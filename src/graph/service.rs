@@ -19,6 +19,16 @@
 //! This module provides the operations service layer for ProximaDB's native graph database,
 //! implementing CRUD operations, queries, and traversals following the vector services pattern.
 //!
+//! **TD-GOD-FILE**: This file (~2800 lines) handles graph CRUD, traversals, analytics,
+//! pattern matching, and batch operations. It should be split into:
+//! - `graph/service/mod.rs` — Service struct + orchestration
+//! - `graph/service/crud.rs` — Node/edge create/read/update/delete
+//! - `graph/service/traversal.rs` — BFS/DFS/traversal operations
+//! - `graph/service/analytics.rs` — Analytics and aggregation
+//! - `graph/service/batch.rs` — Batch operations
+//!
+//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
+//!
 //! ## Architecture Overview
 //!
 //! ```text
@@ -34,11 +44,9 @@
 //! │  │ • Transaction support      │    │
 //! │  └─────────────────────────────┘    │
 //! ├─────────────────────────────────────┤
-//! │              Engines                │
-//! │  ┌─────────┬─────────┬───────────┐  │
-//! │  │ ORION   │ PULSAR  │  QUASAR   │  │
-//! │  │(Memory) │(Distrib)│ (Hybrid)  │  │
-//! │  └─────────┴─────────┴───────────┘  │
+//! │         ORION Graph Runtime         │
+//! │  (relational/storage substrate for  │
+//! │   distributed routing and tiering)   │
 //! ├─────────────────────────────────────┤
 //! │           Arc Memory Pool           │
 //! │    ┌────────────┬─────────────┐     │
@@ -57,8 +65,6 @@
 //! - **Transaction Management**: ACID transactions with rollback support
 //! - **Performance Optimization**: SIMD-ready operations and cache-friendly access patterns
 
-#[path = "service_advanced.rs"]
-pub mod service_advanced;
 #[path = "service_edge_ops.rs"]
 mod service_edge_ops;
 #[path = "service_engine_factory.rs"]
@@ -67,6 +73,12 @@ mod service_engine_factory;
 mod service_helpers;
 #[path = "service_node_ops.rs"]
 mod service_node_ops;
+#[path = "service_query_read.rs"]
+mod service_query_read;
+#[path = "service_query_stats.rs"]
+mod service_query_stats;
+#[path = "service_query_traversal.rs"]
+mod service_query_traversal;
 #[path = "service_schema_validation.rs"]
 mod service_schema_validation;
 #[path = "service_transactions.rs"]
@@ -80,18 +92,24 @@ pub use service_transactions::{
     UnitOfWork,
 };
 
-use crate::core::error::ProximaDBError;
 use crate::graph::{
     Edge, EdgeId, EdgeQuery, GraphMemoryPool, Node, OperationMode,
+    adjacency_projection::{
+        InMemoryGraphAdjacencyProjection, edge_to_canonical_record, node_to_canonical_record,
+    },
     engines::{GraphEngine, orion::OrionGraphEngine},
 };
-use crate::security::unified_rbac::{
+use crate::security::rbac_service::{
     ConsolidatedRBACManager, UnifiedPermission, UnifiedUserContext,
 };
 use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
+use proximadb_graph::projection::{GraphTopologyProjection, TopologyEpoch};
+use proximadb_kernel::error::ProximaDBError;
+use proximadb_records::{RecordKey, RecordStore};
+use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry, SnapshotManifest};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -108,6 +126,31 @@ pub struct GraphOperationsService {
 
     /// Graph registry for multi-graph support - maps graph_id to engine (polymorphic)
     graphs: Arc<DashMap<String, Arc<crate::graph::engines::GraphEngineImpl>>>,
+    /// Optional canonical record store for durable graph node/edge records.
+    canonical_record_store: Option<Arc<dyn RecordStore>>,
+    /// Optional canonical WAL appender. When present, `flush_wal` persists
+    /// a `CanonicalOperation::Checkpoint(SnapshotManifest)` entry to the
+    /// canonical WAL before the engine-local WAL is flushed (TD-066 /
+    /// ADR-020 — canonical WAL as durability authority).
+    canonical_wal_appender: Option<Arc<dyn crate::services::record_store::TableWalAppender>>,
+    /// Optional canonical WAL path, paired with `canonical_wal_appender`
+    /// when production wiring is active. The `TableWalAppender` trait
+    /// doesn't expose `path()`, so we store the path as a parallel
+    /// field. Production wiring threads this into ORION's persistence
+    /// via `engine_factory.rs` so recovery can call
+    /// `OrionPersistence::canonical_checkpoint_lsn` (TD-066 (c) Part 1).
+    canonical_wal_path: Option<std::path::PathBuf>,
+    /// Rebuildable adjacency projections over canonical edge records, keyed by graph id.
+    adjacency_projections: Arc<DashMap<String, Arc<InMemoryGraphAdjacencyProjection>>>,
+    /// Monotonic edge-mutation epoch per graph, used to invalidate CSR/topology projections.
+    /// Advances on every create_edge, update_edge, delete_edge, and batch_create_edges call.
+    edge_epochs: Arc<DashMap<String, AtomicU64>>,
+    /// Last edge epoch applied to the ORION CSR projection per graph.
+    ///
+    /// CSR is a rebuildable read projection. This tracks the canonical edge
+    /// epoch at which CSR was rebuilt so endpoint reads only use explicitly
+    /// materialized, fresh topology.
+    csr_rebuild_epochs: Arc<DashMap<String, AtomicU64>>,
 
     /// Configuration for graph storage base URL
     base_storage_url: String,
@@ -149,6 +192,12 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
+            canonical_record_store: None,
+            canonical_wal_appender: None,
+            canonical_wal_path: None,
+            adjacency_projections: Arc::new(DashMap::new()),
+            edge_epochs: Arc::new(DashMap::new()),
+            csr_rebuild_epochs: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(), // Default storage URL
             memory_pool,
             metrics_updater: None,
@@ -224,6 +273,12 @@ impl GraphOperationsService {
             mode: OperationMode::Unified,
             collection_service,
             graphs: Arc::new(DashMap::new()),
+            canonical_record_store: None,
+            canonical_wal_appender: None,
+            canonical_wal_path: None,
+            adjacency_projections: Arc::new(DashMap::new()),
+            edge_epochs: Arc::new(DashMap::new()),
+            csr_rebuild_epochs: Arc::new(DashMap::new()),
             base_storage_url: "file:///tmp/proximadb".to_string(),
             memory_pool,
             metrics_updater: None,
@@ -264,8 +319,9 @@ impl GraphOperationsService {
             |loc| loc.url.clone(),
         );
 
-        // Engine selection: PULSAR requires 'distributed-graph' feature, QUASAR requires 'tiered-graph'
-        // Engine is determined per-graph from collection metadata during recovery
+        // Engine is determined per-graph from collection metadata during recovery.
+        // ORION is the only graph runtime; distributed/tiered behavior belongs
+        // to the relational/storage substrate.
         tracing::info!(
             "GraphOperationsService engine selection: {}, storage: {}",
             engine_name,
@@ -275,6 +331,41 @@ impl GraphOperationsService {
         let mut service = Self::new();
         service.base_storage_url = base_storage_url;
         service
+    }
+
+    /// Inject the canonical record store used as durable graph node/edge truth.
+    ///
+    /// Graph engines and adjacency/CSR structures remain projection consumers.
+    pub fn with_canonical_record_store(mut self, record_store: Arc<dyn RecordStore>) -> Self {
+        self.canonical_record_store = Some(record_store);
+        self
+    }
+
+    /// Inject the canonical WAL appender that `flush_wal` uses to persist
+    /// `CanonicalOperation::Checkpoint(SnapshotManifest)` entries.
+    ///
+    /// When unset (the default), `flush_wal` emits the canonical-checkpoint
+    /// tracing line as before and skips the disk append — preserving today's
+    /// behavior for callers that haven't yet wired the appender. Once set,
+    /// the canonical WAL becomes the durability authority per ADR-020:
+    /// recovery uses the checkpoint LSN to scope replay, and the engine
+    /// WAL is a compatibility projection buffer (TD-066).
+    pub fn with_canonical_wal_appender(
+        mut self,
+        appender: Arc<dyn crate::services::record_store::TableWalAppender>,
+    ) -> Self {
+        self.canonical_wal_appender = Some(appender);
+        self
+    }
+
+    /// Inject the canonical WAL path so the engine factory can pass it
+    /// to ORION's persistence layer for the read-side observability
+    /// hook (TD-066 (c) Part 1). The path is stored alongside the
+    /// appender because the `TableWalAppender` trait doesn't expose
+    /// `path()`.
+    pub fn with_canonical_wal_path(mut self, path: std::path::PathBuf) -> Self {
+        self.canonical_wal_path = Some(path);
+        self
     }
 
     /// Create a new GraphOperationsService with RBAC enabled
@@ -356,9 +447,52 @@ impl GraphOperationsService {
     pub async fn create_graph_collection(
         &self,
         request: crate::proto::proximadb_v1::CreateGraphRequest,
-    ) -> Result<()> {
-        self.collection_service.create_graph(request).await?;
-        Ok(())
+    ) -> Result<Arc<crate::proto::proximadb_v1::GraphCollection>> {
+        self.collection_service.create_graph(request).await
+    }
+
+    /// Get graph collection metadata (delegates to collection service)
+    pub async fn get_graph_collection(
+        &self,
+        graph_id: &str,
+    ) -> Result<Option<Arc<crate::proto::proximadb_v1::GraphCollection>>> {
+        self.collection_service.get_graph(graph_id).await
+    }
+
+    /// Delete graph collection metadata and drop any active engine.
+    pub async fn delete_graph_collection(&self, graph_id: &str) -> Result<bool> {
+        let existed = self.collection_service.get_graph(graph_id).await?.is_some();
+        if !existed {
+            return Ok(false);
+        }
+
+        self.collection_service.delete_graph(graph_id).await?;
+        self.remove_graph(graph_id);
+        Ok(true)
+    }
+
+    /// List graph collection metadata (delegates to collection service)
+    pub async fn list_graph_collections(
+        &self,
+    ) -> Result<Vec<Arc<crate::proto::proximadb_v1::GraphCollection>>> {
+        self.collection_service.list_graphs().await
+    }
+
+    /// Update graph collection schema and return the refreshed metadata.
+    pub async fn update_graph_schema(
+        &self,
+        graph_id: &str,
+        schema: crate::proto::proximadb_v1::GraphSchema,
+    ) -> Result<Arc<crate::proto::proximadb_v1::GraphCollection>> {
+        self.collection_service
+            .update_schema(graph_id, schema)
+            .await?;
+        self.collection_service
+            .get_graph(graph_id)
+            .await?
+            .ok_or_else(|| {
+                ProximaDBError::InvalidInput(format!("Graph collection '{}' not found", graph_id))
+            })
     }
 
     /// Remove a graph engine (for cleanup/deletion)
@@ -366,7 +500,126 @@ impl GraphOperationsService {
         &self,
         graph_id: &str,
     ) -> Option<Arc<crate::graph::engines::GraphEngineImpl>> {
+        self.adjacency_projections.remove(graph_id);
+        self.edge_epochs.remove(graph_id);
+        self.csr_rebuild_epochs.remove(graph_id);
         self.graphs.remove(graph_id).map(|(_, engine)| engine)
+    }
+
+    /// Return the current edge-mutation epoch for the given graph.
+    ///
+    /// CSR consumers can snapshot this epoch before building/loading a CSR and compare
+    /// with `freshness_epoch` to detect stale topology: if the returned epoch is greater
+    /// than the epoch at CSR-build time, the CSR must be rebuilt.
+    pub fn edge_epoch(&self, graph_id: &str) -> TopologyEpoch {
+        self.edge_epochs
+            .get(graph_id)
+            .map(|v| TopologyEpoch(v.load(Ordering::Acquire)))
+            .unwrap_or_else(TopologyEpoch::initial)
+    }
+
+    /// Advance the edge-mutation epoch for the given graph.
+    ///
+    /// Called internally by every create_edge, update_edge, delete_edge, and
+    /// batch_create_edges path so CSR freshness checks are accurate.
+    pub(crate) fn advance_edge_epoch(&self, graph_id: &str) {
+        self.edge_epochs
+            .entry(graph_id.to_string())
+            .or_insert_with(|| AtomicU64::new(0))
+            .fetch_add(1, Ordering::Release);
+    }
+
+    /// Return the canonical edge epoch represented by the current ORION CSR projection.
+    pub fn csr_rebuild_epoch(&self, graph_id: &str) -> Option<TopologyEpoch> {
+        self.csr_rebuild_epochs
+            .get(graph_id)
+            .map(|v| TopologyEpoch(v.load(Ordering::Acquire)))
+    }
+
+    /// True when CSR has been explicitly rebuilt and no edge mutation happened since.
+    pub fn has_fresh_orion_csr(&self, graph_id: &str) -> bool {
+        self.csr_rebuild_epoch(graph_id)
+            .map(|epoch| epoch >= self.edge_epoch(graph_id))
+            .unwrap_or(false)
+    }
+
+    pub(crate) fn adjacency_projection(
+        &self,
+        graph_id: &str,
+    ) -> Arc<InMemoryGraphAdjacencyProjection> {
+        self.adjacency_projections
+            .entry(graph_id.to_string())
+            .or_insert_with(|| Arc::new(InMemoryGraphAdjacencyProjection::new(graph_id)))
+            .clone()
+    }
+
+    pub fn adjacency_projection_edge_count(&self, graph_id: &str) -> Result<usize> {
+        match self.adjacency_projections.get(graph_id) {
+            Some(projection) => projection.edge_count(),
+            None => Ok(0),
+        }
+    }
+
+    pub(crate) async fn upsert_canonical_node_record(
+        &self,
+        graph_id: &str,
+        node: &Node,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            record_store
+                .upsert_record(node_to_canonical_record(graph_id, node))
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn upsert_canonical_edge_record(
+        &self,
+        graph_id: &str,
+        edge: &Edge,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            record_store
+                .upsert_record(edge_to_canonical_record(graph_id, edge))
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn delete_canonical_node_record(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            let key = RecordKey::new(
+                proximadb_graph::record::GraphNodeKey::new(graph_id, node_id).canonical_oid(),
+            );
+            record_store
+                .delete_record(&key)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn delete_canonical_edge_record(
+        &self,
+        graph_id: &str,
+        edge_id: &str,
+    ) -> Result<()> {
+        if let Some(record_store) = &self.canonical_record_store {
+            let key = RecordKey::new(
+                proximadb_graph::record::GraphEdgeKey::new(graph_id, edge_id).canonical_oid(),
+            );
+            record_store
+                .delete_record(&key)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+        Ok(())
     }
 
     /// Recover all graphs from persistent storage
@@ -422,7 +675,7 @@ impl GraphOperationsService {
     /// Recover a single graph from persistent storage
     ///
     /// This method detects the engine type from the stored collection metadata
-    /// and creates the appropriate engine (ORION, PULSAR, or QUASAR).
+    /// and creates the ORION graph runtime.
     async fn recover_graph(&self, graph_id: &str) -> Result<()> {
         // Get collection metadata to determine engine type
         let collection = self.collection_service.get_graph(graph_id).await?;
@@ -438,60 +691,14 @@ impl GraphOperationsService {
         );
 
         let engine_impl = match engine_type.as_str() {
-            "PULSAR" => {
-                #[cfg(feature = "distributed-graph")]
-                {
-                    use crate::graph::engines::pulsar::{PulsarConfig, PulsarGraphEngine};
-                    let config = PulsarConfig::default();
-                    // Create with persistence enabled for WAL recovery
-                    let engine = PulsarGraphEngine::with_persistence(
-                        config,
-                        graph_id.to_string(),
-                        self.base_storage_url.clone(),
-                    )
-                    .await?;
-                    engine.recover().await?;
-                    crate::graph::engines::GraphEngineImpl::Pulsar(engine)
-                }
-                #[cfg(not(feature = "distributed-graph"))]
-                {
-                    return Err(ProximaDBError::NotImplemented(
-                        "PULSAR engine requires 'distributed-graph' feature".to_string(),
-                    ));
-                }
+            "PULSAR" | "QUASAR" => {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "{engine_type} graph engine metadata is retired; use ORION. \
+                     Distributed placement and projection tiering are relational/storage \
+                     substrate features."
+                )));
             }
-            "QUASAR" => {
-                #[cfg(feature = "tiered-graph")]
-                {
-                    use crate::graph::engines::quasar::{QuasarConfig, QuasarGraphEngine};
-                    let cold_tier_path = std::path::PathBuf::from(format!(
-                        "{}/graphs/{}/cold",
-                        self.base_storage_url.trim_start_matches("file://"),
-                        graph_id
-                    ));
-                    let config = QuasarConfig {
-                        cold_tier_path,
-                        ..QuasarConfig::default()
-                    };
-                    // Create with persistence enabled for WAL recovery
-                    let engine = QuasarGraphEngine::with_persistence(
-                        config,
-                        graph_id.to_string(),
-                        self.base_storage_url.clone(),
-                    )
-                    .await?;
-                    engine.recover().await?;
-                    crate::graph::engines::GraphEngineImpl::Quasar(engine)
-                }
-                #[cfg(not(feature = "tiered-graph"))]
-                {
-                    return Err(ProximaDBError::NotImplemented(
-                        "QUASAR engine requires 'tiered-graph' feature".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                // Default to ORION (includes "ORION" and any unknown types)
+            "ORION" | "" => {
                 let engine = OrionGraphEngine::with_persistence_for_graph(
                     graph_id.to_string(),
                     self.base_storage_url.clone(),
@@ -500,6 +707,11 @@ impl GraphOperationsService {
                 .await?;
                 engine.recover().await?;
                 crate::graph::engines::GraphEngineImpl::Orion(engine)
+            }
+            other => {
+                return Err(ProximaDBError::InvalidInput(format!(
+                    "Unknown graph engine type '{other}' in metadata. Valid option: ORION"
+                )));
             }
         };
 
@@ -693,29 +905,172 @@ impl GraphOperationsService {
     /// # Returns
     /// * `Ok(())` if flush succeeds or graph not found
     /// * `Err` if flush fails
+    ///
+    /// Flush WAL for the given graph.
+    ///
+    /// # Canonical-first ordering (TD-066 / Phase 3 convergence)
+    ///
+    /// The canonical `SnapshotManifest` checkpoint is written to the
+    /// in-process canonical WAL log *before* the engine-specific WAL is
+    /// flushed.  This establishes the canonical WAL as the durable authority:
+    /// recovery uses the checkpoint LSN from the canonical WAL to scope
+    /// replay, then falls back to the engine WAL only as a best-effort
+    /// fast-path for in-flight operations that have not yet been canonicalised.
+    ///
+    /// The engine WAL is therefore a *compatibility projection recovery* buffer,
+    /// not an independent source of truth.
     pub async fn flush_wal(&self, graph_id: &str) -> Result<()> {
+        // Step 1 — write canonical checkpoint, making the canonical WAL the
+        // authoritative durability boundary for this graph.
+        let checkpoint_lsn = self
+            .edge_epochs
+            .get(graph_id)
+            .map(|e| e.load(Ordering::Acquire))
+            .unwrap_or(0);
+
+        let canonical_entry = CanonicalWalEntry::new(
+            checkpoint_lsn,
+            CanonicalOperation::Checkpoint(SnapshotManifest {
+                sequence_number: checkpoint_lsn,
+                timestamp_ms: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0),
+                collection_ids: vec![graph_id.to_string()],
+                projection_freshness: vec![],
+            }),
+            None,
+        );
+
+        // TD-066: persist the checkpoint to the canonical WAL when an
+        // appender is injected. The WAL re-assigns its own sequence number
+        // on append; the engine's `checkpoint_lsn` is preserved inside the
+        // `SnapshotManifest.sequence_number` field for cross-reference.
+        // When no appender is injected (default), fall back to the prior
+        // tracing-only behavior so callers don't get surprised.
+        if let Some(appender) = self.canonical_wal_appender.as_ref() {
+            let tenant_id = canonical_entry.tenant_id.clone();
+            match appender
+                .append_operations(vec![canonical_entry.operation.clone()], tenant_id)
+                .await
+            {
+                Ok(written) => {
+                    let written_seq = written.first().map(|e| e.sequence_number).unwrap_or(0);
+                    tracing::debug!(
+                        graph_id,
+                        checkpoint_lsn,
+                        wal_seq = written_seq,
+                        "canonical WAL checkpoint persisted before engine WAL flush"
+                    );
+                }
+                Err(err) => {
+                    tracing::error!(
+                        graph_id,
+                        checkpoint_lsn,
+                        error = %err,
+                        "failed to persist canonical WAL checkpoint; engine flush will proceed but recovery cannot use this checkpoint"
+                    );
+                    return Err(ProximaDBError::Internal(format!(
+                        "canonical WAL checkpoint append failed: {}",
+                        err
+                    )));
+                }
+            }
+        } else {
+            // In-process canonical checkpoint: log for observability.
+            // Production wiring of the canonical WAL appender is a follow-up
+            // slice; until then this preserves the prior behavior.
+            tracing::debug!(
+                graph_id,
+                checkpoint_lsn,
+                is_checkpoint = canonical_entry.is_checkpoint(),
+                "canonical WAL checkpoint written before engine WAL flush (in-process only — no appender injected)"
+            );
+        }
+
+        // Step 2 — flush ORION's projection WAL as a compatibility buffer.
         if let Some(engine) = self.graphs.get(graph_id) {
             match engine.value().as_ref() {
                 crate::graph::engines::GraphEngineImpl::Orion(orion) => {
                     orion.flush_wal().await?;
                 }
-                #[cfg(feature = "distributed-graph")]
-                crate::graph::engines::GraphEngineImpl::Pulsar(pulsar) => {
-                    pulsar.flush_wal().await?;
-                }
-                #[cfg(feature = "tiered-graph")]
-                crate::graph::engines::GraphEngineImpl::Quasar(quasar) => {
-                    quasar.flush_wal().await?;
+            }
+        }
+        Ok(())
+    }
+
+    // =========================================================================
+    // CSR Projection Management
+    // =========================================================================
+
+    /// Rebuild the ORION engine's CSR from the in-memory adjacency projection.
+    ///
+    /// This is the hook point for the convergence spec item "Make ORION CSR
+    /// load/build from edge records or adjacency projections."  The adjacency
+    /// projection is the single source of truth for write-heavy edge state; the
+    /// CSR is a read-optimised derived projection that should be rebuilt from it
+    /// when the engine is cold-started or when `edge_epoch()` reveals staleness.
+    ///
+    /// Extracts `(from_node_id, to_node_id, edge_id)` from the adjacency
+    /// projection's `edges_by_src` snapshot (one entry per edge, no duplicates)
+    /// and calls `OrionGraphEngine::rebuild_csr_from_edges`.
+    pub async fn rebuild_orion_csr_from_adjacency_projection(&self, graph_id: &str) -> Result<()> {
+        let node_prefix = format!("graph/{graph_id}/node/");
+        let edge_prefix = format!("graph/{graph_id}/edge/");
+
+        let endpoints = {
+            let proj = self.adjacency_projection(graph_id);
+            proj.snapshot_edge_endpoints().map_err(|e| {
+                ProximaDBError::Internal(format!("adjacency projection snapshot failed: {e}"))
+            })?
+        };
+
+        // Build minimal Arc<Edge> stubs — only from/to/id fields are used by
+        // rebuild_csr_from_edges (which just needs endpoint IDs for indexing).
+        let edges: Vec<Arc<crate::graph::Edge>> = endpoints
+            .into_iter()
+            .filter_map(|(from_oid, to_oid, edge_oid)| {
+                let from_id = from_oid.strip_prefix(&node_prefix)?.to_string();
+                let to_id = to_oid.strip_prefix(&node_prefix)?.to_string();
+                let edge_id = edge_oid.strip_prefix(&edge_prefix)?.to_string();
+                Some(Arc::new(crate::graph::Edge {
+                    id: edge_id,
+                    from_node_id: from_id,
+                    to_node_id: to_id,
+                    edge_type: String::new(),
+                    properties: std::collections::HashMap::new(),
+                    weight: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                }))
+            })
+            .collect();
+
+        if let Some(engine) = self.graphs.get(graph_id) {
+            match engine.value().as_ref() {
+                crate::graph::engines::GraphEngineImpl::Orion(orion) => {
+                    orion.rebuild_csr_from_edges(&edges).await?;
+                    let rebuild_epoch = self.edge_epoch(graph_id).0;
+                    self.csr_rebuild_epochs
+                        .entry(graph_id.to_string())
+                        .or_insert_with(|| AtomicU64::new(0))
+                        .store(rebuild_epoch, Ordering::Release);
+                    tracing::info!(
+                        graph_id,
+                        edge_count = edges.len(),
+                        rebuild_epoch,
+                        "ORION CSR rebuilt from adjacency projection"
+                    );
                 }
                 #[allow(unreachable_patterns)]
                 _ => {
-                    // Stub engines (feature-disabled) don't support WAL
                     tracing::debug!(
-                        "WAL flush not supported for this engine type (feature disabled)"
+                        "rebuild_orion_csr_from_adjacency_projection: not an ORION engine, skipped"
                     );
                 }
             }
         }
+
         Ok(())
     }
 
@@ -1559,14 +1914,7 @@ impl GraphOperationsService {
                             && let Some(map_lock) =
                                 self.memory_pool.edge_property_str_ordered.get(&filter.key)
                         {
-                            // Handle poisoned lock gracefully
-                            let Ok(map) = map_lock.read() else {
-                                tracing::warn!(
-                                    "Poisoned lock in edge_property_str_ordered for key {}",
-                                    filter.key
-                                );
-                                continue;
-                            };
+                            let map = map_lock.read();
                             let mut matched = std::collections::HashSet::new();
                             for (_k, ids) in map
                                 .range(prefix.to_string()..)
@@ -1590,14 +1938,7 @@ impl GraphOperationsService {
                             if let Some(map_lock) =
                                 self.memory_pool.edge_property_num_indexes.get(&filter.key)
                             {
-                                // Handle poisoned lock gracefully
-                                let Ok(map) = map_lock.read() else {
-                                    tracing::warn!(
-                                        "Poisoned lock in edge_property_num_indexes for key {}",
-                                        filter.key
-                                    );
-                                    continue;
-                                };
+                                let map = map_lock.read();
                                 let mut matched = std::collections::HashSet::new();
                                 match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                                     Op::GreaterThan => {
@@ -1638,14 +1979,7 @@ impl GraphOperationsService {
                         } else if let Some(map_lock) =
                             self.memory_pool.edge_property_str_ordered.get(&filter.key)
                         {
-                            // Handle poisoned lock gracefully
-                            let Ok(map) = map_lock.read() else {
-                                tracing::warn!(
-                                    "Poisoned lock in edge_property_str_ordered for key {} (string fallback)",
-                                    filter.key
-                                );
-                                continue;
-                            };
+                            let map = map_lock.read();
                             let mut matched = std::collections::HashSet::new();
                             // filter_val was already validated at the start of this Op branch
                             let s = extract_string_from_value(filter_val).unwrap_or("");
@@ -1840,10 +2174,19 @@ impl GraphOperationsService {
             ));
         }
 
-        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        if let Some(record_store) = &self.canonical_record_store {
+            let records = nodes
+                .iter()
+                .map(|node| node_to_canonical_record(graph_id, node))
+                .collect();
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
 
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
         // Use bulk API for optimal performance (100-500x faster than individual inserts)
-        // Single WAL write instead of N WAL writes
         let inserted = engine.bulk_insert_nodes(nodes).await?;
         Ok(inserted)
     }
@@ -1861,27 +2204,28 @@ impl GraphOperationsService {
             ));
         }
 
+        if let Some(record_store) = &self.canonical_record_store {
+            let records = nodes
+                .iter()
+                .map(|node| node_to_canonical_record(graph_id, node))
+                .collect();
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
         let mut results = Vec::with_capacity(nodes.len());
         for node in nodes {
             match if_exists {
-                "update" => {
-                    // Upsert: insert or update existing node
-                    results.push(engine.insert_node(node).await?);
-                }
-                "skip" => {
-                    // Skip if exists: engine handles duplicate IDs gracefully
-                    results.push(engine.insert_node(node).await?);
-                }
-                "error" => {
-                    // Error if exists: engine returns error on duplicate ID
+                "update" | "skip" | "error" => {
                     results.push(engine.insert_node(node).await?);
                 }
                 _ => {
                     return Err(ProximaDBError::InvalidInput(format!(
-                        "Invalid if_exists strategy: {}",
-                        if_exists
+                        "Invalid if_exists strategy: {if_exists}"
                     )));
                 }
             }
@@ -1993,10 +2337,32 @@ impl GraphOperationsService {
         }
         // If no schema, skip validation entirely - major performance win for bulk inserts
 
+        if let Some(record_store) = &self.canonical_record_store {
+            let records = edges
+                .iter()
+                .map(|edge| edge_to_canonical_record(graph_id, edge))
+                .collect();
+            record_store
+                .upsert_records(records)
+                .await
+                .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+        }
+
         let edge_count = edges.len();
         let engine_start = std::time::Instant::now();
         let inserted = engine.bulk_insert_edges(edges).await?;
         let engine_time = engine_start.elapsed();
+
+        let projection_start = std::time::Instant::now();
+        if !inserted.is_empty() {
+            let projection = self.adjacency_projection(graph_id);
+            for edge in &inserted {
+                let edge_record = edge_to_canonical_record(graph_id, edge);
+                projection.apply_edge(&edge_record).await?;
+            }
+            self.advance_edge_epoch(graph_id);
+        }
+        let projection_time = projection_start.elapsed();
 
         // Update edge stats and per-type counters
         let stats_start = std::time::Instant::now();
@@ -2020,10 +2386,11 @@ impl GraphOperationsService {
         let service_total = service_start.elapsed();
         if edge_count >= 100 {
             tracing::debug!(
-                "batch_create_edges timing for {} edges: composite={:?} engine={:?} stats={:?} total={:?}",
+                "batch_create_edges timing for {} edges: composite={:?} engine={:?} projection={:?} stats={:?} total={:?}",
                 edge_count,
                 composite_time,
                 engine_time,
+                projection_time,
                 stats_time,
                 service_total
             );
@@ -2171,6 +2538,12 @@ impl GraphOperationsService {
                 .find(|et| et.edge_type == edge.edge_type)
         {
             use crate::proto::proximadb_v1::Cardinality;
+            // The inner `if !engine.get_*().is_empty()` bodies contain `?`
+            // operators that surface I/O errors from the graph engine; they
+            // can't be collapsed into match-arm guards without losing the
+            // error propagation, so the lint is silenced locally.
+            #[allow(clippy::collapsible_match)]
+            #[allow(clippy::collapsible_if)]
             match ets.cardinality {
                 x if x == Cardinality::OneToOne as i32 => {
                     if !engine
@@ -2540,80 +2913,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg(feature = "distributed-graph")]
-    async fn test_pulsar_traversal_path() -> anyhow::Result<()> {
-        let service = GraphOperationsService::new();
-        // Create graph with PULSAR engine
-        let engine_cfg = crate::proto::proximadb_v1::GraphEngineConfig {
-            engine_type: "PULSAR".to_string(),
-            memory_pool_size_mb: 0,
-            csr_cache_size_mb: 0,
-            enable_parallel_operations: true,
-            max_traversal_depth: 10,
-            advanced_config: std::collections::HashMap::new(),
-        };
-        let req = crate::proto::proximadb_v1::CreateGraphRequest {
-            graph_id: "g_pulsar".to_string(),
-            name: Some("g_pulsar".to_string()),
-            description: None,
-            schema: None,
-            storage_config: None,
-            engine_config: Some(engine_cfg),
-            access_control: None,
-        };
-        service.create_graph_collection(req).await?;
-        // Create small chain A->B->C
-        let mk = |id: &str| crate::proto::proximadb_v1::Node {
-            id: id.to_string(),
-            labels: vec!["N".to_string()],
-            properties: std::collections::HashMap::new(),
-            embedding: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_node("g_pulsar", mk("A")).await?;
-        service.create_node("g_pulsar", mk("B")).await?;
-        service.create_node("g_pulsar", mk("C")).await?;
-        let eab = crate::proto::proximadb_v1::Edge {
-            id: "eab".to_string(),
-            from_node_id: "A".to_string(),
-            to_node_id: "B".to_string(),
-            edge_type: "X".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        let ebc = crate::proto::proximadb_v1::Edge {
-            id: "ebc".to_string(),
-            from_node_id: "B".to_string(),
-            to_node_id: "C".to_string(),
-            edge_type: "X".to_string(),
-            properties: std::collections::HashMap::new(),
-            weight: None,
-            created_at_ms: 0,
-            updated_at_ms: 0,
-        };
-        service.create_edge("g_pulsar", eab).await?;
-        service.create_edge("g_pulsar", ebc).await?;
-        let tr = crate::proto::proximadb_v1::TraversalRequest {
-            graph_id: "g_pulsar".to_string(),
-            start_node_id: "A".to_string(),
-            max_depth: 2,
-            edge_types: vec![],
-            node_labels: vec![],
-            filters: vec![],
-            algorithm: crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32,
-            limit: None,
-            timeout_ms: None,
-            max_frontier: None,
-        };
-        let resp = service.traverse("g_pulsar", tr).await?;
-        assert!(resp.nodes.len() >= 2);
-        Ok(())
-    }
-
-    #[tokio::test]
     async fn test_operation_modes() {
         let mut service = GraphOperationsService::new();
 
@@ -2683,5 +2982,137 @@ mod tests {
         // Note: Tests need to be updated to use async and graph_id parameter
         // This is placeholder compilation fix
         assert_eq!(node.id, "test_node_1");
+    }
+
+    #[tokio::test]
+    async fn test_graph_walk_tool() {
+        let service = GraphOperationsService::new();
+        let graph_id = "walk_test_graph";
+
+        // Create graph
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: graph_id.to_string(),
+            name: Some("Walk Test".to_string()),
+            description: None,
+            schema: None,
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+
+        // Create n1 -> n2 -> n3
+        let nodes = vec!["n1", "n2", "n3"];
+        for id in nodes {
+            let node = Node {
+                id: id.to_string(),
+                labels: vec!["Test".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_node(graph_id, node).await.unwrap();
+        }
+
+        let edges = vec![("e12", "n1", "n2"), ("e23", "n2", "n3")];
+        for (id, from, to) in edges {
+            let edge = Edge {
+                id: id.to_string(),
+                from_node_id: from.to_string(),
+                to_node_id: to.to_string(),
+                edge_type: "NEXT".to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_edge(graph_id, edge).await.unwrap();
+        }
+
+        // Walk from n1 with depth 1
+        let results = service.graph_walk(graph_id, "n1", 1, 10).await.unwrap();
+
+        // Should find n1 and n2 (BFS depth 1)
+        assert_eq!(results.nodes.len(), 2);
+        let ids: Vec<_> = results.nodes.iter().map(|n| &n.id).collect();
+        assert!(ids.contains(&&"n1".to_string()));
+        assert!(ids.contains(&&"n2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_graph_step_tool() {
+        let service = GraphOperationsService::new();
+        let graph_id = "step_test_graph";
+
+        let req = crate::proto::proximadb_v1::CreateGraphRequest {
+            graph_id: graph_id.to_string(),
+            name: Some("Step Test".to_string()),
+            description: None,
+            schema: None,
+            storage_config: None,
+            engine_config: None,
+            access_control: None,
+        };
+        service.create_graph_collection(req).await.unwrap();
+
+        // n1 -> n2 (NEXT), n1 -> n3 (REF), n1 -> n4 (NEXT)
+        for id in ["n1", "n2", "n3", "n4"] {
+            let node = Node {
+                id: id.to_string(),
+                labels: vec!["Test".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_node(graph_id, node).await.unwrap();
+        }
+        for (id, from, to, et) in [
+            ("e12", "n1", "n2", "NEXT"),
+            ("e13", "n1", "n3", "REF"),
+            ("e14", "n1", "n4", "NEXT"),
+        ] {
+            let edge = Edge {
+                id: id.to_string(),
+                from_node_id: from.to_string(),
+                to_node_id: to.to_string(),
+                edge_type: et.to_string(),
+                properties: HashMap::new(),
+                weight: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            };
+            service.create_edge(graph_id, edge).await.unwrap();
+        }
+
+        // Step from n1 with no edge filter: start node + 3 neighbors.
+        let unfiltered = service.graph_step(graph_id, "n1", None, 50).await.unwrap();
+        assert_eq!(unfiltered.nodes.len(), 4, "expected n1 + 3 neighbors");
+        assert_eq!(unfiltered.nodes[0].id, "n1");
+
+        // Step from n1 filtered to NEXT: start node + 2 NEXT neighbors.
+        let next_only = service
+            .graph_step(graph_id, "n1", Some("NEXT"), 50)
+            .await
+            .unwrap();
+        assert_eq!(next_only.nodes.len(), 3, "expected n1 + 2 NEXT neighbors");
+        let ids: Vec<_> = next_only.nodes.iter().map(|n| n.id.as_str()).collect();
+        assert!(ids.contains(&"n1"));
+        assert!(ids.contains(&"n2"));
+        assert!(ids.contains(&"n4"));
+        assert!(!ids.contains(&"n3"), "REF neighbor should be filtered out");
+
+        // Limit caps neighbor count.
+        let limited = service.graph_step(graph_id, "n1", None, 1).await.unwrap();
+        assert_eq!(
+            limited.nodes.len(),
+            2,
+            "expected n1 + 1 neighbor under limit"
+        );
+
+        // Missing node returns NotFound.
+        let missing = service.graph_step(graph_id, "no-such-node", None, 10).await;
+        assert!(missing.is_err(), "missing node should error");
     }
 }

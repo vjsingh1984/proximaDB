@@ -12,7 +12,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 use crate::llm::config::RAGConfig;
@@ -148,7 +148,7 @@ pub struct RAGPipeline {
     total_queries: AtomicU64,
     /// Collection name -> document count
     collections: Arc<RwLock<HashMap<String, usize>>>,
-    initialized: Arc<RwLock<bool>>,
+    initialized: AtomicBool,
 }
 
 impl RAGPipeline {
@@ -159,14 +159,17 @@ impl RAGPipeline {
             stats: Arc::new(RwLock::new(RAGStats::default())),
             total_queries: AtomicU64::new(0),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            initialized: Arc::new(RwLock::new(false)),
+            initialized: AtomicBool::new(false),
         })
     }
 
     /// Initialize the RAG pipeline
     pub async fn initialize(&self) -> Result<()> {
-        let mut initialized = self.initialized.write().await;
-        if *initialized {
+        if self
+            .initialized
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return Ok(());
         }
 
@@ -176,7 +179,6 @@ impl RAGPipeline {
             "Initializing RAG pipeline"
         );
 
-        *initialized = true;
         tracing::info!("RAG pipeline initialized");
         Ok(())
     }

@@ -8,7 +8,7 @@
 mod common;
 
 use common::integration_test_helpers::{UnifiedTestEnvironment, operations};
-use proximadb::proto::proximadb_v1::{SqlValue, StorageEngine, VectorRecord, sql_value};
+use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::storage::traits::UnifiedStorageEngine;
 use tracing::{debug, info};
 
@@ -32,64 +32,49 @@ async fn test_sst_collection_with_proper_routing() -> anyhow::Result<()> {
     debug!("Created SST engine for collection: {}", collection_id);
 
     // Create test vectors
+    let make_record = |oid: String, values: Vec<f32>, category: &str, ts: i64| {
+        let mut props = proximadb_records::ProximaTree::new();
+        props.insert(
+            "category".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                category.to_string(),
+            )),
+        );
+        proximadb_records::ProximaRecord {
+            oid,
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: values.len() as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                ..Default::default()
+            }],
+            props,
+            record_version: 1,
+            created_at_ns: ts * 1_000_000_000,
+            updated_at_ns: ts * 1_000_000_000,
+            ..Default::default()
+        }
+    };
     let vectors = vec![
-        VectorRecord {
-            id: format!("{}_vec1", collection_id),
-            vector: vec![1.0, 0.0, 0.0],
-            metadata: {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert(
-                    "category".to_string(),
-                    SqlValue {
-                        value: Some(sql_value::Value::StringValue("A".to_string())),
-                    },
-                );
-                metadata
-            },
-            timestamp: Some(1000),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        },
-        VectorRecord {
-            id: format!("{}_vec2", collection_id),
-            vector: vec![0.0, 1.0, 0.0],
-            metadata: {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert(
-                    "category".to_string(),
-                    SqlValue {
-                        value: Some(sql_value::Value::StringValue("B".to_string())),
-                    },
-                );
-                metadata
-            },
-            timestamp: Some(1001),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        },
-        VectorRecord {
-            id: format!("{}_vec3", collection_id),
-            vector: vec![0.0, 0.0, 1.0],
-            metadata: {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert(
-                    "category".to_string(),
-                    SqlValue {
-                        value: Some(sql_value::Value::StringValue("A".to_string())),
-                    },
-                );
-                metadata
-            },
-            timestamp: Some(1002),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
-        },
+        make_record(
+            format!("{}_vec1", collection_id),
+            vec![1.0, 0.0, 0.0],
+            "A",
+            1000,
+        ),
+        make_record(
+            format!("{}_vec2", collection_id),
+            vec![0.0, 1.0, 0.0],
+            "B",
+            1001,
+        ),
+        make_record(
+            format!("{}_vec3", collection_id),
+            vec![0.0, 0.0, 1.0],
+            "A",
+            1002,
+        ),
     ];
 
     info!("Test 1: Flush vectors to SST engine");

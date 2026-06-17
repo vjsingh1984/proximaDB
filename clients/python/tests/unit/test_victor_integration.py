@@ -10,13 +10,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Skip entire module if victor is not installed
-victor = pytest.importorskip("victor")
-
-from victor.storage.vector_stores.base import (  # noqa: E402
-    EmbeddingConfig,
-    EmbeddingSearchResult,
-)
+# Skip entire module if Victor or its transitive optional contracts are absent.
+victor_base = pytest.importorskip("victor.storage.vector_stores.base")
+EmbeddingConfig = victor_base.EmbeddingConfig
+EmbeddingSearchResult = victor_base.EmbeddingSearchResult
 
 from proximadb_sdk.integrations.victor import ProximaDBEmbeddingProvider  # noqa: E402
 from proximadb_sdk.models import SearchResult  # noqa: E402
@@ -41,7 +38,7 @@ def _make_config(**overrides: object) -> EmbeddingConfig:
 def mock_client():
     client = MagicMock()
     client.create_collection = MagicMock()
-    client.insert_vectors = MagicMock()
+    client.insert_records = MagicMock()
     client.delete_vectors = MagicMock()
     client.delete_collection = MagicMock()
     client.search = MagicMock(return_value=[])
@@ -87,19 +84,19 @@ class TestIndexDocument:
         await provider.index_document(
             "doc1", "hello world", {"file_path": "src/main.py"}
         )
-        mock_client.insert_vectors.assert_called_once()
-        call_kwargs = mock_client.insert_vectors.call_args
-        records = call_kwargs.kwargs.get("records") or call_kwargs[1].get("records")
+        mock_client.insert_records.assert_called_once()
+        call_kwargs = mock_client.insert_records.call_args
+        records = call_kwargs.args[1]
         assert len(records) == 1
-        assert records[0].id == "doc1"
-        assert records[0].source == "hello world"
-        assert records[0].metadata["file_path"] == "src/main.py"
+        assert records[0]["id"] == "doc1"
+        assert records[0]["source"] == "hello world"
+        assert records[0]["props"]["file_path"] == "src/main.py"
 
     @pytest.mark.asyncio
     async def test_index_document_no_metadata(self, provider, mock_client):
         await provider.index_document("doc2", "content")
-        records = mock_client.insert_vectors.call_args.kwargs["records"]
-        assert records[0].metadata == {}
+        records = mock_client.insert_records.call_args.args[1]
+        assert records[0]["props"] == {}
 
 
 class TestIndexDocumentsBatch:
@@ -110,17 +107,17 @@ class TestIndexDocumentsBatch:
             {"id": "b", "content": "beta", "metadata": {"file_path": "b.py"}},
         ]
         await provider.index_documents(docs)
-        mock_client.insert_vectors.assert_called_once()
-        records = mock_client.insert_vectors.call_args.kwargs["records"]
+        mock_client.insert_records.assert_called_once()
+        records = mock_client.insert_records.call_args.args[1]
         assert len(records) == 2
-        assert records[0].id == "a"
-        assert records[0].source == "alpha"
-        assert records[1].id == "b"
+        assert records[0]["id"] == "a"
+        assert records[0]["source"] == "alpha"
+        assert records[1]["id"] == "b"
 
     @pytest.mark.asyncio
     async def test_index_documents_empty(self, provider, mock_client):
         await provider.index_documents([])
-        mock_client.insert_vectors.assert_not_called()
+        mock_client.insert_records.assert_not_called()
 
 
 class TestSearchSimilar:

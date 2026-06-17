@@ -25,13 +25,14 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
 from langchain_core.vectorstores import VectorStore
 
-from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.integrations._records import insert_records, record_payload
 
 
 class ProximaDBVectorStore(VectorStore):
@@ -65,8 +66,8 @@ class ProximaDBVectorStore(VectorStore):
     def add_texts(
         self,
         texts: Iterable[str],
-        metadatas: Optional[list[dict[str, Any]]] = None,
-        ids: Optional[list[str]] = None,
+        metadatas: list[dict[str, Any]] | None = None,
+        ids: list[str] | None = None,
         **kwargs: Any,
     ) -> list[str]:
         """Embed texts and insert them into ProximaDB.
@@ -76,7 +77,7 @@ class ProximaDBVectorStore(VectorStore):
         texts_list = list(texts)
         vectors = self._embedding.embed_documents(texts_list)
         generated_ids: list[str] = []
-        records: list[VectorRecord] = []
+        records: list[dict[str, Any]] = []
 
         for i, (text, vector) in enumerate(zip(texts_list, vectors)):
             doc_id = ids[i] if ids and i < len(ids) else str(uuid.uuid4())
@@ -87,18 +88,18 @@ class ProximaDBVectorStore(VectorStore):
                 meta.update(metadatas[i])
 
             records.append(
-                VectorRecord(
-                    id=doc_id,
+                record_payload(
+                    record_id=doc_id,
                     vector=vector,
-                    source=text,
+                    text=text,
                     metadata=meta,
                 )
             )
 
-        self._client.insert_vectors(self._collection_name, records=records)
+        insert_records(self._client, self._collection_name, records)
         return generated_ids
 
-    def delete(self, ids: Optional[list[str]] = None, **kwargs: Any) -> Optional[bool]:
+    def delete(self, ids: list[str] | None = None, **kwargs: Any) -> bool | None:
         """Delete vectors by ID."""
         if not ids:
             return False
@@ -165,7 +166,7 @@ class ProximaDBVectorStore(VectorStore):
         cls,
         texts: list[str],
         embedding: Embeddings,
-        metadatas: Optional[list[dict[str, Any]]] = None,
+        metadatas: list[dict[str, Any]] | None = None,
         *,
         client: Any = None,
         collection_name: str = "langchain",

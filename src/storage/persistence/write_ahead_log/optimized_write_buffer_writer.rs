@@ -5,9 +5,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, mpsc};
 use tracing::{debug, error, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::config::WALConfig;
+use proximadb_records::ProximaRecord;
 
 /// WAL serialization format for optimized writes.
 /// Defined locally after removal from vector_operations_service.
@@ -52,7 +52,7 @@ pub struct OptimizedWriteBufferWriter {
 
 struct WalWriteRequest {
     collection_id: String,
-    vectors: Vec<VectorRecord>,
+    records: Vec<ProximaRecord>,
     sequences: Vec<u64>,
     format: OptimizedFormat,
     base_location: String,
@@ -131,7 +131,7 @@ impl OptimizedWriteBufferWriter {
     pub async fn write_vectors(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         sequences: Vec<u64>,
         format: OptimizedFormat,
         base_location: String,
@@ -140,7 +140,7 @@ impl OptimizedWriteBufferWriter {
 
         let request = WalWriteRequest {
             collection_id: collection_id.to_string(),
-            vectors,
+            records,
             sequences,
             format,
             base_location,
@@ -196,7 +196,7 @@ impl OptimizedWriteBufferWriter {
                         let collection_id = request.collection_id.clone();
 
                         // Track batch metrics
-                        total_vectors_in_batch += request.vectors.len();
+                        total_vectors_in_batch += request.records.len();
                         total_bytes_in_batch += Self::estimate_request_size(&request);
 
                         // Add to batch (with combining if enabled)
@@ -291,7 +291,7 @@ impl OptimizedWriteBufferWriter {
         let total_vectors: usize = batch
             .values()
             .flat_map(|requests| requests.iter())
-            .map(|req| req.vectors.len())
+            .map(|req| req.records.len())
             .sum();
 
         debug!(
@@ -398,15 +398,15 @@ impl OptimizedWriteBufferWriter {
                 .insert(assignment.logs_dir.clone(), Instant::now());
         }
 
-        // Collect all vectors and response channels
-        let mut all_vectors = Vec::new();
+        // Collect all records and response channels
+        let mut all_records = Vec::new();
         let mut all_sequences = Vec::new();
         let mut response_txs = Vec::new();
         let mut batch_format = OptimizedFormat::Bincode; // default
 
         for request in requests {
             batch_format = request.format; // use last request's format
-            all_vectors.extend(request.vectors);
+            all_records.extend(request.records);
             all_sequences.extend(request.sequences);
             response_txs.push(request.response_tx);
         }
@@ -414,7 +414,7 @@ impl OptimizedWriteBufferWriter {
         // Write combined batch
         let result = Self::write_combined_batch(
             collection_id,
-            &all_vectors,
+            &all_records,
             &all_sequences,
             &batch_format,
             &assignment,
@@ -481,7 +481,7 @@ impl OptimizedWriteBufferWriter {
     /// Write combined batch with optimized atomic write
     async fn write_combined_batch(
         _collection_id: &str,
-        vectors: &[VectorRecord],
+        records: &[ProximaRecord],
         sequences: &[u64],
         format: &OptimizedFormat,
         assignment: &CachedAssignment,
@@ -489,8 +489,8 @@ impl OptimizedWriteBufferWriter {
         _config: &WALConfig,
         metrics: &Arc<RwLock<WalWriterMetrics>>,
     ) -> Result<String> {
-        // Serialize vectors using the specified format
-        let serialized_data = Self::serialize_vectors_optimized(vectors, format)?;
+        // Serialize canonical records using the specified WAL slot format.
+        let serialized_data = Self::serialize_records_optimized(records, format)?;
 
         // Generate filename with format-specific extension
         let min_seq = sequences.iter().min().copied();
@@ -502,7 +502,7 @@ impl OptimizedWriteBufferWriter {
             OptimizedFormat::Avro => "avwal",
         };
 
-        let uuid_short = &crate::utils::uuid::Uuid::new_v4().to_string()[..8];
+        let uuid_short = &proximadb_kernel::uuid::Uuid::new_v4().to_string()[..8];
         let wal_filename = format!(
             "wal_{}_{:010}_{:010}_{}.{}",
             timestamp,
@@ -529,8 +529,8 @@ impl OptimizedWriteBufferWriter {
         metrics_guard.total_bytes_written += serialized_data.len() as u64;
 
         debug!(
-            "💾 WAL_WRITE: {} vectors ({} bytes) -> {} (sequences: {}..{})",
-            vectors.len(),
+            "💾 WAL_WRITE: {} records ({} bytes) -> {} (sequences: {}..{})",
+            records.len(),
             serialized_data.len(),
             wal_filename,
             min_seq.unwrap_or(0),
@@ -541,29 +541,25 @@ impl OptimizedWriteBufferWriter {
     }
 
     /// Optimized serialization dispatching to format-specific implementations
-    fn serialize_vectors_optimized(
-        vectors: &[VectorRecord],
+    fn serialize_records_optimized(
+        records: &[ProximaRecord],
         format: &OptimizedFormat,
     ) -> Result<Vec<u8>> {
         match format {
             OptimizedFormat::Proto => {
-                use prost::Message;
-                // Batch-serialize all vectors as a VectorBatchRequest wrapper
-                let batch = crate::proto::proximadb_v1::VectorBatchRequest {
-                    collection_id: String::new(), // Set by caller context
-                    vectors: vectors.to_vec(),
-                };
-                let mut buf = Vec::with_capacity(batch.encoded_len());
-                batch.encode(&mut buf)?;
-                Ok(buf)
+                // The optimized writer's format enum names the file slot, not
+                // the internal envelope. Keep the payload canonical while the
+                // surrounding recovery path converges on v2 wire encoding.
+                bincode::serialize(records)
+                    .context("Canonical ProximaRecord proto-slot serialization failed")
             }
             OptimizedFormat::Bincode => {
-                bincode::serialize(vectors).context("Bincode serialization failed")
+                bincode::serialize(records).context("Bincode serialization failed")
             }
             OptimizedFormat::Avro => {
                 // Avro: fall back to bincode for now; full Avro schema-based
                 // serialization requires the AvroSerializationStrategy path
-                bincode::serialize(vectors).context("Avro fallback (bincode) serialization failed")
+                bincode::serialize(records).context("Avro fallback (bincode) serialization failed")
             }
         }
     }
@@ -622,11 +618,22 @@ impl OptimizedWriteBufferWriter {
 
     /// Estimate the size of a write request for batching decisions
     fn estimate_request_size(request: &WalWriteRequest) -> usize {
-        let vector_size = request.vectors.len() * 4 * 128; // Assume 128-dim f32 vectors
-        let metadata_size = request
-            .vectors
+        let embedding_values: usize = request
+            .records
             .iter()
-            .map(|v| v.metadata.len() * 50) // Rough estimate for metadata
+            .map(|record| {
+                record
+                    .embeddings
+                    .iter()
+                    .map(|embedding| embedding.values.len())
+                    .sum::<usize>()
+            })
+            .sum();
+        let vector_size = embedding_values * 4;
+        let metadata_size = request
+            .records
+            .iter()
+            .map(|record| record.props.len() * 50) // Rough estimate for properties
             .sum::<usize>();
         let sequences_size = request.sequences.len() * 8; // u64 sequences
 
@@ -645,10 +652,10 @@ impl OptimizedWriteBufferWriter {
                 // Try to find a request with the same format to combine with
                 if let Some(existing_request) = existing_requests
                     .iter_mut()
-                    .find(|req| req.vectors.len() < 1000)
+                    .find(|req| req.records.len() < 1000)
                 {
-                    // Combine the vectors and sequences
-                    existing_request.vectors.append(&mut new_request.vectors);
+                    // Combine the records and sequences
+                    existing_request.records.append(&mut new_request.records);
                     existing_request
                         .sequences
                         .append(&mut new_request.sequences);
@@ -719,34 +726,39 @@ mod tests {
     use std::sync::Arc;
     use tempfile::TempDir;
 
-    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
     use crate::storage::persistence::filesystem::FilesystemFactory;
     use crate::storage::persistence::write_ahead_log::config::{
         CompressionConfig as WALCompressionConfig, DiskDistributionStrategy, MemTableConfig,
         MultiDiskConfig, PerformanceConfig, WALConfig, WriteBufferStrategyType,
     };
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaTreeNode};
 
     /// Test helper to create sample vectors
-    fn create_test_vectors(count: usize, dimension: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize, dimension: usize) -> Vec<ProximaRecord> {
         (0..count)
             .map(|i| {
                 let mut metadata = std::collections::HashMap::new();
                 metadata.insert(
                     "index".to_string(),
-                    SqlValue {
-                        value: Some(sql_value::Value::StringValue(i.to_string())),
-                    },
+                    ProximaTreeNode::Value(ProximaValue::String(i.to_string())),
                 );
 
-                VectorRecord {
-                    id: format!("vec_{}", i),
-                    vector: vec![i as f32; dimension],
-                    metadata,
-                    timestamp: Some(chrono::Utc::now().timestamp()),
-                    updated_at: Some(chrono::Utc::now().timestamp()),
-                    expires_at: None,
-                    version: Some(1),
-                    source: None,
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+                ProximaRecord {
+                    oid: format!("vec_{}", i),
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32; dimension]),
+                        ..Default::default()
+                    }],
+                    props: metadata,
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    record_version: 1,
+                    ..Default::default()
                 }
             })
             .collect()

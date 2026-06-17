@@ -23,31 +23,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
-/// Configuration for the metadata service
-#[derive(Debug, Clone)]
-pub struct MetadataServiceConfig {
-    /// Maximum entries in metadata cache
-    pub cache_size: usize,
-    /// TTL for cached entries in seconds
-    pub cache_ttl_secs: u64,
-    /// Enable persistent storage of metadata
-    pub persistent: bool,
-    /// Storage path for persistent metadata
-    pub storage_path: Option<String>,
-}
-
-impl Default for MetadataServiceConfig {
-    fn default() -> Self {
-        Self {
-            cache_size: 10000,
-            cache_ttl_secs: 300,
-            persistent: true,
-            storage_path: None,
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{ClusterConfiguration, MetadataServiceConfig};
 
 /// Cluster-wide metadata
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -55,16 +36,20 @@ pub struct ClusterMetadata {
     /// Cluster version (incremented on each change)
     pub version: u64,
     /// Collection metadata map
-    pub collections: HashMap<String, CollectionMetadata>,
+    pub collections: HashMap<String, ClusterCollectionMetadata>,
     /// Shard placement information
     pub shard_placements: HashMap<String, ShardPlacement>,
     /// Cluster configuration
     pub config: ClusterConfiguration,
 }
 
-/// Metadata for a collection in the cluster
+/// Metadata for a collection in the cluster (membership/placement view).
+///
+/// Renamed from the former `CollectionMetadata` to disambiguate from the unrelated
+/// block-header `ProximaBlockCollectionMetadata` and other same-named local structs
+/// (see the LLD duplication watch).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CollectionMetadata {
+pub struct ClusterCollectionMetadata {
     /// Collection unique identifier
     pub collection_id: String,
     /// Collection name
@@ -113,36 +98,12 @@ pub enum ShardState {
     Offline,
 }
 
-/// Cluster-wide configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ClusterConfiguration {
-    /// Default replication factor for new collections
-    pub default_replication_factor: u32,
-    /// Default shard count for new collections
-    pub default_shard_count: u32,
-    /// Enable automatic rebalancing
-    pub auto_rebalance: bool,
-    /// Rebalance threshold (load difference percentage)
-    pub rebalance_threshold: f32,
-}
-
-impl Default for ClusterConfiguration {
-    fn default() -> Self {
-        Self {
-            default_replication_factor: 1,
-            default_shard_count: 1,
-            auto_rebalance: true,
-            rebalance_threshold: 0.2,
-        }
-    }
-}
-
 /// Metadata service for cluster-wide metadata management
 pub struct MetadataService {
     #[allow(dead_code)] // Config reserved for future use (TTL, replication settings)
     config: MetadataServiceConfig,
     metadata: Arc<RwLock<ClusterMetadata>>,
-    version_counter: Arc<RwLock<u64>>,
+    version_counter: Arc<AtomicU64>,
 }
 
 impl MetadataService {
@@ -151,7 +112,7 @@ impl MetadataService {
         Ok(Self {
             config,
             metadata: Arc::new(RwLock::new(ClusterMetadata::default())),
-            version_counter: Arc::new(RwLock::new(0)),
+            version_counter: Arc::new(AtomicU64::new(0)),
         })
     }
 
@@ -161,21 +122,21 @@ impl MetadataService {
     }
 
     /// Get metadata for a specific collection
-    pub async fn get_collection(&self, collection_id: &str) -> Option<CollectionMetadata> {
+    pub async fn get_collection(&self, collection_id: &str) -> Option<ClusterCollectionMetadata> {
         let metadata = self.metadata.read().await;
         metadata.collections.get(collection_id).cloned()
     }
 
     /// Register a new collection
-    pub async fn register_collection(&self, collection: CollectionMetadata) -> Result<()> {
+    pub async fn register_collection(&self, collection: ClusterCollectionMetadata) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
 
-        *version += 1;
-        metadata.version = *version;
+        metadata.version = next_version;
         metadata
             .collections
             .insert(collection.collection_id.clone(), collection);
+        self.version_counter.store(next_version, Ordering::Release);
 
         tracing::info!(
             version = metadata.version,
@@ -186,9 +147,8 @@ impl MetadataService {
     }
 
     /// Update collection metadata
-    pub async fn update_collection(&self, collection: CollectionMetadata) -> Result<()> {
+    pub async fn update_collection(&self, collection: ClusterCollectionMetadata) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
 
         if !metadata.collections.contains_key(&collection.collection_id) {
             return Err(anyhow::anyhow!(
@@ -197,11 +157,12 @@ impl MetadataService {
             ));
         }
 
-        *version += 1;
-        metadata.version = *version;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
+        metadata.version = next_version;
         metadata
             .collections
             .insert(collection.collection_id.clone(), collection);
+        self.version_counter.store(next_version, Ordering::Release);
 
         Ok(())
     }
@@ -209,7 +170,6 @@ impl MetadataService {
     /// Remove a collection from metadata
     pub async fn remove_collection(&self, collection_id: &str) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
 
         if metadata.collections.remove(collection_id).is_none() {
             return Err(anyhow::anyhow!("Collection not found: {}", collection_id));
@@ -220,8 +180,9 @@ impl MetadataService {
             .shard_placements
             .retain(|_, v| v.collection_id != collection_id);
 
-        *version += 1;
-        metadata.version = *version;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
+        metadata.version = next_version;
+        self.version_counter.store(next_version, Ordering::Release);
 
         Ok(())
     }
@@ -240,24 +201,24 @@ impl MetadataService {
     /// Update shard placement
     pub async fn update_shard_placement(&self, placement: ShardPlacement) -> Result<()> {
         let mut metadata = self.metadata.write().await;
-        let mut version = self.version_counter.write().await;
 
-        *version += 1;
-        metadata.version = *version;
+        let next_version = self.version_counter.load(Ordering::Acquire) + 1;
+        metadata.version = next_version;
         metadata
             .shard_placements
             .insert(placement.shard_id.clone(), placement);
+        self.version_counter.store(next_version, Ordering::Release);
 
         Ok(())
     }
 
     /// Get the current metadata version
     pub async fn version(&self) -> u64 {
-        *self.version_counter.read().await
+        self.version_counter.load(Ordering::Acquire)
     }
 
     /// List all collections
-    pub async fn list_collections(&self) -> Vec<CollectionMetadata> {
+    pub async fn list_collections(&self) -> Vec<ClusterCollectionMetadata> {
         let metadata = self.metadata.read().await;
         metadata.collections.values().cloned().collect()
     }
@@ -278,7 +239,7 @@ mod tests {
     async fn test_collection_registration() {
         let service = MetadataService::new(MetadataServiceConfig::default()).unwrap();
 
-        let collection = CollectionMetadata {
+        let collection = ClusterCollectionMetadata {
             collection_id: "test-collection".to_string(),
             name: "Test Collection".to_string(),
             dimension: 128,
@@ -305,7 +266,7 @@ mod tests {
 
         assert_eq!(service.version().await, 0);
 
-        let collection = CollectionMetadata {
+        let collection = ClusterCollectionMetadata {
             collection_id: "test".to_string(),
             name: "Test".to_string(),
             dimension: 64,

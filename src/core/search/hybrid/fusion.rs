@@ -97,7 +97,183 @@ impl HybridFusionEngine {
                 self.dempster_shafer(bm25_results, vector_results, alpha)
             }
             FusionStrategy::Adaptive => self.adaptive_fusion(bm25_results, vector_results),
+            FusionStrategy::Projection { alpha } => {
+                self.projection_fusion(bm25_results, vector_results, alpha)
+            }
         }
+    }
+
+    /// Score-level projection fusion ("Projection", inspired-by-B5).
+    ///
+    /// **Naming caveat**: arXiv:2604.13728 introduces a "B5 Projection
+    /// Fusion" that operates in *vector space* — combining BGE-dense
+    /// (768d) with SPLADE-sparse (30522d, projected to 768d via an
+    /// Achlioptas sparse random projection matrix R∈ℝ^{768×30522}) into
+    /// one dense vector for ANN, then `q = α_query·d̂ + (1−α_query)·p̂`
+    /// followed by L2-normalize, with α_query=0.95 (tuned), α_doc=0.50
+    /// (fixed). This implementation is a **score-level** analog:
+    /// after BM25 and vector search have each returned ranked lists,
+    /// we combine the post-retrieval scalar scores via
+    ///
+    /// ```text
+    /// score = bm25_norm * cos(theta) + vector_norm * sin(theta),
+    /// where theta = alpha * pi/2.
+    /// ```
+    ///
+    /// We min-max normalize before projection and apply a small
+    /// diversity boost for documents present in both sets.
+    ///
+    /// This is a different layer of the stack than the paper's B5
+    /// (paper fuses *before* retrieval; we fuse *after*). Score-level
+    /// projection is a useful operator on its own — it produces a
+    /// diversity-leaning alternative to RRF that fits the existing
+    /// post-retrieval fusion API — but its quantitative properties are
+    /// NOT the same as those the paper measured (paper: B5 nDCG@10
+    /// =0.6779 vs RRF=0.8282 — RRF wins relevance; B5 ILD@10=0.389 vs
+    /// RRF=0.176 — B5 wins diversity 2.2×).
+    ///
+    /// A vector-space B5 implementation would require (1) a sparse
+    /// encoder integrated into the retrieval path, (2) the Achlioptas
+    /// projection matrix, and (3) a single combined-vector ANN index.
+    /// Tracked separately, see TD-044 in TECHNICAL_DEBT.adoc.
+    fn projection_fusion(
+        &self,
+        bm25_results: Vec<BM25Result>,
+        vector_results: Vec<VectorResult>,
+        alpha: f64,
+    ) -> Result<Vec<FusedSearchResult>, FusionError> {
+        if !(0.0..=1.0).contains(&alpha) {
+            return Err(FusionError::InvalidParameters(
+                "Alpha must be between 0.0 and 1.0".to_string(),
+            ));
+        }
+
+        if bm25_results.is_empty() && vector_results.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Find max scores for min-max normalization
+        let bm25_max = bm25_results.iter().map(|r| r.score).fold(0.0_f64, f64::max);
+        let bm25_min = bm25_results
+            .iter()
+            .map(|r| r.score)
+            .fold(f64::INFINITY, f64::min);
+        let bm25_range = if bm25_max > bm25_min {
+            bm25_max - bm25_min
+        } else {
+            1.0
+        };
+
+        let vector_max = vector_results
+            .iter()
+            .map(|r| r.score)
+            .fold(0.0_f64, f64::max);
+        let vector_min = vector_results
+            .iter()
+            .map(|r| r.score)
+            .fold(f64::INFINITY, f64::min);
+        let vector_range = if vector_max > vector_min {
+            vector_max - vector_min
+        } else {
+            1.0
+        };
+
+        // Calculate projection vector based on alpha (angle theta)
+        let theta = alpha * (std::f64::consts::PI / 2.0);
+        let cos_theta = theta.cos();
+        let sin_theta = theta.sin();
+
+        let mut fused_map: HashMap<String, FusedSearchResult> = HashMap::new();
+
+        // Process BM25 results
+        for (rank, bm25) in bm25_results.iter().enumerate() {
+            let normalized_bm25 = if bm25_max > 0.0 {
+                if bm25_max > bm25_min {
+                    (bm25.score - bm25_min) / bm25_range
+                } else {
+                    1.0 // Constant non-zero scores
+                }
+            } else {
+                0.0
+            };
+
+            // Initial projection with only BM25 signal
+            let projection_score = normalized_bm25 * cos_theta;
+
+            fused_map.insert(
+                bm25.doc_id.clone(),
+                FusedSearchResult {
+                    doc_id: bm25.doc_id.clone(),
+                    bm25_score: bm25.score,
+                    vector_score: 0.0,
+                    fused_score: projection_score,
+                    bm25_rank: rank + 1,
+                    vector_rank: usize::MAX,
+                    highlights: bm25.highlights.clone(),
+                    metadata: bm25.metadata.clone(),
+                },
+            );
+        }
+
+        // Process vector results and merge
+        for (rank, vector) in vector_results.iter().enumerate() {
+            let normalized_vector = if vector_max > 0.0 {
+                if vector_max > vector_min {
+                    (vector.score - vector_min) / vector_range
+                } else {
+                    1.0 // Constant non-zero scores
+                }
+            } else {
+                0.0
+            };
+
+            let vector_contribution = normalized_vector * sin_theta;
+
+            if let Some(existing) = fused_map.get_mut(&vector.doc_id) {
+                // Combine signals
+                existing.fused_score += vector_contribution;
+                existing.vector_score = vector.score;
+                existing.vector_rank = rank + 1;
+            } else {
+                // Only in vector set
+                fused_map.insert(
+                    vector.doc_id.clone(),
+                    FusedSearchResult {
+                        doc_id: vector.doc_id.clone(),
+                        bm25_score: 0.0,
+                        vector_score: vector.score,
+                        fused_score: vector_contribution,
+                        bm25_rank: usize::MAX,
+                        vector_rank: rank + 1,
+                        highlights: None,
+                        metadata: vector.metadata.clone(),
+                    },
+                );
+            }
+        }
+
+        // Apply diversity boost: rewarding documents present in both sets
+        // and normalizing unique contributions.
+        for result in fused_map.values_mut() {
+            if result.bm25_rank != usize::MAX && result.vector_rank != usize::MAX {
+                // Present in both - boost signal
+                result.fused_score *= 1.2;
+            } else {
+                // Present in only one - apply slight diversity penalty to unique results
+                // to prioritize high-confidence overlap while maintaining diversity.
+                result.fused_score *= 0.9;
+            }
+        }
+
+        // Sort by fused score (descending)
+        let mut fused_results: Vec<_> = fused_map.into_values().collect();
+        fused_results.sort_by(|a, b| {
+            b.fused_score
+                .partial_cmp(&a.fused_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        Ok(fused_results)
     }
 
     /// Reciprocal Rank Fusion (RRF)
@@ -1916,5 +2092,96 @@ mod tests {
             .fuse(bm25, vec![])
             .expect("Single source should succeed");
         assert!(!fused.is_empty());
+    }
+
+    #[test]
+    fn test_projection_fusion_basic() {
+        let engine = HybridFusionEngine::new(FusionStrategy::Projection { alpha: 0.5 });
+
+        let bm25_results = vec![
+            BM25Result {
+                doc_id: "doc1".to_string(),
+                score: 10.0,
+                highlights: None,
+                metadata: HashMap::new(),
+            },
+            BM25Result {
+                doc_id: "doc2".to_string(),
+                score: 5.0,
+                highlights: None,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let vector_results = vec![
+            VectorResult {
+                doc_id: "doc1".to_string(),
+                score: 0.9,
+                distance: 0.1,
+                metadata: HashMap::new(),
+            },
+            VectorResult {
+                doc_id: "doc3".to_string(),
+                score: 0.8,
+                distance: 0.2,
+                metadata: HashMap::new(),
+            },
+        ];
+
+        let fused = engine
+            .fuse(bm25_results, vector_results)
+            .expect("Projection fusion should succeed");
+
+        // doc1 should be first as it's in both sets with high scores
+        assert_eq!(fused[0].doc_id, "doc1");
+        // Should have 3 unique documents
+        assert_eq!(fused.len(), 3);
+
+        // Verify diversity: doc3 (vector only) and doc2 (bm25 only) should both be present
+        let doc_ids: Vec<_> = fused.iter().map(|r| &r.doc_id).collect();
+        assert!(doc_ids.contains(&&"doc2".to_string()));
+        assert!(doc_ids.contains(&&"doc3".to_string()));
+    }
+
+    #[test]
+    fn test_projection_fusion_alpha_boundary() {
+        // Test with alpha = 1.0 (BM25 only)
+        let engine_bm25 = HybridFusionEngine::new(FusionStrategy::Projection { alpha: 0.0 });
+        let bm25 = vec![BM25Result {
+            doc_id: "b1".to_string(),
+            score: 1.0,
+            highlights: None,
+            metadata: HashMap::new(),
+        }];
+        let vector = vec![VectorResult {
+            doc_id: "v1".to_string(),
+            score: 1.0,
+            distance: 0.0,
+            metadata: HashMap::new(),
+        }];
+
+        let fused = engine_bm25.fuse(bm25, vector).unwrap();
+        // alpha=0.0 -> theta=0 -> cos(0)=1, sin(0)=0 -> BM25 only (except for diversity boost)
+        // b1 score should be higher than v1
+        assert_eq!(fused[0].doc_id, "b1");
+
+        // Test with alpha = 1.0 (Vector only)
+        let engine_vec = HybridFusionEngine::new(FusionStrategy::Projection { alpha: 1.0 });
+        let bm25 = vec![BM25Result {
+            doc_id: "b1".to_string(),
+            score: 1.0,
+            highlights: None,
+            metadata: HashMap::new(),
+        }];
+        let vector = vec![VectorResult {
+            doc_id: "v1".to_string(),
+            score: 1.0,
+            distance: 0.0,
+            metadata: HashMap::new(),
+        }];
+
+        let fused = engine_vec.fuse(bm25, vector).unwrap();
+        // alpha=1.0 -> theta=pi/2 -> cos(pi/2)=0, sin(pi/2)=1 -> Vector only
+        assert_eq!(fused[0].doc_id, "v1");
     }
 }

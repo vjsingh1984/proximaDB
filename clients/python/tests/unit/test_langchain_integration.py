@@ -6,7 +6,7 @@ run without a live server or real embedding model.
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -33,6 +33,7 @@ class FakeEmbeddings(Embeddings):
 @pytest.fixture
 def mock_client():
     client = MagicMock()
+    client.insert_records = MagicMock()
     client.insert_vectors = MagicMock()
     client.delete_vectors = MagicMock()
     client.search = MagicMock(return_value=[])
@@ -52,29 +53,25 @@ class TestAddTexts:
     def test_add_texts_basic(self, store, mock_client):
         ids = store.add_texts(["hello", "world"])
         assert len(ids) == 2
-        mock_client.insert_vectors.assert_called_once()
-        call_kwargs = mock_client.insert_vectors.call_args
-        records = call_kwargs.kwargs.get("records") or call_kwargs[1].get("records")
+        mock_client.insert_records.assert_called_once()
+        records = mock_client.insert_records.call_args.args[1]
         assert len(records) == 2
-        assert records[0].source == "hello"
-        assert records[1].source == "world"
+        assert records[0]["source"] == "hello"
+        assert records[1]["source"] == "world"
+        assert records[0]["text_fields"] == [{"name": "text", "content": "hello"}]
 
     def test_add_texts_with_metadata(self, store, mock_client):
         metadatas = [{"key": "val1"}, {"key": "val2"}]
         ids = store.add_texts(["a", "b"], metadatas=metadatas)
         assert len(ids) == 2
-        records = mock_client.insert_vectors.call_args.kwargs.get(
-            "records"
-        ) or mock_client.insert_vectors.call_args[1].get("records")
-        assert records[0].metadata["key"] == "val1"
+        records = mock_client.insert_records.call_args.args[1]
+        assert records[0]["props"]["key"] == "val1"
 
     def test_add_texts_with_ids(self, store, mock_client):
         ids = store.add_texts(["x"], ids=["custom_id"])
         assert ids == ["custom_id"]
-        records = mock_client.insert_vectors.call_args.kwargs.get(
-            "records"
-        ) or mock_client.insert_vectors.call_args[1].get("records")
-        assert records[0].id == "custom_id"
+        records = mock_client.insert_records.call_args.args[1]
+        assert records[0]["id"] == "custom_id"
 
 
 class TestDelete:
@@ -145,7 +142,7 @@ class TestClassMethods:
             collection_name="test_ft",
         )
         assert isinstance(store, ProximaDBVectorStore)
-        mock_client.insert_vectors.assert_called_once()
+        mock_client.insert_records.assert_called_once()
 
     def test_from_texts_requires_client(self):
         with pytest.raises(ValueError, match="requires a 'client'"):
@@ -166,8 +163,6 @@ class TestClassMethods:
             collection_name="test_fd",
         )
         assert isinstance(store, ProximaDBVectorStore)
-        records = mock_client.insert_vectors.call_args.kwargs.get(
-            "records"
-        ) or mock_client.insert_vectors.call_args[1].get("records")
-        assert records[0].source == "doc1"
-        assert records[0].metadata["src"] == "test"
+        records = mock_client.insert_records.call_args.args[1]
+        assert records[0]["source"] == "doc1"
+        assert records[0]["props"]["src"] == "test"

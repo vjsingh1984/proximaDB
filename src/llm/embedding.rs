@@ -12,7 +12,7 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 use crate::llm::config::{EmbeddingProvider, LLMConfig};
@@ -100,7 +100,7 @@ pub struct EmbeddingService {
     stats: Arc<RwLock<EmbeddingStats>>,
     /// Total embeddings generated counter
     total_generated: AtomicU64,
-    initialized: Arc<RwLock<bool>>,
+    initialized: AtomicBool,
 }
 
 impl EmbeddingService {
@@ -114,14 +114,17 @@ impl EmbeddingService {
             cache: Arc::new(RwLock::new(HashMap::new())),
             stats: Arc::new(RwLock::new(EmbeddingStats::default())),
             total_generated: AtomicU64::new(0),
-            initialized: Arc::new(RwLock::new(false)),
+            initialized: AtomicBool::new(false),
         })
     }
 
     /// Initialize the embedding service
     pub async fn initialize(&self) -> Result<()> {
-        let mut initialized = self.initialized.write().await;
-        if *initialized {
+        if self
+            .initialized
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return Ok(());
         }
 
@@ -133,7 +136,6 @@ impl EmbeddingService {
 
         // The actual embedding generation is done via Victor (Python)
         // This service coordinates and caches
-        *initialized = true;
 
         tracing::info!("Embedding service initialized");
         Ok(())

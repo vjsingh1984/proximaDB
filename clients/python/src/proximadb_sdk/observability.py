@@ -11,11 +11,12 @@ Licensed under the Apache License, Version 2.0
 import logging
 import threading
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, TypeVar, Union
+from typing import Any, Optional, TypeVar
 
 # Type variable for decorator
 F = TypeVar("F", bound=Callable[..., Any])
@@ -47,8 +48,8 @@ class MetricDefinition:
     name: str
     metric_type: MetricType
     description: str
-    labels: List[str] = field(default_factory=list)
-    buckets: Optional[List[float]] = None  # For histograms
+    labels: list[str] = field(default_factory=list)
+    buckets: list[float] | None = None  # For histograms
 
 
 @dataclass
@@ -57,11 +58,11 @@ class SpanContext:
 
     trace_id: str
     span_id: str
-    parent_span_id: Optional[str] = None
-    baggage: Dict[str, str] = field(default_factory=dict)
+    parent_span_id: str | None = None
+    baggage: dict[str, str] = field(default_factory=dict)
     sampled: bool = True
 
-    def to_headers(self) -> Dict[str, str]:
+    def to_headers(self) -> dict[str, str]:
         """Convert to HTTP headers for propagation"""
         return {
             "traceparent": f"00-{self.trace_id}-{self.span_id}-{'01' if self.sampled else '00'}",
@@ -69,7 +70,7 @@ class SpanContext:
         }
 
     @classmethod
-    def from_headers(cls, headers: Dict[str, str]) -> Optional["SpanContext"]:
+    def from_headers(cls, headers: dict[str, str]) -> Optional["SpanContext"]:
         """Extract span context from HTTP headers"""
         traceparent = headers.get("traceparent")
         if not traceparent:
@@ -102,16 +103,16 @@ class Span:
     name: str
     context: SpanContext
     start_time_ns: int
-    end_time_ns: Optional[int] = None
+    end_time_ns: int | None = None
     status: str = "ok"
-    attributes: Dict[str, Any] = field(default_factory=dict)
-    events: List[Dict[str, Any]] = field(default_factory=list)
+    attributes: dict[str, Any] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
 
     def set_attribute(self, key: str, value: Any) -> None:
         """Set a span attribute"""
         self.attributes[key] = value
 
-    def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> None:
+    def add_event(self, name: str, attributes: dict[str, Any] | None = None) -> None:
         """Add an event to the span"""
         self.events.append(
             {
@@ -121,7 +122,7 @@ class Span:
             }
         )
 
-    def set_status(self, status: str, message: Optional[str] = None) -> None:
+    def set_status(self, status: str, message: str | None = None) -> None:
         """Set span status"""
         self.status = status
         if message:
@@ -148,8 +149,8 @@ class MetricsCollector:
 
     def __init__(self, prefix: str = "proximadb"):
         self._prefix = prefix
-        self._metrics: Dict[str, MetricDefinition] = {}
-        self._values: Dict[str, Any] = {}
+        self._metrics: dict[str, MetricDefinition] = {}
+        self._values: dict[str, Any] = {}
         self._lock = threading.Lock()
 
         # Register default SDK metrics
@@ -235,7 +236,7 @@ class MetricsCollector:
         self._values[full_name] = {}
 
     def inc(
-        self, name: str, value: float = 1, labels: Optional[Dict[str, str]] = None
+        self, name: str, value: float = 1, labels: dict[str, str] | None = None
     ) -> None:
         """Increment a counter"""
         full_name = f"{self._prefix}_{name}"
@@ -249,7 +250,7 @@ class MetricsCollector:
             self._values[full_name][label_key] += value
 
     def set(
-        self, name: str, value: float, labels: Optional[Dict[str, str]] = None
+        self, name: str, value: float, labels: dict[str, str] | None = None
     ) -> None:
         """Set a gauge value"""
         full_name = f"{self._prefix}_{name}"
@@ -261,7 +262,7 @@ class MetricsCollector:
             self._values[full_name][label_key] = value
 
     def observe(
-        self, name: str, value: float, labels: Optional[Dict[str, str]] = None
+        self, name: str, value: float, labels: dict[str, str] | None = None
     ) -> None:
         """Observe a histogram value"""
         full_name = f"{self._prefix}_{name}"
@@ -276,7 +277,7 @@ class MetricsCollector:
                 self._values[full_name][label_key] = {
                     "count": 0,
                     "sum": 0,
-                    "buckets": {b: 0 for b in (metric.buckets or [])},
+                    "buckets": dict.fromkeys(metric.buckets or [], 0),
                 }
 
             entry = self._values[full_name][label_key]
@@ -288,7 +289,7 @@ class MetricsCollector:
                     if value <= bucket:
                         entry["buckets"][bucket] += 1
 
-    def _label_key(self, labels: Optional[Dict[str, str]]) -> str:
+    def _label_key(self, labels: dict[str, str] | None) -> str:
         """Generate a key from labels"""
         if not labels:
             return ""
@@ -326,7 +327,7 @@ class MetricsCollector:
 
         return "\n".join(lines)
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get all metrics as dictionary"""
         with self._lock:
             return {name: dict(values) for name, values in self._values.items()}
@@ -341,10 +342,10 @@ class Tracer:
 
     def __init__(self, service_name: str = "proximadb-python-sdk"):
         self._service_name = service_name
-        self._spans: List[Span] = []
-        self._current_span: Optional[Span] = None
+        self._spans: list[Span] = []
+        self._current_span: Span | None = None
         self._lock = threading.Lock()
-        self._span_processors: List[Callable[[Span], None]] = []
+        self._span_processors: list[Callable[[Span], None]] = []
 
     def add_span_processor(self, processor: Callable[[Span], None]) -> None:
         """Add a span processor for export"""
@@ -353,8 +354,8 @@ class Tracer:
     def start_span(
         self,
         name: str,
-        parent: Optional[SpanContext] = None,
-        attributes: Optional[Dict[str, Any]] = None,
+        parent: SpanContext | None = None,
+        attributes: dict[str, Any] | None = None,
     ) -> Span:
         """Start a new span"""
         import uuid
@@ -408,8 +409,8 @@ class Tracer:
     def trace(
         self,
         name: str,
-        parent: Optional[SpanContext] = None,
-        attributes: Optional[Dict[str, Any]] = None,
+        parent: SpanContext | None = None,
+        attributes: dict[str, Any] | None = None,
     ):
         """Context manager for tracing"""
         span = self.start_span(name, parent, attributes)
@@ -421,12 +422,12 @@ class Tracer:
         finally:
             self.end_span(span)
 
-    def get_current_span(self) -> Optional[Span]:
+    def get_current_span(self) -> Span | None:
         """Get the current active span"""
         with self._lock:
             return self._current_span
 
-    def get_spans(self) -> List[Span]:
+    def get_spans(self) -> list[Span]:
         """Get all recorded spans"""
         with self._lock:
             return list(self._spans)
@@ -436,7 +437,7 @@ class Tracer:
         with self._lock:
             self._spans.clear()
 
-    def export_otlp(self) -> List[Dict[str, Any]]:
+    def export_otlp(self) -> list[dict[str, Any]]:
         """Export spans in OTLP-compatible format"""
         with self._lock:
             return [
@@ -484,14 +485,14 @@ class StructuredLogger:
         self._name = name
         self._level = level
         self._json_format = json_format
-        self._context: Dict[str, Any] = {}
-        self._handlers: List[Callable[[Dict[str, Any]], None]] = []
+        self._context: dict[str, Any] = {}
+        self._handlers: list[Callable[[dict[str, Any]], None]] = []
 
         # Set up Python logging
         self._logger = logging.getLogger(name)
         self._logger.setLevel(getattr(logging, level.value.upper()))
 
-    def add_handler(self, handler: Callable[[Dict[str, Any]], None]) -> None:
+    def add_handler(self, handler: Callable[[dict[str, Any]], None]) -> None:
         """Add a log handler"""
         self._handlers.append(handler)
 
@@ -769,7 +770,7 @@ class Observability:
             return self.metrics.export_prometheus()
         return ""
 
-    def get_traces(self) -> List[Dict[str, Any]]:
+    def get_traces(self) -> list[dict[str, Any]]:
         """Get traces in OTLP format"""
         if self.tracer:
             return self.tracer.export_otlp()

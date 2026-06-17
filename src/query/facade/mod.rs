@@ -30,6 +30,10 @@ pub mod adapter;
 pub mod strategies;
 
 pub use adapter::{ExplainComponent, ExplainResult, QueryFacadeAdapter};
+use proximadb_data_model::ProximaValue;
+pub use proximadb_records::ScoredRecord;
+/// Backwards-compat alias for legacy `VectorMatch` users.
+pub type VectorMatch = ScoredRecord;
 pub use strategies::{
     ColumnarStrategy, ColumnarStrategyConfig, DocumentStrategy, GraphStrategy,
     ObservabilityStrategy, SqlStrategy, VectorSearchStrategy,
@@ -107,7 +111,7 @@ pub struct QueryParams {
     /// Return execution metrics
     pub include_metrics: bool,
     /// Simple equality filters for vector search requests
-    pub vector_filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    pub vector_filters: std::collections::HashMap<String, ProximaValue>,
     /// Structured filter tree for vector search requests
     pub vector_advanced_filter: Option<crate::proto::proximadb_v1::MetadataFilter>,
     /// Parsed document filter for document query execution
@@ -183,9 +187,26 @@ impl QueryRequest {
     /// Attach simple vector filters to the request
     pub fn with_vector_filters(
         mut self,
-        filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        filters: std::collections::HashMap<String, ProximaValue>,
     ) -> Self {
         self.params.vector_filters = filters;
+        self
+    }
+
+    /// Attach v1 wire filters at a compatibility edge.
+    pub fn with_vector_filters_v1(
+        mut self,
+        filters: std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+    ) -> Self {
+        self.params.vector_filters = filters
+            .into_iter()
+            .map(|(key, value)| {
+                (
+                    key,
+                    crate::core::search::results::sql_value_to_proxima_value(value),
+                )
+            })
+            .collect();
         self
     }
 
@@ -218,9 +239,12 @@ impl QueryRequest {
 // QUERY RESULT - Unified Output Type
 // ================================================================================
 
+/// Backwards-compat alias for [`FacadeQueryResult`].
+pub type QueryResult = FacadeQueryResult;
+
 /// Unified query result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueryResult {
+pub struct FacadeQueryResult {
     /// Result data (type depends on query)
     pub data: QueryResultData,
     /// Execution metrics (if requested)
@@ -230,22 +254,14 @@ pub struct QueryResult {
 /// Query result data variants
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum QueryResultData {
-    /// Vector search results
-    VectorResults(Vec<VectorMatch>),
+    /// Vector search results (spec §1490 — canonical (ProximaRecord, score, rank) triples)
+    VectorResults(Vec<ScoredRecord>),
     /// Tabular results (SQL, document queries)
     Rows(Vec<serde_json::Value>),
     /// Graph results (nodes, edges, paths)
     Graph(GraphQueryResult),
     /// Empty result
     Empty,
-}
-
-/// Vector similarity match
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorMatch {
-    pub id: String,
-    pub score: f32,
-    pub metadata: Option<serde_json::Value>,
 }
 
 /// Graph query result
@@ -295,7 +311,11 @@ pub trait QueryStrategy: Send + Sync {
     fn can_handle(&self, request: &QueryRequest) -> bool;
 
     /// Execute the query and return results
-    async fn execute(&self, request: QueryRequest, ctx: &QueryContext) -> Result<QueryResult>;
+    async fn execute(
+        &self,
+        request: QueryRequest,
+        ctx: &FacadeQueryContext,
+    ) -> Result<FacadeQueryResult>;
 
     /// Priority when multiple strategies can handle a query (higher = preferred)
     fn priority(&self) -> i32 {
@@ -303,8 +323,11 @@ pub trait QueryStrategy: Send + Sync {
     }
 }
 
+/// Backwards-compat alias for [`FacadeQueryContext`].
+pub type QueryContext = FacadeQueryContext;
+
 /// Query execution context passed to strategies
-pub struct QueryContext {
+pub struct FacadeQueryContext {
     /// Request ID for tracing
     pub request_id: String,
     /// Start time for timeout tracking
@@ -313,7 +336,7 @@ pub struct QueryContext {
     pub timeout: Duration,
 }
 
-impl QueryContext {
+impl FacadeQueryContext {
     pub fn new(timeout_ms: u64) -> Self {
         Self {
             request_id: uuid::Uuid::new_v4().to_string(),
@@ -362,7 +385,7 @@ impl Default for FacadeConfig {
 ///
 /// This facade consolidates the 5 parallel query paths:
 /// 1. UnifiedQueryOptimizer (vector search optimization)
-/// 2. FederatedQueryContext (SQL with extensions)
+/// 2. FederatedFacadeQueryContext (SQL with extensions)
 /// 3. UnifiedQueryEngine (multi-model decomposition)
 /// 4. Distributed query coordination
 /// 5. AST-based query engine
@@ -393,12 +416,12 @@ impl UnifiedQueryFacade {
 
     /// Execute a query through the appropriate strategy
     #[instrument(skip(self, request), fields(query_type = ?request.query_type))]
-    pub async fn execute(&self, request: QueryRequest) -> Result<QueryResult> {
+    pub async fn execute(&self, request: QueryRequest) -> Result<FacadeQueryResult> {
         let timeout_ms = request
             .params
             .timeout_ms
             .unwrap_or(self.config.default_timeout_ms);
-        let ctx = QueryContext::new(timeout_ms);
+        let ctx = FacadeQueryContext::new(timeout_ms);
         let include_metrics = request.params.include_metrics;
         let start = Instant::now();
         let telemetry_kind = match request.query_type {
@@ -516,13 +539,16 @@ mod tests {
         async fn execute(
             &self,
             _request: QueryRequest,
-            _ctx: &QueryContext,
-        ) -> Result<QueryResult> {
-            Ok(QueryResult {
-                data: QueryResultData::VectorResults(vec![VectorMatch {
-                    id: "test_1".to_string(),
+            _ctx: &FacadeQueryContext,
+        ) -> Result<FacadeQueryResult> {
+            Ok(FacadeQueryResult {
+                data: QueryResultData::VectorResults(vec![ScoredRecord {
+                    record: proximadb_records::ProximaRecord {
+                        oid: "test_1".to_string(),
+                        ..Default::default()
+                    },
                     score: 0.95,
-                    metadata: None,
+                    rank: 1,
                 }]),
                 metrics: Some(ExecutionMetrics {
                     execution_path: "unified".to_string(),
@@ -552,9 +578,9 @@ mod tests {
         async fn execute(
             &self,
             _request: QueryRequest,
-            _ctx: &QueryContext,
-        ) -> Result<QueryResult> {
-            Ok(QueryResult {
+            _ctx: &FacadeQueryContext,
+        ) -> Result<FacadeQueryResult> {
+            Ok(FacadeQueryResult {
                 data: QueryResultData::Rows(vec![]),
                 metrics: Some(ExecutionMetrics {
                     execution_path: "unified".to_string(),
@@ -580,9 +606,9 @@ mod tests {
         async fn execute(
             &self,
             _request: QueryRequest,
-            _ctx: &QueryContext,
-        ) -> Result<QueryResult> {
-            Ok(QueryResult {
+            _ctx: &FacadeQueryContext,
+        ) -> Result<FacadeQueryResult> {
+            Ok(FacadeQueryResult {
                 data: QueryResultData::Graph(GraphQueryResult {
                     nodes: vec![],
                     edges: vec![],
@@ -710,8 +736,12 @@ mod tests {
             fn can_handle(&self, r: &QueryRequest) -> bool {
                 r.query_type == QueryType::VectorSearch
             }
-            async fn execute(&self, _r: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
-                Ok(QueryResult {
+            async fn execute(
+                &self,
+                _r: QueryRequest,
+                _ctx: &FacadeQueryContext,
+            ) -> Result<FacadeQueryResult> {
+                Ok(FacadeQueryResult {
                     data: QueryResultData::Empty,
                     metrics: Some(ExecutionMetrics {
                         strategy_name: "low-priority".to_string(),
@@ -732,8 +762,12 @@ mod tests {
             fn can_handle(&self, r: &QueryRequest) -> bool {
                 r.query_type == QueryType::VectorSearch
             }
-            async fn execute(&self, _r: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
-                Ok(QueryResult {
+            async fn execute(
+                &self,
+                _r: QueryRequest,
+                _ctx: &FacadeQueryContext,
+            ) -> Result<FacadeQueryResult> {
+                Ok(FacadeQueryResult {
                     data: QueryResultData::Empty,
                     metrics: Some(ExecutionMetrics {
                         strategy_name: "high-priority".to_string(),

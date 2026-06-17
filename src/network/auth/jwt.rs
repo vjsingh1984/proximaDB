@@ -54,6 +54,50 @@ pub struct Claims {
 
     /// Token type (access or refresh)
     pub typ: TokenType,
+
+    /// Optional enterprise data-plane capability marker.
+    #[serde(default)]
+    pub capability_type: Option<String>,
+
+    /// Optional collection this token is scoped to.
+    #[serde(default)]
+    pub collection: Option<String>,
+
+    /// Optional data-plane operation, for example ingest or search.
+    #[serde(default)]
+    pub operation: Option<String>,
+
+    /// Optional protocol this token may be used with.
+    #[serde(default)]
+    pub protocol: Option<String>,
+
+    /// Optional ingest mode, for example sync or async.
+    #[serde(default)]
+    pub mode: Option<String>,
+
+    /// Optional narrow scopes granted by an external control plane.
+    #[serde(default)]
+    pub scopes: Vec<String>,
+
+    /// Optional maximum records accepted for this capability.
+    #[serde(default)]
+    pub max_records: Option<u64>,
+
+    /// Optional maximum request bytes accepted for this capability.
+    #[serde(default)]
+    pub max_bytes: Option<u64>,
+
+    /// Optional tenant tier label supplied by the control plane.
+    #[serde(default)]
+    pub tier: Option<String>,
+
+    /// Optional route visibility label supplied by the control plane.
+    #[serde(default)]
+    pub route_visibility: Option<String>,
+
+    /// Whether the issuer expects metering for this operation.
+    #[serde(default)]
+    pub metering_required: Option<bool>,
 }
 
 /// Token type for JWT claims
@@ -149,6 +193,17 @@ impl JwtService {
             tenant_id: tenant_id.clone(),
             roles: roles.clone(),
             typ: TokenType::Access,
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            scopes: vec![],
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
         };
 
         // Refresh token claims (longer expiration, no roles)
@@ -163,6 +218,17 @@ impl JwtService {
             tenant_id,
             roles: vec![], // Refresh tokens don't contain roles
             typ: TokenType::Refresh,
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            scopes: vec![],
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
         };
 
         let access_token =
@@ -439,6 +505,17 @@ mod tests {
             tenant_id: None,
             roles: vec![],
             typ: TokenType::Access,
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            scopes: vec![],
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
         };
 
         let token = encode(
@@ -478,6 +555,17 @@ mod tests {
             tenant_id: None,
             roles: vec![],
             typ: TokenType::Access,
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            scopes: vec![],
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
         };
 
         let token = encode(

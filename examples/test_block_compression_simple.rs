@@ -54,7 +54,11 @@ fn main() {
     };
 
     // Create Proxima block
-    let block = ProximaDataBlock::new(vectors, config_no_compression.clone());
+    let proxima_records: Vec<_> = vectors
+        .into_iter()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config_no_compression.clone());
 
     // Test without compression
     match block.serialize_with_config(&config_no_compression) {

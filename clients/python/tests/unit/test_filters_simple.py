@@ -2,8 +2,6 @@
 Test suite for ProximaDB filter builder API - simplified version
 """
 
-import pytest
-
 from proximadb_sdk.filters import (
     FilterBuilder,
     FilterCondition,
@@ -13,8 +11,6 @@ from proximadb_sdk.filters import (
     and_filters,
     eq,
     gt,
-    in_list,
-    lt,
     or_filters,
 )
 

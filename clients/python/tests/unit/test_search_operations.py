@@ -8,12 +8,12 @@ Tests run against embedded ProximaDB database for fast, reliable testing.
 
 import logging
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pytest
 
-from proximadb_sdk import CollectionConfig, DistanceMetric, ProximaDBError
+from proximadb_sdk import CollectionConfig, ProximaDBError
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ class TestSearchOperations:
             pass
 
     @pytest.fixture(scope="class")
-    def test_data(self, bert_model) -> List[Dict[str, Any]]:
+    def test_data(self, bert_model) -> list[dict[str, Any]]:
         """Prepare diverse test data with embeddings"""
         documents = [
             # Technology category

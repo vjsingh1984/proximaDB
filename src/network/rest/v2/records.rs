@@ -26,8 +26,8 @@
 //!
 //! ## ProximaRecord Structure
 //!
-//! ProximaRecord extends VectorRecord with:
-//! - `typed_fields`: Strongly-typed fields (INTEGER, FLOAT, DECIMAL, UUID, etc.)
+//! ProximaRecord replaces VectorRecord with:
+//! - `props`: Canonical rich fields (INTEGER, FLOAT, DECIMAL, UUID, JSONB, etc.)
 //! - `text_fields`: Dedicated TEXT column storage with chunking support
 //! - Schema validation at insert time (when enabled)
 
@@ -39,14 +39,22 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
+use crate::api_handlers::{
+    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
+    RichRecordGetRequest, RichSearchRequest,
+};
 use crate::errors::{ApiError, ApiResult};
+use crate::network::auth::middleware::DataPlaneCapability;
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
-use crate::proto::proximadb_v1::{
-    SearchQuery, VectorBatchRequest, VectorRecord, VectorSearchRequest,
+use crate::services::{
+    WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
 };
+use proximadb_data_model::{ProximaValue, TimeUnit};
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
-/// Convert a JSON value to SqlValue for storage
+#[cfg(test)]
+/// Convert a JSON value to SqlValue for legacy conversion tests.
 fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::SqlValue {
     use crate::proto::proximadb_v1::sql_value::Value;
     use crate::proto::proximadb_v1::{SqlArray, SqlObject, SqlValue};
@@ -80,7 +88,8 @@ fn json_to_sql_value(value: &serde_json::Value) -> crate::proto::proximadb_v1::S
     SqlValue { value: Some(inner) }
 }
 
-/// Convert SqlValue back to JSON for responses
+#[cfg(test)]
+/// Convert SqlValue back to JSON for legacy conversion tests.
 fn sql_value_to_json(
     value: &crate::proto::proximadb_v1::SqlValue,
 ) -> Result<serde_json::Value, ApiError> {
@@ -122,7 +131,8 @@ fn sql_value_to_json(
     })
 }
 
-/// Convert a JSON value to a FilterClause value
+#[cfg(test)]
+/// Convert a JSON value to a FilterClause value.
 fn json_to_filter_clause_value(
     value: &serde_json::Value,
 ) -> Option<crate::proto::proximadb_v1::filter_clause::Value> {
@@ -142,7 +152,8 @@ fn json_to_filter_clause_value(
     }
 }
 
-/// Convert TypedFilter list to FilterClause list for MetadataFilter
+#[cfg(test)]
+/// Convert TypedFilter list to FilterClause list for legacy MetadataFilter tests.
 ///
 /// Supports the following operators:
 /// - eq: Equals
@@ -164,9 +175,12 @@ fn convert_typed_filters_to_clauses(
     let mut clauses = Vec::new();
 
     for filter in typed_filters {
+        let value_json = rest_value_payload(&filter.value);
+        let value_upper_json = filter.value_upper.as_ref().map(rest_value_payload);
+
         match filter.op.as_str() {
             "eq" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Eq as i32,
@@ -175,7 +189,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "neq" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Ne as i32,
@@ -184,7 +198,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "gt" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Gt as i32,
@@ -193,7 +207,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "gte" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Gte as i32,
@@ -202,7 +216,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "lt" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Lt as i32,
@@ -211,7 +225,7 @@ fn convert_typed_filters_to_clauses(
                 }
             }
             "lte" => {
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Lte as i32,
@@ -222,14 +236,14 @@ fn convert_typed_filters_to_clauses(
             "between" => {
                 // "between" requires both value and value_upper
                 // Convert to two clauses: field >= value AND field <= value_upper
-                let value_upper = filter.value_upper.as_ref().ok_or_else(|| {
+                let value_upper = value_upper_json.as_ref().ok_or_else(|| {
                     ApiError::InvalidArgument(
                         "Filter operator 'between' requires 'value_upper' to be specified"
                             .to_string(),
                     )
                 })?;
 
-                if let Some(lower_value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(lower_value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Gte as i32,
@@ -247,7 +261,7 @@ fn convert_typed_filters_to_clauses(
             }
             "contains" => {
                 // Contains for string substring matching
-                if let Some(value) = json_to_filter_clause_value(&filter.value) {
+                if let Some(value) = json_to_filter_clause_value(&value_json) {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Contains as i32,
@@ -259,7 +273,7 @@ fn convert_typed_filters_to_clauses(
                 // starts_with is implemented using Contains operator
                 // The backend should interpret this as prefix matching
                 // We encode the intent by using Contains with the prefix value
-                if let serde_json::Value::String(s) = &filter.value {
+                if let serde_json::Value::String(s) = &value_json {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Contains as i32,
@@ -275,7 +289,7 @@ fn convert_typed_filters_to_clauses(
                 // ends_with is implemented using Contains operator
                 // The backend should interpret this as suffix matching
                 // We encode the intent by using Contains with the suffix value
-                if let serde_json::Value::String(s) = &filter.value {
+                if let serde_json::Value::String(s) = &value_json {
                     clauses.push(FilterClause {
                         field: filter.field.clone(),
                         op: ComparisonOp::Contains as i32,
@@ -290,7 +304,7 @@ fn convert_typed_filters_to_clauses(
             "in" => {
                 // "in" operator: value should be an array
                 // We use the In comparison operator
-                if let serde_json::Value::Array(arr) = &filter.value {
+                if let serde_json::Value::Array(arr) = &value_json {
                     // For the "in" operator, we need to pass the array of values
                     // The FilterClause only supports single values, so we convert
                     // the array to a comma-separated string representation
@@ -339,7 +353,7 @@ fn convert_typed_filters_to_clauses(
 ///         {
 ///             "id": "doc_1",
 ///             "vector": [0.1, 0.2, 0.3],
-///             "typed_fields": {
+///             "props": {
 ///                 "category": "electronics",
 ///                 "price": 299.99,
 ///                 "in_stock": true
@@ -351,20 +365,29 @@ fn convert_typed_filters_to_clauses(
 ///                     "storage_hint": "adaptive"
 ///                 }
 ///             ],
-///             "metadata": {
-///                 "source": "catalog_import"
-///             }
+///             "source": "catalog_import"
 ///         }
 ///     ],
 ///     "validate_schema": true
 /// }
 /// ```
+/// Not supported in v0.2: optimistic versioning, conditional-write predicates,
+/// update-by-filter, delete-by-filter, and patch / partial-record update. The
+/// live contract is exposed via `WriteContractHealth` on the route-health
+/// diagnostic endpoint (`GET /api/v2/_diagnostics/collections/{id}/route-health`);
+/// see also `docs/SUPPORTED_SURFACE.adoc` "Not Supported in v0.2".
 #[derive(Debug, Deserialize)]
 pub struct InsertRecordsRequest {
     /// Records to insert
     pub records: Vec<ProximaRecordInput>,
     /// Whether to validate against collection schema (default: true)
     pub validate_schema: Option<bool>,
+    /// Whether existing records with the same ID should be replaced.
+    ///
+    /// The current durable record write path is idempotent/upsert-oriented; this
+    /// field is accepted so SDKs can expose explicit upsert intent without
+    /// leaving the OpenAPI contract.
+    pub upsert: Option<bool>,
 }
 
 /// Input format for ProximaRecord (JSON-friendly)
@@ -378,21 +401,626 @@ pub struct ProximaRecordInput {
     pub id: Option<String>,
     /// Vector embedding (required)
     pub vector: Vec<f32>,
-    /// Typed fields with strong type support
-    ///
-    /// Supported types:
-    /// - String: TEXT
-    /// - Number (integer): INTEGER
-    /// - Number (float): FLOAT
-    /// - Boolean: BOOLEAN
-    /// - Array: ARRAY types
-    /// - Object: JSON or MAP types
-    /// - null: NULL
-    pub typed_fields: Option<HashMap<String, serde_json::Value>>,
+    /// Canonical rich property map.
+    pub props: Option<HashMap<String, RestProximaValue>>,
     /// Dedicated TEXT fields with storage hints
     pub text_fields: Option<Vec<TextFieldInput>>,
-    /// Legacy metadata (for backward compatibility)
-    pub metadata: Option<HashMap<String, serde_json::Value>>,
+}
+
+/// REST value shape for the canonical `ProximaValue` type system.
+///
+/// Scalars may be sent directly for ergonomic JSON. Rich or ambiguous values use
+/// `{ "type": "...", "value": ... }`, e.g. `{ "type": "jsonb", "value": {...} }`.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum RestProximaValue {
+    Typed {
+        #[serde(rename = "type")]
+        type_name: String,
+        value: serde_json::Value,
+    },
+    Inferred(serde_json::Value),
+}
+
+fn rest_value_to_proxima(value: &RestProximaValue) -> Result<ProximaValue, ApiError> {
+    match value {
+        RestProximaValue::Inferred(value) => infer_json_value(value),
+        RestProximaValue::Typed { type_name, value } => typed_json_value(type_name, value),
+    }
+}
+
+fn infer_json_value(value: &serde_json::Value) -> Result<ProximaValue, ApiError> {
+    Ok(match value {
+        serde_json::Value::Null => ProximaValue::Null,
+        serde_json::Value::Bool(v) => ProximaValue::Boolean(*v),
+        serde_json::Value::Number(v) => {
+            if let Some(i) = v.as_i64() {
+                ProximaValue::Int64(i)
+            } else if let Some(u) = v.as_u64() {
+                ProximaValue::UInt64(u)
+            } else if let Some(f) = v.as_f64() {
+                ProximaValue::Float64(f)
+            } else {
+                return Err(ApiError::InvalidArgument(format!("Invalid number: {v}")));
+            }
+        }
+        serde_json::Value::String(v) => ProximaValue::String(v.clone()),
+        serde_json::Value::Array(values) => ProximaValue::Array(
+            values
+                .iter()
+                .map(infer_json_value)
+                .collect::<Result<Vec<_>, _>>()?,
+        ),
+        serde_json::Value::Object(values) => ProximaValue::Struct(
+            values
+                .iter()
+                .map(|(k, v)| infer_json_value(v).map(|value| (k.clone(), value)))
+                .collect::<Result<HashMap<_, _>, _>>()?,
+        ),
+    })
+}
+
+fn typed_json_value(type_name: &str, value: &serde_json::Value) -> Result<ProximaValue, ApiError> {
+    let normalized = type_name.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "null" => Ok(ProximaValue::Null),
+        "bool" | "boolean" => value
+            .as_bool()
+            .map(ProximaValue::Boolean)
+            .ok_or_else(|| ApiError::InvalidArgument("boolean requires true or false".to_string())),
+        "string" | "utf8" => value
+            .as_str()
+            .map(|v| ProximaValue::String(v.to_string()))
+            .ok_or_else(|| ApiError::InvalidArgument("string requires a string".to_string())),
+        "json" => Ok(ProximaValue::Json(value.clone())),
+        "jsonb" => Ok(ProximaValue::Jsonb(value.clone())),
+        "decimal" => Ok(ProximaValue::Decimal(match value {
+            serde_json::Value::String(v) => v.clone(),
+            _ => value.to_string(),
+        })),
+        "symbol" => value
+            .as_str()
+            .map(|v| ProximaValue::Symbol(v.to_string()))
+            .ok_or_else(|| ApiError::InvalidArgument("symbol requires a string".to_string())),
+        "uuid" => value
+            .as_str()
+            .ok_or_else(|| ApiError::InvalidArgument("uuid requires a string".to_string()))
+            .and_then(|v| {
+                uuid::Uuid::parse_str(v)
+                    .map(|uuid| ProximaValue::Uuid(*uuid.as_bytes()))
+                    .map_err(|e| ApiError::InvalidArgument(format!("invalid uuid: {e}")))
+            }),
+        "ulid" => parse_hex_16("ulid", value).map(ProximaValue::ULID),
+        "int8" => parse_i64("int8", value).and_then(|v| {
+            i8::try_from(v)
+                .map(ProximaValue::Int8)
+                .map_err(|_| ApiError::InvalidArgument("int8 out of range".to_string()))
+        }),
+        "int16" => parse_i64("int16", value).and_then(|v| {
+            i16::try_from(v)
+                .map(ProximaValue::Int16)
+                .map_err(|_| ApiError::InvalidArgument("int16 out of range".to_string()))
+        }),
+        "int32" => parse_i64("int32", value).and_then(|v| {
+            i32::try_from(v)
+                .map(ProximaValue::Int32)
+                .map_err(|_| ApiError::InvalidArgument("int32 out of range".to_string()))
+        }),
+        "int64" | "integer" => parse_i64("int64", value).map(ProximaValue::Int64),
+        "uint8" => parse_u64("uint8", value).and_then(|v| {
+            u8::try_from(v)
+                .map(ProximaValue::UInt8)
+                .map_err(|_| ApiError::InvalidArgument("uint8 out of range".to_string()))
+        }),
+        "uint16" => parse_u64("uint16", value).and_then(|v| {
+            u16::try_from(v)
+                .map(ProximaValue::UInt16)
+                .map_err(|_| ApiError::InvalidArgument("uint16 out of range".to_string()))
+        }),
+        "uint32" => parse_u64("uint32", value).and_then(|v| {
+            u32::try_from(v)
+                .map(ProximaValue::UInt32)
+                .map_err(|_| ApiError::InvalidArgument("uint32 out of range".to_string()))
+        }),
+        "uint64" => value
+            .as_u64()
+            .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+            .map(ProximaValue::UInt64)
+            .ok_or_else(|| {
+                ApiError::InvalidArgument("uint64 requires an unsigned integer".to_string())
+            }),
+        "float16" => value
+            .as_f64()
+            .map(|v| ProximaValue::Float16(v as f32))
+            .ok_or_else(|| ApiError::InvalidArgument("float16 requires a number".to_string())),
+        "float32" => value
+            .as_f64()
+            .map(|v| ProximaValue::Float32(v as f32))
+            .ok_or_else(|| ApiError::InvalidArgument("float32 requires a number".to_string())),
+        "float64" | "float" | "number" => value
+            .as_f64()
+            .map(ProximaValue::Float64)
+            .ok_or_else(|| ApiError::InvalidArgument("float64 requires a number".to_string())),
+        "date" => parse_i64("date", value).and_then(|v| {
+            i32::try_from(v)
+                .map(ProximaValue::Date)
+                .map_err(|_| ApiError::InvalidArgument("date out of range".to_string()))
+        }),
+        "time" => parse_temporal(value).map(|(v, unit)| ProximaValue::Time(v, unit)),
+        "timestamp" => parse_temporal(value).map(|(v, unit)| ProximaValue::Timestamp(v, unit)),
+        "timestamptz" | "timestamp_tz" => {
+            parse_temporal(value).map(|(v, unit)| ProximaValue::TimestampTz(v, unit))
+        }
+        "binary_vector" => bytes_from_json_array(value).map(ProximaValue::BinaryVector),
+        "binary" => bytes_from_json_array(value).map(ProximaValue::Binary),
+        "array" => value
+            .as_array()
+            .ok_or_else(|| ApiError::InvalidArgument("array requires an array".to_string()))?
+            .iter()
+            .map(infer_json_value)
+            .collect::<Result<Vec<_>, _>>()
+            .map(ProximaValue::Array),
+        "map" => typed_object_to_proxima(value).map(ProximaValue::Map),
+        "struct" => typed_object_to_proxima(value).map(ProximaValue::Struct),
+        "dense_vector" | "vector" => value
+            .as_array()
+            .ok_or_else(|| ApiError::InvalidArgument("vector requires an array".to_string()))?
+            .iter()
+            .map(|v| {
+                v.as_f64().map(|n| n as f32).ok_or_else(|| {
+                    ApiError::InvalidArgument("vector values must be numeric".to_string())
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(ProximaValue::DenseVector),
+        "sparse_vector" => {
+            let obj = value.as_object().ok_or_else(|| {
+                ApiError::InvalidArgument(
+                    "sparse_vector requires {\"indices\": [...], \"values\": [...]}".to_string(),
+                )
+            })?;
+            let indices = obj
+                .get("indices")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    ApiError::InvalidArgument("sparse_vector indices must be an array".to_string())
+                })?
+                .iter()
+                .map(|v| {
+                    v.as_u64()
+                        .and_then(|v| u32::try_from(v).ok())
+                        .ok_or_else(|| {
+                            ApiError::InvalidArgument(
+                                "sparse_vector indices must be uint32 values".to_string(),
+                            )
+                        })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let values = obj
+                .get("values")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| {
+                    ApiError::InvalidArgument("sparse_vector values must be an array".to_string())
+                })?
+                .iter()
+                .map(|v| {
+                    v.as_f64().map(|v| v as f32).ok_or_else(|| {
+                        ApiError::InvalidArgument(
+                            "sparse_vector values must be numeric".to_string(),
+                        )
+                    })
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(ProximaValue::SparseVector { indices, values })
+        }
+        _ => infer_json_value(value),
+    }
+}
+
+fn typed_object_to_proxima(
+    value: &serde_json::Value,
+) -> Result<HashMap<String, ProximaValue>, ApiError> {
+    value
+        .as_object()
+        .ok_or_else(|| ApiError::InvalidArgument("object type requires a JSON object".to_string()))?
+        .iter()
+        .map(|(key, value)| {
+            serde_json::from_value::<RestProximaValue>(value.clone())
+                .map_err(|e| ApiError::InvalidArgument(format!("invalid typed object value: {e}")))
+                .and_then(|value| rest_value_to_proxima(&value))
+                .map(|value| (key.clone(), value))
+        })
+        .collect()
+}
+
+fn parse_i64(type_name: &str, value: &serde_json::Value) -> Result<i64, ApiError> {
+    value
+        .as_i64()
+        .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+        .ok_or_else(|| ApiError::InvalidArgument(format!("{type_name} requires an integer")))
+}
+
+fn parse_u64(type_name: &str, value: &serde_json::Value) -> Result<u64, ApiError> {
+    value
+        .as_u64()
+        .or_else(|| value.as_str().and_then(|v| v.parse().ok()))
+        .ok_or_else(|| {
+            ApiError::InvalidArgument(format!("{type_name} requires an unsigned integer"))
+        })
+}
+
+fn parse_temporal(value: &serde_json::Value) -> Result<(i64, TimeUnit), ApiError> {
+    if let Some(object) = value.as_object() {
+        let value = object
+            .get("value")
+            .ok_or_else(|| {
+                ApiError::InvalidArgument("temporal value requires a value field".to_string())
+            })
+            .and_then(|value| parse_i64("temporal value", value))?;
+        let unit = object
+            .get("unit")
+            .and_then(|unit| unit.as_str())
+            .map(parse_time_unit)
+            .transpose()?
+            .unwrap_or(TimeUnit::Nanosecond);
+        Ok((value, unit))
+    } else {
+        parse_i64("temporal value", value).map(|value| (value, TimeUnit::Nanosecond))
+    }
+}
+
+fn parse_time_unit(unit: &str) -> Result<TimeUnit, ApiError> {
+    match unit.trim().to_ascii_lowercase().as_str() {
+        "s" | "sec" | "second" | "seconds" => Ok(TimeUnit::Second),
+        "ms" | "millisecond" | "milliseconds" => Ok(TimeUnit::Millisecond),
+        "us" | "microsecond" | "microseconds" => Ok(TimeUnit::Microsecond),
+        "ns" | "nanosecond" | "nanoseconds" => Ok(TimeUnit::Nanosecond),
+        other => Err(ApiError::InvalidArgument(format!(
+            "unsupported temporal unit: {other}"
+        ))),
+    }
+}
+
+fn parse_hex_16(type_name: &str, value: &serde_json::Value) -> Result<[u8; 16], ApiError> {
+    let raw = value
+        .as_str()
+        .ok_or_else(|| ApiError::InvalidArgument(format!("{type_name} requires a string")))?;
+    let decoded = hex::decode(raw.trim())
+        .map_err(|e| ApiError::InvalidArgument(format!("{type_name} must be 16 hex bytes: {e}")))?;
+    decoded.try_into().map_err(|_| {
+        ApiError::InvalidArgument(format!("{type_name} must decode to exactly 16 bytes"))
+    })
+}
+
+pub(crate) fn proxima_value_to_rest_value(value: &ProximaValue) -> RestProximaValue {
+    let typed = |type_name: &str, value: serde_json::Value| RestProximaValue::Typed {
+        type_name: type_name.to_string(),
+        value,
+    };
+
+    match value {
+        ProximaValue::Boolean(value) => typed("boolean", serde_json::Value::Bool(*value)),
+        ProximaValue::Int8(value) => typed("int8", serde_json::json!(value)),
+        ProximaValue::Int16(value) => typed("int16", serde_json::json!(value)),
+        ProximaValue::Int32(value) => typed("int32", serde_json::json!(value)),
+        ProximaValue::Int64(value) => typed("int64", serde_json::json!(value)),
+        ProximaValue::UInt8(value) => typed("uint8", serde_json::json!(value)),
+        ProximaValue::UInt16(value) => typed("uint16", serde_json::json!(value)),
+        ProximaValue::UInt32(value) => typed("uint32", serde_json::json!(value)),
+        ProximaValue::UInt64(value) => typed("uint64", serde_json::json!(value)),
+        ProximaValue::Float16(value) => typed("float16", serde_json::json!(value)),
+        ProximaValue::Float32(value) => typed("float32", serde_json::json!(value)),
+        ProximaValue::Float64(value) => typed("float64", serde_json::json!(value)),
+        ProximaValue::Decimal(value) => typed("decimal", serde_json::Value::String(value.clone())),
+        ProximaValue::String(value) => typed("string", serde_json::Value::String(value.clone())),
+        ProximaValue::Symbol(value) => typed("symbol", serde_json::Value::String(value.clone())),
+        ProximaValue::Binary(value) => typed("binary", bytes_to_json(value)),
+        ProximaValue::Date(value) => typed("date", serde_json::json!(value)),
+        ProximaValue::Time(value, unit) => typed("time", temporal_to_json(*value, *unit)),
+        ProximaValue::Timestamp(value, unit) => typed("timestamp", temporal_to_json(*value, *unit)),
+        ProximaValue::TimestampTz(value, unit) => {
+            typed("timestamptz", temporal_to_json(*value, *unit))
+        }
+        ProximaValue::Uuid(value) => typed(
+            "uuid",
+            serde_json::Value::String(uuid::Uuid::from_bytes(*value).to_string()),
+        ),
+        ProximaValue::ULID(value) => typed("ulid", serde_json::Value::String(hex::encode(value))),
+        ProximaValue::Json(value) => typed("json", value.clone()),
+        ProximaValue::Jsonb(value) => typed("jsonb", value.clone()),
+        ProximaValue::Array(values) => typed(
+            "array",
+            serde_json::Value::Array(
+                values
+                    .iter()
+                    .map(|value| rest_value_to_json_value(&proxima_value_to_rest_value(value)))
+                    .collect(),
+            ),
+        ),
+        ProximaValue::Map(values) => typed("map", proxima_map_to_json(values)),
+        ProximaValue::Struct(values) => typed("struct", proxima_map_to_json(values)),
+        ProximaValue::DenseVector(values) => typed("dense_vector", serde_json::json!(values)),
+        ProximaValue::SparseVector { indices, values } => typed(
+            "sparse_vector",
+            serde_json::json!({
+                "indices": indices,
+                "values": values,
+            }),
+        ),
+        ProximaValue::BinaryVector(value) => typed("binary_vector", bytes_to_json(value)),
+        ProximaValue::Null => typed("null", serde_json::Value::Null),
+    }
+}
+
+#[cfg(test)]
+fn rest_value_payload(value: &RestProximaValue) -> serde_json::Value {
+    match value {
+        RestProximaValue::Typed { value, .. } | RestProximaValue::Inferred(value) => value.clone(),
+    }
+}
+
+fn rest_value_to_json_value(value: &RestProximaValue) -> serde_json::Value {
+    serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+}
+
+fn proxima_map_to_json(values: &HashMap<String, ProximaValue>) -> serde_json::Value {
+    serde_json::Value::Object(
+        values
+            .iter()
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    rest_value_to_json_value(&proxima_value_to_rest_value(value)),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn temporal_to_json(value: i64, unit: TimeUnit) -> serde_json::Value {
+    serde_json::json!({
+        "value": value,
+        "unit": match unit {
+            TimeUnit::Second => "second",
+            TimeUnit::Millisecond => "millisecond",
+            TimeUnit::Microsecond => "microsecond",
+            TimeUnit::Nanosecond => "nanosecond",
+        },
+    })
+}
+
+fn bytes_to_json(value: &[u8]) -> serde_json::Value {
+    serde_json::Value::Array(
+        value
+            .iter()
+            .map(|value| serde_json::Value::Number((*value as u64).into()))
+            .collect(),
+    )
+}
+
+fn bytes_from_json_array(value: &serde_json::Value) -> Result<Vec<u8>, ApiError> {
+    value
+        .as_array()
+        .ok_or_else(|| {
+            ApiError::InvalidArgument("binary values require an array of bytes".to_string())
+        })?
+        .iter()
+        .map(|v| {
+            v.as_u64()
+                .filter(|v| *v <= u8::MAX as u64)
+                .map(|v| v as u8)
+                .ok_or_else(|| {
+                    ApiError::InvalidArgument("binary byte values must be 0..255".to_string())
+                })
+        })
+        .collect()
+}
+
+/// Convert TypedFilter list → optimizer Predicate list for the planner.
+///
+/// Best-effort: filter ops we can't map to a `PredicateOp` are dropped, since
+/// the planner can fall through to policy defaults. The selectivity estimator
+/// treats an empty predicate list as "selectivity = 1.0" (full scan).
+fn typed_filters_to_predicates(
+    filters: &[TypedFilter],
+) -> Vec<crate::query::federated::optimizer::Predicate> {
+    use crate::query::federated::optimizer::{Predicate, PredicateOp};
+    filters
+        .iter()
+        .filter_map(|f| {
+            let op = match f.op.as_str() {
+                "eq" => PredicateOp::Eq,
+                "neq" => PredicateOp::Ne,
+                "gt" => PredicateOp::Gt,
+                "gte" => PredicateOp::Ge,
+                "lt" => PredicateOp::Lt,
+                "lte" => PredicateOp::Le,
+                "between" => PredicateOp::Between,
+                "in" => PredicateOp::In,
+                _ => return None,
+            };
+            let value = rest_value_to_predicate_value(&f.value);
+            Some(Predicate {
+                column: f.field.clone(),
+                op,
+                value,
+            })
+        })
+        .collect()
+}
+
+fn rest_value_to_predicate_value(
+    v: &RestProximaValue,
+) -> crate::query::federated::optimizer::PredicateValue {
+    use crate::query::federated::optimizer::PredicateValue;
+    // Project through ProximaValue so we share the same JSON-inference logic
+    // already used for query execution. Anything we can't infer collapses to
+    // Null — the selectivity estimator handles Null gracefully via the
+    // fallback policy.
+    let pv = match rest_value_to_proxima(v) {
+        Ok(p) => p,
+        Err(_) => return PredicateValue::Null,
+    };
+    match pv {
+        ProximaValue::String(s) => PredicateValue::String(s),
+        ProximaValue::Int64(i) => PredicateValue::Int(i),
+        ProximaValue::UInt64(u) => PredicateValue::Int(u as i64),
+        ProximaValue::Float64(f) => PredicateValue::Float(f),
+        ProximaValue::Boolean(b) => PredicateValue::Bool(b),
+        ProximaValue::Array(items) => PredicateValue::List(
+            items
+                .into_iter()
+                .filter_map(proxima_to_predicate_value)
+                .collect(),
+        ),
+        _ => PredicateValue::Null,
+    }
+}
+
+fn proxima_to_predicate_value(
+    p: ProximaValue,
+) -> Option<crate::query::federated::optimizer::PredicateValue> {
+    use crate::query::federated::optimizer::PredicateValue;
+    Some(match p {
+        ProximaValue::String(s) => PredicateValue::String(s),
+        ProximaValue::Int64(i) => PredicateValue::Int(i),
+        ProximaValue::UInt64(u) => PredicateValue::Int(u as i64),
+        ProximaValue::Float64(f) => PredicateValue::Float(f),
+        ProximaValue::Boolean(b) => PredicateValue::Bool(b),
+        ProximaValue::Null => PredicateValue::Null,
+        _ => return None,
+    })
+}
+
+/// Operators accepted on the typed `{field,op,value}` filter surface, shared by
+/// `/search` and `/records/scan` validation.
+const VALID_TYPED_FILTER_OPS: [&str; 11] = [
+    "eq",
+    "neq",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "contains",
+    "between",
+    "in",
+    "starts_with",
+    "ends_with",
+];
+
+/// Validate a list of typed `{field,op,value}` filters before lowering them.
+fn validate_typed_filters(filters: &[TypedFilter]) -> Result<(), ApiError> {
+    for filter in filters {
+        if filter.field.is_empty() {
+            return Err(ApiError::InvalidArgument(
+                "Filter field name cannot be empty".to_string(),
+            ));
+        }
+        if !VALID_TYPED_FILTER_OPS.contains(&filter.op.as_str()) {
+            return Err(ApiError::InvalidArgument(format!(
+                "Invalid filter operator '{}'. Valid operators: {:?}",
+                filter.op, VALID_TYPED_FILTER_OPS
+            )));
+        }
+        if filter.op == "between" && filter.value_upper.is_none() {
+            return Err(ApiError::InvalidArgument(
+                "Filter operator 'between' requires 'value_upper' to be specified".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Parse a metadata filter supplied as loose JSON into the canonical
+/// [`FilterExpression`] consumed by the scan/search engines.
+///
+/// Two shapes are accepted so the same field can mirror `/search` and the
+/// simple equality maps that multi-tenant callers send:
+///   - **array** — `[{ "field": .., "op": .., "value": .. }, ..]`, the typed
+///     filter list (full operator set), reusing the search lowering;
+///   - **object** — `{ "field": value, .. }`, treated as an AND of equality
+///     comparisons (the common `account_id`-scoping case).
+///
+/// Returns `Ok(None)` when there is nothing to filter on.
+fn parse_metadata_filter(
+    value: &serde_json::Value,
+) -> Result<Option<crate::core::search::FilterExpression>, ApiError> {
+    use crate::core::search::{ComparisonOperator, FilterExpression};
+
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Array(items) if items.is_empty() => Ok(None),
+        serde_json::Value::Object(map) if map.is_empty() => Ok(None),
+        serde_json::Value::Array(_) => {
+            let typed: Vec<TypedFilter> = serde_json::from_value(value.clone())
+                .map_err(|e| ApiError::InvalidArgument(format!("invalid filter list: {e}")))?;
+            validate_typed_filters(&typed)?;
+            let rich = typed
+                .iter()
+                .map(typed_filter_to_rich)
+                .collect::<Result<Vec<_>, ApiError>>()?;
+            Ok(crate::services::operations::vectors::rich_filters_to_filter_expression(&rich))
+        }
+        serde_json::Value::Object(map) => {
+            let conditions: Vec<FilterExpression> = map
+                .iter()
+                .map(|(field, v)| FilterExpression::Comparison {
+                    field: field.clone(),
+                    operator: ComparisonOperator::Equals,
+                    value: v.clone(),
+                })
+                .collect();
+            Ok(match conditions.len() {
+                0 => None,
+                1 => conditions.into_iter().next(),
+                _ => Some(FilterExpression::And(conditions)),
+            })
+        }
+        _ => Err(ApiError::InvalidArgument(
+            "filter must be an object or an array of {field,op,value}".to_string(),
+        )),
+    }
+}
+
+fn typed_filter_to_rich(filter: &TypedFilter) -> Result<RichFilterCondition, ApiError> {
+    let operator = match filter.op.as_str() {
+        "eq" => RichFilterOperator::Eq,
+        "neq" => RichFilterOperator::Ne,
+        "gt" => RichFilterOperator::Gt,
+        "gte" => RichFilterOperator::Gte,
+        "lt" => RichFilterOperator::Lt,
+        "lte" => RichFilterOperator::Lte,
+        "contains" => RichFilterOperator::Contains,
+        "starts_with" => RichFilterOperator::StartsWith,
+        "ends_with" => RichFilterOperator::EndsWith,
+        "between" => RichFilterOperator::Between,
+        "in" => RichFilterOperator::In,
+        _ => {
+            return Err(ApiError::InvalidArgument(format!(
+                "Unsupported filter operator: {}",
+                filter.op
+            )));
+        }
+    };
+
+    let value = rest_value_to_proxima(&filter.value)?;
+    let value_upper = filter
+        .value_upper
+        .as_ref()
+        .map(rest_value_to_proxima)
+        .transpose()?;
+    let value_list = match (&operator, &value) {
+        (RichFilterOperator::In, ProximaValue::Array(values)) => values.clone(),
+        _ => Vec::new(),
+    };
+
+    Ok(RichFilterCondition {
+        field: filter.field.clone(),
+        operator,
+        value,
+        value_upper,
+        value_list,
+    })
 }
 
 /// Input format for TEXT fields
@@ -459,6 +1087,7 @@ pub async fn insert_records(
     Path(collection): Path<String>,
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
+    capability: Option<Extension<DataPlaneCapability>>,
     Json(request): Json<InsertRecordsRequest>,
 ) -> ApiResult<Json<InsertRecordsResponse>> {
     info!(
@@ -480,10 +1109,64 @@ pub async fn insert_records(
         ));
     }
 
+    // Slice 4 of tenant-pod-affinity: gate writes against the
+    // primary-pod registry BEFORE any storage work. Two outcomes:
+    //
+    // * `Allow`: either no binding for (tenant, collection) — legacy
+    //   behavior — or the binding matches this pod. Increment the
+    //   appropriate `WRITES_ALLOWED_TOTAL` counter and proceed.
+    // * `Misrouted`: a binding exists pointing elsewhere. Return 421
+    //   Misdirected Request with the target pod so the client SDK
+    //   re-routes. Continuing here would land the write in this pod's
+    //   memtable where reads on the primary pod would never find it
+    //   (the 3-stage search at services/operations/vectors/legacy.rs
+    //   :2827-2858 is local-memtable-only on stage 1).
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &state.primary_pod_registry,
+        &state.self_pod_id,
+        &tenant.tenant_id,
+        &collection,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if state
+                .primary_pod_registry
+                .is_assigned(&tenant.tenant_id, &collection)
+            {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(&tenant.tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(&tenant.tenant_id);
+            }
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(&tenant.tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %state.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant.tenant_id,
+                collection_id = %collection,
+                "v2 insert misrouted — client SDK should retry against the primary pod"
+            );
+            return Err(ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant.tenant_id.clone(),
+                collection_id: collection,
+            });
+        }
+    }
+    if let Some(Extension(capability)) = capability.as_ref() {
+        capability
+            .ensure_record_count(request.records.len())
+            .map_err(ApiError::InvalidArgument)?;
+    }
+
     let validate_schema = request.validate_schema.unwrap_or_else(|| {
         debug!("No schema validation preference provided, defaulting to true");
         true
     });
+    if request.upsert.unwrap_or(false) {
+        debug!("Record batch requested explicit upsert semantics");
+    }
     debug!(
         "Schema validation: {}",
         if validate_schema {
@@ -493,79 +1176,74 @@ pub async fn insert_records(
         }
     );
 
-    let mut inserted_ids = Vec::new();
+    let total_records = request.records.len();
+    let mut inserted_ids = Vec::with_capacity(total_records);
     let mut errors = Vec::new();
-    let mut vector_records = Vec::new();
+    let mut rich_records = Vec::with_capacity(total_records);
 
-    for (index, record) in request.records.iter().enumerate() {
+    for (index, record) in request.records.into_iter().enumerate() {
         // Validate vector is not empty
         if record.vector.is_empty() {
             errors.push(InsertError {
                 index,
-                id: record.id.clone(),
+                id: record.id,
                 error: "Vector cannot be empty".to_string(),
             });
             continue;
         }
 
         // Generate ID if not provided
-        let record_id = record.id.clone().unwrap_or_else(|| {
+        let record_id = record.id.unwrap_or_else(|| {
             let new_id = uuid::Uuid::new_v4().to_string();
             debug!("Generated new UUID for record: {}", new_id);
             new_id
         });
 
-        // Convert typed_fields to metadata for backward compatibility with v1 storage
-        let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
+        let mut props = HashMap::new();
 
-        // Convert typed_fields
-        if let Some(ref typed_fields) = record.typed_fields {
-            for (key, value) in typed_fields {
-                let sql_value = json_to_sql_value(value);
-                metadata.insert(key.clone(), sql_value);
+        if let Some(input_props) = record.props {
+            for (key, value) in input_props {
+                let proxima_value = rest_value_to_proxima(&value)?;
+                props.insert(key, ProximaTreeNode::Value(proxima_value));
             }
         }
 
-        // Convert text_fields to metadata
-        if let Some(ref text_fields) = record.text_fields {
+        if let Some(text_fields) = record.text_fields {
             for text_field in text_fields {
-                let sql_value = crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        text_field.content.clone(),
-                    )),
-                };
-                metadata.insert(text_field.name.clone(), sql_value);
+                props.insert(
+                    text_field.name,
+                    ProximaTreeNode::Value(ProximaValue::String(text_field.content)),
+                );
             }
         }
 
-        // Merge legacy metadata
-        if let Some(ref legacy_metadata) = record.metadata {
-            for (key, value) in legacy_metadata {
-                if !metadata.contains_key(key) {
-                    let sql_value = json_to_sql_value(value);
-                    metadata.insert(key.clone(), sql_value);
-                }
-            }
-        }
-
-        // Create VectorRecord for storage
-        let vector_record = VectorRecord {
-            id: record_id.clone(),
-            vector: record.vector.clone(),
-            metadata,
-            version: None,
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            source: Some("v2_api".to_string()),
-            updated_at: None,
-            expires_at: None,
+        let now_ns = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_mul(1_000_000);
+        let vector = record.vector;
+        let dim = vector.len() as u32;
+        let rich_record = ProximaRecord {
+            oid: record_id.clone(),
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            origin: Some("v2_api".to_string()),
+            props,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
         };
 
-        vector_records.push(vector_record);
+        rich_records.push(rich_record);
         inserted_ids.push(record_id);
     }
 
     // Early return if all records failed validation
-    if vector_records.is_empty() {
+    if rich_records.is_empty() {
         return Ok(Json(InsertRecordsResponse {
             inserted_count: 0,
             failed_count: errors.len(),
@@ -574,26 +1252,76 @@ pub async fn insert_records(
         }));
     }
 
-    // Insert via unified handlers
-    let batch_request = VectorBatchRequest {
+    let batch_request = RichRecordBatchRequest {
         collection_id: collection.clone(),
-        vectors: vector_records,
+        records: rich_records,
     };
 
+    let intent = WriteIntent::new(&collection, WriteOperationKind::Insert)
+        .with_durability(WriteDurabilityRequirement::WalRequired)
+        .with_row_count_hint(inserted_ids.len() as u64);
+    let lane = WriteLaneRouter::new().route(&intent);
+    debug!(
+        collection_id = %collection,
+        write_lane = ?lane.lane,
+        guards = ?lane.required_guards,
+        "REST v2 insert_records write-lane decision"
+    );
+
     match state
-        .unified_handlers
-        .handle_vector_batch_v1_for_tenant(batch_request, Some(&tenant.tenant_id))
+        .request_handlers
+        .handle_record_batch_for_tenant(batch_request, Some(&tenant.tenant_id))
         .await
     {
         Ok(resp) => {
+            // v0.2 release-readiness audit (round 2): a missing collection
+            // was returning HTTP 200 with `BatchOperationResult::failure` in
+            // the body, which broke the v2 INSERT data-path silently for
+            // weeks. Map the well-known NOT_FOUND error_code onto a real
+            // HTTP 404 here so SDK consumers and curl users see the same
+            // signal. Other failure codes still flow through the body, which
+            // matches the batched per-record contract.
+            if !resp.success && resp.error_code.as_deref() == Some("NOT_FOUND") {
+                return Err(ApiError::NotFound(
+                    resp.errors
+                        .into_iter()
+                        .next()
+                        .unwrap_or_else(|| format!("Collection '{}' not found", collection)),
+                ));
+            }
             // Check for success - if successful, all records were inserted
-            let success_count = if resp.success { inserted_ids.len() } else { 0 };
+            let validation_error_count = errors.len();
+            let success_count = if resp.success {
+                resp.metrics.successful_count as usize
+            } else {
+                0
+            }
+            .min(inserted_ids.len());
+            let service_failed_count = inserted_ids
+                .len()
+                .saturating_sub(success_count)
+                .max(resp.metrics.failed_count.max(0) as usize)
+                .max(resp.errors.len());
+            errors.extend(
+                resp.errors
+                    .into_iter()
+                    .enumerate()
+                    .map(|(idx, error)| InsertError {
+                        index: success_count + idx,
+                        id: None,
+                        error,
+                    }),
+            );
 
             let response = InsertRecordsResponse {
                 inserted_count: success_count,
-                failed_count: errors.len() + (inserted_ids.len() - success_count),
+                failed_count: validation_error_count + service_failed_count,
                 errors,
-                inserted_ids: if resp.success { inserted_ids } else { vec![] },
+                inserted_ids: if resp.success {
+                    resp.vector_ids
+                } else {
+                    vec![]
+                },
             };
 
             info!(
@@ -643,6 +1371,11 @@ pub struct TypedSearchRequest {
     ///
     /// Vector data can be large, so it is excluded by default.
     pub include_vector: Option<bool>,
+    /// Return the SearchPlanTrace + a human-readable route explain
+    /// in the response (LLD §1 contract). Defaults to `false` so
+    /// non-debug requests don't pay the JSON serialization cost of
+    /// the ~30-field trace envelope.
+    pub debug: Option<bool>,
 }
 
 /// A typed filter for search operations
@@ -668,9 +1401,9 @@ pub struct TypedFilter {
     /// - "ends_with": String ends with suffix
     pub op: String,
     /// Filter value (type depends on field type)
-    pub value: serde_json::Value,
+    pub value: RestProximaValue,
     /// Upper bound for "between" operator
-    pub value_upper: Option<serde_json::Value>,
+    pub value_upper: Option<RestProximaValue>,
 }
 
 /// Search result with typed fields
@@ -682,12 +1415,10 @@ pub struct TypedSearchResult {
     pub score: f32,
     /// Vector embedding (if requested)
     pub vector: Option<Vec<f32>>,
-    /// Typed fields from the record
-    pub typed_fields: HashMap<String, serde_json::Value>,
+    /// Rich properties from the record
+    pub props: HashMap<String, RestProximaValue>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
-    /// Legacy metadata
-    pub metadata: Option<HashMap<String, serde_json::Value>>,
 }
 
 /// Output format for TEXT fields
@@ -714,6 +1445,19 @@ pub struct TypedSearchResponse {
     pub latency_ms: u64,
     /// Request ID for tracing
     pub request_id: String,
+    /// SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
+    /// upstream gateways consume for metering and planner-v2 training.
+    /// Phase 0 emits a stub trace populated from request_id + latency; later
+    /// phases fill in the per-stage counters. Only emitted when the request
+    /// sets `debug=true` (LLD §1 contract).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub search_plan_trace: Option<crate::observability::search_plan_trace::SearchPlanTrace>,
+    /// Human-readable explain summary derived from the SearchPlanTrace.
+    /// Only emitted when the request sets `debug=true` — gives an on-call
+    /// operator a one-glance view of the plan, cache result, and any
+    /// actionable hints (high scan fraction, repair triggered, ...).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explain: Option<crate::observability::route_explain::RouteExplain>,
 }
 
 /// POST /api/v2/collections/{collection}/search
@@ -765,43 +1509,27 @@ pub async fn search_with_typed_filters(
             "top_k must be greater than 0".to_string(),
         ));
     }
+    // v0.2 release-readiness audit (round 2): cap top_k to a defensive
+    // upper bound so a malformed client (or a malicious one) cannot ask
+    // the server to allocate an unbounded result buffer. The cap is
+    // intentionally generous — production HNSW workloads top out far
+    // below this — but small enough that a single bad request can't
+    // exhaust memory. Operators can raise it via an env var if they
+    // need a wider window for benchmark or batch-export shapes.
+    let max_top_k: usize = std::env::var("PROXIMADB_MAX_SEARCH_TOP_K")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(10_000);
+    if request.top_k > max_top_k {
+        return Err(ApiError::InvalidArgument(format!(
+            "top_k={} exceeds server cap {} (set PROXIMADB_MAX_SEARCH_TOP_K to override)",
+            request.top_k, max_top_k
+        )));
+    }
 
     // Validate filters if provided
     if let Some(ref filters) = request.filters {
-        for filter in filters {
-            if filter.field.is_empty() {
-                return Err(ApiError::InvalidArgument(
-                    "Filter field name cannot be empty".to_string(),
-                ));
-            }
-
-            let valid_ops = [
-                "eq",
-                "neq",
-                "gt",
-                "gte",
-                "lt",
-                "lte",
-                "contains",
-                "between",
-                "in",
-                "starts_with",
-                "ends_with",
-            ];
-            if !valid_ops.contains(&filter.op.as_str()) {
-                return Err(ApiError::InvalidArgument(format!(
-                    "Invalid filter operator '{}'. Valid operators: {:?}",
-                    filter.op, valid_ops
-                )));
-            }
-
-            // Validate "between" has upper bound
-            if filter.op == "between" && filter.value_upper.is_none() {
-                return Err(ApiError::InvalidArgument(
-                    "Filter operator 'between' requires 'value_upper' to be specified".to_string(),
-                ));
-            }
-        }
+        validate_typed_filters(filters)?;
     }
 
     let include_text = request.include_text.unwrap_or_else(|| {
@@ -814,78 +1542,69 @@ pub async fn search_with_typed_filters(
         request.filters.as_ref().map(|f| f.len())
     );
 
-    // Convert typed filters to MetadataFilter format with advanced filter support
-    let advanced_filter = if let Some(ref typed_filters) = request.filters {
-        let clauses = convert_typed_filters_to_clauses(typed_filters)?;
-        if clauses.is_empty() {
-            None
-        } else {
-            Some(crate::proto::proximadb_v1::MetadataFilter {
-                clauses,
-                op: crate::proto::proximadb_v1::LogicalOp::And as i32,
-            })
-        }
-    } else {
-        None
-    };
+    let filters = request
+        .filters
+        .as_ref()
+        .map(|filters| {
+            filters
+                .iter()
+                .map(typed_filter_to_rich)
+                .collect::<Result<Vec<_>, ApiError>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
 
-    // Keep simple equality filters in the filters map for backward compatibility
-    let filters = if let Some(ref typed_filters) = request.filters {
-        let mut filter_map: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
-        for filter in typed_filters {
-            if filter.op == "eq" {
-                filter_map.insert(filter.field.clone(), json_to_sql_value(&filter.value));
-            }
-        }
-        filter_map
-    } else {
-        HashMap::new()
-    };
-
-    // Create search query
-    let search_query = SearchQuery {
-        vector: request.vector.clone(),
-        filters,
-        advanced_filter,
-    };
-
-    let search_request = VectorSearchRequest {
+    let search_request = RichSearchRequest {
         collection_id: collection.clone(),
-        queries: vec![search_query],
+        query_vector: request.vector.clone(),
         top_k: request.top_k as u32,
-        include_fields: None,
-        search_params: None,
-        distance_metric_override: None,
-        search_optimization: None,
+        filters,
     };
 
-    // Execute search via unified handlers
-    match state
-        .unified_handlers
-        .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
-        .await
-    {
+    // TD-064: wrap the search in a predicate-diagnostics scope so any
+    // AxisManager-deep shortfall surfaces here without needing every
+    // intermediate service/proto type to carry a predicate_shortfall field.
+    // Capture the quantized-route downgrade INSIDE the scope — the task-local
+    // binding ends when the scoped future completes, so it must be taken here
+    // (TD-075 / F2: surfaced in EXPLAIN below).
+    let (search_outcome, quantized_route_downgraded, cold_stage1_only, turboquant_hints) =
+        crate::observability::predicate_diagnostics::scope(async {
+            let outcome = state
+                .request_handlers
+                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+                .await;
+            let downgraded =
+                crate::observability::predicate_diagnostics::take_quantized_downgrade();
+            // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
+            let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
+            // Phase K (Quantization Trait Convergence Plan): TurboQuant
+            // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
+            // the scope because the task-local binding ends when this
+            // future completes — same constraint as the take above.
+            // `None` is the common case (most searches don't run
+            // through TurboQuant scoring); the slot is skipped at
+            // serialization time via the `skip_serializing_if` on
+            // `SearchPlanHints.turboquant` (Phase J) and
+            // `VectorHints.turboquant` (Phase F).
+            let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
+            (outcome, downgraded, cold_stage1, tq_hints)
+        })
+        .await;
+    let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
+
+    match search_outcome {
         Ok(resp) => {
             let latency_ms = start_time.elapsed().as_millis() as u64;
 
-            // resp.results is Option<SearchResult> - use default if None
-            let search_result = resp.results.unwrap_or_else(|| {
-                debug!("Search response contains no results, using default");
-                Default::default()
-            });
-
-            // Convert results to TypedSearchResult format
-            // search_result.results is Vec<SearchVectorRecord>
-            let results: Vec<TypedSearchResult> = search_result
+            let results: Vec<TypedSearchResult> = resp
                 .results
                 .iter()
                 .map(|r| {
-                    // Convert metadata to typed_fields
-                    let typed_fields: HashMap<String, serde_json::Value> = r
-                        .metadata
+                    let props: HashMap<String, RestProximaValue> = r
+                        .props
                         .iter()
-                        .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
-                        .collect::<Result<_, ApiError>>()?;
+                        .map(|(k, v)| (k.clone(), proxima_value_to_rest_value(v)))
+                        .collect();
 
                     Ok(TypedSearchResult {
                         id: r.id.clone(),
@@ -898,24 +1617,189 @@ pub async fn search_with_typed_filters(
                         } else {
                             None
                         },
-                        typed_fields,
+                        props,
                         text_fields: if include_text {
                             // Extract text fields from metadata
                             Some(vec![]) // Would be populated from text storage
                         } else {
                             None
                         },
-                        metadata: None, // Legacy metadata is converted to typed_fields
                     })
                 })
                 .collect::<Result<_, ApiError>>()?;
 
-            let total_matches = search_result.total_found as u64;
+            let total_matches = resp.total_found as u64;
+
+            // ── Phase 1: run the deterministic planner via the
+            // process-wide PlanCache ─────────────────────────────
+            // Bundles selectivity + GLS + filter-strategy + route
+            // choice + cache lookup. Identical query shapes within
+            // the same corpus version reuse the cached PlanOutput
+            // instead of recomputing.
+            let predicates = match request.filters.as_ref() {
+                Some(filters) => typed_filters_to_predicates(filters.as_slice()),
+                None => Vec::new(),
+            };
+            let field_stats =
+                crate::query::federated::optimizer::selectivity::FieldStatistics::default();
+            let plan_policy =
+                crate::query::federated::optimizer::PredicateSelectivityPolicy::default();
+            let tier_record =
+                crate::catalog::tenant_tier::TenantTierRecord::fail_safe(&tenant.tenant_id);
+            // GLS sampling requires neighborhood centroids that we
+            // don't yet surface; pass an empty slice. The cached
+            // planner short-circuits to a fresh compute when GLS
+            // samples are non-empty, so this contract holds when
+            // Phase 5's stats refresher lands.
+            let cached_inputs =
+                crate::query::federated::optimizer::cached_plan_builder::CachedPlanInputs {
+                    plan_inputs:
+                        crate::query::federated::optimizer::plan_builder::PlanBuilderInputs {
+                            predicates: &predicates,
+                            field_stats: &field_stats,
+                            policy: &plan_policy,
+                            gls_samples: &[],
+                            dim: request.vector.len(),
+                            recall_target: 0.9,
+                            collection_gb: 0.0,
+                            tier: &tier_record,
+                        },
+                    // Pull the current corpus_version from the
+                    // process-wide registry. Catalog write paths
+                    // bump this on schema/segment/stats changes;
+                    // the cache invalidates on the next lookup
+                    // when the stamped version no longer matches.
+                    // Defaults to 1 for any (tenant, collection)
+                    // the registry has never seen.
+                    corpus_version: crate::catalog::CorpusVersionRegistry::global()
+                        .current(&tenant.tenant_id, &collection)
+                        .await,
+                };
+            let cached_plan =
+                crate::query::federated::optimizer::cached_plan_builder::build_for_search_cached_with_collection(
+                    crate::query::cache::plan_cache::PlanCache::global(),
+                    &cached_inputs,
+                    &collection,
+                )
+                .await;
+
+            // Build the Phase-1 SearchPlanTrace via the centralized
+            // TraceBuilder helper. AXIS-level counters
+            // (block_fill_pct, tunneled_nodes, ...) stay zero until
+            // Phase 3's engine wiring fills them in; the builder
+            // accepts the default IndexStats today and emits a
+            // valid trace.
+            let cache_result = if cached_plan.cache_hit {
+                crate::observability::search_plan_trace::CacheResult::Hit
+            } else {
+                crate::observability::search_plan_trace::CacheResult::Miss
+            };
+            let trace = crate::observability::search_plan_trace_builder::build(
+                crate::observability::search_plan_trace_builder::TraceBuilderInputs {
+                    trace_id: request_id.clone(),
+                    tenant_id: tenant.tenant_id.clone(),
+                    collection_name: collection.clone(),
+                    plan: &cached_plan.plan,
+                    latency_ms: latency_ms as f64,
+                    index_stats: crate::core::service_types::IndexStats::default(),
+                    candidate_count: results.len() as u32,
+                    rerank_count: results.len() as u32,
+                    repair_count: 0,
+                    sure_signals: crate::observability::search_plan_trace::SureSignals::default(),
+                    cache_result,
+                    failure_class: None,
+                    // bytes_per_vector: the trace builder needs this
+                    // for actual_scan_gb derivation. Pass 0.0 until
+                    // engine instrumentation lands (Phase 3); the
+                    // builder skips the derivation and leaves
+                    // actual_scan_gb at 0.0.
+                    bytes_per_vector: 0.0,
+                    // TD-064: shortfall pulled from the task-local
+                    // diagnostics bus established above. `None` when
+                    // no AxisManager-level shortfall was recorded
+                    // during this search.
+                    predicate_shortfall: predicate_shortfall.clone(),
+                    // Phase K: TurboQuant EXPLAIN payload pulled from
+                    // the same task-local bus. `None` for searches
+                    // that didn't route through TurboQuant scoring;
+                    // present with the full 9-field payload otherwise.
+                    turboquant_explain: turboquant_hints.clone(),
+                },
+            );
+
+            // Emit the populated trace as a structured tracing span so
+            // existing log aggregators (Loki, etc.) ingest it without
+            // needing a dedicated billing sink yet. Tier-aware
+            // sampling + retention live downstream of this — every
+            // search emits one structured event; the gateway's log
+            // pipeline samples per its own policy.
+            //
+            // Fields land as labels on the log entry. trace_id keeps
+            // the entry correlatable with the response's
+            // search_plan_trace block when debug=true; tenant_id +
+            // collection are kept as bounded-cardinality labels.
+            // Enum fields use Debug formatting (they have stable
+            // snake_case Display via serde, but the tracing macro
+            // doesn't auto-convert; the Debug shape is good enough
+            // for log search).
+            tracing::info!(
+                trace_id = %trace.trace_id,
+                tenant_id = %trace.tenant_id,
+                collection = %trace.collection_name,
+                filter_strategy = ?trace.filter_strategy,
+                index_route = ?trace.index_route,
+                cache_result = ?trace.cache_result,
+                latency_ms = trace.latency_ms,
+                candidate_count = trace.candidate_count,
+                "search_plan_trace"
+            );
+
+            // Gate the trace + explain emission on debug=true per LLD §1.
+            // Non-debug responses keep the JSON payload tight; debug
+            // responses surface the full trace + a human-readable route
+            // explain (route_explain::build over the populated trace).
+            let debug_requested = request.debug.unwrap_or(false);
+            let (trace_field, explain_field) = if debug_requested {
+                // TD-064 / LLD §5: surface the recall-probe gate state to
+                // EXPLAIN so the route_explain hint chain can emit
+                // RECALL_PROBE_CLOSED when the model wanted the quantized
+                // route but the gate isn't open for this (tenant, collection)
+                // scope. Only paid on debug=true requests — non-debug
+                // searches skip the lock acquisition entirely.
+                let recall_probe_open = match &state.recall_probe_gate {
+                    Some(gate) => {
+                        let scope = crate::catalog::ProbeScope::new(
+                            tenant.tenant_id.clone(),
+                            collection.clone(),
+                        );
+                        Some(gate.is_open(&scope).await)
+                    }
+                    None => None,
+                };
+                let explain = crate::observability::route_explain::build(
+                    &crate::observability::route_explain::ExplainInputs {
+                        trace: &trace,
+                        // collection_gb not yet plumbed from the
+                        // catalog; pass 0.0 and accept the
+                        // scan-fraction-zero fallback until
+                        // collection-size hydration lands.
+                        corpus_gb: 0.0,
+                        recall_probe_open,
+                        quantized_route_downgraded,
+                        cold_stage1_only,
+                    },
+                );
+                (Some(trace.clone()), Some(explain))
+            } else {
+                (None, None)
+            };
             let response = TypedSearchResponse {
                 results: results.clone(),
                 total_matches: Some(total_matches),
                 latency_ms,
                 request_id: request_id.clone(),
+                search_plan_trace: trace_field,
+                explain: explain_field,
             };
 
             info!(
@@ -954,14 +1838,25 @@ pub struct RecordV2Response {
     pub id: String,
     /// Vector embedding (if requested)
     pub vector: Option<Vec<f32>>,
-    /// Typed fields from the record
-    pub typed_fields: HashMap<String, serde_json::Value>,
+    /// Rich properties from the record
+    pub props: HashMap<String, RestProximaValue>,
     /// TEXT fields (if include_text is true)
     pub text_fields: Option<Vec<TextFieldOutput>>,
     /// Record version
     pub version: Option<u64>,
     /// Record timestamp
     pub timestamp: Option<i64>,
+}
+
+/// Response for deleting a single record.
+#[derive(Debug, Serialize)]
+pub struct DeleteRecordV2Response {
+    /// Whether the delete tombstone was accepted.
+    pub success: bool,
+    /// Deleted record ID.
+    pub id: String,
+    /// Processing latency in microseconds.
+    pub processing_time_us: i64,
 }
 
 /// GET /api/v2/collections/{collection_id}/records/{record_id}
@@ -1018,55 +1913,49 @@ pub async fn get_record_v2(
         false
     });
 
-    // Get vector via unified handlers
     match state
-        .unified_handlers
-        .handle_vector_v1_for_tenant(
-            &collection_id,
-            &record_id,
-            include_vector,
-            true,
+        .request_handlers
+        .handle_record_get_for_tenant(
+            RichRecordGetRequest {
+                collection_id: collection_id.clone(),
+                record_id: record_id.clone(),
+                include_vector,
+                include_props: true,
+            },
             Some(&tenant.tenant_id),
         )
         .await
     {
-        Ok(resp) => {
-            // resp.results is Option<SearchResult>, use default if None
-            let search_result = resp.results.unwrap_or_else(|| {
-                debug!("Get vector response contains no results, using default");
-                Default::default()
-            });
-            let result = search_result
-                .results
-                .first()
-                .ok_or_else(|| ApiError::NotFound(format!("Record '{}' not found", record_id)))?;
-
-            // Convert metadata to typed_fields
-            let typed_fields: HashMap<String, serde_json::Value> = result
-                .metadata
+        Ok(Some(record)) => {
+            let props: HashMap<String, RestProximaValue> = record
+                .props
                 .iter()
-                .map(|(k, v)| Ok((k.clone(), sql_value_to_json(v)?)))
-                .collect::<Result<_, ApiError>>()?;
+                .map(|(k, v)| (k.clone(), proxima_value_to_rest_value(v)))
+                .collect();
 
             let response = RecordV2Response {
-                id: result.id.clone(),
+                id: record.id,
                 vector: if include_vector {
-                    Some(result.vector.clone())
+                    Some(record.vector)
                 } else {
                     None
                 },
-                typed_fields,
+                props,
                 text_fields: if include_text {
                     Some(vec![]) // Would be populated from text storage
                 } else {
                     None
                 },
-                version: result.version.map(|v| v as u64),
-                timestamp: result.timestamp,
+                version: record.version.map(|v| v as u64),
+                timestamp: record.timestamp,
             };
 
             Ok(Json(response))
         }
+        Ok(None) => Err(ApiError::NotFound(format!(
+            "Record '{}' not found in collection '{}'",
+            record_id, collection_id
+        ))),
         Err(e) => {
             if e.to_string().contains("not found") {
                 Err(ApiError::NotFound(format!(
@@ -1080,9 +1969,568 @@ pub async fn get_record_v2(
     }
 }
 
+/// DELETE /api/v2/collections/{collection_id}/records/{record_id}
+///
+/// Delete a single record by writing a tombstone through the rich record path.
+pub async fn delete_record_v2(
+    Path((collection_id, record_id)): Path<(String, String)>,
+    State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
+) -> ApiResult<Json<DeleteRecordV2Response>> {
+    debug!(
+        "V2 API: Deleting record '{}' from collection '{}'",
+        record_id, collection_id
+    );
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    if record_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Record ID is required".to_string(),
+        ));
+    }
+
+    let intent = WriteIntent::new(&collection_id, WriteOperationKind::Delete)
+        .with_durability(WriteDurabilityRequirement::WalRequired)
+        .with_row_count_hint(1);
+    let lane = WriteLaneRouter::new().route(&intent);
+    debug!(
+        collection_id = %collection_id,
+        write_lane = ?lane.lane,
+        guards = ?lane.required_guards,
+        "REST v2 delete_record write-lane decision"
+    );
+
+    match state
+        .request_handlers
+        .handle_record_delete_batch_for_tenant(
+            RichRecordDeleteBatchRequest {
+                collection_id: collection_id.clone(),
+                record_ids: vec![record_id.clone()],
+            },
+            Some(&tenant.tenant_id),
+        )
+        .await
+    {
+        Ok(result) if result.success => Ok(Json(DeleteRecordV2Response {
+            success: true,
+            id: record_id,
+            processing_time_us: result.metrics.processing_time_us,
+        })),
+        Ok(result) => Err(ApiError::Internal(format!(
+            "Delete failed: {}",
+            result
+                .errors
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "unknown error".to_string())
+        ))),
+        Err(e) => {
+            if e.to_string().contains("not found") {
+                Err(ApiError::NotFound(format!(
+                    "Record '{}' not found in collection '{}'",
+                    record_id, collection_id
+                )))
+            } else {
+                Err(ApiError::Internal(format!(
+                    "Failed to delete record: {}",
+                    e
+                )))
+            }
+        }
+    }
+}
+
+// ── TD-099: paginated records scan ──────────────────────────────────
+//
+// Cursor-paginated table-scan over a collection. Spec'd at
+// `POST /api/v2/collections/{collection_id}/records/scan`
+// (operationId `scanRecords`). The Hadoop connector's RecordReader and
+// Spark's planInputPartitions use this to drain a collection without
+// the similarity bias of `searchRecords`.
+//
+// Storage-engine delegation (TD-099 acceptance 2) shipped in
+// `c8050ab1a`: the handler drives `UnifiedHandlers::handle_record_scan_for_tenant`
+// → `VectorOperationsService::scan_records_with_tenant_context` (the
+// same WAL/memtable scan used by the rest of the v2 surface).
+//
+// Cursor pagination (TD-099 acceptance 3, sub-slice a): the handler
+// now stable-sorts records by `(updated_at_ns, oid)` then filters
+// strictly after the inbound cursor's tuple. Cursors are opaque
+// `base64(rmp_serde(ScanCursor))` blobs; stale cursors (epoch > 24h)
+// return 410, collection-mismatched cursors return 400. The
+// `VectorOperationsService` still materializes the full collection
+// (cursor is applied at the handler layer); pushing cursor into the
+// WAL streaming layer is a separate slice — see TD-099 acceptance (3).
+
+// ScanCursor + apply_scan_cursor moved to `src/services/scan_cursor.rs`
+// (shared codec — used by both this REST handler and
+// `EmbeddedProximaDB::scan_records`). REST-specific error mapping
+// (HTTP 400 / 410) happens at the handler boundary; the codec itself
+// stays protocol-agnostic.
+pub(crate) use crate::services::scan_cursor::{ScanCursor, ScanCursorDecodeError};
+
+/// Map the shared codec's decode errors onto our HTTP-mapped
+/// ApiError variants. Kept thin so the codec stays protocol-neutral.
+fn decode_scan_cursor(
+    raw: &str,
+    requested_collection: &str,
+    now_ns: i64,
+) -> Result<ScanCursor, ApiError> {
+    ScanCursor::decode(raw, requested_collection, now_ns).map_err(|e| match e {
+        ScanCursorDecodeError::Expired => ApiError::Gone(e.to_string()),
+        ScanCursorDecodeError::CollectionMismatch { .. } | ScanCursorDecodeError::Malformed(_) => {
+            ApiError::InvalidArgument(e.to_string())
+        }
+    })
+}
+
+/// Body of `POST /records/scan`. Mirrors the OpenAPI `ScanRecordsRequest`
+/// schema; all fields optional so an empty `{}` returns the first page.
+#[derive(Debug, Deserialize, Default)]
+pub struct ScanRecordsRequest {
+    /// Opaque continuation token returned as `next_cursor` from a
+    /// prior page. Omit / null to start from the beginning.
+    #[serde(default)]
+    pub cursor: Option<String>,
+    /// Max records to return in this page. Server enforces upper bound.
+    #[serde(default)]
+    pub limit: Option<u32>,
+    /// Metadata filter applied (before the limit) to the scanned page.
+    /// Accepts either the typed list form `[{field,op,value}]` (mirrors
+    /// `searchRecords.filters`) or a simple equality map `{field: value}`.
+    #[serde(default)]
+    pub filter: Option<serde_json::Value>,
+    #[serde(default)]
+    pub include_vector: Option<bool>,
+    #[serde(default)]
+    pub include_text: Option<bool>,
+}
+
+/// Response shape for `scanRecords`. Empty `records` + null
+/// `next_cursor` signals end-of-scan. Each record matches the OpenAPI
+/// `RecordResponse` schema (same shape used by `getRecord`).
+#[derive(Debug, Serialize)]
+pub struct ScanRecordsResponse {
+    pub records: Vec<RecordV2Response>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub scanned_count: Option<u64>,
+}
+
+/// Server-side cap on a single scan page. Callers asking for more get
+/// silently clamped — keeps a wild `limit=u32::MAX` from materializing
+/// the whole collection in one round trip.
+const SCAN_RECORDS_MAX_PAGE: usize = 10_000;
+/// Default `limit` when the caller omits one. Mirrors the Hadoop SDK
+/// default in `clients/rust/src/connectors/hadoop.rs`.
+const SCAN_RECORDS_DEFAULT_LIMIT: usize = 1_000;
+
+/// POST /api/v2/collections/{collection_id}/records/scan
+///
+/// Returns the next page of records (TD-099 acceptance 2, live). The
+/// handler resolves the collection id, calls
+/// `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
+/// `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
+/// `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
+/// still deferred: `next_cursor` is always `None` today; callers bump
+/// `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+pub async fn scan_records(
+    Path(collection_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
+    Json(request): Json<ScanRecordsRequest>,
+) -> ApiResult<Json<ScanRecordsResponse>> {
+    debug!("V2 API: scan_records for collection '{}'", collection_id);
+
+    if collection_id.is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "Collection ID is required".to_string(),
+        ));
+    }
+
+    let include_vector = request.include_vector.unwrap_or(true);
+    let include_text = request.include_text.unwrap_or(false);
+    let include_props = true;
+    let effective_limit = clamp_scan_limit(request.limit);
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
+
+    let inbound_cursor: Option<ScanCursor> = match request.cursor.as_deref() {
+        Some(raw) if !raw.is_empty() => Some(decode_scan_cursor(raw, &collection_id, now_ns)?),
+        _ => None,
+    };
+
+    // Metadata filter is parsed into the canonical FilterExpression and pushed
+    // into the scan predicate (applied before the limit). Previously this field
+    // was accepted but silently ignored — a cross-tenant leak for callers that
+    // scope a shared collection with an `account_id`/`tenant_id` filter.
+    let metadata_filter = match request.filter.as_ref() {
+        Some(value) => parse_metadata_filter(value)?,
+        None => None,
+    };
+
+    // TD-099(3d): cursor + limit + tenant predicate are pushed into the WAL
+    // streaming layer; the handler returns a single ordered page plus the next
+    // cursor (O(log d + limit) per page once the scan index is warm).
+    let (page, next_cursor) = state
+        .request_handlers
+        .handle_record_scan_paginated_for_tenant(
+            &collection_id,
+            inbound_cursor.as_ref(),
+            effective_limit,
+            include_vector,
+            include_props,
+            Some(&tenant.tenant_id),
+            metadata_filter.as_ref(),
+            now_ns,
+        )
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                ApiError::NotFound(format!("Collection '{}' not found", collection_id))
+            } else {
+                ApiError::Internal(format!("scan_records failed: {}", e))
+            }
+        })?;
+
+    let scanned_count = page.len() as u64;
+    let serialized: Vec<RecordV2Response> = page
+        .into_iter()
+        .map(|record| proxima_record_to_response(record, include_vector, include_text))
+        .collect();
+
+    let next_cursor_str = match next_cursor {
+        Some(c) => Some(
+            c.encode()
+                .map_err(|e| ApiError::Internal(format!("cursor encode failed: {e}")))?,
+        ),
+        None => None,
+    };
+
+    Ok(Json(ScanRecordsResponse {
+        records: serialized,
+        next_cursor: next_cursor_str,
+        scanned_count: Some(scanned_count),
+    }))
+}
+
+/// Clamp the caller's requested `limit` into the
+/// `[1, SCAN_RECORDS_MAX_PAGE]` range. `None` defaults to
+/// `SCAN_RECORDS_DEFAULT_LIMIT`. Pure for testing.
+fn clamp_scan_limit(requested: Option<u32>) -> usize {
+    match requested {
+        None => SCAN_RECORDS_DEFAULT_LIMIT,
+        Some(0) => SCAN_RECORDS_DEFAULT_LIMIT,
+        Some(n) => (n as usize).min(SCAN_RECORDS_MAX_PAGE),
+    }
+}
+
+/// Convert a canonical `ProximaRecord` into the `RecordResponse`
+/// wire shape used by both `getRecord` and `scanRecords`. Honors
+/// `include_vector` + `include_text`; props always populated.
+fn proxima_record_to_response(
+    record: ProximaRecord,
+    include_vector: bool,
+    include_text: bool,
+) -> RecordV2Response {
+    let vector = if include_vector {
+        record
+            .embeddings
+            .into_iter()
+            .next()
+            .map(|cell| cell.values.to_fp32_owned())
+    } else {
+        None
+    };
+
+    let props: HashMap<String, RestProximaValue> = record
+        .props
+        .into_iter()
+        .filter_map(|(k, node)| match node {
+            ProximaTreeNode::Value(v) => Some((k, proxima_value_to_rest_value(&v))),
+            _ => None,
+        })
+        .collect();
+
+    let version = if record.record_version == 0 {
+        None
+    } else {
+        Some(record.record_version)
+    };
+    let timestamp = if record.updated_at_ns == 0 {
+        None
+    } else {
+        // ProximaRecord timestamps are nanoseconds; the v2 response
+        // shape historically uses the same ns granularity (see
+        // get_record_v2). Pass through unchanged.
+        Some(record.updated_at_ns)
+    };
+
+    RecordV2Response {
+        id: if record.oid.is_empty() {
+            record.local_id.unwrap_or_else(|| "unknown".to_string())
+        } else {
+            record.oid
+        },
+        vector,
+        props,
+        text_fields: if include_text { Some(vec![]) } else { None },
+        version,
+        timestamp,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rv(value: serde_json::Value) -> RestProximaValue {
+        RestProximaValue::Inferred(value)
+    }
+
+    #[test]
+    fn parse_metadata_filter_object_form_is_equality_and() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        // Single key → a single Equals comparison (the account-scoping case).
+        let expr = parse_metadata_filter(&serde_json::json!({ "account_id": "acctA" }))
+            .expect("valid")
+            .expect("some");
+        match expr {
+            FilterExpression::Comparison {
+                field,
+                operator,
+                value,
+            } => {
+                assert_eq!(field, "account_id");
+                assert_eq!(operator, ComparisonOperator::Equals);
+                assert_eq!(value, serde_json::json!("acctA"));
+            }
+            other => panic!("expected single comparison, got {other:?}"),
+        }
+
+        // Multiple keys → an AND of equality comparisons.
+        let expr = parse_metadata_filter(&serde_json::json!({ "account_id": "acctA", "tier": 2 }))
+            .expect("valid")
+            .expect("some");
+        match expr {
+            FilterExpression::And(conditions) => assert_eq!(conditions.len(), 2),
+            other => panic!("expected AND, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_metadata_filter_array_form_lowers_typed_ops() {
+        use crate::core::search::{ComparisonOperator, FilterExpression};
+
+        let expr = parse_metadata_filter(&serde_json::json!([
+            { "field": "name", "op": "starts_with", "value": "ac" }
+        ]))
+        .expect("valid")
+        .expect("some");
+        match expr {
+            FilterExpression::Comparison {
+                operator, field, ..
+            } => {
+                assert_eq!(field, "name");
+                // Must NOT collapse to Contains.
+                assert_eq!(operator, ComparisonOperator::StartsWith);
+            }
+            other => panic!("expected comparison, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_metadata_filter_empty_and_invalid() {
+        assert!(
+            parse_metadata_filter(&serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_metadata_filter(&serde_json::json!({}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_metadata_filter(&serde_json::json!([]))
+                .unwrap()
+                .is_none()
+        );
+        // Bad operator in the typed-list form is rejected.
+        assert!(
+            parse_metadata_filter(&serde_json::json!([
+                { "field": "x", "op": "bogus", "value": 1 }
+            ]))
+            .is_err()
+        );
+        // A bare scalar is neither an object nor a list.
+        assert!(parse_metadata_filter(&serde_json::json!("nope")).is_err());
+    }
+
+    #[test]
+    fn test_clamp_scan_limit_defaults_when_missing_or_zero() {
+        assert_eq!(clamp_scan_limit(None), SCAN_RECORDS_DEFAULT_LIMIT);
+        assert_eq!(clamp_scan_limit(Some(0)), SCAN_RECORDS_DEFAULT_LIMIT);
+    }
+
+    #[test]
+    fn test_clamp_scan_limit_passes_through_small_values() {
+        assert_eq!(clamp_scan_limit(Some(1)), 1);
+        assert_eq!(clamp_scan_limit(Some(42)), 42);
+        assert_eq!(
+            clamp_scan_limit(Some(SCAN_RECORDS_MAX_PAGE as u32)),
+            SCAN_RECORDS_MAX_PAGE
+        );
+    }
+
+    #[test]
+    fn test_clamp_scan_limit_caps_oversize_requests() {
+        assert_eq!(
+            clamp_scan_limit(Some(u32::MAX)),
+            SCAN_RECORDS_MAX_PAGE,
+            "oversize limit must be clamped to the page cap"
+        );
+        assert_eq!(
+            clamp_scan_limit(Some(SCAN_RECORDS_MAX_PAGE as u32 + 1)),
+            SCAN_RECORDS_MAX_PAGE,
+        );
+    }
+
+    #[test]
+    fn test_scan_records_request_deserializes_bare_body() {
+        // OpenAPI spec marks every field optional; a bare {} must parse.
+        let parsed: ScanRecordsRequest = serde_json::from_str("{}").unwrap();
+        assert!(parsed.cursor.is_none());
+        assert!(parsed.limit.is_none());
+        assert!(parsed.filter.is_none());
+        assert!(parsed.include_vector.is_none());
+        assert!(parsed.include_text.is_none());
+    }
+
+    #[test]
+    fn test_scan_records_request_round_trips_full_body() {
+        let body = r#"{
+            "cursor": "abc",
+            "limit": 250,
+            "filter": {"label": "active"},
+            "include_vector": false,
+            "include_text": true
+        }"#;
+        let parsed: ScanRecordsRequest = serde_json::from_str(body).unwrap();
+        assert_eq!(parsed.cursor.as_deref(), Some("abc"));
+        assert_eq!(parsed.limit, Some(250));
+        assert_eq!(parsed.include_vector, Some(false));
+        assert_eq!(parsed.include_text, Some(true));
+        assert!(parsed.filter.is_some());
+    }
+
+    #[test]
+    fn test_proxima_record_to_response_extracts_oid_props_and_vector() {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
+
+        let mut record = ProximaRecord::default();
+        record.oid = "rec-1".to_string();
+        record.record_version = 7;
+        record.updated_at_ns = 1_700_000_000_000_000_000;
+        record.props.insert(
+            "label".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("active".to_string())),
+        );
+        record.embeddings.push(EmbeddingCell::new_fp32(
+            "model-x",
+            "vector",
+            3,
+            vec![0.1, 0.2, 0.3],
+        ));
+
+        let resp = proxima_record_to_response(record, true, false);
+        assert_eq!(resp.id, "rec-1");
+        assert_eq!(resp.version, Some(7));
+        assert_eq!(resp.timestamp, Some(1_700_000_000_000_000_000));
+        assert_eq!(resp.vector.as_ref().map(|v| v.len()), Some(3));
+        assert!(resp.props.contains_key("label"));
+        assert!(resp.text_fields.is_none(), "include_text=false → None");
+    }
+
+    #[test]
+    fn test_proxima_record_to_response_omits_vector_when_not_requested() {
+        use proximadb_records::{EmbeddingCell, ProximaRecord};
+
+        let mut record = ProximaRecord::default();
+        record.oid = "rec-2".to_string();
+        record.embeddings.push(EmbeddingCell::new_fp32(
+            "model-x",
+            "vector",
+            2,
+            vec![1.0, 2.0],
+        ));
+
+        let resp = proxima_record_to_response(record, false, true);
+        assert!(resp.vector.is_none(), "include_vector=false → None");
+        match resp.text_fields {
+            Some(fields) => assert_eq!(fields.len(), 0, "include_text=true → empty Vec"),
+            None => panic!("include_text=true must yield Some(vec)"),
+        }
+    }
+
+    // Cursor codec + apply_scan_cursor tests live with the shared
+    // module: `src/services/scan_cursor.rs::tests`. The handler-side
+    // tests below only verify the REST-specific error mapping
+    // (decode_scan_cursor → ApiError variants → HTTP status codes).
+
+    fn fixture_cursor_raw() -> String {
+        ScanCursor {
+            collection_id: "col-a".to_string(),
+            last_updated_at_ns: 1_700_000_000_000_000_000,
+            last_oid: "rec-077".to_string(),
+            epoch_ns: 1_700_000_000_000_000_000,
+        }
+        .encode()
+        .expect("encode")
+    }
+
+    #[test]
+    fn test_decode_scan_cursor_maps_stale_to_gone_410() {
+        let raw = fixture_cursor_raw();
+        // 25 hours later, past the 24h ceiling.
+        let now_ns = 1_700_000_000_000_000_000_i64 + 25 * 3_600 * 1_000_000_000;
+        match decode_scan_cursor(&raw, "col-a", now_ns) {
+            Err(ApiError::Gone(_)) => {}
+            other => panic!("expected ApiError::Gone, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_decode_scan_cursor_maps_mismatch_and_malformed_to_400() {
+        let raw = fixture_cursor_raw();
+        let now_ns = 1_700_000_000_000_000_000_i64;
+        // Collection mismatch.
+        match decode_scan_cursor(&raw, "col-OTHER", now_ns) {
+            Err(ApiError::InvalidArgument(msg)) => {
+                assert!(
+                    msg.contains("col-a"),
+                    "msg must surface issuing collection: {msg}"
+                );
+                assert!(msg.contains("col-OTHER"), "msg must surface target: {msg}");
+            }
+            other => panic!("expected ApiError::InvalidArgument, got {:?}", other),
+        }
+        // Malformed base64.
+        assert!(matches!(
+            decode_scan_cursor("not!valid!base64", "col-a", now_ns),
+            Err(ApiError::InvalidArgument(_))
+        ));
+    }
 
     #[test]
     fn test_insert_request_deserialization() {
@@ -1091,7 +2539,7 @@ mod tests {
                 {
                     "id": "doc_1",
                     "vector": [0.1, 0.2, 0.3],
-                    "typed_fields": {
+                    "props": {
                         "category": "test",
                         "price": 99.99
                     },
@@ -1144,8 +2592,8 @@ mod tests {
         let json = r#"{
             "field": "price",
             "op": "between",
-            "value": 100,
-            "value_upper": 500
+            "value": {"type": "decimal", "value": "100.00"},
+            "value_upper": {"type": "decimal", "value": "500.00"}
         }"#;
 
         let filter: TypedFilter =
@@ -1155,13 +2603,62 @@ mod tests {
     }
 
     #[test]
+    fn test_typed_filter_to_rich_preserves_explicit_decimal() {
+        let filter = TypedFilter {
+            field: "price".to_string(),
+            op: "between".to_string(),
+            value: RestProximaValue::Typed {
+                type_name: "decimal".to_string(),
+                value: serde_json::json!("10.50"),
+            },
+            value_upper: Some(RestProximaValue::Typed {
+                type_name: "decimal".to_string(),
+                value: serde_json::json!("20.75"),
+            }),
+        };
+
+        let rich = typed_filter_to_rich(&filter).expect("typed filter should convert");
+
+        assert!(matches!(rich.value, ProximaValue::Decimal(v) if v == "10.50"));
+        assert!(matches!(rich.value_upper, Some(ProximaValue::Decimal(v)) if v == "20.75"));
+    }
+
+    #[test]
+    fn test_proxima_value_to_rest_value_preserves_rich_type() {
+        let value = ProximaValue::Jsonb(serde_json::json!({"tags": ["a", "b"]}));
+        let rest = proxima_value_to_rest_value(&value);
+
+        assert_eq!(
+            rest,
+            RestProximaValue::Typed {
+                type_name: "jsonb".to_string(),
+                value: serde_json::json!({"tags": ["a", "b"]}),
+            }
+        );
+    }
+
+    #[test]
+    fn test_nested_rest_values_preserve_element_types() {
+        let value = ProximaValue::Array(vec![ProximaValue::Decimal("10.50".to_string())]);
+        let rest = proxima_value_to_rest_value(&value);
+
+        assert_eq!(
+            rest,
+            RestProximaValue::Typed {
+                type_name: "array".to_string(),
+                value: serde_json::json!([{"type": "decimal", "value": "10.50"}]),
+            }
+        );
+    }
+
+    #[test]
     fn test_convert_eq_filter() {
         use crate::proto::proximadb_v1::ComparisonOp;
 
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "eq".to_string(),
-            value: serde_json::json!("active"),
+            value: rv(serde_json::json!("active")),
             value_upper: None,
         }];
 
@@ -1180,25 +2677,25 @@ mod tests {
             TypedFilter {
                 field: "price".to_string(),
                 op: "gt".to_string(),
-                value: serde_json::json!(100),
+                value: rv(serde_json::json!(100)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "gte".to_string(),
-                value: serde_json::json!(100),
+                value: rv(serde_json::json!(100)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "lt".to_string(),
-                value: serde_json::json!(500),
+                value: rv(serde_json::json!(500)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "lte".to_string(),
-                value: serde_json::json!(500),
+                value: rv(serde_json::json!(500)),
                 value_upper: None,
             },
         ];
@@ -1219,8 +2716,8 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "price".to_string(),
             op: "between".to_string(),
-            value: serde_json::json!(100),
-            value_upper: Some(serde_json::json!(500)),
+            value: rv(serde_json::json!(100)),
+            value_upper: Some(rv(serde_json::json!(500))),
         }];
 
         let clauses = convert_typed_filters_to_clauses(&filters)
@@ -1238,7 +2735,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "price".to_string(),
             op: "between".to_string(),
-            value: serde_json::json!(100),
+            value: rv(serde_json::json!(100)),
             value_upper: None, // Missing upper bound
         }];
 
@@ -1253,7 +2750,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "description".to_string(),
             op: "contains".to_string(),
-            value: serde_json::json!("search term"),
+            value: rv(serde_json::json!("search term")),
             value_upper: None,
         }];
 
@@ -1270,7 +2767,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "starts_with".to_string(),
-            value: serde_json::json!("pre"),
+            value: rv(serde_json::json!("pre")),
             value_upper: None,
         }];
 
@@ -1293,7 +2790,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "ends_with".to_string(),
-            value: serde_json::json!("suffix"),
+            value: rv(serde_json::json!("suffix")),
             value_upper: None,
         }];
 
@@ -1316,7 +2813,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "in".to_string(),
-            value: serde_json::json!(["active", "pending", "review"]),
+            value: rv(serde_json::json!(["active", "pending", "review"])),
             value_upper: None,
         }];
 
@@ -1343,7 +2840,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "priority".to_string(),
             op: "in".to_string(),
-            value: serde_json::json!([1, 2, 3]),
+            value: rv(serde_json::json!([1, 2, 3])),
             value_upper: None,
         }];
 
@@ -1365,7 +2862,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "in".to_string(),
-            value: serde_json::json!("not_an_array"),
+            value: rv(serde_json::json!("not_an_array")),
             value_upper: None,
         }];
 
@@ -1380,7 +2877,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "status".to_string(),
             op: "neq".to_string(),
-            value: serde_json::json!("deleted"),
+            value: rv(serde_json::json!("deleted")),
             value_upper: None,
         }];
 
@@ -1398,19 +2895,19 @@ mod tests {
             TypedFilter {
                 field: "category".to_string(),
                 op: "eq".to_string(),
-                value: serde_json::json!("electronics"),
+                value: rv(serde_json::json!("electronics")),
                 value_upper: None,
             },
             TypedFilter {
                 field: "price".to_string(),
                 op: "lt".to_string(),
-                value: serde_json::json!(1000),
+                value: rv(serde_json::json!(1000)),
                 value_upper: None,
             },
             TypedFilter {
                 field: "in_stock".to_string(),
                 op: "eq".to_string(),
-                value: serde_json::json!(true),
+                value: rv(serde_json::json!(true)),
                 value_upper: None,
             },
         ];
@@ -1721,7 +3218,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "x".to_string(),
             op: "regex".to_string(),
-            value: serde_json::json!(".*"),
+            value: rv(serde_json::json!(".*")),
             value_upper: None,
         }];
 
@@ -1736,7 +3233,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "starts_with".to_string(),
-            value: serde_json::json!(123),
+            value: rv(serde_json::json!(123)),
             value_upper: None,
         }];
 
@@ -1749,7 +3246,7 @@ mod tests {
         let filters = vec![TypedFilter {
             field: "name".to_string(),
             op: "ends_with".to_string(),
-            value: serde_json::json!(true),
+            value: rv(serde_json::json!(true)),
             value_upper: None,
         }];
 
@@ -1943,7 +3440,7 @@ mod tests {
                 {
                     "id": "rec_001",
                     "vector": [0.1, 0.2, 0.3, 0.4],
-                    "typed_fields": {
+                    "props": {
                         "name": "Widget",
                         "price": 29.99,
                         "in_stock": true,
@@ -1955,14 +3452,11 @@ mod tests {
                             "content": "A high-quality widget for all purposes",
                             "storage_hint": "adaptive"
                         }
-                    ],
-                    "metadata": {
-                        "source": "api_test"
-                    }
+                    ]
                 },
                 {
                     "vector": [0.5, 0.6, 0.7, 0.8],
-                    "typed_fields": {
+                    "props": {
                         "name": "Gadget"
                     }
                 }
@@ -1980,15 +3474,12 @@ mod tests {
         let rec0 = &request.records[0];
         assert_eq!(rec0.id, Some("rec_001".to_string()));
         assert_eq!(rec0.vector.len(), 4);
-        assert!(rec0.typed_fields.is_some());
-        let typed = rec0
-            .typed_fields
-            .as_ref()
-            .expect("typed_fields should be Some");
-        assert_eq!(typed.get("name"), Some(&serde_json::json!("Widget")));
-        assert_eq!(typed.get("price"), Some(&serde_json::json!(29.99)));
-        assert_eq!(typed.get("in_stock"), Some(&serde_json::json!(true)));
-        assert_eq!(typed.get("quantity"), Some(&serde_json::json!(42)));
+        assert!(rec0.props.is_some());
+        let props = rec0.props.as_ref().expect("props should be Some");
+        assert!(props.contains_key("name"));
+        assert!(props.contains_key("price"));
+        assert!(props.contains_key("in_stock"));
+        assert!(props.contains_key("quantity"));
 
         let text_fields = rec0
             .text_fields
@@ -1998,15 +3489,12 @@ mod tests {
         assert_eq!(text_fields[0].name, "description");
         assert_eq!(text_fields[0].storage_hint, Some("adaptive".to_string()));
 
-        let metadata = rec0.metadata.as_ref().expect("metadata should be Some");
-        assert_eq!(metadata.get("source"), Some(&serde_json::json!("api_test")));
-
         // Second record has auto-generated ID (None)
         let rec1 = &request.records[1];
         assert!(rec1.id.is_none());
         assert_eq!(rec1.vector.len(), 4);
         assert!(rec1.text_fields.is_none());
-        assert!(rec1.metadata.is_none());
+        assert!(rec1.props.is_some());
     }
 
     // ============================================================
@@ -2057,9 +3545,9 @@ mod tests {
         // A batch with multiple records of varying completeness
         let json = r#"{
             "records": [
-                {"vector": [0.1, 0.2], "typed_fields": {"a": 1}},
-                {"vector": [0.3, 0.4], "typed_fields": {"b": 2}},
-                {"vector": [0.5, 0.6], "typed_fields": {"c": 3}},
+                {"vector": [0.1, 0.2], "props": {"a": 1}},
+                {"vector": [0.3, 0.4], "props": {"b": 2}},
+                {"vector": [0.5, 0.6], "props": {"c": 3}},
                 {"vector": [0.7, 0.8]}
             ]
         }"#;
@@ -2076,11 +3564,11 @@ mod tests {
             assert_eq!(rec.vector.len(), 2);
         }
 
-        // Only first three have typed_fields
-        assert!(request.records[0].typed_fields.is_some());
-        assert!(request.records[1].typed_fields.is_some());
-        assert!(request.records[2].typed_fields.is_some());
-        assert!(request.records[3].typed_fields.is_none());
+        // Only first three have props
+        assert!(request.records[0].props.is_some());
+        assert!(request.records[1].props.is_some());
+        assert!(request.records[2].props.is_some());
+        assert!(request.records[3].props.is_none());
     }
 
     // ============================================================
@@ -2123,7 +3611,7 @@ mod tests {
         assert_eq!(filters[2].op, "lte");
         assert_eq!(filters[3].field, "brand");
         assert_eq!(filters[3].op, "in");
-        assert!(filters[3].value.is_array());
+        assert!(rest_value_payload(&filters[3].value).is_array());
         assert_eq!(filters[4].field, "description");
         assert_eq!(filters[4].op, "contains");
 
@@ -2262,17 +3750,24 @@ mod tests {
                 id: "doc_1".to_string(),
                 score: 0.95,
                 vector: None,
-                typed_fields: {
+                props: {
                     let mut m = HashMap::new();
-                    m.insert("category".to_string(), serde_json::json!("test"));
+                    m.insert(
+                        "category".to_string(),
+                        RestProximaValue::Typed {
+                            type_name: "string".to_string(),
+                            value: serde_json::json!("test"),
+                        },
+                    );
                     m
                 },
                 text_fields: None,
-                metadata: None,
             }],
             total_matches: Some(100),
             latency_ms: 5,
             request_id: "req-123".to_string(),
+            search_plan_trace: None,
+            explain: None,
         };
 
         let search_json =

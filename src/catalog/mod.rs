@@ -14,51 +14,86 @@
 //! - Lakehouse-native: Iceberg/Delta/Hudi table format support
 //! - Multi-tenant: Namespace isolation with RBAC
 
-// Internal catalog types (Serde-compatible)
-pub mod types;
-
 // Core traits
-pub mod traits;
-
-// Metadata cache
-pub mod cache;
-
-// Schema utilities (builders, evolution, validation)
-pub mod schema;
+// `traits` was the local Catalog trait module. Option B consolidation
+// (PR INT-3 line-of-work) merged its method surface into
+// `proximadb_catalog::Catalog`. The module now lives only as a shim
+// that re-exports the canonical types so historical import paths
+// (`crate::catalog::traits::Catalog`, etc.) keep working without
+// touching every importer.
+pub mod traits {
+    pub use proximadb_catalog::{Catalog, CatalogHealth, LakehouseExtension, TableFormat};
+}
 
 // Partition pruning for query optimization
 pub mod partition_pruning;
 
-// Always-available catalog implementations
-pub mod hive;
-pub mod iceberg;
-pub mod native;
-
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
+
+// Iceberg REST catalog server — service layer translating internal ↔ Iceberg REST types
+pub mod iceberg_rest_service;
+
+// PAX segment registry — bridges write path (gRPC v2) with Iceberg REST snapshot stats
+pub mod segment_registry;
+pub use segment_registry::SegmentRegistry;
 
 // Catalog federation (unified view across internal and external catalogs)
 pub mod federation;
 
-// Feature-gated implementations
-#[cfg(feature = "delta-lake")]
-pub mod delta;
-#[cfg(feature = "aws")]
-pub mod glue;
-#[cfg(feature = "polaris-catalog")]
-pub mod polaris;
-#[cfg(feature = "unity-catalog")]
-pub mod unity;
+// Tenant tier store — per-tenant policy + budget + feature flags (LLD §3, §4).
+pub mod tenant_tier;
+pub use tenant_tier::{
+    BudgetDecision, CachedTenantTierStore, FeatureFlags, InMemoryTenantTierStore, TenantTierRecord,
+    TenantTierStore, Tier,
+};
 
-// Re-exports for feature-gated catalogs
+// Recall probe gate — gating logic for the quantized route default-on (LLD §5).
+pub mod recall_probe;
+pub use recall_probe::{ProbeConfig, ProbeOutcome, ProbeScope, ProbeState, RecallProbeGate};
+
+/// Soft-cap budget guard — gateway-side check returning structured rejection.
+pub mod budget_guard;
+pub use budget_guard::{BudgetRejection, EnforcedBudget, enforce as enforce_budget};
+
+/// Tenant tier transition detector — classifies before/after tier
+/// record pairs as upgrade / downgrade / lateral / no-change for the
+/// audit log + billing reconciliation.
+pub mod tier_transition;
+pub use tier_transition::{
+    AxisDelta, AxisDirection, TierTransitionEvent, TransitionClass, detect as detect_transition,
+};
+
+/// Tier recommendation — consumes a WorkloadMix + signal counts and
+/// recommends Upgrade / Hold / Downgrade with bounded reason labels.
+pub mod tier_recommendation;
+pub use tier_recommendation::{
+    Recommendation, RecommendationInputs, RecommendationKind, RecommendationPolicy, SignalCounts,
+    recommend as recommend_tier,
+};
+
+/// Corpus version registry — process-wide monotonic counter per
+/// (tenant, collection) for plan-cache invalidation. Catalog write
+/// paths call into this when they make a schema/segment/stats
+/// change visible to the planner.
+pub mod corpus_version;
+pub use corpus_version::CorpusVersionRegistry;
+
+/// File-backed CorpusVersionStore — first concrete durable backend
+/// for single-node deployments. Other backends (catalog row, KV)
+/// can implement the trait independently.
+pub mod corpus_version_fs_store;
+pub use corpus_version_fs_store::FileSystemCorpusVersionStore;
+
+// Feature-gated catalog backends — canonical impls live in `proximadb-catalog`.
 #[cfg(feature = "delta-lake")]
-pub use delta::{DeltaCatalog, DeltaCatalogConfig};
+pub use proximadb_catalog::delta::{DeltaCatalog, DeltaCatalogConfig};
 #[cfg(feature = "aws")]
-pub use glue::GlueCatalog;
+pub use proximadb_catalog::glue::GlueCatalog;
 #[cfg(feature = "polaris-catalog")]
-pub use polaris::PolarisCatalog;
+pub use proximadb_catalog::polaris::PolarisCatalog;
 #[cfg(feature = "unity-catalog")]
-pub use unity::UnityCatalog;
+pub use proximadb_catalog::unity::UnityCatalog;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,12 +102,15 @@ use anyhow::{Result, anyhow};
 use tokio::sync::RwLock;
 use tracing::info;
 
-pub use self::cache::CatalogCache;
 pub use self::partition_pruning::{
     PartitionInfo, PartitionPruner, PruningResult, parse_partition_path,
 };
 pub use self::traits::*;
-pub use self::types::*;
+pub use proximadb_catalog::cache::CatalogCache;
+pub use proximadb_catalog::*;
+// Explicitly re-export the local Catalog trait to disambiguate from proximadb_catalog::Catalog
+// (which is also pulled in via `pub use proximadb_catalog::*`).
+pub use self::traits::{Catalog, CatalogHealth};
 
 /// Catalog manager - manages multiple catalog instances
 pub struct CatalogManager {
@@ -130,15 +168,19 @@ impl CatalogManager {
         name: &str,
         storage_url: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::NativeCatalogConfig;
+        use proximadb_catalog::native::NativeCatalogConfig;
 
         let config = NativeCatalogConfig {
             storage_url: storage_url.to_string(),
             ..Default::default()
         };
 
-        let catalog =
-            native::NativeCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::native::NativeCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -151,14 +193,16 @@ impl CatalogManager {
         name: &str,
         thrift_uri: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::HiveCatalogConfig;
+        use proximadb_catalog::hive::HiveCatalogConfig;
 
         let config = HiveCatalogConfig {
             thrift_uri: thrift_uri.to_string(),
             ..Default::default()
         };
 
-        let catalog = hive::HiveCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog =
+            proximadb_catalog::hive::HiveCatalog::new(name.to_string(), config, self.cache.clone())
+                .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -172,7 +216,7 @@ impl CatalogManager {
         uri: &str,
         warehouse: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::IcebergCatalogConfig;
+        use proximadb_catalog::iceberg::IcebergCatalogConfig;
 
         let config = IcebergCatalogConfig {
             uri: uri.to_string(),
@@ -180,8 +224,12 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            iceberg::IcebergCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::iceberg::IcebergCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -208,7 +256,7 @@ impl CatalogManager {
         region: &str,
         catalog_id: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::GlueCatalogConfig;
+        use proximadb_catalog::glue::GlueCatalogConfig;
 
         let config = GlueCatalogConfig {
             region: region.to_string(),
@@ -216,7 +264,9 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog = glue::GlueCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog =
+            proximadb_catalog::glue::GlueCatalog::new(name.to_string(), config, self.cache.clone())
+                .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -264,7 +314,7 @@ impl CatalogManager {
         token: &str,
         catalog_name: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::UnityCatalogConfig;
+        use proximadb_catalog::unity::UnityCatalogConfig;
 
         let config = UnityCatalogConfig {
             workspace_url: workspace_url.to_string(),
@@ -273,8 +323,12 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            unity::UnityCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::unity::UnityCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -323,7 +377,7 @@ impl CatalogManager {
         warehouse: &str,
         credential: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use crate::proto::proximadb_v1::PolarisCatalogConfig;
+        use proximadb_catalog::polaris::PolarisCatalogConfig;
 
         let config = PolarisCatalogConfig {
             uri: uri.to_string(),
@@ -332,8 +386,12 @@ impl CatalogManager {
             ..Default::default()
         };
 
-        let catalog =
-            polaris::PolarisCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::polaris::PolarisCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -376,15 +434,19 @@ impl CatalogManager {
         name: &str,
         storage_url: &str,
     ) -> Result<Arc<dyn Catalog>> {
-        use delta::DeltaCatalogConfig;
+        use proximadb_catalog::delta::DeltaCatalogConfig;
 
         let config = DeltaCatalogConfig {
             storage_url: storage_url.to_string(),
             ..Default::default()
         };
 
-        let catalog =
-            delta::DeltaCatalog::new(name.to_string(), config, self.cache.clone()).await?;
+        let catalog = proximadb_catalog::delta::DeltaCatalog::new(
+            name.to_string(),
+            config,
+            self.cache.clone(),
+        )
+        .await?;
 
         let catalog: Arc<dyn Catalog> = Arc::new(catalog);
         self.register(catalog.clone()).await?;
@@ -402,6 +464,59 @@ impl CatalogManager {
             "Delta Lake catalog requires the 'delta-lake' feature flag. \
              Build with: cargo build --features delta-lake"
         ))
+    }
+
+    /// Create and register an OLTP catalog (PostgreSQL / Neon / Supabase / MariaDB / SQLite).
+    ///
+    /// The OLTP catalog stores ONLY catalog metadata — record data always stays in ProximaDB's
+    /// internal engines (stacked durability mandate). Use for collections < 1 GB.
+    ///
+    /// Connection string formats:
+    /// - `postgres://user:pw@host/db` — PostgreSQL, Neon, Supabase, CockroachDB
+    /// - `mysql://user:pw@host/db` — MariaDB, MySQL, TiDB
+    /// - `sqlite:///path/catalog.db` — SQLite
+    pub async fn create_oltp_catalog(
+        &self,
+        name: &str,
+        connection_string: &str,
+    ) -> Result<Arc<dyn Catalog>> {
+        let config = proximadb_catalog::oltp::OltpCatalogConfig {
+            connection_string: connection_string.to_string(),
+            ..Default::default()
+        };
+
+        let catalog =
+            proximadb_catalog::oltp::OltpCatalog::new(name.to_string(), config, self.cache.clone())
+                .await?;
+
+        let catalog: Arc<dyn Catalog> = Arc::new(catalog);
+        self.register(catalog.clone()).await?;
+        Ok(catalog)
+    }
+
+    /// Select the appropriate catalog based on estimated table size.
+    ///
+    /// - `size_bytes < threshold` → OLTP catalog (if registered)
+    /// - `size_bytes >= threshold` → default catalog (lakehouse / native)
+    pub async fn catalog_for_size(
+        &self,
+        size_bytes: u64,
+        oltp_threshold_bytes: u64,
+    ) -> Result<Arc<dyn Catalog>> {
+        let oltp_candidate = if size_bytes < oltp_threshold_bytes {
+            let catalogs = self.catalogs.read().await;
+            catalogs
+                .values()
+                .find(|c| c.catalog_type().starts_with("oltp-"))
+                .cloned()
+        } else {
+            None
+        };
+
+        if let Some(cat) = oltp_candidate {
+            return Ok(cat);
+        }
+        self.default_catalog().await
     }
 
     /// Get a catalog by name
@@ -511,55 +626,58 @@ impl Default for CatalogManager {
     }
 }
 
-/// Table identifier with namespace path
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TableIdentifier {
-    /// Namespace path (e.g., ["db", "schema"])
-    pub namespace: Vec<String>,
-    /// Table name
-    pub name: String,
-}
-
-impl TableIdentifier {
-    /// Create a new table identifier with the given namespace path and table name
-    pub fn new(namespace: Vec<String>, name: String) -> Self {
-        Self { namespace, name }
-    }
-
-    /// Parse from string (e.g., "db.schema.table")
-    pub fn parse(s: &str) -> Self {
-        let parts: Vec<&str> = s.split('.').collect();
-        if parts.len() == 1 {
-            Self::new(vec![], parts[0].to_string())
-        } else {
-            let namespace: Vec<String> = parts[..parts.len() - 1]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
-            let name = parts[parts.len() - 1].to_string();
-            Self::new(namespace, name)
-        }
-    }
-
-    /// Convert to fully-qualified name
-    pub fn to_fqn(&self) -> String {
-        if self.namespace.is_empty() {
-            self.name.clone()
-        } else {
-            format!("{}.{}", self.namespace.join("."), self.name)
-        }
-    }
-}
-
-impl std::fmt::Display for TableIdentifier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.to_fqn())
-    }
-}
+// `TableIdentifier` lives in `proximadb_catalog` and is re-exported via
+// `pub use self::types::*` above. The previous duplicate definition
+// here shadowed the canonical type and caused the in-flight catalog
+// trait migration to keep "two TableIdentifier" type-identity errors.
+// Removed as part of Option B consolidation.
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    // TD-108: the local `types` shim (`pub use proximadb_catalog::*`) was deleted.
+    // Alias the canonical crate so the existing `types::Catalog*` test paths keep
+    // resolving to exactly what the shim pointed at — no test churn.
+    use proximadb_catalog as types;
+
+    // ============================================================
+    // Re-export surface guard (TD-108 regression)
+    // ============================================================
+    // The `crate::catalog::*` facade must keep re-exporting the canonical
+    // xCatalog contract types from `proximadb-catalog`. TD-108 deleted the
+    // local `types`/`cache`/backend shim modules; this guard fails to COMPILE
+    // if any of those re-exports is dropped or a type is renamed/moved,
+    // catching the exact regression where the facade dangled against a
+    // removed module. Pure type-level references — no runtime assertions.
+    #[allow(dead_code, unused_imports)]
+    mod reexport_surface_guard {
+        // Contract types (were `crate::catalog::types::*`).
+        use crate::catalog::{
+            CatalogColumn, CatalogIndex, CatalogIndexType, CatalogProjection, CatalogTableSchema,
+            TableIdentifier,
+        };
+        use proximadb_data_model::ProximaType;
+        // Cache surface (was `crate::catalog::cache::CatalogCache`).
+        use crate::catalog::CatalogCache;
+        // Local trait re-exported explicitly to win over `proximadb_catalog::Catalog`.
+        use crate::catalog::{Catalog, CatalogHealth};
+
+        // Force each path to be a real, named item (not just a glob hit).
+        fn _surface(
+            _id: TableIdentifier,
+            _schema: CatalogTableSchema,
+            _col: CatalogColumn,
+            _dt: ProximaType,
+            _idx: CatalogIndex,
+            _idxt: CatalogIndexType,
+            _proj: CatalogProjection,
+            _cache: &CatalogCache,
+            _h: CatalogHealth,
+        ) {
+        }
+        // Trait object reachability through the facade.
+        type _CatalogDyn = dyn Catalog;
+    }
 
     // ========================
     // TableIdentifier Tests
@@ -1216,11 +1334,18 @@ mod tests {
 
         let schema = types::CatalogTableSchema::new("vectors")
             .with_column(
-                types::CatalogColumn::new(1, "id", types::CatalogDataType::String).nullable(false),
+                types::CatalogColumn::new(1, "id", proximadb_data_model::ProximaType::String)
+                    .nullable(false),
             )
             .with_column({
-                let mut col =
-                    types::CatalogColumn::new(2, "embedding", types::CatalogDataType::Vector);
+                let mut col = types::CatalogColumn::new(
+                    2,
+                    "embedding",
+                    proximadb_data_model::ProximaType::DenseVector {
+                        element: proximadb_data_model::VectorElement::Float32,
+                        dim: 0,
+                    },
+                );
                 col.properties
                     .insert("dimension".to_string(), "768".to_string());
                 col
@@ -1228,7 +1353,7 @@ mod tests {
             .with_column(types::CatalogColumn::new(
                 3,
                 "category",
-                types::CatalogDataType::String,
+                proximadb_data_model::ProximaType::String,
             ))
             .with_primary_key(vec!["id".to_string()]);
 
@@ -1294,26 +1419,34 @@ mod tests {
 
         let schema = types::CatalogTableSchema::new("products")
             .with_column(
-                types::CatalogColumn::new(1, "product_id", types::CatalogDataType::Uuid)
+                types::CatalogColumn::new(1, "product_id", proximadb_data_model::ProximaType::Uuid)
                     .nullable(false)
                     .with_comment("Primary key UUID"),
             )
             .with_column(
-                types::CatalogColumn::new(2, "name", types::CatalogDataType::String)
+                types::CatalogColumn::new(2, "name", proximadb_data_model::ProximaType::String)
                     .nullable(false),
             )
             .with_column(
-                types::CatalogColumn::new(3, "price", types::CatalogDataType::Float64)
+                types::CatalogColumn::new(3, "price", proximadb_data_model::ProximaType::Float64)
                     .with_default("0.0"),
             )
             .with_column(types::CatalogColumn::new(
                 4,
                 "created_at",
-                types::CatalogDataType::TimestampTz,
+                proximadb_data_model::ProximaType::TimestampTz(
+                    proximadb_data_model::TimeUnit::Nanosecond,
+                ),
             ))
             .with_column({
-                let mut col =
-                    types::CatalogColumn::new(5, "embedding", types::CatalogDataType::Vector);
+                let mut col = types::CatalogColumn::new(
+                    5,
+                    "embedding",
+                    proximadb_data_model::ProximaType::DenseVector {
+                        element: proximadb_data_model::VectorElement::Float32,
+                        dim: 0,
+                    },
+                );
                 col.properties
                     .insert("dimension".to_string(), "768".to_string());
                 col
@@ -1347,7 +1480,7 @@ mod tests {
             .find(|c| c.name == "product_id")
             .expect("product_id column should exist");
         assert!(!id_col.nullable);
-        assert_eq!(id_col.data_type, types::CatalogDataType::Uuid);
+        assert_eq!(id_col.data_type, proximadb_data_model::ProximaType::Uuid);
         assert_eq!(id_col.comment.as_deref(), Some("Primary key UUID"));
 
         let price_col = retrieved
@@ -1355,7 +1488,10 @@ mod tests {
             .iter()
             .find(|c| c.name == "price")
             .expect("price column should exist");
-        assert_eq!(price_col.data_type, types::CatalogDataType::Float64);
+        assert_eq!(
+            price_col.data_type,
+            proximadb_data_model::ProximaType::Float64
+        );
         assert_eq!(price_col.default_value.as_deref(), Some("0.0"));
         assert!(price_col.nullable); // Default is true
 
@@ -1364,7 +1500,13 @@ mod tests {
             .iter()
             .find(|c| c.name == "embedding")
             .expect("embedding column should exist");
-        assert_eq!(embed_col.data_type, types::CatalogDataType::Vector);
+        assert_eq!(
+            embed_col.data_type,
+            proximadb_data_model::ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            }
+        );
 
         // Verify primary key
         assert_eq!(retrieved.primary_key, vec!["product_id"]);

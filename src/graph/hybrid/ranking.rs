@@ -49,10 +49,10 @@
 //! ```
 
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::core::error::ProximaDBError;
 use crate::graph::Node;
 use crate::proto::proximadb_v1::DistanceMetric;
 use dashmap::DashMap;
+use proximadb_kernel::error::ProximaDBError;
 use std::sync::Arc;
 
 /// Type alias for node identifiers

@@ -5,7 +5,7 @@ These tests verify collection CRUD operations using mocked gRPC stubs.
 """
 
 import types
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 

@@ -14,7 +14,7 @@ Reports:
 
 import statistics
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -41,7 +41,7 @@ def generate_sift_like_vectors(n: int, dim: int = 128) -> np.ndarray:
 
 def compute_ground_truth(
     base_vectors: np.ndarray, query_vectors: np.ndarray, k: int
-) -> List[List[int]]:
+) -> list[list[int]]:
     """Compute ground truth top-k neighbors using brute-force."""
     ground_truth = []
     for query in query_vectors:
@@ -53,7 +53,7 @@ def compute_ground_truth(
     return ground_truth
 
 
-def compute_recall_at_k(ground_truth: List[int], results: List[str], k: int) -> float:
+def compute_recall_at_k(ground_truth: list[int], results: list[str], k: int) -> float:
     """Compute recall@k: fraction of ground truth neighbors found in results."""
     if not ground_truth or not results:
         return 0.0
@@ -81,7 +81,7 @@ def benchmark_sst_search(
     num_queries: int = 100,
     k: int = 10,
     num_sst_files: int = 10,  # Number of SST files to create (for nprobe testing)
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Benchmark SST engine with different search modes.
 
@@ -275,20 +275,20 @@ def benchmark_sst_search(
     return results
 
 
-def print_summary(results: Dict[str, Any]):
+def print_summary(results: dict[str, Any]):
     """Print a formatted summary of benchmark results."""
     print("\n" + "=" * 80)
     print("BENCHMARK SUMMARY")
     print("=" * 80)
 
     config = results["config"]
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Vectors: {config['num_vectors']:,} x {config['dim']}D")
     print(f"  Queries: {config['num_queries']}")
     print(f"  Top-K: {config['k']}")
     print(f"  SST Files: {config['num_sst_files']}")
 
-    print(f"\nInsert Performance:")
+    print("\nInsert Performance:")
     print(f"  Time: {results['insert']['time_ms']:.1f}ms")
     print(f"  Rate: {results['insert']['rate_per_sec']:,.0f} vectors/sec")
 
@@ -308,7 +308,7 @@ def print_summary(results: Dict[str, Any]):
     )
 
     gt = results["ground_truth_comparison"]
-    print(f"\nGround Truth Validation:")
+    print("\nGround Truth Validation:")
     print(
         f"  Queries with 100% recall: {gt['perfect_matches']}/{gt['total_queries']} ({gt['perfect_match_rate']:.1f}%)"
     )
@@ -320,7 +320,7 @@ def print_summary(results: Dict[str, Any]):
     ):
         speedup = exact["latency_avg_ms"] / approx["latency_avg_ms"]
         recall_diff = exact["recall_at_k"] - approx["recall_at_k"]
-        print(f"\nApproximate vs Exact:")
+        print("\nApproximate vs Exact:")
         print(f"  Speedup: {speedup:.2f}x faster")
         print(f"  Recall difference: {recall_diff:.1f}%")
 

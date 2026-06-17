@@ -32,7 +32,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Result, anyhow};
-use arrow::array::{ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
+use arrow::array::{ArrayRef, BooleanArray, Float32Array, Float64Array, Int64Array, StringArray};
 use arrow::record_batch::RecordBatch;
 use async_trait::async_trait;
 use tracing::{debug, info, instrument};
@@ -118,6 +118,12 @@ impl SqlStrategy {
 
         if let Some(arr) = array.as_any().downcast_ref::<Float64Array>() {
             let val = arr.value(idx);
+            return serde_json::Number::from_f64(val)
+                .map_or(serde_json::Value::Null, serde_json::Value::Number);
+        }
+
+        if let Some(arr) = array.as_any().downcast_ref::<Float32Array>() {
+            let val = arr.value(idx) as f64;
             return serde_json::Number::from_f64(val)
                 .map_or(serde_json::Value::Null, serde_json::Value::Number);
         }
@@ -309,6 +315,37 @@ mod tests {
         // Check float values with tolerance
         if let serde_json::Value::Number(n) = &rows[0]["score"] {
             assert!((n.as_f64().unwrap() - 0.95).abs() < 0.001);
+        } else {
+            panic!("Expected number");
+        }
+    }
+
+    #[test]
+    fn test_batches_to_rows_with_float32() {
+        use arrow::array::Float32Array;
+
+        let schema = Arc::new(Schema::new(vec![Field::new(
+            "score",
+            DataType::Float32,
+            false,
+        )]));
+
+        let batch = RecordBatch::try_new(
+            schema,
+            vec![Arc::new(Float32Array::from(vec![0.3_f32, 0.2_f32]))],
+        )
+        .unwrap();
+
+        let rows = SqlStrategy::batches_to_rows(&[batch]);
+
+        assert_eq!(rows.len(), 2);
+        if let serde_json::Value::Number(n) = &rows[0]["score"] {
+            assert!((n.as_f64().unwrap() - 0.3).abs() < 0.001);
+        } else {
+            panic!("Expected number");
+        }
+        if let serde_json::Value::Number(n) = &rows[1]["score"] {
+            assert!((n.as_f64().unwrap() - 0.2).abs() < 0.001);
         } else {
             panic!("Expected number");
         }

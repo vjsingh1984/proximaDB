@@ -5,13 +5,13 @@ use crate::storage::engines::core::ops::compression_common::CompressionStrategy;
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::core::compression::{
-    CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
-};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
 use crate::storage::engines::core::ops::compression_common::{
     AdaptiveCompressionSettings, ContextAwareCompressionConfig, UniversalCompressionConfig,
+};
+use proximadb_compression::{
+    CompressionAlgorithm, CompressionContext, CompressionProvider, StandardCompression,
 };
 
 /// Compression adapter that bridges Universal config with Unified implementation
@@ -419,8 +419,8 @@ impl UniversalCompressionAdapter {
         &self,
         config: &UniversalCompressionConfig,
         compression_time: std::time::Duration,
-    ) -> CompressionMetadata {
-        CompressionMetadata {
+    ) -> AdapterCompressionMetadata {
+        AdapterCompressionMetadata {
             universal_config: config.clone(),
             compression_time_ms: compression_time.as_millis() as u64,
             hardware_used: self.hardware.clone(),
@@ -448,12 +448,15 @@ pub struct CompressedData {
     pub compressed_size: usize,
     pub compression_level: i32,
     pub context: CompressionContext,
-    pub metadata: CompressionMetadata,
+    pub metadata: AdapterCompressionMetadata,
 }
+
+/// Backwards-compat alias for [`AdapterCompressionMetadata`].
+pub type CompressionMetadata = AdapterCompressionMetadata;
 
 /// Compression metadata
 #[derive(Debug, Clone)]
-pub struct CompressionMetadata {
+pub struct AdapterCompressionMetadata {
     pub universal_config: UniversalCompressionConfig,
     pub compression_time_ms: u64,
     pub hardware_used: HardwareCapabilities,

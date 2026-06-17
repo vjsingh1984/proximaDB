@@ -39,9 +39,10 @@
 //! - **Network partition**: Timeout and abort
 //! - **WAL replay**: On restart, check prepared transactions and decide
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
@@ -121,16 +122,31 @@ pub struct TwoPhaseCommit {
 
     /// Transaction timeout in seconds
     timeout_secs: u64,
+
+    /// Monotonic transaction-id generator. Seeded from the wall clock at
+    /// construction so ids stay roughly time-ordered (and unique across
+    /// restarts), then incremented atomically so concurrent `begin()` calls
+    /// can never collide.
+    next_tx_id: Arc<AtomicU64>,
 }
 
 impl TwoPhaseCommit {
     /// Create a new 2PC coordinator
     pub fn new(timeout_secs: u64) -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        // Seed from the wall clock (nanos) so ids are time-ordered and survive
+        // restarts; `max(1)` keeps the first id non-zero.
+        let seed = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(1)
+            .max(1);
         Self {
             transactions: Arc::new(RwLock::new(HashMap::new())),
             votes: Arc::new(RwLock::new(HashMap::new())),
             participants: Arc::new(RwLock::new(HashMap::new())),
             timeout_secs,
+            next_tx_id: Arc::new(AtomicU64::new(seed)),
         }
     }
 
@@ -377,22 +393,11 @@ impl TwoPhaseCommit {
 
     /// Generate unique transaction ID
     fn generate_tx_id(&self) -> TransactionId {
-        use std::time::{SystemTime, UNIX_EPOCH};
-
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-
-        // Combine timestamp with random component
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        timestamp.hash(&mut hasher);
-        std::thread::current().id().hash(&mut hasher);
-
-        hasher.finish()
+        // Atomic fetch-add guarantees a unique, monotonic id per process. The
+        // previous timestamp(secs)+thread-id hash collided when several
+        // transactions began within the same second on shared worker threads,
+        // letting one transaction overwrite another's 2PC state.
+        self.next_tx_id.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Cleanup old transactions
@@ -440,6 +445,7 @@ impl Clone for TwoPhaseCommit {
             votes: self.votes.clone(),
             participants: self.participants.clone(),
             timeout_secs: self.timeout_secs,
+            next_tx_id: self.next_tx_id.clone(),
         }
     }
 }

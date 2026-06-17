@@ -8,8 +8,10 @@
 //! 5. Customer APIs (get_by_id, delete_by_id) work correctly
 
 use super::*;
-use crate::proto::proximadb_v1::{QuantizationConfig, SqlValue, VectorRecord};
+use crate::proto::proximadb_v1::QuantizationConfig;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -19,9 +21,24 @@ use super::create_columnar_schema;
 use super::{OptimizationRecommendations, QuantizationStrategy, QueryPattern, StorageBudget};
 use super::{ParquetWriterConfig, StreamingParquetWriter, UnifiedParquetReader};
 
+fn prop_string<'a>(record: &'a ProximaRecord, key: &str) -> Option<&'a str> {
+    match record.props.get(key) {
+        Some(ProximaTreeNode::Value(ProximaValue::String(value))) => Some(value.as_str()),
+        _ => None,
+    }
+}
+
+fn first_vector_len(record: &ProximaRecord) -> usize {
+    record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.values.len())
+        .unwrap_or(0)
+}
+
 #[tokio::test]
 async fn test_id_column_always_preserved() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_id_preservation.parquet");
@@ -65,7 +82,7 @@ async fn test_id_column_always_preserved() {
 
 #[tokio::test]
 async fn test_id_less_storage_warning() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_name = format!("test_id_less_warning.parquet");
@@ -120,7 +137,7 @@ async fn test_id_less_storage_warning() {
 
 #[tokio::test]
 async fn test_parquet_flush_and_read_pattern() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("collection_data");
@@ -145,16 +162,23 @@ async fn test_parquet_flush_and_read_pattern() {
         .unwrap();
 
     // Create records as would happen during flush
-    let test_records: Vec<VectorRecord> = (0..300)
-        .map(|i| VectorRecord {
-            id: format!("vec_{:06}", i),
-            vector: vec![i as f32 * 0.1; 128],
-            metadata: HashMap::new(),
-            timestamp: Some(i as i64),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    let test_records: Vec<ProximaRecord> = (0..300)
+        .map(|i| {
+            let values = vec![i as f32 * 0.1; 128];
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: format!("vec_{:06}", i),
+                record_version: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         })
         .collect();
 
@@ -188,7 +212,7 @@ async fn test_parquet_flush_and_read_pattern() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -214,7 +238,7 @@ async fn test_parquet_flush_and_read_pattern() {
         .await
         .unwrap();
 
-    let total_rows = batches.len(); // Each element is a VectorRecord, not a batch
+    let total_rows = batches.len(); // Each element is a ProximaRecord, not a batch
     assert_eq!(total_rows, 300);
 
     // Test reading specific row groups
@@ -227,7 +251,7 @@ async fn test_parquet_flush_and_read_pattern() {
         .await
         .unwrap();
 
-    let rg_rows = row_group_batches.len(); // Each element is a VectorRecord, not a batch
+    let rg_rows = row_group_batches.len(); // Each element is a ProximaRecord, not a batch
     assert_eq!(rg_rows, 200); // First two row groups with 100 records each
 
     // Scan directory for files using filesystem API
@@ -241,55 +265,49 @@ async fn test_parquet_flush_and_read_pattern() {
 
 #[tokio::test]
 async fn test_branched_filtering_fast_vs_slow_path() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_branched_filtering.parquet");
 
     // Create test data with some filterable columns and some in extra_meta
-    let mut test_records: Vec<VectorRecord> = Vec::new();
+    let mut test_records: Vec<ProximaRecord> = Vec::new();
 
     for i in 0..200 {
-        let mut metadata = HashMap::new();
+        let mut metadata: HashMap<String, ProximaTreeNode> = HashMap::new();
 
         // Add metadata - some will be filterable columns, some won't
         metadata.insert(
             "category".to_string(), // This will be a filterable column
-            SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    format!("cat_{}", i % 5),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String(format!("cat_{}", i % 5))),
         );
 
         metadata.insert(
             "priority".to_string(), // This will be a filterable column
-            SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
-                    (i % 10) as i64,
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::Int64((i % 10) as i64)),
         );
 
         metadata.insert(
             "custom_field".to_string(), // This will NOT be filterable
-            SqlValue {
-                value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                    format!("custom_{}", i % 3),
-                )),
-            },
+            ProximaTreeNode::Value(ProximaValue::String(format!("custom_{}", i % 3))),
         );
 
-        test_records.push(VectorRecord {
-            id: format!("record_{:04}", i),
-            vector: vec![i as f32 * 0.1; 128],
-            metadata,
-            timestamp: Some(i as i64),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        let values = vec![i as f32 * 0.1; 128];
+        let dim = values.len() as u32;
+        let mut r = ProximaRecord {
+            oid: format!("record_{:04}", i),
+            record_version: 1,
+            props: metadata,
+            ..Default::default()
+        };
+        r.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            dim,
+            ..Default::default()
         });
+        test_records.push(r);
     }
 
     // Write with specific filterable columns
@@ -319,7 +337,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -369,10 +387,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     // Verify all results match filter
     for record in &fast_results {
-        let cat = record.metadata.get("category").unwrap();
-        if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &cat.value {
-            assert_eq!(s, "cat_2");
-        }
+        assert_eq!(prop_string(record, "category"), Some("cat_2"));
     }
 
     println!(
@@ -481,15 +496,8 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
     // Verify results match both filters
     for record in &mixed_results {
-        let cat = record.metadata.get("category").unwrap();
-        if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &cat.value {
-            assert_eq!(s, "cat_1");
-        }
-
-        let custom = record.metadata.get("custom_field").unwrap();
-        if let Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) = &custom.value {
-            assert_eq!(s, "custom_0");
-        }
+        assert_eq!(prop_string(record, "category"), Some("cat_1"));
+        assert_eq!(prop_string(record, "custom_field"), Some("custom_0"));
     }
 
     // Performance expectation: fast < mixed < slow (in most cases)
@@ -501,7 +509,7 @@ async fn test_branched_filtering_fast_vs_slow_path() {
 
 #[tokio::test]
 async fn test_multi_file_directory_scan() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let data_dir = dir.path().join("collection_data");
@@ -543,19 +551,33 @@ async fn test_multi_file_directory_scan() {
 
         // Each file contains different records simulating different flush batches
         let batch_size = 1000 * (batch_idx + 1); // 1000, 2000, 3000 records
-        let test_records: Vec<VectorRecord> = (0..batch_size)
+        let test_records: Vec<ProximaRecord> = (0..batch_size)
             .map(|i| {
                 let global_id = total_written + i;
-                VectorRecord {
-                    id: format!("record_{:08}", global_id),
-                    vector: vec![global_id as f32 * 0.01; 256],
-                    metadata: HashMap::new(),
-                    timestamp: Some(global_id as i64),
-                    updated_at: None,
-                    expires_at: None,
-                    version: Some(1),
-                    source: None,
-                }
+                let values = vec![global_id as f32 * 0.01; 256];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: format!("record_{:08}", global_id),
+                    record_version: 1,
+                    // Deterministic per-record timestamp so the millisecond
+                    // filter below is meaningful. Without this the struct default
+                    // stamps wall-clock now() on every record, matching all 6000.
+                    // The columnar format persists the timestamp at MILLISECOND
+                    // granularity (writer divides created_at_ns by 1e6, reader
+                    // multiplies back), so encode global_id as whole
+                    // milliseconds: stored ms-column == global_id, which spans
+                    // 0..5999 → 3001..=5999 (2999 records) exceed 3000 ms.
+                    created_at_ns: global_id as i64 * 1_000_000,
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             })
             .collect();
 
@@ -597,7 +619,7 @@ async fn test_multi_file_directory_scan() {
         .get_filesystem(data_dir.to_str().unwrap())
         .unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -615,7 +637,7 @@ async fn test_multi_file_directory_scan() {
 
     // Read from all files and verify total record count
     let all_records = reader.read_all_records(0, None).await.unwrap();
-    let record_ids: Vec<String> = all_records.iter().map(|r| r.id.clone()).collect();
+    let record_ids: Vec<String> = all_records.iter().map(|r| r.oid.clone()).collect();
 
     assert_eq!(
         record_ids.len(),
@@ -627,15 +649,17 @@ async fn test_multi_file_directory_scan() {
     let unique_records: std::collections::HashSet<_> = record_ids.iter().collect();
     assert_eq!(unique_records.len(), 6000, "All records should be unique");
 
-    // Test filtering by timestamp
+    // Test filtering by timestamp. The columnar format round-trips the
+    // timestamp at millisecond granularity, so compare in ms (created_at_ns
+    // was written as global_id whole-milliseconds above).
     let filtered_count = all_records
         .iter()
-        .filter(|record| record.timestamp.unwrap() > 3000)
+        .filter(|record| record.created_at_ns / 1_000_000 > 3000)
         .count();
 
     assert_eq!(
         filtered_count, 2999,
-        "Should find exactly 2999 records with timestamp > 3000"
+        "Should find exactly 2999 records with timestamp > 3000 ms"
     );
 
     // Verify all files are accessible via filesystem API
@@ -651,7 +675,7 @@ async fn test_multi_file_directory_scan() {
 
 #[tokio::test]
 async fn test_dictionary_encoding_optimization() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_dictionary_encoding.parquet");
@@ -667,33 +691,35 @@ async fn test_dictionary_encoding_optimization() {
         .unwrap();
 
     // Create records with repeated ID patterns (good for dictionary encoding)
-    let test_records: Vec<VectorRecord> = (0..1000)
+    let test_records: Vec<ProximaRecord> = (0..1000)
         .map(|i| {
-            let mut metadata = HashMap::new();
+            let mut metadata: HashMap<String, ProximaTreeNode> = HashMap::new();
             metadata.insert(
                 "group".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("group_{}", i % 20),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(format!("group_{}", i % 20))),
             );
             metadata.insert(
                 "member_id".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
-                },
+                ProximaTreeNode::Value(ProximaValue::Int64(i)),
             );
 
-            VectorRecord {
-                id: format!("user_group_{:02}", i % 20), // Only 20 unique IDs, repeated
-                vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
-                metadata,
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            {
+                let values: Vec<f32> = (0..128).map(|j| (i + j) as f32 * 0.01).collect();
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: format!("user_group_{:02}", i % 20),
+                    record_version: 1,
+                    props: metadata,
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             }
         })
         .collect();
@@ -718,7 +744,7 @@ async fn test_dictionary_encoding_optimization() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -737,25 +763,39 @@ async fn test_dictionary_encoding_optimization() {
     // Deferred: Implement optimized_batch_id_lookup method
     // For now, simulate ID lookup results
     let lookup_results = vec![
-        VectorRecord {
-            id: "user_group_05".to_string(),
-            vector: vec![0.5; 128],
-            metadata: HashMap::new(),
-            timestamp: Some(5),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        {
+            let values = vec![0.5_f32; 128];
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "user_group_05".to_string(),
+                record_version: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         },
-        VectorRecord {
-            id: "user_group_15".to_string(),
-            vector: vec![1.5; 128],
-            metadata: HashMap::new(),
-            timestamp: Some(15),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        {
+            let values = vec![1.5_f32; 128];
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "user_group_15".to_string(),
+                record_version: 1,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         },
     ];
 
@@ -764,14 +804,14 @@ async fn test_dictionary_encoding_optimization() {
 
     // All results should have the requested IDs
     for result in &lookup_results {
-        let id = &result.id;
+        let id = &result.oid;
         assert!(id == "user_group_05" || id == "user_group_15");
     }
 }
 
 #[tokio::test]
 async fn test_customer_api_compatibility() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     let dir = tempdir().unwrap();
     let file_path = dir.path().join("test_customer_apis.parquet");
@@ -783,35 +823,59 @@ async fn test_customer_api_compatibility() {
         .unwrap();
 
     let test_records = vec![
-        VectorRecord {
-            id: "cust_001".to_string(),
-            vector: (0..384).map(|i| i as f32 * 0.01).collect(),
-            metadata: HashMap::new(), // Empty metadata to avoid MapArray issues
-            timestamp: Some(1000),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        {
+            let values: Vec<f32> = (0..384).map(|i| i as f32 * 0.01).collect();
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "cust_001".to_string(),
+                record_version: 1,
+                created_at_ns: 1000 * 1_000_000,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         },
-        VectorRecord {
-            id: "cust_002".to_string(),
-            vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
-            metadata: HashMap::new(), // Empty metadata to avoid MapArray issues
-            timestamp: Some(2000),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        {
+            let values: Vec<f32> = (0..384).map(|i| (i + 100) as f32 * 0.01).collect();
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "cust_002".to_string(),
+                record_version: 1,
+                created_at_ns: 2000 * 1_000_000,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         },
-        VectorRecord {
-            id: "cust_003".to_string(),
-            vector: (0..384).map(|i| (i + 200) as f32 * 0.01).collect(),
-            metadata: HashMap::new(), // Empty metadata to avoid MapArray issues
-            timestamp: Some(3000),
-            updated_at: None,
-            expires_at: None,
-            version: Some(2),
-            source: None,
+        {
+            let values: Vec<f32> = (0..384).map(|i| (i + 200) as f32 * 0.01).collect();
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "cust_003".to_string(),
+                record_version: 2,
+                created_at_ns: 3000 * 1_000_000,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         },
     ];
 
@@ -824,7 +888,7 @@ async fn test_customer_api_compatibility() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -842,62 +906,86 @@ async fn test_customer_api_compatibility() {
 
     // Single ID lookup
     // Deferred: Implement optimized_batch_id_lookup method
-    let single_result = vec![VectorRecord {
-        id: "cust_002".to_string(),
-        vector: (0..384).map(|i| (i + 100) as f32 * 0.01).collect(),
-        metadata: HashMap::new(),
-        timestamp: Some(2000),
-        updated_at: None,
-        expires_at: None,
-        version: Some(1),
-        source: None,
+    let single_result = vec![{
+        let values: Vec<f32> = (0..384).map(|i| (i + 100) as f32 * 0.01).collect();
+        let dim = values.len() as u32;
+        let mut r = ProximaRecord {
+            oid: "cust_002".to_string(),
+            record_version: 1,
+            created_at_ns: 2000 * 1_000_000,
+            ..Default::default()
+        };
+        r.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            dim,
+            ..Default::default()
+        });
+        r
     }];
 
     assert_eq!(single_result.len(), 1);
-    assert_eq!(&single_result[0].id, "cust_002");
-    assert_eq!(single_result[0].timestamp.unwrap(), 2000);
-    assert_eq!(single_result[0].vector.len(), 384);
+    assert_eq!(&single_result[0].oid, "cust_002");
+    assert_eq!(single_result[0].created_at_ns / 1_000_000, 2000);
+    assert_eq!(first_vector_len(&single_result[0]), 384);
 
     // Batch ID lookup
     // Deferred: Implement optimized_batch_id_lookup method
     let batch_result = vec![
-        VectorRecord {
-            id: "cust_001".to_string(),
-            vector: (0..384).map(|i| i as f32 * 0.01).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(1000),
-            updated_at: None,
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        {
+            let values: Vec<f32> = (0..384).map(|i| i as f32 * 0.01).collect();
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "cust_001".to_string(),
+                record_version: 1,
+                created_at_ns: 1000 * 1_000_000,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         },
-        VectorRecord {
-            id: "cust_003".to_string(),
-            vector: (0..384).map(|i| (i + 200) as f32 * 0.01).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(3000),
-            updated_at: None,
-            expires_at: None,
-            version: Some(2),
-            source: None,
+        {
+            let values: Vec<f32> = (0..384).map(|i| (i + 200) as f32 * 0.01).collect();
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "cust_003".to_string(),
+                record_version: 2,
+                created_at_ns: 3000 * 1_000_000,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         },
     ];
 
     assert_eq!(batch_result.len(), 2);
-    let ids: Vec<String> = batch_result.iter().map(|r| r.id.clone()).collect();
+    let ids: Vec<String> = batch_result.iter().map(|r| r.oid.clone()).collect();
     assert!(ids.contains(&"cust_001".to_string()));
     assert!(ids.contains(&"cust_003".to_string()));
 
     // Non-existent ID
     // Deferred: Implement optimized_batch_id_lookup method
-    let empty_result: Vec<VectorRecord> = vec![];
+    let empty_result: Vec<ProximaRecord> = vec![];
 
     assert_eq!(empty_result.len(), 0);
 }
 
 #[tokio::test]
 async fn test_row_group_offset_optimization() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test that row group offset is added when id_less_storage is enabled
     // but ID column is still preserved
@@ -940,7 +1028,7 @@ async fn test_row_group_offset_optimization() {
     // Create UnifiedCachingFilesystem for optimal performance
     let base_fs = filesystem.get_filesystem("file://").unwrap();
     let cached_filesystem = Arc::new(
-        crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+        crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
             base_fs,
             "test_collection".to_string(),
             "test".to_string(),
@@ -957,51 +1045,62 @@ async fn test_row_group_offset_optimization() {
     .unwrap();
 
     // Deferred: Implement optimized_batch_id_lookup method
-    let lookup_result = vec![VectorRecord {
-        id: "test_id_050".to_string(),
-        vector: (0..128).map(|j| (50 + j) as f32 * 0.01).collect(),
-        metadata: HashMap::new(),
-        timestamp: Some(1050),
-        updated_at: None,
-        expires_at: None,
-        version: Some(1),
-        source: None,
+    let lookup_result = vec![{
+        let values: Vec<f32> = (0..128).map(|j| (50 + j) as f32 * 0.01).collect();
+        let dim = values.len() as u32;
+        let mut r = ProximaRecord {
+            oid: "test_id_050".to_string(),
+            record_version: 1,
+            created_at_ns: 1050 * 1_000_000,
+            ..Default::default()
+        };
+        r.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            dim,
+            ..Default::default()
+        });
+        r
     }];
 
     assert_eq!(lookup_result.len(), 1);
-    assert_eq!(&lookup_result[0].id, "test_id_050");
+    assert_eq!(&lookup_result[0].oid, "test_id_050");
 }
 
 // Helper functions
 
-fn create_test_records(count: usize) -> Vec<VectorRecord> {
+fn create_test_records(count: usize) -> Vec<ProximaRecord> {
     (0..count)
         .map(|i| {
-            let metadata = if i % 3 == 0 {
+            let props = if i % 3 == 0 {
                 let mut map = HashMap::new();
                 map.insert(
                     "tag".to_string(),
-                    SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                            format!("tag_{}", i % 10),
-                        )),
-                    },
+                    ProximaTreeNode::Value(ProximaValue::String(format!("tag_{}", i % 10))),
                 );
                 map
             } else {
                 HashMap::new()
             };
 
-            VectorRecord {
-                id: format!("test_id_{:03}", i),
-                vector: (0..128).map(|j| (i + j) as f32 * 0.01).collect(),
-                metadata,
-                timestamp: Some((1000 + i) as i64),
-                updated_at: None,
-                expires_at: None,
-                version: Some(((i % 5) + 1) as u32),
-                source: None,
-            }
+            let values: Vec<f32> = (0..128).map(|j| (i + j) as f32 * 0.01).collect();
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: format!("record_{i:08}"),
+                record_version: ((i % 5) + 1) as u64,
+                created_at_ns: (1000 + i as i64) * 1_000_000,
+                props,
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         })
         .collect()
 }
@@ -1016,7 +1115,7 @@ fn read_parquet_schema(file_path: &std::path::Path) -> Result<arrow_schema::Sche
 
 #[tokio::test]
 async fn test_schema_evolution_with_id_column() {
-    let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+    let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
     // Test that schema evolution preserves ID column requirement
     let quantization_configs = vec![
@@ -1163,9 +1262,9 @@ fn test_optimization_recommendations_preserve_id_column() {
     }
 }
 
-// Helper function to convert Arrow RecordBatch to VectorRecord for testing
+// Helper function to convert Arrow RecordBatch to ProximaRecord for testing
 #[allow(dead_code)]
-fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<VectorRecord> {
+fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<ProximaRecord> {
     let mut records = Vec::new();
 
     for batch in batches {
@@ -1201,16 +1300,21 @@ fn convert_batches_to_records(batches: Vec<arrow_array::RecordBatch>) -> Vec<Vec
                 .map(|j| vector_values.value(j))
                 .collect();
 
-            records.push(VectorRecord {
-                id,
-                vector,
-                metadata: HashMap::new(),
-                timestamp: Some(timestamp),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            let mut record = ProximaRecord {
+                oid: id,
+                record_version: 1,
+                created_at_ns: timestamp * 1_000_000,
+                updated_at_ns: timestamp * 1_000_000,
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: vector.len() as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                ..Default::default()
             });
+            records.push(record);
         }
     }
 

@@ -417,24 +417,23 @@ impl DomainBusinessIntelligence {
     fn validate_entity_for_business_context(&self, entity: &Entity) -> Result<()> {
         // Business context validation based on domain type
         match self.business_context.primary_function.as_str() {
-            "risk_management" => {
-                // Risk management domains require risk-related metadata
+            "risk_management"
                 if !entity.flexible_metadata.contains_key("risk_score")
-                    && !entity.flexible_metadata.contains_key("risk_category")
-                {
-                    return Err(anyhow!("Entity missing risk management context"));
-                }
+                    && !entity.flexible_metadata.contains_key("risk_category") =>
+            {
+                // Risk management domains require risk-related metadata
+                return Err(anyhow!("Entity missing risk management context"));
             }
-            "customer_intelligence" => {
-                // Customer domains require customer-related context
+            "customer_intelligence"
                 if !entity.flexible_metadata.contains_key("customer_id")
-                    && !entity.flexible_metadata.contains_key("customer_segment")
-                {
-                    return Err(anyhow!("Entity missing customer intelligence context"));
-                }
+                    && !entity.flexible_metadata.contains_key("customer_segment") =>
+            {
+                // Customer domains require customer-related context
+                return Err(anyhow!("Entity missing customer intelligence context"));
             }
             _ => {
-                // Generic validation for other business contexts
+                // Generic validation for other business contexts (or
+                // required fields already present).
             }
         }
 

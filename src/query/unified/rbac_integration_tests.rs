@@ -21,16 +21,16 @@ use crate::query::unified::{
     },
     executor::ParallelExecutor,
 };
-use crate::security::unified_rbac::{
-    ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
+use crate::security::rbac_service::{
+    ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
 use crate::storage::document::DocumentService;
 
 /// Helper function to create a mock storage engine for testing
-async fn create_mock_storage_engine() -> Arc<dyn crate::storage::traits::UnifiedStorageEngine> {
-    use crate::storage::engines::factory::StorageEngineFactory;
+async fn create_mock_storage_engine() -> Arc<dyn crate::storage::traits::UnifiedStorageFormat> {
+    use crate::storage::engines::factory::StorageFormatFactory;
 
-    StorageEngineFactory::create_sst_async().await.unwrap()
+    StorageFormatFactory::create_sst_async().await.unwrap()
 }
 
 /// Helper function to create a test user context
@@ -40,7 +40,7 @@ fn create_test_user(user_id: &str, tenant_id: Option<&str>) -> UnifiedUserContex
         tenant_id: tenant_id.map(|s| s.to_string()),
         roles: Vec::new(),
         effective_permissions: HashSet::new(),
-        auth_method: crate::security::unified_rbac::AuthMethod::Internal,
+        auth_method: UnifiedAuthMethod::Internal,
         session_id: uuid::Uuid::new_v4().to_string(),
         expires_at: None,
         created_at: Utc::now(),

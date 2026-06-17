@@ -215,22 +215,18 @@ impl ZOrderEncoder {
     /// - 17-32 dims: 256-bit codes
     /// - 33-64 dims: 512-bit codes
     pub fn new(dimensions: usize, bits_per_dim: usize) -> Self {
-        assert!(
-            dimensions > 0 && dimensions <= 64,
-            "Dimensions must be 1-64"
-        );
-        assert!(
-            bits_per_dim > 0 && bits_per_dim <= 16,
-            "Bits per dim must be 1-16"
-        );
+        // Clamp to valid Z-order range instead of panicking. Config layer already enforces
+        // ≤64 for most callers, but the post-delete compaction path may pass raw vector dim.
+        let dimensions = dimensions.clamp(1, 64);
+        let bits_per_dim = bits_per_dim.clamp(1, 16);
 
         // Auto-select code type based on required bits
         let code_type = CodeType::select(dimensions, bits_per_dim);
 
-        // Validate total bits fit in selected code type
+        // Total-bits invariant holds after clamping above; assert only in debug builds.
         let total_bits = dimensions * bits_per_dim;
         let max_bits = code_type.max_bits();
-        assert!(
+        debug_assert!(
             total_bits <= max_bits,
             "Total bits ({} * {} = {}) exceeds {}-bit limit",
             dimensions,
@@ -254,11 +250,11 @@ impl ZOrderEncoder {
     /// # Returns
     /// Z-order code (Morton code) as SpatialCode enum
     pub fn encode(&self, coords: &[f32]) -> SpatialCode {
-        assert_eq!(
-            coords.len(),
-            self.dimensions,
-            "Coordinate dimension mismatch"
-        );
+        // Tombstone / empty-vector records arrive with coords.len() == 0 during compaction.
+        // Return a zero code so they cluster at the origin rather than panicking.
+        if coords.len() != self.dimensions {
+            return SpatialCode::Code64(0);
+        }
 
         match self.code_type {
             CodeType::Bits64 => SpatialCode::Code64(self.encode_64(coords)),
@@ -1033,7 +1029,7 @@ where
         .collect();
 
     // Step 5: Sort by curve position
-    clustered.sort_by(|a, b| a.0.cmp(&b.0));
+    clustered.sort_by_key(|c| c.0);
 
     // Step 6: Extract sorted blocks, entries, and codes
     let (codes, blocks, index_entries): (Vec<u64>, Vec<B>, Vec<I>) = clustered.into_iter().fold(

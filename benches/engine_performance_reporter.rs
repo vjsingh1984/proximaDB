@@ -12,10 +12,11 @@
 use anyhow::Result;
 use proximadb::{
     compute::distance_computation::{DistanceMetric, UnifiedDistanceCompute},
-    core::{VectorRecord, hardware_capabilities},
+    core::hardware_capabilities,
+    proto::proximadb_v1::VectorRecord,
     proto::proximadb_v1::{SqlValue, sql_value},
     storage::{
-        engines::impls::{sst::SstEngine, viper::ViperEngine},
+        engines::{sst::SstEngine, viper::ViperEngine},
         persistence::filesystem::FilesystemFactory,
         traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine},
     },
@@ -195,7 +196,10 @@ async fn benchmark_engine_configuration(
                 let start_flush = Instant::now();
                 let flush_params = FlushParameters {
                     collection_id: Some(collection_id.clone()),
-                    vector_records: vectors,
+                    vector_records: vectors
+                        .into_iter()
+                        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+                        .collect(),
                     force: true,
                     collection_config: Some(collection_proto.clone()),
                     ..Default::default()
@@ -255,7 +259,10 @@ async fn benchmark_engine_configuration(
                 let start_flush = Instant::now();
                 let flush_params = FlushParameters {
                     collection_id: Some(collection_id.clone()),
-                    vector_records: vectors,
+                    vector_records: vectors
+                        .into_iter()
+                        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+                        .collect(),
                     force: true,
                     collection_config: Some(collection_proto.clone()),
                     ..Default::default()

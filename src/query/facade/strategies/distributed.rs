@@ -21,6 +21,7 @@
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
+use proximadb_graph_query::service::GraphQueryService;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -28,20 +29,20 @@ use std::time::Duration;
 use tracing::debug;
 
 use crate::cluster::ClusterManager;
-use crate::graph::service::GraphOperationsService;
 use crate::observability::ObservabilityService;
 use crate::query::distributed::DistributedQueryConfig;
 use crate::query::distributed::DistributedQueryCoordinator;
 use crate::query::facade::{
-    QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData, QueryStrategy,
+    ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
+    QueryStrategy,
 };
-use crate::query::federated::parser::{SqlExtension, TargetModelType, VectorQuery};
+use crate::query::federated::parser::{SqlExtension, VectorQuery};
 use crate::query::federated::{FederatedParser, QueryType as FederatedQueryType};
+use crate::query::graph_lowering::lower_supported_graph_query_component;
 use crate::query::unified::ast::{
-    DataModel, DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue, GraphTraversalExpr,
-    LogQueryExpr, MetricAggregation, MetricQueryExpr, ModelOperation, MultiModelQuery, NodeFilter,
-    PathFilter, QueryComponent, StartNodeSpec, TraversalDirection, VectorSearchExpr,
-    VectorSearchParams,
+    DataModel, DistanceMetric, DocumentQueryExpr, FilterOperator, FilterValue, LogQueryExpr,
+    MetricAggregation, MetricQueryExpr, ModelOperation, MultiModelQuery, PathFilter,
+    QueryComponent, VectorSearchExpr, VectorSearchParams,
 };
 use crate::query::unified::fusion::SubQueryResult;
 use crate::services::operations::vectors::VectorOperationsService;
@@ -134,8 +135,11 @@ impl DistributedQueryStrategy {
         self
     }
 
-    /// Wire graph operations into local distributed execution.
-    pub fn with_graph_service(mut self, graph_service: Arc<GraphOperationsService>) -> Self {
+    /// Wire graph query/traversal service into local distributed execution.
+    pub fn with_graph_service<G>(mut self, graph_service: Arc<G>) -> Self
+    where
+        G: GraphQueryService + 'static,
+    {
         self.coordinator = self.coordinator.with_graph_service(graph_service);
         self
     }
@@ -202,50 +206,6 @@ impl DistributedQueryStrategy {
             .captures(sql)
             .and_then(|caps| caps.get(1))
             .and_then(|m| m.as_str().parse::<u32>().ok()))
-    }
-
-    fn parse_graph_label(&self, cypher: &str) -> Result<Option<String>> {
-        let label_re = Regex::new(r":\s*([A-Za-z_][A-Za-z0-9_]*)")
-            .map_err(|error| anyhow!("Failed to compile graph label regex: {error}"))?;
-        Ok(label_re
-            .captures(cypher)
-            .and_then(|caps| caps.get(1))
-            .map(|m| m.as_str().to_string()))
-    }
-
-    fn parse_graph_edge_types(&self, cypher: &str) -> Result<Vec<String>> {
-        let edge_re = Regex::new(r"\[:\s*([A-Za-z_][A-Za-z0-9_]*)")
-            .map_err(|error| anyhow!("Failed to compile graph edge regex: {error}"))?;
-        Ok(edge_re
-            .captures_iter(cypher)
-            .filter_map(|caps| caps.get(1).map(|m| m.as_str().to_string()))
-            .collect())
-    }
-
-    fn parse_graph_max_depth(&self, cypher: &str) -> Result<u32> {
-        let range_re = Regex::new(r"\*(?:\d+\.\.)?(\d+)")
-            .map_err(|error| anyhow!("Failed to compile graph depth regex: {error}"))?;
-        Ok(range_re
-            .captures(cypher)
-            .and_then(|caps| caps.get(1))
-            .and_then(|m| m.as_str().parse::<u32>().ok())
-            .unwrap_or_else(|| {
-                if cypher.contains("-[") || cypher.contains("--") {
-                    1
-                } else {
-                    0
-                }
-            }))
-    }
-
-    fn infer_graph_direction(&self, cypher: &str) -> TraversalDirection {
-        let has_incoming = cypher.contains("<-");
-        let has_outgoing = cypher.contains("->");
-        match (has_incoming, has_outgoing) {
-            (true, true) => TraversalDirection::Both,
-            (true, false) => TraversalDirection::Incoming,
-            _ => TraversalDirection::Outgoing,
-        }
     }
 
     fn normalize_document_path(&self, field: &str) -> String {
@@ -324,7 +284,13 @@ impl DistributedQueryStrategy {
     }
 
     fn parse_vector_literal(&self, raw: &str) -> Result<Vec<f32>> {
-        let trimmed = raw.trim().trim_start_matches('[').trim_end_matches(']');
+        let normalized = Self::strip_pgvector_cast(raw.trim());
+        let trimmed = normalized
+            .trim_matches('\'')
+            .trim_matches('"')
+            .trim()
+            .trim_start_matches('[')
+            .trim_end_matches(']');
         if trimmed.is_empty() {
             return Ok(Vec::new());
         }
@@ -343,7 +309,26 @@ impl DistributedQueryStrategy {
             .collect()
     }
 
-    fn query_to_multimodel(&self, request: &QueryRequest, sql: &str) -> Result<MultiModelQuery> {
+    fn strip_pgvector_cast(value: &str) -> &str {
+        let lower = value.to_ascii_lowercase();
+        let Some(cast_start) = lower.rfind("::vector") else {
+            return value;
+        };
+        let suffix = lower[cast_start + "::vector".len()..].trim();
+        if suffix.is_empty()
+            || (suffix.starts_with('(')
+                && suffix.ends_with(')')
+                && suffix[1..suffix.len() - 1]
+                    .chars()
+                    .all(|ch| ch.is_ascii_digit()))
+        {
+            value[..cast_start].trim()
+        } else {
+            value
+        }
+    }
+
+    fn query_to_multimodal(&self, request: &QueryRequest, sql: &str) -> Result<MultiModelQuery> {
         let parser = FederatedParser::new();
         let federated = parser.parse(sql)?;
 
@@ -450,38 +435,11 @@ impl DistributedQueryStrategy {
                 filters: Vec::new(),
                 dependencies: Vec::new(),
             }),
-            SqlExtension::GraphQuery { cypher } => {
-                let graph_name = request
-                    .target
-                    .clone()
-                    .or_else(|| {
-                        federated.targets.iter().find_map(|target| {
-                            (target.model_type == TargetModelType::Graph)
-                                .then(|| target.name.clone())
-                        })
-                    })
-                    .unwrap_or_else(|| "default".to_string());
-
-                Ok(QueryComponent {
-                    model: DataModel::Graph,
-                    operation: ModelOperation::GraphTraversal(GraphTraversalExpr {
-                        graph_name,
-                        start_nodes: StartNodeSpec::Filter(NodeFilter {
-                            label: self.parse_graph_label(cypher)?,
-                            properties: Vec::new(),
-                        }),
-                        edge_types: self.parse_graph_edge_types(cypher)?,
-                        direction: self.infer_graph_direction(cypher),
-                        max_depth: self.parse_graph_max_depth(cypher)?,
-                        min_depth: 0,
-                        node_filters: Vec::new(),
-                        edge_filters: Vec::new(),
-                        return_paths: false,
-                    }),
-                    filters: Vec::new(),
-                    dependencies: Vec::new(),
-                })
-            }
+            SqlExtension::GraphQuery { cypher } => lower_supported_graph_query_component(
+                cypher,
+                request.target.as_deref(),
+                Some("default"),
+            ),
             SqlExtension::Logs { namespace } => {
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -524,6 +482,14 @@ impl DistributedQueryStrategy {
                     dependencies: Vec::new(),
                 })
             }
+            SqlExtension::Traces { namespace } => Err(anyhow!(
+                "Distributed execution does not support TRACES('{}') yet; use the federated observability executor",
+                namespace
+            )),
+            SqlExtension::RerankSearch { .. } => Err(anyhow!(
+                "Distributed execution does not support RerankSearch yet; \
+                 route through the local rank pipeline"
+            )),
         }
     }
 }
@@ -548,29 +514,76 @@ impl QueryStrategy for DistributedQueryStrategy {
 
         let sql = self.extract_sql(&request)?;
         let normalized_sql = self.strip_strategy_comments(sql)?;
-        let query = self.query_to_multimodel(&request, &normalized_sql)?;
+        let query = self.query_to_multimodal(&request, &normalized_sql)?;
+
+        let stats_before = self.coordinator.get_stats().await;
 
         // Execute via distributed coordinator
-        let results = self
+        let execution = self
             .coordinator
-            .execute(&query)
+            .execute_with_metadata(&query)
             .await
             .map_err(|e| anyhow!("Distributed query failed: {}", e))?;
+        let stats_after = self.coordinator.get_stats().await;
+
+        let nodes_involved = execution.plan.as_ref().map(|plan| {
+            plan.local_subqueries
+                .iter()
+                .chain(plan.remote_subqueries.iter())
+                .map(|subquery| subquery.target_node.as_str())
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+        });
+        let local_subqueries = execution
+            .plan
+            .as_ref()
+            .map(|plan| plan.local_subqueries.len())
+            .unwrap_or_default();
+        let remote_subqueries = execution
+            .plan
+            .as_ref()
+            .map(|plan| plan.remote_subqueries.len())
+            .unwrap_or_default();
+        let records_returned = execution
+            .results
+            .iter()
+            .map(|result| result.records.len())
+            .sum::<usize>();
 
         // Convert results
-        let data = self.convert_results(results.clone());
+        let data = self.convert_results(execution.results);
 
         // Create execution metrics
-        let metrics = serde_json::json!({
+        let extra = serde_json::json!({
             "query_type": "distributed",
-            "num_results": results.len(),
+            "num_results": records_returned,
             "num_components": query.components.len(),
             "local_node_id": self.local_node_id,
+            "nodes_involved": nodes_involved,
+            "local_subqueries": local_subqueries,
+            "remote_subqueries": remote_subqueries,
+            "cache_hits": stats_after.cache_hits.saturating_sub(stats_before.cache_hits),
+            "total_queries_delta": stats_after.total_queries.saturating_sub(stats_before.total_queries),
+            "local_only_queries_delta": stats_after
+                .local_only_queries
+                .saturating_sub(stats_before.local_only_queries),
+            "distributed_queries_delta": stats_after
+                .distributed_queries
+                .saturating_sub(stats_before.distributed_queries),
+            "failed_remote_subqueries_delta": stats_after
+                .failed_remote_subqueries
+                .saturating_sub(stats_before.failed_remote_subqueries),
+            "shuffle_count_delta": stats_after.shuffle_count.saturating_sub(stats_before.shuffle_count),
         });
 
         Ok(QueryResult {
             data,
-            metrics: Some(serde_json::from_value(metrics)?),
+            metrics: Some(ExecutionMetrics {
+                results_returned: records_returned,
+                cache_hit: execution.cache_hit,
+                extra,
+                ..Default::default()
+            }),
         })
     }
 }
@@ -602,7 +615,7 @@ mod tests {
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-        StorageEngineStrategy, UnifiedStorageEngine,
+        StorageFormatStrategy, UnifiedStorageFormat,
     };
     use chrono::Utc;
     use std::collections::HashMap;
@@ -631,7 +644,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_to_multimodel_translates_document_filter() {
+    fn test_query_to_multimodal_translates_document_filter() {
         let strategy = DistributedQueryStrategy::new(
             "test-node".to_string(),
             DistributedStrategyConfig::default(),
@@ -641,7 +654,7 @@ mod tests {
         );
 
         let query = strategy
-            .query_to_multimodel(
+            .query_to_multimodal(
                 &request,
                 "SELECT * FROM DOCUMENT_QUERY('users', 'status = active') LIMIT 5",
             )
@@ -661,7 +674,7 @@ mod tests {
     }
 
     #[test]
-    fn test_query_to_multimodel_rejects_expression_vector() {
+    fn test_query_to_multimodal_rejects_expression_vector() {
         let strategy = DistributedQueryStrategy::new(
             "test-node".to_string(),
             DistributedStrategyConfig::default(),
@@ -670,13 +683,129 @@ mod tests {
             QueryRequest::federated("SELECT * FROM VECTOR_SEARCH('users', u.embedding, 10)");
 
         let error = strategy
-            .query_to_multimodel(
+            .query_to_multimodal(
                 &request,
                 "SELECT * FROM VECTOR_SEARCH('users', u.embedding, 10)",
             )
             .expect_err("expression vectors should remain unsupported for distributed execution");
 
         assert!(error.to_string().contains("expression-based query vectors"));
+    }
+
+    #[test]
+    fn test_query_to_multimodal_lowers_pgvector_distance_cast() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let sql =
+            "SELECT id FROM memories ORDER BY embedding <-> '[0.1, 0.2, -0.3]'::vector(3) LIMIT 5";
+        let request = QueryRequest::federated(sql);
+
+        let query = strategy
+            .query_to_multimodal(&request, sql)
+            .expect("pgvector distance query should lower");
+
+        assert_eq!(query.components.len(), 1);
+        match &query.components[0].operation {
+            ModelOperation::VectorSearch(expr) => {
+                assert_eq!(expr.collection, "memories");
+                assert_eq!(expr.query_vector, vec![0.1, 0.2, -0.3]);
+                assert_eq!(expr.top_k, 5);
+            }
+            other => panic!("expected vector search component, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_query_to_multimodal_lowers_cross_modal_components() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let sql = "\
+            SELECT *
+            FROM DOCUMENT_QUERY('profiles', 'tier = gold') p
+            JOIN LATERAL VECTOR_SEARCH('memories', '[0.1, 0.2]'::vector(2), 3) v ON true
+            JOIN LATERAL GRAPH_QUERY('MATCH (n:Agent) FROM agent_graph RETURN n') g ON true
+            LIMIT 3";
+        let request = QueryRequest::federated(sql);
+
+        let query = strategy
+            .query_to_multimodal(&request, sql)
+            .expect("cross-modal query should lower through unified query components");
+
+        assert_eq!(query.components.len(), 3);
+        assert_eq!(query.limit, Some(3));
+        assert!(matches!(
+            query.components[0].operation,
+            ModelOperation::DocumentQuery(_)
+        ));
+        assert!(matches!(
+            query.components[1].operation,
+            ModelOperation::VectorSearch(_)
+        ));
+        assert!(matches!(
+            query.components[2].operation,
+            ModelOperation::GraphQuery(_)
+        ));
+    }
+
+    #[test]
+    fn test_query_to_multimodal_uses_graph_target_from_supported_subset() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let request = QueryRequest::federated(
+            "SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n')",
+        );
+
+        let query = strategy
+            .query_to_multimodal(
+                &request,
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Person) FROM social RETURN n')",
+            )
+            .expect("graph distributed query should translate");
+
+        assert_eq!(query.components.len(), 1);
+        match &query.components[0].operation {
+            ModelOperation::GraphQuery(expr) => {
+                assert_eq!(expr.graph_name, "social");
+                assert_eq!(expr.normalized_query, "MATCH (n:Person) RETURN n");
+                assert_eq!(
+                    expr.output_columns,
+                    vec![
+                        "node_id".to_string(),
+                        "label".to_string(),
+                        "properties".to_string()
+                    ]
+                );
+                assert!(expr.uses_legacy_node_rows);
+                assert_eq!(expr.max_depth, 0);
+            }
+            other => panic!("expected graph query component, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_query_to_multimodal_rejects_conflicting_graph_target_and_from_clause() {
+        let strategy = DistributedQueryStrategy::new(
+            "test-node".to_string(),
+            DistributedStrategyConfig::default(),
+        );
+        let request =
+            QueryRequest::federated("SELECT * FROM GRAPH_QUERY('MATCH (n) FROM social RETURN n')")
+                .with_target("api_graph");
+
+        let error = strategy
+            .query_to_multimodal(
+                &request,
+                "SELECT * FROM GRAPH_QUERY('MATCH (n) FROM social RETURN n')",
+            )
+            .expect_err("conflicting graph targets should be rejected");
+
+        assert!(error.to_string().contains("target conflict"));
     }
 
     struct MockStorageEngine {
@@ -693,7 +822,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl UnifiedStorageEngine for MockStorageEngine {
+    impl UnifiedStorageFormat for MockStorageEngine {
         fn engine_name(&self) -> &'static str {
             "mock"
         }
@@ -702,8 +831,8 @@ mod tests {
             "1.0.0"
         }
 
-        fn strategy(&self) -> StorageEngineStrategy {
-            StorageEngineStrategy::Viper
+        fn strategy(&self) -> StorageFormatStrategy {
+            StorageFormatStrategy::Viper
         }
 
         async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {
@@ -748,7 +877,7 @@ mod tests {
             _collection_id: &str,
             _base_path: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        ) -> Result<Option<proximadb_records::ProximaRecord>> {
             Ok(None)
         }
 
@@ -766,7 +895,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_distributed_strategy_executes_document_query_locally() {
-        let storage_engine: Arc<dyn UnifiedStorageEngine> =
+        let storage_engine: Arc<dyn UnifiedStorageFormat> =
             Arc::new(MockStorageEngine::new().await);
         let document_service = Arc::new(DocumentService::new(storage_engine));
         document_service

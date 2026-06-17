@@ -33,15 +33,14 @@ mod tests {
         SearchParams, SearchPlan, SearchResultSet, StorageInfo, UnifiedSearchEngine,
         results::OptimizedSearchRecord,
     };
-    use crate::proto::proximadb_v1::{MetadataItem, VectorRecord};
     use crate::services::operations::vectors::VectorOperationsService;
-    use crate::storage::engines::impls::viper::FilterValue;
-    // use crate::storage::engines::impls::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig}; // Removed
-    // use crate::storage::engines::impls::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig}; // Removed
-    use crate::compute::quantization::unified::UnifiedQuantizationEngine;
-    use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
+    use crate::storage::engines::viper::FilterValue;
+    // use crate::storage::engines::viper::unified_search_engine::{ViperUnifiedSearchEngine, ViperSearchConfig}; // Removed
+    // use crate::storage::engines::sst::unified_search_engine::{SstUnifiedSearchEngine, SstSearchConfig}; // Removed
+    use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
+    use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
     // UnifiedParquetReader moved to different module
-    // use crate::storage::engines::impls::viper::readers::unified_parquet_reader::UnifiedParquetReader;
+    // use crate::storage::engines::viper::readers::unified_parquet_reader::UnifiedParquetReader;
 
     /// Test data structure for comprehensive testing
     #[derive(Debug, Clone)]
@@ -450,7 +449,9 @@ mod tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         // Note: UnifiedQuantizationEngine requires a CodebookStore, which would need to be mocked for tests
         // For now, we'll create a simple in-memory codebook store
-        use crate::compute::quantization::unified::{CodebookStore, InMemoryCodebookStore};
+        use crate::compute::quantization::quantization_engine::{
+            CodebookStore, InMemoryCodebookStore,
+        };
         let codebook_store = Arc::new(InMemoryCodebookStore::new()) as Arc<dyn CodebookStore>;
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(
             distance_compute.clone(),
@@ -512,7 +513,9 @@ mod tests {
         let distance_compute = Arc::new(UnifiedDistanceCompute::default());
         // Note: UnifiedQuantizationEngine requires a CodebookStore, which would need to be mocked for tests
         // For now, we'll create a simple in-memory codebook store
-        use crate::compute::quantization::unified::{CodebookStore, InMemoryCodebookStore};
+        use crate::compute::quantization::quantization_engine::{
+            CodebookStore, InMemoryCodebookStore,
+        };
         use tracing::{debug, error, info};
         let codebook_store = Arc::new(InMemoryCodebookStore::new()) as Arc<dyn CodebookStore>;
         let quantization_engine = Arc::new(UnifiedQuantizationEngine::new(

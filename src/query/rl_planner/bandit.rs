@@ -227,6 +227,18 @@ impl ContextualBanditPlanner {
     /// Select action using Thompson Sampling or ε-greedy.
     /// For engines with few observations (<50 updates), temporarily boosts exploration
     /// to the base rate, preventing a well-explored engine from suppressing exploration
+    /// Return the action with the highest expected value (α/(α+β)) for all arms.
+    /// This is the deterministic exploitation path used on the query hot path.
+    /// Thompson Sampling exploration only runs in the background batch-update cycle.
+    pub fn exploit_best_action(&self, state: &PlannerState) -> ExecutionAction {
+        let engine_name = state.storage_engine.to_string();
+        let action_space = self
+            .engine_action_spaces
+            .get(&engine_name)
+            .unwrap_or(&self.default_action_space);
+        self.best_action(state, action_space)
+    }
+
     /// for a newly-encountered one.
     pub fn select_action(&self, state: &PlannerState) -> ExecutionAction {
         // Get action space for this engine

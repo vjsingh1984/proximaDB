@@ -73,6 +73,7 @@ impl ParquetConfigBuilder {
                     binary_threshold: Some(0.5),
                     int8_threshold: Some(0.3),
                     pq_threshold: Some(0.1),
+                    enable_turboquant: Some(false),
                 },
                 max_records_per_file: None,
                 target_file_size_bytes: None,

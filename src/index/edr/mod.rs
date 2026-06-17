@@ -166,7 +166,7 @@ impl EdrIndex {
         let vector_count = self.document_store.count().await;
         let memory_usage = self.document_store.estimate_memory_usage().await;
 
-        let mut stats = self.stats.write().unwrap();
+        let mut stats = self.stats.write().unwrap_or_else(|e| e.into_inner());
         stats.vector_count = vector_count;
         stats.memory_usage_bytes = memory_usage;
     }
@@ -208,7 +208,7 @@ impl AxisVectorIndex for EdrIndex {
 
     fn stats(&self) -> IndexStats {
         // Use blocking read for synchronous method
-        let stats = self.stats.read().unwrap();
+        let stats = self.stats.read().unwrap_or_else(|e| e.into_inner());
         stats.clone()
     }
 }
@@ -216,11 +216,10 @@ impl AxisVectorIndex for EdrIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
 
     #[tokio::test]
     async fn test_edr_index_creation() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let config = EdrIndexConfig::default();
         let index = EdrIndex::new(config).unwrap();
 
@@ -238,7 +237,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edr_add_document() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let config = EdrIndexConfig::default();
         let index = EdrIndex::new(config).unwrap();
 
@@ -254,7 +253,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_edr_search() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let config = EdrIndexConfig {
             top_k: 5,
             enable_query_expansion: true,

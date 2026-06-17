@@ -20,7 +20,7 @@ Requirements:
 import hashlib
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 import requests
@@ -1001,7 +1001,7 @@ SEMANTIC_SEARCH_QUERIES = [
 # =============================================================================
 
 
-def generate_embedding(text: str, dimension: int = 384) -> List[float]:
+def generate_embedding(text: str, dimension: int = 384) -> list[float]:
     """Generate deterministic pseudo-embedding from text."""
     text_hash = hashlib.sha256(text.encode()).digest()
     embedding = []
@@ -1016,7 +1016,7 @@ def generate_embedding(text: str, dimension: int = 384) -> List[float]:
     return embedding
 
 
-def to_sql_value(value: Any) -> Dict[str, Any]:
+def to_sql_value(value: Any) -> dict[str, Any]:
     """Convert Python value to SqlValue format."""
     if value is None:
         return {"null_value": 0}
@@ -1034,12 +1034,12 @@ def to_sql_value(value: Any) -> Dict[str, Any]:
         return {"string_value": str(value)}
 
 
-def convert_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+def convert_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
     """Convert metadata dict to SqlValue format."""
     return {k: to_sql_value(v) for k, v in metadata.items()}
 
 
-def create_collection(name: str, dimension: int = 384) -> Dict[str, Any]:
+def create_collection(name: str, dimension: int = 384) -> dict[str, Any]:
     """Create a collection."""
     response = requests.post(
         f"{SERVER_URL}/api/v1/collections",
@@ -1066,8 +1066,8 @@ def delete_collection(name: str) -> bool:
 
 
 def insert_vectors(
-    collection_name: str, vectors: List[Dict[str, Any]]
-) -> Dict[str, Any]:
+    collection_name: str, vectors: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Insert vectors with metadata."""
     formatted_vectors = []
     for v in vectors:
@@ -1084,8 +1084,8 @@ def insert_vectors(
 
 
 def search_vectors(
-    collection_name: str, query_vector: List[float], top_k: int = 10
-) -> List[Dict[str, Any]]:
+    collection_name: str, query_vector: list[float], top_k: int = 10
+) -> list[dict[str, Any]]:
     """Search for similar vectors. Returns list of results."""
     response = requests.post(
         f"{SERVER_URL}/api/v1/search",
@@ -1107,7 +1107,7 @@ def search_vectors(
     return []
 
 
-def assert_success(result: Dict[str, Any], message: str = "API call failed"):
+def assert_success(result: dict[str, Any], message: str = "API call failed"):
     """Assert API call succeeded."""
     if result.get("success") is True:
         return
@@ -1127,8 +1127,8 @@ class SearchResult:
     """Semantic search test result."""
 
     query: str
-    expected_ids: List[str]
-    found_ids: List[str]
+    expected_ids: list[str]
+    found_ids: list[str]
     top_k_accuracy: float
     mrr: float  # Mean Reciprocal Rank
     recall: float

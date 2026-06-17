@@ -39,11 +39,11 @@ pub struct DetectedEnvironment {
     /// CPU, memory, storage and GPU resources available on the host
     pub resource_availability: ResourceAvailability,
     /// Network topology and firewall requirements for the deployment
-    pub network_configuration: NetworkConfig,
+    pub network_configuration: DiscoveryNetworkConfig,
     /// Compliance and security policies that must be enforced
     pub security_constraints: SecurityConstraints,
     /// Performance characteristics and optimal ProximaDB tuning parameters
-    pub performance_characteristics: PerformanceProfile,
+    pub performance_characteristics: DiscoveryPerformanceProfile,
     /// Recommended deployment strategy and scaling configuration
     pub recommended_deployment: DeploymentRecommendation,
     /// UTC timestamp when this environment snapshot was captured
@@ -103,9 +103,12 @@ pub struct CapacityEstimate {
     pub recommended_storage_engine: String,
 }
 
+/// Backwards-compat alias for [`DiscoveryNetworkConfig`].
+pub type NetworkConfig = DiscoveryNetworkConfig;
+
 /// Network configuration details
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkConfig {
+pub struct DiscoveryNetworkConfig {
     /// Whether the ProximaDB API must be reachable from outside the cluster
     pub public_access_required: bool,
     /// Whether an external load balancer is available for traffic distribution
@@ -182,9 +185,12 @@ pub struct EncryptionRequirements {
     pub encryption_algorithm: Option<String>,
 }
 
+/// Backwards-compat alias for [`DiscoveryPerformanceProfile`].
+pub type PerformanceProfile = DiscoveryPerformanceProfile;
+
 /// Performance profile of target environment
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PerformanceProfile {
+pub struct DiscoveryPerformanceProfile {
     /// Estimated maximum query throughput in queries per second
     pub estimated_qps_capacity: u32,
     /// Storage subsystem IOPS capability
@@ -222,7 +228,7 @@ pub struct DeploymentRecommendation {
     /// Replica count and auto-scaling configuration
     pub scaling_configuration: ScalingConfig,
     /// Monitoring and observability setup recommendation
-    pub monitoring_setup: MonitoringConfig,
+    pub monitoring_setup: DiscoveryMonitoringConfig,
     /// Backup frequency and retention strategy
     pub backup_strategy: BackupStrategy,
     /// Estimated time to complete the full deployment in minutes
@@ -277,9 +283,12 @@ pub enum ScalingAction {
     Alert,
 }
 
+/// Backwards-compat alias for [`DiscoveryMonitoringConfig`].
+pub type MonitoringConfig = DiscoveryMonitoringConfig;
+
 /// Monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
+pub struct DiscoveryMonitoringConfig {
     /// Master switch; when `false` no monitoring subsystems are started
     pub enabled: bool,
     /// Number of days to retain collected metrics time-series data
@@ -298,7 +307,7 @@ pub struct MonitoringConfig {
     pub enable_alerting: bool,
 }
 
-impl MonitoringConfig {
+impl DiscoveryMonitoringConfig {
     /// Construct a fully-enabled monitoring configuration suitable for enterprise deployments
     pub fn enterprise_default() -> Self {
         Self {
@@ -795,7 +804,7 @@ impl EnvironmentDetector {
         platform_type: &PlatformType,
         resources: &ResourceAvailability,
         security: &SecurityConstraints,
-        _performance: &PerformanceProfile,
+        _performance: &DiscoveryPerformanceProfile,
     ) -> Result<DeploymentRecommendation> {
         // Determine deployment strategy based on resources and requirements
         let deployment_strategy = if resources.cpu_cores >= 16 && resources.memory_gb >= 32 {
@@ -846,7 +855,7 @@ impl EnvironmentDetector {
         Ok(DeploymentRecommendation {
             deployment_strategy,
             scaling_configuration: scaling_config,
-            monitoring_setup: MonitoringConfig::enterprise_default(),
+            monitoring_setup: DiscoveryMonitoringConfig::enterprise_default(),
             backup_strategy: BackupStrategy::enterprise_default(),
             estimated_deployment_time_minutes: estimated_deployment_time,
         })
@@ -864,9 +873,9 @@ impl EnvironmentDetector {
     } // Assume modern storage
 
     /// Analyze network configuration
-    async fn analyze_network_configuration(&self) -> Result<NetworkConfig> {
+    async fn analyze_network_configuration(&self) -> Result<DiscoveryNetworkConfig> {
         debug!("🌐 Analyzing network configuration...");
-        Ok(NetworkConfig {
+        Ok(DiscoveryNetworkConfig {
             public_access_required: true,
             load_balancer_available: false,
             ssl_termination_available: false,
@@ -912,9 +921,9 @@ impl EnvironmentDetector {
     async fn profile_performance_characteristics(
         &self,
         resource_availability: &ResourceAvailability,
-    ) -> Result<PerformanceProfile> {
+    ) -> Result<DiscoveryPerformanceProfile> {
         debug!("⚡ Profiling performance characteristics...");
-        Ok(PerformanceProfile {
+        Ok(DiscoveryPerformanceProfile {
             estimated_qps_capacity: resource_availability.cpu_cores * 250,
             storage_iops: if self.detect_high_iops_storage().await? {
                 10000
@@ -1148,7 +1157,7 @@ impl Default for DetectionConfig {
 
 // Removed duplicate structs - using original definitions above
 
-// Removed duplicate NetworkConfiguration struct - use NetworkConfig instead
+// Removed duplicate DiscoveryNetworkConfiguration struct - use DiscoveryNetworkConfig instead
 
 #[cfg(test)]
 mod tests {

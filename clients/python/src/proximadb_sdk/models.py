@@ -20,17 +20,16 @@ limitations under the License.
 """
 
 import math
-from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 # Type aliases for convenience
-VectorArray = Union[List[List[float]], np.ndarray]
-MetadataDict = Dict[str, Union[str, int, float, bool, List[Union[str, int, float]]]]
-FilterDict = Dict[str, Any]
+VectorArray = Union[list[list[float]], np.ndarray]
+MetadataDict = dict[str, str | int | float | bool | list[str | int | float]]
+FilterDict = dict[str, Any]
 
 
 # ============================================================================
@@ -144,6 +143,85 @@ class IndexType(int, Enum):
     LSH = 6  # Locality Sensitive Hashing
 
 
+class EmbeddingPrecision(str, Enum):
+    """Canonical embedding precision for a collection.
+
+    Mirrors the server's proto ``EmbeddingPrecision`` enum
+    (``proto/proximadb/v1/collection_types.proto``) and the Rust SDK's
+    ``EmbeddingPrecision`` (``clients/rust/src/collection.rs``). Set
+    once at collection-create time via
+    ``CollectionConfig.canonical_embedding_precision``; controls the
+    on-disk + in-memory scalar type for the embedding column.
+
+    See ``docs/05-concepts/embedding-precision.adoc`` for the operator
+    guide. ``FP32`` (the default) preserves legacy behavior — existing
+    callers that never set the field continue to produce identical
+    serialized payloads.
+
+    Example:
+        cfg = CollectionConfig(
+            name="docs_fp16",
+            dimension=768,
+            canonical_embedding_precision=EmbeddingPrecision.FP16,
+        )
+        # Or pass a string — common aliases all accepted
+        cfg = CollectionConfig(
+            name="docs_fp16",
+            dimension=768,
+            canonical_embedding_precision="fp16",  # or "half", "float16", "EMBEDDING_PRECISION_FP16"
+        )
+    """
+
+    FP32 = "fp32"
+    FP16 = "fp16"
+    BF16 = "bf16"
+    INT8 = "int8"
+    UINT8 = "uint8"
+
+    @classmethod
+    def _normalize(cls, raw):
+        """Accept the same string forms the server's
+        ``apply_proto_enum_workarounds`` accepts: canonical lowercase,
+        proto SCREAMING label (``EMBEDDING_PRECISION_FP16``), and common
+        aliases (``half``, ``float16``, ``bfloat16``, ``i8``,
+        ``int8_scalar``, ``u8``, ``uint8_scalar``).
+
+        Returns an EmbeddingPrecision or raises ValueError. Used by the
+        CollectionConfig field_validator so users can pass either the
+        enum or a string and get consistent semantics.
+        """
+        if isinstance(raw, cls):
+            return raw
+        if isinstance(raw, str):
+            key = raw.strip().lower()
+            if key.startswith("embedding_precision_"):
+                key = key[len("embedding_precision_") :]
+            aliases = {
+                "fp32": cls.FP32,
+                "f32": cls.FP32,
+                "float32": cls.FP32,
+                "fp16": cls.FP16,
+                "f16": cls.FP16,
+                "half": cls.FP16,
+                "float16": cls.FP16,
+                "bf16": cls.BF16,
+                "bfloat16": cls.BF16,
+                "int8": cls.INT8,
+                "i8": cls.INT8,
+                "int8_scalar": cls.INT8,
+                "uint8": cls.UINT8,
+                "u8": cls.UINT8,
+                "uint8_scalar": cls.UINT8,
+            }
+            if key in aliases:
+                return aliases[key]
+        raise ValueError(
+            f"unrecognised canonical_embedding_precision {raw!r}; "
+            "accepted: fp32, fp16, bf16, int8, uint8 (case-insensitive, "
+            "with shorthand half/float16/bfloat16/i8/u8/etc.)"
+        )
+
+
 class StorageEngineType(int, Enum):
     """Storage engine types for gRPC API (integer-based, matches v1 proto)
 
@@ -208,7 +286,7 @@ class ServerCapabilities(BaseModel):
     """Server capabilities and fallback behavior for configuration validation"""
 
     # Fully supported distance metrics (no fallback) - All 13 metrics supported as of 2025-08
-    supported_distance_metrics: List[str] = [
+    supported_distance_metrics: list[str] = [
         "cosine",
         "euclidean",
         "dot_product",
@@ -225,16 +303,16 @@ class ServerCapabilities(BaseModel):
     ]
 
     # Distance metrics that fallback to cosine (none - all are now supported natively)
-    fallback_distance_metrics: List[str] = []
+    fallback_distance_metrics: list[str] = []
 
     # Fully supported storage engines (no fallback)
-    supported_storage_engines: List[str] = ["viper", "sst"]
+    supported_storage_engines: list[str] = ["viper", "sst"]
 
     # Storage engines that fallback to viper
-    fallback_storage_engines: List[str] = ["mmap", "hybrid"]
+    fallback_storage_engines: list[str] = ["mmap", "hybrid"]
 
     # Fully supported indexing algorithms (no fallback) - All 6 algorithms supported as of 2025-08
-    supported_indexing_algorithms: List[str] = [
+    supported_indexing_algorithms: list[str] = [
         "hnsw",
         "ivf",
         "pq",
@@ -244,10 +322,10 @@ class ServerCapabilities(BaseModel):
     ]
 
     # Indexing algorithms that fallback to hnsw (none - all are now supported natively)
-    fallback_indexing_algorithms: List[str] = []
+    fallback_indexing_algorithms: list[str] = []
 
     # Quantization types (all supported in VIPER engine)
-    supported_quantization_types: List[str] = [
+    supported_quantization_types: list[str] = [
         "none",
         "uniform",
         "pq",
@@ -257,7 +335,7 @@ class ServerCapabilities(BaseModel):
     ]
 
     # Server behavior notes
-    notes: Dict[str, str] = {
+    notes: dict[str, str] = {
         "fallback_policy": "Server uses intelligent fallbacks instead of errors",
         "dimension_limit": "Server default maximum is 65536 dimensions (configurable)",
         "name_validation": "Collection names must be 8+ characters to avoid collision with 7-char base62 IDs",
@@ -266,7 +344,7 @@ class ServerCapabilities(BaseModel):
     }
 
     @classmethod
-    def get_fallback_for(cls, config_type: str, value: str) -> Optional[str]:
+    def get_fallback_for(cls, config_type: str, value: str) -> str | None:
         """Get the fallback value for an unsupported configuration"""
         capabilities = cls()
 
@@ -366,27 +444,27 @@ class QuantizationLevel(BaseModel):
     """Quantization level configuration"""
 
     level_type: str  # "none", "uniform", "pq", "scalar", "binary", "custom"
-    bits: Optional[int] = None
-    scale: Optional[float] = None
-    offset: Optional[float] = None
-    num_subvectors: Optional[int] = None
-    bits_per_code: Optional[int] = None
-    codebook_id: Optional[str] = None
-    adaptive_subvectors: Optional[bool] = None
-    threshold: Optional[float] = None
-    sign_based: Optional[bool] = None
-    clamp_values: Optional[bool] = None
-    type_id: Optional[str] = None
-    bits_per_element: Optional[int] = None
-    config: Optional[Dict[str, str]] = None
+    bits: int | None = None
+    scale: float | None = None
+    offset: float | None = None
+    num_subvectors: int | None = None
+    bits_per_code: int | None = None
+    codebook_id: str | None = None
+    adaptive_subvectors: bool | None = None
+    threshold: float | None = None
+    sign_based: bool | None = None
+    clamp_values: bool | None = None
+    type_id: str | None = None
+    bits_per_element: int | None = None
+    config: dict[str, str] | None = None
 
 
 class StorageQuantizationConfig(BaseModel):
     """Storage quantization configuration"""
 
     enabled: bool = False
-    level: Optional[QuantizationLevel] = None
-    codebook_id: Optional[str] = None
+    level: QuantizationLevel | None = None
+    codebook_id: str | None = None
     progressive_quantization: bool = False
     storage_compatibility: str = "VIPER_ONLY"
 
@@ -397,14 +475,14 @@ class IndexQuantizationStrategy(BaseModel):
     index_name: str
     level: QuantizationLevel
     build_async: bool = False
-    codebook_id: Optional[str] = None
+    codebook_id: str | None = None
 
 
 class IndexQuantizationConfig(BaseModel):
     """Index quantization configuration"""
 
     enabled: bool = False
-    strategies: List[IndexQuantizationStrategy] = Field(default_factory=list)
+    strategies: list[IndexQuantizationStrategy] = Field(default_factory=list)
     auto_select_strategy: bool = False
 
 
@@ -412,7 +490,7 @@ class SearchQuantizationConfig(BaseModel):
     """Search quantization configuration"""
 
     enabled: bool = False
-    default_level: Optional[QuantizationLevel] = None
+    default_level: QuantizationLevel | None = None
     adaptive_precision: bool = True
     accuracy_threshold: float = 0.95
     candidate_multiplier: int = 3
@@ -442,7 +520,7 @@ class CompressionConfig(BaseModel):
         default=CompressionAlgorithm.NONE,
         description="Compression algorithm (ZSTD/LZ4/Snappy)",
     )
-    level: Optional[int] = Field(
+    level: int | None = Field(
         default=None, description="Compression level (1-22 for ZSTD, 1-9 for others)"
     )
 
@@ -451,7 +529,7 @@ class CompressionConfig(BaseModel):
         default=False,
         description="Enable adaptive compression based on data characteristics",
     )
-    min_ratio: Optional[float] = Field(
+    min_ratio: float | None = Field(
         default=None,
         description="Minimum compression ratio (e.g., 1.5 = 50% reduction)",
     )
@@ -461,17 +539,17 @@ class CompressionConfig(BaseModel):
         default=False,
         description="Enable VIPER dual columns (FP32 + quantized). Ignored by SST engine.",
     )
-    quantization_type: Optional[str] = Field(
+    quantization_type: str | None = Field(
         default=None,
         description="VIPER quantization method: 'int8', 'pq8', 'pq4'. Ignored by SST engine.",
     )
-    normalization_method: Optional[str] = Field(
+    normalization_method: str | None = Field(
         default=None,
         description="VIPER normalization: 'mean', 'trimmed_mean', 'median'. Ignored by SST engine.",
     )
 
     # SST-specific block sizing (proto fields 8-9)
-    block_size_kb: Optional[int] = Field(
+    block_size_kb: int | None = Field(
         default=None,
         description="SST block size in KB (256-16384). Ignored by VIPER engine.",
     )
@@ -543,31 +621,31 @@ class QuantizationConfig(BaseModel):
     progressive_quantization: bool = False
 
     # Product quantization params
-    bits_per_subvector: Optional[int] = None
-    num_subvectors: Optional[int] = None
+    bits_per_subvector: int | None = None
+    num_subvectors: int | None = None
 
     # Scalar quantization params
-    bits_per_vector: Optional[int] = None
+    bits_per_vector: int | None = None
 
     # Binary quantization params
-    threshold: Optional[float] = None
+    threshold: float | None = None
 
     # Common params
-    accuracy_threshold: Optional[float] = 0.95
-    compression_ratio_target: Optional[float] = None
-    validation_sample_size: Optional[int] = 1000
-    retraining_threshold: Optional[float] = 0.90
+    accuracy_threshold: float | None = 0.95
+    compression_ratio_target: float | None = None
+    validation_sample_size: int | None = 1000
+    retraining_threshold: float | None = 0.90
 
 
 class ComprehensiveQuantizationConfig(BaseModel):
     """Comprehensive quantization configuration matching proto structure"""
 
     enabled: bool = False
-    storage_quantization: Optional[StorageQuantizationConfig] = None
-    index_quantization: Optional[IndexQuantizationConfig] = None
-    search_quantization: Optional[SearchQuantizationConfig] = None
-    compression_ratio_target: Optional[float] = None
-    validation: Optional[QuantizationValidation] = None
+    storage_quantization: StorageQuantizationConfig | None = None
+    index_quantization: IndexQuantizationConfig | None = None
+    search_quantization: SearchQuantizationConfig | None = None
+    compression_ratio_target: float | None = None
+    validation: QuantizationValidation | None = None
 
 
 # ============================================================================
@@ -597,94 +675,94 @@ class DataDensity(str, Enum):
 class ParquetWriterSettings(BaseModel):
     """Parquet writer settings for columnar engines"""
 
-    row_group_size: Optional[int] = None
-    page_size: Optional[int] = None
-    enable_bloom_filters: Optional[bool] = None
-    bloom_filter_fpp: Optional[float] = None
-    bloom_filter_columns: Optional[List[str]] = None
-    enable_column_statistics: Optional[bool] = None
-    enable_page_index: Optional[bool] = None
-    enable_column_index: Optional[bool] = None
-    enable_offset_index: Optional[bool] = None
-    page_index_granularity: Optional[int] = None
-    enable_dictionary: Optional[bool] = None
-    dictionary_threshold: Optional[float] = None
-    enable_delta_encoding: Optional[bool] = None
-    enable_byte_stream_split: Optional[bool] = None
-    enable_pq_sorting: Optional[bool] = None
-    pq_sorting_segments: Optional[int] = None
-    pq_sorting_codebook_size: Optional[int] = None
-    enable_native_metadata: Optional[bool] = None
-    metadata_inference_samples: Optional[int] = None
-    write_batch_size: Optional[int] = None
-    id_less_storage: Optional[bool] = None
+    row_group_size: int | None = None
+    page_size: int | None = None
+    enable_bloom_filters: bool | None = None
+    bloom_filter_fpp: float | None = None
+    bloom_filter_columns: list[str] | None = None
+    enable_column_statistics: bool | None = None
+    enable_page_index: bool | None = None
+    enable_column_index: bool | None = None
+    enable_offset_index: bool | None = None
+    page_index_granularity: int | None = None
+    enable_dictionary: bool | None = None
+    dictionary_threshold: float | None = None
+    enable_delta_encoding: bool | None = None
+    enable_byte_stream_split: bool | None = None
+    enable_pq_sorting: bool | None = None
+    pq_sorting_segments: int | None = None
+    pq_sorting_codebook_size: int | None = None
+    enable_native_metadata: bool | None = None
+    metadata_inference_samples: int | None = None
+    write_batch_size: int | None = None
+    id_less_storage: bool | None = None
 
 
 class FooterCacheSettings(BaseModel):
     """Footer cache settings for cloud storage optimization"""
 
-    enable: Optional[bool] = None
-    max_entries: Optional[int] = None
-    ttl_seconds: Optional[int] = None
-    time_to_idle_seconds: Optional[int] = None
-    enable_persistence: Optional[bool] = None
-    persistence_path: Optional[str] = None
-    enable_prefetch: Optional[bool] = None
-    prefetch_threshold: Optional[int] = None
-    warming_interval_seconds: Optional[int] = None
-    enable_compression: Optional[bool] = None
-    compression_level: Optional[int] = None
+    enable: bool | None = None
+    max_entries: int | None = None
+    ttl_seconds: int | None = None
+    time_to_idle_seconds: int | None = None
+    enable_persistence: bool | None = None
+    persistence_path: str | None = None
+    enable_prefetch: bool | None = None
+    prefetch_threshold: int | None = None
+    warming_interval_seconds: int | None = None
+    enable_compression: bool | None = None
+    compression_level: int | None = None
 
 
 class HybridWriterSettings(BaseModel):
     """Hybrid writer settings for adaptive performance"""
 
-    enable: Optional[bool] = None
-    initial_mode: Optional[str] = None  # "streaming", "batch", "adaptive"
-    enable_auto_switch: Optional[bool] = None
-    mode_switch_threshold: Optional[int] = None
-    pattern_window_size: Optional[int] = None
-    streaming_threshold: Optional[float] = None
-    batch_threshold: Optional[int] = None
-    max_buffer_size: Optional[int] = None
-    buffer_time_limit_seconds: Optional[int] = None
-    enable_concurrent_writes: Optional[bool] = None
-    max_concurrent_writers: Optional[int] = None
-    optimize_row_group_size: Optional[bool] = None
-    min_row_group_size: Optional[int] = None
-    max_row_group_size: Optional[int] = None
+    enable: bool | None = None
+    initial_mode: str | None = None  # "streaming", "batch", "adaptive"
+    enable_auto_switch: bool | None = None
+    mode_switch_threshold: int | None = None
+    pattern_window_size: int | None = None
+    streaming_threshold: float | None = None
+    batch_threshold: int | None = None
+    max_buffer_size: int | None = None
+    buffer_time_limit_seconds: int | None = None
+    enable_concurrent_writes: bool | None = None
+    max_concurrent_writers: int | None = None
+    optimize_row_group_size: bool | None = None
+    min_row_group_size: int | None = None
+    max_row_group_size: int | None = None
 
 
 class SstEngineSettings(BaseModel):
     """SST-specific engine settings"""
 
-    enable_bloom_filters: Optional[bool] = None
-    bloom_filter_fpp: Optional[float] = None
-    compression: Optional[CompressionAlgorithm] = None
-    compression_level: Optional[int] = None
-    write_buffer_size: Optional[int] = None
-    max_write_buffers: Optional[int] = None
-    block_size_kb: Optional[int] = None
-    dynamic_block_sizing: Optional[bool] = None
+    enable_bloom_filters: bool | None = None
+    bloom_filter_fpp: float | None = None
+    compression: CompressionAlgorithm | None = None
+    compression_level: int | None = None
+    write_buffer_size: int | None = None
+    max_write_buffers: int | None = None
+    block_size_kb: int | None = None
+    dynamic_block_sizing: bool | None = None
 
 
 class ViperEngineSettings(BaseModel):
     """VIPER-specific engine settings"""
 
-    inherit_global_settings: Optional[bool] = None
-    enable_columnar_compression: Optional[bool] = None
-    enable_vector_quantization: Optional[bool] = None
-    vector_chunk_size: Optional[int] = None
-    enable_lazy_loading: Optional[bool] = None
+    inherit_global_settings: bool | None = None
+    enable_columnar_compression: bool | None = None
+    enable_vector_quantization: bool | None = None
+    vector_chunk_size: int | None = None
+    enable_lazy_loading: bool | None = None
 
 
 class NovaEngineSettings(BaseModel):
     """NOVA-specific engine settings"""
 
-    inherit_global_settings: Optional[bool] = None
-    enable_real_time_mode: Optional[bool] = None
-    streaming_buffer_size: Optional[int] = None
-    prefer_low_latency: Optional[bool] = None
+    inherit_global_settings: bool | None = None
+    enable_real_time_mode: bool | None = None
+    streaming_buffer_size: int | None = None
+    prefer_low_latency: bool | None = None
 
 
 # Note: StorageEngineConfig is deprecated, use StorageConfig instead
@@ -771,23 +849,23 @@ class IndexConfiguration(BaseModel):
     """Index configuration"""
 
     index_name: str
-    algorithm: Union[IndexingAlgorithm, IndexType]
+    algorithm: IndexingAlgorithm | IndexType
     update_mode: IndexUpdateMode = IndexUpdateMode.SYNCHRONOUS
-    async_update_timeout_ms: Optional[int] = None
-    async_update_batch_size: Optional[int] = None
-    enable_background_optimization: Optional[bool] = None
-    hnsw_config: Optional[HnswConfig] = None
-    ivf_config: Optional[IvfConfig] = None
-    flat_config: Optional[FlatConfig] = None
-    pq_config: Optional[PqConfig] = None
-    annoy_config: Optional[AnnoyConfig] = None
-    lsh_config: Optional[LshConfig] = None
-    build_concurrency: Optional[int] = None
-    memory_limit_mb: Optional[int] = None
-    checkpoint_interval_ms: Optional[int] = None
-    is_primary: Optional[bool] = None
-    use_cases: Optional[List[str]] = None
-    selectivity_threshold: Optional[float] = None
+    async_update_timeout_ms: int | None = None
+    async_update_batch_size: int | None = None
+    enable_background_optimization: bool | None = None
+    hnsw_config: HnswConfig | None = None
+    ivf_config: IvfConfig | None = None
+    flat_config: FlatConfig | None = None
+    pq_config: PqConfig | None = None
+    annoy_config: AnnoyConfig | None = None
+    lsh_config: LshConfig | None = None
+    build_concurrency: int | None = None
+    memory_limit_mb: int | None = None
+    checkpoint_interval_ms: int | None = None
+    is_primary: bool | None = None
+    use_cases: list[str] | None = None
+    selectivity_threshold: float | None = None
 
 
 # ============================================================================
@@ -802,7 +880,7 @@ class FilterableColumn(BaseModel):
     data_type: FilterableDataType
     indexed: bool = True
     supports_range: bool = False
-    estimated_cardinality: Optional[int] = None
+    estimated_cardinality: int | None = None
 
 
 class CollectionConfig(BaseModel):
@@ -817,12 +895,12 @@ class CollectionConfig(BaseModel):
     dimension: int = Field(
         ge=1, le=65536
     )  # Server default maximum is 65536 (configurable)
-    distance_metric: Optional[DistanceMetric] = (
+    distance_metric: DistanceMetric | None = (
         DistanceMetric.COSINE
     )  # Default to most common metric
 
     # STORAGE CONFIGURATION
-    storage_engine: Optional[StorageEngine] = (
+    storage_engine: StorageEngine | None = (
         StorageEngine.SST
     )  # Default to SST (fast, production-ready)
     storage_config: Optional["StorageConfig"] = None  # Complete storage configuration
@@ -831,16 +909,16 @@ class CollectionConfig(BaseModel):
     )
 
     # INDEX CONFIGURATION
-    index_configs: Optional[List[IndexConfiguration]] = None
-    primary_index: Optional[str] = None  # Primary index name
-    auto_index_selection: Optional[bool] = None  # Auto-select best index
+    index_configs: list[IndexConfiguration] | None = None
+    primary_index: str | None = None  # Primary index name
+    auto_index_selection: bool | None = None  # Auto-select best index
 
     # SCHEMA CONFIGURATION
-    filterable_columns: Optional[List[FilterableColumn]] = None
-    quantization_config: Optional[QuantizationConfig] = Field(
+    filterable_columns: list[FilterableColumn] | None = None
+    quantization_config: QuantizationConfig | None = Field(
         None, alias="quantization"
     )  # Vector quantization configuration
-    primary_indexing_algorithm: Optional[IndexingAlgorithm] = (
+    primary_indexing_algorithm: IndexingAlgorithm | None = (
         None  # Primary indexing algorithm
     )
 
@@ -850,13 +928,30 @@ class CollectionConfig(BaseModel):
         return self.quantization_config
 
     # METADATA
-    description: Optional[str] = None
-    tags: Optional[List[str]] = None
-    owner: Optional[str] = None
+    description: str | None = None
+    tags: list[str] | None = None
+    owner: str | None = None
 
     # Additional Python SDK fields
-    metadata_schema: Optional[Dict[str, Any]] = None
-    filterable_metadata_fields: Optional[List[str]] = None
+    metadata_schema: dict[str, Any] | None = None
+    filterable_metadata_fields: list[str] | None = None
+
+    # Per-collection canonical embedding precision (fp16/bf16/int8/uint8).
+    # Default `None` means "use the server's fp32 default" — preserves the
+    # wire payload byte-identical with pre-precision-rollout SDK requests.
+    # See docs/05-concepts/embedding-precision.adoc for the operator guide.
+    canonical_embedding_precision: EmbeddingPrecision | None = None
+
+    @field_validator("canonical_embedding_precision", mode="before")
+    @classmethod
+    def normalize_canonical_embedding_precision(cls, v):
+        """Accept enum, canonical string, proto SCREAMING label, or
+        common shorthand aliases (half / float16 / bfloat16 / i8 / etc.).
+        Same dispatch as the server's apply_proto_enum_workarounds so
+        REST / gRPC / SQL DDL clients see consistent semantics."""
+        if v is None:
+            return None
+        return EmbeddingPrecision._normalize(v)
 
     @field_validator("name")
     def validate_name_length(cls, v):
@@ -965,7 +1060,7 @@ class CollectionInfo(BaseModel):
     metric: str
     created_at_ms: int  # Milliseconds since epoch (signed int64)
     updated_at_ms: int  # Milliseconds since epoch (signed int64)
-    vector_count: Optional[int] = None
+    vector_count: int | None = None
     indexed: bool = False
 
     # Backward compatibility properties
@@ -1064,22 +1159,22 @@ class Collection(BaseModel):
 class VectorRecord(BaseModel):
     """Vector record for REST API"""
 
-    id: Optional[str] = None
-    vector: List[float]
-    metadata: Dict[str, Union[str, int, float, bool, List[Union[str, int, float]]]] = (
-        Field(default_factory=dict)
+    id: str | None = None
+    vector: list[float]
+    metadata: dict[str, str | int | float | bool | list[str | int | float]] = Field(
+        default_factory=dict
     )
     timestamp_ms: int = Field(
         default_factory=lambda: int(__import__("time").time() * 1000)
     )  # Required - milliseconds since epoch (signed int64)
-    updated_at_ms: Optional[int] = (
+    updated_at_ms: int | None = (
         None  # Only set if different from timestamp_ms (saves bytes)
     )
-    expires_at_ms: Optional[int] = (
+    expires_at_ms: int | None = (
         None  # TTL support (milliseconds since epoch, signed int64)
     )
-    version: Optional[int] = 0  # Optional to save bytes, use small positive values
-    source: Optional[str] = (
+    version: int | None = 0  # Optional to save bytes, use small positive values
+    source: str | None = (
         None  # Original content that generated this vector (e.g., chunk text for RAG)
     )
 
@@ -1113,22 +1208,22 @@ class VectorRecord(BaseModel):
         self.timestamp_ms = value * 1000
 
     @property
-    def updated_at(self) -> Optional[int]:
+    def updated_at(self) -> int | None:
         """Backward compatibility: updated_at in seconds"""
         return self.updated_at_ms // 1000 if self.updated_at_ms else None
 
     @updated_at.setter
-    def updated_at(self, value: Optional[int]):
+    def updated_at(self, value: int | None):
         """Backward compatibility: updated_at in seconds"""
         self.updated_at_ms = value * 1000 if value is not None else None
 
     @property
-    def expires_at(self) -> Optional[int]:
+    def expires_at(self) -> int | None:
         """Backward compatibility: expires_at in seconds"""
         return self.expires_at_ms // 1000 if self.expires_at_ms else None
 
     @expires_at.setter
-    def expires_at(self, value: Optional[int]):
+    def expires_at(self, value: int | None):
         """Backward compatibility: expires_at in seconds"""
         self.expires_at_ms = value * 1000 if value is not None else None
 
@@ -1149,33 +1244,33 @@ class FilterCondition(BaseModel):
 class MetadataFilter(BaseModel):
     """Metadata filter"""
 
-    conditions: List[FilterCondition]
+    conditions: list[FilterCondition]
     operator: FilterOperator = FilterOperator.AND
 
 
 class SearchQuery(BaseModel):
     """Search query"""
 
-    vector: List[float]
-    filters: Dict[str, Any] = (
+    vector: list[float]
+    filters: dict[str, Any] = (
         {}
     )  # Simple equality filters (proto map field - always include)
-    id: Optional[str] = None
-    metadata_filter: Optional[MetadataFilter] = None
+    id: str | None = None
+    metadata_filter: MetadataFilter | None = None
 
 
 class SearchParameters(BaseModel):
     """Search parameters"""
 
-    ef_search: Optional[int] = None
-    max_connections: Optional[int] = None
-    n_probe: Optional[int] = None
-    enable_reranking: Optional[bool] = None
-    batch_size: Optional[int] = None
-    timeout_ms: Optional[int] = None
-    accuracy_threshold: Optional[float] = None
-    enable_parallel_search: Optional[bool] = None
-    thread_count: Optional[int] = None
+    ef_search: int | None = None
+    max_connections: int | None = None
+    n_probe: int | None = None
+    enable_reranking: bool | None = None
+    batch_size: int | None = None
+    timeout_ms: int | None = None
+    accuracy_threshold: float | None = None
+    enable_parallel_search: bool | None = None
+    thread_count: int | None = None
 
 
 class IncludeFields(BaseModel):
@@ -1191,37 +1286,37 @@ class QuantizationHint(BaseModel):
     """Quantization hint for search"""
 
     hint_type: str  # "none", "binary", "scalar", "product", "uniform"
-    parameters: Optional[Dict[str, Any]] = None
+    parameters: dict[str, Any] | None = None
 
 
 class SearchOptimization(BaseModel):
     """Search optimization hints including compression-aware options"""
 
-    top_k: Optional[int] = None
-    filters: Optional[Dict[str, Any]] = None
-    accuracy_threshold: Optional[float] = None
-    include_expired: Optional[bool] = None
-    timeout_ms: Optional[int] = None
-    enable_two_stage: Optional[bool] = None
-    quantization_hint: Optional[QuantizationHint] = None
-    enable_clustering_hint: Optional[bool] = None
-    enable_metadata_filtering_hint: Optional[bool] = None
+    top_k: int | None = None
+    filters: dict[str, Any] | None = None
+    accuracy_threshold: float | None = None
+    include_expired: bool | None = None
+    timeout_ms: int | None = None
+    enable_two_stage: bool | None = None
+    quantization_hint: QuantizationHint | None = None
+    enable_clustering_hint: bool | None = None
+    enable_metadata_filtering_hint: bool | None = None
 
     # Compression-aware search hints
-    prefer_compressed_search: Optional[bool] = Field(
+    prefer_compressed_search: bool | None = Field(
         default=None, description="Prefer searching compressed data when available"
     )
-    decompression_budget_ms: Optional[int] = Field(
+    decompression_budget_ms: int | None = Field(
         default=None, description="Maximum time budget for decompression operations"
     )
-    use_decompression_cache: Optional[bool] = Field(
+    use_decompression_cache: bool | None = Field(
         default=True, description="Use decompression cache for repeated searches"
     )
-    compression_aware_routing: Optional[bool] = Field(
+    compression_aware_routing: bool | None = Field(
         default=None, description="Enable compression-aware query routing"
     )
 
-    custom_hints: Optional[Dict[str, Any]] = None
+    custom_hints: dict[str, Any] | None = None
 
 
 class SearchResult(BaseModel):
@@ -1229,23 +1324,23 @@ class SearchResult(BaseModel):
 
     id: str
     score: float
-    vector: Optional[List[float]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    rank: Optional[int] = None
+    vector: list[float] | None = None
+    metadata: dict[str, Any] | None = None
+    rank: int | None = None
     # Additional SearchVectorRecord fields (proto field 5-13)
-    version: Optional[int] = None  # Proto field 5
-    similarity: Optional[float] = None  # Proto field 6
-    timestamp: Optional[int] = None  # Proto field 7 (milliseconds)
-    source: Optional[str] = None  # Proto field 8 (original content for RAG)
-    expanded_context: Optional[List[str]] = None  # Proto field 9
-    semantic_similarity: Optional[float] = None  # Proto field 10
-    quantization_info: Optional[str] = None  # Proto field 11
-    engine_stats: Optional[Dict[str, str]] = None  # Proto field 12
-    index_path: Optional[str] = None  # Proto field 13
+    version: int | None = None  # Proto field 5
+    similarity: float | None = None  # Proto field 6
+    timestamp: int | None = None  # Proto field 7 (milliseconds)
+    source: str | None = None  # Proto field 8 (original content for RAG)
+    expanded_context: list[str] | None = None  # Proto field 9
+    semantic_similarity: float | None = None  # Proto field 10
+    quantization_info: str | None = None  # Proto field 11
+    engine_stats: dict[str, str] | None = None  # Proto field 12
+    index_path: str | None = None  # Proto field 13
 
     # Backward compatibility - map timestamp to timestamp_ms
     @property
-    def timestamp_ms(self) -> Optional[int]:
+    def timestamp_ms(self) -> int | None:
         """Alias for timestamp field"""
         return self.timestamp
 
@@ -1261,11 +1356,11 @@ class SearchProgress(BaseModel):
 class SearchEnvelope(BaseModel):
     """Envelope for paginated/progressive SKS search results"""
 
-    items: List[SearchResult]
-    total: Optional[int] = None
-    cursor: Optional[str] = None
+    items: list[SearchResult]
+    total: int | None = None
+    cursor: str | None = None
     has_more: bool = False
-    progress: Optional[SearchProgress] = None
+    progress: SearchProgress | None = None
 
 
 class VectorGetResponse(BaseModel):
@@ -1273,16 +1368,16 @@ class VectorGetResponse(BaseModel):
 
     id: str
     collection_id: str
-    vector: Optional[List[float]] = None
-    metadata: Optional[Dict[str, Any]] = None
-    score: Optional[float] = None
-    rank: Optional[int] = None
+    vector: list[float] | None = None
+    metadata: dict[str, Any] | None = None
+    score: float | None = None
+    rank: int | None = None
 
 
 class ListCollectionsResponse(BaseModel):
     """List collections response"""
 
-    collections: List[CollectionInfo]
+    collections: list[CollectionInfo]
     total_count: int
 
 
@@ -1295,11 +1390,11 @@ class CollectionOperationRequest(BaseModel):
     """Collection operation request"""
 
     operation: CollectionOperationType
-    collection_id: Optional[str] = None
-    collection_name: Optional[str] = None
-    config: Optional[CollectionConfig] = None
-    query_params: Optional[Dict[str, str]] = None
-    options: Optional[Dict[str, bool]] = None
+    collection_id: str | None = None
+    collection_name: str | None = None
+    config: CollectionConfig | None = None
+    query_params: dict[str, str] | None = None
+    options: dict[str, bool] | None = None
 
 
 class CollectionResponse(BaseModel):
@@ -1307,13 +1402,13 @@ class CollectionResponse(BaseModel):
 
     success: bool
     operation: str
-    collection: Optional[Collection] = None
-    collections: Optional[List[Collection]] = None
+    collection: Collection | None = None
+    collections: list[Collection] | None = None
     affected_count: int = 0
-    total_count: Optional[int] = None
-    metadata: Dict[str, str] = Field(default_factory=dict)
-    error_message: Optional[str] = None
-    error_code: Optional[str] = None
+    total_count: int | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+    error_message: str | None = None
+    error_code: str | None = None
     processing_time_us: int = 0
 
 
@@ -1321,21 +1416,21 @@ class VectorBatchRequest(BaseModel):
     """Vector batch operation request - aligned with REST API"""
 
     collection_id: str
-    vectors: List[VectorRecord]  # Changed from 'records' to match REST API
-    batch_timeout_ms: Optional[int] = None
-    request_id: Optional[str] = None
+    vectors: list[VectorRecord]  # Changed from 'records' to match REST API
+    batch_timeout_ms: int | None = None
+    request_id: str | None = None
 
 
 class VectorSearchRequest(BaseModel):
     """Vector search request"""
 
     collection_id: str
-    queries: List[SearchQuery]
+    queries: list[SearchQuery]
     top_k: int = 10
-    distance_metric_override: Optional[str] = None
-    search_parameters: Optional[SearchParameters] = None  # Fixed field name
-    include_fields: Optional[IncludeFields] = None
-    search_optimization: Optional[SearchOptimization] = None
+    distance_metric_override: str | None = None
+    search_parameters: SearchParameters | None = None  # Fixed field name
+    include_fields: IncludeFields | None = None
+    search_optimization: SearchOptimization | None = None
 
 
 class OperationMetrics(BaseModel):
@@ -1355,8 +1450,12 @@ class DeleteResult(BaseModel):
 
     deleted_count: int = 0
     success: bool = True
-    message: Optional[str] = None
-    metrics: Optional[OperationMetrics] = None
+    message: str | None = None
+    # Per-id failure messages; populated by batch delete_vectors when individual
+    # deletes fail. (Previously absent, so delete_vectors silently dropped the
+    # errors it tried to set — a real bug this field closes.)
+    errors: list[str] = Field(default_factory=list)
+    metrics: OperationMetrics | None = None
 
 
 class BatchResult(BaseModel):
@@ -1365,7 +1464,7 @@ class BatchResult(BaseModel):
     total: int = 0
     success: int = 0
     failed: int = 0
-    errors: List[str] = Field(default_factory=list)
+    errors: list[str] = Field(default_factory=list)
     duration_ms: float = 0.0
     metrics: OperationMetrics = Field(default_factory=OperationMetrics)
 
@@ -1373,13 +1472,13 @@ class BatchResult(BaseModel):
 class VectorOperationResponse(BaseModel):
     """Vector operation response"""
 
-    success: Union[bool, int]
+    success: bool | int
     operation: str
     metrics: OperationMetrics
-    results: Optional[List[SearchResult]] = None
-    vector_ids: List[str] = Field(default_factory=list)
-    error_message: Optional[str] = None
-    error_code: Optional[str] = None
+    results: list[SearchResult] | None = None
+    vector_ids: list[str] = Field(default_factory=list)
+    error_message: str | None = None
+    error_code: str | None = None
 
     @property
     def count(self) -> int:
@@ -1392,16 +1491,16 @@ class ApiError(BaseModel):
 
     code: str
     message: str
-    details: Optional[Any] = None
+    details: Any | None = None
 
 
 class ApiResponse(BaseModel):
     """Generic API response wrapper"""
 
     success: bool
-    data: Optional[Any] = None
-    error: Optional[ApiError] = None
-    message: Optional[str] = None
+    data: Any | None = None
+    error: ApiError | None = None
+    message: str | None = None
 
     model_config = ConfigDict(extra="allow")
 
@@ -1418,42 +1517,47 @@ class CompressionType(str, Enum):
     LZ4 = "lz4"
     ZSTD = "zstd"
     SNAPPY = "snappy"
+    # `builders/collection.py` already references `CompressionType.GZIP`
+    # and the `test_collection_builder_fluent_methods_and_helpers`
+    # unit test expects `"gzip"` to be a valid value. Add the variant
+    # so both call sites work.
+    GZIP = "gzip"
 
 
 class StorageConfig(BaseModel):
     """Complete storage configuration matching proto StorageConfig"""
 
     # Storage location and persistence
-    storage_location: Optional[str] = None  # Override default storage path
-    persistent: Optional[bool] = True  # Whether data persists after restart
+    storage_location: str | None = None  # Override default storage path
+    persistent: bool | None = True  # Whether data persists after restart
 
     # Compression configuration
-    compression: Optional[CompressionConfig] = None
+    compression: CompressionConfig | None = None
 
     # Optimization hints
-    access_pattern: Optional[AccessPattern] = None
-    data_density: Optional[DataDensity] = None
-    frequent_updates: Optional[bool] = None
-    expected_size_gb: Optional[int] = None
-    read_write_ratio: Optional[float] = None
+    access_pattern: AccessPattern | None = None
+    data_density: DataDensity | None = None
+    frequent_updates: bool | None = None
+    expected_size_gb: int | None = None
+    read_write_ratio: float | None = None
 
     # Quick presets
-    preset: Optional[str] = (
+    preset: str | None = (
         None  # "maximum_performance", "balanced", "memory_constrained", "cloud_optimized", "real_time", "archive"
     )
 
     # Master optimization control
-    enable_all_optimizations: Optional[bool] = True  # Default enabled
+    enable_all_optimizations: bool | None = True  # Default enabled
 
     # Specific configuration overrides
-    parquet_writer: Optional[ParquetWriterSettings] = None
-    footer_cache: Optional[FooterCacheSettings] = None
-    hybrid_writer: Optional[HybridWriterSettings] = None
+    parquet_writer: ParquetWriterSettings | None = None
+    footer_cache: FooterCacheSettings | None = None
+    hybrid_writer: HybridWriterSettings | None = None
 
     # Engine-specific settings
-    sst_settings: Optional[SstEngineSettings] = None
-    viper_settings: Optional[ViperEngineSettings] = None
-    nova_settings: Optional[NovaEngineSettings] = None
+    sst_settings: SstEngineSettings | None = None
+    viper_settings: ViperEngineSettings | None = None
+    nova_settings: NovaEngineSettings | None = None
 
 
 class FlushConfig(BaseModel):
@@ -1463,7 +1567,7 @@ class FlushConfig(BaseModel):
     timeout_ms: int = 5000
     include_secondary_indexes: bool = True
     include_metadata: bool = True
-    max_wal_size_mb: Optional[float] = None
+    max_wal_size_mb: float | None = None
 
 
 class HealthStatus(BaseModel):
@@ -1472,7 +1576,7 @@ class HealthStatus(BaseModel):
     status: str
     version: str
     uptime_seconds: int
-    services: Dict[str, str]
+    services: dict[str, str]
     timestamp_ms: int  # Milliseconds since epoch (signed int64)
 
     # Backward compatibility property
@@ -1485,6 +1589,62 @@ class HealthStatus(BaseModel):
     def timestamp(self, value: int):
         """Backward compatibility: timestamp in seconds"""
         self.timestamp_ms = value * 1000
+
+
+class ProbeResponse(BaseModel):
+    """Kubernetes liveness/readiness probe response (OpenAPI ProbeResponse)."""
+
+    model_config = ConfigDict(extra="allow")
+    status: str
+
+
+class ColumnDefinition(BaseModel):
+    """Column definition for a collection schema (OpenAPI ColumnDefinition)."""
+
+    model_config = ConfigDict(extra="allow")
+    name: str
+    data_type: str
+    nullable: bool | None = None
+    indexed: bool | None = None
+    filterable: bool | None = None
+    max_length: int | None = None
+    precision: int | None = None
+    scale: int | None = None
+    vector_dimension: int | None = None
+
+
+class SchemaDefinition(BaseModel):
+    """Schema definition (OpenAPI SchemaDefinition)."""
+
+    model_config = ConfigDict(extra="allow")
+    columns: list[ColumnDefinition]
+    enforcement: str | None = None
+    allow_additional_fields: bool | None = None
+
+
+class SchemaResponse(BaseModel):
+    """Response from GET /api/v2/collections/{id}/schema (OpenAPI SchemaResponse)."""
+
+    model_config = ConfigDict(extra="allow")
+    schema_id: str
+    schema_version: str
+    collection_id: str
+    schema_: SchemaDefinition = Field(alias="schema")
+    created_at: str
+    updated_at: str | None = None
+    parent_schema_id: str | None = None
+
+
+class UpdateSchemaResponse(BaseModel):
+    """Response from PUT /api/v2/collections/{id}/schema (OpenAPI UpdateSchemaResponse)."""
+
+    model_config = ConfigDict(extra="allow")
+    schema_id: str
+    schema_version: str
+    previous_schema_id: str
+    changes: list[dict[str, Any]]
+    warnings: list[str]
+    updated_at: str
 
 
 # Simple alias

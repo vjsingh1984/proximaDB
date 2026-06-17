@@ -6,7 +6,7 @@
 :last-updated: December 2025
 
 [.lead]
-Comprehensive guide to using the ProximaDB Python SDK for vector search, graph operations, document storage, and observability.
+Comprehensive guide to using the ProximaDB Python SDK for record-native vector search, graph operations, document storage, and observability.
 
 == Installation
 
@@ -26,7 +26,7 @@ pip install proximadb-sdk[full]
 
 [source,python]
 ----
-from proximadb_sdk import ProximaDBClient, VectorRecord, DistanceMetric
+from proximadb_sdk import ProximaDBClient, ProximaRecord, DistanceMetric
 
 # Connect to ProximaDB
 client = ProximaDBClient(url="http://localhost:5678")
@@ -38,10 +38,10 @@ client.create_collection(
     distance_metric=DistanceMetric.COSINE
 )
 
-# Insert vectors
-client.insert_vectors("my_vectors", [
-    VectorRecord(id="doc1", vector=[0.1] * 768, metadata={"title": "Document 1"}),
-    VectorRecord(id="doc2", vector=[0.2] * 768, metadata={"title": "Document 2"}),
+# Insert records with embedding cells
+client.insert_records("my_vectors", [
+    ProximaRecord(id="doc1", vector=[0.1] * 768).set_flexible("title", "Document 1"),
+    ProximaRecord(id="doc2", vector=[0.2] * 768).set_flexible("title", "Document 2"),
 ])
 
 # Search
@@ -136,30 +136,35 @@ client.create_collection(
 
 == Vector Operations
 
-=== Insert Vectors
+Vector features are expressed as embedding fields inside `ProximaRecord` payloads.
+`VectorRecord` and `insert_vectors()` remain compatibility aliases for older clients,
+but new code should call `insert_records()`.
+
+=== Insert Records With Embeddings
 
 [source,python]
 ----
-from proximadb_sdk import VectorRecord
+from proximadb_sdk import ProximaRecord, TypedValue
 
 # Single insert
-client.insert_vectors("my_collection", [
-    VectorRecord(
+client.insert_records("my_collection", [
+    ProximaRecord(
         id="vec_001",
         vector=[0.1, 0.2, 0.3, ...],
-        metadata={"category": "electronics", "price": 299.99}
     )
+    .set_typed("category", TypedValue.text("electronics"))
+    .set_typed("price", TypedValue.float_(299.99))
 ])
 
 # Batch insert
 records = [
-    VectorRecord(id=f"vec_{i}", vector=embeddings[i], metadata=data[i])
+    ProximaRecord(id=f"vec_{i}", vector=embeddings[i], flexible_fields=data[i])
     for i in range(1000)
 ]
-client.insert_vectors("my_collection", records)
+client.insert_records("my_collection", records)
 ----
 
-=== Search Vectors
+=== Search Records By Vector
 
 [source,python]
 ----
@@ -622,13 +627,15 @@ client = ProximaDBClient(
 
 [source,python]
 ----
+from proximadb_sdk import ProximaRecord
+
 # Good: Batch inserts
-records = [VectorRecord(id=f"v{i}", vector=vecs[i]) for i in range(1000)]
-client.insert_vectors("collection", records)
+records = [ProximaRecord(id=f"v{i}", vector=vecs[i]) for i in range(1000)]
+client.insert_records("collection", records)
 
 # Bad: Individual inserts
 for i in range(1000):
-    client.insert_vectors("collection", [VectorRecord(id=f"v{i}", vector=vecs[i])])
+    client.insert_records("collection", [ProximaRecord(id=f"v{i}", vector=vecs[i])])
 ----
 
 === Engine Selection
@@ -661,7 +668,7 @@ finally:
 
 == Related Documentation
 
-* xref:../concepts/storage-engines.adoc[Storage Engine Selection Guide]
-* xref:../concepts/graph-engines.adoc[Graph Engine Selection Guide]
-* xref:../03-reference/api/rest.adoc[REST API Reference]
-* xref:../03-reference/api/grpc.adoc[gRPC API Reference]
+* xref:../05-concepts/storage-engines.adoc[Storage Engine Selection Guide]
+* xref:../05-concepts/graph-engines.adoc[Graph Engine Selection Guide]
+* xref:../03-api-reference/rest.adoc[REST API Reference]
+* xref:../03-api-reference/index.md[API Reference Index]

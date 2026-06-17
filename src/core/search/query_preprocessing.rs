@@ -5,14 +5,14 @@
 //!
 //! Expected Performance Improvement: 15-25% reduction in repeated computation
 
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 use crate::compute::quantization::storage_engine::StorageQuantizationEngine;
 use crate::compute::quantization::types::QuantizationLevel;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
-use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
 use crate::proto::proximadb_v1::DistanceMetric;
 use crate::proto::proximadb_v1::QuantizationConfig;
-use crate::utils::cache::LruCache;
 use parking_lot::RwLock;
+use proximadb_hardware::{SimdLevel, best_simd_level};
+use proximadb_runtime_common::cache::LruCache;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroUsize;
@@ -55,8 +55,8 @@ pub struct QueryPreprocessor {
     /// Quantization engine (optional until properly initialized)
     quantization_engine: Option<Arc<StorageQuantizationEngine>>,
 
-    /// Hardware capabilities for SIMD
-    hardware: Arc<HardwareCapabilities>,
+    /// SIMD level for hardware-accelerated operations
+    simd_level: SimdLevel,
 
     /// Cache statistics
     stats: Arc<RwLock<CacheStats>>,
@@ -90,7 +90,7 @@ impl QueryPreprocessor {
 
         trace!("Creating InMemoryCodebookStore");
         let codebook_store =
-            Arc::new(crate::compute::quantization::unified::InMemoryCodebookStore::new());
+            Arc::new(crate::compute::quantization::quantization_engine::InMemoryCodebookStore::new());
 
         trace!("Creating UnifiedQuantizationEngine");
         let unified_engine = Arc::new(UnifiedQuantizationEngine::new(
@@ -107,15 +107,11 @@ impl QueryPreprocessor {
         */
         let quantization_engine = None;
 
-        trace!("Getting hardware capabilities");
-        let hardware = get_hardware_capabilities();
-        trace!("Hardware capabilities retrieved");
-
         trace!("QueryPreprocessor creation complete");
         Self {
             cache: Arc::new(RwLock::new(LruCache::new(cache_size))),
             quantization_engine,
-            hardware,
+            simd_level: best_simd_level(),
             stats: Arc::new(RwLock::new(CacheStats::default())),
         }
     }
@@ -260,14 +256,11 @@ impl QueryPreprocessor {
         // Use hardware-accelerated normalization if available
         #[cfg(target_arch = "x86_64")]
         {
-            trace!(
-                "On x86_64 - AVX2: {}, SSE42: {}",
-                self.hardware.cpu.features.avx2_support, self.hardware.cpu.features.sse42_support
-            );
-            if self.hardware.cpu.features.avx2_support {
+            trace!("On x86_64 - SIMD level: {:?}", self.simd_level);
+            if self.simd_level >= SimdLevel::AVX2 {
                 trace!("Using AVX2 normalization");
                 return Arc::new(self.normalize_avx2(vector));
-            } else if self.hardware.cpu.features.sse42_support {
+            } else if self.simd_level >= SimdLevel::SSE41 {
                 trace!("Using SSE normalization");
                 return Arc::new(self.normalize_sse(vector));
             }
@@ -275,11 +268,9 @@ impl QueryPreprocessor {
 
         #[cfg(target_arch = "aarch64")]
         {
-            trace!(
-                "On aarch64 - NEON: {}",
-                self.hardware.cpu.features.neon_support
-            );
-            if self.hardware.cpu.features.neon_support {
+            let neon_available = self.simd_level >= SimdLevel::NEON;
+            trace!("On aarch64 - NEON: {}", neon_available);
+            if neon_available {
                 trace!("Using NEON normalization");
                 return Arc::new(self.normalize_neon(vector));
             }
@@ -305,7 +296,7 @@ impl QueryPreprocessor {
             let mut result = vec![0.0f32; len];
 
             // Compute magnitude squared using AVX2
-            let mut mag_sq = 0.0f32;
+            let mut mag_sq;
             let chunks = len / 8;
             let _remainder = len % 8;
 
@@ -373,7 +364,7 @@ impl QueryPreprocessor {
             let mut result = vec![0.0f32; len];
 
             // Compute magnitude squared using SSE
-            let mut mag_sq = 0.0f32;
+            let mut mag_sq;
             let chunks = len / 4;
             let _remainder = len % 4;
 
@@ -446,6 +437,7 @@ impl QueryPreprocessor {
 
     /// Stub for NEON when not on aarch64
     #[cfg(not(target_arch = "aarch64"))]
+    #[allow(dead_code)] // cfg-completeness stub; the aarch64 build provides the real impl
     fn normalize_neon(&self, _vector: &[f32]) -> Vec<f32> {
         // This should never be called on non-ARM platforms
         unreachable!("normalize_neon called on non-ARM platform")
@@ -617,9 +609,9 @@ impl QueryPreprocessor {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStatistics {
+    pub fn stats(&self) -> QueryPreprocessingCacheStatistics {
         let stats = self.stats.read();
-        CacheStatistics {
+        QueryPreprocessingCacheStatistics {
             hits: stats.hits,
             misses: stats.misses,
             hit_rate: if stats.hits + stats.misses > 0 {
@@ -627,11 +619,11 @@ impl QueryPreprocessor {
             } else {
                 0.0
             },
-            avg_preprocessing_time_us: if stats.misses > 0 {
-                (stats.preprocessing_time_ns / stats.misses) / 1000
-            } else {
-                0
-            },
+            avg_preprocessing_time_us: stats
+                .preprocessing_time_ns
+                .checked_div(stats.misses)
+                .map(|ns| ns / 1000)
+                .unwrap_or(0),
             simd_operations: stats.simd_operations,
         }
     }
@@ -645,7 +637,7 @@ impl QueryPreprocessor {
 
 /// Cache statistics for monitoring
 #[derive(Debug, Clone)]
-pub struct CacheStatistics {
+pub struct QueryPreprocessingCacheStatistics {
     /// Number of preprocessing cache hits
     pub hits: u64,
     /// Number of preprocessing cache misses

@@ -445,7 +445,7 @@ impl PCAModelManager {
         }
 
         // Sort by version (newest first)
-        history.sort_by(|a, b| b.version.cmp(&a.version));
+        history.sort_by_key(|h| std::cmp::Reverse(h.version));
 
         // Find versions to remove
         let to_remove: Vec<u32> = history

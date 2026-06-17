@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use crate::core::compression::CompressionAlgorithm;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::metrics::compression::CompressionData;
+use proximadb_compression::CompressionAlgorithm;
 
 /// Universal compression configuration
 #[derive(Debug, Clone)]
@@ -150,7 +150,7 @@ pub struct AdaptationCriteria {
     pub data_characteristics: DataCharacteristics,
 
     /// Performance thresholds
-    pub performance_thresholds: PerformanceThresholds,
+    pub performance_thresholds: CompressionPerformanceThresholds,
 
     /// Resource constraints
     pub resource_constraints: ResourceConstraints,
@@ -256,9 +256,12 @@ pub enum DataHint {
     Unknown,
 }
 
+/// Backwards-compat alias for [`CompressionPerformanceThresholds`].
+pub type PerformanceThresholds = CompressionPerformanceThresholds;
+
 /// Performance thresholds
 #[derive(Debug, Clone)]
-pub struct PerformanceThresholds {
+pub struct CompressionPerformanceThresholds {
     /// Maximum compression latency (ms)
     pub max_compression_latency_ms: f64,
 
@@ -1095,12 +1098,15 @@ pub struct OptimizationConstraints {
     pub min_improvement_percent: f32,
 
     /// Resource limits during optimization
-    pub resource_limits: ResourceLimits,
+    pub resource_limits: CompressionResourceLimits,
 }
+
+/// Backwards-compat alias for [`CompressionResourceLimits`].
+pub type ResourceLimits = CompressionResourceLimits;
 
 /// Resource limits
 #[derive(Debug, Clone)]
-pub struct ResourceLimits {
+pub struct CompressionResourceLimits {
     /// Maximum CPU usage during optimization (%)
     pub max_cpu_usage_percent: f32,
 
@@ -1480,14 +1486,17 @@ pub struct QualityCharacteristics {
     pub lossless_capable: bool,
 }
 
+/// Backwards-compat alias for [`CommonCompressionStats`].
+pub type CompressionStats = CommonCompressionStats;
+
 /// Compression statistics
 #[derive(Debug, Clone)]
-pub struct CompressionStats {
+pub struct CommonCompressionStats {
     /// Overall statistics
-    pub overall: OverallCompressionStats,
+    pub overall: OverallCommonCompressionStats,
 
     /// Per-algorithm statistics
-    pub per_algorithm: HashMap<String, AlgorithmCompressionStats>,
+    pub per_algorithm: HashMap<String, AlgorithmCommonCompressionStats>,
 
     /// Hardware utilization
     pub hardware_utilization: HardwareUtilizationStats,
@@ -1496,12 +1505,12 @@ pub struct CompressionStats {
     pub quality_metrics: QualityStats,
 
     /// Performance metrics
-    pub performance_metrics: PerformanceStats,
+    pub performance_metrics: CompressionPerformanceStats,
 }
 
 /// Overall compression statistics
 #[derive(Debug, Clone)]
-pub struct OverallCompressionStats {
+pub struct OverallCommonCompressionStats {
     /// Total bytes compressed
     pub total_bytes_compressed: u64,
 
@@ -1523,7 +1532,7 @@ pub struct OverallCompressionStats {
 
 /// Algorithm compression statistics
 #[derive(Debug, Clone)]
-pub struct AlgorithmCompressionStats {
+pub struct AlgorithmCommonCompressionStats {
     /// Bytes processed
     pub bytes_processed: u64,
 
@@ -1575,9 +1584,12 @@ pub struct QualityStats {
     pub quality_test_pass_rate: f32,
 }
 
+/// Backwards-compat alias for [`CompressionPerformanceStats`].
+pub type PerformanceStats = CompressionPerformanceStats;
+
 /// Performance statistics
 #[derive(Debug, Clone)]
-pub struct PerformanceStats {
+pub struct CompressionPerformanceStats {
     /// Average compression speed (MB/s)
     pub avg_compression_speed: f64,
 
@@ -1642,7 +1654,7 @@ impl Default for AdaptiveCompressionSettings {
                     },
                     data_type_hints: vec![DataHint::Vector, DataHint::Metadata, DataHint::Index],
                 },
-                performance_thresholds: PerformanceThresholds {
+                performance_thresholds: CompressionPerformanceThresholds {
                     max_compression_latency_ms: 100.0,
                     max_decompression_latency_ms: 50.0,
                     min_throughput_mbps: 100.0,
@@ -1844,7 +1856,7 @@ impl Default for CompressionPerformanceConfig {
                     max_optimization_time_ms: 5000,
                     max_regression_percent: 5.0,
                     min_improvement_percent: 10.0,
-                    resource_limits: ResourceLimits {
+                    resource_limits: CompressionResourceLimits {
                         max_cpu_usage_percent: 50.0,
                         max_memory_usage_mb: 256,
                         max_io_bandwidth_mbps: 100.0,

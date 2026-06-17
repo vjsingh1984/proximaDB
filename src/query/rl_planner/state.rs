@@ -78,6 +78,49 @@ impl std::fmt::Display for QuantizationLevel {
     }
 }
 
+/// Object economy metadata features for routing decisions
+///
+/// Encodes block-level statistics from VectorObjectEconomyDirectory
+/// to enable cost-aware routing and tier-specific optimization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObjectEconomyFeatures {
+    /// Whether object economy metadata is available
+    pub enabled: bool,
+    /// Directory freshness (0.0 = stale, 1.0 = fresh)
+    pub directory_freshness: f32,
+    /// Number of blocks in the SST
+    pub block_count: u32,
+    /// Average vectors per block
+    pub block_density: f32,
+    /// Average query-to-centroid distance
+    pub avg_centroid_distance: f32,
+    /// Z-order code quality (0.0 = poor, 1.0 = excellent clustering)
+    pub zorder_code_quality: f32,
+    /// Zone map filter effectiveness (0.0 = no filtering, 1.0 = perfect)
+    pub zone_map_selectivity: f32,
+}
+
+impl ObjectEconomyFeatures {
+    /// Create disabled features when no object economy directory is available
+    pub fn disabled() -> Self {
+        Self {
+            enabled: false,
+            directory_freshness: 0.0,
+            block_count: 0,
+            block_density: 0.0,
+            avg_centroid_distance: 0.0,
+            zorder_code_quality: 0.0,
+            zone_map_selectivity: 0.0,
+        }
+    }
+}
+
+impl Default for ObjectEconomyFeatures {
+    fn default() -> Self {
+        Self::disabled()
+    }
+}
+
 /// Filter complexity categories
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum FilterComplexity {
@@ -162,6 +205,10 @@ pub struct PlannerState {
     pub recent_recalls: Vec<f32>,
     /// Recent throughput (QPS, last 10 measurements)
     pub recent_throughput: Vec<f32>,
+
+    // ===== Object Economy Features =====
+    /// Object economy metadata for cost-aware routing
+    pub object_economy: ObjectEconomyFeatures,
 }
 
 impl Default for PlannerState {
@@ -187,6 +234,7 @@ impl Default for PlannerState {
             recent_latencies: vec![10.0; 10],
             recent_recalls: vec![0.95; 10],
             recent_throughput: vec![100.0; 10],
+            object_economy: ObjectEconomyFeatures::default(),
         }
     }
 }
@@ -273,6 +321,19 @@ impl PlannerState {
             .sum::<f32>()
             / self.recent_latencies.len() as f32;
         features.push(latency_variance.sqrt() / avg_latency);
+
+        // Object economy features
+        features.push(if self.object_economy.enabled {
+            1.0
+        } else {
+            0.0
+        });
+        features.push(self.object_economy.directory_freshness);
+        features.push(self.object_economy.block_count as f32 / 10000.0);
+        features.push(self.object_economy.block_density / 10000.0);
+        features.push(self.object_economy.avg_centroid_distance);
+        features.push(self.object_economy.zorder_code_quality);
+        features.push(self.object_economy.zone_map_selectivity);
 
         features
     }
@@ -384,6 +445,11 @@ impl PlannerStateBuilder {
         self
     }
 
+    pub fn object_economy(mut self, oe: ObjectEconomyFeatures) -> Self {
+        self.state.object_economy = oe;
+        self
+    }
+
     pub fn build(self) -> PlannerState {
         self.state
     }
@@ -461,5 +527,63 @@ mod tests {
 
         assert!(!small.should_consider_approximate());
         assert!(large.should_consider_approximate());
+    }
+
+    #[test]
+    fn test_object_economy_features_disabled() {
+        let oe = ObjectEconomyFeatures::disabled();
+        assert!(!oe.enabled);
+        assert_eq!(oe.directory_freshness, 0.0);
+    }
+
+    #[test]
+    fn test_object_economy_features_in_state() {
+        let state = PlannerState::builder()
+            .object_economy(ObjectEconomyFeatures {
+                enabled: true,
+                directory_freshness: 0.9,
+                block_count: 100,
+                block_density: 1000.0,
+                avg_centroid_distance: 0.5,
+                zorder_code_quality: 0.8,
+                zone_map_selectivity: 0.7,
+            })
+            .build();
+
+        assert!(state.object_economy.enabled);
+        assert_eq!(state.object_economy.block_count, 100);
+    }
+
+    #[test]
+    fn test_feature_vector_includes_object_economy() {
+        let state = PlannerState::builder()
+            .object_economy(ObjectEconomyFeatures {
+                enabled: true,
+                directory_freshness: 0.9,
+                block_count: 100,
+                block_density: 1000.0,
+                avg_centroid_distance: 0.5,
+                zorder_code_quality: 0.8,
+                zone_map_selectivity: 0.7,
+            })
+            .build();
+
+        let features = state.as_feature_vector();
+
+        // Object economy contributes the trailing 7 features of the vector.
+        // Assert against the actual encoding (rather than a brittle total
+        // count) so the test stays meaningful as the base feature set evolves.
+        assert!(
+            features.len() >= 7,
+            "feature vector must include the object-economy block"
+        );
+        let oe = &features[features.len() - 7..];
+        assert_eq!(oe[0], 1.0, "enabled");
+        assert!((oe[1] - 0.9).abs() < 1e-6, "directory_freshness");
+        assert!((oe[2] - 100.0 / 10_000.0).abs() < 1e-6, "block_count");
+        assert!((oe[3] - 1000.0 / 10_000.0).abs() < 1e-6, "block_density");
+        assert!((oe[4] - 0.5).abs() < 1e-6, "avg_centroid_distance");
+        assert!((oe[5] - 0.8).abs() < 1e-6, "zorder_code_quality");
+        assert!((oe[6] - 0.7).abs() < 1e-6, "zone_map_selectivity");
     }
 }

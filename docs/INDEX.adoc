@@ -12,9 +12,9 @@ Developer-first documentation for building multi-model applications on ProximaDB
 | Goal | Doc | Time
 
 | **Run locally** | link:../README.adoc[README] | 5 min
-| **REST API usage** | link:api/rest.adoc[REST API] | 15 min
+| **REST API usage** | link:03-api-reference/rest.adoc[REST API] | 15 min
 | **Python SDK** | link:../clients/python/SDK_DOCUMENTATION.adoc[Python SDK] | 10 min
-| **Architecture overview** | link:concepts/architecture.adoc[Architecture] | 15 min
+| **Architecture overview** | link:05-concepts/architecture.adoc[Architecture] | 15 min
 |===
 
 ---
@@ -34,13 +34,17 @@ ProximaDB development follows four phases:
 |===
 | Phase | Focus | Status
 
-| **Phase 1** | Storage formats, catalog, core APIs | ✅ Complete
-| **Phase 2** | Cross-model queries, graph, observability | ✅ Complete
-| **Phase 3** | Ecosystem integration, streaming, SDKs | 🔄 In Progress
-| **Phase 4** | Time-series, event sourcing, hybrid search, framework integrations | Planned
+| **Phase 1** | Storage formats, catalog, core APIs | ✅ Core complete
+| **Phase 2** | Cross-model queries, graph, observability | ⚠ Core complete; modality projections Beta in v0.2 — see link:SUPPORTED_SURFACE.adoc[Supported Surface]
+| **Phase 3** | Ecosystem integration, streaming, SDKs | 🔄 In progress
+| **Phase 4** | Time-series, event sourcing, hybrid search, framework integrations | Planned post-v0.2
 |===
 
-For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap].
+For v0.2 release-cut scope and the canonical Supported / Beta / Experimental
+split, use link:SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] and
+link:_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP
+Release Readiness Reconciliation — 2026-05-28]. For longer-horizon roadmap, see
+link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap].
 
 ---
 
@@ -49,10 +53,28 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Topic | Doc | Why it matters
 
-| Multi-model design | link:concepts/architecture.adoc[Architecture] | How 8 models share the data plane
-| Storage engine selection | link:concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
-| Graph engines | link:concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
+| Multi-model design | link:05-concepts/architecture.adoc[Architecture] | How 8 models share the data plane
+| Storage engine selection | link:05-concepts/storage-engines.adoc[Storage Engines] | Pick the right engine for your workload
+| Graph engines | link:05-concepts/graph-engines.adoc[Graph Engines] | Choose traversal performance vs scale
+| Embedding precision | link:05-concepts/embedding-precision.adoc[Embedding Precision] | Per-collection fp16 / bf16 / int8 storage; ~50% byte reduction
 | Design patterns | link:12-design/DESIGN_PATTERNS.adoc[Design Patterns] | Storage, consensus, caching, query optimization patterns
+|===
+
+---
+
+== Current Architecture Blueprints
+
+|===
+| Doc | Purpose
+
+| link:12-design/README.adoc[Architecture and Design Index] | Canonical entry point for active architecture docs and archived design context
+| link:12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc[Data and AI Platform Anchor] | Product/platform architecture, roadmap shape, ecosystem direction
+| link:12-design/COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc[Competitive OLTP/OLAP/MPP Trajectory] | Competitive HLD/LLD route map for OLTP, OLAP, HTAP, MPP delegation, and xCatalog planner knobs
+| link:12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc[Stacked Durability and Modality Convergence] | Accepted mandate for record authority, modality facades, and projections
+| link:12-design/RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc[Relational Storage and Interoperability] | Relational/PAX/MVCC/open-format storage direction
+| link:12-design/RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc[Pgwire DML and Compute Blueprint] | Active HLD/LLD tracker for DML routing, legacy VectorOps compatibility, and compute execution
+| link:../roadmap/techdebt/TD_110_OLTP_OLAP_HTAP_STORAGE_AND_CONSTRAINTS_PLAN_2026_06_04.adoc[TD-110 OLTP/OLAP HTAP Storage and Constraints] | Roadmap tracker for PostgreSQL-style OLTP constraints, native row/delta commit, Volcano freshness, DataFusion snapshot reads, and distributed consistency gates
+| link:12-design/OPEN_FORMAT_CATALOG_2026_05_17.adoc[Open Format Catalog] | Iceberg REST, OLTP catalog backends, xCatalog ownership, external engines
 |===
 
 ---
@@ -62,9 +84,9 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | API | Doc | Notes
 
-| REST | link:api/rest.adoc[REST API] | Primary builder interface
-| Graph | link:api/graph.adoc[Graph API] | Nodes, edges, traversal
-| Configuration | link:api/configuration.adoc[Configuration] | Local and production settings
+| REST | link:03-api-reference/rest.adoc[REST API] | Primary builder interface
+| Graph | link:03-api-reference/graph.adoc[Graph API] | Nodes, edges, traversal
+| Configuration | link:03-api-reference/configuration.adoc[Configuration] | Local and production settings
 |===
 
 ---
@@ -74,9 +96,9 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Topic | Doc | Focus
 
-| Deployment | link:operations/deployment.adoc[Deployment] | Local and production setup
-| Monitoring | link:operations/monitoring.adoc[Monitoring] | Metrics + health checks
-| Security | link:operations/security.adoc[Security] | Auth, TLS, RBAC
+| Deployment | link:04-operations/deployment.adoc[Deployment] | Local and production setup
+| Monitoring | link:04-operations/monitoring.adoc[Monitoring] | Metrics + health checks
+| Security | link:04-operations/security.adoc[Security] | Auth, TLS, RBAC
 |===
 
 ---
@@ -97,8 +119,8 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Doc | Purpose
 
-| link:10-quality/proximadb-strategic-analysis.adoc[Strategic Analysis] | Comprehensive gap analysis, competitive position, feature audit
-| link:10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] | TD-001 through TD-017 with priority, effort, phase alignment
+| link:10-quality/proximadb-strategic-analysis.adoc[Strategic Analysis] | Historical/current drift-check input for feature gaps and competitive position
+| link:10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] | Active technical-debt register, including TD-110 for OLTP/OLAP HTAP storage and PostgreSQL constraint semantics
 | link:10-quality/code-coverage-report.adoc[Code Coverage Report] | Module-level coverage analysis and TDD action plan
 |===
 
@@ -109,9 +131,9 @@ For detailed roadmap, see link:_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategi
 |===
 | Topic | Doc
 
-| Storage internals | link:internals/columnar-storage-architecture.adoc[Columnar Storage Architecture]
-| SST engine | link:internals/sst-engine-deep-dive.adoc[SST Deep Dive]
-| Graph internals | link:internals/graph-engines-deep-dive.adoc[Graph Engines Deep Dive]
+| Storage internals | link:06-internals/deep-dives/columnar-storage-architecture.adoc[Columnar Storage Architecture]
+| SST engine | link:06-internals/deep-dives/sst-engine-deep-dive.adoc[SST Deep Dive]
+| Graph internals | link:06-internals/deep-dives/graph-engines-deep-dive.adoc[Graph Engines Deep Dive]
 |===
 
 ---

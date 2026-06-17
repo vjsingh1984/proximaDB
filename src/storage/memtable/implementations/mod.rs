@@ -8,6 +8,4 @@ pub mod global_partitioned; // ✅ ACTIVE - Primary write buffer implementation
 pub mod graph_memtable;
 pub mod skiplist; // Skip list implementation for concurrent access // Graph-specific memtable with CSR optimization
 
-// Unit tests
-#[cfg(test)]
-pub mod tests;
+// Note: Test modules have been inlined into their respective implementations

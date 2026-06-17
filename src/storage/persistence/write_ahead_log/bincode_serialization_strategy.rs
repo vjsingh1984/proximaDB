@@ -14,14 +14,13 @@ use tracing::{debug, info, warn};
 use super::batch_strategy::WALBatchStrategy;
 use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     MemtableManager, RecoveryManager, WALFlushCoordinator, WriteAheadLogDiskManager,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Bincode WAL batch strategy using serialization-first architecture
 pub struct BincodeSerializationStrategy {
@@ -38,7 +37,7 @@ pub struct BincodeSerializationStrategy {
     recovery_manager: Arc<RecoveryManager>,
 
     /// Storage engine for delegated operations
-    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageFormat>>>>,
 
     /// Flush coordinator
     #[allow(dead_code)]
@@ -145,7 +144,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
     fn set_storage_engine(
         &self,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         collection_id: &str,
     ) {
         let mut engine_guard = self.storage_engine.blocking_write();
@@ -191,7 +190,67 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
 
         // Persist to disk if configured
         if self.should_persist_to_disk() {
-            let serialized = self.serializer.serialize_batch(&batch.vector_records)?;
+            // INT-2b (mini-phase EMBEDDING_PRECISION_INTEGRATION_PLAN):
+            // when the precision-schema-v2 feature flag is on, prepend
+            // the PR 4 v2 segment header to the bincode payload. When
+            // it's off (the default), the byte layout is identical to
+            // pre-INT-2b WAL files — operators can flip the flag back
+            // off and roll back without on-disk damage.
+            //
+            // Header metadata: today this uses the global-default
+            // policy because per-collection precision policy lookup
+            // isn't plumbed through to this strategy layer yet. INT-3
+            // adds the per-collection lookup; until then, a v2-enabled
+            // cluster writes "default canonical fp32, default policy"
+            // headers and the actual fp16 storage win lands in INT-3
+            // when the PAX writer keys on the header.
+            let serialized =
+                if proximadb_config::EmbeddingPrecisionConfig::cached().schema_v2_enabled {
+                    let header = build_default_v2_segment_header(&batch.batch_id);
+                    self.serializer.serialize_batch_with_v2_segment_header(
+                        batch.vector_records.as_ref(),
+                        &header,
+                    )?
+                } else {
+                    self.serializer
+                        .serialize_batch(batch.vector_records.as_ref())?
+                };
+
+            // INT-4-partial (mini-phase EMBEDDING_PRECISION_INTEGRATION_PLAN):
+            // populate `proximadb_embedding_precision_canonical_bytes`
+            // from this batch's records. Per-precision accumulation
+            // means a future fp16-mixed collection will see both
+            // {precision="fp32"} and {precision="fp16"} totals at the
+            // same {collection} label. Today every record's
+            // `EmbeddingCell.precision` is Fp32 (the bridge that
+            // produces non-fp32 records is INT-2.5, still pending),
+            // so this currently always increments the fp32 gauge.
+            // That's still useful: per-collection canonical-bytes
+            // accounting unblocks capacity dashboards immediately.
+            //
+            // Safe to call before init_precision_metrics(): the
+            // singleton accessor returns None and the increment is a
+            // no-op. Hot-path overhead is one HashMap lookup +
+            // one atomic add per (collection, precision) seen.
+            if let Some(pm) = crate::observability::precision_metrics::metrics() {
+                let mut per_precision: std::collections::HashMap<
+                    proximadb_records::EmbeddingScalarType,
+                    i64,
+                > = std::collections::HashMap::new();
+                for record in batch.vector_records.iter() {
+                    for cell in &record.embeddings {
+                        *per_precision.entry(cell.precision).or_insert(0) +=
+                            cell.values_byte_size() as i64;
+                    }
+                }
+                for (precision, delta) in per_precision {
+                    pm.add_canonical_bytes(
+                        collection_id,
+                        crate::observability::precision_metrics::precision_label(precision),
+                        delta,
+                    );
+                }
+            }
 
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
@@ -211,6 +270,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
                     &batch.batch_id,
                     &serialized,
                     SerializationFormat::Bincode,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await?;
@@ -262,7 +322,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         &self,
         collection_id: &str,
         vector_id: &crate::core::VectorId,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .search_vector_by_id(collection_id, vector_id)
             .await
@@ -274,7 +334,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
-    ) -> Result<Vec<(String, f32, VectorRecord)>> {
+    ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
         // For tests, we can do a simple search in memtable
         let vectors = self
             .memtable_manager
@@ -291,13 +351,19 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         // Use the unified distance compute to calculate distances
         let metric =
             distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
-        let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
+        let mut results: Vec<(String, f32, proximadb_records::ProximaRecord)> = Vec::new();
 
         for vector in vectors {
-            let distance_result =
-                distance_compute.calculate_distance(query_vector, &vector.vector, &metric);
+            let Some(embedding) = vector.embeddings.first() else {
+                continue;
+            };
+            let distance_result = distance_compute.calculate_distance(
+                query_vector,
+                &embedding.as_fp32_cow(),
+                &metric,
+            );
             // Use empty string for vectors without IDs
-            let id = vector.id.clone();
+            let id = vector.oid.clone();
             // Use rank_value for sorting (lower = more similar)
             results.push((id, distance_result.rank_value, vector));
         }
@@ -309,7 +375,10 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         Ok(results)
     }
 
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .get_collection_vectors(collection_id)
             .await
@@ -371,7 +440,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         let mut total_bytes = 0u64;
 
         // Prepare vectors for flush
-        let mut all_vectors = Vec::new();
+        let mut all_vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
         let mut batch_ids = Vec::new();
 
         for batch in &unflushed {
@@ -575,7 +644,7 @@ impl WALBatchStrategy for BincodeSerializationStrategy {
         batches.extend(disk_batches);
 
         // 3. Sort by timestamp to maintain chronological order
-        batches.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        batches.sort_by_key(|b| b.timestamp);
 
         match limit {
             Some(n) => Ok(batches.into_iter().take(n).collect()),
@@ -844,10 +913,15 @@ impl BincodeSerializationStrategy {
             return Ok(Vec::new());
         }
 
-        // Deserialize using Bincode
-        let vector_records = self
+        // INT-2b: magic-peek dispatch. Legacy v1 files (no PWAL prefix)
+        // route to the existing decode path; v2 files (PWAL-prefixed)
+        // get their header stripped and records stamped V2 by
+        // `deserialize_batch_auto`. We ignore the parsed header at this
+        // layer — INT-3's PAX writer is the one that keys on
+        // `canonical_default_precision` / `precision_epoch`.
+        let (vector_records, _v2_header) = self
             .serializer
-            .deserialize_batch(&data)
+            .deserialize_batch_auto(&data)
             .with_context(|| format!("Failed to deserialize Bincode WAL file: {}", file_path))?;
 
         if vector_records.is_empty() {
@@ -874,5 +948,51 @@ impl BincodeSerializationStrategy {
         };
 
         Ok(vec![batch])
+    }
+}
+
+/// INT-2b: build a minimal valid v2 segment header for the WAL writer
+/// when the precision-schema-v2 feature flag is on.
+///
+/// Per-collection precision policy lookup is NOT plumbed through to
+/// this strategy layer yet — that's INT-3's job. Until then, every
+/// v2-enabled WAL file carries a "default canonical fp32, global
+/// default policy" header. The header is still useful because:
+///
+/// * The PWAL magic + version byte enables the reader's auto-dispatch
+///   (so INT-3's PAX writer can key on the parsed header).
+/// * The `precision_epoch = 0` matches what fresh collections carry
+///   per LLD §"Collection-level precision attributes" (PR 6b).
+/// * The `policy_id = GLOBAL_DEFAULT_POLICY_ID` (PR 6a) is the seeded
+///   row every cluster starts with.
+///
+/// Once INT-3 plumbs per-collection precision metadata through to
+/// this layer, the constants below become lookups against the
+/// collection's catalog row.
+fn build_default_v2_segment_header(
+    batch_id: &BatchId,
+) -> crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let created_at_ns = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
+
+    // Each bincode WAL file is one batch (one file per batch_id), so
+    // the batch_id is a natural unique key for the segment. Pack the
+    // 10-byte CompactBatchId (timestamp_ms u64 + counter u16) into the
+    // header's u128 segment_id with timestamp in the high 64 bits.
+    let segment_id = ((batch_id.timestamp_ms() as u128) << 64) | (batch_id.counter() as u128);
+
+    crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader {
+        flags: 0,
+        segment_id,
+        created_at_ns,
+        canonical_default_precision: proximadb_records::EmbeddingScalarType::Fp32,
+        precision_epoch: 0,
+        policy_id: proximadb_catalog::embedding_precision_policy::GLOBAL_DEFAULT_POLICY_ID
+            .to_string(),
+        policy_version: 1,
     }
 }

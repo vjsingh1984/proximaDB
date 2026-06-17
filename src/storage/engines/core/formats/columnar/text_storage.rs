@@ -67,11 +67,12 @@ use std::sync::Arc;
 use thiserror::Error;
 
 use crate::core::types::TextStorageStrategy;
+use crate::storage::document::sdp::{SdpChunker, SdpConfig};
 
 // Import full-text search index types
 use super::fulltext_index::{
-    BM25Config, FullTextIndex, FullTextIndexError, SearchOptions,
-    SearchResult as FullTextSearchResult, TokenizerConfig,
+    BM25Config, FullTextIndex, FullTextIndexError, FulltextSearchResult as FullTextSearchResult,
+    SearchOptions, TokenizerConfig,
 };
 
 /// Thresholds for storage strategy selection
@@ -296,6 +297,15 @@ pub struct ChunkingConfig {
     /// If provided, text is split on this pattern first, then combined
     /// to reach target chunk size.
     pub separator: Option<String>,
+
+    /// Whether to use the Semantic Disentanglement Pipeline (SDP) for preprocessing
+    ///
+    /// SDP restructures documents before embedding to reduce semantic entanglement,
+    /// which can significantly improve Top-K precision (TD-043).
+    pub use_sdp: bool,
+
+    /// SDP configuration (used when use_sdp is true)
+    pub sdp_config: SdpConfig,
 }
 
 impl Default for ChunkingConfig {
@@ -308,6 +318,8 @@ impl Default for ChunkingConfig {
             max_boundary_search: MAX_BOUNDARY_SEARCH,
             chunk_id_prefix: "chunk".to_string(),
             separator: None,
+            use_sdp: false,
+            sdp_config: SdpConfig::default(),
         }
     }
 }
@@ -505,6 +517,38 @@ impl TextChunker {
     pub fn chunk_text(&self, parent_id: &str, text: &str) -> Vec<TextChunk> {
         if text.is_empty() {
             return Vec::new();
+        }
+
+        // Use SDP pipeline if enabled (TD-043)
+        if self.config.use_sdp {
+            let sdp_chunker = SdpChunker::new(self.config.sdp_config.clone());
+            if let Ok(sdp_chunks) = sdp_chunker.process(text) {
+                let total_chunks = sdp_chunks.len();
+                return sdp_chunks
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, sc)| {
+                        let mut metadata = sc.metadata;
+                        metadata.insert("total_chunks".to_string(), total_chunks.to_string());
+                        metadata.insert("chunking_strategy".to_string(), "sdp".to_string());
+
+                        TextChunk {
+                            chunk_id: format!(
+                                "{}_{}_{}",
+                                self.config.chunk_id_prefix, parent_id, i
+                            ),
+                            parent_id: parent_id.to_string(),
+                            chunk_index: i as u32,
+                            content: sc.content,
+                            embedding: None,
+                            // SDP restructures text so offsets may not map 1:1 to original
+                            start_offset: 0,
+                            end_offset: text.len(),
+                            metadata,
+                        }
+                    })
+                    .collect();
+            }
         }
 
         // Validate configuration

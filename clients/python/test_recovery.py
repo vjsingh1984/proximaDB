@@ -8,6 +8,7 @@ import time
 
 # Connect to the running server
 
+
 def main():
     client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
 
@@ -43,9 +44,9 @@ def main():
     print(f"3. Listing vectors in '{collection_name}':")
     try:
         # First ensure we have the collection object
-        if 'collection' not in locals():
+        if "collection" not in locals():
             collection = client.get_collection(collection_name)
-    
+
         # Use list_all_vectors to get all vectors
         vectors = collection.list_all_vectors()
         print(f"   Found {len(vectors)} vectors")
@@ -59,12 +60,10 @@ def main():
     # Try to search for vectors
     print(f"4. Searching for similar vectors:")
     try:
-        if 'collection' in locals():
+        if "collection" in locals():
             query_vector = [0.1] * 128
             results = collection.search(
-                vector=query_vector,
-                top_k=3,
-                distance_metric=DistanceMetric.COSINE
+                vector=query_vector, top_k=3, distance_metric=DistanceMetric.COSINE
             )
             print(f"   Found {len(results)} similar vectors")
             for i, result in enumerate(results):
@@ -74,6 +73,7 @@ def main():
 
     print()
     print("=== Persistence Test Complete ===")
+
 
 if __name__ == "__main__":
     main()

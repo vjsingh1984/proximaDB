@@ -3,55 +3,13 @@
 //! Multiple storage backend implementations for audit logs
 //! including file-based, database, and cloud storage options.
 
-use super::types::{AuditEvent, AuditEventType};
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use proximadb_security::{AuditEvent, AuditEventType, AuditResult};
+pub use proximadb_security::{AuditStatistics, AuditStorage};
 use std::path::Path;
 use tracing::{debug, info, warn};
-
-/// Trait for audit storage backends
-#[async_trait]
-pub trait AuditStorage {
-    /// Store an audit event
-    async fn store_audit_event(&self, event: &AuditEvent) -> Result<()>;
-
-    /// Query audit events with filters
-    async fn query_events(
-        &self,
-        event_type: Option<AuditEventType>,
-        user_id: Option<String>,
-        since: Option<DateTime<Utc>>,
-        until: Option<DateTime<Utc>>,
-        limit: Option<usize>,
-    ) -> Result<Vec<AuditEvent>>;
-
-    /// Get audit statistics
-    async fn get_audit_statistics(&self, since: DateTime<Utc>) -> Result<AuditStatistics>;
-
-    /// Cleanup old audit logs based on retention policy
-    async fn cleanup_old_logs(&self, retention_days: u32) -> Result<usize>;
-}
-
-/// Audit statistics for reporting
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditStatistics {
-    /// Total number of audit events in the reporting period
-    pub total_events: u64,
-    /// Breakdown of event counts grouped by event type
-    pub events_by_type: std::collections::HashMap<AuditEventType, u64>,
-    /// Number of distinct users who generated at least one event in the period
-    pub unique_users: u64,
-    /// Number of distinct tenants that had activity in the period
-    pub unique_tenants: u64,
-    /// Percentage of events that resulted in `AuditResult::Success` (0.0 – 100.0)
-    pub success_rate: f64,
-    /// Start of the statistics window (UTC)
-    pub period_start: DateTime<Utc>,
-    /// End of the statistics window (UTC)
-    pub period_end: DateTime<Utc>,
-}
 
 /// File-based audit storage implementation
 pub struct FileAuditStorage {
@@ -165,7 +123,7 @@ impl AuditStorage for FileAuditStorage {
         }
 
         // Sort by timestamp (newest first)
-        events.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        events.sort_by_key(|e| std::cmp::Reverse(e.timestamp));
 
         debug!("🔍 Queried {} audit events matching criteria", events.len());
         Ok(events)
@@ -194,7 +152,7 @@ impl AuditStorage for FileAuditStorage {
             }
 
             // Count successes
-            if matches!(event.result, super::types::AuditResult::Success) {
+            if matches!(event.result, AuditResult::Success) {
                 success_count += 1;
             }
         }
@@ -388,7 +346,7 @@ impl AuditStorage for DatabaseAuditStorage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
+    use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
     use tempfile::TempDir;
     use uuid::Uuid;
 

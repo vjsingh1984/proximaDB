@@ -100,9 +100,9 @@
 //! ## Key Features
 //!
 //! ### Strategy Pattern
-//! All engines implement `UnifiedStorageEngine` trait:
+//! All engines implement `UnifiedStorageFormat` trait:
 //! ```rust,ignore
-//! trait UnifiedStorageEngine {
+//! trait UnifiedStorageFormat {
 //!     async fn insert(&self, records: Vec<VectorRecord>) -> Result<InsertResult>;
 //!     async fn search(&self, query: SearchQuery) -> Result<SearchResult>;
 //!     async fn flush(&self, params: FlushParameters) -> Result<FlushResult>;
@@ -180,13 +180,11 @@
 //! - `StorageError::OutOfSpace` - Disk space exhausted
 //! - `StorageError::Configuration` - Invalid configuration
 
-pub mod builder;
 pub mod error;
+pub mod scan_strategy;
 pub mod trait_components;
 pub mod traits;
 pub mod types;
-pub mod unified_scan_strategy;
-pub mod validation;
 
 // Common reusable components
 pub mod common;
@@ -211,6 +209,8 @@ pub mod transaction_coordinator;
 
 // Core modules
 pub mod engine;
+// Vector Object Economy Phase 6: per-collection pinning control surface
+pub mod collection_pinning;
 // Unified memtable system
 pub mod memtable;
 pub mod metadata;
@@ -233,7 +233,6 @@ pub mod transaction;
 
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;
-pub mod provenance;
 pub mod relations;
 
 // Key-value storage interface
@@ -259,14 +258,12 @@ pub mod schema;
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers
 
 // Main exports from organized structure
-pub use builder::{StorageSystem, StorageSystemBuilder, StorageSystemConfig};
 pub use types::StorageEngineType;
-pub use validation::ConfigValidator;
 
 // Strategy pattern exports
 pub use traits::{
     CompactionParameters, CompactionResult, EngineHealth, EngineStatistics, FlushParameters,
-    FlushResult as TraitFlushResult, StorageEngineStrategy, UnifiedStorageEngine,
+    FlushResult as TraitFlushResult, StorageFormatStrategy, UnifiedStorageFormat,
 };
 
 // New decomposed trait hierarchy (ISP-compliant)
@@ -276,7 +273,7 @@ pub use trait_components::{
 };
 
 // Engine exports
-pub use engines::impls::sst::SstEngine;
+pub use engines::sst::SstEngine;
 // Arrow integration re-enabled - compilation conflicts resolved
 // pub use engines::viper::ViperEngine;
 
@@ -417,7 +414,6 @@ pub use schema::{
     AvroStyleType,
     // Bloom filter consolidation (WS1)
     BloomConsolidator,
-    CacheStats,
     CachedHeader,
     CachingHeaderLoader,
     CentroidNode,
@@ -427,13 +423,14 @@ pub use schema::{
     ColumnBounds,
     ColumnValue,
     ConsolidatedBloom,
+    DefaultProximaRecordBridge,
     DefaultSchemaEvolution,
     DefaultValue,
-    DefaultVectorRecordBridge,
     EncodingInfo,
     // Enhanced header cache with CentroidTree integration
     EnhancedCachedHeader,
     EvolutionValidation,
+    HeaderCacheStats,
     HeaderLoader,
     HeaderLoaderRegistry,
     InMemorySchemaRegistry,
@@ -448,9 +445,10 @@ pub use schema::{
     PersistentSchemaRegistry,
     ProximaBlocksHeaderLoader,
     ProximaColumn,
-    ProximaDataType,
     // Header cache for smart I/O
     ProximaHeaderCache,
+    // ProximaRecord bridge (WS5: ProximaRecord to Arrow RecordBatch conversion)
+    ProximaRecordBridge,
     // Core schema types
     ProximaSchema,
     RowGroupMeta,
@@ -468,11 +466,8 @@ pub use schema::{
     TypeCompatibility,
     // Type mapping
     TypeMapper,
-    VectorElementType,
-    // VectorRecord bridge (WS5: VectorRecord to Arrow RecordBatch conversion)
-    VectorRecordBridge,
     global_header_cache,
-    infer_schema_from_vector_records,
+    infer_schema_from_proxima_records,
     init_global_header_cache,
 };
 

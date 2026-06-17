@@ -193,6 +193,10 @@ impl ScoreOperator {
                 (0..num_rows)
                     .map(|i| {
                         let arr = list.value(i);
+                        #[expect(
+                            clippy::expect_used,
+                            reason = "schema enforces Float32 elements in this list column"
+                        )]
                         let fa = arr
                             .as_any()
                             .downcast_ref::<Float32Array>()
@@ -356,6 +360,7 @@ impl TopKOperator {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
+            ..Default::default()
         })
     }
 }

@@ -11,17 +11,17 @@
 mod sks_integration_tests {
     use anyhow::Result;
     use chrono::Utc;
-    use proximadb::core::VectorRecord;
     use proximadb::proto::proximadb_v1::{
         EmbeddingVersion, Entity, Modality, Provenance, Relation, TypedField, TypedMetadata,
     };
+    use proximadb::storage::entity_store::CsrRelationsStore as InMemoryRelationsStore;
+    use proximadb::storage::entity_store::InMemoryProvenanceRegistry;
     use proximadb::storage::entity_store::{EntityStore, ProximaEntityStore};
-    use proximadb::storage::provenance::InMemoryProvenanceRegistry;
-    use proximadb::storage::relations::InMemoryRelationsStore;
     use proximadb::storage::traits::StorageEngineStrategy;
     use proximadb::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
     };
+    use proximadb_records::ProximaRecord;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -30,11 +30,13 @@ mod sks_integration_tests {
         // Create mock storage engine
         let storage_engine = create_mock_storage_engine();
 
-        // Create relations store
-        let relations_store = Arc::new(InMemoryRelationsStore::new(storage_engine.clone()));
+        // Create relations store (CsrRelationsStore is in-memory; the
+        // older signature took a storage_engine arg but the canonical
+        // type is zero-arg — entity_store_legacy uses RwLock<HashMap>).
+        let relations_store = Arc::new(InMemoryRelationsStore::new());
 
-        // Create provenance registry
-        let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new(storage_engine.clone()));
+        // Create provenance registry (also zero-arg now).
+        let provenance_registry = Arc::new(InMemoryProvenanceRegistry::new());
 
         // Create entity store
         Arc::new(ProximaEntityStore::new(
@@ -102,7 +104,7 @@ mod sks_integration_tests {
                 _collection_id: &str,
                 _base_path: &str,
                 _vector_id: &str,
-            ) -> Result<Option<VectorRecord>> {
+            ) -> Result<Option<ProximaRecord>> {
                 Ok(None)
             }
 

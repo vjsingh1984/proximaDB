@@ -1,0 +1,315 @@
+= TD-106 Document Canonical Migration — Group B/C Handoff, HLD/LLD & Spec
+:toc: left
+:toclevels: 3
+Date: 2026-06-03
+Status: Group A SHIPPED; Group B/C PENDING (resume in a new session)
+Seam: CONVERGENCE_AUDIT S3 / TD-106
+Branch: proximadb-embedding
+
+[NOTE]
+====
+This is a **resumption handoff**. It records what shipped, then gives the HLD, LLD,
+spec and a paste-ready prompt to finish TD-106 (Groups B + C) plus all other
+follow-up items surfaced in the 2026-06-03 session. The live strategy plan is also at
+`~/.claude/plans/fancy-hatching-dawn.md`; this repo doc is the canonical source.
+====
+
+== 0. Resumption prompt (paste into the new session)
+
+[source,text]
+----
+Resume TD-106 (seam S3) on branch proximadb-embedding. Group A is shipped (filter +
+aggregation VALUE path is canonical ProximaValue; proto SqlValue confined to row-field
+edges). Read docs/12-design/TD106_DOCUMENT_CANONICAL_MIGRATION_HANDOFF_2026_06_03.adoc
+and memory project_td106_sqlvalue_migration_2026_06_03.md.
+
+Do Group B (Slice 5): flip the aggregation working set Vec<SqlObject> -> Vec<ProximaTree>
+across src/storage/document/aggregation.rs AND the aggregate methods in
+src/storage/document/service.rs, converting only at the two outermost edges
+(DocumentRecord.document -> ProximaTree in; ProximaTree -> SqlObject out). Reuse the
+existing converters (sql_object_to_proxima_tree, proxima_tree_to_sql_object,
+proxima_tree_to_json_map, proxima_value_to_json). This removes the temporary
+proxima_to_sql_value convert-backs in compare_by_path/process_unwind and the
+process_group/project insertion conversions. Rewrite the ~8 aggregation tests to build
+ProximaTree inputs / assert ProximaTree (or SqlObject at the execute() output edge).
+
+Then Group C (Slices 6-7): add props: ProximaTree to DocumentRecord beside
+document: SqlObject; migrate internal readers to props; delete document: SqlObject; the
+DocumentStorageEngine trait then carries the canonical-backed record.
+
+Verify each slice: cargo check --lib + cargo test --lib storage::document. Commit each
+slice individually with `git commit -o <files>` (hot branch). Acceptance:
+`grep -rn "SqlObject\|SqlValue" src/storage/document/` returns hits only in
+canonical_adapter.rs, DocumentRecord::{from_proto,to_proto_content}, and services/dml
+edge adapters.
+----
+
+== 1. Session summary (2026-06-03) — what shipped
+
+13 commits pushed, all individually built/tested/green. Convergence arc:
+
+[cols="1,3,2",options="header"]
+|===
+| Area | What | Commits
+| Catalog regression | Repaired broken HEAD from TD-108 (deleted-shim re-exports dangled) | `74dfaea34`
+| Build wiring | Forward root `cluster` feature to proximadb-runtime/cluster (+uuid) | `4a4af8ac8`
+| TD-107 (S4) | Consolidate cluster configs into proximadb-config | `822982846`
+| Feature fold | `distributed` -> `cluster` (vestigial flag removed) | `d2c707b74`
+| TD-105 (S2) Phase B | Converge observability/streaming/graph/security gRPC services onto their Ports (dead tonic surfaces removed) | `979fdf18d` `18e3485a4` `08e719e75` `1380cb11d`
+| TD-105 closeout | Mark seam S2 / TD-105 DONE in trackers | `6eca9f869`
+| **TD-106 (S3) Group A** | **filter kernel S1 / filter path S2 / aggregation accumulators S3 / aggregation value-read S4** | `1723c0faf` `0d0dfbab3` `c01f826a8` `fbd587c68`
+|===
+
+== 2. HLD — the seam and the strategy
+
+=== 2.1 The reframing (critical)
+* There is **no `StorageRow`** type (earlier scoping was wrong). The document row is
+  `DocumentRecord` (`src/storage/document/mod.rs:110`) with `document: SqlObject` (proto v1,
+  `{ fields: HashMap<String, SqlValue> }`).
+* Canonical types **and adapters already exist**:
+** `ProximaValue` (28 variants) — `crates/foundation/proximadb-data-model/src/lib.rs:305`
+** `ProximaTree = HashMap<String, ProximaTreeNode>`, `ProximaTreeNode = Value(ProximaValue) | Object(ProximaTree)` — `crates/foundation/proximadb-records/src/lib.rs:66`
+** `ProximaRecord.props: ProximaTree` — `…/proximadb-records/src/lib.rs:760`
+** Adapters: `canonical_adapter.rs::{sql_object_to_proxima_tree, proxima_tree_to_sql_object}`;
+   `proximadb-records/src/conversions.rs::{sql_value_to_proxima, proxima_to_sql_value, json_to_proxima}`;
+   `core/search/sql_value_filter.rs::{proxima_value_to_json, proxima_tree_to_json_map}`.
+* **Durable authority is already `ProximaRecord`** (service.rs writes/reads it). So `SqlObject`
+  is purely an *in-memory compute* representation in the document engine — **WAL/serde is a
+  non-issue** for the internal slices. The work removes `SqlObject` from the *compute* path.
+
+=== 2.2 Strategy (unchanged)
+. **Convert-at-boundary** for compute kernels — each function converts to canonical at its
+  own edge via the existing adapters; signatures stay stable; revertible per slice. (Done: Group A.)
+. **Working-set flip** (Group B) — push the boundary outward: the internal working set becomes
+  `Vec<ProximaTree>`, converting only at the two outermost edges. Kills per-stage/per-edge conversion.
+. **Terminal dual-carry** (Group C) — add `props: ProximaTree` to `DocumentRecord`, migrate
+  readers, delete `document: SqlObject`.
+. **Reject big-bang** field-flip of `DocumentRecord` in one commit (454 sites).
+
+== 3. Group B — Slice 5: working-set type flip (HLD + LLD + spec)
+
+=== 3.1 Goal
+Flip the aggregation internal working set `Vec<SqlObject>` -> `Vec<ProximaTree>` so no
+per-stage `SqlObject<->ProximaTree` conversion happens; convert only at the outermost edges.
+
+=== 3.2 Blast radius (confirmed)
+* **`src/storage/document/aggregation.rs`** (~20 functions) — whole-file data-type change. This
+  is **atomic** (the working set is shared across every `process_*`/helper; cannot be sub-sliced).
+* **`src/storage/document/service.rs`** — the aggregate methods that consume the executor:
+** `executor.execute(documents, filter, &pipeline)` at ~1738, ~1815 (returns `Vec<SqlObject>`).
+** the hand-rolled stage loop at ~1876–1902 with `working_set: Vec<SqlObject>` interleaving
+   `process_lookup`/`process_stage` — must carry `Vec<ProximaTree>` to kill per-stage conversion there too.
+* **~8 inline tests** in aggregation.rs build `SqlObject` inputs / assert `SqlObject` outputs.
+
+=== 3.3 Edge boundaries (where conversion stays)
+* **Input edge** — `execute()`: `documents.into_iter().map(|d| d.document)` becomes
+  `.map(|d| sql_object_to_proxima_tree(&d.document))`. (Group C removes this when DocumentRecord carries props.)
+* **Output edge** — `execute()` keeps its public `Result<Vec<SqlObject>>` by converting the final
+  `Vec<ProximaTree>` via `proxima_tree_to_sql_object` (until callers are migrated). OR change the
+  return to `Vec<ProximaTree>` and convert in service.rs — pick one; keeping `Vec<SqlObject>` return
+  is lower-churn for service.rs.
+* **Filter edge** — `process_match` builds a temp `DocumentRecord` to call
+  `FilterEvaluator::evaluate(&DocumentFilter, &DocumentRecord)`. Since filter still takes
+  `DocumentRecord{document: SqlObject}`, convert the working `ProximaTree` -> `SqlObject`
+  (`proxima_tree_to_sql_object`) to build that temp record. (Group C / a later filter-input slice removes this.)
+
+=== 3.4 LLD — mechanical substitution table (aggregation.rs)
+
+[cols="2,3",options="header"]
+|===
+| Pattern (current) | Replace with
+| `Vec<SqlObject>` / `&[SqlObject]` / `&[&SqlObject]` / `&SqlObject` / `&mut SqlObject` | `…ProximaTree…` (same shapes)
+| `SqlObject { fields: HashMap::new() }` | `ProximaTree::new()` (it *is* a `HashMap`)
+| `doc.fields.get(k)` | `doc.get(k)` -> `Option<&ProximaTreeNode>` (match `Value(pv)` / `Object(sub)`)
+| `doc.fields.insert(k, sqlvalue)` | `doc.insert(k, ProximaTreeNode::Value(proximavalue))`
+| `result.fields = doc.fields.clone()` | `result = doc.clone()`
+| `sql_object_to_json(&SqlObject)` | build `JsonValue::Object` from `proxima_tree_to_json_map(&ProximaTree)`; **delete** the local `sql_object_to_json`/`sql_value_to_json`
+| `extract_value`/`extract_group_key` (jsonpath input) | render the tree via `proxima_tree_to_json_map`, run jsonpath, lift with `json_to_proxima` (already used)
+| `set_path_value(&mut SqlObject, path, SqlValue)` | `set_path_value(&mut ProximaTree, path, ProximaValue)` -> insert `ProximaTreeNode::Value`
+| `compare_by_path` + `compare_sql_values(&SqlValue,…)` | compare on `ProximaValue` (add `compare_proxima_values`); **drop** the temporary `proxima_to_sql_value` convert-back added in Slice 4
+| `process_group`: `proxima_to_sql_value(&agg_value)` at insert | insert `ProximaTreeNode::Value(agg_value)` directly; `_id` -> `ProximaTreeNode::Value(ProximaValue::String(key))`
+| `project_document` -> `SqlObject` | -> `ProximaTree`; computed field inserts `ProximaTreeNode::Value(val)` (drop the Slice-4 `proxima_to_sql_value`)
+| `process_unwind`: `…map(proxima_to_sql_value)` + match `SqlValue::ArrayValue` | match `ProximaValue::Array`; `set_path_value` with `ProximaValue`; **drop** the convert-back
+|===
+
+NOTE: the accumulators (`agg_*`, `compute_aggregation`) already return `ProximaValue` (Slice 3) and
+read via `extract_value` which already returns `ProximaValue` (Slice 4) — they only need their `docs:
+&[&SqlObject]` params retyped to `&[&ProximaTree]`.
+
+=== 3.5 LLD — service.rs
+. `execute(documents, …)` already takes `Vec<DocumentRecord>`; only its internals/return change
+  (output edge). Callers at 1738/1815 unchanged if `execute` keeps `Vec<SqlObject>` return.
+. The stage loop (~1876–1902): change `working_set` to `Vec<ProximaTree>`; convert `documents`
+  (`DocumentRecord.document`) -> `ProximaTree` once before the loop; convert the final
+  `working_set` -> `Vec<SqlObject>` once after. `process_stage`/`process_lookup` signatures become
+  `&[ProximaTree] -> Vec<ProximaTree>`.
+. `process_lookup` -> `execute_lookup` (aggregation_extensions.rs) currently `&[SqlObject]`; either
+  retype it to `ProximaTree` (it's a join/array-shaping fn — moderate) or wrap-convert at this one
+  call. Recommend retype for consistency (it's the one wired extensions export).
+
+=== 3.6 Reused converters (do NOT hand-roll)
+* `proximadb_records::conversions::{json_to_proxima, sql_value_to_proxima, proxima_to_sql_value}`
+* `crate::storage::document::canonical_adapter::{sql_object_to_proxima_tree, proxima_tree_to_sql_object}`
+* `crate::core::search::sql_value_filter::{proxima_value_to_json, proxima_tree_to_json_map}`
+
+=== 3.7 Tests
+Rewrite the ~8 inline tests: build `ProximaTree` inputs (helper `create_test_doc` ->
+`ProximaTree`; `int_value`/`string_value` -> `ProximaValue` + `ProximaTreeNode::Value`); assert on
+`ProximaTree`/`ProximaValue`. Tests that go through `execute()` (output edge = `SqlObject`) can keep
+`SqlObject` assertions. Assert byte-identical results vs the pre-Group-A behavior for count/sum/avg/
+min/max/group/sort/limit/skip/fulltext.
+
+=== 3.8 Verification
+`cargo check --lib` (file compiles) then `cargo test --lib storage::document` (25 agg + 8 filter
+tests). Confirm no per-stage conversion remains (only the two outermost edges + the filter edge).
+
+=== 3.9 Risks
+* **Atomicity** — the whole file changes at once; budget 2–3 build cycles (~28 min each).
+* **`ProximaTreeNode` nesting** — `doc.get(k)` returns `Value(pv)` *or* `Object(sub-tree)`;
+  handle both where the old code assumed a flat `SqlValue` (esp. nested-path/jsonpath cases).
+* **Filter edge** — `process_match` convert-back must be exact (`proxima_tree_to_sql_object`).
+* **Hot branch** — `git commit -o <files>` only; a red `cargo test --lib` may be *foreign* WIP
+  (check error file paths before assuming it's yours — happened in Slice 4 with dml/record_store).
+
+== 3ter. Group C COMPLETE (2026-06-03 session 2) — S6 + S7a–e SHIPPED
+
+`DocumentRecord.document: SqlObject` is **deleted**; `props: ProximaTree` is the
+single in-memory document body. The whole document compute layer (filter, index/
+array/fulltext, query sort, aggregation pipeline, update-mutation family,
+projection) is `ProximaValue`-native. Commits: S5 `58a4f4ac4`, S6 `32d4436b3`,
+sync-fix `39a68714e`, S7a `f8f2e5e65`, S7b `dfed61722`, S7c `a10695861`,
+S7d `3ed3fe14b`, S7e `47d1186b4`, path_parser cleanup (dead JsonPath engine, −329 LOC).
+
+Residual `SqlObject`/`SqlValue` in `src/storage/document/` is **edges only** (intended):
+the proto wire (`from_proto`/`to_proto_*`, `DocumentStorageEngine` trait, v1
+Get/Query responses), the persistence `_document` JSON (`document_block`/`cold_tier`),
+the cross-collection `$lookup` join boundary (`aggregation_extensions::execute_lookup`
++ `aggregation::process_lookup` + `DocumentServiceLookupFetcher`), the
+`AggregateResult.results` output edge, and condition wire operands (`sql_value_to_proxima`).
+Remaining tidy-ups: the two task-#3 minors (`filter.rs::sql_value_to_index_value`;
+`aggregation_extensions` unwired evaluate_expression/stddev) and optionally moving the
+`$lookup` fetcher to a canonical contract. DocumentRecord is an in-memory facade so
+none of this changed any on-disk/wire format.
+
+== 3bis. Group C status (2026-06-03 session 2) — S6 SHIPPED; S7 re-scoped (superseded by §3ter)
+
+* **Slice 5 (Group B) SHIPPED** `58a4f4ac4` — aggregation working set is `Vec<ProximaTree>`; `SqlObject` only at the input/output/filter/lookup edges.
+* **Slice 6 (Group C dual-carry) SHIPPED** `32d4436b3` — `DocumentRecord` now carries `props: ProximaTree` (`#[serde(default)]`) beside `document: SqlObject`, populated at every construction site (`new`/`from_proto` + the `canonical_adapter`/`cold_tier`/aggregation-temp/query-test literals). The aggregation **input edges** (`execute()`/fulltext/lookup-arc) now clone `doc.props` natively — the Slice-5 per-record `sql_object_to_proxima_tree` conversions are gone. `DocumentRecord` is an in-memory facade (durable authority is `ProximaRecord`), so the new field changes **no on-disk/wire format**.
+
+=== Real DocumentRecord blast radius (corrected)
+The "~110 sites / 454 `.fields`" figure conflated the **trait** `DocumentRecord`
+(`src/storage/traits/document.rs`; fields `id/document/version/created_at_ns/updated_at_ns`,
+used in `query/federated/**` + `multimodel/transaction/**`) with the **storage**
+`DocumentRecord` (`src/storage/document/mod.rs`). The storage type has only:
+
+* **~7 struct-literal construction sites** (all updated in S6): canonical_adapter ×2, aggregation temp ×2, cold_tier ×1, query test ×2; plus `new`/`from_proto`.
+* **1 mutation** of `.document`: `service.rs:apply_update(&mut record.document, …)`.
+* **~25 reads** of `.document`, almost all at proto/WAL/persistence edges.
+
+=== S7 is NOT just field deletion — it must migrate three SqlObject-native compute engines
+Deleting `document: SqlObject` forces every reader onto `props`. The blocker is that
+the document compute layer is built on **proto `SqlObject`/`SqlValue`**, not just the record field:
+
+. **`query::path_parser::JsonPath`** (`src/storage/document/query/path_parser.rs`) — `parse()` + `evaluate(&SqlObject) -> Vec<SqlValue>`. Used by `indexes::extract_path_value`/`extract_array_values` **and** `service::apply_projection`.
+. **`indexes::fulltext::FullTextIndex`** — `index_document(&SqlObject)` + `extract_text(&SqlObject)`.
+. **The update-mutation family** in `service.rs` (`apply_update` + `set_path_value`/`unset_path`/`increment_path`/`push_to_array`/`pull_from_array`/`add_to_set`/`rename_path`, ~330 LOC) — path navigation/mutation over `&mut SqlObject`/`SqlValue`.
+. `filter.rs::evaluate_condition`/`extract_path_value` — already half-canonical (comparison kernel is `ProximaValue` since Slice 1/2); cheap to flip to `&ProximaTree` via `proxima_tree_to_json_map`.
+
+Wrapping these engines with per-record `proxima_tree_to_sql_object(&rec.props)` would
+delete the field but **re-introduce per-record conversions in the index-build / query-sort
+/ filter hot paths** — a perf regression and not real convergence. Therefore S7 must
+**migrate the engines to `ProximaTree`/`ProximaValue` natively**, which is a multi-slice
+project, not one atomic commit.
+
+=== S7 recommended slicing (each its own `git commit -o`, builds+tests green)
+* **S7a — filter onto props.** `FilterEvaluator::evaluate` reads `&document.props`; `evaluate_condition(&ProximaTree)`; `extract_path_value` renders via `proxima_tree_to_json_map` (delete filter.rs `sql_object_to_json`/`sql_value_to_json`). Aggregation temp records then carry **only** props (drop the `proxima_tree_to_sql_object` in `process_match`). Cheap, self-contained.
+* **S7b — ProximaTree path engine.** Add a canonical path evaluator (either teach `JsonPath::evaluate` a `&ProximaTree` overload returning `Vec<ProximaValue>`, or reuse the jsonpath/`proxima_tree_to_json_map` bridge already used in `aggregation.rs`/`filter.rs`). Point `indexes::extract_path_value`/`extract_array_values` and `service::apply_projection` at it (reading `doc.props`).
+* **S7c — fulltext onto props.** `FullTextIndex::index_document(&ProximaTree)` + `extract_text(&ProximaTree)`; `indexes::index_document_with_key` passes `&document.props`.
+* **S7d — update-mutation family onto props.** Rewrite the 8 methods to navigate/mutate `ProximaTree`/`ProximaTreeNode`; lift the wire `update.value: Option<SqlValue>` via `sql_value_to_proxima` at the boundary; `apply_update(&mut record.props, …)`.
+* **S7e — delete `document` + wire edges.** Remove the field; `new`/`from_proto` compute only props; persistence `_document` JSON serializes `proxima_tree_to_sql_object(&doc.props)` (keeps the cold_tier on-disk format — legitimate edge); proto results (`to_proto_*`, `Some(record.document)` sites, `to_trait_doc_record`) convert from props at the wire edge; migrate the ~7 test assertions (`.document.fields.get` → read props or a converted SqlObject). Acceptance: `grep -rn "SqlObject\|SqlValue" src/storage/document/` then hits only `canonical_adapter.rs`, `DocumentRecord::{from_proto,to_proto_content,to_proto_result}`, `document_to_proxima_record`/`cold_tier` persistence-`_document` edge, and the path/fulltext engine wire boundaries.
+
+== 4. Group C — Slices 6/7: DocumentRecord dual-carry (HLD + LLD)
+
+* **S6** — add `props: ProximaTree` to `DocumentRecord` beside `document: SqlObject`; populate on
+  every construction (via `sql_object_to_proxima_tree`); point internal readers (now ProximaTree-native
+  after Group B) at `props`. Removes the Group-B input/filter edge conversions.
+* **S7** — delete `document: SqlObject`; the `DocumentStorageEngine` trait
+  (`src/storage/document/mod.rs:46`) now carries the canonical-backed record. Update
+  `DocumentRecord::{from_proto, to_proto_content}` to (de)serialize proto `SqlObject` only at the
+  wire edge. **Wide blast radius** (~110 construction + readers); do construction-site-group at a time.
+* **Acceptance (whole seam)**: `grep -rn "SqlObject\|SqlValue" src/storage/document/` returns hits
+  ONLY in `canonical_adapter.rs`, `DocumentRecord::{from_proto,to_proto_content}`, and `services/dml`
+  edge adapters.
+
+== 5. Remaining minor TD-106 items (low priority)
+* `filter.rs::sql_value_to_index_value` — the document index-value path (public, called from
+  `query/mod.rs`); migrate `SqlValue` -> `ProximaValue` -> `IndexValue` when the index layer is touched.
+* `aggregation_extensions.rs` `evaluate_expression(&AggregationExpression)` / `compute_stddev` /
+  `StdDevAccumulator` — **test-only / unwired** (no production callers; only `execute_lookup` is wired).
+  Decision needed: wire them, delete them, or migrate-for-acceptance. Recommend **delete or wire** before
+  declaring the seam closed (they construct internal `SqlValue`).
++
+**Deletion entanglement (verified 2026-06-03):** the wired `$lookup` tests
+(`test_lookup_*`, `TestFetcher`) and the orphan `test_accumulator_push/add_to_set` tests reuse the
+file-level helpers `sql_values_equal` / `string_val` / `#[cfg(test)] int_val` / `make_doc`. A delete
+must keep `execute_lookup`/`LookupConfig`/`LookupFetcher` and either retain those helpers or move them
+into the test module — don't delete them wholesale or the lookup tests break. Migrate-to-`ProximaValue`
+keeps the (genuinely useful) MongoDB-style `$add/$cond/$concat` + Welford stddev features while closing
+the seam; delete is lower-effort but loses a parallel-but-unwired expression model.
+
+== 6. New tech debt surfaced — TD-109 (proposed): consolidate json<->proxima converters
+Found **3+ scattered private copies** of `json -> ProximaValue` and a separate `proxima -> json`:
+
+* `src/network/arrow_ipc/codec.rs:640` `json_to_proxima_value`
+* `src/network/rest/websocket.rs:105` `json_value_to_proxima_value`
+* `src/network/rest/v2/query.rs:58` `json_to_proxima_value`
+* `src/core/search/sql_value_filter.rs:236` `proxima_value_to_json` + `:304` `proxima_tree_to_json_map`
+
+Canonical home now exists: `proximadb_records::conversions::json_to_proxima` (added in Slice 2).
+**TD-109**: converge the 3 json->proxima copies onto it, and move `proxima_value_to_json` /
+`proxima_tree_to_json_map` into `conversions.rs` (or a shared `proximadb-records` json module) so both
+directions live in one place.
+
+[IMPORTANT]
+====
+**The 3 copies are NOT identical (verified 2026-06-03) — it is not a safe drop-in.**
+The canonical `json_to_proxima` maps numbers as `as_i64 -> Int64` else `as_f64 -> Float64`
+(no `UInt64`; mirrors the `SqlValue` path, which has no u64).
+
+* `network/rest/v2/query.rs:58` and `network/arrow_ipc/codec.rs:640` — add a **`UInt64`** branch
+  (`as_i64 -> Int64`, `as_u64 -> UInt64`, `as_f64 -> Float64`). Converging onto canonical drops
+  `UInt64 -> Float64` for json numbers in `(i64::MAX, u64::MAX]` (param-bind / arrow-ingest edge).
+* `network/rest/websocket.rs:105` — **lossy / divergent**: only handles String/Number/Bool;
+  Null and **Array/Object are stringified** (`v.to_string()`), not mapped to `Null`/`Array`/`Map`.
+  Converging is a behavior change at the WS protocol boundary (more correct, but must verify consumers).
+
+**Recommended TD-109 path:** add a `UInt64` branch to canonical `json_to_proxima` (makes it a true
+superset of query/codec), AND add `UInt64` arms to the document filter kernel
+(`filter.rs::proxima_values_equal`/`proxima_value_to_f64`) + `aggregation.rs::extract_numeric_value`
+— otherwise a document field holding a json number `> i64::MAX` becomes `UInt64` and silently stops
+matching (the filter kernel currently only has Int64/Float64 arms). Then replace query/codec copies
+(`&value` vs owned — adjust call sites) and decide websocket separately. NOT the trivial drop-in the
+ticket assumed; needs the UInt64 semantics decision + a small test.
+====
+
+== 7. Other open convergence seams (refined this session)
+* **S1 / TD-104** (handler extraction) — OPEN, large. Refined finding: there are **two**
+  `UnifiedHandlers` (root `src/api_handlers/request_handlers.rs` inherent-logic; runtime
+  `crates/platform/proximadb-runtime/src/handlers.rs` port-based) and *both* implement
+  `ApiHandlersPort`. The **live REST path uses the ROOT one** (`rest/v1/handlers.rs:1337` casts
+  `request_handlers as Arc<dyn ApiHandlersPort>`). Convergence = cut the live path to the runtime
+  port-based `UnifiedHandlers`, moving root logic behind `CollectionPort`/`VectorOpsPort`/
+  `QueryAdapterPort`. No clean small slice (the metrics/admin methods aren't even in `ApiHandlersPort`).
+* **S2 / TD-105** — DONE (this session). * **S4 / TD-107** — DONE. * **S6 / TD-108** — DONE.
+
+== 8. Convergence-status snapshot (post-session)
+[cols="1,3,1",options="header"]
+|===
+| Seam | State | Tracker
+| S1 | OPEN (large; two UnifiedHandlers, live path = root) | TD-104
+| S2 | DONE 2026-06-03 | TD-105
+| S3 | Group A DONE; Group B/C pending | TD-106
+| S4 | DONE 2026-06-03 | TD-107
+| S6 | DONE 2026-06-02 | TD-108
+| (new) | json<->proxima converter dupes | TD-109 (proposed)
+|===

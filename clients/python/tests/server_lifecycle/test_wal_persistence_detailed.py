@@ -18,7 +18,6 @@ Test procedure:
 - Verify data recovered from WAL
 """
 
-import json
 import os
 import subprocess
 import sys
@@ -53,7 +52,7 @@ def start_server():
     config_file = os.path.join(project_root, "config/config.toml")
 
     if not os.path.exists(server_binary):
-        print(f"❌ Server not found. Build with: cargo build --release")
+        print("❌ Server not found. Build with: cargo build --release")
         return False
 
     server_process = subprocess.Popen(
@@ -98,7 +97,7 @@ def stop_server():
 
 def check_wal_files(storage_path, collection_id):
     """Check if WAL files exist at correct location"""
-    print(f"\n📁 Checking WAL files...")
+    print("\n📁 Checking WAL files...")
     print(f"   Storage path: {storage_path}")
 
     # Extract path from file:// URL
@@ -114,7 +113,7 @@ def check_wal_files(storage_path, collection_id):
 
     if os.path.exists(wal_dir):
         wal_files = [f for f in os.listdir(wal_dir) if f.endswith(".bcwal")]
-        print(f"✅ WAL directory exists")
+        print("✅ WAL directory exists")
         print(f"✅ Found {len(wal_files)} WAL files:")
         for f in wal_files[:5]:  # Show first 5
             file_path = os.path.join(wal_dir, f)
@@ -229,7 +228,7 @@ def test_wal_persistence():
                 break
 
         if not collection_found:
-            print(f"❌ Collection NOT recovered")
+            print("❌ Collection NOT recovered")
 
         # Search for vectors
         if collection_found:
@@ -256,17 +255,17 @@ def test_wal_persistence():
     print("TEST RESULTS")
     print("=" * 80)
 
-    print(f"\n📊 Recovery Status:")
+    print("\n📊 Recovery Status:")
     print(f"   Collection: {'✅ Recovered' if collection_found else '❌ Lost'}")
     print(
         f"   Vectors: {recovered_vectors}/20 recovered ({recovered_vectors/20*100:.0f}%)"
     )
 
     if collection_found and recovered_vectors >= 18:
-        print(f"\n✅ SUCCESS: WAL persistence working correctly!")
+        print("\n✅ SUCCESS: WAL persistence working correctly!")
         success = True
     else:
-        print(f"\n❌ FAILURE: Data not fully recovered")
+        print("\n❌ FAILURE: Data not fully recovered")
         success = False
 
     # Cleanup

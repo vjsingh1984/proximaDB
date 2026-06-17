@@ -44,6 +44,7 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
+use proximadb_catalog::{CatalogNamespace, StoragePoolClass};
 use std::sync::Arc;
 
 /// Storage location assignment for a collection
@@ -411,6 +412,217 @@ impl CollectionPathResolver for CompositeResolver {
     }
 }
 
+// ============================================================================
+// DR-aware structured path (P2 of COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc)
+// ============================================================================
+
+/// Authority-checked path for a DR-eligible collection.
+///
+/// Constructed via [`DrPathBuilder::build`] after fetching the collection's
+/// owning `CatalogNamespace`. The builder refuses null `tenant_id` /
+/// `namespace_id`, refuses invalid ID characters, and surfaces pool-class
+/// information so the caller can route writes to the correct bucket.
+///
+/// The render is `data/{tenant_id}/{namespace_id}/{collection_id}/`. The
+/// helper methods append the contract's well-known subprefixes.
+///
+/// See `docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` "LLD: Physical
+/// Path Contract".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrResolvedPath {
+    pub tenant_id: String,
+    pub namespace_id: String,
+    pub collection_id: String,
+    pub storage_pool_class: StoragePoolClass,
+}
+
+impl DrResolvedPath {
+    /// Root prefix `data/<tenant_id>/<namespace_id>/<collection_id>/`.
+    /// This is the value passed as the provider replication rule filter
+    /// and the only prefix the path resolver guard accepts.
+    pub fn root_prefix(&self) -> String {
+        format!(
+            "data/{}/{}/{}/",
+            self.tenant_id, self.namespace_id, self.collection_id
+        )
+    }
+
+    /// WAL subprefix `<root>wal/`.
+    pub fn wal_subprefix(&self) -> String {
+        format!("{}wal/", self.root_prefix())
+    }
+
+    /// Manifests subprefix `<root>manifests/`.
+    pub fn manifests_subprefix(&self) -> String {
+        format!("{}manifests/", self.root_prefix())
+    }
+
+    /// Snapshots subprefix `<root>snapshots/`.
+    pub fn snapshots_subprefix(&self) -> String {
+        format!("{}snapshots/", self.root_prefix())
+    }
+
+    /// Segments subprefix `<root>segments/`.
+    pub fn segments_subprefix(&self) -> String {
+        format!("{}segments/", self.root_prefix())
+    }
+
+    /// Indexes subprefix `<root>indexes/`.
+    pub fn indexes_subprefix(&self) -> String {
+        format!("{}indexes/", self.root_prefix())
+    }
+
+    /// Restore-checkpoint subprefix `<root>restore-checkpoints/`.
+    pub fn restore_checkpoints_subprefix(&self) -> String {
+        format!("{}restore-checkpoints/", self.root_prefix())
+    }
+}
+
+/// Errors returned by [`DrPathBuilder::build`]. The reconciler and engine
+/// API map these to specific operator-visible failure modes; the path
+/// resolver guard refuses any write whose builder returns one of these.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PathResolverError {
+    /// The owning namespace has no `tenant_id` populated. Either the row
+    /// is a legacy pre-P0.5 namespace pending migration backfill, or the
+    /// operator forgot to set the tenant when provisioning. The DR path
+    /// is refused; reconciler refuses to create a policy.
+    #[error("namespace {namespace_fqn:?} has no tenant_id set")]
+    MissingTenantId { namespace_fqn: String },
+
+    /// The owning namespace has no `namespace_id` populated. Same
+    /// migration / provisioning gap as `MissingTenantId`.
+    #[error("namespace {namespace_fqn:?} has no namespace_id set")]
+    MissingNamespaceId { namespace_fqn: String },
+
+    /// An ID failed validation. IDs must be non-empty, ASCII, and free
+    /// of path-separator or reserved characters (`/`, `\`, `..`, `\0`).
+    #[error("invalid {field} {value:?}: {reason}")]
+    InvalidId {
+        field: &'static str,
+        value: String,
+        reason: &'static str,
+    },
+
+    /// The bucket/container the caller wanted to write to has a different
+    /// pool class than the owning namespace. The path resolver refuses
+    /// cross-class writes — Business namespaces never write to `pooled`
+    /// buckets and vice versa.
+    #[error(
+        "storage pool class mismatch: namespace expects {expected:?}, \
+         destination is {got:?}"
+    )]
+    PoolClassMismatch {
+        expected: StoragePoolClass,
+        got: StoragePoolClass,
+    },
+}
+
+/// Builder that turns a (namespace, collection_id) pair into a fully
+/// validated [`DrResolvedPath`].
+///
+/// Pure construction — no I/O, no catalog calls. Callers fetch the
+/// owning `CatalogNamespace` themselves (cache, store, or test fixture)
+/// and pass it in. Tests use this builder directly; the path resolver
+/// trait wraps it once the rest of the storage layer is consolidated.
+pub struct DrPathBuilder;
+
+impl DrPathBuilder {
+    /// Build the authoritative DR path for `collection_id` under
+    /// `namespace`. Returns an error if either ID is missing or invalid,
+    /// or if the namespace is not DR-addressable.
+    pub fn build(
+        namespace: &CatalogNamespace,
+        collection_id: &str,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        let tenant_id =
+            namespace
+                .tenant_id
+                .as_deref()
+                .ok_or_else(|| PathResolverError::MissingTenantId {
+                    namespace_fqn: namespace.fqn(),
+                })?;
+        let namespace_id = namespace.namespace_id.as_deref().ok_or_else(|| {
+            PathResolverError::MissingNamespaceId {
+                namespace_fqn: namespace.fqn(),
+            }
+        })?;
+
+        Self::validate_id("tenant_id", tenant_id)?;
+        Self::validate_id("namespace_id", namespace_id)?;
+        Self::validate_id("collection_id", collection_id)?;
+
+        Ok(DrResolvedPath {
+            tenant_id: tenant_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            collection_id: collection_id.to_string(),
+            storage_pool_class: namespace.storage_pool_class,
+        })
+    }
+
+    /// Same as [`build`] but additionally asserts that the destination
+    /// bucket/container's pool class matches the namespace's class. Used
+    /// at the boundary where a write is being routed to a specific
+    /// storage pool — refuses cross-class writes.
+    pub fn build_for_pool(
+        namespace: &CatalogNamespace,
+        collection_id: &str,
+        destination_pool_class: StoragePoolClass,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        let resolved = Self::build(namespace, collection_id)?;
+        if resolved.storage_pool_class != destination_pool_class {
+            return Err(PathResolverError::PoolClassMismatch {
+                expected: resolved.storage_pool_class,
+                got: destination_pool_class,
+            });
+        }
+        Ok(resolved)
+    }
+
+    fn validate_id(field: &'static str, value: &str) -> Result<(), PathResolverError> {
+        if value.is_empty() {
+            return Err(PathResolverError::InvalidId {
+                field,
+                value: value.to_string(),
+                reason: "must not be empty",
+            });
+        }
+        if !value.is_ascii() {
+            return Err(PathResolverError::InvalidId {
+                field,
+                value: value.to_string(),
+                reason: "must be ASCII",
+            });
+        }
+        for ch in value.chars() {
+            // Forbid characters that could escape the prefix, traverse
+            // up the tree, or break provider rule filters.
+            if matches!(ch, '/' | '\\' | '\0') {
+                return Err(PathResolverError::InvalidId {
+                    field,
+                    value: value.to_string(),
+                    reason: "must not contain path separators or NUL",
+                });
+            }
+            if ch.is_whitespace() {
+                return Err(PathResolverError::InvalidId {
+                    field,
+                    value: value.to_string(),
+                    reason: "must not contain whitespace",
+                });
+            }
+        }
+        if value.contains("..") {
+            return Err(PathResolverError::InvalidId {
+                field,
+                value: value.to_string(),
+                reason: "must not contain traversal sequence",
+            });
+        }
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +696,179 @@ mod tests {
         // Should use first resolver
         let loc = composite.resolve_base_location("test").await.unwrap();
         assert_eq!(loc, "/primary/test");
+    }
+
+    // ------------------------------------------------------------------
+    // DrPathBuilder / DrResolvedPath
+    // ------------------------------------------------------------------
+
+    fn dr_addressable_namespace() -> CatalogNamespace {
+        CatalogNamespace::new(vec!["acme".into(), "orders".into()])
+            .with_tenant("tnt_acme")
+            .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
+            .with_region_home("us-east-1")
+            .with_storage_pool_class(StoragePoolClass::Business)
+    }
+
+    #[test]
+    fn dr_resolved_path_emits_contract_subprefixes() {
+        let ns = dr_addressable_namespace();
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+
+        assert_eq!(
+            path.root_prefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/"
+        );
+        assert_eq!(
+            path.wal_subprefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/wal/"
+        );
+        assert_eq!(
+            path.manifests_subprefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/manifests/"
+        );
+        assert_eq!(
+            path.snapshots_subprefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/snapshots/"
+        );
+        assert_eq!(
+            path.segments_subprefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/segments/"
+        );
+        assert_eq!(
+            path.indexes_subprefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/indexes/"
+        );
+        assert_eq!(
+            path.restore_checkpoints_subprefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/restore-checkpoints/"
+        );
+        assert_eq!(path.storage_pool_class, StoragePoolClass::Business);
+    }
+
+    #[test]
+    fn dr_builder_rejects_namespace_without_tenant() {
+        // Legacy namespace pending P0.5 backfill — has namespace_id but
+        // no tenant_id.
+        let ns = CatalogNamespace::new(vec!["legacy".into()]).with_namespace_id("ns_legacy_001");
+        let err = DrPathBuilder::build(&ns, "col_x").unwrap_err();
+        assert!(matches!(err, PathResolverError::MissingTenantId { .. }));
+    }
+
+    #[test]
+    fn dr_builder_rejects_namespace_without_namespace_id() {
+        // Legacy namespace pending P0.5 backfill — has tenant but no
+        // namespace_id.
+        let ns = CatalogNamespace::new(vec!["legacy".into()]).with_tenant("tnt_legacy_system");
+        let err = DrPathBuilder::build(&ns, "col_x").unwrap_err();
+        assert!(matches!(err, PathResolverError::MissingNamespaceId { .. }));
+    }
+
+    #[test]
+    fn dr_builder_rejects_path_traversal_in_collection_id() {
+        let ns = dr_addressable_namespace();
+        let err = DrPathBuilder::build(&ns, "../escape").unwrap_err();
+        match err {
+            PathResolverError::InvalidId { field, reason, .. } => {
+                // Either traversal or path separator catches it first;
+                // both are correct refusals.
+                assert_eq!(field, "collection_id");
+                assert!(
+                    reason.contains("traversal") || reason.contains("path separators"),
+                    "unexpected reason: {reason}"
+                );
+            }
+            other => panic!("expected InvalidId, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dr_builder_rejects_empty_collection_id() {
+        let ns = dr_addressable_namespace();
+        let err = DrPathBuilder::build(&ns, "").unwrap_err();
+        assert!(matches!(
+            err,
+            PathResolverError::InvalidId {
+                field: "collection_id",
+                reason: "must not be empty",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dr_builder_rejects_non_ascii_ids() {
+        let ns = dr_addressable_namespace();
+        let err = DrPathBuilder::build(&ns, "col_café").unwrap_err();
+        assert!(matches!(
+            err,
+            PathResolverError::InvalidId {
+                field: "collection_id",
+                reason: "must be ASCII",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dr_builder_rejects_whitespace_in_ids() {
+        let ns = dr_addressable_namespace();
+        let err = DrPathBuilder::build(&ns, "col orders").unwrap_err();
+        assert!(matches!(
+            err,
+            PathResolverError::InvalidId {
+                field: "collection_id",
+                reason: "must not contain whitespace",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dr_builder_rejects_null_byte_in_ids() {
+        let ns = dr_addressable_namespace();
+        let err = DrPathBuilder::build(&ns, "col\0x").unwrap_err();
+        assert!(matches!(
+            err,
+            PathResolverError::InvalidId {
+                field: "collection_id",
+                reason: "must not contain path separators or NUL",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn dr_builder_for_pool_accepts_matching_class() {
+        let ns = dr_addressable_namespace();
+        let path =
+            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Business).unwrap();
+        assert_eq!(path.storage_pool_class, StoragePoolClass::Business);
+    }
+
+    #[test]
+    fn dr_builder_for_pool_rejects_class_mismatch() {
+        // Business namespace cannot write to a Pooled destination. This
+        // is the contract's "cross-class refusal" rule.
+        let ns = dr_addressable_namespace();
+        let err =
+            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Pooled).unwrap_err();
+        match err {
+            PathResolverError::PoolClassMismatch { expected, got } => {
+                assert_eq!(expected, StoragePoolClass::Business);
+                assert_eq!(got, StoragePoolClass::Pooled);
+            }
+            other => panic!("expected PoolClassMismatch, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn dr_builder_for_pool_propagates_missing_ids() {
+        // Pool-class check runs *after* ID validation, so a missing
+        // tenant_id surfaces first instead of being masked.
+        let ns = CatalogNamespace::new(vec!["legacy".into()]).with_namespace_id("ns_legacy");
+        let err =
+            DrPathBuilder::build_for_pool(&ns, "col_x", StoragePoolClass::Pooled).unwrap_err();
+        assert!(matches!(err, PathResolverError::MissingTenantId { .. }));
     }
 }

@@ -17,6 +17,7 @@
 //! REST server implementation using axum
 
 use axum::{Router, extract::DefaultBodyLimit, middleware};
+use proximadb_graph_query::service::GraphExecutionService;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -45,6 +46,23 @@ pub struct RestServer {
     router: Router,
     bind_addr: SocketAddr,
     tls_config: Option<NetworkTlsConfig>,
+}
+
+/// Port-based service objects for wiring proximadb-api REST handlers.
+///
+/// When provided to `RestServer`, the document/graph/observability routes are
+/// served by the port-backed handlers from `proximadb-api` instead of the
+/// legacy root-crate handlers.
+pub struct RestServerPorts {
+    /// Document/graph/observability route ports. Optional: TD-104 S1 lets the
+    /// multi-port REST server carry `api_handlers` even when these are not built
+    /// (e.g. gRPC disabled), so collection/vector dispatch always reaches the
+    /// runtime port-based handler instead of falling back to the root handler.
+    pub doc_port: Option<std::sync::Arc<dyn proximadb_runtime::DocumentPort>>,
+    pub graph_port: Option<std::sync::Arc<dyn proximadb_runtime::GraphPort>>,
+    pub obs_port: Option<std::sync::Arc<dyn proximadb_runtime::ObservabilityPort>>,
+    /// Port-backed handler for collection/vector routes (Phase 9.10). Always set.
+    pub api_handlers: std::sync::Arc<dyn proximadb_runtime::ApiHandlersPort>,
 }
 
 /// Authentication configuration for the REST server
@@ -238,7 +256,7 @@ impl RestServer {
     /// - Compression: Optional based on parameter
     pub fn new(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -246,12 +264,13 @@ impl RestServer {
     ) -> Self {
         Self::with_security(
             bind_addr,
-            unified_handlers,
+            request_handlers,
             max_request_size_mb,
             compression,
             metrics_collector,
             security_coordinator,
             RestServerSecurityConfig::default(),
+            None,
         )
     }
 
@@ -260,7 +279,7 @@ impl RestServer {
     /// **WARNING**: Only use for local development and testing!
     pub fn new_development(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -269,28 +288,32 @@ impl RestServer {
         tracing::warn!("🚨 Starting REST server in DEVELOPMENT mode - security is relaxed!");
         Self::with_security(
             bind_addr,
-            unified_handlers,
+            request_handlers,
             max_request_size_mb,
             compression,
             metrics_collector,
             security_coordinator,
             RestServerSecurityConfig::development(),
+            None,
         )
     }
 
     /// Create new REST server with custom security configuration.
     pub fn with_security(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         security_config: RestServerSecurityConfig,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
+        let graph_execution_service = request_handlers.graph_execution_service.clone();
         Self::with_security_and_config(
             bind_addr,
-            unified_handlers,
+            request_handlers,
+            graph_execution_service,
             max_request_size_mb,
             compression,
             metrics_collector,
@@ -298,13 +321,15 @@ impl RestServer {
             security_config,
             std::path::PathBuf::from("/tmp/proximadb/data"), // Default fallback
             None, // No query adapter for legacy constructor
+            llm_engine,
         )
     }
 
     /// Create new REST server with custom security configuration and data directory from config.
     pub fn with_security_and_config(
         bind_addr: SocketAddr,
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
         max_request_size_mb: Option<u64>,
         compression: bool,
         metrics_collector: Option<Arc<MetricsCollector>>,
@@ -312,19 +337,131 @@ impl RestServer {
         security_config: RestServerSecurityConfig,
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
     ) -> Self {
-        // Create catalog manager for external catalog integration
-        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
-
-        let state = AppState {
-            unified_handlers,
-            security_coordinator: security_coordinator.clone(),
+        Self::with_security_and_config_and_ports(
+            bind_addr,
+            request_handlers,
+            graph_execution_service,
+            max_request_size_mb,
+            compression,
+            metrics_collector,
+            security_coordinator,
+            security_config,
             data_dir,
             query_adapter,
-            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            ))),
-            catalog_manager,
+            llm_engine,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+
+    /// Create new REST server with port-backed service objects wired in.
+    ///
+    /// When `ports` is `Some`, document/graph/observability routes are served
+    /// by handlers from `proximadb-api` that delegate to the port trait objects.
+    /// When `queue_client` is `Some`, the v3 `/documents?mode=async` handler
+    /// routes through `producer.send`; otherwise it falls back to inline embed.
+    pub fn with_security_and_config_and_ports(
+        bind_addr: SocketAddr,
+        request_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
+        max_request_size_mb: Option<u64>,
+        compression: bool,
+        metrics_collector: Option<Arc<MetricsCollector>>,
+        security_coordinator: Option<Arc<SecurityCoordinator>>,
+        security_config: RestServerSecurityConfig,
+        data_dir: std::path::PathBuf,
+        query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+        ports: Option<RestServerPorts>,
+        catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
+        queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
+        external_collection_service: Option<
+            Arc<crate::services::external_collection::ExternalCollectionService>,
+        >,
+    ) -> Self {
+        // Tier 1.2 (pre-release foundational plan 2026-05-26):
+        // Warn loudly if a production-mode server is being constructed with
+        // authentication disabled.  `RestServerSecurityConfig::default()` and
+        // `production_with_origins` / `production_with_tls` builders all
+        // delegate to `RestAuthConfig::default()` which has `enabled: false`
+        // for backward compatibility — explicit `multi_tenant()` setups turn
+        // auth on.  Single-tenant production deployments that forget to wire
+        // auth would otherwise silently accept unauthenticated requests; the
+        // warning makes the foot-gun visible at server start.
+        if !security_config.development_mode && !security_config.auth.enabled {
+            tracing::warn!(
+                target: "proximadb::security",
+                bind_addr = %bind_addr,
+                "REST server starting in production mode with auth.enabled=false. \
+                 All requests will be accepted without authentication. If this is \
+                 intentional (single-tenant trusted-network deployment), suppress \
+                 by switching to development_mode or by explicitly enabling auth via \
+                 RestServerSecurityConfig::multi_tenant() / auth.enabled=true. \
+                 See PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc T1.2 for context."
+            );
+        }
+
+        let mut base_state = AppState::new(
+            request_handlers,
+            graph_execution_service,
+            security_coordinator.clone(),
+            data_dir,
+            query_adapter.clone(),
+            llm_engine,
+        );
+        if let Some(manager) = catalog_manager {
+            base_state = base_state.with_catalog_manager(manager);
+        }
+        if let Some(qc) = queue_client {
+            base_state = base_state.with_queue_client(qc);
+        }
+        // T3.2 Slice 1b: share `fulltext_indexes` with `SharedServices` so REST
+        // hybrid search and gRPC hybrid search read+write the same in-process
+        // map. Without this, REST has its own empty map and gRPC's BM25
+        // component returns 0 results.
+        if let Some(indexes) = fulltext_indexes.clone() {
+            base_state = base_state.with_fulltext_indexes(indexes);
+        }
+        // Phase 8 (F1): share the Continuous Discovery service so the v2
+        // `discovery-jobs` endpoints reach the same registry the background
+        // executor consumes (multi-port REST path).
+        if let Some(discovery) = discovery_service {
+            base_state = base_state.with_discovery_service(discovery);
+        }
+        // Phase 8 (F5): share the External Collection service so the v2
+        // `external-collections` endpoints reach the same registry.
+        if let Some(external) = external_collection_service {
+            base_state = base_state.with_external_collection_service(external);
+        }
+        let state = if let Some(p) = ports {
+            // Always wire the runtime port-based api_handlers (TD-104 S1); the
+            // document/graph/observability route ports are mounted only when present.
+            let mut s = base_state.with_api_handlers(p.api_handlers);
+            if let (Some(doc_port), Some(graph_port), Some(obs_port)) =
+                (p.doc_port, p.graph_port, p.obs_port)
+            {
+                s = s.with_ports(doc_port, graph_port, obs_port);
+            }
+            s
+        } else {
+            base_state
+        };
+        let state = if let Some(ref adapter) = query_adapter {
+            let port = Arc::new(
+                crate::query::UnifiedQueryPortImpl::new(adapter.clone())
+                    .with_catalog_manager(state.catalog_manager.clone()),
+            ) as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
+            state.with_unified_query_port(port)
+        } else {
+            state
         };
 
         // Calculate max request size in bytes (default to 64MB if not specified)
@@ -343,7 +480,7 @@ impl RestServer {
         // Build service layers conditionally to avoid type mismatch
         let security_coordinator = state.security_coordinator.clone();
         let state_for_v2 = state.clone();
-        let mut base_router = create_router(state);
+        let mut base_router = create_router(state.clone());
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
@@ -355,9 +492,19 @@ impl RestServer {
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
 
         // Add V2 API router with ProximaRecord support
+        let state_for_v3 = state_for_v2.clone();
         let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
         base_router = base_router.nest("/api/v2", v2_router);
         tracing::info!("✅ V2 API enabled at /api/v2 (ProximaRecord, typed schema)");
+
+        // Add V3 API router with native server-side embedding
+        let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
+        base_router = base_router.nest("/api/v3", v3_router);
+        tracing::info!("✅ V3 API enabled at /api/v3 (native server-side embedding)");
+
+        // Unmatched routes (incl. the removed v1 surfaces) return the canonical
+        // error envelope with a migration hint pointing at the v2 replacement.
+        base_router = base_router.fallback(not_found_fallback);
 
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();
@@ -422,6 +569,13 @@ impl RestServer {
 
         // Add request ID middleware for tracing and correlation
         let base_router = base_router.layer(middleware::from_fn(request_id_middleware));
+
+        // Per-route REST metrics. `route_layer` runs post-routing so the
+        // matched-path label is available (bounded cardinality); unmatched
+        // requests fall through to the 404 fallback and are not metered here.
+        let base_router = base_router.route_layer(middleware::from_fn(
+            crate::network::middleware::metrics::metrics_middleware,
+        ));
 
         let mut router = if compression {
             // Create compression layer with support for multiple algorithms
@@ -513,27 +667,101 @@ impl RestServer {
 
     /// Build a REST router for unified mode without starting a server.
     ///
-    /// This is used by the unified server to get the configured REST router
-    /// that can be passed to the protocol multiplexer.
+    /// `ports` injects port-backed handlers from `proximadb-api` for document,
+    /// graph, and observability routes. When `None`, the legacy root-crate
+    /// handlers are used.
     pub fn build_router_for_unified(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
         metrics_collector: Option<Arc<MetricsCollector>>,
         security_coordinator: Option<Arc<SecurityCoordinator>>,
         data_dir: std::path::PathBuf,
         query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+        ports: Option<RestServerPorts>,
+        segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
+        catalog_manager: Option<Arc<crate::catalog::CatalogManager>>,
+        queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+        fulltext_indexes: Option<crate::network::rest::v1::handlers::FullTextIndexMap>,
+        recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
+        rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+        rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
+        discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
+        external_collection_service: Option<
+            Arc<crate::services::external_collection::ExternalCollectionService>,
+        >,
     ) -> Router {
-        // Create catalog manager for external catalog integration
-        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
-
-        let state = AppState {
-            unified_handlers,
-            security_coordinator: security_coordinator.clone(),
+        let mut base_state = AppState::new(
+            request_handlers,
+            graph_execution_service,
+            security_coordinator.clone(),
             data_dir,
-            query_adapter,
-            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
-                std::collections::HashMap::new(),
-            ))),
-            catalog_manager,
+            query_adapter.clone(),
+            llm_engine,
+        );
+        if let Some(reg) = segment_registry {
+            base_state = base_state.with_segment_registry(reg);
+        }
+        if let Some(manager) = catalog_manager {
+            base_state = base_state.with_catalog_manager(manager);
+        }
+        if let Some(qc) = queue_client {
+            base_state = base_state.with_queue_client(qc);
+        }
+        // T3.2 Slice 1b: share `fulltext_indexes` with `SharedServices` so REST
+        // hybrid search and gRPC hybrid search read+write the same in-process
+        // map. Without this, REST has its own empty map and gRPC's BM25
+        // component returns 0 results.
+        if let Some(indexes) = fulltext_indexes.clone() {
+            base_state = base_state.with_fulltext_indexes(indexes);
+        }
+        // TD-064 / LLD §5: share the recall-probe gate so v2 route-health
+        // can resolve per-scope `gate_open` state without re-constructing.
+        if let Some(gate) = recall_probe_gate {
+            base_state = base_state.with_recall_probe_gate(gate);
+        }
+        // R-7c.3 production wiring: share the rank-pipeline singleton + the
+        // durable rank-profile catalog so the REST `/api/v1/rank/search` route
+        // and the new `/api/v1/rank/profiles` install endpoints reach the same
+        // process-wide `RankServices` that pgwire SQL `RERANK(...)` uses.
+        if let Some(services) = rank_services {
+            base_state = base_state.with_rank_services(services);
+        }
+        if let Some(store) = rank_profile_store {
+            base_state = base_state.with_rank_profile_store(store);
+        }
+        // Phase 8 (F1): share the Continuous Discovery service so the v2
+        // `discovery-jobs` endpoints reach the same registry the background
+        // executor consumes.
+        if let Some(discovery) = discovery_service {
+            base_state = base_state.with_discovery_service(discovery);
+        }
+        // Phase 8 (F5): share the External Collection service so the v2
+        // `external-collections` endpoints reach the same registry.
+        if let Some(external) = external_collection_service {
+            base_state = base_state.with_external_collection_service(external);
+        }
+        let state = if let Some(p) = ports {
+            // Always wire the runtime port-based api_handlers (TD-104 S1); the
+            // document/graph/observability route ports are mounted only when present.
+            let mut s = base_state.with_api_handlers(p.api_handlers);
+            if let (Some(doc_port), Some(graph_port), Some(obs_port)) =
+                (p.doc_port, p.graph_port, p.obs_port)
+            {
+                s = s.with_ports(doc_port, graph_port, obs_port);
+            }
+            s
+        } else {
+            base_state
+        };
+        let state = if let Some(ref adapter) = query_adapter {
+            let port = Arc::new(
+                crate::query::UnifiedQueryPortImpl::new(adapter.clone())
+                    .with_catalog_manager(state.catalog_manager.clone()),
+            ) as Arc<dyn proximadb_runtime::UnifiedQueryPort>;
+            state.with_unified_query_port(port)
+        } else {
+            state
         };
 
         // Create metrics router if metrics collector is available
@@ -548,7 +776,7 @@ impl RestServer {
 
         // Build base router with all endpoints
         let state_for_v2 = state.clone();
-        let mut base_router = create_router(state);
+        let mut base_router = create_router(state.clone());
 
         // Nest metrics router if available
         if let Some(metrics) = metrics_router {
@@ -560,9 +788,18 @@ impl RestServer {
         base_router = base_router.route("/dashboard", axum::routing::get(dashboard_handler));
 
         // Add V2 API router with ProximaRecord support
+        let state_for_v3 = state_for_v2.clone();
         let v2_router = super::v2::create_v2_router().with_state(state_for_v2);
         base_router = base_router.nest("/api/v2", v2_router);
         tracing::info!("✅ V2 API enabled at /api/v2 (unified mode)");
+
+        // Add V3 API router with native server-side embedding
+        let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
+        base_router = base_router.nest("/api/v3", v3_router);
+        tracing::info!("✅ V3 API enabled at /api/v3 (native embedding, unified mode)");
+
+        // Unmatched routes (incl. removed v1 surfaces) → canonical 404 + hint.
+        base_router = base_router.fallback(not_found_fallback);
 
         // Add WebSocket streaming routes
         let ws_state = super::websocket::WebSocketState::new();
@@ -570,10 +807,50 @@ impl RestServer {
         base_router = base_router.nest("/ws", ws_routes);
         tracing::info!("✅ WebSocket streaming enabled at /ws (unified mode)");
 
-        // Apply minimal layers for unified mode
-        // (Full middleware stack is handled by the unified server)
+        // Tenant extraction layer for unified mode. v2/v3 handlers require an
+        // `Extension<MiddlewareTenantContext>`; without this layer every
+        // `/api/v2` request 500s with "missing request extension". The
+        // multi-port path applies the same layer in `create_router`; the
+        // unified path must apply it too (it is NOT wrapped by the caller).
+        // Default config resolves to the single "default" tenant in dev.
+        let tenant_extractor = TenantExtractor::with_config(TenantExtractorConfig::default());
+        let tenant_layer = middleware::from_fn_with_state(tenant_extractor, tenant_middleware);
+
+        // Auth layer — convergent with the multi-port `start_with_security`
+        // path. When the caller supplies a `SecurityCoordinator`, attach
+        // `auth_middleware_unified` so handlers that declare
+        // `Option<Extension<UnifiedUserContext>>` see Some(ctx) for
+        // authenticated requests. When `security_coordinator` is `None`
+        // (auth disabled by config), no layer is attached and the
+        // operator-gated handlers fall back to their `require_*_admin`
+        // single-node bypass. multi_server.rs gates the coordinator it
+        // passes by `rest_auth_enabled`, so this branch fires iff the
+        // operator explicitly enabled REST auth — matching the
+        // `start_with_security` gate at line 510.
+        let auth_layer = security_coordinator.clone().map(|coordinator| {
+            middleware::from_fn_with_state(
+                coordinator,
+                crate::network::auth::middleware::auth_middleware_unified,
+            )
+        });
+
+        // Layer order:
+        //   outermost: TraceLayer (sees every request, including unauth'd)
+        //   tenant_layer (needs auth-injected ctx for tenant resolution)
+        //   auth_layer  (injects UnifiedUserContext)
+        // Axum applies layers in reverse order, so auth runs first on
+        // the request path, then tenant, then handler.
         use tower_http::trace::TraceLayer;
-        base_router.layer(TraceLayer::new_for_http())
+        let mut router = base_router.layer(tenant_layer);
+        if let Some(auth) = auth_layer {
+            router = router.layer(auth);
+            tracing::info!("🔒 Unified-port REST auth: ENABLED (auth_middleware_unified attached)");
+        } else {
+            tracing::info!(
+                "🔓 Unified-port REST auth: DISABLED (no security coordinator supplied)"
+            );
+        }
+        router.layer(TraceLayer::new_for_http())
     }
 
     /// Start the REST server
@@ -725,7 +1002,9 @@ impl RestServer {
     /// Log available endpoints
     fn log_endpoints(bind_addr: &SocketAddr, tls: bool) {
         let protocol = if tls { "https" } else { "http" };
-        tracing::info!("REST server using v1 handlers with collection endpoints enabled");
+        tracing::info!(
+            "REST server using canonical v2 record routes plus v1 compatibility adapters"
+        );
         tracing::info!("REST server listening on {}://{}", protocol, bind_addr);
         tracing::info!("Compression enabled: deflate, gzip, zstd, brotli (in priority order)");
         tracing::info!("Available endpoints:");
@@ -734,11 +1013,22 @@ impl RestServer {
         tracing::info!("   GET    /metrics                          - Prometheus metrics");
         tracing::info!("   GET    /metrics/json                     - JSON metrics");
         tracing::info!("   GET    /metrics/health                   - Metrics health check");
-        tracing::info!("   POST   /api/v1/search                    - Vector search");
-        tracing::info!("   POST   /api/v1/vectors/batch             - Vector batch operations");
+        tracing::info!(
+            "   POST   /api/v2/collections/:id/search     - Canonical record/vector search"
+        );
+        tracing::info!(
+            "   POST   /api/v2/collections/:id/records/batch - Canonical ProximaRecord writes"
+        );
+        tracing::info!("Compatibility endpoints:");
+        tracing::info!(
+            "   POST   /api/v1/search                    - Deprecated vector search adapter"
+        );
+        tracing::info!(
+            "   POST   /api/v1/vectors/batch             - Deprecated alias over record writes"
+        );
         tracing::info!("   POST   /api/v1/progressive/search/:id    - Progressive search (JSON)");
         tracing::info!(
-            "   POST   /api/v1/collections               - Unified collection operations"
+            "   POST   /api/v1/collections               - Deprecated collection compatibility"
         );
         tracing::info!("   GET    /api/v1/collections               - List collections");
         tracing::info!("   GET    /api/v1/collections/:id           - Get collection by ID");
@@ -753,6 +1043,64 @@ impl RestServer {
 }
 
 /// Dashboard handler - serves a comprehensive professional dashboard
+/// Router fallback for unmatched paths. Returns the canonical error envelope
+/// and, for paths under the removed `/api/v1/*` surfaces, a migration hint
+/// pointing at the v2 replacement.
+async fn not_found_fallback(uri: axum::http::Uri) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    let path = uri.path();
+
+    let mut error = serde_json::json!({
+        "type": "not_found",
+        "code": 404u16,
+    });
+    if let Some(replacement) = v1_replacement_for(path) {
+        error["message"] = serde_json::json!(format!(
+            "{} was removed in the /api/v2 API standardization; use {}",
+            path, replacement
+        ));
+        error["details"] = serde_json::json!({
+            "removed_endpoint": path,
+            "replacement_endpoint": replacement,
+            "docs": "https://docs.proximadb.io/api/v2",
+        });
+    } else {
+        error["message"] = serde_json::json!(format!("No route for {}", path));
+    }
+    if let Some(rid) = proximadb_api::rest::errors::current_request_id() {
+        error["request_id"] = serde_json::json!(rid);
+    }
+
+    (
+        axum::http::StatusCode::NOT_FOUND,
+        axum::Json(serde_json::json!({ "error": error })),
+    )
+        .into_response()
+}
+
+/// Coarse old→new map for the v1 surfaces removed in the API standardization.
+fn v1_replacement_for(path: &str) -> Option<&'static str> {
+    let table: &[(&str, &str)] = &[
+        ("/api/v1/collections", "/api/v2/collections"),
+        ("/api/v1/search", "/api/v2/collections/{id}/search"),
+        ("/api/v1/vectors", "/api/v2/collections/{id}/records"),
+        ("/api/v1/sql", "/api/v2/query"),
+        ("/api/v1/documents", "/api/v2/document-collections"),
+        ("/api/v1/hybrid", "/api/v2/hybrid"),
+        ("/api/v1/observability", "/api/v2/observability"),
+        ("/api/v1/graph", "/api/v2/graphs"),
+    ];
+    for (prefix, replacement) in table {
+        if path.starts_with(prefix) {
+            return Some(replacement);
+        }
+    }
+    if path.starts_with("/api/v1/") {
+        return Some("/api/v2");
+    }
+    None
+}
+
 async fn dashboard_handler() -> axum::response::Html<&'static str> {
     axum::response::Html(
         r#"<!DOCTYPE html>
@@ -1731,11 +2079,11 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::network::auth::middleware::auth_middleware_unified;
-    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
-    use crate::security::unified_auth::{
+    use crate::security::auth_service::{
         ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
     };
-    use crate::security::unified_rbac::RBACConfig;
+    use crate::security::rbac_service::RBACConfig;
+    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
 
     fn build_api_key_security_config() -> SecurityConfig {

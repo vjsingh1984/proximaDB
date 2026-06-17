@@ -10,9 +10,10 @@ Licensed under the Apache License, Version 2.0
 
 import logging
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     FilterDict,
@@ -24,6 +25,7 @@ from ..models import (
     VectorOperationResponse,
     VectorRecord,
 )
+from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
 from .base import BaseProtocolAdapter
 
@@ -40,7 +42,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     def __init__(
         self,
         url: str = "http://localhost:5678",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         timeout: float = 30.0,
         **kwargs,
     ):
@@ -52,7 +54,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             timeout: Request timeout in seconds
             **kwargs: Additional configuration passed to underlying client
         """
-        from ..config import ClientConfig, load_config
+        from ..config import load_config
         from ..protocols.rest_sync import ProximaDBClient
 
         # Load config with provided parameters
@@ -101,7 +103,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self, name: str, config: CollectionConfig | None = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         result = self._client.create_collection(name=name, config=config, **kwargs)
@@ -126,7 +128,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
 
         return result
 
-    def get_collection(self, collection_id: str) -> Optional[Collection]:
+    def get_collection(self, collection_id: str) -> Collection | None:
         """Get collection metadata by ID or name."""
         try:
             result = self._client.get_collection(collection_id)
@@ -153,7 +155,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             logger.debug(f"Collection not found: {collection_id} - {e}")
             return None
 
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> list[Collection]:
         """List all collections."""
         try:
             results = self._client.list_collections()
@@ -192,101 +194,141 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             return False
 
     # ==========================================================================
-    # Vector Operations
+    # Record Operations
+    # ==========================================================================
+
+    @staticmethod
+    def _record_payloads(records: list[ProximaRecord] | list[dict[str, Any]]):
+        payloads = []
+        for record in records:
+            if isinstance(record, dict):
+                payloads.append(record)
+            elif hasattr(record, "model_dump"):
+                payloads.append(record.model_dump(exclude_none=True))
+            else:
+                payloads.append(ProtoConverter.vector_record_to_dict(record))
+        return payloads
+
+    @staticmethod
+    def _to_batch_result(result: Any, total_count: int) -> BatchResult:
+        if isinstance(result, BatchResult):
+            return result
+        if isinstance(result, VectorOperationResponse):
+            metrics = result.metrics or OperationMetrics()
+            return BatchResult(
+                total=total_count,
+                success=metrics.successful_count,
+                failed=metrics.failed_count,
+                errors=[result.error_message] if result.error_message else [],
+                metrics=metrics,
+            )
+        if isinstance(result, dict):
+            success = result.get(
+                "success",
+                result.get(
+                    "successful_count", result.get("inserted_count", total_count)
+                ),
+            )
+            failed = result.get("failed", result.get("failed_count", 0))
+            return BatchResult(
+                total=result.get("total", success + failed),
+                success=success,
+                failed=failed,
+                errors=result.get("errors", []),
+                metrics=OperationMetrics(
+                    total_processed=result.get("total", success + failed),
+                    successful_count=success,
+                    failed_count=failed,
+                ),
+            )
+        successful = getattr(result, "success", total_count)
+        if isinstance(successful, bool):
+            successful = total_count if successful else 0
+        failed = getattr(result, "failed", 0)
+        return BatchResult(
+            total=successful + failed,
+            success=successful,
+            failed=failed,
+            metrics=OperationMetrics(
+                total_processed=successful + failed,
+                successful_count=successful,
+                failed_count=failed,
+            ),
+        )
+
+    @staticmethod
+    def _batch_to_vector_response(
+        result: BatchResult, operation: str
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=result.metrics,
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord] | list[dict[str, Any]],
+        **kwargs,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads into a collection."""
+        result = self._client.insert_records(
+            collection_id, self._record_payloads(records), **kwargs
+        )
+        return self._to_batch_result(result, len(records))
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord] | list[dict[str, Any]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads into a collection."""
+        if hasattr(self._client, "upsert_records"):
+            result = self._client.upsert_records(
+                collection_id, self._record_payloads(records), **kwargs
+            )
+        else:
+            result = self._client.insert_records(
+                collection_id, self._record_payloads(records), upsert=True, **kwargs
+            )
+        return self._to_batch_result(result, len(records))
+
+    # ==========================================================================
+    # Vector Compatibility Aliases
     # ==========================================================================
 
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection."""
-        # Convert VectorRecord objects to dicts if needed
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        result = self._client.insert_vectors(collection_id, vector_dicts, **kwargs)
-
-        if isinstance(result, VectorOperationResponse):
-            return result
-
-        # Convert dict or other response to VectorOperationResponse
-        if isinstance(result, dict):
-            return VectorOperationResponse(
-                success=result.get("success", True),
-                operation="INSERT",
-                metrics=OperationMetrics(
-                    successful_count=result.get("successful_count", len(vectors)),
-                    failed_count=result.get("failed_count", 0),
-                    total_count=len(vectors),
-                ),
-            )
-
-        # Handle wrapper objects
-        return VectorOperationResponse(
-            success=getattr(result, "success", True),
-            operation="INSERT",
-            metrics=OperationMetrics(
-                successful_count=len(vectors),
-                failed_count=0,
-                total_count=len(vectors),
-            ),
+        """Compatibility alias for record-native inserts."""
+        return self._batch_to_vector_response(
+            self.insert_records(collection_id, vectors, **kwargs), "INSERT"
         )
 
     def upsert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Upsert (insert or update) vectors in a collection."""
-        # Convert VectorRecord objects to dicts if needed
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        # Use upsert method if available, otherwise insert with upsert flag
-        if hasattr(self._client, "upsert_vectors"):
-            result = self._client.upsert_vectors(collection_id, vector_dicts, **kwargs)
-        else:
-            result = self._client.insert_vectors(
-                collection_id, vector_dicts, upsert=True, **kwargs
-            )
-
-        if isinstance(result, VectorOperationResponse):
-            return result
-
-        return VectorOperationResponse(
-            success=(
-                getattr(result, "success", True) if hasattr(result, "success") else True
-            ),
-            operation="UPSERT",
-            metrics=OperationMetrics(
-                successful_count=len(vectors),
-                failed_count=0,
-                total_count=len(vectors),
-            ),
+        """Compatibility alias for record-native upserts."""
+        return self._batch_to_vector_response(
+            self.upsert_records(collection_id, vectors, **kwargs), "UPSERT"
         )
 
     def get_vectors(
         self,
         collection_id: str,
-        vector_ids: List[str],
+        vector_ids: list[str],
         include_vectors: bool = True,
         **kwargs,
-    ) -> List[VectorRecord]:
+    ) -> list[VectorRecord]:
         """Get vectors by IDs."""
         if hasattr(self._client, "get_vectors"):
             results = self._client.get_vectors(
@@ -322,7 +364,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         return records
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str], **kwargs
+        self, collection_id: str, vector_ids: list[str], **kwargs
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         result = self._client.delete_vectors(collection_id, vector_ids, **kwargs)
@@ -392,11 +434,11 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         collection_id: str,
         query_vector: VectorArray,
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors."""
         # Normalize query vector
         if hasattr(query_vector, "tolist"):
@@ -442,16 +484,101 @@ class RestProtocolAdapter(BaseProtocolAdapter):
 
         return search_results
 
+    # ==========================================================================
+    # AQL/UQL Query Operations
+    # ==========================================================================
+
+    def execute_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute AQL/UQL through the OpenAPI v2 REST query surface."""
+        return self._client.execute_query(
+            query,
+            language=language,
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_uql(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute UQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="uql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_aql(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute AQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_federated(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute federated SQL extensions through the OpenAPI v2 REST surface."""
+        return self.execute_query(
+            query,
+            language="federated",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def explain_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        collection: str | None = None,
+    ) -> dict[str, Any]:
+        """Explain AQL/UQL through the OpenAPI v2 REST query surface."""
+        return self._client.explain_query(
+            query, language=language, collection=collection
+        )
+
     def batch_search(
         self,
         collection_id: str,
-        query_vectors: List[VectorArray],
+        query_vectors: list[VectorArray],
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[List[SearchResult]]:
+    ) -> list[list[SearchResult]]:
         """Batch search for similar vectors."""
         # Normalize query vectors
         normalized_queries = []
@@ -512,14 +639,13 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_document_collection(
-        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None, **kwargs
+    ) -> dict[str, Any]:
         """Create a document collection via REST."""
         try:
-            import requests
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/documents/collections",
+                f"{self._url}/api/v2/document-collections",
                 json={"name": name, **(config or {})},
                 timeout=self._client._timeout,
             )
@@ -532,16 +658,15 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     def insert_document(
         self,
         collection_name: str,
-        document: Dict[str, Any],
-        id: Optional[str] = None,
+        document: dict[str, Any],
+        id: str | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Insert a document via REST."""
         try:
-            import requests
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents",
                 json={"id": id, "document": document},
                 timeout=self._client._timeout,
             )
@@ -555,18 +680,17 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         self,
         collection_name: str,
         doc_id: str,
-        projection: Optional[List[str]] = None,
+        projection: list[str] | None = None,
         **kwargs,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a document by ID via REST."""
         try:
-            import requests
 
             params = {}
             if projection:
                 params["projection"] = ",".join(projection)
             response = self._client._session.get(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 params=params,
                 timeout=self._client._timeout,
             )
@@ -581,14 +705,13 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     def query_documents(
         self,
         collection_name: str,
-        filter: Optional[Dict[str, Any]] = None,
-        projection: Optional[List[str]] = None,
+        filter: dict[str, Any] | None = None,
+        projection: list[str] | None = None,
         limit: int = 100,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query documents with filter via REST."""
         try:
-            import requests
 
             body = {}
             if filter:
@@ -597,7 +720,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
                 body["projection"] = projection
             body["limit"] = limit
             response = self._client._session.post(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents",
                 json=body,
                 timeout=self._client._timeout,
             )
@@ -608,14 +731,13 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def update_document(
-        self, collection_name: str, doc_id: str, updates: List[Dict[str, Any]], **kwargs
-    ) -> Dict[str, Any]:
+        self, collection_name: str, doc_id: str, updates: list[dict[str, Any]], **kwargs
+    ) -> dict[str, Any]:
         """Update a document via REST."""
         try:
-            import requests
 
             response = self._client._session.put(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 json={"updates": updates},
                 timeout=self._client._timeout,
             )
@@ -628,10 +750,9 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     def delete_document(self, collection_name: str, doc_id: str, **kwargs) -> bool:
         """Delete a document via REST."""
         try:
-            import requests
 
             response = self._client._session.delete(
-                f"{self._url}/api/v1/documents/collections/{collection_name}/documents/{doc_id}",
+                f"{self._url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -641,13 +762,12 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to delete document: {e}")
             return False
 
-    def list_document_collections(self, **kwargs) -> List[Dict[str, Any]]:
+    def list_document_collections(self, **kwargs) -> list[dict[str, Any]]:
         """List all document collections via REST."""
         try:
-            import requests
 
             response = self._client._session.get(
-                f"{self._url}/api/v1/documents/collections",
+                f"{self._url}/api/v2/document-collections",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -659,10 +779,9 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     def delete_document_collection(self, collection_name: str, **kwargs) -> bool:
         """Delete a document collection via REST."""
         try:
-            import requests
 
             response = self._client._session.delete(
-                f"{self._url}/api/v1/documents/collections/{collection_name}",
+                f"{self._url}/api/v2/document-collections/{collection_name}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -680,17 +799,16 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         self,
         collection: str,
         text_query: str,
-        query_vector: List[float],
+        query_vector: list[float],
         fusion_strategy: str = "rrf",
         top_k: int = 10,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute hybrid search via REST."""
         try:
-            import requests
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/hybrid/search",
+                f"{self._url}/api/v2/hybrid/search",
                 json={
                     "collection": collection,
                     "text_query": text_query,
@@ -711,14 +829,13 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_timeseries_collection(
-        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None, **kwargs
+    ) -> dict[str, Any]:
         """Create a time-series collection via REST."""
         try:
-            import requests
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/timeseries/collections",
+                f"{self._url}/api/v2/timeseries/collections",
                 json={"name": name, **(config or {})},
                 timeout=self._client._timeout,
             )
@@ -729,14 +846,13 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             raise
 
     def ingest_timeseries(
-        self, collection_name: str, points: List[Dict[str, Any]], **kwargs
-    ) -> Dict[str, Any]:
+        self, collection_name: str, points: list[dict[str, Any]], **kwargs
+    ) -> dict[str, Any]:
         """Ingest time-series data points via REST."""
         try:
-            import requests
 
             response = self._client._session.post(
-                f"{self._url}/api/v1/timeseries/collections/{collection_name}/ingest",
+                f"{self._url}/api/v2/timeseries/collections/{collection_name}/ingest",
                 json={"points": points},
                 timeout=self._client._timeout,
             )
@@ -752,13 +868,12 @@ class RestProtocolAdapter(BaseProtocolAdapter):
         start_time: str,
         end_time: str,
         aggregation: str = "avg",
-        bucket_ms: Optional[int] = None,
-        tag_filters: Optional[Dict[str, str]] = None,
+        bucket_ms: int | None = None,
+        tag_filters: dict[str, str] | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query time-series data with optional aggregation via REST."""
         try:
-            import requests
 
             body = {
                 "start_time": start_time,
@@ -770,7 +885,7 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             if tag_filters:
                 body["tag_filters"] = tag_filters
             response = self._client._session.post(
-                f"{self._url}/api/v1/timeseries/collections/{collection_name}/query",
+                f"{self._url}/api/v2/timeseries/collections/{collection_name}/query",
                 json=body,
                 timeout=self._client._timeout,
             )
@@ -780,13 +895,12 @@ class RestProtocolAdapter(BaseProtocolAdapter):
             logger.error(f"Failed to query time-series data: {e}")
             raise
 
-    def list_timeseries_collections(self, **kwargs) -> List[Dict[str, Any]]:
+    def list_timeseries_collections(self, **kwargs) -> list[dict[str, Any]]:
         """List all time-series collections via REST."""
         try:
-            import requests
 
             response = self._client._session.get(
-                f"{self._url}/api/v1/timeseries/collections",
+                f"{self._url}/api/v2/timeseries/collections",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()
@@ -798,10 +912,9 @@ class RestProtocolAdapter(BaseProtocolAdapter):
     def delete_timeseries_collection(self, collection_name: str, **kwargs) -> bool:
         """Delete a time-series collection via REST."""
         try:
-            import requests
 
             response = self._client._session.delete(
-                f"{self._url}/api/v1/timeseries/collections/{collection_name}",
+                f"{self._url}/api/v2/timeseries/collections/{collection_name}",
                 timeout=self._client._timeout,
             )
             response.raise_for_status()

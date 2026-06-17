@@ -15,14 +15,14 @@ use tokio::time::{sleep, timeout};
 use tracing::{debug, info};
 
 use proximadb::core::config::{ProximaConfig, CompactionConfig};
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::index::axis::{AxisManager, AxisConfig};
 use proximadb::index::axis::eventlog::{EventLogService, EventType, StorageEngineType};
 use proximadb::index::axis::eventlog_consumer::{start_axis_consumer, ConsumerConfig};
 use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, DistanceMetric};
 use proximadb::services::event_log_service::EventLogServiceImpl;
-use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::sst::SstEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use dashmap::DashMap;
 

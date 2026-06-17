@@ -54,9 +54,12 @@ pub enum EncryptionType {
     Randomized,
 }
 
+/// Backwards-compat alias for [`FieldEncryptionConfig`].
+pub type EncryptionConfig = FieldEncryptionConfig;
+
 /// Configuration for field encryption
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EncryptionConfig {
+pub struct FieldEncryptionConfig {
     /// Enable field encryption
     pub enabled: bool,
 
@@ -73,7 +76,7 @@ pub struct EncryptionConfig {
     pub blind_index_salt: Option<String>,
 }
 
-impl Default for EncryptionConfig {
+impl Default for FieldEncryptionConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -129,7 +132,7 @@ pub struct FieldEncryption {
     key_store: Arc<KeyStore>,
 
     /// Configuration
-    config: EncryptionConfig,
+    config: FieldEncryptionConfig,
 
     /// Random number generator
     rng: SystemRandom,
@@ -142,7 +145,7 @@ impl FieldEncryption {
     /// Create a new field encryption service
     pub fn new(
         key_store: Arc<KeyStore>,
-        config: EncryptionConfig,
+        config: FieldEncryptionConfig,
     ) -> Result<Self, FieldEncryptionError> {
         let blind_index_key = if config.enable_blind_indexes {
             let salt = config
@@ -489,7 +492,7 @@ mod tests {
             .create_key("ssn-key", "SSN encryption key")
             .expect("Key creation should succeed in tests");
 
-        let config = EncryptionConfig {
+        let config = FieldEncryptionConfig {
             enabled: true,
             default_type: EncryptionType::Randomized,
             field_settings: HashMap::from([(

@@ -12,10 +12,19 @@ deploy/
 │   ├── docker-compose.yml # Local development stack
 │   └── prometheus.yml   # Prometheus configuration
 ├── helm/
-│   └── proximadb/       # Helm chart for Kubernetes
-│       ├── Chart.yaml
-│       ├── values.yaml
-│       └── templates/
+│   ├── proximadb/       # Canonical Helm chart for Kubernetes
+│   │   ├── Chart.yaml
+│   │   ├── values.yaml
+│   │   └── templates/
+│   ├── proximadb-operator/ # Operator chart
+│   └── legacy-proximadb/   # Retained legacy chart values
+├── infrastructure/      # Full cloud infrastructure examples
+│   ├── terraform/       # Environment-specific Terraform stacks
+│   ├── helm/            # Infrastructure Helm chart variant
+│   ├── monitoring/      # Prometheus/Grafana examples
+│   └── scripts/         # Infrastructure deployment helpers
+├── k8s/                 # Versioned enterprise Kubernetes release manifests
+├── packaging/           # Package scripts, systemd units, and WiX assets
 ├── kubernetes/          # Plain Kubernetes manifests (no Helm)
 │   ├── namespace.yaml
 │   ├── configmap.yaml
@@ -23,6 +32,7 @@ deploy/
 │   ├── deployment.yaml
 │   ├── service.yaml
 │   └── kustomization.yaml
+├── systemd/             # Legacy root-level systemd units retained for compatibility
 └── terraform/
     ├── modules/
     │   └── proximadb/   # Reusable Terraform module
@@ -30,6 +40,9 @@ deploy/
     ├── azure/           # Azure AKS deployment
     └── gcp/             # GCP GKE deployment
 ```
+
+Release and deployment assets should stay under `deploy/`. Avoid adding new root-level
+`helm/`, `k8s/`, `deployment/`, `packaging/`, or `infrastructure/` directories.
 
 ## Quick Start
 
@@ -210,10 +223,10 @@ gcloud container clusters get-credentials proximadb-gke \
 |--------|----------|-------------|
 | `sst` | Write-optimized, real-time | ~5ms (10K vectors) |
 | `helix` | Locality-optimized | ~13ms |
-| `raptor` | Adaptive row-group | ~9ms |
 | `viper` | Columnar analytics | ~90ms |
 | `nova` | Progressive columnar | ~100ms |
-| `swift` | Ultra-low latency (<5K) | ~95ms |
+
+`swift` and `raptor` remain behind `experimental-engines` as deprecated research engines. Do not use them for new production deployments.
 
 ## Production Recommendations
 

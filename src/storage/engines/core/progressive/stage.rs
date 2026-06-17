@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 
 /// Quantization level identifier for stages
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -105,9 +105,12 @@ impl ScoredCandidate {
     }
 }
 
+/// Backwards-compat alias for [`ProgressiveStageResult`].
+pub type StageResult = ProgressiveStageResult;
+
 /// Result from a stage execution
 #[derive(Debug)]
-pub struct StageResult {
+pub struct ProgressiveStageResult {
     /// Candidates that passed the stage filter
     pub candidates: Vec<ScoredCandidate>,
     /// Number of candidates before filtering

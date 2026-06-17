@@ -1,4 +1,4 @@
-//! Filtered HybridQuery Builder (Issue #39, SB-09)
+//! Filtered SearchHybridQuery Builder (Issue #39, SB-09)
 //!
 //! This module implements a builder for constructing filtered hybrid queries
 //! that combine vector similarity search with metadata filtering using the
@@ -16,7 +16,7 @@
 //!                        │
 //!                        ▼
 //!     ┌─────────────────────────────────────────┐
-//!     │         HybridQuery                     │
+//!     │         SearchHybridQuery                     │
 //!     │  - Vector search parameters             │
 //!     │  - Filter contracts                     │
 //!     │  - Candidate set                        │
@@ -45,49 +45,129 @@ use tracing::{debug, info, trace};
 
 use crate::core::search::FilterExpression;
 use crate::core::search::filter_contract::{CandidateSet, FilterContract, MetadataLookup};
-use crate::index::axis::management::manager::HybridQuery as AxisHybridQuery;
+use crate::index::axis::management::manager::HybridQuery as AxisHybridQueryImport;
 
-/// Execution strategy for hybrid queries
+/// Selectivity below which filter-first (PreFilter) is used. ADR-011: 5%.
+const DEFAULT_FILTER_FIRST_MAX_SELECTIVITY: f64 = 0.05;
+const DEFAULT_VECTOR_FIRST_MIN_SELECTIVITY: f64 = 0.50;
+
+/// Selectivity thresholds for automatic hybrid execution strategy selection.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum HybridExecutionStrategy {
-    /// Filter-first strategy: Apply filters before vector search
-    ///
-    /// Best for highly selective filters (selectivity < 10%)
-    FilterFirst,
-
-    /// Vector-first strategy: Perform vector search, then filter results
-    ///
-    /// Best for low-selectivity filters (selectivity > 50%)
-    VectorFirst,
-
-    /// Parallel strategy: Execute filters and vector search in parallel
-    ///
-    /// Best for moderate selectivity (10-50%)
-    Parallel,
-
-    /// Automatic strategy selection based on filter selectivity
-    Auto,
+pub struct HybridStrategyPolicy {
+    /// Selectivity below this value uses filter-first execution.
+    pub filter_first_max_selectivity: f64,
+    /// Selectivity above this value uses vector-first execution.
+    pub vector_first_min_selectivity: f64,
 }
 
-impl HybridExecutionStrategy {
-    /// Select the optimal strategy based on filter selectivity
-    pub fn from_selectivity(selectivity: f64) -> Self {
-        if selectivity < 0.1 {
-            // Highly selective: filter first to reduce vector search space
-            HybridExecutionStrategy::FilterFirst
-        } else if selectivity > 0.5 {
-            // Low selectivity: vector search first, then filter
-            HybridExecutionStrategy::VectorFirst
-        } else {
-            // Moderate selectivity: parallel execution
-            HybridExecutionStrategy::Parallel
+impl Default for HybridStrategyPolicy {
+    fn default() -> Self {
+        Self {
+            filter_first_max_selectivity: DEFAULT_FILTER_FIRST_MAX_SELECTIVITY,
+            vector_first_min_selectivity: DEFAULT_VECTOR_FIRST_MIN_SELECTIVITY,
         }
     }
 }
 
+impl HybridStrategyPolicy {
+    /// Validate threshold ordering and numeric bounds.
+    pub fn validate(&self) -> Result<()> {
+        if !self.filter_first_max_selectivity.is_finite()
+            || !(0.0..=1.0).contains(&self.filter_first_max_selectivity)
+        {
+            anyhow::bail!("hybrid.filter_first_max_selectivity must be finite and in [0.0, 1.0]");
+        }
+        if !self.vector_first_min_selectivity.is_finite()
+            || !(0.0..=1.0).contains(&self.vector_first_min_selectivity)
+        {
+            anyhow::bail!("hybrid.vector_first_min_selectivity must be finite and in [0.0, 1.0]");
+        }
+        if self.filter_first_max_selectivity >= self.vector_first_min_selectivity {
+            anyhow::bail!(
+                "hybrid.filter_first_max_selectivity must be less than hybrid.vector_first_min_selectivity"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Execution strategy for hybrid queries.
+///
+/// Variants map to the three ADR-011 ANN filtering modes:
+/// - `FilterFirst`  → PreFilter  (selectivity < 5%)
+/// - `Inline`       → Inline ANN (5–50%): predicate is passed into the HNSW graph walk
+/// - `VectorFirst`  → PostFilter (> 50%): oversample ANN then apply predicate to results
+///
+/// `Parallel` is retained for backward compatibility; new code should use `Inline`
+/// for the moderate-selectivity range.  `Auto` delegates to `from_selectivity_with_policy`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum HybridExecutionStrategy {
+    /// Apply the predicate to build a candidate set, then ANN-search within it.
+    /// Avoids vector comparisons on non-matching records entirely (ADR-011 PreFilter).
+    FilterFirst,
+
+    /// Pass the predicate into the HNSW graph walk (ACORN semantics, ADR-011 Inline).
+    /// Correct for 5–50% selectivity; degrades gracefully when the candidate set
+    /// shrinks below `ef_construction * 4` by falling back to FilterFirst.
+    Inline,
+
+    /// ANN-search with `top_k * oversample_factor` candidates, then post-filter.
+    /// Used when the predicate is not selective enough to prune the search space
+    /// (ADR-011 PostFilter, selectivity > 50%).
+    VectorFirst,
+
+    /// Legacy: run filter generation and vector search concurrently.
+    /// Prefer `Inline` for new code in the moderate-selectivity range.
+    Parallel,
+
+    /// Automatic strategy selection based on filter selectivity.
+    Auto,
+}
+
+impl HybridExecutionStrategy {
+    /// Select the optimal strategy based on filter selectivity using ADR-011 thresholds.
+    pub fn from_selectivity(selectivity: f64) -> Self {
+        Self::from_selectivity_with_policy(selectivity, HybridStrategyPolicy::default())
+            .unwrap_or(HybridExecutionStrategy::Inline)
+    }
+
+    /// Select the optimal strategy using explicit, validated policy thresholds.
+    pub fn from_selectivity_with_policy(
+        selectivity: f64,
+        policy: HybridStrategyPolicy,
+    ) -> Result<Self> {
+        policy.validate()?;
+        if !selectivity.is_finite() || !(0.0..=1.0).contains(&selectivity) {
+            anyhow::bail!("hybrid selectivity must be finite and in [0.0, 1.0]");
+        }
+
+        if selectivity < policy.filter_first_max_selectivity {
+            Ok(HybridExecutionStrategy::FilterFirst)
+        } else if selectivity > policy.vector_first_min_selectivity {
+            Ok(HybridExecutionStrategy::VectorFirst)
+        } else {
+            Ok(HybridExecutionStrategy::Inline)
+        }
+    }
+
+    /// Return the ADR-011 mode name for EXPLAIN output.
+    pub fn as_explain_str(self) -> &'static str {
+        match self {
+            Self::FilterFirst => "PreFilter",
+            Self::Inline => "Inline",
+            Self::VectorFirst => "PostFilter",
+            Self::Parallel => "Parallel",
+            Self::Auto => "Auto",
+        }
+    }
+}
+
+/// Backwards-compat alias for [`SearchHybridQuery`].
+pub type HybridQuery = SearchHybridQuery;
+
 /// Hybrid query combining vector search with metadata filtering
 #[derive(Debug, Clone)]
-pub struct HybridQuery {
+pub struct SearchHybridQuery {
     /// Query vector for similarity search
     pub query_vector: Vec<f32>,
 
@@ -103,6 +183,9 @@ pub struct HybridQuery {
     /// Execution strategy
     pub strategy: HybridExecutionStrategy,
 
+    /// Auto-strategy threshold policy
+    pub strategy_policy: HybridStrategyPolicy,
+
     /// Similarity threshold (0.0 to 1.0)
     pub similarity_threshold: f32,
 
@@ -116,7 +199,7 @@ pub struct HybridQuery {
     pub max_candidate_size: Option<usize>,
 }
 
-impl HybridQuery {
+impl SearchHybridQuery {
     /// Create a new hybrid query builder
     pub fn builder() -> HybridQueryBuilder {
         HybridQueryBuilder::new()
@@ -135,7 +218,10 @@ impl HybridQuery {
                 .as_ref()
                 .map(|f| f.estimated_selectivity())
                 .unwrap_or(1.0);
-            HybridExecutionStrategy::from_selectivity(selectivity)
+            HybridExecutionStrategy::from_selectivity_with_policy(
+                selectivity,
+                self.strategy_policy,
+            )?
         } else {
             self.strategy
         };
@@ -147,12 +233,15 @@ impl HybridQuery {
             HybridExecutionStrategy::FilterFirst => {
                 self.execute_filter_first(metadata_lookup).await?
             }
+            // Inline: predicate is threaded into the HNSW walk. The query layer is
+            // responsible for passing a predicate_fn to the index; here we fall through
+            // to execute_parallel as the placeholder until HNSW predicate API is wired.
+            HybridExecutionStrategy::Inline => self.execute_parallel(metadata_lookup).await?,
             HybridExecutionStrategy::VectorFirst => {
                 self.execute_vector_first(metadata_lookup).await?
             }
             HybridExecutionStrategy::Parallel => self.execute_parallel(metadata_lookup).await?,
             HybridExecutionStrategy::Auto => {
-                // Should have been resolved above
                 return Err(anyhow::anyhow!("Auto strategy should have been resolved"));
             }
         };
@@ -329,6 +418,9 @@ pub struct HybridQueryBuilder {
     /// Execution strategy
     strategy: Option<HybridExecutionStrategy>,
 
+    /// Auto-strategy threshold policy
+    strategy_policy: HybridStrategyPolicy,
+
     /// Similarity threshold
     similarity_threshold: Option<f32>,
 
@@ -351,6 +443,7 @@ impl HybridQueryBuilder {
             filter: None,
             collection_id: None,
             strategy: None,
+            strategy_policy: HybridStrategyPolicy::default(),
             similarity_threshold: Some(0.0),
             include_expired: Some(false),
             enable_candidate_optimization: Some(true),
@@ -394,6 +487,12 @@ impl HybridQueryBuilder {
         self
     }
 
+    /// Set the automatic strategy threshold policy.
+    pub fn strategy_policy(mut self, policy: HybridStrategyPolicy) -> Self {
+        self.strategy_policy = policy;
+        self
+    }
+
     /// Set the similarity threshold
     pub fn similarity_threshold(mut self, threshold: f32) -> Self {
         self.similarity_threshold = Some(threshold);
@@ -419,7 +518,7 @@ impl HybridQueryBuilder {
     }
 
     /// Build the hybrid query
-    pub fn build(self) -> Result<HybridQuery> {
+    pub fn build(self) -> Result<SearchHybridQuery> {
         let query_vector = self
             .query_vector
             .ok_or_else(|| anyhow::anyhow!("Query vector is required"))?;
@@ -436,12 +535,13 @@ impl HybridQueryBuilder {
             HybridExecutionStrategy::Auto
         };
 
-        Ok(HybridQuery {
+        Ok(SearchHybridQuery {
             query_vector,
             top_k,
             filter: self.filter,
             collection_id,
             strategy,
+            strategy_policy: self.strategy_policy,
             similarity_threshold: self.similarity_threshold.unwrap_or(0.0),
             include_expired: self.include_expired.unwrap_or(false),
             enable_candidate_optimization: self.enable_candidate_optimization.unwrap_or(true),
@@ -456,10 +556,16 @@ impl Default for HybridQueryBuilder {
     }
 }
 
-/// Convert HybridQuery to AXIS HybridQuery for compatibility
-impl From<HybridQuery> for AxisHybridQuery {
-    fn from(query: HybridQuery) -> Self {
-        AxisHybridQuery {
+/// Convert SearchHybridQuery to AXIS SearchHybridQuery for compatibility
+impl From<SearchHybridQuery> for AxisHybridQueryImport {
+    fn from(query: SearchHybridQuery) -> Self {
+        use crate::index::axis::management::manager::AnnFilteringMode;
+        let ann_filtering_mode = match query.strategy {
+            HybridExecutionStrategy::FilterFirst => AnnFilteringMode::PreFilter,
+            HybridExecutionStrategy::Inline => AnnFilteringMode::Inline,
+            _ => AnnFilteringMode::PostFilter,
+        };
+        AxisHybridQueryImport {
             collection_id: query.collection_id,
             vector_query: Some(
                 crate::index::axis::management::manager::VectorQuery::Dense {
@@ -467,10 +573,15 @@ impl From<HybridQuery> for AxisHybridQuery {
                     similarity_threshold: query.similarity_threshold,
                 },
             ),
-            metadata_filters: Vec::new(), // Would convert from filter contract
+            metadata_filters: Vec::new(),
             id_filters: Vec::new(),
             top_k: query.top_k,
             include_expired: query.include_expired,
+            ann_filtering_mode,
+            // ADR-011 policy-driven routing not exposed via this converter
+            // yet; the legacy strategy enum already determined the mode above.
+            ann_filtering_policy: None,
+            estimated_selectivity: None,
         }
     }
 }
@@ -482,28 +593,65 @@ mod tests {
 
     #[test]
     fn test_strategy_selection_from_selectivity() {
-        // Highly selective filter → filter-first
+        // < 5%: PreFilter (ADR-011)
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(0.05),
+            HybridExecutionStrategy::from_selectivity(0.03),
             HybridExecutionStrategy::FilterFirst
         );
 
-        // Low selectivity filter → vector-first
+        // 5–50%: Inline HNSW walk (ADR-011)
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(0.7),
-            HybridExecutionStrategy::VectorFirst
+            HybridExecutionStrategy::from_selectivity(0.30),
+            HybridExecutionStrategy::Inline
         );
 
-        // Moderate selectivity → parallel
+        // boundary: exactly 5% → Inline (not < 0.05)
         assert_eq!(
-            HybridExecutionStrategy::from_selectivity(0.3),
-            HybridExecutionStrategy::Parallel
+            HybridExecutionStrategy::from_selectivity(0.05),
+            HybridExecutionStrategy::Inline
+        );
+
+        // > 50%: PostFilter (ADR-011)
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity(0.70),
+            HybridExecutionStrategy::VectorFirst
         );
     }
 
     #[test]
+    fn test_strategy_selection_uses_configured_policy() {
+        let policy = HybridStrategyPolicy {
+            filter_first_max_selectivity: 0.2,
+            vector_first_min_selectivity: 0.8,
+        };
+
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity_with_policy(0.15, policy).unwrap(),
+            HybridExecutionStrategy::FilterFirst
+        );
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity_with_policy(0.60, policy).unwrap(),
+            HybridExecutionStrategy::Inline
+        );
+        assert_eq!(
+            HybridExecutionStrategy::from_selectivity_with_policy(0.90, policy).unwrap(),
+            HybridExecutionStrategy::VectorFirst
+        );
+    }
+
+    #[test]
+    fn test_strategy_policy_validation_rejects_bad_thresholds() {
+        let policy = HybridStrategyPolicy {
+            filter_first_max_selectivity: 0.8,
+            vector_first_min_selectivity: 0.2,
+        };
+
+        assert!(policy.validate().is_err());
+    }
+
+    #[test]
     fn test_hybrid_query_builder_basic() {
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.1, 0.2, 0.3])
             .top_k(10)
             .collection_id("test_collection".to_string())
@@ -514,6 +662,7 @@ mod tests {
         assert_eq!(query.top_k, 10);
         assert_eq!(query.collection_id, "test_collection");
         assert_eq!(query.strategy, HybridExecutionStrategy::Auto);
+        assert_eq!(query.strategy_policy, HybridStrategyPolicy::default());
     }
 
     #[test]
@@ -524,7 +673,7 @@ mod tests {
             value: serde_json::json!(1000),
         };
 
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.1, 0.2, 0.3])
             .top_k(5)
             .collection_id("products".to_string())
@@ -538,7 +687,7 @@ mod tests {
 
     #[test]
     fn test_hybrid_query_builder_with_strategy() {
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.1, 0.2, 0.3])
             .top_k(10)
             .collection_id("test".to_string())
@@ -557,7 +706,7 @@ mod tests {
             value: serde_json::json!("active"),
         };
 
-        let query = HybridQuery::builder()
+        let query = SearchHybridQuery::builder()
             .query_vector(vec![0.5; 384])
             .top_k(20)
             .collection_id("users".to_string())

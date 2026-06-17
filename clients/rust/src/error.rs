@@ -279,4 +279,97 @@ mod tests {
         let err: ProximaError = "internal error".into();
         assert!(matches!(err, ProximaError::Internal(_)));
     }
+
+    #[test]
+    fn collection_error_messages_cover_validation_and_engine_failures() {
+        let cases = [
+            (
+                CollectionError::AlreadyExists {
+                    name: "items".to_string(),
+                },
+                "Collection 'items' already exists",
+            ),
+            (
+                CollectionError::InvalidConfig {
+                    reason: "dimension is required".to_string(),
+                },
+                "Invalid collection configuration: dimension is required",
+            ),
+            (
+                CollectionError::InvalidName {
+                    reason: "empty".to_string(),
+                },
+                "Invalid collection name: empty",
+            ),
+            (
+                CollectionError::DimensionMismatch {
+                    expected: 768,
+                    actual: 384,
+                },
+                "Dimension mismatch: expected 768, got 384",
+            ),
+            (
+                CollectionError::UnknownEngine {
+                    engine: "bad".to_string(),
+                },
+                "Unknown storage engine: bad. Supported: sst, helix, viper, nova, swift, raptor, tst",
+            ),
+        ];
+
+        for (error, message) in cases {
+            assert_eq!(error.to_string(), message);
+            let converted: ProximaError = error.into();
+            assert!(matches!(converted, ProximaError::Collection(_)));
+        }
+    }
+
+    #[test]
+    fn vector_network_config_search_and_embedded_errors_convert_to_top_level_error() {
+        let vector: ProximaError = VectorError::BatchSizeMismatch { ids: 1, vectors: 2 }.into();
+        assert!(matches!(vector, ProximaError::Vector(_)));
+
+        let network: ProximaError = NetworkError::RateLimited {
+            retry_after_ms: 500,
+        }
+        .into();
+        assert_eq!(
+            network.to_string(),
+            "Network error: Rate limited: retry after 500ms"
+        );
+
+        let config: ProximaError = ConfigError::MissingRequired {
+            field: "url".to_string(),
+        }
+        .into();
+        assert!(matches!(config, ProximaError::Config(_)));
+
+        let search: ProximaError = SearchError::InvalidMode {
+            mode: "turbo".to_string(),
+        }
+        .into();
+        assert_eq!(
+            search.to_string(),
+            "Search error: Invalid search mode: turbo. Supported: exact, approximate, adaptive"
+        );
+
+        let embedded: ProximaError = EmbeddedError::NotAvailable.into();
+        assert!(matches!(embedded, ProximaError::Embedded(_)));
+    }
+
+    #[test]
+    fn json_and_url_errors_lower_to_network_errors() {
+        let json_error = serde_json::from_str::<serde_json::Value>("{not-json").unwrap_err();
+        let converted = ProximaError::from(json_error);
+        assert!(matches!(
+            converted,
+            ProximaError::Network(NetworkError::Serialization { .. })
+        ));
+
+        let url_error = url::Url::parse("http://[::1").unwrap_err();
+        let converted = ProximaError::from(url_error);
+        assert!(matches!(
+            converted,
+            ProximaError::Network(NetworkError::InvalidUrl { .. })
+        ));
+    }
 }

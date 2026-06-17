@@ -9,7 +9,6 @@ import sys
 import time
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 from ..embedding_utils import embed_seed
@@ -17,21 +16,10 @@ from ..embedding_utils import embed_seed
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
-from utils.server_utils import ensure_server_running
 
 from proximadb_sdk import (
-    NetworkError,
     ProximaDBError,
-    SearchResult,
-    VectorOperationResponse,
     VectorRecord,
-)
-from proximadb_sdk.models import (
-    Collection,
-    CollectionConfig,
-    DistanceMetric,
-    IndexingAlgorithm,
-    StorageEngine,
 )
 from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 

@@ -2,6 +2,7 @@
 name = "proximadb"
 version = "0.2.0"
 edition = "2024"
+autobenches = false
 authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
 description = "ProximaDB - Cloud-native vector database engineered for AI-first applications"
 license = "Apache-2.0"
@@ -11,23 +12,207 @@ keywords = ["vector", "database", "ai", "ml", "proximity", "similarity-search"]
 categories = ["database-implementations", "science"]
 rust-version = "1.88"
 
+[lints]
+workspace = true
+
 [workspace]
+resolver = "2"
 members = [
+    "apps/proximadb-bench",
+    "apps/proximadb-migrate",
+    "apps/proximadb-server",
     ".",
     "clients/rust",
+    "crates/foundation/proximadb-compression-types",
+    "crates/foundation/proximadb-config",
+    "crates/foundation/proximadb-data-model",
+    "crates/foundation/proximadb-distance-types",
+    "crates/foundation/proximadb-encoding-types",
+    "crates/foundation/proximadb-filter-expression",
+    "crates/foundation/proximadb-hardware",
+    "crates/foundation/proximadb-kernel",
+    "crates/foundation/proximadb-pipeline-operator",
+    "crates/foundation/proximadb-proto",
+    "crates/foundation/proximadb-quantization-types",
+    "crates/foundation/proximadb-records",
+    "crates/foundation/proximadb-relational-types",
+    "crates/foundation/proximadb-functions",
+    "crates/control/proximadb-catalog",
+    "crates/horizontal/proximadb-codec",
+    "crates/horizontal/proximadb-compression",
+    "crates/horizontal/proximadb-embedded-common",
+    "crates/horizontal/proximadb-recall-bench",
+    "crates/horizontal/proximadb-runtime-common",
+    "crates/horizontal/proximadb-security",
+    "crates/horizontal/proximadb-telemetry",
+    "crates/platform/proximadb-api",
+    "crates/platform/proximadb-runtime",
+    "crates/modalities/proximadb-graph",
+    "crates/modalities/proximadb-vector",
+    "crates/modalities/proximadb-document",
+    "crates/modalities/proximadb-observability",
+    "crates/modalities/proximadb-embedding",
+    "crates/modalities/proximadb-queue",
+    "crates/modalities/proximadb-rank-core",
+    "crates/modalities/proximadb-rank-features",
+    "crates/modalities/proximadb-rank-expr",
+    "crates/modalities/proximadb-rank-profile",
+    "crates/modalities/proximadb-rank-onnx",
+    "crates/storage/proximadb-storage-common",
+    "crates/storage/proximadb-block-format",
+    "crates/storage/proximadb-object-store",
+    "crates/storage/proximadb-iceberg-engine",
+    "crates/query/proximadb-document-query",
+    "crates/query/proximadb-graph-arrow",
+    "crates/query/proximadb-graph-query",
+    "crates/query/proximadb-graph-subset",
+    "crates/query/proximadb-multimodel-query",
+    "crates/query/proximadb-multimodel-plan",
+    "crates/query/proximadb-relational-algebra",
+    "crates/query/proximadb-relational-reader",
+    "crates/query/proximadb-relational-planner",
+    "crates/query/proximadb-relational-executor",
+    "crates/query/proximadb-relational-frontend",
+    "crates/query/proximadb-relational-engine",
+    "crates/contracts/quantization",
+    "crates/query/proximadb-observability-query",
+    "crates/query/proximadb-query",
+    "crates/query/proximadb-query-capability",
+    "crates/query/proximadb-query-clauses",
+    "crates/query/proximadb-query-fusion",
+    "crates/query/proximadb-query-filter",
+    "crates/query/proximadb-uql",
+    "crates/query/proximadb-vector-query",
+    "crates/binding/proximadb-spark-jni",
 ]
 
-[[bin]]
-name = "proximadb-server"
-path = "src/bin/server.rs"
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+authors = ["Vijaykumar Singh <singhvjd@gmail.com>"]
+repository = "https://github.com/vjsingh1984/proximadb"
+homepage = "https://github.com/vjsingh1984/proximadb"
+
+[workspace.lints.rust]
+# Edition-2024 migration for x86_64 SIMD: many `#[target_feature] unsafe fn`s call
+# intrinsics / memory ops directly. Keep the pre-2024 "unsafe fn body is an unsafe
+# context" behavior workspace-wide; `unused_unsafe` covers the resulting redundancy
+# of any explicit `unsafe {}` blocks remaining in those fns. (NEON/AVX SIMD modules.)
+unsafe_op_in_unsafe_fn = "allow"
+unused_unsafe = "allow"
+
+[workspace.lints.clippy]
+# x86_64 SIMD idiom (only ever compiled on x86_64 CI, so it accrued unlinted):
+# internal `#[target_feature]` unsafe primitives whose safety contract is uniformly
+# "caller ensures the CPU supports the feature", and explicit chunk-index loops that
+# read clearer than iterator adapters. Sloppy lints (needless_return / assign_op) are
+# fixed in-code, not allowed.
+missing_safety_doc = "allow"
+needless_range_loop = "allow"
+
+[workspace.dependencies]
+anyhow = "1.0"
+# R-5b.1.3 workaround: an auto-refactor commit added
+# crates/query/proximadb-relational-frontend referencing
+# `sqlparser = { workspace = true }` without first declaring the
+# dep at the workspace level. Same pin as the root `[dependencies]`
+# entry.
+sqlparser = "0.59"
+arrow = { version = "57.1", features = ["prettyprint"] }
+arrow-array = { version = "57.1", default-features = false }
+bincode = "1.3"
+arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
+arrow-schema = { version = "57.1", default-features = false }
+parquet = { version = "57.1", default-features = false, features = ["arrow", "object_store", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
+object_store = "0.12"
+async-trait = "0.1"
+axum = { version = "0.6", features = ["json", "ws"] }
+chrono = { version = "0.4.31", features = ["serde"] }
+clap = { version = "4.0", features = ["derive"] }
+hyper = { version = "0.14" }
+proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-config = { path = "crates/foundation/proximadb-config" }
+proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
+proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
+proximadb-proto = { path = "crates/foundation/proximadb-proto" }
+proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
+proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-records = { path = "crates/foundation/proximadb-records" }
+proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
+proximadb-functions = { path = "crates/foundation/proximadb-functions" }
+proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
+proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
+proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
+proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
+proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
+proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
+proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+dashmap = "6.1.0"
+parking_lot = "0.12"
+tracing = "0.1"
+serde_json = "1.0"
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "json", "chrono", "uuid"] }
+prost = "0.14"
+prost-types = "0.14"
+futures = "0.3"
+rand = { version = "0.8", features = ["small_rng"] }
+rayon = "1.10"
+regex = "1.10"
+serde = { version = "1.0", features = ["derive"] }
+tempfile = "3.0"
+thiserror = "1.0"
+tokio = { version = "1.37", features = ["full"] }
+tokio-stream = "0.1"
+tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
+toml = "0.8"
+tower = { version = "0.4", features = ["limit"] }
+tower-http = { version = "0.4", features = ["cors", "trace"] }
+proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-document = { path = "crates/modalities/proximadb-document" }
+proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
+proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
+proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
+proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
+proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
+proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
+proximadb-api = { path = "crates/platform/proximadb-api" }
+proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
+proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
+proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
+proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+crc32fast = "1.4"
+rmp-serde = "1.1"
+tonic-prost = "0.14"
+# Compression libraries (workspace-inheritable for modality/horizontal crates)
+brotli = "6.0"
+bzip2 = "0.5"
+flate2 = { version = "1.0", default-features = true }
+lz4_flex = "0.11"
+snap = "1.1"
+xz2 = "0.1"
+zstd = "0.13"
+
+# TurboQuant numerics (ADR-021, gated by `experimental-turboquant`).
+# Kept here so future modality + benchmark consumers share a single version.
+faer = { version = "0.20", default-features = false, features = ["std"] }
+statrs = "0.17"
 
 [[bin]]
-name = "proximadb-bench"
-path = "src/bin/proximadb-bench-consolidated.rs"
+name = "simple-perf-bench"
+path = "benches/simple_perf_bench.rs"
 
 [[bin]]
-name = "proximadb-migrate"
-path = "src/bin/proximadb-migrate.rs"
+name = "grpc-benchmark"
+path = "benches/grpc_benchmark.rs"
+
+[[bin]]
+name = "quick-perf-bench"
+path = "benches/quick_perf_bench.rs"
 
 # Python embedded library (cdylib for PyO3)
 [lib]
@@ -47,9 +232,64 @@ tokio-stream = "0.1"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-bincode = "1.3"
+bincode.workspace = true
 rmp-serde = "1.1"  # MessagePack serialization
 bytemuck = { version = "1.14", features = ["derive"] }
+proximadb-proto = { path = "crates/foundation/proximadb-proto" }
+proximadb-document-query = { path = "crates/query/proximadb-document-query" }
+proximadb-config = { path = "crates/foundation/proximadb-config" }
+proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
+proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
+proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
+proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
+proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
+proximadb-functions = { path = "crates/foundation/proximadb-functions" }
+proximadb-relational-algebra = { path = "crates/query/proximadb-relational-algebra" }
+proximadb-relational-reader = { path = "crates/query/proximadb-relational-reader" }
+proximadb-relational-planner = { path = "crates/query/proximadb-relational-planner" }
+proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
+proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
+proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
+proximadb-records = { path = "crates/foundation/proximadb-records" }
+proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-catalog = { path = "crates/control/proximadb-catalog" }
+proximadb-api = { path = "crates/platform/proximadb-api" }
+proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
+proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
+proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
+proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-common" }
+proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
+proximadb-security = { path = "crates/horizontal/proximadb-security" }
+proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
+proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
+proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
+proximadb-document = { path = "crates/modalities/proximadb-document" }
+proximadb-graph = { path = "crates/modalities/proximadb-graph" }
+proximadb-observability = { path = "crates/modalities/proximadb-observability" }
+proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
+proximadb-queue = { path = "crates/modalities/proximadb-queue" }
+proximadb-rank-core = { path = "crates/modalities/proximadb-rank-core" }
+proximadb-rank-features = { path = "crates/modalities/proximadb-rank-features" }
+proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
+proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
+proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
+proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
+proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
+proximadb-graph-subset = { path = "crates/query/proximadb-graph-subset" }
+proximadb-multimodel-query = { path = "crates/query/proximadb-multimodel-query" }
+proximadb-multimodel-plan = { path = "crates/query/proximadb-multimodel-plan" }
+proximadb-observability-query = { path = "crates/query/proximadb-observability-query" }
+proximadb-query = { path = "crates/query/proximadb-query" }
+proximadb-pipeline-operator = { path = "crates/foundation/proximadb-pipeline-operator" }
+proximadb-query-capability = { path = "crates/query/proximadb-query-capability" }
+proximadb-query-clauses = { path = "crates/query/proximadb-query-clauses" }
+proximadb-query-fusion = { path = "crates/query/proximadb-query-fusion" }
+proximadb-query-filter = { path = "crates/query/proximadb-query-filter" }
+proximadb-uql = { path = "crates/query/proximadb-uql" }
+proximadb-vector-query = { path = "crates/query/proximadb-vector-query" }
 
 # SQL Parsing
 sqlparser = "0.59"
@@ -70,7 +310,8 @@ lazy_static = "1.5"
 # Networking & gRPC
 tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
 tonic-prost = "0.14"  # Runtime codec for tonic-build 0.14+ generated code
-# tonic-reflection = "0.14"  # REMOVED: Unused in production code (confirmed by cargo-udeps)
+tonic-health = "0.14"  # Standard grpc.health.v1.Health service
+tonic-reflection = "0.14"  # Server reflection (grpc.reflection.v1alpha.ServerReflection)
 prost = "0.14"
 prost-types = { version = "0.14" }
 hyper = "0.14"  # Used by axum 0.6
@@ -87,6 +328,7 @@ memmap2 = "0.9"
 lru = "0.12"  # LRU cache for disk-backed graph storage
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tokio-postgres = { version = "0.7", optional = true }  # PostgreSQL client for CDC (experimental-cdc-connectors)
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "json", "chrono", "uuid"], optional = true }  # OLTP catalog backends (oltp-catalog)
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
@@ -104,7 +346,7 @@ arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
 arrow-cast = { version = "57.1", default-features = false }
 
 # DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
-datafusion = { version = "51.0", default-features = false, features = ["regex_expressions", "unicode_expressions"], optional = true }
+datafusion = { version = "51.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions"], optional = true }
 datafusion-common = { version = "51.0", optional = true }
 
 # Advanced compression for recovery-optimized WAL
@@ -123,11 +365,16 @@ sysinfo = "0.30"
 apache-avro = "0.16"
 bytes = "1.5"
 
-# Cloud storage SDKs (optional for testing)
-aws-config = { version = "1.0", optional = true }
-aws-sdk-s3 = { version = "1.0", optional = true }
-azure_storage = { version = "0.19", optional = true }
-azure_storage_blobs = { version = "0.19", optional = true }
+# Cloud storage: the canonical object_store crate provides true byte-range
+# get_range for S3 + Azure (the bandwidth-optimal ADR-023 cold-load primitive)
+# + emulator support (MinIO / Azurite), replacing the pre-GA azure_storage_blobs
+# (broken ranged GET) and the heavy aws-sdk-s3 tree. Already transitive (via
+# parquet); promoted to a direct dep. Feature-gated via the aws/azure features.
+object_store = { workspace = true }
+# GCS stays on the google-cloud-storage SDK: object_store's GCS backend speaks
+# the XML API, which fake-gcs-server (our test emulator) does not serve, so it
+# is unverifiable locally; this SDK uses the JSON API (fake-gcs-compatible) and
+# still issues true ranged object downloads (bandwidth-optimal). Feature `gcp`.
 google-cloud-storage = { version = "0.15", optional = true }
 
 # Vector operations & SIMD
@@ -139,7 +386,7 @@ num_cpus = "1.16"
 raw-cpuid = "11.0"  # CPU feature detection for x86_64
 
 # Random number generation
-rand = { version = "0.8", features = ["small_rng"] }
+rand.workspace = true
 rand_chacha = "0.3"
 rand_distr = "0.4"  # For generating realistic probability distributions
 
@@ -175,6 +422,7 @@ toml = "0.8"
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
+proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
@@ -239,31 +487,73 @@ criterion = { version = "0.5", features = ["async_tokio"] }
 proptest = "1.0"
 # tempdir = "0.3"  # REMOVED: Deprecated since 2018, has TOCTOU vulnerability (RUSTSEC-2023-0018). Use tempfile instead.
 env_logger = "0.10"
+walkdir = "2"
+# Real Postgres wire-protocol client for the pgwire transport e2e tests
+# (tests/fp16_pgwire_e2e.rs). Same major as the optional CDC dep but
+# dev-only so it doesn't affect production binary size.
+tokio-postgres = "0.7"
+# Rust SDK in client (REST) mode for SDK-level integration tests
+# (tests/fp16_rust_sdk_e2e.rs). The SDK lives in clients/rust as a
+# workspace member; dev-dep here so we can drive it against an
+# in-process server fixture.
+proximadb-sdk = { path = "clients/rust", default-features = false, features = ["client"] }
+# OpenAPI contract gates for the Rust connectors (tests/connectors_openapi_contract.rs
+# and tests/connectors_flight_contract.rs). httpmock is the same crate the SDK
+# gate uses at clients/rust/tests/openapi_contract.rs; serde_yaml lets the
+# gates load docs/openapi/proximadb-openapi.yaml directly.
+httpmock = "0.7"
+serde_yaml = "0.9"
 
 [features]
-default = ["sql_frontend", "graph-first-sks", "unified-facade-routing"]
+# Default feature set as of 2026-05-26 (ADR-020 Tier 2.2 / TD-065 default-enable).
+# `canonical-document-store` flips on by default so the canonical WAL path is
+# the durable authority for documents. Operators on the legacy non-canonical
+# (in-memory-map-as-durable-source) path during one minor-release migration
+# window can opt OUT via `default-features = false` + explicit feature selection.
+# Plan: remove the feature flag entirely in v0.4 once the migration window closes.
+default = ["sql_frontend", "graph-first-sks", "unified-facade-routing", "canonical-document-store", "datafusion-integration"]
 # Optional surfaces; keep off by default to minimize binary size and public API surface
 ai_endpoints = []
 sales_endpoints = []
 tenant_access = []
 executive_intel = []
+revenue_surface = []
+licensing_surface = []
 # Experimental storage engines (RAPTOR, SWIFT); disabled by default to prevent
 # server panics from unimplemented code paths. Enable for development/testing only.
 experimental-engines = []
 # Experimental SIMD path; not enabled by default
 simd-experimental = []
+# TurboQuant data-oblivious quantizer + in-kernel allowlist (ADR-021).
+# Gates the QuantizationLevel::TurboQuant variant in proximadb-vector + the
+# TurboQuantVectorData struct in src/compute/distance_computation/quantized.rs.
+# Tracked in docs/12-design/TURBOQUANT_LLD_2026_05_30.adoc; promoted to beta
+# after P9 recall validation closes.
+experimental-turboquant = [
+    "proximadb-quantization-types/experimental-turboquant",
+    "proximadb-vector/experimental-turboquant",
+]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
 avx512 = []
-distributed = []
 standalone = []
 # Cluster mode - enables distributed consensus (Raft), replication, and health services
-# Used for multi-node deployments with leader election and data replication
-cluster = []
+# Used for multi-node deployments with leader election and data replication.
+# Forwards to proximadb-runtime/cluster so the `ClusterServerConfig` re-export and
+# the `MultiServerConfig::cluster_config` field (both `#[cfg(feature = "cluster")]`
+# in bootstrap_config.rs) actually compile when this feature is on.
+cluster = ["proximadb-runtime/cluster"]
 rocksdb = ["dep:rocksdb"]  # RocksDB metadata backend support
+# Real ONNX-runtime embedding. Off by default (the `ort` runtime + model files
+# are heavyweight and not needed for the default build). Forwards to
+# proximadb-embedding/onnx so the in-process BGE embedder produces real vectors;
+# without it the BGE route returns ModelUnavailable (synthetic fallback is
+# forbidden in production paths). Tests that exercise real embedding are gated
+# on this feature.
+onnx = ["proximadb-embedding/onnx"]
 
 # Cloud storage features (optional to avoid linking issues during testing)
-aws = ["dep:aws-config", "dep:aws-sdk-s3"]
-azure = ["dep:azure_storage", "dep:azure_storage_blobs"]
+aws = ["object_store/aws", "proximadb-catalog/aws"]
+azure = ["object_store/azure"]
 gcp = ["dep:google-cloud-storage"]
 
 # ============================================================================
@@ -276,6 +566,13 @@ network-rest = []
 # CDC Kafka integration (change data capture to Kafka)
 # Note: rdkafka dependency would be added when enabling this feature
 cdc-kafka = []
+
+# LLM-driven semantic join modes (TD-049, arXiv:2510.08489 block-batched joins).
+# When enabled, JoinType::Semantic { mode: LlmBlockBatch { ... } } is dispatched
+# to an LLM-backed batched-prompt path. When disabled, only the cosine mode runs;
+# the LlmBlockBatch mode returns a clear NotImplemented error so server logs
+# attribute the failure correctly.
+llm-joins = []
 
 # Protobuf compilation (for distributed gRPC service generation)
 compile_protobuf = []
@@ -335,6 +632,11 @@ sql_frontend = []
 # When disabled, uses legacy direct handler paths for backward compatibility.
 unified-facade-routing = []
 
+# Canonical document CRUD path. When enabled and a RecordStore is injected,
+# DocumentService writes/reads durable document state through ProximaRecord while
+# keeping legacy v1 document API shapes at the service edge.
+canonical-document-store = []
+
 # SKS Graph-First Architecture (default on for production)
 # When enabled, uses OrionBackedEntityStore for 3-6x better performance
 # When disabled, falls back to legacy split storage
@@ -343,21 +645,6 @@ graph-first-sks = []
 # DataFusion integration for compute engine compatibility
 # DataFusion 51.x uses Arrow 57.x — versions are aligned as of 2026-04
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
-
-# ============================================================================
-# EXPERIMENTAL GRAPH ENGINE FEATURES
-# ============================================================================
-# These engines are experimental and not production-ready. Use ORION for production.
-
-# PULSAR: Distributed sharded graph engine (experimental)
-# WARNING: Cross-shard queries may miss edges, no distributed WAL
-# For production, use ORION with application-level sharding
-distributed-graph = []
-
-# QUASAR: Hybrid hot/cold tiering graph engine (experimental)
-# WARNING: No WAL for cold tier, simple LRU tiering, not integrated with storage engines
-# For production, use ORION with appropriate memory sizing
-tiered-graph = []
 
 # Hardware acceleration features
 gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
@@ -386,6 +673,11 @@ experimental-cdc-connectors = ["dep:tokio-postgres"]
 # Python embedded mode (PyO3 bindings with zero-copy numpy support)
 python = ["dep:pyo3", "dep:numpy"]  # Enable Python bindings with zero-copy numpy support
 
+# Python cdylib output (for PyO3/FFI builds)
+# When enabled, changes crate-type to include cdylib for Python shared library generation
+# See ADR-006: Feature-gated approach prevents test exclusion issues
+pylib = []  # Enable cdylib output for Python/FFI builds
+
 # Java embedded mode (JNI bindings)
 java = ["dep:jni"]  # Enable Java bindings for embedded database mode
 
@@ -405,10 +697,19 @@ embedded-all = ["python", "java", "nodejs", "c_ffi"]
 # GPU acceleration (removed - was placeholder code)
 
 # Enterprise catalog integrations (optional)
-unity-catalog = []      # Databricks Unity Catalog integration
-polaris-catalog = []    # Apache Polaris (Iceberg REST Catalog) integration
-delta-lake = []         # Delta Lake table format support
+unity-catalog = ["proximadb-catalog/unity-catalog"]      # Databricks Unity Catalog integration
+polaris-catalog = ["proximadb-catalog/polaris-catalog"]    # Apache Polaris (Iceberg REST Catalog) integration
+delta-lake = ["proximadb-catalog/delta-lake"]         # Delta Lake table format support
 enterprise-catalogs = ["unity-catalog", "polaris-catalog", "delta-lake"]
+
+# OLTP catalog backends — metadata-only; record data stays in ProximaDB engines.
+# Supports PostgreSQL / Neon / Supabase / CockroachDB (postgres wire),
+# MariaDB / MySQL / TiDB (mysql wire), and embedded SQLite.
+oltp-catalog = ["dep:sqlx"]
+oltp-catalog-postgres = ["oltp-catalog", "sqlx/postgres"]
+oltp-catalog-mysql    = ["oltp-catalog", "sqlx/mysql"]
+oltp-catalog-sqlite   = ["oltp-catalog", "sqlx/sqlite"]
+oltp-catalog-full     = ["oltp-catalog-postgres", "oltp-catalog-mysql", "oltp-catalog-sqlite"]
 
 # TLS/mTLS support (enabled by default)
 tls = []  # Enable TLS/mTLS certificate management and secure connections
@@ -458,7 +759,11 @@ strip = true
 # IMPORTANT: dev and test profiles should match for artifact reuse
 [profile.dev]
 opt-level = 0
-debug = true
+# `line-tables-only` keeps file:line in backtraces (panics still readable) but
+# drops the heavy DWARF variable/type info. ~5-10x smaller .rlib/.dSYM, large
+# link-time reduction on the ~80-crate workspace. Switch back to `true` only
+# when stepping through variables in lldb.
+debug = "line-tables-only"
 overflow-checks = true
 incremental = true
 split-debuginfo = "unpacked"  # Faster linking, reusable debug info
@@ -467,7 +772,7 @@ split-debuginfo = "unpacked"  # Faster linking, reusable debug info
 # Cargo ONLY reuses artifacts if profiles are identical
 [profile.test]
 opt-level = 0  # MUST match dev for artifact reuse (0, not 1!)
-debug = true
+debug = "line-tables-only"  # MUST match dev (was `true`)
 overflow-checks = true
 incremental = true
 split-debuginfo = "unpacked"
@@ -551,6 +856,11 @@ name = "bench_14_graph_operations"
 harness = false
 path = "benches/bench_14_graph_operations.rs"
 
+[[bench]]
+name = "bench_graph_adjacency_vs_csr"
+harness = false
+path = "benches/bench_graph_adjacency_vs_csr.rs"
+
 # 7. GRAPH ENGINES COMPARISON (17)
 [[bench]]
 name = "bench_17_graph_engines"
@@ -594,14 +904,44 @@ harness = false
 path = "benches/bench_21_query_cache.rs"
 
 [[bench]]
+name = "bench_21_hybrid_search_fusion"
+harness = false
+path = "benches/bench_21_hybrid_search_fusion.rs"
+
+[[bench]]
 name = "bench_22_multimodal_queries"
 harness = false
 path = "benches/bench_22_multimodal_queries.rs"
 
 [[bench]]
+name = "bench_23_codec_vector_base_xor"
+harness = false
+path = "benches/bench_23_codec_vector_base_xor.rs"
+
+[[bench]]
+name = "hmgi_benchmark"
+harness = false
+path = "benches/hmgi_benchmark.rs"
+
+[[bench]]
 name = "streaming_search_bench"
 harness = false
 path = "benches/streaming_search_bench.rs"
+
+[[bench]]
+name = "bench_vector_object_economy"
+harness = false
+path = "benches/bench_vector_object_economy.rs"
+
+[[bench]]
+name = "bench_vector_object_economy_e2e"
+harness = false
+path = "benches/bench_vector_object_economy_e2e.rs"
+
+[[bench]]
+name = "bench_warm_path_profile"
+harness = false
+path = "benches/bench_warm_path_profile.rs"
 
 # ============================================================================
 # BUILD OPTIMIZATION STRATEGY

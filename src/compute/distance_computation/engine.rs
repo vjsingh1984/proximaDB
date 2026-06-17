@@ -44,9 +44,9 @@
 //! This normalization ensures consistent behavior across all storage engines
 //! and search algorithms without special casing.
 
-use crate::core::memory::pool::{PooledItem, VectorMemoryPool};
 use anyhow::Result;
 use async_trait::async_trait;
+use proximadb_runtime_common::pool::{PooledItem, VectorMemoryPool};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
@@ -68,9 +68,12 @@ impl DistanceMetricExt for DistanceMetric {
 }
 #[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::create_gpu_accelerator;
+#[cfg(feature = "gpu")]
 use crate::core::hardware_capabilities::get_hardware_capabilities;
 #[cfg(feature = "gpu")]
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Handle as TokioHandle};
+
+use proximadb_hardware::{SimdLevel, best_simd_level};
 
 // Re-export HardwareBackend for public use
 pub use crate::core::hardware_capabilities::HardwareBackend;
@@ -116,9 +119,16 @@ static SEARCH_BACKEND_LOGGED: AtomicBool = AtomicBool::new(false);
 ///
 /// This 100,000x speedup is critical for hot paths.
 fn get_cached_preferred_backend() -> HardwareBackend {
-    *PREFERRED_BACKEND.get_or_init(|| {
-        let caps = get_hardware_capabilities();
-        caps.preferred_backend()
+    *PREFERRED_BACKEND.get_or_init(|| match best_simd_level() {
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX512 => HardwareBackend::AVX512,
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX2 => HardwareBackend::AVX2,
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::SSE41 => HardwareBackend::SSE,
+        #[cfg(target_arch = "aarch64")]
+        SimdLevel::NEON => HardwareBackend::NEON,
+        _ => HardwareBackend::Scalar,
     })
 }
 
@@ -128,8 +138,13 @@ fn get_cached_preferred_backend() -> HardwareBackend {
 /// Future versions will support CUDA/ROCm/Metal acceleration.
 fn is_gpu_enabled_cached() -> bool {
     *GPU_ENABLED_CACHE.get_or_init(|| {
-        let caps = get_hardware_capabilities();
-        caps.has_gpu()
+        #[cfg(feature = "gpu")]
+        {
+            let caps = get_hardware_capabilities();
+            caps.has_gpu()
+        }
+        #[cfg(not(feature = "gpu"))]
+        false
     })
 }
 
@@ -241,37 +256,30 @@ static PLATFORM_CAPABILITY: OnceLock<PlatformCapability> = OnceLock::new();
 ///
 /// This ensures SIMD dispatch has zero overhead in production.
 fn get_platform_capability() -> PlatformCapability {
-    *PLATFORM_CAPABILITY.get_or_init(|| {
-        // Use the already-initialized global hardware capabilities
-        let caps = get_hardware_capabilities();
-        let backend = caps.preferred_backend();
-
-        // Map HardwareBackend to PlatformCapability
-        match backend {
-            #[cfg(target_arch = "x86_64")]
-            HardwareBackend::AVX512 => {
-                trace!("Using AVX-512 SIMD from global hardware detection");
-                PlatformCapability::X86Avx512
-            }
-            #[cfg(target_arch = "x86_64")]
-            HardwareBackend::AVX2 => {
-                trace!("Using AVX2 SIMD from global hardware detection");
-                PlatformCapability::X86Avx2
-            }
-            #[cfg(target_arch = "x86_64")]
-            HardwareBackend::SSE => {
-                trace!("Using SSE2 SIMD from global hardware detection");
-                PlatformCapability::X86Sse2
-            }
-            #[cfg(target_arch = "aarch64")]
-            HardwareBackend::NEON => {
-                trace!("Using ARM NEON SIMD from global hardware detection");
-                PlatformCapability::ArmNeon
-            }
-            _ => {
-                trace!("Using scalar implementation from global hardware detection");
-                PlatformCapability::Scalar
-            }
+    *PLATFORM_CAPABILITY.get_or_init(|| match best_simd_level() {
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX512 => {
+            trace!("Using AVX-512 SIMD from global hardware detection");
+            PlatformCapability::X86Avx512
+        }
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::AVX2 => {
+            trace!("Using AVX2 SIMD from global hardware detection");
+            PlatformCapability::X86Avx2
+        }
+        #[cfg(target_arch = "x86_64")]
+        SimdLevel::SSE41 => {
+            trace!("Using SSE2 SIMD from global hardware detection");
+            PlatformCapability::X86Sse2
+        }
+        #[cfg(target_arch = "aarch64")]
+        SimdLevel::NEON => {
+            trace!("Using ARM NEON SIMD from global hardware detection");
+            PlatformCapability::ArmNeon
+        }
+        _ => {
+            trace!("Using scalar implementation from global hardware detection");
+            PlatformCapability::Scalar
         }
     })
 }
@@ -439,13 +447,39 @@ impl SimilarityResult {
     fn normalize_distance(value: f32, metric: &DistanceMetric) -> (f32, f32) {
         match metric {
             DistanceMetric::DotProduct => {
-                // Dot product: higher = more similar, so invert for distance semantics
-                // Return negated value as distance (lower = more similar)
+                // Dot product: higher = more similar, so invert for
+                // distance semantics. Return negated value as distance
+                // (lower = more similar). HNSW's heap also negates
+                // internally via `metric_aware_distance`; consumers
+                // that want SimilarityResult directly should rely on
+                // this `distance` field for ranking.
                 let distance = -value;
-                let normalized_similarity = ((value + 1.0) / 2.0).clamp(0.0, 1.0);
+
+                // **Soft-sign normalization** (replaces the older
+                // `((v+1)/2).clamp(0, 1)` which silently collapsed
+                // every unnormalized inner product above 1.0 to the
+                // same score of 1.0 — destroying magnitude information
+                // for vectors with norms in the tens or hundreds).
+                //
+                // Formula: `f(v) = 0.5 + 0.5 * v / (1 + |v|)`
+                //   * monotone increasing across the entire real line
+                //   * bounded in (0, 1), `f(0) = 0.5` (orthogonal anchor)
+                //   * no clamping → preserves rank for any |v|
+                //     (v=5 → 0.917, v=50 → 0.990, v=500 → 0.999)
+                //   * cheap: 2 adds, 1 mul, 1 div, 1 abs (no `exp`)
+                //
+                // NaN / infinity guards avoid 0/0 and ∞/∞ producing
+                // NaN scores that would corrupt downstream ranking.
+                let normalized_similarity = if value.is_nan() {
+                    0.5
+                } else if value.is_infinite() {
+                    if value > 0.0 { 1.0 } else { 0.0 }
+                } else {
+                    0.5 + 0.5 * value / (1.0 + value.abs())
+                };
                 (distance, normalized_similarity)
             }
-            DistanceMetric::Cosine => {
+            DistanceMetric::Cosine | DistanceMetric::Unspecified => {
                 // Cosine distance: [0, 2] range, lower = more similar
                 // Convert to normalized similarity [0,1] where higher = more similar
                 let normalized_similarity = if value.is_infinite() {
@@ -587,14 +621,10 @@ impl Default for UnifiedDistanceCompute {
 impl UnifiedDistanceCompute {
     /// Create new instance with system default metric
     pub fn new(metric: DistanceMetric) -> Self {
-        // Use cached hardware detection for efficiency
         let preferred_backend = get_cached_preferred_backend();
         let gpu_enabled = is_gpu_enabled_cached();
-        let platform_capability = get_platform_capability(); // Uses global cached detection
-
-        // Get actual hardware backend from centralized capabilities
-        let caps = get_hardware_capabilities();
-        let hardware_backend = caps.preferred_backend();
+        let platform_capability = get_platform_capability();
+        let hardware_backend = preferred_backend;
 
         trace!(
             "Creating UnifiedDistanceCompute with metric: {:?}, backend: {:?}, platform: {:?}",
@@ -701,7 +731,9 @@ impl UnifiedDistanceCompute {
         log_search_backend_first_time(self.platform_capability);
 
         match metric {
-            DistanceMetric::Cosine => self.compute_cosine_simd(vec_a, vec_b),
+            DistanceMetric::Cosine | DistanceMetric::Unspecified => {
+                self.compute_cosine_simd(vec_a, vec_b)
+            }
             DistanceMetric::Euclidean => self.compute_euclidean_simd(vec_a, vec_b),
             DistanceMetric::DotProduct => self.compute_dot_product_simd(vec_a, vec_b),
             DistanceMetric::Manhattan => self.compute_manhattan_scalar(vec_a, vec_b),
@@ -713,7 +745,7 @@ impl UnifiedDistanceCompute {
             DistanceMetric::BrayCurtis => self.compute_bray_curtis_scalar(vec_a, vec_b),
             DistanceMetric::Angular => self.compute_angular_scalar(vec_a, vec_b),
             DistanceMetric::Hellinger => self.compute_hellinger_scalar(vec_a, vec_b),
-            _ => self.compute_euclidean_simd(vec_a, vec_b), // Default fallback
+            _ => self.compute_euclidean_simd(vec_a, vec_b), // Default fallback for unhandled metrics
         }
     }
 
@@ -1495,9 +1527,9 @@ impl UnifiedDistanceCompute {
         #[cfg(target_arch = "x86_64")]
         {
             match self.platform_capability {
-                PlatformCapability::X86Avx512 => return 128, // AVX-512: Process more vectors for better cache use
-                PlatformCapability::X86Avx2 => return 64, // AVX2: Good balance of cache and register use
-                _ => return 32,                           // SSE2: Smaller batches
+                PlatformCapability::X86Avx512 => 128, // AVX-512: Process more vectors for better cache use
+                PlatformCapability::X86Avx2 => 64, // AVX2: Good balance of cache and register use
+                _ => 32,                           // SSE2: Smaller batches
             }
         }
 
@@ -2150,6 +2182,62 @@ mod tests {
     }
 
     #[test]
+    fn test_dot_product_normalized_similarity_soft_sign() {
+        // Pins the soft-sign transform for DotProduct normalization.
+        // The old `((v+1)/2).clamp(0,1)` collapsed every inner
+        // product above 1.0 to a score of 1.0 — destroying magnitude
+        // information for unnormalized vectors. This test fails if a
+        // future regression reintroduces clamping.
+        let cases = [
+            // (raw inner product, expected normalized similarity)
+            (-50.0_f32, 0.5 + 0.5 * (-50.0) / 51.0), // ≈ 0.010
+            (-1.0, 0.25),                            // 0.5 + 0.5 * -0.5 = 0.25
+            (0.0, 0.5),                              // orthogonal anchor
+            (0.5, 0.5 + 0.5 * 0.5 / 1.5),            // ≈ 0.667
+            (1.0, 0.75),                             // 0.5 + 0.5 * 0.5 = 0.75
+            (5.0, 0.5 + 0.5 * 5.0 / 6.0),            // ≈ 0.917
+            (50.0, 0.5 + 0.5 * 50.0 / 51.0),         // ≈ 0.990 (NOT clamped to 1.0)
+            (500.0, 0.5 + 0.5 * 500.0 / 501.0),      // ≈ 0.999 (NOT clamped to 1.0)
+        ];
+        for (raw, expected) in cases {
+            let result = SimilarityResult::new(raw, DistanceMetric::DotProduct);
+            assert!(
+                (result.normalized_score - expected).abs() < 1e-5,
+                "DotProduct soft-sign at v={}: expected {:.6}, got {:.6}",
+                raw,
+                expected,
+                result.normalized_score
+            );
+        }
+
+        // Critical regression check: two unnormalized inner products
+        // must produce DISTINGUISHABLE scores (old formula clamped
+        // both to 1.0).
+        let s5 = SimilarityResult::new(5.0, DistanceMetric::DotProduct).normalized_score;
+        let s50 = SimilarityResult::new(50.0, DistanceMetric::DotProduct).normalized_score;
+        assert!(
+            s50 > s5 + 0.01,
+            "v=5 and v=50 must produce distinguishable similarity scores, got s5={} s50={}",
+            s5,
+            s50
+        );
+
+        // NaN / infinity handling.
+        let nan = SimilarityResult::new(f32::NAN, DistanceMetric::DotProduct).normalized_score;
+        assert!(
+            (nan - 0.5).abs() < 1e-6,
+            "NaN inner product → 0.5, got {}",
+            nan
+        );
+        let pinf =
+            SimilarityResult::new(f32::INFINITY, DistanceMetric::DotProduct).normalized_score;
+        assert!((pinf - 1.0).abs() < 1e-6, "+inf → 1.0, got {}", pinf);
+        let ninf =
+            SimilarityResult::new(f32::NEG_INFINITY, DistanceMetric::DotProduct).normalized_score;
+        assert!((ninf - 0.0).abs() < 1e-6, "-inf → 0.0, got {}", ninf);
+    }
+
+    #[test]
     fn test_distance_with_explicit_metric() {
         let compute = UnifiedDistanceCompute::new(DistanceMetric::Euclidean);
         let a = vec![1.0, 0.0, 0.0];
@@ -2570,9 +2658,7 @@ mod tests {
 
     #[test]
     fn test_platform_detection() {
-        // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        let _capability = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Test that we can create calculators for all metrics
         let cosine_calc = UnifiedDistanceCompute::new(DistanceMetric::Cosine);
@@ -2594,7 +2680,7 @@ mod tests {
 
     #[test]
     fn test_scalar_implementations() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 0.0];
         let b = vec![0.0, 1.0];
 
@@ -2614,7 +2700,7 @@ mod tests {
 
     #[test]
     fn test_metric_specific_implementations() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0, 6.0];
 
@@ -2633,7 +2719,7 @@ mod tests {
 
     #[test]
     fn test_batch_processing() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let query = vec![1.0, 2.0, 3.0];
         let vectors = vec![
             vec![1.0, 2.0, 3.0],
@@ -2655,7 +2741,7 @@ mod tests {
 
     #[test]
     fn test_distance_metric_properties() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 2.0, 3.0];
         let b = vec![4.0, 5.0, 6.0];
 
@@ -2673,7 +2759,7 @@ mod tests {
 
     #[test]
     fn test_simd_vs_scalar_consistency() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let a = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
         let b = vec![8.0, 7.0, 6.0, 5.0, 4.0, 3.0, 2.0, 1.0];
 
@@ -2687,7 +2773,7 @@ mod tests {
 
     #[test]
     fn test_zero_vectors() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let zero_a = vec![0.0, 0.0, 0.0];
         let zero_b = vec![0.0, 0.0, 0.0];
         let non_zero = vec![1.0, 2.0, 3.0];
@@ -2726,7 +2812,7 @@ mod tests {
 
     #[test]
     fn test_edge_cases() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Test with single element vectors
         let a = vec![5.0];
         let b = vec![3.0];
@@ -2767,7 +2853,7 @@ mod tests {
 
     #[test]
     fn test_jaccard_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let jaccard_calc = UnifiedDistanceCompute::new(DistanceMetric::Jaccard);
 
         // Test identical sets (binary vectors)
@@ -2799,7 +2885,7 @@ mod tests {
 
     #[test]
     fn test_hamming_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let hamming_calc = UnifiedDistanceCompute::new(DistanceMetric::Hamming);
 
         // Test identical vectors
@@ -2835,7 +2921,7 @@ mod tests {
 
     #[test]
     fn test_chebyshev_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let chebyshev_calc = UnifiedDistanceCompute::new(DistanceMetric::Chebyshev);
 
         // Test identical vectors
@@ -2871,7 +2957,7 @@ mod tests {
 
     #[test]
     fn test_canberra_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let canberra_calc = UnifiedDistanceCompute::new(DistanceMetric::Canberra);
 
         // Test identical vectors
@@ -2900,7 +2986,7 @@ mod tests {
 
     #[test]
     fn test_minkowski_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let minkowski_calc = UnifiedDistanceCompute::new(DistanceMetric::Minkowski);
 
         // Test identical vectors
@@ -2923,7 +3009,7 @@ mod tests {
 
     #[test]
     fn test_angular_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let angular_calc = UnifiedDistanceCompute::new(DistanceMetric::Angular);
 
         // Test identical vectors (angle = 0)
@@ -2965,7 +3051,7 @@ mod tests {
 
     #[test]
     fn test_bray_curtis_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let bray_curtis_calc = UnifiedDistanceCompute::new(DistanceMetric::BrayCurtis);
 
         // Test identical vectors
@@ -2998,7 +3084,7 @@ mod tests {
 
     #[test]
     fn test_hellinger_distance() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let hellinger_calc = UnifiedDistanceCompute::new(DistanceMetric::Hellinger);
 
         // Test identical distributions
@@ -3029,7 +3115,7 @@ mod tests {
 
     #[test]
     fn test_batch_consistency() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let query = vec![1.0, 2.0, 3.0, 4.0];
         let vectors = vec![
             vec![1.0, 2.0, 3.0, 4.0], // Same as query
@@ -3076,7 +3162,7 @@ mod tests {
 
     #[test]
     fn test_large_vector_dimensions() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         // Test with high-dimensional vectors
         let dim = 1024;
         let a: Vec<f32> = (0..dim).map(|i| i as f32 * 0.001).collect();
@@ -3095,7 +3181,7 @@ mod tests {
 
     #[test]
     fn test_nan_and_infinity_handling() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         use std::f32::{INFINITY, NAN, NEG_INFINITY};
 
         let normal = vec![1.0, 2.0, 3.0];

@@ -16,11 +16,16 @@
 
 //! # ORION Graph Engine - PRODUCTION READY
 //!
-//! ORION is ProximaDB's production-grade in-memory graph engine featuring:
-//! - CSR (Compressed Sparse Row) format for fast traversal
+//! ORION is ProximaDB's production-grade in-memory graph traversal engine featuring:
+//! - CSR (Compressed Sparse Row) projection for fast traversal
 //! - Arc-based zero-copy memory sharing
-//! - WAL persistence for durability
+//! - WAL persistence for legacy/compatibility operation logs
 //! - DashMap concurrent access
+//!
+//! In the canonical convergence architecture, ORION is a topology projection
+//! and traversal cache over durable `ProximaRecord` node/edge records. It must
+//! be rebuildable from canonical edge records or adjacency projections and must
+//! not grow independent durable semantics for graph facts.
 //!
 //! ## Production Status
 //!
@@ -41,14 +46,14 @@
 //!
 //! ## Key Features
 //!
-//! - **CSR Format**: Compressed Sparse Row for memory-efficient edge storage
+//! - **CSR Format**: Compressed Sparse Row for memory-efficient edge traversal
 //! - **Zero-Copy Memory**: Arc-based sharing eliminates data duplication
-//! - **WAL Persistence**: Write-ahead logging ensures durability across restarts
+//! - **WAL Persistence**: Compatibility operation logging for non-canonical paths
 //! - **Concurrent Access**: DashMap provides lock-free concurrent reads
 //! - **Graph Algorithms**: PageRank, community detection, centrality metrics
 //! - **Label Indexes**: O(1) lookup for nodes by label
 //!
-//! ## CSR Format Benefits
+//! ## CSR Projection Benefits
 //!
 //! - **Memory Efficiency**: 60% reduction vs adjacency matrix
 //! - **Cache Friendly**: Sequential access patterns for traversal
@@ -108,7 +113,7 @@ pub mod persistence;
 pub mod storage;
 pub mod traversal;
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphMemoryPool, Node, NodeId};
@@ -144,15 +149,18 @@ pub struct OrionGraphEngine {
     pub index_to_node: Arc<RwLock<Vec<NodeId>>>,
 
     /// Engine statistics
-    stats: Arc<RwLock<EngineStats>>,
+    stats: Arc<RwLock<OrionEngineStats>>,
 
     /// Persistence manager (optional)
     persistence: Option<Arc<persistence::OrionPersistence>>,
 }
 
+/// Backwards-compat alias for [`OrionEngineStats`].
+pub type EngineStats = OrionEngineStats;
+
 /// Engine performance statistics tracking cumulative operation counts.
 #[derive(Debug, Default)]
-pub struct EngineStats {
+pub struct OrionEngineStats {
     /// Total number of nodes inserted since engine creation.
     pub nodes_created: u64,
     /// Total number of edges inserted since engine creation.
@@ -191,7 +199,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: None,
         }
     }
@@ -205,7 +213,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: None,
         }
     }
@@ -226,7 +234,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: Some(persistence),
         })
     }
@@ -237,8 +245,29 @@ impl OrionGraphEngine {
         base_url: String,
         enable_wal: bool,
     ) -> Result<Self> {
-        let persistence =
-            Arc::new(persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?);
+        Self::with_persistence_for_graph_and_canonical_wal(graph_id, base_url, enable_wal, None)
+            .await
+    }
+
+    /// Create ORION engine with persistence AND a shared canonical WAL
+    /// path for the TD-066 (c) recovery hook. When
+    /// `canonical_wal_path` is `Some`, `OrionPersistence` will scan
+    /// the canonical WAL on recovery and log the latest checkpoint
+    /// LSN for this graph (read-side observability only; recovery
+    /// behavior is unchanged in Part 1). When `None`, behavior is
+    /// identical to [`Self::with_persistence_for_graph`].
+    pub async fn with_persistence_for_graph_and_canonical_wal(
+        graph_id: String,
+        base_url: String,
+        enable_wal: bool,
+        canonical_wal_path: Option<std::path::PathBuf>,
+    ) -> Result<Self> {
+        let mut persistence =
+            persistence::OrionPersistence::new(graph_id, base_url, enable_wal).await?;
+        if let Some(path) = canonical_wal_path {
+            persistence = persistence.with_canonical_wal_path(path);
+        }
+        let persistence = Arc::new(persistence);
 
         Ok(Self {
             memory_pool: Arc::new(GraphMemoryPool::new()),
@@ -247,7 +276,7 @@ impl OrionGraphEngine {
             edge_metadata: Arc::new(DashMap::new()),
             node_to_index: Arc::new(DashMap::new()),
             index_to_node: Arc::new(RwLock::new(Vec::new())),
-            stats: Arc::new(RwLock::new(EngineStats::default())),
+            stats: Arc::new(RwLock::new(OrionEngineStats::default())),
             persistence: Some(persistence),
         })
     }
@@ -267,6 +296,13 @@ impl OrionGraphEngine {
         Ok(engine)
     }
 
+    /// Access the optional persistence layer. Returns `None` for in-memory
+    /// engines constructed via [`Self::new`]. Exposed for read-side
+    /// observability tests (TD-066 (c) Part 1) and ADR-020 recovery hooks.
+    pub fn persistence(&self) -> Option<&Arc<persistence::OrionPersistence>> {
+        self.persistence.as_ref()
+    }
+
     /// Load engine from persistent snapshot for a specific graph
     pub async fn load_from_snapshot_for_graph(
         snapshot_path: impl AsRef<Path>,
@@ -284,7 +320,7 @@ impl OrionGraphEngine {
     }
 
     /// Get engine statistics
-    pub async fn get_stats(&self) -> EngineStats {
+    pub async fn get_stats(&self) -> OrionEngineStats {
         let stats = match self.stats.read() {
             Ok(stats) => stats,
             Err(poisoned) => {
@@ -292,7 +328,7 @@ impl OrionGraphEngine {
                 poisoned.into_inner()
             }
         };
-        EngineStats {
+        OrionEngineStats {
             nodes_created: stats.nodes_created,
             edges_created: stats.edges_created,
             nodes_updated: stats.nodes_updated,
@@ -449,6 +485,34 @@ impl OrionGraphEngine {
         if let Some(ref persistence) = self.persistence {
             tracing::info!("🔄 Starting ORION graph recovery...");
 
+            // TD-066 (c) Part 1: read-side observability of the canonical
+            // WAL checkpoint. If a shared canonical WAL path is wired
+            // through, log the latest checkpoint LSN for this graph so
+            // operators can confirm the durability authority's state.
+            // Recovery BEHAVIOR is unchanged in Part 1 — Part 2 (Option A
+            // of the LSN-correlation design) will use this LSN to scope
+            // engine WAL replay.
+            let checkpoint_with_ts = persistence.canonical_checkpoint_with_timestamp().await;
+            let (canonical_checkpoint_lsn, checkpoint_ts_ms) = match checkpoint_with_ts {
+                Some((lsn, ts)) => (Some(lsn), Some(ts)),
+                None => (None, None),
+            };
+            tracing::info!(
+                graph_id = persistence.graph_id(),
+                canonical_checkpoint_lsn = ?canonical_checkpoint_lsn,
+                "ORION recovery: canonical checkpoint scan (read-side observability; \
+                 recovery behavior unchanged — TD-066 (c) Part 1)"
+            );
+            // TD-066 (c) Part 2 Option E: emit metrics so operators can
+            // detect "is canonical emission + production wiring healthy?"
+            // without depending on log scraping. See
+            // `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`.
+            crate::metrics::td066_metrics::record_recovery_checkpoint_observation(
+                persistence.graph_id(),
+                canonical_checkpoint_lsn,
+                checkpoint_ts_ms,
+            );
+
             // Step 1: Load latest snapshot (if available)
             // Deferred: Implement snapshot discovery and loading
             // For now, we'll just replay WAL from the beginning
@@ -477,6 +541,79 @@ impl OrionGraphEngine {
         Ok(())
     }
 
+    /// Rebuild all CSR state from a provided slice of edges.
+    ///
+    /// This clears `node_to_index`, `index_to_node`, `csr_outgoing`, and
+    /// `csr_incoming`, then re-adds every edge in a single batch rebuild.
+    /// Use this when canonical edge records (or an adjacency projection snapshot)
+    /// are the authoritative source and the in-memory CSR needs to be
+    /// cold-started or refreshed — for example after restart before WAL replay,
+    /// or when the caller detects a stale epoch via `service.edge_epoch()`.
+    ///
+    /// Edges are added in the order provided; the CSR is rebuilt once after all
+    /// edges have been staged.
+    pub async fn rebuild_csr_from_edges(&self, edges: &[Arc<Edge>]) -> Result<()> {
+        // Phase 1: Resolve all node indices before taking CSR locks.
+        // This preserves lock order: index_to_node → csr_outgoing/csr_incoming,
+        // matching the order used by add_edge_to_csr to prevent deadlocks.
+        self.node_to_index.clear();
+        let mut resolved: Vec<(usize, usize, EdgeId)> = Vec::with_capacity(edges.len());
+        {
+            let mut idx = Self::write_lock(&self.index_to_node, "index_to_node")?;
+            idx.clear();
+
+            for edge in edges {
+                let from_idx = if let Some(i) = self.node_to_index.get(&edge.from_node_id) {
+                    *i
+                } else {
+                    let i = idx.len();
+                    idx.push(edge.from_node_id.clone());
+                    self.node_to_index.insert(edge.from_node_id.clone(), i);
+                    i
+                };
+                let to_idx = if let Some(i) = self.node_to_index.get(&edge.to_node_id) {
+                    *i
+                } else {
+                    let i = idx.len();
+                    idx.push(edge.to_node_id.clone());
+                    self.node_to_index.insert(edge.to_node_id.clone(), i);
+                    i
+                };
+                resolved.push((from_idx, to_idx, edge.id.clone()));
+            }
+        } // index_to_node write lock released
+
+        // Phase 2: Reset and populate CSR with resolved indices.
+        {
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
+            *csr_out = storage::CsrStorage::with_capacity(edges.len() * 2, edges.len());
+        }
+        {
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
+            *csr_in = storage::CsrStorage::with_capacity(edges.len() * 2, edges.len());
+        }
+        {
+            let mut csr_out = Self::write_lock(&self.csr_outgoing, "CSR outgoing")?;
+            let mut csr_in = Self::write_lock(&self.csr_incoming, "CSR incoming")?;
+
+            for (from_idx, to_idx, edge_id) in &resolved {
+                // Silently ignore duplicates during batch rebuild.
+                let _ = csr_out.add_edge(*from_idx, *to_idx, edge_id.clone());
+                let _ = csr_in.add_edge(*to_idx, *from_idx, edge_id.clone());
+            }
+
+            csr_out.rebuild()?;
+            csr_in.rebuild()?;
+        }
+
+        tracing::debug!(
+            "ORION CSR rebuilt from {} edges ({} nodes indexed)",
+            edges.len(),
+            self.node_to_index.len()
+        );
+        Ok(())
+    }
+
     // Convenience alias methods for persistence module compatibility
 
     /// Create a node in the graph (alias for `insert_node` used by persistence layer).
@@ -499,8 +636,8 @@ impl OrionGraphEngine {
         GraphEngine::delete_edge(self, edge_id).await
     }
 
-    /// Insert edge without validation - for use by PULSAR when cross-shard validation
-    /// has already been performed at the distributed layer
+    /// Insert edge without validation for callers that have already performed
+    /// graph-level validation.
     pub async fn insert_edge_unchecked(&self, edge: Edge) -> Result<Arc<Edge>> {
         tracing::debug!("insert_edge_unchecked called for edge: {}", edge.id);
 

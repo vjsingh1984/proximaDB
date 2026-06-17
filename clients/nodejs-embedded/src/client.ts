@@ -14,6 +14,13 @@ import {
   GraphInfo,
   ProximaDBError,
   ErrorCode,
+  ProbeResponse,
+  SchemaResponse,
+  UpdateSchemaRequest,
+  UpdateSchemaResponse,
+  QueryRequest,
+  ExplainQueryRequest,
+  QueryResponse,
 } from "./types";
 import { CollectionBuilder, CollectionHandle, CollectionHttpClient } from "./collection";
 import { GraphBuilder, GraphHandle, GraphHttpClient } from "./graph";
@@ -129,6 +136,13 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    */
   async post<T>(requestUrl: string, body: unknown): Promise<T> {
     return this.request<T>("POST", requestUrl, body);
+  }
+
+  /**
+   * Make a PUT request
+   */
+  async put<T>(requestUrl: string, body: unknown): Promise<T> {
+    return this.request<T>("PUT", requestUrl, body);
   }
 
   /**
@@ -253,7 +267,7 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * Delete a collection
    */
   async deleteCollection(name: string): Promise<void> {
-    const requestUrl = this.config.url + "/api/v1/collections/" + name;
+    const requestUrl = this.config.url + "/api/v2/collections/" + name;
     await this.delete<unknown>(requestUrl);
   }
 
@@ -261,9 +275,62 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * List all collections
    */
   async listCollections(): Promise<CollectionInfo[]> {
-    const requestUrl = this.config.url + "/api/v1/collections";
+    const requestUrl = this.config.url + "/api/v2/collections";
     const response = await this.get<{ collections: CollectionInfo[] }>(requestUrl);
     return response.collections;
+  }
+
+  /**
+   * Get the schema for a collection
+   *
+   * Wire endpoint: GET /api/v2/collections/{collection_id}/schema
+   * OpenAPI operationId: getCollectionSchema
+   */
+  async getCollectionSchema(collectionId: string): Promise<SchemaResponse> {
+    const requestUrl =
+      this.config.url + "/api/v2/collections/" + collectionId + "/schema";
+    return await this.get<SchemaResponse>(requestUrl);
+  }
+
+  /**
+   * Update the schema for a collection
+   *
+   * Wire endpoint: PUT /api/v2/collections/{collection_id}/schema
+   * OpenAPI operationId: updateCollectionSchema
+   */
+  async updateCollectionSchema(
+    collectionId: string,
+    schema: UpdateSchemaRequest
+  ): Promise<UpdateSchemaResponse> {
+    const requestUrl =
+      this.config.url + "/api/v2/collections/" + collectionId + "/schema";
+    return await this.put<UpdateSchemaResponse>(requestUrl, schema);
+  }
+
+  // =========================================================================
+  // Query Facade (AQL / UQL)
+  // =========================================================================
+
+  /**
+   * Execute an AQL or UQL query through the shared query facade
+   *
+   * Wire endpoint: POST /api/v2/query
+   * OpenAPI operationId: executeQuery
+   */
+  async executeQuery(req: QueryRequest): Promise<QueryResponse> {
+    const requestUrl = this.config.url + "/api/v2/query";
+    return await this.post<QueryResponse>(requestUrl, req);
+  }
+
+  /**
+   * Explain an AQL or UQL query through the shared query facade
+   *
+   * Wire endpoint: POST /api/v2/query/explain
+   * OpenAPI operationId: explainQuery
+   */
+  async explainQuery(req: ExplainQueryRequest): Promise<QueryResponse> {
+    const requestUrl = this.config.url + "/api/v2/query/explain";
+    return await this.post<QueryResponse>(requestUrl, req);
   }
 
   // =========================================================================
@@ -278,25 +345,37 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
   }
 
   /**
-   * Create a graph builder
+   * Create a graph builder.
+   *
+   * Wire endpoint: POST /api/v2/graphs
+   * OpenAPI operationId: createGraph
+   *
+   * The argument is the server-true `graph_id` (unique identifier). Use
+   * `.name(...)` on the returned builder to set the optional display name.
    */
-  createGraph(name: string): GraphBuilder {
-    return new GraphBuilder(this, name);
+  createGraph(graphId: string): GraphBuilder {
+    return new GraphBuilder(this, graphId);
   }
 
   /**
    * Delete a graph
+   *
+   * Wire endpoint: DELETE /api/v2/graphs/{graph_id}
+   * OpenAPI operationId: deleteGraph
    */
   async deleteGraph(name: string): Promise<void> {
-    const requestUrl = this.config.url + "/api/v1/graphs/" + name;
+    const requestUrl = this.config.url + "/api/v2/graphs/" + name;
     await this.delete<unknown>(requestUrl);
   }
 
   /**
    * List all graphs
+   *
+   * Wire endpoint: GET /api/v2/graphs
+   * OpenAPI operationId: listGraphs
    */
   async listGraphs(): Promise<GraphInfo[]> {
-    const requestUrl = this.config.url + "/api/v1/graphs";
+    const requestUrl = this.config.url + "/api/v2/graphs";
     const response = await this.get<{ graphs: GraphInfo[] }>(requestUrl);
     return response.graphs;
   }
@@ -311,6 +390,28 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
   async health(): Promise<HealthStatus> {
     const requestUrl = this.config.url + "/health";
     return await this.get<HealthStatus>(requestUrl);
+  }
+
+  /**
+   * Kubernetes-style liveness probe
+   *
+   * Wire endpoint: GET /health/live
+   * OpenAPI operationId: getLiveness
+   */
+  async healthLive(): Promise<ProbeResponse> {
+    const requestUrl = this.config.url + "/health/live";
+    return await this.get<ProbeResponse>(requestUrl);
+  }
+
+  /**
+   * Kubernetes-style readiness probe
+   *
+   * Wire endpoint: GET /health/ready
+   * OpenAPI operationId: getReadiness
+   */
+  async healthReady(): Promise<ProbeResponse> {
+    const requestUrl = this.config.url + "/health/ready";
+    return await this.get<ProbeResponse>(requestUrl);
   }
 
   /**

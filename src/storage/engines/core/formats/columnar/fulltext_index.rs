@@ -17,7 +17,7 @@
 //! │  │  - N-gram       │  │  - Frequencies   │  │  - Avg length  │ │
 //! │  └─────────────────┘  └──────────────────┘  └────────────────┘ │
 //! ├─────────────────────────────────────────────────────────────────┤
-//! │  FullTextIndex │ TextStatistics │ SearchResult │ IndexBuilder  │
+//! │  FullTextIndex │ TextStatistics │ FulltextSearchResult │ IndexBuilder  │
 //! └─────────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -549,9 +549,12 @@ pub struct Posting {
     pub positions: Vec<u32>,
 }
 
+/// Backwards-compat alias for [`FulltextPostingList`].
+pub type PostingList = FulltextPostingList;
+
 /// Posting list for a term
 #[derive(Debug, Clone, Default)]
-pub struct PostingList {
+pub struct FulltextPostingList {
     /// Document frequency (number of documents containing this term)
     pub doc_frequency: u32,
     /// Total occurrences across all documents
@@ -560,7 +563,7 @@ pub struct PostingList {
     pub postings: Vec<Posting>,
 }
 
-impl PostingList {
+impl FulltextPostingList {
     /// Create a new empty posting list
     pub fn new() -> Self {
         Self::default()
@@ -787,7 +790,7 @@ impl BM25Scorer {
 
 /// A search result with score
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct FulltextSearchResult {
     /// Document ID
     pub doc_id: String,
     /// Relevance score
@@ -800,7 +803,7 @@ pub struct SearchResult {
     pub highlight_positions: HashMap<String, Vec<u32>>,
 }
 
-impl SearchResult {
+impl FulltextSearchResult {
     /// Create a new search result
     pub fn new(doc_id: String, score: f64) -> Self {
         Self {
@@ -894,7 +897,7 @@ pub struct FullTextIndex {
     /// Tokenizer for processing text
     tokenizer: Tokenizer,
     /// Inverted index: term -> posting list
-    inverted_index: BTreeMap<String, PostingList>,
+    inverted_index: BTreeMap<String, FulltextPostingList>,
     /// Document metadata
     documents: HashMap<String, DocumentMetadata>,
     /// Text statistics
@@ -1079,12 +1082,16 @@ impl FullTextIndex {
     }
 
     /// Search the index with default options
-    pub fn search(&self, query: &str, limit: usize) -> Vec<SearchResult> {
+    pub fn search(&self, query: &str, limit: usize) -> Vec<FulltextSearchResult> {
         self.search_with_options(query, SearchOptions::top_k(limit))
     }
 
     /// Search the index with custom options
-    pub fn search_with_options(&self, query: &str, options: SearchOptions) -> Vec<SearchResult> {
+    pub fn search_with_options(
+        &self,
+        query: &str,
+        options: SearchOptions,
+    ) -> Vec<FulltextSearchResult> {
         if self.documents.is_empty() {
             return Vec::new();
         }
@@ -1140,7 +1147,7 @@ impl FullTextIndex {
         }
 
         // Filter and collect results
-        let mut results: Vec<SearchResult> = doc_scores
+        let mut results: Vec<FulltextSearchResult> = doc_scores
             .into_iter()
             .filter(|(_, (score, matched_terms, _, _))| {
                 // Filter by minimum score
@@ -1157,7 +1164,7 @@ impl FullTextIndex {
             })
             .map(
                 |(doc_id, (score, matched_terms, term_frequencies, highlight_positions))| {
-                    SearchResult {
+                    FulltextSearchResult {
                         doc_id,
                         score,
                         matched_terms,
@@ -1215,7 +1222,7 @@ impl FullTextIndex {
             .map(|(term, pl)| (term.clone(), pl.doc_frequency))
             .collect();
 
-        terms.sort_by(|a, b| b.1.cmp(&a.1));
+        terms.sort_by_key(|t| std::cmp::Reverse(t.1));
         terms.truncate(limit);
         terms
     }

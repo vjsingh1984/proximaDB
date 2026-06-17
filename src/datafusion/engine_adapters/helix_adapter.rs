@@ -73,9 +73,7 @@ use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::storage::formats::{
-    CacheStatus, ColumnBounds, FileSplit, SpatialBounds, SplitStatistics, SplitType, StorageTier,
-};
+use crate::storage::formats::{CacheStatus, FileSplit, SpatialBounds, SplitType, StorageTier};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 use super::common::vector_collection_schema;
@@ -249,10 +247,10 @@ impl HelixTableProvider {
 
     /// Parse LSM level from filename.
     fn parse_level_from_filename(filename: &str) -> usize {
-        if let Some(level_str) = filename.strip_prefix("L") {
-            if let Some(underscore_pos) = level_str.find('_') {
-                return level_str[..underscore_pos].parse().unwrap_or(0);
-            }
+        if let Some(level_str) = filename.strip_prefix("L")
+            && let Some(underscore_pos) = level_str.find('_')
+        {
+            return level_str[..underscore_pos].parse().unwrap_or(0);
         }
         0
     }
@@ -446,6 +444,7 @@ impl ProximaTableProvider for HelixTableProvider {
 /// Reads Hilbert-ordered blocks from HELIX files and returns RecordBatch streams.
 /// Supports spatial pruning based on Hilbert curve bounds.
 #[derive(Debug)]
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct HelixSplitReader {
     /// Arrow schema for records
     schema: SchemaRef,
@@ -532,6 +531,7 @@ impl SplitReader for HelixSplitReader {
 /// RecordBatch stream for reading HELIX blocks.
 ///
 /// Reads Hilbert-ordered blocks and yields RecordBatches.
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct HelixBlockStream {
     /// Output schema (after projection)
     schema: SchemaRef,

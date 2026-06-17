@@ -36,11 +36,12 @@ Example:
 
 from __future__ import annotations
 
+import json
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Union
-
-from .models import Collection
+from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -55,11 +56,11 @@ class GraphNode:
     """
 
     id: str
-    labels: List[str] = field(default_factory=list)
-    properties: Dict[str, Any] = field(default_factory=dict)
-    embedding: Optional[List[float]] = None
+    labels: list[str] = field(default_factory=list)
+    properties: dict[str, Any] = field(default_factory=dict)
+    embedding: list[float] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API calls."""
         return {
             "id": self.id,
@@ -85,10 +86,10 @@ class GraphEdge:
     from_node: str
     to_node: str
     edge_type: str
-    properties: Dict[str, Any] = field(default_factory=dict)
-    weight: Optional[float] = None
+    properties: dict[str, Any] = field(default_factory=dict)
+    weight: float | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API calls."""
         result = {
             "id": self.id,
@@ -112,8 +113,8 @@ class GraphPath:
         total_weight: Sum of edge weights
     """
 
-    nodes: List[str] = field(default_factory=list)
-    edges: List[str] = field(default_factory=list)
+    nodes: list[str] = field(default_factory=list)
+    edges: list[str] = field(default_factory=list)
     total_weight: float = 0.0
 
 
@@ -128,10 +129,10 @@ class GraphQueryResult:
         stats: Query execution statistics
     """
 
-    nodes: List[GraphNode] = field(default_factory=list)
-    edges: List[GraphEdge] = field(default_factory=list)
-    paths: List[GraphPath] = field(default_factory=list)
-    stats: Dict[str, Any] = field(default_factory=dict)
+    nodes: list[GraphNode] = field(default_factory=list)
+    edges: list[GraphEdge] = field(default_factory=list)
+    paths: list[GraphPath] = field(default_factory=list)
+    stats: dict[str, Any] = field(default_factory=dict)
 
 
 class ProximaDBGraph:
@@ -158,15 +159,253 @@ class ProximaDBGraph:
         self._client = client
         self._graph_id = graph_id
 
+    @staticmethod
+    def _is_internal_label(label: str) -> bool:
+        return label.startswith("__")
+
+    @staticmethod
+    def _normalize_node(node: Any) -> GraphNode | None:
+        if node is None:
+            return None
+        if isinstance(node, GraphNode):
+            return node
+        if isinstance(node, dict):
+            return GraphNode(
+                id=node.get("id", ""),
+                labels=list(node.get("labels", []) or []),
+                properties=dict(node.get("properties", {}) or {}),
+            )
+        return GraphNode(
+            id=getattr(node, "id", ""),
+            labels=list(getattr(node, "labels", []) or []),
+            properties=dict(getattr(node, "properties", {}) or {}),
+        )
+
+    @staticmethod
+    def _normalize_edge(edge: Any) -> GraphEdge | None:
+        if edge is None:
+            return None
+        if isinstance(edge, GraphEdge):
+            return edge
+        if isinstance(edge, dict):
+            return GraphEdge(
+                id=edge.get("id", ""),
+                from_node=edge.get("from_node_id") or edge.get("from_node") or "",
+                to_node=edge.get("to_node_id") or edge.get("to_node") or "",
+                edge_type=edge.get("edge_type", edge.get("type", "")),
+                properties=dict(edge.get("properties", {}) or {}),
+                weight=edge.get("weight"),
+            )
+        return GraphEdge(
+            id=getattr(edge, "id", ""),
+            from_node=getattr(edge, "from_node_id", None)
+            or getattr(edge, "from_node", ""),
+            to_node=getattr(edge, "to_node_id", None) or getattr(edge, "to_node", ""),
+            edge_type=getattr(edge, "edge_type", ""),
+            properties=dict(getattr(edge, "properties", {}) or {}),
+            weight=getattr(edge, "weight", None),
+        )
+
+    def _query_nodes_raw(
+        self,
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> list[dict[str, Any]]:
+        result = self._client.query_nodes(
+            graph_id=self._graph_id,
+            labels=labels,
+            properties=properties,
+            limit=limit,
+            offset=offset,
+        )
+        if isinstance(result, dict):
+            return list(result.get("nodes", []) or [])
+        return []
+
+    def _get_node_raw(self, node_id: str) -> dict[str, Any] | None:
+        try:
+            result = self._client.get_node(node_id=node_id, graph_id=self._graph_id)
+            if isinstance(result, dict):
+                return result
+        except Exception:
+            pass
+
+        for node in self._query_nodes_raw(limit=100000):
+            if node.get("id") == node_id:
+                return node
+        return None
+
+    def _get_outgoing_edges_raw(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            edges = self._client.get_outgoing_edges(
+                node_id=node_id,
+                edge_types=edge_types,
+                graph_id=self._graph_id,
+            )
+            return [
+                dict(edge) if isinstance(edge, dict) else edge for edge in (edges or [])
+            ]
+        except Exception:
+            pass
+
+        try:
+            traversal = self._client.traverse_graph(
+                graph_id=self._graph_id,
+                start_node_id=node_id,
+                max_depth=1,
+                edge_types=edge_types,
+                limit=None,
+            )
+        except Exception:
+            return []
+
+        edges = []
+        for edge in traversal.get("edges", []) or []:
+            normalized = self._normalize_edge(edge)
+            if normalized and normalized.from_node == node_id:
+                edges.append(normalized.to_dict())
+        return edges
+
+    def _get_incoming_edges_raw(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        try:
+            edges = self._client.get_incoming_edges(
+                node_id=node_id,
+                edge_types=edge_types,
+                graph_id=self._graph_id,
+            )
+            return [
+                dict(edge) if isinstance(edge, dict) else edge for edge in (edges or [])
+            ]
+        except Exception:
+            pass
+
+        incoming: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for node in self.get_all_nodes(include_internal=True):
+            for edge in self._get_outgoing_edges_raw(node.id, edge_types=edge_types):
+                normalized = self._normalize_edge(edge)
+                if normalized is None or normalized.to_node != node_id:
+                    continue
+                signature = (
+                    normalized.from_node,
+                    normalized.to_node,
+                    normalized.edge_type,
+                )
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                incoming.append(normalized.to_dict())
+        return incoming
+
+    @staticmethod
+    def _normalize_json_node(raw_node: dict[str, Any]) -> dict[str, Any] | None:
+        node_id = raw_node.get("id") or raw_node.get("node_id") or raw_node.get("key")
+        if not node_id:
+            return None
+
+        labels = raw_node.get("labels")
+        if isinstance(labels, str):
+            labels = [labels]
+        if not labels:
+            node_type = raw_node.get("type") or raw_node.get("kind")
+            labels = [str(node_type)] if node_type else []
+
+        properties = dict(raw_node.get("properties", {}) or {})
+        for key, value in raw_node.items():
+            if key in {"id", "node_id", "key", "labels", "properties"}:
+                continue
+            properties.setdefault(key, value)
+
+        return {
+            "id": str(node_id),
+            "labels": [str(label) for label in labels],
+            "properties": properties,
+        }
+
+    @staticmethod
+    def _normalize_json_edge(
+        raw_edge: dict[str, Any], index: int
+    ) -> dict[str, Any] | None:
+        from_node = (
+            raw_edge.get("from_node_id")
+            or raw_edge.get("from_node")
+            or raw_edge.get("source")
+            or raw_edge.get("src")
+            or raw_edge.get("from")
+        )
+        to_node = (
+            raw_edge.get("to_node_id")
+            or raw_edge.get("to_node")
+            or raw_edge.get("target")
+            or raw_edge.get("dst")
+            or raw_edge.get("to")
+        )
+        if not from_node or not to_node:
+            return None
+
+        edge_type = (
+            raw_edge.get("edge_type")
+            or raw_edge.get("type")
+            or raw_edge.get("label")
+            or "RELATED_TO"
+        )
+        edge_id = (
+            raw_edge.get("id") or f"edge_{index}_{from_node}_{to_node}_{edge_type}"
+        )
+
+        properties = dict(raw_edge.get("properties", {}) or {})
+        for key, value in raw_edge.items():
+            if key in {
+                "id",
+                "from_node_id",
+                "from_node",
+                "source",
+                "src",
+                "from",
+                "to_node_id",
+                "to_node",
+                "target",
+                "dst",
+                "to",
+                "edge_type",
+                "type",
+                "label",
+                "properties",
+                "weight",
+            }:
+                continue
+            properties.setdefault(key, value)
+
+        result = {
+            "id": str(edge_id),
+            "from_node_id": str(from_node),
+            "to_node_id": str(to_node),
+            "edge_type": str(edge_type),
+            "properties": properties,
+        }
+        if raw_edge.get("weight") is not None:
+            result["weight"] = raw_edge.get("weight")
+        return result
+
     # ========================================================================
     # Batch Operations (Performance-Critical for Victor)
     # ========================================================================
 
     def batch_create_nodes(
         self,
-        nodes: List[Union[GraphNode, Dict[str, Any]]],
+        nodes: list[GraphNode | dict[str, Any]],
         batch_size: int = 1000,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create multiple nodes in a single operation.
 
         This is **critical for Victor performance** when indexing codebases
@@ -228,9 +467,9 @@ class ProximaDBGraph:
 
     def batch_create_edges(
         self,
-        edges: List[Union[GraphEdge, Dict[str, Any]]],
+        edges: list[GraphEdge | dict[str, Any]],
         batch_size: int = 1000,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create multiple edges in a single operation.
 
         Critical for Victor when creating call graphs and import relationships.
@@ -267,14 +506,30 @@ class ProximaDBGraph:
             batch = edge_dicts[i : i + batch_size]
 
             try:
-                for edge_dict in batch:
+                for edge_offset, edge_dict in enumerate(batch):
+                    from_node_id = (
+                        edge_dict.get("from_node_id")
+                        or edge_dict.get("from_node")
+                        or edge_dict.get("from")
+                    )
+                    to_node_id = (
+                        edge_dict.get("to_node_id")
+                        or edge_dict.get("to_node")
+                        or edge_dict.get("to")
+                    )
+                    edge_type = edge_dict.get("edge_type") or edge_dict.get("type")
+                    if not from_node_id or not to_node_id or not edge_type:
+                        raise ValueError(
+                            "Edge batch items must include from/to node IDs and edge type"
+                        )
                     self._client.create_edge(
                         graph_id=self._graph_id,
-                        edge_id=edge_dict.get("id", f"edge_{i}"),
-                        from_node=edge_dict["from_node"],
-                        to_node=edge_dict["to_node"],
-                        edge_type=edge_dict["edge_type"],
+                        edge_id=edge_dict.get("id", f"edge_{i + edge_offset}"),
+                        from_node_id=from_node_id,
+                        to_node_id=to_node_id,
+                        edge_type=edge_type,
                         properties=edge_dict.get("properties", {}),
+                        weight=edge_dict.get("weight"),
                     )
                     total_created += 1
             except Exception as e:
@@ -294,7 +549,7 @@ class ProximaDBGraph:
     def query_cypher(
         self,
         query: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
     ) -> GraphQueryResult:
         """Execute Cypher-like graph query.
 
@@ -342,7 +597,7 @@ class ProximaDBGraph:
 
         return GraphQueryResult()
 
-    def _parse_cypher(self, query: str) -> Dict[str, Any]:
+    def _parse_cypher(self, query: str) -> dict[str, Any]:
         """Parse Cypher query into components.
 
         This is a simplified parser for common patterns.
@@ -406,7 +661,7 @@ class ProximaDBGraph:
         return result
 
     def _execute_traversal(
-        self, start_node_ids: List[str], parsed_query: Dict[str, Any]
+        self, start_node_ids: list[str], parsed_query: dict[str, Any]
     ) -> GraphQueryResult:
         """Execute graph traversal from start nodes."""
         result = GraphQueryResult()
@@ -427,26 +682,16 @@ class ProximaDBGraph:
 
                 if traversal_result.get("nodes"):
                     for node_data in traversal_result["nodes"]:
-                        result.nodes.append(
-                            GraphNode(
-                                id=node_data["id"],
-                                labels=node_data.get("labels", []),
-                                properties=node_data.get("properties", {}),
-                            )
-                        )
+                        node = self._normalize_node(node_data)
+                        if node is not None:
+                            result.nodes.append(node)
 
                 if traversal_result.get("edges"):
                     for edge_data in traversal_result["edges"]:
-                        result.edges.append(
-                            GraphEdge(
-                                id=edge_data["id"],
-                                from_node=edge_data["from_node_id"],
-                                to_node=edge_data["to_node_id"],
-                                edge_type=edge_data.get("edge_type", ""),
-                                properties=edge_data.get("properties", {}),
-                            )
-                        )
-            except Exception as e:
+                        edge = self._normalize_edge(edge_data)
+                        if edge is not None:
+                            result.edges.append(edge)
+            except Exception:
                 # Log and continue
                 pass
 
@@ -461,7 +706,7 @@ class ProximaDBGraph:
         node_id: str,
         edge_type: str = "CALLS",
         max_depth: int = 1,
-    ) -> List[GraphNode]:
+    ) -> list[GraphNode]:
         """Find all nodes that have edges pointing to the target node.
 
         This is **critical for Victor** to find:
@@ -483,64 +728,341 @@ class ProximaDBGraph:
             for caller in callers:
                 print(f"{caller.properties['name']}() calls parse_json()")
         """
-        # Get all edges of the specified type
-        all_edges = []
         try:
-            # Query edges that point to our target
-            # This requires a custom query since standard API doesn't support it
-            # For now, we'll use a workaround: get all edges and filter
-            graph_info = self._client.get_graph(self._graph_id)
+            callers: list[GraphNode] = []
+            seen_ids: set[str] = set()
 
-            # Get all nodes first to find connections
-            # This is inefficient - proper implementation needs reverse index
-            all_nodes = self._client.query_nodes(
-                graph_id=self._graph_id,
-                labels=[],
-                properties={},
-            )
+            if max_depth <= 1:
+                for edge in self._get_incoming_edges_raw(
+                    node_id,
+                    edge_types=[edge_type] if edge_type else None,
+                ):
+                    normalized = self._normalize_edge(edge)
+                    if normalized is None:
+                        continue
+                    caller = self.get_node_by_id(normalized.from_node)
+                    if caller is None or caller.id in seen_ids:
+                        continue
+                    seen_ids.add(caller.id)
+                    callers.append(caller)
+                return callers
 
-            caller_ids = []
-
-            # For each node, check if it has an edge to our target
-            # TODO: Optimize this with proper reverse index query
-            for node_data in all_nodes.get("nodes", []):
-                try:
-                    # Try to traverse from this node
-                    traversal = self._client.traverse_graph(
-                        graph_id=self._graph_id,
-                        start_node_id=node_data["id"],
-                        max_depth=max_depth,
+            frontier = {node_id}
+            for _ in range(max_depth):
+                next_frontier: set[str] = set()
+                for target_id in frontier:
+                    for edge in self._get_incoming_edges_raw(
+                        target_id,
                         edge_types=[edge_type] if edge_type else None,
-                    )
-
-                    # Check if traversal reaches our target
-                    for visited_node in traversal.get("nodes", []):
-                        if visited_node["id"] == node_id:
-                            caller_ids.append(node_data["id"])
-                            break
-                except Exception:
-                    pass
-
-            # Get full node data for callers
-            callers = []
-            for caller_id in caller_ids:
-                try:
-                    node_data = self._client.get_node(self._graph_id, caller_id)
-                    callers.append(
-                        GraphNode(
-                            id=node_data["id"],
-                            labels=node_data.get("labels", []),
-                            properties=node_data.get("properties", {}),
-                        )
-                    )
-                except Exception:
-                    pass
+                    ):
+                        normalized = self._normalize_edge(edge)
+                        if normalized is None:
+                            continue
+                        caller_id = normalized.from_node
+                        if caller_id in seen_ids:
+                            continue
+                        caller = self.get_node_by_id(caller_id)
+                        if caller is None:
+                            continue
+                        seen_ids.add(caller.id)
+                        callers.append(caller)
+                        next_frontier.add(caller.id)
+                frontier = next_frontier
+                if not frontier:
+                    break
 
             return callers
 
-        except Exception as e:
+        except Exception:
             # Log error and return empty list
             return []
+
+    def get_node_by_id(self, node_id: str) -> GraphNode | None:
+        """Get a graph node by ID."""
+        return self._normalize_node(self._get_node_raw(node_id))
+
+    def get_all_nodes(
+        self,
+        labels: list[str] | None = None,
+        batch_size: int = 1000,
+        include_internal: bool = False,
+    ) -> list[GraphNode]:
+        """Get all graph nodes with optional label filtering."""
+        nodes: list[GraphNode] = []
+        offset = 0
+
+        while True:
+            page = self._query_nodes_raw(
+                labels=labels,
+                properties={},
+                limit=batch_size,
+                offset=offset,
+            )
+            if not page:
+                break
+
+            for raw_node in page:
+                node = self._normalize_node(raw_node)
+                if node is None:
+                    continue
+                if not include_internal and any(
+                    self._is_internal_label(label) for label in node.labels
+                ):
+                    continue
+                nodes.append(node)
+
+            if len(page) < batch_size:
+                break
+            offset += batch_size
+
+        return nodes
+
+    def get_nodes_by_file(self, file_path: str) -> list[GraphNode]:
+        """Return nodes associated with a file path."""
+        result = []
+        for node in self.get_all_nodes():
+            candidate_file = (
+                node.properties.get("file")
+                or node.properties.get("file_path")
+                or node.properties.get("path")
+            )
+            if candidate_file == file_path:
+                result.append(node)
+        return result
+
+    def find_nodes(
+        self,
+        *,
+        name: str | None = None,
+        type: str | None = None,
+        file: str | None = None,
+    ) -> list[GraphNode]:
+        """Find nodes by exact symbol metadata."""
+        labels = [type] if type else None
+        nodes = [
+            node
+            for node in (
+                self._normalize_node(raw_node)
+                for raw_node in self._query_nodes_raw(
+                    labels=labels,
+                    properties={"name": name} if name else {},
+                    limit=1000,
+                    offset=0,
+                )
+            )
+            if node is not None
+        ]
+
+        if file:
+            nodes = [
+                node
+                for node in nodes
+                if (
+                    node.properties.get("file")
+                    or node.properties.get("file_path")
+                    or node.properties.get("path")
+                )
+                == file
+            ]
+        if name:
+            nodes = [
+                node
+                for node in nodes
+                if node.properties.get("name") == name
+                or node.properties.get("qualified_name") == name
+            ]
+        return nodes
+
+    def search_symbols(
+        self,
+        query: str,
+        limit: int = 20,
+        symbol_types: Iterable[str] | None = None,
+    ) -> list[GraphNode]:
+        """Search symbol-like nodes using exact, prefix, and substring ranking."""
+        normalized_query = query.strip().lower()
+        if not normalized_query:
+            return []
+
+        allowed_types = {str(symbol_type) for symbol_type in symbol_types or []}
+        ranked: list[tuple[int, GraphNode]] = []
+
+        for node in self.get_all_nodes():
+            if allowed_types and not any(
+                label in allowed_types for label in node.labels
+            ):
+                continue
+
+            props = node.properties
+            candidates = [
+                str(props.get("qualified_name", "")),
+                str(props.get("name", "")),
+                str(props.get("signature", "")),
+                str(props.get("docstring", "")),
+                str(props.get("file", props.get("file_path", ""))),
+            ]
+            haystack = " ".join(value for value in candidates if value).lower()
+            if not haystack:
+                continue
+
+            score = 0
+            if str(props.get("qualified_name", "")).lower() == normalized_query:
+                score = 120
+            elif str(props.get("name", "")).lower() == normalized_query:
+                score = 110
+            elif (
+                str(props.get("qualified_name", ""))
+                .lower()
+                .startswith(normalized_query)
+            ):
+                score = 100
+            elif str(props.get("name", "")).lower().startswith(normalized_query):
+                score = 95
+            elif normalized_query in str(props.get("qualified_name", "")).lower():
+                score = 90
+            elif normalized_query in str(props.get("name", "")).lower():
+                score = 85
+            elif normalized_query in str(props.get("signature", "")).lower():
+                score = 70
+            elif normalized_query in str(props.get("docstring", "")).lower():
+                score = 60
+            elif normalized_query in haystack:
+                score = 40
+
+            if score > 0:
+                ranked.append((score, node))
+
+        ranked.sort(
+            key=lambda item: (
+                -item[0],
+                item[1].properties.get("file", item[1].properties.get("file_path", "")),
+                item[1].properties.get("line", item[1].properties.get("line_start", 0))
+                or 0,
+                item[1].properties.get("name", ""),
+            )
+        )
+        return [node for _, node in ranked[:limit]]
+
+    def get_neighbors(
+        self,
+        node_id: str,
+        edge_types: Iterable[str] | None = None,
+        *,
+        direction: str = "both",
+        max_depth: int = 1,
+    ) -> list[GraphEdge]:
+        """Get neighboring edges around a node."""
+        allowed_edge_types = list(edge_types or [])
+        seen_edges: set[tuple[str, str, str]] = set()
+        collected: list[GraphEdge] = []
+        frontier = {node_id}
+        visited_nodes = {node_id}
+
+        for _ in range(max_depth):
+            next_frontier: set[str] = set()
+            for current_node_id in frontier:
+                raw_edges: list[dict[str, Any]] = []
+                if direction in {"out", "both"}:
+                    raw_edges.extend(
+                        self._get_outgoing_edges_raw(
+                            current_node_id, allowed_edge_types or None
+                        )
+                    )
+                if direction in {"in", "both"}:
+                    raw_edges.extend(
+                        self._get_incoming_edges_raw(
+                            current_node_id, allowed_edge_types or None
+                        )
+                    )
+
+                for raw_edge in raw_edges:
+                    edge = self._normalize_edge(raw_edge)
+                    if edge is None:
+                        continue
+                    signature = (edge.from_node, edge.to_node, edge.edge_type)
+                    if signature in seen_edges:
+                        continue
+                    seen_edges.add(signature)
+                    collected.append(edge)
+
+                    neighbor_id = (
+                        edge.to_node
+                        if edge.from_node == current_node_id
+                        else edge.from_node
+                    )
+                    if neighbor_id and neighbor_id not in visited_nodes:
+                        visited_nodes.add(neighbor_id)
+                        next_frontier.add(neighbor_id)
+            frontier = next_frontier
+            if not frontier:
+                break
+
+        return collected
+
+    def get_all_edges(
+        self,
+        edge_types: Iterable[str] | None = None,
+    ) -> list[GraphEdge]:
+        """Get all edges in the graph via outgoing-edge scans."""
+        seen_edges: set[tuple[str, str, str]] = set()
+        edges: list[GraphEdge] = []
+
+        for node in self.get_all_nodes(include_internal=True):
+            for raw_edge in self._get_outgoing_edges_raw(
+                node.id,
+                list(edge_types) if edge_types else None,
+            ):
+                edge = self._normalize_edge(raw_edge)
+                if edge is None:
+                    continue
+                signature = (edge.from_node, edge.to_node, edge.edge_type)
+                if signature in seen_edges:
+                    continue
+                seen_edges.add(signature)
+                edges.append(edge)
+
+        return edges
+
+    def import_graph_json(
+        self,
+        graph_data: str | Path | dict[str, Any],
+    ) -> dict[str, Any]:
+        """Import a Graphify-like or generic graph.json artifact into the graph."""
+        if isinstance(graph_data, (str, Path)):
+            with Path(graph_data).open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        else:
+            payload = graph_data
+
+        raw_nodes = payload.get("nodes") or payload.get("graph", {}).get("nodes") or []
+        raw_edges = payload.get("edges") or payload.get("graph", {}).get("edges") or []
+
+        nodes = [
+            normalized
+            for normalized in (
+                self._normalize_json_node(raw_node) for raw_node in raw_nodes
+            )
+            if normalized is not None
+        ]
+        edges = [
+            normalized
+            for normalized in (
+                self._normalize_json_edge(raw_edge, index)
+                for index, raw_edge in enumerate(raw_edges)
+            )
+            if normalized is not None
+        ]
+
+        node_result = self.batch_create_nodes(nodes)
+        edge_result = self.batch_create_edges(edges)
+        return {
+            "success": bool(node_result.get("success"))
+            and bool(edge_result.get("success")),
+            "node_count": len(nodes),
+            "edge_count": len(edges),
+            "nodes": node_result,
+            "edges": edge_result,
+        }
 
     # ========================================================================
     # Pattern Matching
@@ -549,8 +1071,8 @@ class ProximaDBGraph:
     def match_pattern(
         self,
         pattern: str,
-        filters: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, GraphNode]]:
+        filters: dict[str, Any] | None = None,
+    ) -> list[dict[str, GraphNode]]:
         """Match a graph pattern and return matching subgraphs.
 
         Pattern syntax:
@@ -638,7 +1160,7 @@ class ProximaDBGraph:
     # Graph Statistics
     # ========================================================================
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get graph statistics.
 
         Returns:

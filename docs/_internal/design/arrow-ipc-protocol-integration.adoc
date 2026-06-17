@@ -910,7 +910,7 @@ impl ArrowFlightServiceImpl {
 * Production-ready Arrow IPC server
 * Security audit completed
 * Client SDK examples (Python, Java, Rust)
-* User documentation in `docs/api/arrow-ipc.adoc`
+* User documentation in `docs/03-api-reference/arrow-ipc.adoc`
 
 == Testing Strategy
 

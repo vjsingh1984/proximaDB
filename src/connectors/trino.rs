@@ -384,45 +384,122 @@ impl TrinoSplitManager {
     }
 }
 
-/// Trino page source - provides data pages from a split
+/// Trino page source — streams data pages from a split via Arrow
+/// Flight `DoGet`. Fifth live Flight method (TD-098, 2026-06-01); first
+/// of the streaming RPCs.
+///
+/// Dial pattern matches the prior four live methods
+/// (`Channel::from_shared(...).connect_lazy()` +
+/// `FlightServiceClient::new(channel)`). The split is JSON-encoded
+/// into the `Ticket.ticket` bytes — same wire format
+/// `flight_get_splits` produced on the receive side. The response
+/// stream is wrapped in `arrow_flight::decode::FlightRecordBatchStream`
+/// so each `get_next_page` pulls the next `RecordBatch`, then converts
+/// it into a `TrinoPage` (one `TrinoBlock` per column, each block
+/// holding the column slice as a stream-IPC-encoded single-column
+/// batch).
 pub struct TrinoPageSource {
-    /// Split being read
     #[allow(dead_code)]
     split: TrinoSplit,
-    /// Schema for output
     #[allow(dead_code)]
     schema: Arc<ArrowSchema>,
-    /// Whether source is finished
-    #[allow(dead_code)]
+    stream: Option<arrow_flight::decode::FlightRecordBatchStream>,
     finished: bool,
-    /// Bytes read so far
-    #[allow(dead_code)]
     bytes_read: usize,
-    /// Rows read so far
-    #[allow(dead_code)]
     rows_read: usize,
 }
 
 impl TrinoPageSource {
-    /// Create a new page source
-    pub fn new(split: TrinoSplit, schema: Arc<ArrowSchema>) -> Self {
+    /// Dial the Flight endpoint and open a `DoGet` stream for the
+    /// supplied split. Connect / RPC failures mark the source as
+    /// `finished` immediately so `get_next_page` returns `None` on
+    /// the first call without further I/O — callers see "no rows"
+    /// instead of a panic on transient blips.
+    pub async fn new(endpoint: &str, split: TrinoSplit, schema: Arc<ArrowSchema>) -> Self {
+        use arrow_flight::Ticket;
+        use arrow_flight::decode::FlightRecordBatchStream;
+        use arrow_flight::error::FlightError;
+        use arrow_flight::flight_service_client::FlightServiceClient;
+        use futures::TryStreamExt;
+
+        let dial = endpoint
+            .strip_prefix("grpc://")
+            .map(|rest| format!("http://{rest}"))
+            .unwrap_or_else(|| endpoint.to_string());
+
+        let channel = match tonic::transport::Channel::from_shared(dial)
+            .ok()
+            .map(|e| e.connect_lazy())
+        {
+            Some(ch) => ch,
+            None => {
+                return Self {
+                    split,
+                    schema,
+                    stream: None,
+                    finished: true,
+                    bytes_read: 0,
+                    rows_read: 0,
+                };
+            }
+        };
+
+        let mut client = FlightServiceClient::new(channel);
+        let ticket = Ticket {
+            ticket: serde_json::to_vec(&split).unwrap_or_default().into(),
+        };
+        let stream = match client.do_get(tonic::Request::new(ticket)).await {
+            Ok(resp) => {
+                let mapped = resp
+                    .into_inner()
+                    .map_err(|s| FlightError::Tonic(Box::new(s)));
+                Some(FlightRecordBatchStream::new_from_flight_data(mapped))
+            }
+            Err(_) => None,
+        };
+        let finished = stream.is_none();
+
         Self {
             split,
             schema,
-            finished: false,
+            stream,
+            finished,
             bytes_read: 0,
             rows_read: 0,
         }
     }
 
-    /// Get next page of data
-    pub fn get_next_page(&mut self) -> Option<TrinoPage> {
+    /// Pull the next `RecordBatch` off the wire and surface it as a
+    /// `TrinoPage`. Stream exhaustion, decode failure, or per-column
+    /// IPC encoding failure flips the source to `finished` and
+    /// returns `None` — callers stop iterating.
+    pub async fn get_next_page(&mut self) -> Option<TrinoPage> {
+        use futures::StreamExt;
+
         if self.finished {
             return None;
         }
-        // Read: Arrow Flight DoGet with split ticket
-        self.finished = true;
-        None
+        let Some(stream) = self.stream.as_mut() else {
+            self.finished = true;
+            return None;
+        };
+        match stream.next().await {
+            Some(Ok(batch)) => match record_batch_to_trino_page(&batch) {
+                Ok(page) => {
+                    self.rows_read += batch.num_rows();
+                    self.bytes_read += page.size_in_bytes;
+                    Some(page)
+                }
+                Err(_) => {
+                    self.finished = true;
+                    None
+                }
+            },
+            Some(Err(_)) | None => {
+                self.finished = true;
+                None
+            }
+        }
     }
 
     /// Check if source is finished
@@ -448,7 +525,48 @@ impl TrinoPageSource {
     /// Close the page source
     pub fn close(&mut self) {
         self.finished = true;
+        self.stream = None;
     }
+}
+
+/// Convert an Arrow `RecordBatch` to a Trino-shaped `TrinoPage`. Each
+/// column becomes one `TrinoBlock` whose `data` is the stream-IPC
+/// bytes of a single-column `RecordBatch` (so the consumer can decode
+/// each block independently via `arrow::ipc::reader::StreamReader`).
+///
+/// Inverse of [`trino_page_to_record_batch`]; both round-trip through
+/// the wire today (page-source decode + page-sink encode).
+pub fn record_batch_to_trino_page(
+    batch: &arrow::array::RecordBatch,
+) -> Result<TrinoPage, arrow::error::ArrowError> {
+    use arrow::array::RecordBatch;
+    use arrow::ipc::writer::StreamWriter;
+
+    let schema = batch.schema();
+    let mut blocks = Vec::with_capacity(batch.num_columns());
+    for (idx, col) in batch.columns().iter().enumerate() {
+        let field = schema.field(idx).clone();
+        let single_schema = Arc::new(ArrowSchema::new(vec![field.clone()]));
+        let single_batch = RecordBatch::try_new(single_schema.clone(), vec![col.clone()])?;
+        let mut buf: Vec<u8> = Vec::new();
+        {
+            let mut writer = StreamWriter::try_new(&mut buf, &single_schema)?;
+            writer.write(&single_batch)?;
+            writer.finish()?;
+        }
+        blocks.push(TrinoBlock {
+            column: field.name().clone(),
+            data_type: field.data_type().to_string(),
+            data: buf,
+            nulls: None,
+            position_count: col.len(),
+        });
+    }
+    Ok(TrinoPage {
+        size_in_bytes: blocks.iter().map(|b| b.data.len()).sum(),
+        position_count: batch.num_rows(),
+        blocks,
+    })
 }
 
 /// Trino page - columnar data format
@@ -477,41 +595,147 @@ pub struct TrinoBlock {
     pub position_count: usize,
 }
 
-/// Trino page sink - writes data to ProximaDB
+/// Trino page sink — writes data pages to ProximaDB via Arrow Flight
+/// `DoPut`. Closes TD-098: this is the 7th and final live Flight
+/// method; the second streaming RPC (after `TrinoPageSource`).
+///
+/// Bidirectional streaming: the client opens a `do_put` channel,
+/// sends one `FlightData` per inbound page (preceded by a one-shot
+/// schema message on the first append), and the server emits a
+/// `PutResult` ack per inbound message. The sink does not block on
+/// per-page acks today — `finish` drains all remaining `PutResult`s
+/// before returning the summary, so the server has had a chance to
+/// surface any per-batch errors.
 pub struct TrinoPageSink {
-    /// Target table
     #[allow(dead_code)]
     table: TrinoTable,
-    /// Rows written
-    #[allow(dead_code)]
     rows_written: usize,
-    /// Bytes written
-    #[allow(dead_code)]
     bytes_written: usize,
-    /// Committed
-    #[allow(dead_code)]
     committed: bool,
+    /// Sender into the bidirectional do_put request stream. Dropping
+    /// it (in `finish` / `abort`) closes the client side of the
+    /// stream, which lets the server drain its loop.
+    request_tx: Option<tokio::sync::mpsc::Sender<arrow_flight::FlightData>>,
+    /// Server's PutResult stream. Drained on `finish` so caller sees
+    /// any server-reported errors before the summary lands.
+    response_rx: Option<tonic::Streaming<arrow_flight::PutResult>>,
+    /// Schema message is sent lazily on the first `append_page` call
+    /// (so a sink that's opened-then-immediately-finished writes no
+    /// data over the wire).
+    schema_sent: bool,
 }
 
 impl TrinoPageSink {
-    /// Create a new page sink
-    pub fn new(table: TrinoTable) -> Self {
-        Self {
+    /// Dial the Flight endpoint and open a bidirectional `do_put`
+    /// stream for the supplied table. Returns `TrinoError` on
+    /// connect / RPC failure so the planner can fast-fail before
+    /// any pages are produced.
+    pub async fn new(endpoint: &str, table: TrinoTable) -> Result<Self, TrinoError> {
+        use arrow_flight::flight_service_client::FlightServiceClient;
+
+        let dial = endpoint
+            .strip_prefix("grpc://")
+            .map(|rest| format!("http://{rest}"))
+            .unwrap_or_else(|| endpoint.to_string());
+
+        let channel = tonic::transport::Channel::from_shared(dial)
+            .map_err(|e| TrinoError {
+                error_code: TrinoErrorCode::InvalidArguments,
+                message: format!("invalid flight endpoint: {e}"),
+            })?
+            .connect_lazy();
+
+        let mut client = FlightServiceClient::new(channel);
+
+        let (request_tx, request_rx) = tokio::sync::mpsc::channel::<arrow_flight::FlightData>(16);
+        let request_stream = tokio_stream::wrappers::ReceiverStream::new(request_rx);
+
+        let response = client
+            .do_put(tonic::Request::new(request_stream))
+            .await
+            .map_err(|s| TrinoError {
+                error_code: TrinoErrorCode::ConnectionError,
+                message: format!("do_put open failed: {s}"),
+            })?;
+        let response_rx = response.into_inner();
+
+        Ok(Self {
             table,
             rows_written: 0,
             bytes_written: 0,
             committed: false,
-        }
+            request_tx: Some(request_tx),
+            response_rx: Some(response_rx),
+            schema_sent: false,
+        })
     }
 
-    /// Append a page of data
-    pub fn append_page(&mut self, _page: TrinoPage) -> Result<(), TrinoError> {
-        // Write: Arrow Flight DoPut with collection descriptor
+    /// Decode the page back into a `RecordBatch`, send a one-shot
+    /// schema `FlightData` if this is the first page, then send the
+    /// batch `FlightData`. Counts rows + bytes for the eventual
+    /// summary.
+    pub async fn append_page(&mut self, page: TrinoPage) -> Result<(), TrinoError> {
+        use arrow_flight::SchemaAsIpc;
+
+        let tx = self.request_tx.as_ref().ok_or_else(|| TrinoError {
+            error_code: TrinoErrorCode::GenericInternalError,
+            message: "page sink already finished".to_string(),
+        })?;
+
+        let batch = trino_page_to_record_batch(&page).map_err(|e| TrinoError {
+            error_code: TrinoErrorCode::InvalidArguments,
+            message: format!("page decode failed: {e}"),
+        })?;
+        let batch_schema = batch.schema();
+        let options = arrow::ipc::writer::IpcWriteOptions::default();
+
+        if !self.schema_sent {
+            let schema_msg: arrow_flight::FlightData =
+                SchemaAsIpc::new(batch_schema.as_ref(), &options).into();
+            tx.send(schema_msg).await.map_err(|e| TrinoError {
+                error_code: TrinoErrorCode::ConnectionError,
+                message: format!("schema send failed: {e}"),
+            })?;
+            self.schema_sent = true;
+        }
+
+        let messages =
+            arrow_flight::utils::batches_to_flight_data(batch_schema.as_ref(), vec![batch.clone()])
+                .map_err(|e| TrinoError {
+                    error_code: TrinoErrorCode::GenericInternalError,
+                    message: format!("batch encode failed: {e}"),
+                })?;
+        // batches_to_flight_data prepends a schema message we've
+        // already sent above; skip it.
+        for msg in messages.into_iter().skip(1) {
+            self.bytes_written += msg.data_body.len();
+            tx.send(msg).await.map_err(|e| TrinoError {
+                error_code: TrinoErrorCode::ConnectionError,
+                message: format!("batch send failed: {e}"),
+            })?;
+        }
+        self.rows_written += batch.num_rows();
         Ok(())
     }
 
-    /// Finish writing (commit)
-    pub fn finish(&mut self) -> Result<TrinoWriteSummary, TrinoError> {
+    /// Close the request stream, drain the server's PutResult acks
+    /// (so any per-batch error surfaces here, not silently), and
+    /// return the write summary.
+    pub async fn finish(&mut self) -> Result<TrinoWriteSummary, TrinoError> {
+        use futures::StreamExt;
+
+        // Drop the sender to close the client side of the stream.
+        self.request_tx = None;
+        if let Some(mut rx) = self.response_rx.take() {
+            while let Some(item) = rx.next().await {
+                if let Err(s) = item {
+                    return Err(TrinoError {
+                        error_code: TrinoErrorCode::GenericInternalError,
+                        message: format!("server reported error: {s}"),
+                    });
+                }
+            }
+        }
         self.committed = true;
         Ok(TrinoWriteSummary {
             rows_written: self.rows_written as i64,
@@ -519,11 +743,47 @@ impl TrinoPageSink {
         })
     }
 
-    /// Abort writing
+    /// Abort writing — drop the request stream without draining the
+    /// response stream. The server's `do_put` loop sees its inbound
+    /// channel close and exits.
     pub fn abort(&mut self) {
-        // Cleanup: abort partial DoPut via FlightAction
+        self.request_tx = None;
+        self.response_rx = None;
         self.committed = false;
     }
+}
+
+/// Decode a `TrinoPage` back to a `RecordBatch`. Each block holds a
+/// single-column stream-IPC `RecordBatch`; this reverses that
+/// encoding into a multi-column batch in block order.
+///
+/// Inverse of [`record_batch_to_trino_page`].
+pub fn trino_page_to_record_batch(
+    page: &TrinoPage,
+) -> Result<arrow::array::RecordBatch, arrow::error::ArrowError> {
+    use arrow::array::RecordBatch;
+    use arrow::datatypes::Field;
+    use arrow::error::ArrowError;
+    use arrow::ipc::reader::StreamReader;
+
+    let mut fields: Vec<Field> = Vec::with_capacity(page.blocks.len());
+    let mut arrays = Vec::with_capacity(page.blocks.len());
+    for (idx, block) in page.blocks.iter().enumerate() {
+        let mut reader = StreamReader::try_new(&block.data[..], None)?;
+        let batch = reader.next().ok_or_else(|| {
+            ArrowError::IpcError(format!("block {idx} produced no record batch"))
+        })??;
+        if batch.num_columns() != 1 {
+            return Err(ArrowError::SchemaError(format!(
+                "block {idx} must encode exactly one column, got {}",
+                batch.num_columns()
+            )));
+        }
+        fields.push(batch.schema().field(0).clone());
+        arrays.push(batch.column(0).clone());
+    }
+    let schema = Arc::new(ArrowSchema::new(fields));
+    RecordBatch::try_new(schema, arrays)
 }
 
 /// Trino write summary
@@ -580,41 +840,289 @@ pub enum TrinoErrorCode {
 // ============================================================================
 // Arrow Flight Integration Points
 // ============================================================================
+//
+// TD-098 RESOLVED 2026-06-02 — all 7 Flight methods live (real
+// `FlightServiceClient` + RPC):
+//   - `flight_list_schemas`             (list_flights    → bucketed TrinoSchema)
+//   - `flight_list_tables`              (list_flights    → schema-filtered Vec<String>)
+//   - `flight_get_table_schema`         (get_schema      → SchemaResult → ArrowSchema)
+//   - `flight_get_splits`               (get_flight_info → endpoint tickets → Vec<TrinoSplit>)
+//   - `TrinoPageSource::get_next_page`  (do_get          → FlightRecordBatchStream → TrinoPage)
+//   - `TrinoPageSink::append_page`      (do_put          → FlightData stream → server PutResult ack)
+//   - `TrinoPageSink::finish`           (drains PutResult acks → TrinoWriteSummary)
+//
+// See per-fn docstrings + the contract gate at
+// `tests/connectors_flight_contract.rs::trino_flight_pilot` for the
+// in-process tonic round-trip proof. Both have async signatures —
+// older sync callers need a runtime handle.
+//
+// Dial template: `grpc://` → `http://` normalize →
+// `Channel::from_shared(...).connect_lazy()` →
+// `FlightServiceClient::new(channel)` (tonic ≥0.12 removed the
+// convenience `connect()` shorthand). See
+// `docs/10-quality/TECHNICAL_DEBT.adoc` TD-098 for the migration
+// history.
 
-/// Flight action for listing schemas
-pub fn flight_list_schemas(_catalog: &str) -> Vec<TrinoSchema> {
-    // Schema listing: Arrow Flight ListFlights for available schemas
-    vec![TrinoSchema {
-        name: "default".to_string(),
-        tables: Vec::new(),
-    }]
+/// Live Arrow Flight `ListFlights` query against the configured ProximaDB
+/// Flight endpoint. Returns one [`TrinoSchema`] per unique first-path
+/// segment in the returned `FlightInfo.flight_descriptor.path` — matches
+/// the server's routing convention at
+/// `src/network/arrow_ipc/service.rs:313-342` (`["relational", table_fqn]`
+/// + `["vectors", collection_id]`).
+///
+/// First live Flight method (TD-098 pilot, 2026-06-01). The other 6
+/// `flight_*` helpers below stay scaffolded; they follow the same
+/// `FlightServiceClient::connect → list_flights / get_schema / do_get`
+/// pattern and are mechanical follow-up.
+///
+/// Returns an empty Vec on connect / list failures so callers can degrade
+/// to "no schemas visible" instead of panicking on a transient blip.
+pub async fn flight_list_schemas(endpoint: &str, _catalog: &str) -> Vec<TrinoSchema> {
+    use arrow_flight::Criteria;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+    use futures::StreamExt;
+    use std::collections::BTreeMap;
+
+    // Normalize `grpc://host:port` → `http://host:port` so tonic's HTTP/2
+    // transport accepts it. tonic's `Channel::from_shared` rejects the
+    // `grpc://` scheme even though the wire protocol is gRPC-over-HTTP/2.
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    // tonic ≥0.12 removed the convenience `connect` constructor on
+    // codegen client types; build the Channel explicitly and hand
+    // it to `FlightServiceClient::new`. Behavior unchanged from
+    // the previous `connect()` form.
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return Vec::new(),
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    let mut stream = match client
+        .list_flights(tonic::Request::new(Criteria {
+            expression: Default::default(),
+        }))
+        .await
+    {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return Vec::new(),
+    };
+
+    // Bucket each FlightInfo by its first descriptor-path segment. Tables
+    // accumulate under the same schema name; preserves insertion order
+    // via BTreeMap.
+    let mut by_schema: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    while let Some(item) = stream.next().await {
+        let Ok(flight_info) = item else { continue };
+        let Some(desc) = flight_info.flight_descriptor else {
+            continue;
+        };
+        let mut path_iter = desc.path.into_iter();
+        let Some(schema_name) = path_iter.next() else {
+            continue;
+        };
+        let table_name = path_iter.next().unwrap_or_default();
+        let entry = by_schema.entry(schema_name).or_default();
+        if !table_name.is_empty() && !entry.contains(&table_name) {
+            entry.push(table_name);
+        }
+    }
+
+    by_schema
+        .into_iter()
+        .map(|(name, tables)| TrinoSchema { name, tables })
+        .collect()
 }
 
-/// Flight action for listing tables
-pub fn flight_list_tables(_catalog: &str, _schema: &str) -> Vec<String> {
-    // Table listing: Arrow Flight ListFlights for schema tables
-    Vec::new()
+/// Live Arrow Flight `ListFlights` query that returns the table names
+/// under a given schema. Same wire as [`flight_list_schemas`] but
+/// filters by `path[0] == schema` and returns the per-schema table
+/// list as `Vec<String>` (deduplicated, insertion-ordered).
+///
+/// Empty Vec on connect / list failures (no panic).
+///
+/// TD-098 progress: 2/7 live (was 1/7 after the `flight_list_schemas`
+/// pilot).
+pub async fn flight_list_tables(endpoint: &str, _catalog: &str, schema: &str) -> Vec<String> {
+    use arrow_flight::Criteria;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+    use futures::StreamExt;
+
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    // tonic ≥0.12 removed the convenience `FlightServiceClient::connect`;
+    // build the Channel via `Channel::from_shared(...).connect_lazy()`
+    // and hand it to `FlightServiceClient::new`. Same pattern as
+    // `flight_list_schemas` above.
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return Vec::new(),
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    let mut stream = match client
+        .list_flights(tonic::Request::new(Criteria {
+            expression: Default::default(),
+        }))
+        .await
+    {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return Vec::new(),
+    };
+
+    let mut tables: Vec<String> = Vec::new();
+    while let Some(item) = stream.next().await {
+        let Ok(flight_info) = item else { continue };
+        let Some(desc) = flight_info.flight_descriptor else {
+            continue;
+        };
+        let mut path_iter = desc.path.into_iter();
+        let Some(schema_name) = path_iter.next() else {
+            continue;
+        };
+        if schema_name != schema {
+            continue;
+        }
+        let Some(table_name) = path_iter.next() else {
+            continue;
+        };
+        if !tables.iter().any(|t| t == &table_name) {
+            tables.push(table_name);
+        }
+    }
+    tables
 }
 
-/// Flight action for getting table schema
-pub fn flight_get_table_schema(
+/// Live Arrow Flight `GetSchema` query for a `catalog.schema.table`
+/// triple. Third live Flight method (TD-098, 2026-06-01).
+///
+/// Dials the ProximaDB Flight endpoint, calls `get_schema` with a
+/// `FlightDescriptor::path([schema, table])`, and decodes the IPC
+/// schema bytes back into an `ArrowSchema` via
+/// `arrow_flight::SchemaResult::try_into`. Same dial pattern as
+/// `flight_list_schemas` / `flight_list_tables` —
+/// `Channel::from_shared(...).connect_lazy()` +
+/// `FlightServiceClient::new(channel)` (tonic ≥0.12 removed the
+/// convenience `connect()` shorthand).
+///
+/// `catalog` is currently informational — Flight descriptors are
+/// `[schema, table]` two-segment paths; the catalog is implicit in the
+/// Flight endpoint binding. Connect / RPC / decode failures degrade
+/// to `None` so callers see "schema unknown" instead of panicking on
+/// transient blips.
+pub async fn flight_get_table_schema(
+    endpoint: &str,
     _catalog: &str,
-    _schema: &str,
-    _table: &str,
+    schema: &str,
+    table: &str,
 ) -> Option<Arc<ArrowSchema>> {
-    // Schema retrieval: Arrow Flight GetSchema for table columns
-    None
+    use arrow_flight::FlightDescriptor;
+    use arrow_flight::SchemaResult;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return None,
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    let descriptor = FlightDescriptor::new_path(vec![schema.to_string(), table.to_string()]);
+    let result: SchemaResult = match client.get_schema(tonic::Request::new(descriptor)).await {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return None,
+    };
+
+    match ArrowSchema::try_from(&result) {
+        Ok(s) => Some(Arc::new(s)),
+        Err(_) => None,
+    }
 }
 
-/// Flight action for getting splits
-pub fn flight_get_splits(
+/// Live Arrow Flight `GetFlightInfo` query that materializes the
+/// `TrinoSplit` set for a `catalog.schema.table` triple. Fourth live
+/// Flight method (TD-098, 2026-06-01).
+///
+/// Dials the ProximaDB Flight endpoint, calls `get_flight_info` with a
+/// `FlightDescriptor` carrying `path=[schema, table]` and `cmd =
+/// JSON-encoded constraint` (the constraint is informational over the
+/// wire today; the ProximaDB Flight server is expected to apply it
+/// when generating endpoints), then decodes each
+/// `FlightInfo.endpoint[i].ticket.ticket` bytes back into a
+/// `TrinoSplit` via serde-json. Same dial pattern as the prior three
+/// live methods — `Channel::from_shared(...).connect_lazy()` +
+/// `FlightServiceClient::new(channel)`.
+///
+/// `catalog` is informational (Flight descriptors are two-segment
+/// `[schema, table]` paths; the catalog is implicit in the endpoint
+/// binding). Connect / RPC / decode failures degrade to an empty Vec.
+pub async fn flight_get_splits(
+    endpoint: &str,
     _catalog: &str,
-    _schema: &str,
-    _table: &str,
-    _constraint: &TrinoTupleDomain,
+    schema: &str,
+    table: &str,
+    constraint: &TrinoTupleDomain,
 ) -> Vec<TrinoSplit> {
-    // Split generation: Arrow Flight GetFlightInfo for parallel reads
-    Vec::new()
+    use arrow_flight::FlightDescriptor;
+    use arrow_flight::flight_service_client::FlightServiceClient;
+
+    let dial = endpoint
+        .strip_prefix("grpc://")
+        .map(|rest| format!("http://{rest}"))
+        .unwrap_or_else(|| endpoint.to_string());
+
+    let channel = match tonic::transport::Channel::from_shared(dial)
+        .ok()
+        .map(|e| e.connect_lazy())
+    {
+        Some(ch) => ch,
+        None => return Vec::new(),
+    };
+    let mut client = FlightServiceClient::new(channel);
+
+    // FlightDescriptor type is PATH (path is set); cmd carries the
+    // JSON-encoded predicate so the server can do pushdown without a
+    // separate RPC. Tonic serialization is lossless for both fields.
+    let cmd_bytes = serde_json::to_vec(constraint).unwrap_or_default();
+    let mut descriptor = FlightDescriptor::new_path(vec![schema.to_string(), table.to_string()]);
+    descriptor.cmd = cmd_bytes.into();
+
+    let info = match client
+        .get_flight_info(tonic::Request::new(descriptor))
+        .await
+    {
+        Ok(resp) => resp.into_inner(),
+        Err(_) => return Vec::new(),
+    };
+
+    let mut splits = Vec::with_capacity(info.endpoint.len());
+    for ep in info.endpoint {
+        let Some(ticket) = ep.ticket else { continue };
+        match serde_json::from_slice::<TrinoSplit>(&ticket.ticket) {
+            Ok(split) => splits.push(split),
+            Err(_) => continue,
+        }
+    }
+    splits
 }
 
 // ============================================================================
@@ -681,8 +1189,8 @@ mod tests {
         assert!(trino_split.remotely_accessible);
     }
 
-    #[test]
-    fn test_trino_page_source() {
+    #[tokio::test]
+    async fn test_trino_page_source() {
         let file_split = FileSplit {
             split_id: "test:0".to_string(),
             file_path: String::new(),
@@ -702,11 +1210,15 @@ mod tests {
             file_split,
         );
 
-        let mut source = TrinoPageSource::new(split, Arc::new(ArrowSchema::empty()));
-        assert!(!source.is_finished());
-
+        // Unreachable endpoint → constructor marks source as
+        // `finished` immediately (connect_lazy + first do_get fails
+        // when the test runs in an env with no Flight server on
+        // this port). Test pins that contract: no panic, no
+        // pages returned, source ends up finished.
+        let mut source =
+            TrinoPageSource::new("grpc://127.0.0.1:1", split, Arc::new(ArrowSchema::empty())).await;
         // First call should return None and mark finished
-        assert!(source.get_next_page().is_none());
+        assert!(source.get_next_page().await.is_none());
         assert!(source.is_finished());
     }
 }

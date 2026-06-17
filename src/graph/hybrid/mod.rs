@@ -56,12 +56,12 @@
 //! ## Example Usage
 //!
 //! ```rust,ignore
-//! use proximadb::graph::hybrid::{HybridQueryEngine, HybridQuery, FusionStrategy};
+//! use proximadb::graph::hybrid::{HybridQueryEngine, GraphHybridQuery, FusionStrategy};
 //!
 //! let engine = HybridQueryEngine::new(graph_memory, vector_service);
 //!
 //! // Find documents similar to query_vector that are connected to "Alice" via KNOWS edges
-//! let query = HybridQuery {
+//! let query = GraphHybridQuery {
 //!     vector_component: Some(VectorQueryComponent {
 //!         query_vector: query_vector.clone(),
 //!         threshold: Some(0.7),
@@ -146,13 +146,13 @@
 pub mod ranking;
 pub mod semantic_traversal;
 
-use crate::core::error::{ProximaDBError, QueryError, VectorDBError};
 use crate::graph::{
     Edge, EdgeId, GraphMemoryPool, Node, NodeId,
     query::{QueryContext, QueryResult, QueryStats},
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::vector_operations_service::VectorOperationsService;
+use proximadb_kernel::error::{ProximaDBError, QueryError, VectorDBError};
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
@@ -216,9 +216,12 @@ pub struct HybridOptimizations {
     pub early_termination: bool,
 }
 
+/// Backwards-compat alias for [`GraphHybridQuery`].
+pub type HybridQuery = GraphHybridQuery;
+
 /// Hybrid query specification
 #[derive(Debug, Clone)]
-pub struct HybridQuery {
+pub struct GraphHybridQuery {
     /// Vector component of the query
     pub vector_component: Option<VectorQueryComponent>,
     /// Graph component of the query
@@ -256,9 +259,11 @@ pub struct GraphQueryComponent {
     /// Node filters
     pub node_filters: Vec<NodeFilter>,
     /// Edge filters
-    pub edge_filters: Vec<EdgeFilter>,
+    pub edge_filters: Vec<HybridEdgeFilter>,
     /// Traversal algorithm
     pub algorithm: TraversalAlgorithm,
+    /// Optional query vector used by semantic traversal algorithms.
+    pub semantic_query_vector: Option<Vec<f32>>,
 }
 
 /// Node filter for graph component
@@ -272,9 +277,12 @@ pub struct NodeFilter {
     pub value: serde_json::Value,
 }
 
+/// Backwards-compat alias for [`HybridEdgeFilter`].
+pub type EdgeFilter = HybridEdgeFilter;
+
 /// Edge filter for graph component
 #[derive(Debug, Clone)]
-pub struct EdgeFilter {
+pub struct HybridEdgeFilter {
     /// Property name to filter on
     pub property: String,
     /// Filter operator
@@ -437,7 +445,7 @@ pub struct VectorCandidate {
     /// Cosine or distance similarity score from vector search.
     pub similarity: f32,
     /// The underlying vector record for this candidate.
-    pub vector_record: VectorRecord,
+    pub vector_record: ProximaRecord,
 }
 
 /// Graph candidate in debug info before fusion.
@@ -577,7 +585,7 @@ impl HybridQueryEngine {
     /// Execute a hybrid query
     pub async fn execute_hybrid_query(
         &self,
-        query: &HybridQuery,
+        query: &GraphHybridQuery,
         context: &QueryContext,
     ) -> QueryResult<HybridQueryResult> {
         let start_time = std::time::Instant::now();
@@ -664,7 +672,7 @@ impl HybridQueryEngine {
     /// Execute the vector component of the query
     async fn execute_vector_component(
         &self,
-        query: &HybridQuery,
+        query: &GraphHybridQuery,
         _context: &QueryContext,
     ) -> QueryResult<Vec<VectorCandidate>> {
         let mut candidates = Vec::new();
@@ -713,7 +721,7 @@ impl HybridQueryEngine {
     /// Execute the graph component of the query
     async fn execute_graph_component(
         &self,
-        query: &HybridQuery,
+        query: &GraphHybridQuery,
         _context: &QueryContext,
     ) -> QueryResult<Vec<GraphCandidate>> {
         let mut candidates = Vec::new();
@@ -846,7 +854,11 @@ impl HybridQueryEngine {
 
         // Try to get query vector and similarity threshold from context
         // In a real implementation, this would come from the hybrid query context
-        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let query_vector = graph_comp
+            .semantic_query_vector
+            .clone()
+            .or_else(|| self.get_query_vector_from_context())
+            .unwrap_or_default();
         let similarity_threshold = self.get_similarity_threshold_from_context().unwrap_or(0.3);
 
         // Initialize with start node
@@ -927,7 +939,11 @@ impl HybridQueryEngine {
         let mut visited = HashSet::new();
 
         // Get query context for semantic guidance
-        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let query_vector = graph_comp
+            .semantic_query_vector
+            .clone()
+            .or_else(|| self.get_query_vector_from_context())
+            .unwrap_or_default();
         let similarity_threshold = self.get_similarity_threshold_from_context().unwrap_or(0.3);
 
         // Start DFS from the initial node
@@ -1086,7 +1102,7 @@ impl HybridQueryEngine {
     }
 
     /// Check if edge matches filters
-    fn edge_matches_filters(&self, edge: &Edge, filters: &[EdgeFilter]) -> QueryResult<bool> {
+    fn edge_matches_filters(&self, edge: &Edge, filters: &[HybridEdgeFilter]) -> QueryResult<bool> {
         for filter in filters {
             if let Some(prop_value) = edge.properties.get(&filter.property) {
                 let json_value = self.property_value_to_json(prop_value);
@@ -1224,10 +1240,10 @@ impl HybridQueryEngine {
 
     /// Get query vector from context (helper method for semantic traversal)
     fn get_query_vector_from_context(&self) -> Option<Vec<f32>> {
-        // Query vector extraction: the HybridQuery carries an optional query_vector
-        // field. When not present, semantic traversal uses a uniform vector as neutral
-        // guidance (all directions equally weighted).
-        Some(vec![0.5; 128]) // Neutral guidance vector; overridden by HybridQuery.query_vector
+        // Query-vector context injection is still being extracted. Callers that
+        // need deterministic semantic traversal should set
+        // GraphQueryComponent::semantic_query_vector.
+        None
     }
 
     /// Get similarity threshold from context
@@ -1369,7 +1385,7 @@ impl HybridQueryEngine {
 
         // Extract query vector from vector component
         // In a real hybrid query, this would come from the query context
-        let query_vector = self.get_query_vector_from_context().unwrap_or_default();
+        let query_vector = vector_comp.query_vector.clone();
 
         // Configure search with hybrid-specific settings
         let search_config = UnifiedSearchConfig {
@@ -1403,18 +1419,29 @@ impl HybridQueryEngine {
                                 .as_ref()
                                 .map(|arc| (**arc).clone())
                                 .unwrap_or_default();
+                            let now_ms = chrono::Utc::now().timestamp_millis();
+                            let dim = vector.len() as u32;
+                            let props = rec
+                                .metadata
+                                .iter()
+                                .map(|(k, v)| (k.clone(), ProximaTreeNode::Value(v.clone())))
+                                .collect();
                             candidates.push(VectorCandidate {
                                 node_id: rec.id.clone(),
                                 similarity,
-                                vector_record: VectorRecord {
-                                    id: rec.id,
-                                    vector,
-                                    metadata: rec.metadata.clone(),
-                                    timestamp: Some(rec.timestamp.unwrap_or(0)),
-                                    updated_at: Some(rec.updated_at.unwrap_or(0)),
-                                    expires_at: None,
-                                    version: None,
-                                    source: None,
+                                vector_record: ProximaRecord {
+                                    oid: rec.id,
+                                    created_at_ns: rec.timestamp.unwrap_or(now_ms) * 1_000_000,
+                                    updated_at_ns: rec.updated_at.unwrap_or(now_ms) * 1_000_000,
+                                    props,
+                                    embeddings: vec![EmbeddingCell {
+                                        model_id: "default".to_string(),
+                                        modality: "vector".to_string(),
+                                        values: proximadb_records::EmbeddingValues::Fp32(vector),
+                                        dim,
+                                        ..Default::default()
+                                    }],
+                                    ..Default::default()
                                 },
                             });
                         }
@@ -1459,23 +1486,37 @@ impl HybridQueryEngine {
                 let similarity = self.cosine_similarity(&embedding.vector, &query_vector);
 
                 if similarity >= threshold && candidates.len() < max_results {
+                    let dim = embedding.vector.len() as u32;
+                    let props = self
+                        .convert_node_properties_to_metadata(&node.properties)
+                        .into_iter()
+                        .map(|(k, v)| {
+                            (
+                                k,
+                                ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                                    v,
+                                )),
+                            )
+                        })
+                        .collect();
                     candidates.push(VectorCandidate {
                         node_id: node.id.clone(),
                         similarity,
-                        vector_record: VectorRecord {
-                            id: node.id.clone(),
-                            vector: embedding.vector.clone(),
-                            metadata: self.convert_node_properties_to_metadata(&node.properties)
-                                .into_iter()
-                                .map(|(k, v)| (k, crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(v))
-                                }))
-                                .collect(),
-                            timestamp: Some(node.created_at_ms),
-                            updated_at: Some(node.updated_at_ms),
-                            expires_at: None,
-                            version: None,
-                            source: None,
+                        vector_record: ProximaRecord {
+                            oid: node.id.clone(),
+                            created_at_ns: node.created_at_ms * 1_000_000,
+                            updated_at_ns: node.updated_at_ms * 1_000_000,
+                            props,
+                            embeddings: vec![EmbeddingCell {
+                                model_id: "default".to_string(),
+                                modality: "vector".to_string(),
+                                values: proximadb_records::EmbeddingValues::Fp32(
+                                    embedding.vector.clone(),
+                                ),
+                                dim,
+                                ..Default::default()
+                            }],
+                            ..Default::default()
                         },
                     });
                 }
@@ -1700,7 +1741,7 @@ impl HybridQueryEngine {
         max_hops: u32,
         similarity_threshold: f32,
     ) -> QueryResult<Vec<HybridNodeResult>> {
-        let query = HybridQuery {
+        let query = GraphHybridQuery {
             vector_component: Some(VectorQueryComponent {
                 query_vector: query_vector.to_vec(),
                 threshold: Some(similarity_threshold),
@@ -1715,6 +1756,7 @@ impl HybridQueryEngine {
                 node_filters: vec![],
                 edge_filters: vec![],
                 algorithm: TraversalAlgorithm::BFS,
+                semantic_query_vector: Some(query_vector.to_vec()),
             }),
             fusion: FusionConfig {
                 strategy: FusionStrategy::Balanced,

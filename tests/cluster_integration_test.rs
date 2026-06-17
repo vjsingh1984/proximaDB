@@ -1604,6 +1604,7 @@ impl ConsensusTransport for InMemoryTransport {
                 command: Command::Noop,
             })
             .collect();
+        let appended = entries.len() as u64;
 
         let consensus = node.read().await;
         let (term, success) = consensus
@@ -1616,10 +1617,20 @@ impl ConsensusTransport for InMemoryTransport {
                 req.leader_commit,
             )
             .await;
+        // A real follower reports the highest log index it now stores so the
+        // leader can advance match_index and, in turn, the commit index. The
+        // follower's handle_append_entries only returns (term, success), so
+        // derive the match index here: on success it holds everything up to
+        // prev_log_index plus the entries just appended.
+        let match_index = if success {
+            Some(req.prev_log_index + appended)
+        } else {
+            None
+        };
         Ok(AppendEntriesResponse {
             term,
             success,
-            match_index: None,
+            match_index,
             conflict_term: None,
             conflict_index: None,
         })

@@ -16,7 +16,7 @@ use crate::core::bloom::{
     BloomFilter, BloomFilterBuilder as CoreBloomBuilder, BloomFilterConfig as CoreConfig,
     BloomStrategy,
 };
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Wrapper around core bloom filter builder for Parquet-specific use
 pub struct BloomFilterBuilder {
@@ -24,15 +24,18 @@ pub struct BloomFilterBuilder {
     bloom_filters: HashMap<usize, BloomFilter>,
 
     /// Configuration for bloom filters
-    config: BloomFilterConfig,
+    config: ParquetBloomFilterConfig,
 
     /// Current row group being processed
     current_row_group: usize,
 }
 
+/// Backwards-compat alias for [`ParquetBloomFilterConfig`].
+pub type BloomFilterConfig = ParquetBloomFilterConfig;
+
 /// Configuration for bloom filter creation (wraps core config)
 #[derive(Debug, Clone)]
-pub struct BloomFilterConfig {
+pub struct ParquetBloomFilterConfig {
     /// False positive probability
     pub fpp: f64,
 
@@ -49,7 +52,7 @@ pub struct BloomFilterConfig {
     pub bits_per_key: Option<f32>,
 }
 
-impl Default for BloomFilterConfig {
+impl Default for ParquetBloomFilterConfig {
     fn default() -> Self {
         Self {
             fpp: 0.01,   // 1% false positive rate (matching core default)
@@ -63,7 +66,7 @@ impl Default for BloomFilterConfig {
 
 impl BloomFilterBuilder {
     /// Create new bloom filter builder
-    pub fn new(config: BloomFilterConfig) -> Self {
+    pub fn new(config: ParquetBloomFilterConfig) -> Self {
         Self {
             bloom_filters: HashMap::new(),
             config,
@@ -108,14 +111,14 @@ impl BloomFilterBuilder {
     }
 
     /// Add records to current bloom filter
-    pub fn add_batch(&mut self, records: &[VectorRecord]) -> Result<()> {
+    pub fn add_batch(&mut self, records: &[ProximaRecord]) -> Result<()> {
         let filter = self.get_or_create_filter(self.current_row_group)?;
 
         for record in records {
-            filter.insert(record.id.as_bytes());
+            filter.insert(record.oid.as_bytes());
 
             // Optionally add metadata keys for filtering
-            for key in record.metadata.keys() {
+            for key in record.props.keys() {
                 filter.insert(key.as_bytes());
             }
         }
@@ -201,13 +204,13 @@ impl BloomFilterBuilder {
 
         Ok(Self {
             bloom_filters,
-            config: BloomFilterConfig::default(),
+            config: ParquetBloomFilterConfig::default(),
             current_row_group: 0,
         })
     }
 
     /// Get statistics about bloom filters
-    pub fn get_stats(&self) -> BloomFilterStats {
+    pub fn get_stats(&self) -> ParquetBloomFilterStats {
         let total_filters = self.bloom_filters.len();
 
         // Use core bloom filter's stats
@@ -222,7 +225,7 @@ impl BloomFilterBuilder {
             })
             .sum();
 
-        BloomFilterStats {
+        ParquetBloomFilterStats {
             total_filters,
             total_memory_bytes: total_memory,
             false_positive_probability: self.config.fpp,
@@ -237,16 +240,19 @@ impl BloomFilterBuilder {
     }
 }
 
+/// Backwards-compat alias for [`ParquetBloomFilterStats`].
+pub type BloomFilterStats = ParquetBloomFilterStats;
+
 /// Statistics about bloom filters
 #[derive(Debug, Clone)]
-pub struct BloomFilterStats {
+pub struct ParquetBloomFilterStats {
     pub total_filters: usize,
     pub total_memory_bytes: usize,
     pub false_positive_probability: f64,
     pub estimated_ndv: u64,
 }
 
-impl BloomFilterStats {
+impl ParquetBloomFilterStats {
     /// Get human-readable summary
     pub fn summary(&self) -> String {
         format!(
@@ -265,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_basic() {
-        let config = BloomFilterConfig::default();
+        let config = ParquetBloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
         // Add IDs to row group 0
@@ -287,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_multiple_row_groups() {
-        let config = BloomFilterConfig {
+        let config = ParquetBloomFilterConfig {
             per_row_group: true,
             ..Default::default()
         };
@@ -315,7 +321,7 @@ mod tests {
 
     #[test]
     fn test_batch_addition() {
-        let config = BloomFilterConfig::default();
+        let config = ParquetBloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
         builder
@@ -323,18 +329,12 @@ mod tests {
             .expect("Failed to start row group");
 
         let records = vec![
-            VectorRecord {
-                id: "batch_1".to_string(),
-                vector: vec![1.0, 2.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
+            ProximaRecord {
+                oid: "batch_1".to_string(),
                 ..Default::default()
             },
-            VectorRecord {
-                id: "batch_2".to_string(),
-                vector: vec![3.0, 4.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
+            ProximaRecord {
+                oid: "batch_2".to_string(),
                 ..Default::default()
             },
         ];
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn test_stats() {
-        let config = BloomFilterConfig::default();
+        let config = ParquetBloomFilterConfig::default();
         let mut builder = BloomFilterBuilder::new(config);
 
         builder

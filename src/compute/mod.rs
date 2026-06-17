@@ -163,17 +163,16 @@
 // Semantic module organization
 pub mod distance_computation;
 pub mod gpu;
+pub mod montecarlo;
 pub mod pipeline_executor;
+pub mod proximacodec;
 pub mod quantization;
 
-// Pluggable compute provider interface (Hadoop-style storage-compute separation)
-pub mod provider;
-
-// Serializable compute plans for storage-compute separation
-pub mod plan;
-
-// Compute scheduler for routing plans to optimal providers
-pub mod scheduler;
+// NOTE (2026-06-04): the pluggable `provider` / `plan` / `scheduler` "Hadoop-style
+// storage-compute separation" scaffold was DELETED — a dead stub
+// (`LocalComputeProvider::execute` returned empty streams) with zero live callers,
+// superseded by the DataFusion-direct OLAP path. A real distributed worker model,
+// when needed, is a fresh coordinator/worker design, not this.
 
 // Legacy distance module removed - all functionality moved to distance_computation::core
 
@@ -186,32 +185,6 @@ pub use distance_computation::*;
 pub use pipeline_executor::*;
 pub use quantization::*;
 
-// ============================================================================
-// Storage-Compute Separation Re-exports (Hadoop-style architecture)
-// ============================================================================
-
-// Re-export compute provider types for pluggable compute engines
-pub use provider::{
-    ComputeCapabilities, ComputeProvider, CostEstimate, ExecutionContext, LocalComputeProvider,
-    ProviderMetrics,
-};
-
-// Re-export compute plan types for serializable query plans
-pub use plan::{
-    AggExpr, AggFunction, BinaryOp, ComputePlan, Expr, JoinCondition, JoinStrategy, JoinType,
-    LiteralValue, Partitioning, PlanHints, PlanNode, ProjectExpr, SortExpr, TraversalDirection,
-    TraversalSpec, UnaryOp,
-};
-
-// Re-export compute scheduler types for provider selection and routing
-pub use scheduler::{
-    ComputeScheduler, ComputeSchedulerBuilder, CostWeights, ProviderStatistics, SchedulerConfig,
-    SchedulerStatistics, SchedulingPolicy,
-};
-
-#[cfg(test)]
-mod tests;
-
 /// Vector computation configuration
 #[derive(Debug, Clone)]
 pub struct ComputeConfig {
@@ -222,7 +195,7 @@ pub struct ComputeConfig {
     /// Memory optimization settings
     pub memory: MemoryConfig,
     /// Performance tuning parameters
-    pub performance: PerformanceConfig,
+    pub performance: ComputePerformanceConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -237,8 +210,8 @@ pub struct AccelerationConfig {
     pub math_library: MathLibrary,
 }
 
-// Using central HardwareBackend from hardware_capabilities module
-pub use crate::core::hardware_capabilities::HardwareBackend as ComputeBackend;
+// ComputeBackend: use proximadb_hardware::SimdLevel directly for SIMD dispatch
+pub use proximadb_hardware::SimdLevel as ComputeBackend;
 
 #[derive(Debug, Clone)]
 pub struct CpuVectorization {
@@ -297,7 +270,7 @@ pub struct AlgorithmConfig {
     /// Index algorithm preferences
     pub index_algorithm: IndexAlgorithm,
     /// Search algorithm tuning
-    pub search_params: SearchParams,
+    pub search_params: ComputeSearchParams,
     /// Quantization settings
     pub quantization: UnifiedQuantizationLevel,
 }
@@ -332,7 +305,7 @@ pub enum IndexAlgorithm {
 }
 
 #[derive(Debug, Clone)]
-pub struct SearchParams {
+pub struct ComputeSearchParams {
     /// Search accuracy vs speed trade-off
     pub accuracy_target: f32, // 0.0 = fastest, 1.0 = most accurate
     /// Maximum search time (milliseconds)
@@ -350,7 +323,7 @@ pub struct MemoryConfig {
     /// Memory mapping configuration
     pub mmap_config: MmapConfig,
     /// Cache configuration
-    pub cache_config: CacheConfig,
+    pub cache_config: ComputeCacheConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -386,8 +359,11 @@ pub enum MadviseHint {
     DontNeed,
 }
 
+/// Backwards-compat alias for [`ComputeCacheConfig`].
+pub type CacheConfig = ComputeCacheConfig;
+
 #[derive(Debug, Clone)]
-pub struct CacheConfig {
+pub struct ComputeCacheConfig {
     /// L1 cache size (vectors in memory)
     pub l1_cache_size: usize,
     /// L2 cache size (compressed vectors)
@@ -404,8 +380,11 @@ pub enum CachePolicy {
     TwoQ, // Two Queue
 }
 
+/// Backwards-compat alias for [`ComputePerformanceConfig`].
+pub type PerformanceConfig = ComputePerformanceConfig;
+
 #[derive(Debug, Clone)]
-pub struct PerformanceConfig {
+pub struct ComputePerformanceConfig {
     /// Enable SIMD optimizations
     pub simd_enabled: bool,
     /// Unroll loops for better performance
@@ -435,10 +414,10 @@ impl Default for ComputeConfig {
         Self {
             acceleration: AccelerationConfig {
                 backend_priority: vec![
-                    ComputeBackend::CUDA,
-                    ComputeBackend::ROCm,
-                    ComputeBackend::OpenCL,
+                    ComputeBackend::AVX512,
                     ComputeBackend::AVX2,
+                    ComputeBackend::NEON,
+                    ComputeBackend::SSE41,
                 ],
                 cpu_vectorization: CpuVectorization {
                     avx512: true,
@@ -458,7 +437,7 @@ impl Default for ComputeConfig {
             algorithms: AlgorithmConfig {
                 default_metric: DistanceMetric::Cosine,
                 index_algorithm: IndexAlgorithm::Auto,
-                search_params: SearchParams {
+                search_params: ComputeSearchParams {
                     accuracy_target: 0.95,
                     max_search_time_ms: 100,
                     early_termination_threshold: None,
@@ -476,13 +455,13 @@ impl Default for ComputeConfig {
                     huge_pages: true,
                     numa_node: None,
                 },
-                cache_config: CacheConfig {
+                cache_config: ComputeCacheConfig {
                     l1_cache_size: 100_000,   // 100K vectors
                     l2_cache_size: 1_000_000, // 1M vectors compressed
                     replacement_policy: CachePolicy::ARC,
                 },
             },
-            performance: PerformanceConfig {
+            performance: ComputePerformanceConfig {
                 simd_enabled: true,
                 loop_unrolling: true,
                 branch_prediction: true,
@@ -502,7 +481,8 @@ pub struct HardwareInfo {
     pub numa_topology: NumaTopology,
 }
 
-// Re-export CpuFeatures and CacheSizes from centralized hardware capabilities module
+// CpuFeatures and CacheSizes are root-crate-specific (complex NUMA/cache metadata)
+// Use crate::core::hardware_capabilities directly for GPU and detailed CPU info
 pub use crate::core::hardware_capabilities::{CacheSizes, CpuFeatures};
 
 // Using central GpuDevice and GpuBackend from hardware_capabilities module
@@ -552,5 +532,206 @@ pub fn get_hardware_info() -> HardwareInfo {
                 memory_free: caps.memory.total_memory / 2,
             }],
         },
+    }
+}
+
+#[cfg(test)]
+mod unified_quantization_tests {
+    use crate::compute::quantization::types::{
+        BinaryQuantization, NoQuantization, ProductQuantization, QuantizationLevel,
+        ScalarQuantization, UnifiedQuantizationLevel, UniformQuantization,
+    };
+    use std::sync::Once;
+
+    static INIT: Once = Once::new();
+
+    fn setup_hardware_capabilities() {
+        INIT.call_once(|| {
+            let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        });
+    }
+
+    #[test]
+    fn test_quantization_level_creation() {
+        setup_hardware_capabilities();
+
+        // Test PQ8 creation
+        let pq8 = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 8,
+                num_subvectors: 16,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            })),
+        };
+
+        assert!(pq8.level_type.is_some());
+        if let Some(QuantizationLevel::Pq(pq)) = &pq8.level_type {
+            assert_eq!(pq.bits_per_code, 8);
+            assert_eq!(pq.num_subvectors, 16);
+        }
+
+        // Test Uniform quantization
+        let uniform4 = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Uniform(UniformQuantization {
+                bits: 4,
+                scale: None,
+                offset: None,
+            })),
+        };
+
+        assert!(uniform4.level_type.is_some());
+        if let Some(QuantizationLevel::Uniform(uniform)) = &uniform4.level_type {
+            assert_eq!(uniform.bits, 4);
+        }
+
+        // Test Binary quantization
+        let binary = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
+                threshold: None,
+                sign_based: false,
+            })),
+        };
+
+        assert!(binary.level_type.is_some());
+        if let Some(QuantizationLevel::Binary(bin)) = &binary.level_type {
+            assert!(!bin.sign_based);
+        }
+    }
+
+    #[test]
+    fn test_quantization_none() {
+        setup_hardware_capabilities();
+
+        let none_quant = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::None(NoQuantization {})),
+        };
+
+        assert!(none_quant.level_type.is_some());
+        assert!(matches!(
+            none_quant.level_type,
+            Some(QuantizationLevel::None(_))
+        ));
+    }
+
+    #[test]
+    fn test_scalar_quantization() {
+        setup_hardware_capabilities();
+
+        let scalar = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
+                bits: 8,
+                scale: 1.0,
+                offset: 0.0,
+                clamp_values: false,
+            })),
+        };
+
+        assert!(scalar.level_type.is_some());
+        if let Some(QuantizationLevel::Scalar(s)) = &scalar.level_type {
+            assert_eq!(s.bits, 8);
+        }
+    }
+
+    #[test]
+    fn test_quantization_level_display() {
+        setup_hardware_capabilities();
+
+        let pq_level = UnifiedQuantizationLevel {
+            level_type: Some(QuantizationLevel::Pq(ProductQuantization {
+                bits_per_code: 8,
+                num_subvectors: 16,
+                codebook_id: None,
+                adaptive_subvectors: false,
+            })),
+        };
+
+        let display_str = format!("{:?}", pq_level);
+        assert!(display_str.contains("UnifiedQuantizationLevel"));
+    }
+
+    #[test]
+    fn test_product_quantization_subvectors() {
+        setup_hardware_capabilities();
+
+        let pq = ProductQuantization {
+            bits_per_code: 8,
+            num_subvectors: 32,
+            codebook_id: None,
+            adaptive_subvectors: true,
+        };
+
+        assert_eq!(pq.bits_per_code, 8);
+        assert_eq!(pq.num_subvectors, 32);
+        assert!(pq.adaptive_subvectors);
+        assert!(pq.codebook_id.is_none());
+    }
+
+    #[test]
+    fn test_uniform_quantization_params() {
+        setup_hardware_capabilities();
+
+        let uniform = UniformQuantization {
+            bits: 4,
+            scale: Some(0.01),
+            offset: Some(-128.0),
+        };
+
+        assert_eq!(uniform.bits, 4);
+        assert_eq!(uniform.scale, Some(0.01));
+        assert_eq!(uniform.offset, Some(-128.0));
+    }
+
+    #[test]
+    fn test_binary_quantization_threshold() {
+        setup_hardware_capabilities();
+
+        let binary = BinaryQuantization {
+            threshold: Some(0.5),
+            sign_based: true,
+        };
+
+        assert_eq!(binary.threshold, Some(0.5));
+        assert!(binary.sign_based);
+    }
+
+    #[test]
+    fn test_no_quantization() {
+        setup_hardware_capabilities();
+
+        let none = NoQuantization {};
+        let display_str = format!("{:?}", none);
+        assert!(display_str.contains("NoQuantization"));
+    }
+
+    #[test]
+    fn test_quantization_levels() {
+        setup_hardware_capabilities();
+
+        // Test that all quantization levels can be created
+        let levels = vec![
+            UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevel::None(NoQuantization {})),
+            },
+            UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevel::Binary(BinaryQuantization {
+                    threshold: None,
+                    sign_based: false,
+                })),
+            },
+            UnifiedQuantizationLevel {
+                level_type: Some(QuantizationLevel::Scalar(ScalarQuantization {
+                    bits: 8,
+                    scale: 1.0,
+                    offset: 0.0,
+                    clamp_values: false,
+                })),
+            },
+        ];
+
+        assert_eq!(levels.len(), 3);
+        for level in levels {
+            assert!(level.level_type.is_some());
+        }
     }
 }

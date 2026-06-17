@@ -4,9 +4,11 @@
 //! single-field and multi-field unique constraints for per-graph scopes.
 
 use super::Result;
+use crate::graph::adjacency_projection::edge_to_canonical_record;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Node, NodeId};
 use crate::proto::proximadb_v1::NodeQuery;
+use proximadb_graph::projection::GraphTopologyProjection;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -14,7 +16,7 @@ impl super::GraphOperationsService {
     /// Get neighbors of a node
     pub async fn get_neighbors(&self, graph_id: &str, node_id: &NodeId) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -86,7 +88,7 @@ impl super::GraphOperationsService {
     /// Query nodes by labels and properties
     pub async fn query_nodes(&self, graph_id: &str, query: NodeQuery) -> Result<Vec<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -147,14 +149,7 @@ impl super::GraphOperationsService {
                         && let Some(map_lock) =
                             self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        // Handle poisoned lock gracefully
-                        let Ok(map) = map_lock.read() else {
-                            tracing::warn!(
-                                "Poisoned lock in node_property_str_ordered for key {}",
-                                filter.key
-                            );
-                            continue;
-                        };
+                        let map = map_lock.read();
                         let mut matched = HashSet::new();
                         for (_k, ids) in map
                             .range(prefix.to_string()..)
@@ -175,14 +170,7 @@ impl super::GraphOperationsService {
                         && let Some(map_lock) =
                             self.memory_pool.node_property_num_indexes.get(&filter.key)
                     {
-                        // Handle poisoned lock gracefully
-                        let Ok(map) = map_lock.read() else {
-                            tracing::warn!(
-                                "Poisoned lock in node_property_num_indexes for key {}",
-                                filter.key
-                            );
-                            continue;
-                        };
+                        let map = map_lock.read();
                         let mut matched = HashSet::new();
                         match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                             Op::GreaterThan => {
@@ -219,14 +207,7 @@ impl super::GraphOperationsService {
                     } else if let Some(map_lock) =
                         self.memory_pool.node_property_str_ordered.get(&filter.key)
                     {
-                        // Handle poisoned lock gracefully
-                        let Ok(map) = map_lock.read() else {
-                            tracing::warn!(
-                                "Poisoned lock in node_property_str_ordered for key {} (string fallback)",
-                                filter.key
-                            );
-                            continue;
-                        };
+                        let map = map_lock.read();
                         let mut matched = HashSet::new();
                         // filter_val was already validated at the start of this Op branch
                         let s = super::extract_string_from_value(filter_val).unwrap_or("");
@@ -337,7 +318,7 @@ impl super::GraphOperationsService {
         );
 
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -347,6 +328,7 @@ impl super::GraphOperationsService {
         self.enforce_schema_on_node(graph_id, &node).await?;
         self.enforce_unique_constraints_on_node(graph_id, &node)?;
         self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
+        self.upsert_canonical_node_record(graph_id, &node).await?;
 
         tracing::debug!("Calling engine.insert_node for node: {}", node.id);
         let node_arc = engine.insert_node(node).await?;
@@ -359,7 +341,7 @@ impl super::GraphOperationsService {
     /// Get a node by ID
     pub async fn get_node(&self, graph_id: &str, id: &NodeId) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -367,17 +349,24 @@ impl super::GraphOperationsService {
         engine.get_node(id)
     }
 
-    /// Update a node
-    pub async fn update_node(&self, graph_id: &str, node: Node) -> Result<Arc<Node>> {
+    /// Update a node, applying ADR-012 merge semantics for label sets.
+    pub async fn update_node(&self, graph_id: &str, mut node: Node) -> Result<Arc<Node>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
+
+        // ADR-012 Add-Wins label union: preserve labels from the existing node.
+        if let Ok(Some(existing)) = engine.get_node(&node.id) {
+            node.labels = crate::graph::merge::merge_labels(&existing.labels, &node.labels);
+        }
+
         self.enforce_schema_on_node(graph_id, &node).await?;
         self.enforce_unique_constraints_on_node(graph_id, &node)?;
         self.enforce_multi_unique_constraints_on_node(graph_id, &node)?;
+        self.upsert_canonical_node_record(graph_id, &node).await?;
         let node_arc = engine.update_node(node).await?;
         self.register_node_in_unique_constraints(graph_id, &node_arc);
         self.register_node_in_multi_unique_constraints(graph_id, &node_arc);
@@ -387,7 +376,7 @@ impl super::GraphOperationsService {
     /// Delete a node
     pub async fn delete_node(&self, graph_id: &str, id: &NodeId) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -396,7 +385,11 @@ impl super::GraphOperationsService {
             self.unregister_node_from_unique_constraints(graph_id, &node);
             self.unregister_node_from_multi_unique_constraints(graph_id, &node);
         }
-        crate::graph::engines::GraphEngine::delete_node(&*engine, id).await
+        let deleted = crate::graph::engines::GraphEngine::delete_node(&*engine, id).await?;
+        if deleted.is_some() {
+            self.delete_canonical_node_record(graph_id, id).await?;
+        }
+        Ok(deleted)
     }
 
     /// Delete a node and detach all incident edges (DETACH mode)
@@ -406,7 +399,7 @@ impl super::GraphOperationsService {
         id: &NodeId,
     ) -> Result<Option<Arc<Node>>> {
         if !self.graph_enabled() {
-            return Err(crate::core::error::ProximaDBError::InvalidInput(
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
             ));
         }
@@ -422,6 +415,13 @@ impl super::GraphOperationsService {
             if let Some(edge) =
                 crate::graph::engines::GraphEngine::delete_edge(&*engine, &eid).await?
             {
+                let edge_record = edge_to_canonical_record(graph_id, &edge);
+                self.adjacency_projection(graph_id)
+                    .remove_edge(&edge_record)
+                    .await?;
+                self.delete_canonical_edge_record(graph_id, &edge.id)
+                    .await?;
+                self.advance_edge_epoch(graph_id);
                 self.stats_edges
                     .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
                 if let Some(v) = self.edge_type_counts.get(&edge.edge_type) {
@@ -433,7 +433,11 @@ impl super::GraphOperationsService {
             self.unregister_node_from_unique_constraints(graph_id, &node);
             self.unregister_node_from_multi_unique_constraints(graph_id, &node);
         }
-        crate::graph::engines::GraphEngine::delete_node(&*engine, id).await
+        let deleted = crate::graph::engines::GraphEngine::delete_node(&*engine, id).await?;
+        if deleted.is_some() {
+            self.delete_canonical_node_record(graph_id, id).await?;
+        }
+        Ok(deleted)
     }
 
     // ===== Unique constraints (single-field) =====
@@ -454,10 +458,12 @@ impl super::GraphOperationsService {
                     if let Some(existing) = map.get(&k)
                         && existing.value() != &node.id
                     {
-                        return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
-                            "Unique constraint violation on (label='{}', property='{}') for value '{}'",
-                            clabel, cprop, k
-                        )));
+                        return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                            format!(
+                                "Unique constraint violation on (label='{}', property='{}') for value '{}'",
+                                clabel, cprop, k
+                            ),
+                        ));
                     }
                 }
             }
@@ -525,10 +531,9 @@ impl super::GraphOperationsService {
                 if let Some(existing) = map.get(&comp)
                     && existing.value() != &node.id
                 {
-                    return Err(crate::core::error::ProximaDBError::InvalidInput(format!(
-                        "Duplicate composite key for unique ({:?})",
-                        props
-                    )));
+                    return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                        format!("Duplicate composite key for unique ({:?})", props),
+                    ));
                 }
             }
         }

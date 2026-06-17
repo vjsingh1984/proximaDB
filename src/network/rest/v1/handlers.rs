@@ -8,31 +8,53 @@
 use axum::{
     extract::{Extension, Json, Path, Query, State},
     http::StatusCode,
-    response::{IntoResponse, Json as JsonResponse},
+    response::Json as JsonResponse,
 };
+use proximadb_api::rest::v1::add_rest_v1_deprecation_headers;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
-#[cfg(any(feature = "ai_endpoints", feature = "sales_endpoints"))]
-use tracing::warn;
-use tracing::{debug, error, info};
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 use crate::api_handlers::UnifiedHandlers;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::health;
+use crate::network::rest::v1::analytics::{self, AnalyticsApiState};
+use crate::network::rest::v1::aql::{self, AqlApiState};
+use crate::network::rest::v1::nl::{self, NlApiState};
 use crate::proto::proximadb_v1;
-use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
-use crate::proto::proximadb_v1::{VectorBatchRequest, VectorSearchRequest};
 use crate::query::QueryFacadeAdapter;
-use crate::query::execution::QueryEngine;
-use crate::query::explain::ExplainPlan;
-use crate::utils::uuid::Uuid;
+use crate::query::aql::executor::AqlExecutor;
+use crate::query::aql::sources::document::DocumentAqlSource;
+use crate::query::aql::sources::graph::GraphAqlSource;
+use crate::query::aql::sources::memory::MemoryAqlSource;
+use crate::query::aql::sources::observability::ObservabilityAqlSource;
+use crate::query::aql::sources::vector::VectorAqlSource;
 use serde::{Deserialize, Serialize};
 
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
     /// Shared unified handlers for business logic delegation
-    pub unified_handlers: Arc<UnifiedHandlers>,
+    pub request_handlers: Arc<UnifiedHandlers>,
+    /// Extracted graph execution capability for query planning/execution helpers
+    pub graph_execution_service: Arc<dyn GraphExecutionService>,
+    /// Vector operations service, extracted at boot so the REST router-build
+    /// (AQL/analytics/hybrid/memory wiring) no longer reaches into
+    /// `request_handlers`'s concrete fields (TD-104 S5 — ROOT decoupling).
+    /// Same `Arc` the root handler holds; mirrors `graph_execution_service`.
+    pub vector_operations_service: Arc<crate::services::VectorOperationsService>,
+    /// Document service, extracted at boot (TD-104 S5). Feeds the document AQL
+    /// source; same `Arc` as the root handler.
+    pub document_service: Arc<crate::storage::document::DocumentService>,
+    /// Observability service, extracted at boot (TD-104 S5). Feeds the
+    /// observability AQL source; same `Arc` as the root handler.
+    pub observability_service: Arc<crate::observability::ObservabilityService>,
+    /// Event-log engine for persistent audit trails (TD-050), extracted at
+    /// boot (TD-104 S5). Feeds AQL audit + agent-memory consolidation sink;
+    /// same `Option<Arc>` as the root handler.
+    pub event_log: Option<Arc<crate::storage::engines::eventlog::EventLogEngine>>,
     /// Optional security coordinator for authentication/authorization
     pub security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
     /// Data directory from config (e.g., server.data_dir from TOML)
@@ -44,558 +66,351 @@ pub struct AppState {
     pub fulltext_indexes: Option<FullTextIndexMap>,
     /// Catalog manager for external catalog integration
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
+    /// Phase 6: per-collection pinning registry. Set from
+    /// `SharedServices.pin_registry` so the REST handlers and the
+    /// AxisTieringManager consumer share the same Arc.
+    pub pin_registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
+    /// Phase 7.2.4: per-collection cache-affinity registry. Set from
+    /// `SharedServices.affinity_registry` so the REST operator
+    /// endpoints and the `VectorOperationsService` data-plane
+    /// recorder share the same `Arc`.
+    pub affinity_registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
+    /// Slice 3 of tenant-pod-affinity: per-(tenant, collection)
+    /// primary-pod registry. Set from `SharedServices.primary_pod_registry`
+    /// so the REST operator endpoints and the future gateway write
+    /// router share the same `Arc`. The REST handlers in
+    /// `crate::network::rest::v1::primary_pod` gate every read/write
+    /// behind an operator-permission check — see
+    /// [`crate::network::rest::v1::primary_pod::authorize_operator`].
+    pub primary_pod_registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+
+    /// Slice 4 of tenant-pod-affinity: this pod's identity, used by
+    /// the gateway write-router gate to compare against bindings in
+    /// `primary_pod_registry`. Resolved via
+    /// [`crate::cluster::primary_pod_registry::resolve_self_pod_id`]:
+    /// explicit config override → `PROXIMADB_POD_ID` env var →
+    /// `"self"` fallback. Stored as a plain `String` (not `Arc`)
+    /// because it's cheap to clone and immutable for the process
+    /// lifetime.
+    pub self_pod_id: String,
+    /// PAX segment registry shared with the write path (gRPC v2, Arrow Flight).
+    /// Enables Iceberg REST snapshot summaries to reflect real PAX segment stats.
+    pub segment_registry: Arc<crate::catalog::SegmentRegistry>,
+    /// LLM engine for semantic operations
+    pub llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+    /// Port-based document service (from proximadb-api migration)
+    pub doc_port: Option<Arc<dyn proximadb_runtime::DocumentPort>>,
+    /// Port-based graph service (from proximadb-api migration)
+    pub graph_port: Option<Arc<dyn proximadb_runtime::GraphPort>>,
+    /// Port-based observability service (from proximadb-api migration)
+    pub obs_port: Option<Arc<dyn proximadb_runtime::ObservabilityPort>>,
+    /// Port-backed unified query service (Phase 9.9)
+    pub unified_query_port: Option<Arc<dyn proximadb_runtime::UnifiedQueryPort>>,
+    /// Port-backed API handler for collection/vector routes (Phase 9.10).
+    ///
+    /// The canonical v2 router (`create_v2_router`) delegates collection and
+    /// record operations through this `ApiHandlersPort`
+    /// (`CollectionPort`/`VectorOpsPort` trait objects).
+    ///
+    /// TD-104 2(b): non-optional. `AppState::new` defaults it to the concrete
+    /// root `UnifiedHandlers` cast to its `ApiHandlersPort` impl (the boot
+    /// adapter — every constructor already has `request_handlers`), and
+    /// `with_api_handlers` overrides it with the runtime port-based handler in
+    /// production (unified, multi-port, cluster boots). This removed the
+    /// `create_router` `ports=None` fallback that read the concrete
+    /// `request_handlers` field directly.
+    pub api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    /// Optional queue client for async ingest. When `Some`, the v3
+    /// `/documents?mode=async` handler routes through `producer.send`
+    /// on the `embed-ingest` topic and the embedding drainer consumes
+    /// it asynchronously. When `None`, async mode degrades to inline
+    /// embedding (still returns 202 but no real queue path). Production
+    /// deployments wire this from `apps/proximadb-server` startup.
+    pub queue_client: Option<Arc<proximadb_queue::QueueClient>>,
+    /// Optional ranking framework services (R-7c). When `Some`, the
+    /// `/api/v2/rank/search` route routes through the multi-phase
+    /// pipeline; when `None`, the route returns 503. See
+    /// `src/network/rest/v1/rank.rs` and
+    /// `roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md`.
+    pub rank_services: Option<Arc<crate::network::rest::v1::rank::RankServices>>,
+
+    /// Optional durable rank-profile catalog (R-7c.3 production wiring).
+    /// When `Some`, the `/api/v2/rank/profiles` REST routes can install,
+    /// fetch, and remove profiles end-to-end. When `None`, those routes
+    /// return 503. Should always be wired alongside `rank_services` so
+    /// installs reach both the catalog and the live registry.
+    pub rank_profile_store: Option<Arc<dyn crate::services::RankProfileStore>>,
+
+    /// Optional recall-probe gate (TD-064 / LLD §5). When `Some`, the v2
+    /// route-health endpoint reports per-scope `gate_open` state and flips
+    /// `recall_probe.live_state_in_app_state: true`. Production wires this
+    /// from `SharedServices.recall_probe_gate` via `with_recall_probe_gate`
+    /// in `src/network/multi_server.rs`. Search-path consultation
+    /// (`wired_to_query_path: true`) is a separate follow-up; this slot
+    /// only proves the gate is reachable from request handlers.
+    pub recall_probe_gate: Option<Arc<crate::catalog::RecallProbeGate>>,
+
+    /// Phase 8 (F1) Continuous Discovery service. Wired from
+    /// `SharedServices.discovery_service` via `with_discovery_service` in
+    /// `src/network/multi_server.rs` so the v2 `discovery-jobs` endpoints reach
+    /// the same registry the background executor consumes.
+    pub discovery_service: Option<Arc<crate::services::discovery::DiscoveryService>>,
+
+    /// Phase 8 (F5) External Collection service. Wired from
+    /// `SharedServices.external_collection_service` via
+    /// `with_external_collection_service` in `src/network/multi_server.rs` so the
+    /// v2 `external-collections` endpoints reach the same registry the service
+    /// owns. `None` when the service is not enabled (handlers return 501).
+    pub external_collection_service:
+        Option<Arc<crate::services::external_collection::ExternalCollectionService>>,
 }
 
-/// Parse search request from JSON, supporting both proto and simple formats
-/// Proto format: { "collection_id": "...", "queries": [{"vector": [...]}], "top_k": 10 }
-/// Simple format: { "collection": "...", "vector": [...], "top_k": 10 } (MVP-friendly)
-fn parse_search_request(value: serde_json::Value) -> Result<VectorSearchRequest, String> {
-    // Check if this is the simple format (has "collection" or "vector" at root level)
-    if let Some(obj) = value.as_object() {
-        let has_simple_collection = obj.contains_key("collection");
-        let has_simple_vector = obj.contains_key("vector");
-        let is_simple_format = has_simple_collection || has_simple_vector;
-
-        if is_simple_format {
-            // Parse as simple format and convert to proto format
-            let collection_id = obj
-                .get("collection")
-                .or_else(|| obj.get("collection_id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let vector: Vec<f32> = obj
-                .get("vector")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_f64().map(|f| f as f32))
-                        .collect()
-                })
-                .unwrap_or_default();
-
-            let top_k = obj.get("top_k").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
-
-            // Parse optional filters from simple format
-            let filters = obj
-                .get("filters")
-                .and_then(|v| {
-                    serde_json::from_value::<
-                        std::collections::HashMap<String, proximadb_v1::SqlValue>,
-                    >(v.clone())
-                    .ok()
-                })
-                .unwrap_or_default();
-
-            // Create a single SearchQuery from the simple format
-            let query = proximadb_v1::SearchQuery {
-                vector,
-                filters,
-                advanced_filter: None,
-            };
-
-            return Ok(VectorSearchRequest {
-                collection_id,
-                queries: vec![query],
-                top_k,
-                include_fields: None,
-                search_params: None,
-                distance_metric_override: None,
-                search_optimization: None,
-            });
+impl AppState {
+    /// Create REST app state with the standard shared runtime components.
+    pub fn new(
+        request_handlers: Arc<UnifiedHandlers>,
+        graph_execution_service: Arc<dyn GraphExecutionService>,
+        security_coordinator: Option<Arc<crate::security::SecurityCoordinator>>,
+        data_dir: std::path::PathBuf,
+        query_adapter: Option<Arc<QueryFacadeAdapter>>,
+        llm_engine: Option<Arc<crate::ai::llm_integration::LLMIntegrationEngine>>,
+    ) -> Self {
+        // TD-104 S5: extract the concrete services once, at construction (the
+        // boot adapter), so the router-build reads `state.<service>` rather
+        // than scattering `state.request_handlers.<service>` across ~13 sites.
+        // Mirrors how `graph_execution_service` is already threaded.
+        let vector_operations_service = request_handlers.vector_operations_service.clone();
+        let document_service = request_handlers.document_service.clone();
+        let observability_service = request_handlers.observability_service.clone();
+        let event_log = request_handlers.event_log.clone();
+        // TD-104 2(b): default `api_handlers` to the root handler cast to its
+        // `ApiHandlersPort` impl. Production overrides via `with_api_handlers`
+        // with the runtime port-based handler; legacy/dev/test paths that never
+        // call it keep this default — so `create_router` never needs the old
+        // `ports=None` fallback that reached into the concrete `request_handlers`.
+        let api_handlers = request_handlers.clone() as Arc<dyn proximadb_runtime::ApiHandlersPort>;
+        Self {
+            request_handlers,
+            api_handlers,
+            graph_execution_service,
+            vector_operations_service,
+            document_service,
+            observability_service,
+            event_log,
+            security_coordinator,
+            data_dir,
+            query_adapter,
+            fulltext_indexes: Some(Arc::new(std::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            ))),
+            catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
+            // Default: standalone pin registry. Production wires
+            // SharedServices.pin_registry via `with_pin_registry` so
+            // REST handlers and the eventual AxisTieringManager
+            // consumer share the same Arc.
+            pin_registry: crate::storage::collection_pinning::new_shared(),
+            // Default: standalone affinity registry. Production wires
+            // SharedServices.affinity_registry via `with_affinity_registry`
+            // so REST handlers and the search-path recorder share the
+            // same Arc.
+            affinity_registry: crate::cluster::cache_affinity::new_shared(),
+            // Default: standalone primary-pod registry. Production
+            // wires `SharedServices.primary_pod_registry` so REST
+            // handlers and the future gateway write router share the
+            // same `Arc`.
+            primary_pod_registry: crate::cluster::primary_pod_registry::new_shared(),
+            // Default pod identity: resolve from env var or fall
+            // back to `"self"`. Production may override via
+            // `with_self_pod_id` once the config field lands.
+            self_pod_id: crate::cluster::primary_pod_registry::resolve_self_pod_id(None),
+            segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
+            llm_engine,
+            doc_port: None,
+            graph_port: None,
+            obs_port: None,
+            unified_query_port: None,
+            queue_client: None,
+            rank_services: None,
+            rank_profile_store: None,
+            recall_probe_gate: None,
+            discovery_service: None,
+            external_collection_service: None,
         }
     }
 
-    // Fall back to proto format
-    serde_json::from_value(value).map_err(|e| e.to_string())
-}
-
-/// Parse batch request from JSON, supporting both proto and simple formats
-fn parse_batch_request(value: serde_json::Value) -> Result<VectorBatchRequest, String> {
-    // Check if this is the simple format (has "collection" at root level)
-    if let Some(obj) = value.as_object() {
-        let has_simple_collection = obj.contains_key("collection");
-
-        if has_simple_collection {
-            // Parse as simple format and convert to proto format
-            let collection_id = obj
-                .get("collection")
-                .or_else(|| obj.get("collection_id"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            // Parse vectors array - already in proto-compatible format
-            let vectors: Vec<proximadb_v1::VectorRecord> = obj
-                .get("vectors")
-                .and_then(|v| serde_json::from_value(v.clone()).ok())
-                .unwrap_or_default();
-
-            return Ok(VectorBatchRequest {
-                collection_id,
-                vectors,
-            });
-        }
+    /// Inject the process-wide pin registry (Phase 6 control surface).
+    /// Wired from `SharedServices.pin_registry` in production so REST
+    /// handlers and the eventual `AxisTieringManager` consumer share
+    /// the same Arc.
+    pub fn with_pin_registry(
+        mut self,
+        registry: Arc<crate::storage::collection_pinning::CollectionPinRegistry>,
+    ) -> Self {
+        self.pin_registry = registry;
+        self
     }
 
-    // Fall back to proto format
-    serde_json::from_value(value).map_err(|e| e.to_string())
-}
-
-/// Aligned vector search handler
-/// Accepts BOTH:
-/// 1. Proto format: { "collection_id": "...", "queries": [{"vector": [...]}], "top_k": 10 }
-/// 2. Simple format: { "collection": "...", "vector": [...], "top_k": 10 } (MVP-friendly)
-pub async fn vector_search(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Json(value): Json<serde_json::Value>,
-) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Try to parse as simple format first, then fall back to proto format
-    let request: VectorSearchRequest = parse_search_request(value)
-        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
-
-    if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection ID is required".to_string(),
-        ));
+    /// Inject the process-wide cache-affinity registry (Phase 7.2.4).
+    /// Wired from `SharedServices.affinity_registry` so REST operator
+    /// endpoints and the `VectorOperationsService` recorder share
+    /// the same Arc.
+    pub fn with_affinity_registry(
+        mut self,
+        registry: Arc<crate::cluster::cache_affinity::CacheAffinityRegistry>,
+    ) -> Self {
+        self.affinity_registry = registry;
+        self
     }
 
-    // Log tenant context for audit trail
-    debug!(
-        "🔍 Vector search: collection='{}', tenant='{}', source='{}'",
-        request.collection_id, tenant.tenant_id, tenant.source
-    );
-
-    match state
-        .unified_handlers
-        .handle_vector_search_v1_for_tenant(request.clone(), Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(response) => Ok(JsonResponse(response)),
-        Err(e) => {
-            error!(
-                "❌ Vector search failed for collection '{}': {:?}",
-                request.collection_id, e
-            );
-            error!(
-                "Search request details: num_queries={}, top_k={}, has_filters={}, has_advanced_filter={}, has_search_params={}",
-                request.queries.len(),
-                request.top_k,
-                request
-                    .queries
-                    .first()
-                    .is_some_and(|q| !q.filters.is_empty()),
-                request
-                    .queries
-                    .first()
-                    .and_then(|q| q.advanced_filter.as_ref())
-                    .is_some(),
-                request.search_params.is_some()
-            );
-            Err(ApiError::Internal(format!("Search failed: {}", e)))
-        }
-    }
-}
-
-/// Aligned vector batch operation handler
-/// Accepts BOTH:
-/// 1. Proto format: { "collection_id": "...", "vectors": [...] }
-/// 2. Simple format: { "collection": "...", "vectors": [...] } (MVP-friendly)
-pub async fn vector_batch(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Json(value): Json<serde_json::Value>,
-) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorBatchRequest (supports both formats)
-    let request: VectorBatchRequest = parse_batch_request(value)
-        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
-
-    info!(
-        "Vector batch operation for collection: {}, {} records (tenant: {})",
-        request.collection_id,
-        request.vectors.len(),
-        tenant.tenant_id
-    );
-
-    // Validate request
-    if request.collection_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection ID is required".to_string(),
-        ));
+    /// Inject the process-wide primary-pod registry (Slice 3 of
+    /// tenant-pod-affinity). Wired from
+    /// `SharedServices.primary_pod_registry` so REST operator
+    /// endpoints and the future gateway write router share the same
+    /// `Arc`.
+    pub fn with_primary_pod_registry(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    ) -> Self {
+        self.primary_pod_registry = registry;
+        self
     }
 
-    if request.vectors.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "At least one record is required".to_string(),
-        ));
+    /// Override the resolved self-pod identity (Slice 4 of
+    /// tenant-pod-affinity). Production wires this when the config
+    /// field or env var sets a known pod_id; tests inject deterministic
+    /// values so the write-routing gate behaves predictably.
+    pub fn with_self_pod_id(mut self, pod_id: impl Into<String>) -> Self {
+        self.self_pod_id = pod_id.into();
+        self
     }
 
-    // Delegate to UnifiedHandlers v1 wrapper (returns v1 response)
-    match state
-        .unified_handlers
-        .handle_vector_batch_v1_for_tenant(request, Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(v1_resp) => Ok(JsonResponse(v1_resp)),
-        Err(e) => {
-            error!("Vector batch operation failed: {}", e);
-            Err(ApiError::Internal(e.to_string()))
-        }
-    }
-}
-
-/// Get a single vector by ID
-pub async fn get_vector(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Path((collection_id, vector_id)): Path<(String, String)>,
-    Query(params): Query<GetVectorParams>,
-) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    debug!("Get vector: collection={}, id={}", collection_id, vector_id);
-
-    // Validate parameters
-    if collection_id.is_empty() || vector_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "collection_id and vector_id are required".to_string(),
-        ));
+    /// Inject the shared full-text index map (T3.2 Slice 1b).
+    /// Production wires this from `SharedServices.fulltext_indexes` so
+    /// REST `/api/v1/hybrid/search` and gRPC `hybrid_search` share the
+    /// same in-process map — an indexed document is searchable on
+    /// both protocols.
+    pub fn with_fulltext_indexes(mut self, indexes: FullTextIndexMap) -> Self {
+        self.fulltext_indexes = Some(indexes);
+        self
     }
 
-    let include_vector = params.include_vector.unwrap_or(true);
-    let include_metadata = params.include_metadata.unwrap_or(true);
+    /// Inject the ranking framework services bundle. Production wires
+    /// this from `apps/proximadb-server` startup after constructing the
+    /// `ProfileRegistry`, registering built-in features into the
+    /// `BlueprintFactory`, and selecting a `CandidateProvider` impl
+    /// (production = adapter over the hybrid coordinator; tests +
+    /// pre-R-7c.1 deployments = `MockRangeCandidateProvider`).
+    pub fn with_rank_services(
+        mut self,
+        services: Arc<crate::network::rest::v1::rank::RankServices>,
+    ) -> Self {
+        self.rank_services = Some(services);
+        self
+    }
 
-    // Delegate to UnifiedHandlers
-    match state
-        .unified_handlers
-        .handle_vector_v1_for_tenant(
-            &collection_id,
-            &vector_id,
-            include_vector,
-            include_metadata,
-            Some(&tenant.tenant_id),
+    /// Inject the durable rank-profile catalog so the REST install / fetch /
+    /// remove endpoints can persist DDL-style operations through the canonical
+    /// WAL. Production wires this from `SharedServices.rank_profile_store`.
+    pub fn with_rank_profile_store(
+        mut self,
+        store: Arc<dyn crate::services::RankProfileStore>,
+    ) -> Self {
+        self.rank_profile_store = Some(store);
+        self
+    }
+
+    /// Inject a queue client for async ingest. Production wires this
+    /// from `apps/proximadb-server` startup after opening the queue
+    /// subsystem at the configured root path.
+    pub fn with_queue_client(mut self, client: Arc<proximadb_queue::QueueClient>) -> Self {
+        self.queue_client = Some(client);
+        self
+    }
+
+    /// Inject a shared segment registry (same `Arc` as in `SharedServices`).
+    pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
+        self.segment_registry = registry;
+        self
+    }
+
+    /// Inject the shared xCatalog manager from the server composition root.
+    pub fn with_catalog_manager(mut self, manager: Arc<crate::catalog::CatalogManager>) -> Self {
+        self.catalog_manager = manager;
+        self
+    }
+
+    /// Inject the shared recall-probe gate from `SharedServices`. When set,
+    /// `/api/v2/_diagnostics/collections/:id/route-health` resolves
+    /// per-scope gate state and reports `recall_probe.gate_open` +
+    /// `recall_probe.live_state_in_app_state: true`. Search-path
+    /// consultation (`wired_to_query_path: true`) is separate.
+    pub fn with_recall_probe_gate(mut self, gate: Arc<crate::catalog::RecallProbeGate>) -> Self {
+        self.recall_probe_gate = Some(gate);
+        self
+    }
+
+    /// Inject the Phase 8 Continuous Discovery service (F1) so the v2
+    /// `discovery-jobs` endpoints can create/inspect jobs.
+    pub fn with_discovery_service(
+        mut self,
+        discovery_service: Arc<crate::services::discovery::DiscoveryService>,
+    ) -> Self {
+        self.discovery_service = Some(discovery_service);
+        self
+    }
+
+    /// Inject the Phase 8 (F5) External Collection service so the v2
+    /// `external-collections` endpoints can register/build/search.
+    pub fn with_external_collection_service(
+        mut self,
+        external_collection_service: Arc<
+            crate::services::external_collection::ExternalCollectionService,
+        >,
+    ) -> Self {
+        self.external_collection_service = Some(external_collection_service);
+        self
+    }
+
+    /// Inject port-based service objects for API-crate-backed routes.
+    pub fn with_ports(
+        mut self,
+        doc_port: Arc<dyn proximadb_runtime::DocumentPort>,
+        graph_port: Arc<dyn proximadb_runtime::GraphPort>,
+        obs_port: Arc<dyn proximadb_runtime::ObservabilityPort>,
+    ) -> Self {
+        self.doc_port = Some(doc_port);
+        self.graph_port = Some(graph_port);
+        self.obs_port = Some(obs_port);
+        self
+    }
+
+    /// Inject unified query port (Phase 9.9).
+    pub fn with_unified_query_port(
+        mut self,
+        port: Arc<dyn proximadb_runtime::UnifiedQueryPort>,
+    ) -> Self {
+        self.unified_query_port = Some(port);
+        self
+    }
+
+    /// Override the port-backed API handler for collection/vector routes
+    /// (Phase 9.10). Production wires the runtime port-based handler here,
+    /// replacing the root-as-port default set in `AppState::new` (TD-104 2(b)).
+    pub fn with_api_handlers(
+        mut self,
+        handlers: Arc<dyn proximadb_runtime::ApiHandlersPort>,
+    ) -> Self {
+        self.api_handlers = handlers;
+        self
+    }
+
+    /// Create health-check state from the same explicit REST capability view.
+    pub fn health_state(&self) -> health::HealthState {
+        health::HealthState::new(
+            self.vector_operations_service.clone(),
+            self.request_handlers.collection_service.clone(),
+            self.graph_execution_service.clone(),
         )
-        .await
-    {
-        Ok(response) => Ok(JsonResponse(response)),
-        Err(e) => {
-            error!(
-                "Failed to get vector {}/{}: {}",
-                collection_id, vector_id, e
-            );
-            Err(ApiError::Internal(e.to_string()))
-        }
-    }
-}
-
-/// Delete a single vector by ID
-pub async fn delete_vector(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Path((collection_id, vector_id)): Path<(String, String)>,
-) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    info!(
-        "Delete vector: collection={}, id={}",
-        collection_id, vector_id
-    );
-
-    // Validate parameters
-    if collection_id.is_empty() || vector_id.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "collection_id and vector_id are required".to_string(),
-        ));
-    }
-
-    // Create a batch request with vector marked for deletion via expires_at
-    let delete_request = proximadb_v1::VectorBatchRequest {
-        collection_id: collection_id.clone(),
-        vectors: vec![proximadb_v1::VectorRecord {
-            id: vector_id.clone(),
-            vector: vec![], // Empty vector (tombstone)
-            metadata: std::collections::HashMap::new(),
-            version: None,
-            timestamp: None,
-            source: None,
-            updated_at: None,
-            expires_at: Some(0), // Set to 0 (past time) to mark for immediate deletion
-        }],
-    };
-
-    // Delegate to vector batch handler (which supports deletions)
-    match state
-        .unified_handlers
-        .handle_vector_batch_v1_for_tenant(delete_request, Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(response) => {
-            // Return the batch response (operation is already VsBatch)
-            Ok(JsonResponse(response))
-        }
-        Err(e) => {
-            error!(
-                "Failed to delete vector {}/{}: {}",
-                collection_id, vector_id, e
-            );
-            Err(ApiError::Internal(e.to_string()))
-        }
-    }
-}
-
-/// Query parameters for get_vector endpoint
-#[derive(Debug, Deserialize)]
-pub struct GetVectorParams {
-    /// Include the raw vector data in the response
-    pub include_vector: Option<bool>,
-    /// Include metadata fields in the response
-    pub include_metadata: Option<bool>,
-}
-
-/// Aligned collection operation handler
-pub async fn collection_operation(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Json(value): Json<serde_json::Value>,
-) -> ApiResult<JsonResponse<proximadb_v1::CollectionResponse>> {
-    info!(
-        "🔵 REST API: collection_operation called (tenant: {}) with payload: {}",
-        tenant.tenant_id,
-        serde_json::to_string_pretty(&value).unwrap_or_else(|_| "invalid json".to_string())
-    );
-
-    // Parse the JSON value into CollectionRequest
-    let request: CollectionRequest = serde_json::from_value(value.clone()).map_err(|e| {
-        error!(
-            "🔴 REST API: Failed to parse CollectionRequest from payload: {:?}. Error: {}",
-            value, e
-        );
-        ApiError::InvalidArgument(format!("Invalid request format: {}", e))
-    })?;
-
-    let operation = match CollectionOperation::try_from(request.operation) {
-        Ok(op) => op,
-        Err(_) => {
-            return Err(ApiError::InvalidArgument(
-                "Invalid collection operation".to_string(),
-            ));
-        }
-    };
-
-    info!(
-        "Collection operation: {:?} for collection: {:?}",
-        operation, request.collection_id
-    );
-
-    // Direct delegation to UnifiedHandlers
-    match state
-        .unified_handlers
-        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(response) => Ok(JsonResponse(response)),
-        Err(e) => {
-            error!("Collection operation failed: {}", e);
-            Err(ApiError::Internal(e.to_string()))
-        }
-    }
-}
-
-/// Health check endpoint with proper error handling
-pub async fn health_check(
-    State(_state): State<AppState>,
-) -> ApiResult<JsonResponse<serde_json::Value>> {
-    // Return basic health status
-    // Deferred: Add actual health checks when UnifiedHandlers supports it
-
-    Ok(JsonResponse(serde_json::json!({
-        "status": "healthy",
-        "timestamp": chrono::Utc::now().to_rfc3339(),
-        "version": env!("CARGO_PKG_VERSION"),
-        "services": {
-            "rest_api": "operational",
-            "storage": "operational",
-            "indexing": "operational"
-        }
-    })))
-}
-
-/// Get collection by ID with aligned error handling
-pub async fn get_collection(
-    Path(collection_id): Path<String>,
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-) -> impl IntoResponse {
-    debug!(
-        "Get collection '{}' for tenant '{}'",
-        collection_id, tenant.tenant_id
-    );
-
-    if collection_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
-    }
-
-    let request = CollectionRequest {
-        operation: CollectionOperation::CollectionGet as i32,
-        collection_id: Some(collection_id.clone()),
-        collection_config: None,
-        query_params: Default::default(),
-        options: Default::default(),
-        migration_config: Default::default(),
-    };
-
-    match state
-        .unified_handlers
-        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(response) => JsonResponse(response).into_response(),
-        Err(e) => {
-            if e.to_string().contains("not found") {
-                (
-                    StatusCode::NOT_FOUND,
-                    format!("Collection not found: {}", collection_id),
-                )
-                    .into_response()
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-            }
-        }
-    }
-}
-
-/// List collections with pagination
-#[derive(serde::Deserialize)]
-pub struct ListCollectionsQuery {
-    /// Maximum number of collections to return
-    pub limit: Option<u32>,
-    /// Pagination offset
-    pub offset: Option<u32>,
-    /// Include collection statistics (vector count, storage size)
-    pub include_stats: Option<bool>,
-}
-
-/// List collections with pagination and optional statistics
-pub async fn list_collections(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Query(params): Query<ListCollectionsQuery>,
-) -> impl IntoResponse {
-    debug!("Listing collections for tenant '{}'", tenant.tenant_id);
-
-    let mut query_params = std::collections::HashMap::new();
-
-    if let Some(limit) = params.limit {
-        query_params.insert("limit".to_string(), limit.to_string());
-    }
-    if let Some(offset) = params.offset {
-        query_params.insert("offset".to_string(), offset.to_string());
-    }
-
-    let mut options = std::collections::HashMap::new();
-    if let Some(include_stats) = params.include_stats {
-        options.insert("include_stats".to_string(), include_stats);
-    }
-
-    let request = CollectionRequest {
-        operation: CollectionOperation::CollectionList as i32,
-        collection_id: None,
-        collection_config: None,
-        query_params,
-        options,
-        migration_config: Default::default(),
-    };
-
-    match state
-        .unified_handlers
-        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(response) => JsonResponse(response).into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
-}
-
-/// Delete collection with proper error handling
-pub async fn delete_collection(
-    Path(collection_id): Path<String>,
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-) -> impl IntoResponse {
-    info!(
-        "Delete collection '{}' for tenant '{}'",
-        collection_id, tenant.tenant_id
-    );
-
-    if collection_id.is_empty() {
-        return (StatusCode::BAD_REQUEST, "Collection ID is required").into_response();
-    }
-
-    let request = CollectionRequest {
-        operation: CollectionOperation::CollectionDelete as i32,
-        collection_id: Some(collection_id.clone()),
-        collection_config: None,
-        query_params: Default::default(),
-        options: Default::default(),
-        migration_config: Default::default(),
-    };
-
-    match state
-        .unified_handlers
-        .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(response) => JsonResponse(response).into_response(),
-        Err(e) => {
-            if e.to_string().contains("not found") {
-                (
-                    StatusCode::NOT_FOUND,
-                    format!("Collection not found: {}", collection_id),
-                )
-                    .into_response()
-            } else {
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-            }
-        }
-    }
-}
-
-/// Example using JSON wrapper types for consistent structure
-pub async fn vector_search_with_metadata(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Json(value): Json<serde_json::Value>,
-) -> ApiResult<JsonResponse<proximadb_v1::VectorOperationResponse>> {
-    // Parse the JSON value into VectorSearchRequest (supports both formats)
-    let request: VectorSearchRequest = parse_search_request(value)
-        .map_err(|e| ApiError::InvalidArgument(format!("Invalid request format: {}", e)))?;
-
-    let start_time = std::time::Instant::now();
-    let request_id = Uuid::new_v4().to_string();
-
-    info!(
-        "Vector search request {} for collection: {} (tenant: {})",
-        request_id, request.collection_id, tenant.tenant_id
-    );
-
-    // Execute search
-    match state
-        .unified_handlers
-        .handle_vector_search_v1_for_tenant(request, Some(&tenant.tenant_id))
-        .await
-    {
-        Ok(response) => {
-            let elapsed = start_time.elapsed();
-            info!(
-                "Vector search {} completed in {}ms",
-                request_id,
-                elapsed.as_millis()
-            );
-
-            Ok(JsonResponse(response))
-        }
-        Err(e) => {
-            error!("Vector search {} failed: {}", request_id, e);
-            Err(ApiError::Internal(e.to_string()))
-        }
     }
 }
 
@@ -614,8 +429,173 @@ pub struct SqlQueryRequest {
     pub seeding: Option<String>,
 }
 
+fn sql_params_to_proxima_values(
+    parameters: Option<Vec<proximadb_v1::SqlValue>>,
+) -> Option<Vec<proximadb_data_model::ProximaValue>> {
+    parameters.map(|values| {
+        values
+            .iter()
+            .map(proximadb_records::conversions::sql_value_to_proxima)
+            .collect()
+    })
+}
+
+/// ADR-012 graph branch merge endpoint — extractor shim.
+///
+/// All actual logic lives in [`merge_graph_branch_inner`] so integration
+/// tests can drive it through their own minimal axum Router without
+/// constructing a full `AppState`. See
+/// `tests/graph_branch_merge_rest_integration_test.rs`.
+pub async fn merge_graph_branch(
+    State(state): State<AppState>,
+    Path((collection, branch)): Path<(String, String)>,
+    Json(request): Json<GraphBranchMergeRequest>,
+) -> ApiResult<JsonResponse<serde_json::Value>> {
+    merge_graph_branch_inner(&state.data_dir, &collection, &branch, request).await
+}
+
+/// Pure-logic core of the branch-merge handler. Decoupled from `AppState`
+/// so it can be driven from integration tests (and any future REST
+/// endpoint that needs the same logic) without service-stub scaffolding.
+///
+/// Reads the canonical WAL under `data_dir/pgwire/canonical-records.wal`,
+/// filters by `collection`, runs `merge_branches`, and (if `!dry_run`)
+/// writes the resolutions back through `write_back_merge` with
+/// `origin = "branch_merge:<branch>:<request.target_branch>"`.
+pub async fn merge_graph_branch_inner(
+    data_dir: &std::path::Path,
+    collection: &str,
+    branch: &str,
+    request: GraphBranchMergeRequest,
+) -> ApiResult<JsonResponse<serde_json::Value>> {
+    if collection.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "collection path parameter must not be empty".to_string(),
+        ));
+    }
+    if branch.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "branch path parameter must not be empty".to_string(),
+        ));
+    }
+    if request.target_branch.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "target_branch must not be empty".to_string(),
+        ));
+    }
+
+    let wal_path = graph_branch_merge_wal_path(data_dir);
+    if !tokio::fs::try_exists(&wal_path).await.map_err(|err| {
+        ApiError::Internal(format!(
+            "checking canonical WAL {} failed: {}",
+            wal_path.display(),
+            err
+        ))
+    })? {
+        return Err(ApiError::NotFound(format!(
+            "canonical WAL not found at {}",
+            wal_path.display()
+        )));
+    }
+
+    let entries = crate::services::FramedTableWalAppender::read_entries_from_path(&wal_path)
+        .await
+        .map_err(|err| {
+            ApiError::Internal(format!(
+                "reading canonical WAL {} failed: {}",
+                wal_path.display(),
+                err
+            ))
+        })?;
+    let collection_entries = filter_canonical_wal_for_collection(entries, collection);
+    let report =
+        crate::graph::merge::merge_branches(&collection_entries, branch, &request.target_branch)
+            .ok_or_else(|| {
+                ApiError::NotFound(format!(
+                    "no mergeable branch entries found for collection '{}' source '{}' target '{}'",
+                    collection, branch, request.target_branch
+                ))
+            })?;
+
+    // If not dry-run, write the merged records to WAL
+    let write_back_result = if !request.dry_run {
+        match crate::graph::merge::write_back_merge(
+            &collection_entries,
+            &report,
+            &wal_path,
+            collection,
+            branch,
+            &request.target_branch,
+            request.tenant_id.clone(),
+        )
+        .await
+        {
+            Ok(Some(result)) => Some(result),
+            Ok(None) => None, // Nothing to write
+            Err(err) => {
+                return Err(ApiError::Internal(format!(
+                    "merge write-back failed: {}",
+                    err
+                )));
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(JsonResponse(serde_json::json!({
+        "collection": collection,
+        "source_branch": branch,
+        "target_branch": request.target_branch,
+        "dry_run": request.dry_run,
+        "merge_base_lsn": report.merge_base_lsn,
+        "left_events": report.left_events,
+        "right_events": report.right_events,
+        "conflicts": report.conflicts,
+        "resolutions": report.resolutions,
+        "summary": {
+            "left_event_count": report.left_events.len(),
+            "right_event_count": report.right_events.len(),
+            "conflict_count": report.conflicts.len(),
+            "resolution_count": report.resolutions.len(),
+            "wal_path": wal_path.display().to_string()
+        },
+        "write_back": match write_back_result {
+            Some(result) => serde_json::json!({
+                "first_lsn": result.first_lsn,
+                "last_lsn": result.last_lsn,
+                "entries_written": result.written_entries.len()
+            }),
+            None => serde_json::json!(null)
+        }
+    })))
+}
+
+fn graph_branch_merge_wal_path(data_dir: &std::path::Path) -> std::path::PathBuf {
+    data_dir.join("pgwire").join("canonical-records.wal")
+}
+
+fn filter_canonical_wal_for_collection(
+    entries: Vec<proximadb_storage_common::CanonicalWalEntry>,
+    collection: &str,
+) -> Vec<proximadb_storage_common::CanonicalWalEntry> {
+    entries
+        .into_iter()
+        .filter(|entry| match &entry.operation {
+            proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id, ..
+            } => collection_id == collection,
+            proximadb_storage_common::CanonicalOperation::RecordDelete {
+                collection_id, ..
+            } => collection_id == collection,
+            proximadb_storage_common::CanonicalOperation::Checkpoint(_)
+            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. } => false,
+        })
+        .collect()
+}
+
 // SQL query response structure
-// For REST, we now return proximadb.v1 ExecuteSqlResponse directly, wrapped by ProtoApiResponse
+// For REST, we now return proximadb.v1 ExecuteQueryResponse directly, wrapped by ProtoApiResponse
 /// Column information in SQL results
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SqlColumnInfo {
@@ -623,6 +603,48 @@ pub struct SqlColumnInfo {
     pub name: String,
     /// Column data type
     pub data_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CatalogRoutingQuery {
+    pub table_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TableWriteExplainRequest {
+    pub target_table: String,
+    pub source_table: Option<String>,
+    pub source_sql: Option<String>,
+    pub write_mode: Option<String>,
+    pub distribution: Option<String>,
+    pub target_columns: Option<Vec<String>>,
+    pub tenant_id: Option<String>,
+    pub actor: Option<String>,
+    pub idempotency_key: Option<String>,
+    pub row_count_hint: Option<u64>,
+    pub estimated_bytes: Option<u64>,
+    pub requires_row_level_semantics: Option<bool>,
+    pub batch_local_constraints_sufficient: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GraphBranchMergeRequest {
+    /// Target branch to merge into. Defaults to `main`.
+    #[serde(default = "default_graph_branch_merge_target")]
+    pub target_branch: String,
+    /// Dry-run returns the ADR-012 merge report without writing a merge commit.
+    #[serde(default = "default_graph_branch_merge_dry_run")]
+    pub dry_run: bool,
+    /// Optional tenant ID for multi-tenant deployments.
+    pub tenant_id: Option<String>,
+}
+
+fn default_graph_branch_merge_target() -> String {
+    "main".to_string()
+}
+
+fn default_graph_branch_merge_dry_run() -> bool {
+    true
 }
 
 /// Execute SQL query handler
@@ -655,20 +677,68 @@ pub async fn execute_sql(
         ));
     }
 
-    // Route through unified facade when adapter is available
+    // Prefer unified query port (decoupled from concrete QueryFacadeAdapter type)
+    if let Some(ref qp) = state.unified_query_port {
+        debug!("Using unified query port for SQL query");
+        let query_with_hint = if let Some(ref seeding) = request.seeding {
+            format!(
+                "-- SEEDING: {}\n{}",
+                seeding.to_ascii_uppercase(),
+                request.query
+            )
+        } else {
+            request.query.clone()
+        };
+        return match qp
+            .execute_unified_query(
+                query_with_hint,
+                sql_params_to_proxima_values(request.parameters.clone()),
+                request.collection.clone(),
+                None,
+            )
+            .await
+        {
+            Ok(port_result) => {
+                let execution_time_ms = start_time.elapsed().as_millis() as u64;
+                let records = port_result
+                    .get("records")
+                    .cloned()
+                    .unwrap_or(serde_json::Value::Array(vec![]));
+                let total = port_result
+                    .get("total_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                let json_data = serde_json::json!({
+                    "rows": records,
+                    "execution_time_ms": execution_time_ms,
+                    "rows_returned": total,
+                    "row_count": total,
+                    "request_id": request_id,
+                });
+                info!(
+                    "SQL query {} (port) completed in {}ms",
+                    request_id, execution_time_ms
+                );
+                Ok(JsonResponse(json_data))
+            }
+            Err(e) => {
+                error!("SQL query {} (port) failed: {}", request_id, e);
+                Err(ApiError::Internal(e.to_string()))
+            }
+        };
+    }
+
+    // Fallback: route through concrete query_adapter facade
     if let Some(ref adapter) = state.query_adapter {
-        debug!("Using unified facade routing for SQL query");
+        debug!("Using query_adapter fallback for SQL query");
         return match adapter.sql_query(&request.query).await {
             Ok(result) => {
                 let execution_time_ms = start_time.elapsed().as_millis() as u64;
-
-                // Convert QueryResult to JSON response
                 let rows = match result.data {
                     crate::query::QueryResultData::Rows(rows) => rows,
                     crate::query::QueryResultData::Empty => vec![],
-                    _ => vec![], // Other types return empty for SQL endpoint
+                    _ => vec![],
                 };
-
                 let json_data = serde_json::json!({
                     "rows": rows,
                     "execution_time_ms": execution_time_ms,
@@ -676,16 +746,14 @@ pub async fn execute_sql(
                     "row_count": rows.len(),
                     "request_id": request_id
                 });
-
                 info!(
-                    "SQL query {} (facade) completed in {}ms",
+                    "SQL query {} (adapter) completed in {}ms",
                     request_id, execution_time_ms
                 );
-
                 Ok(JsonResponse(json_data))
             }
             Err(e) => {
-                error!("SQL query {} (facade) failed: {}", request_id, e);
+                error!("SQL query {} (adapter) failed: {}", request_id, e);
                 Err(ApiError::Internal(e.to_string()))
             }
         };
@@ -702,11 +770,17 @@ pub async fn execute_sql(
         request.query.clone()
     };
 
+    // Route through the ApiHandlersPort (TD-104 / seam S1) rather than the
+    // concrete ROOT handler. In the default config `state.api_handlers` is the
+    // ROOT handler exposed as a port (round-trips params back to the inherent
+    // path, so behavior is unchanged); under the runtime override it is the
+    // port-based handler over the reconciled QueryFacadeAdapter. Wire SqlValue
+    // params are lowered to canonical ProximaValue at this protocol boundary.
     match state
-        .unified_handlers
+        .api_handlers
         .execute_sql_v1(
             query_with_hint,
-            request.parameters.clone(),
+            sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
         )
         .await
@@ -715,7 +789,7 @@ pub async fn execute_sql(
             let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
             // Convert SQL response to JSON value for now
-            // Deferred: Create proper JsonExecuteSqlResponse wrapper if needed
+            // Deferred: Create proper JsonExecuteQueryResponse wrapper if needed
             let json_data = serde_json::json!({
                 "rows": v1_resp.rows.iter().map(|row| {
                     // Convert fields to a JSON object instead of list of key/value pairs
@@ -749,15 +823,227 @@ pub async fn execute_sql(
     }
 }
 
-/// EXPLAIN query request structure  
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExplainQueryRequest {
-    /// SQL query string to explain
-    pub query: String,
-    /// Whether to include execution (ANALYZE)
-    pub analyze: Option<bool>,
-    /// Optional collection context
-    pub collection: Option<String>,
+/// Return table-level xCatalog routing metadata for REST clients.
+pub async fn get_catalog_table_routing(
+    State(state): State<AppState>,
+    Query(query): Query<CatalogRoutingQuery>,
+) -> ApiResult<Json<crate::services::CatalogIntrospectionResult>> {
+    let sql = match query.table_name.as_deref().map(str::trim) {
+        Some(table_name) if !table_name.is_empty() => format!(
+            "SELECT * FROM information_schema.table_routing WHERE table_name = '{}'",
+            table_name.replace('\'', "''")
+        ),
+        _ => "SELECT * FROM information_schema.table_routing".to_string(),
+    };
+
+    let result = crate::services::CatalogIntrospectionService::new(state.catalog_manager.clone())
+        .execute_select(&sql)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+        .unwrap_or_else(crate::services::CatalogIntrospectionResult::empty);
+
+    Ok(Json(result))
+}
+
+/// Explain table-write route selection without executing the write.
+pub async fn explain_table_write_route(
+    State(state): State<AppState>,
+    Json(request): Json<TableWriteExplainRequest>,
+) -> ApiResult<Json<crate::query::table_write_plan::TableWriteRouteExplanation>> {
+    use crate::query::table_write_plan::{
+        ConflictPolicy, CopyIntoPlan, DmlWritePlanRequest, DmlWritePlanner, WriteIntentOverrides,
+        WriteMode,
+    };
+
+    let target = logical_table_ref_from_name(&request.target_table)?;
+    let target_table_name = target.qualified_name();
+    let (catalog, table_id) = state
+        .catalog_manager
+        .resolve_table(&target_table_name)
+        .await
+        .map_err(|error| ApiError::NotFound(error.to_string()))?;
+    if !catalog
+        .table_exists(&table_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?
+    {
+        return Err(ApiError::NotFound(format!(
+            "Table '{}' does not exist",
+            target_table_name
+        )));
+    }
+    let target_schema = catalog
+        .get_table(&table_id)
+        .await
+        .map_err(|error| ApiError::Internal(error.to_string()))?;
+    let target_stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+    let (source, source_schema, source_stats) =
+        resolve_table_write_explain_source(&state, &request).await?;
+    let write_mode = parse_table_write_mode(request.write_mode.as_deref())?;
+    let distribution = parse_distribution_mode(request.distribution.as_deref())?;
+    let conflict_policy = if matches!(write_mode, WriteMode::Upsert | WriteMode::Merge) {
+        ConflictPolicy::Upsert
+    } else {
+        ConflictPolicy::Error
+    };
+    let plan = CopyIntoPlan {
+        source,
+        target,
+        write_mode,
+        conflict_policy,
+        distribution,
+    };
+    let write_intent_overrides = WriteIntentOverrides {
+        tenant_id: request.tenant_id.clone(),
+        actor: request.actor.clone(),
+        idempotency_key: request.idempotency_key.clone(),
+        row_count_hint: request.row_count_hint,
+        estimated_bytes: request.estimated_bytes,
+        requires_row_level_semantics: request.requires_row_level_semantics,
+        batch_local_constraints_sufficient: request.batch_local_constraints_sufficient,
+    };
+    let target_columns = request.target_columns.unwrap_or_default();
+    let routed = DmlWritePlanner::default()
+        .plan(DmlWritePlanRequest {
+            target_schema: &target_schema,
+            target_stats: Some(&target_stats),
+            source_schema: source_schema.as_ref(),
+            source_stats: source_stats.as_ref(),
+            write_intent_overrides: Some(&write_intent_overrides),
+            plan: &plan,
+            target_columns: &target_columns,
+        })
+        .map_err(|error| ApiError::InvalidArgument(error.to_string()))?;
+
+    Ok(Json(routed.route_explanation()))
+}
+
+async fn resolve_table_write_explain_source(
+    state: &AppState,
+    request: &TableWriteExplainRequest,
+) -> ApiResult<(
+    crate::query::table_write_plan::ReadSource,
+    Option<proximadb_catalog::CatalogTableSchema>,
+    Option<proximadb_catalog::CatalogTableStatistics>,
+)> {
+    use crate::query::table_write_plan::{ReadSource, SnapshotRef};
+
+    let source_table = request
+        .source_table
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let source_sql = request
+        .source_sql
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    match (source_table, source_sql) {
+        (Some(_), Some(_)) => Err(ApiError::InvalidArgument(
+            "Provide either source_table or source_sql, not both".to_string(),
+        )),
+        (None, None) => Err(ApiError::InvalidArgument(
+            "source_table or source_sql is required".to_string(),
+        )),
+        (Some(table_name), None) => {
+            let table = logical_table_ref_from_name(table_name)?;
+            let (catalog, table_id) = state
+                .catalog_manager
+                .resolve_table(&table.qualified_name())
+                .await
+                .map_err(|error| ApiError::NotFound(error.to_string()))?;
+            if !catalog
+                .table_exists(&table_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?
+            {
+                return Err(ApiError::NotFound(format!(
+                    "Source table '{}' does not exist",
+                    table.qualified_name()
+                )));
+            }
+            let schema = catalog
+                .get_table(&table_id)
+                .await
+                .map_err(|error| ApiError::Internal(error.to_string()))?;
+            let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
+            Ok((
+                ReadSource::CatalogTable {
+                    table,
+                    snapshot: SnapshotRef::Latest,
+                },
+                Some(schema),
+                Some(stats),
+            ))
+        }
+        (None, Some(sql)) => Ok((ReadSource::QuerySql(sql.to_string()), None, None)),
+    }
+}
+
+fn logical_table_ref_from_name(
+    name: &str,
+) -> ApiResult<crate::query::table_write_plan::LogicalTableRef> {
+    let parts: Vec<_> = name
+        .split('.')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    let Some(table_name) = parts.last() else {
+        return Err(ApiError::InvalidArgument(
+            "table name cannot be empty".to_string(),
+        ));
+    };
+    Ok(crate::query::table_write_plan::LogicalTableRef {
+        namespace: parts[..parts.len().saturating_sub(1)]
+            .iter()
+            .map(|part| (*part).to_string())
+            .collect(),
+        name: (*table_name).to_string(),
+    })
+}
+
+fn parse_table_write_mode(
+    mode: Option<&str>,
+) -> ApiResult<crate::query::table_write_plan::WriteMode> {
+    use crate::query::table_write_plan::WriteMode;
+
+    match mode
+        .unwrap_or("append")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "append" => Ok(WriteMode::Append),
+        "insert" | "insert_only" | "insert-only" => Ok(WriteMode::InsertOnly),
+        "upsert" => Ok(WriteMode::Upsert),
+        "overwrite" | "insert_overwrite" | "insert-overwrite" | "overwrite_table"
+        | "overwrite-table" => Ok(WriteMode::OverwriteTable),
+        "merge" => Ok(WriteMode::Merge),
+        other => Err(ApiError::InvalidArgument(format!(
+            "Unsupported table write mode '{}'",
+            other
+        ))),
+    }
+}
+
+fn parse_distribution_mode(
+    mode: Option<&str>,
+) -> ApiResult<crate::query::table_write_plan::DistributionMode> {
+    use crate::query::table_write_plan::DistributionMode;
+
+    match mode.unwrap_or("auto").trim().to_ascii_lowercase().as_str() {
+        "auto" => Ok(DistributionMode::Auto),
+        "local" | "local_only" | "local-only" => Ok(DistributionMode::LocalOnly),
+        "pseudo" | "pseudo_distributed" | "pseudo-distributed" => {
+            Ok(DistributionMode::PseudoDistributed)
+        }
+        "distributed" => Ok(DistributionMode::Distributed),
+        other => Err(ApiError::InvalidArgument(format!(
+            "Unsupported distribution mode '{}'",
+            other
+        ))),
+    }
 }
 
 /// Helper: convert proto SqlValue to serde_json::Value (temporary until full internal refactor)
@@ -793,77 +1079,6 @@ fn sql_value_to_json(v: &proximadb_v1::SqlValue) -> serde_json::Value {
     }
 }
 
-/// EXPLAIN query response
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ExplainQueryResponse {
-    /// The explain plan
-    pub plan: ExplainPlan,
-    /// Request ID for tracing
-    pub request_id: String,
-}
-
-/// EXPLAIN SQL query handler - shows query execution plan with vector and graph hints
-pub async fn explain_sql(
-    State(state): State<AppState>,
-    Json(request): Json<ExplainQueryRequest>,
-) -> ApiResult<JsonResponse<ExplainQueryResponse>> {
-    let request_id = Uuid::new_v4().to_string();
-
-    info!(
-        "EXPLAIN query request {} for query: {}",
-        request_id,
-        request.query.chars().take(100).collect::<String>()
-    );
-
-    // Validate request
-    if request.query.trim().is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "SQL query cannot be empty".to_string(),
-        ));
-    }
-
-    // Build a lightweight QueryEngine with vector and graph services
-    let qe = QueryEngine::new(
-        state.unified_handlers.vector_operations_service.clone(),
-        state.unified_handlers.graph_operations_service.clone(),
-    );
-    // Parse SQL and explain using frontend
-    use crate::query::sql_frontend::parser::SqlFrontendParser;
-    let parser = SqlFrontendParser::new();
-    let parsed = parser
-        .parse(&request.query)
-        .map_err(|e| ApiError::Internal(format!("Failed to parse SQL: {}", e)))?;
-
-    let explain_result = qe
-        .explain_frontend(parsed)
-        .await
-        .map_err(|e| ApiError::Internal(format!("Failed to explain SQL: {}", e)))?;
-
-    // Convert ExplainResult to ExplainPlan
-    let plan = ExplainPlan {
-        orchestration_steps: explain_result.operations,
-        vector_hints: None, // Deferred: Extract from explain_result if needed
-        graph_hints: None,  // Deferred: Extract from explain_result if needed
-        join_costs: None,
-        query_stats: None,
-        execution_strategy: Some(format!("{:?}", explain_result.query_type)),
-        estimated_total_cost: Some(explain_result.estimated_cost),
-        cost_breakdown: None,
-        join_strategy: None,
-        fusion_strategy: None,
-    };
-
-    let response = ExplainQueryResponse {
-        plan,
-        request_id: request_id.clone(),
-    };
-
-    info!("EXPLAIN query {} completed", request_id);
-    Ok(JsonResponse(response))
-}
-
-// Note: EXPLAIN now uses QueryEngine::explain_sql() for real plans/hints.
-
 // =============================================================================
 // Hybrid Search (BM25 + Vector with RRF Fusion)
 // =============================================================================
@@ -878,9 +1093,23 @@ struct VectorSearchInput {
     score: f32,
 }
 
-/// Request body for hybrid search
+/// Legacy request body for hybrid search — DEAD CODE kept only for
+/// deserialization-shape tests.
+///
+/// The hybrid_search handler that used this struct was removed (see
+/// comment ~line 805 in this file): "Routes are now served by
+/// create_hybrid_search_router() from proximadb-api backed by
+/// Bm25IndexPortImpl and RestHybridPortImpl."
+///
+/// Naming note: this type used to be called `HybridSearchRequest` and
+/// collided with `crate::proto::v1::HybridSearchRequest` (proto wire form
+/// for vector+graph hybrid) AND with
+/// `src/network/rest/v1/hybrid.rs::ExperimentalHybridSearchRequest`.
+/// Renamed to `LegacyHybridSearchRequest` to mark it as deprecated; the
+/// struct can be deleted once the deserialization tests are moved to the
+/// active proximadb-api hybrid handlers.
 #[derive(Debug, Deserialize)]
-pub struct HybridSearchRequest {
+pub struct LegacyHybridSearchRequest {
     /// Collection to search
     pub collection: String,
     /// Query vector for similarity search (optional if keyword-only)
@@ -929,9 +1158,18 @@ pub struct HybridDocument {
     pub text: String,
 }
 
-/// Response for hybrid search
+/// Legacy response for hybrid search — DEAD CODE paired with
+/// `LegacyHybridSearchRequest` (see ~line 695). The handler that produced
+/// this response was removed (routes now served by proximadb-api's
+/// create_hybrid_search_router backed by RestHybridPortImpl). The struct
+/// survives only for serialization-shape tests in this file + tests/rest_api_v1_test.rs.
+///
+/// Naming note: renamed from `HybridSearchResponse` to
+/// `LegacyHybridSearchResponse` to mark it as dead-code-eligible and to
+/// distinguish from the proto wire form
+/// `crate::proto::v1::HybridSearchResponse`.
 #[derive(Debug, Serialize)]
-pub struct HybridSearchResponse {
+pub struct LegacyHybridSearchResponse {
     /// Whether the search completed successfully
     pub success: bool,
     /// Fused search result hits
@@ -990,262 +1228,13 @@ pub type FullTextIndexMap = Arc<
     >,
 >;
 
-/// Index text documents for hybrid search
-///
-/// POST /api/v1/hybrid/index
-/// Body: { "collection": "...", "documents": [{"id": "...", "text": "..."}] }
-pub async fn hybrid_index(
-    State(state): State<AppState>,
-    Json(request): Json<HybridIndexRequest>,
-) -> ApiResult<JsonResponse<HybridIndexResponse>> {
-    if request.collection.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection name is required".to_string(),
-        ));
-    }
-    if request.documents.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "At least one document is required".to_string(),
-        ));
-    }
-
-    let fulltext_indexes = state
-        .fulltext_indexes
-        .as_ref()
-        .ok_or_else(|| ApiError::Internal("Hybrid search not initialized".to_string()))?;
-
-    let mut indexes = fulltext_indexes
-        .write()
-        .map_err(|e| ApiError::Internal(format!("Lock error: {}", e)))?;
-
-    let index = indexes
-        .entry(request.collection.clone())
-        .or_insert_with(|| {
-            use crate::storage::engines::core::formats::columnar::fulltext_index::{
-                FullTextIndex, TokenizerConfig,
-            };
-            FullTextIndex::new(TokenizerConfig::for_keyword_search())
-        });
-
-    let mut indexed = 0;
-    for doc in &request.documents {
-        // Skip if document already exists (idempotent)
-        if index.contains_document(&doc.id) {
-            continue;
-        }
-        if let Err(e) = index.add_document(&doc.id, &doc.text) {
-            debug!("Skipping document {}: {}", doc.id, e);
-            continue;
-        }
-        indexed += 1;
-    }
-
-    let total = index.document_count();
-
-    info!(
-        "Hybrid index: collection='{}', indexed={}, total={}",
-        request.collection, indexed, total
-    );
-
-    Ok(JsonResponse(HybridIndexResponse {
-        success: true,
-        collection: request.collection,
-        documents_indexed: indexed,
-        total_documents: total,
-    }))
-}
-
-/// Perform hybrid BM25 + vector search with RRF fusion
-///
-/// POST /api/v1/hybrid/search
-/// Body: { "collection": "...", "vector": [...], "text_query": "...", "top_k": 10 }
-pub async fn hybrid_search(
-    State(state): State<AppState>,
-    Extension(tenant): Extension<TenantContext>,
-    Json(request): Json<HybridSearchRequest>,
-) -> ApiResult<JsonResponse<HybridSearchResponse>> {
-    let start_time = std::time::Instant::now();
-
-    if request.collection.is_empty() {
-        return Err(ApiError::InvalidArgument(
-            "Collection name is required".to_string(),
-        ));
-    }
-    if request.vector.is_none() && request.text_query.is_none() {
-        return Err(ApiError::InvalidArgument(
-            "At least one of 'vector' or 'text_query' is required".to_string(),
-        ));
-    }
-
-    let has_vector = request.vector.is_some();
-    let has_text = request.text_query.is_some();
-
-    // Determine search mode
-    let mode = match (has_vector, has_text) {
-        (true, true) => "hybrid",
-        (true, false) => "vector_only",
-        (false, true) => "keyword_only",
-        (false, false) => unreachable!(), // checked above
-    };
-
-    debug!(
-        "Hybrid search: collection='{}', mode={}, top_k={}, vector_weight={}",
-        request.collection, mode, request.top_k, request.vector_weight
-    );
-
-    // --- Vector search side ---
-    let vector_results = if let Some(ref vector) = request.vector {
-        // Build a VectorSearchRequest and execute through existing pipeline
-        let search_query = proximadb_v1::SearchQuery {
-            vector: vector.clone(),
-            filters: std::collections::HashMap::new(),
-            advanced_filter: None,
-        };
-        let search_request = VectorSearchRequest {
-            collection_id: request.collection.clone(),
-            queries: vec![search_query],
-            top_k: request.top_k as u32,
-            include_fields: None,
-            search_params: None,
-            distance_metric_override: None,
-            search_optimization: None,
-        };
-
-        // Use query adapter if available, else legacy handlers
-        let response = state
-            .unified_handlers
-            .handle_vector_search_v1_for_tenant(search_request, Some(&tenant.tenant_id))
-            .await
-            .map_err(|e| ApiError::Internal(format!("Vector search failed: {}", e)))?;
-
-        // Return the raw results - will be converted to VectorResult later
-        // NOTE: Old VectorSearchInput code removed (type doesn't exist)
-        response.results.map(|r| r.results).unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-
-    // --- BM25 search side ---
-    let bm25_results = if let Some(ref text_query) = request.text_query {
-        let fulltext_indexes = state.fulltext_indexes.as_ref().ok_or_else(|| {
-            ApiError::InvalidArgument(
-                "No text index available. POST to /api/v1/hybrid/index first.".to_string(),
-            )
-        })?;
-
-        let indexes = fulltext_indexes
-            .read()
-            .map_err(|e| ApiError::Internal(format!("Lock error: {}", e)))?;
-
-        if let Some(index) = indexes.get(&request.collection) {
-            use crate::core::search::hybrid::{BM25Result, TextHighlight};
-            let search_results = index.search(text_query, request.top_k);
-            search_results
-                .into_iter()
-                .map(|r| BM25Result {
-                    doc_id: r.doc_id,
-                    score: r.score,
-                    highlights: Some(
-                        r.matched_terms
-                            .iter()
-                            .map(|term| TextHighlight {
-                                field: "content".to_string(),
-                                text: term.clone(),
-                                start_offset: 0,
-                                end_offset: term.len(),
-                            })
-                            .collect(),
-                    ),
-                    metadata: std::collections::HashMap::new(),
-                })
-                .collect()
-        } else {
-            // No text index for this collection — return empty BM25 results
-            debug!(
-                "No text index for collection '{}', using vector-only results",
-                request.collection
-            );
-            Vec::new()
-        }
-    } else {
-        Vec::new()
-    };
-
-    // --- RRF Fusion using comprehensive hybrid module ---
-    use crate::core::search::hybrid::{FusionStrategy, HybridFusionEngine, VectorResult};
-
-    // Convert vector results to VectorResult format
-    let vector_results_compact: Vec<VectorResult> = vector_results
-        .into_iter()
-        .map(|v| VectorResult {
-            doc_id: v.id,
-            score: v.score,
-            distance: 1.0 - v.score, // Convert similarity to distance
-            metadata: std::collections::HashMap::new(),
-        })
-        .collect();
-
-    let engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank {
-        k: request.rrf_k as usize,
-    });
-
-    let fused = engine
-        .fuse(bm25_results, vector_results_compact)
-        .map_err(|e| ApiError::Internal(format!("Fusion failed: {}", e)))?;
-
-    let hits: Vec<HybridSearchHit> = fused
-        .into_iter()
-        .map(|r| HybridSearchHit {
-            id: r.doc_id,
-            combined_score: r.fused_score,
-            vector_score: if r.vector_score > 0.0 {
-                Some(r.vector_score as f32)
-            } else {
-                None
-            },
-            bm25_score: if r.bm25_score > 0.0 {
-                Some(r.bm25_score)
-            } else {
-                None
-            },
-            vector_rank: if r.vector_rank != usize::MAX {
-                Some(r.vector_rank)
-            } else {
-                None
-            },
-            bm25_rank: if r.bm25_rank != usize::MAX {
-                Some(r.bm25_rank)
-            } else {
-                None
-            },
-            matched_terms: r
-                .highlights
-                .as_ref()
-                .map(|h| h.iter().map(|hl| hl.text.clone()).collect())
-                .unwrap_or_default(),
-        })
-        .collect();
-
-    let total = hits.len();
-    let elapsed = start_time.elapsed().as_micros() as u64;
-
-    info!(
-        "Hybrid search complete: collection='{}', mode={}, results={}, time={}us",
-        request.collection, mode, total, elapsed
-    );
-
-    Ok(JsonResponse(HybridSearchResponse {
-        success: true,
-        results: hits,
-        total,
-        processing_time_us: elapsed,
-        mode: mode.to_string(),
-    }))
-}
+// hybrid_index and hybrid_search handlers removed.
+// Routes are now served by create_hybrid_search_router() from proximadb-api
+// backed by Bm25IndexPortImpl and RestHybridPortImpl.
 
 /// Create router with all REST endpoints
 pub fn create_router(state: AppState) -> axum::Router {
-    use axum::routing::{delete, get, post};
+    use axum::routing::{get, post};
 
     info!("🔵 REST API: Creating router with collection endpoints...");
 
@@ -1257,14 +1246,14 @@ pub fn create_router(state: AppState) -> axum::Router {
         };
 
         let engine = state
-            .unified_handlers
+            .request_handlers
             .vector_operations_service
             .unified_engine();
         let legacy_store = ProximaEntityStore::with_vector_service(
             engine,
             Arc::new(CsrRelationsStore::new()),
             Arc::new(InMemoryProvenanceRegistry::new()),
-            state.unified_handlers.vector_operations_service.clone(),
+            state.vector_operations_service.clone(),
         );
 
         // Register legacy store globally for compatibility (entity API currently uses legacy store).
@@ -1280,173 +1269,178 @@ pub fn create_router(state: AppState) -> axum::Router {
     };
 
     let mut router = axum::Router::new()
-        // Vector operations
-        .route("/api/v1/search", post(vector_search))
-        .route("/api/v1/vectors/batch", post(vector_batch))
         .route(
-            "/api/v1/vectors/:collection_id/:vector_id",
-            get(get_vector).delete(delete_vector),
-        )
-        .route(
-            "/api/v1/progressive/search/:collection_id",
+            "/api/v2/progressive/search/:collection_id",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
         )
-        // SQL query execution
-        .route("/api/v1/sql/execute", post(execute_sql))
-        .route("/api/v1/sql/explain", post(explain_sql))
-        // Collection operations
-        .route("/api/v1/collections", post(collection_operation))
-        .route("/api/v1/collections", get(list_collections))
-        .route("/api/v1/collections/:collection_id", get(get_collection))
         .route(
-            "/api/v1/collections/:collection_id",
-            delete(delete_collection),
+            "/api/v2/catalog/table-routing",
+            get(get_catalog_table_routing),
+        )
+        .route(
+            "/api/v2/catalog/table-write/explain",
+            post(explain_table_write_route),
+        )
+        .route(
+            "/api/v2/collections/:collection_id/branches/:branch/merge",
+            post(merge_graph_branch),
+        )
+        // Multi-phase ranking pipeline (R-7c.1).
+        // `rank_search_dispatch` runs the arena-bearing first phase
+        // inside `tokio::task::spawn_blocking` so the outer future
+        // stays `Send` — required by axum's tokio multi-threaded
+        // runtime, blocked previously by `bumpalo::Bump` being `!Sync`.
+        // The route returns:
+        //   200 — successful rank pipeline result
+        //   404 — named profile not found
+        //   501 — RankServices not injected at startup
+        //   500 — pipeline failure (model load, expression compile, …)
+        .route(
+            "/api/v2/rank/search",
+            post(|State(state): State<AppState>, Json(req): Json<crate::network::rest::v1::rank::RankSearchRequest>| async move {
+                crate::network::rest::v1::rank::rank_search_dispatch(state, req)
+                    .await
+                    .map(Json)
+            }),
+        )
+        // Phase 6: per-collection pinning control surface.
+        // Operators PATCH a collection's pin state; the AxisTieringManager
+        // honors the override on its next evaluation. See
+        // src/storage/collection_pinning.rs for the control/data plane split.
+        .route(
+            "/api/v2/collections/:collection_id/pin",
+            axum::routing::patch(crate::network::rest::v1::pinning::patch_pin)
+                .get(crate::network::rest::v1::pinning::get_pin),
+        )
+        .route(
+            "/api/v2/collections/pinning",
+            get(crate::network::rest::v1::pinning::list_pins),
+        )
+        // Phase 7.2.4: per-collection cache-affinity inspect/invalidate.
+        // Operators read or drop the affinity hint for routing
+        // re-evaluation. See src/cluster/cache_affinity.rs.
+        .route(
+            "/api/v2/collections/:collection_id/affinity",
+            get(crate::network::rest::v1::affinity::get_affinity)
+                .delete(crate::network::rest::v1::affinity::delete_affinity),
+        )
+        .route(
+            "/api/v2/collections/affinity",
+            get(crate::network::rest::v1::affinity::list_affinity),
+        )
+        // Slice 3 of tenant-pod-affinity: per-(tenant, collection)
+        // primary-pod operator API. Auth-gated inside each handler
+        // to `SystemAdmin` or `ConfigureSystem` — these endpoints
+        // expose cross-tenant placement and drive WAL write routing,
+        // so they MUST NOT be reachable by regular tenants. The
+        // auth_middleware_unified layer authenticates the request;
+        // `authorize_operator` then checks for the operator-level
+        // permission.
+        .route(
+            "/api/v2/primary-pod/:tenant_id/:collection_id",
+            get(crate::network::rest::v1::primary_pod::get_primary_pod)
+                .put(crate::network::rest::v1::primary_pod::put_primary_pod)
+                .delete(crate::network::rest::v1::primary_pod::delete_primary_pod),
+        )
+        .route(
+            "/api/v2/primary-pod",
+            get(crate::network::rest::v1::primary_pod::list_primary_pods),
         )
         // Health check endpoints
         .route("/health", get(comprehensive_health_check))
         .route("/health/live", get(liveness_check))
         .route("/health/ready", get(readiness_check))
-        // Hybrid search production endpoints (AppState-backed)
-        .route("/api/v1/hybrid/search", post(hybrid_search))
-        .route("/api/v1/hybrid/index", post(hybrid_index))
-        // With metadata endpoints
-        .route(
-            "/api/v1/search/with_metadata",
-            post(vector_search_with_metadata),
-        )
-        // Graph database endpoints
-        .nest(
-            "/api/v1/graph",
-            crate::network::rest::v1::graph::create_graph_router(),
-        )
         // SKS entity endpoints (storage-coupled path)
         .nest("/api", entities_router);
 
-    // Document API endpoints (with WAL for durability)
-    let document_router = {
-        use crate::network::rest::v1::document::{self, DocumentApiState};
-        use crate::storage::document::DocumentService;
+    // Graph routes — port-backed (always wired in production since Phase 9.12).
+    //
+    // Mounted only at the canonical `/api/v2` prefix (`/api/v2/graphs/...`).
+    // The legacy `/api/v1/graph` mount (which produced the awkward doubled
+    // `/api/v1/graph/graphs/...` paths) was removed in the API standardization
+    // hard-rename; the in-router `*_legacy` redirects now point at `/api/v2`.
+    if let Some(ref gp) = state.graph_port {
+        use proximadb_api::rest::{GraphRestState, create_graph_router};
+        let graph_state = GraphRestState {
+            graph_port: gp.clone(),
+        };
+        router = router.nest("/api/v2", create_graph_router().with_state(graph_state));
+        info!("✅ Graph API routing via port-based handler (proximadb-api) — /api/v2/graphs/*");
+    }
 
-        let engine = state
-            .unified_handlers
-            .vector_operations_service
-            .unified_engine();
+    // Collection and vector CRUD are served exclusively by the canonical v2
+    // router (`create_v2_router`, mounted at `/api/v2` in `server.rs`). The
+    // legacy v1 surfaces (`/api/v1/collections`, `/api/v1/search`,
+    // `/api/v1/vectors/*`) were removed in the API standardization hard-rename;
+    // clients use `/api/v2/collections/*` (records/search). `state.api_handlers`
+    // remains the canonical write/read port the v2 handlers delegate to.
 
-        // Use WAL-enabled constructor for durability (same as gRPC server)
-        // data_dir comes from TOML config (server.data_dir)
-        let doc_base_path = state.data_dir.join("documents");
-        let doc_path_str = doc_base_path.to_string_lossy().to_string();
+    // Document routes — port-backed (always wired in production since Phase 9)
+    if let Some(ref dp) = state.doc_port {
+        use proximadb_api::rest::{DocumentRestState, create_document_router};
+        router = router.nest(
+            "/api/v2/document-collections",
+            create_document_router().with_state(DocumentRestState {
+                document_port: dp.clone(),
+            }),
+        );
+        info!("✅ Document API routing via port-based handler (proximadb-api)");
+    }
 
-        let document_service = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
-                    Ok(svc) => Arc::new(svc),
-                    Err(e) => {
-                        tracing::warn!("Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
-                        Arc::new(DocumentService::new(engine))
-                    }
-                }
-            })
-        });
+    // Observability routes — port-backed (always wired in production since Phase 9)
+    if let Some(ref op) = state.obs_port {
+        use proximadb_api::rest::{ObservabilityRestState, create_observability_router};
+        router = router.nest(
+            "/api/v2/observability",
+            create_observability_router().with_state(ObservabilityRestState {
+                observability_port: op.clone(),
+            }),
+        );
+        info!("✅ Observability API routing via port-based handler (proximadb-api)");
+    }
 
-        let doc_state = DocumentApiState { document_service };
-        document::create_document_router().with_state(doc_state)
-    };
-    router = router.nest("/api/v1/documents", document_router);
-    info!("✅ Document API endpoints enabled at /api/v1/documents (WAL-enabled)");
-
-    // Observability API endpoints (with WAL for durability)
-    // Create observability service first so it can be shared with unified query
-    let observability_service: Option<Arc<crate::observability::ObservabilityService>> = {
-        use crate::observability::{ObservabilityService, ObservabilityStorage};
-
-        // Create storage in data directory with WAL for durability (same as gRPC server)
-        // data_dir comes from TOML config (server.data_dir)
-        let obs_base_path = state.data_dir.join("observability");
-        let obs_path_str = obs_base_path.to_string_lossy().to_string();
-
-        // Create service with WAL-enabled storage
-        match tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                // Try WAL-enabled storage first
-                let storage = match ObservabilityStorage::new_with_wal(&obs_path_str).await {
-                    Ok(s) => Arc::new(s),
-                    Err(e) => {
-                        tracing::warn!("Failed to create ObservabilityStorage with WAL: {}. Using non-durable storage.", e);
-                        Arc::new(ObservabilityStorage::new(&obs_path_str))
-                    }
-                };
-                ObservabilityService::new(storage).await
-            })
-        }) {
-            Ok(service) => Some(Arc::new(service)),
-            Err(e) => {
-                tracing::warn!("Observability service initialization failed: {}", e);
-                None
-            }
-        }
-    };
-
-    // Create observability router if service initialized successfully
-    if let Some(ref obs_service) = observability_service {
-        use crate::network::rest::v1::observability::{self, ObservabilityApiState};
-        let obs_state = ObservabilityApiState {
-            observability_service: obs_service.clone(),
+    // Unified multi-model query routes — port-backed (always wired in production since Phase 9.9)
+    if let Some(ref uq_port) = state.unified_query_port {
+        use proximadb_api::rest::UnifiedQueryRestState;
+        let uq_state = UnifiedQueryRestState {
+            unified_query_port: uq_port.clone(),
         };
         router = router.nest(
-            "/api/v1/observability",
-            observability::create_observability_router().with_state(obs_state),
+            "/api/v2/unified",
+            proximadb_api::rest::create_multimodal_router().with_state(uq_state),
         );
-        info!("✅ Observability API endpoints enabled at /api/v1/observability");
+        info!("✅ Unified Query API enabled at /api/v2/unified (port-backed)");
     }
 
-    // Unified Multi-Model Query API endpoints
-    // Routes all queries through QueryFacadeAdapter for consistent execution
-    let unified_query_router_opt = {
-        use crate::network::rest::v1::unified_query::{self, UnifiedQueryApiState};
-        use crate::storage::document::DocumentService;
+    // Hybrid search — port-backed via RestHybridPortImpl (real BM25+vector fusion).
+    // Shares the in-process HybridFullTextIndexMap with Bm25IndexPortImpl so indexed
+    // documents are immediately searchable without a separate startup step.
+    {
+        use crate::network::hybrid_search::{Bm25IndexPortImpl, RestHybridPortImpl};
+        use proximadb_api::rest::{HybridRestState, create_hybrid_search_router};
 
-        let engine = state
-            .unified_handlers
-            .vector_operations_service
-            .unified_engine();
-
-        // Use WAL-enabled constructor for durability (same as document router)
-        // data_dir comes from TOML config (server.data_dir)
-        let doc_base_path = state.data_dir.join("documents");
-        let doc_path_str = doc_base_path.to_string_lossy().to_string();
-
-        let document_service = tokio::task::block_in_place(|| {
-            tokio::runtime::Handle::current().block_on(async {
-                match DocumentService::new_with_wal(engine.clone(), &doc_path_str).await {
-                    Ok(svc) => Arc::new(svc),
-                    Err(e) => {
-                        tracing::warn!("Unified query: Failed to create DocumentService with WAL: {}. Using non-durable storage.", e);
-                        Arc::new(DocumentService::new(engine.clone()))
-                    }
-                }
-            })
-        });
-
-        // Get the query adapter from state (required for unified query execution)
-        let query_adapter_opt = state.query_adapter.clone();
-
-        // Use new_with_adapter to route all queries through QueryFacadeAdapter
-        query_adapter_opt.map(|adapter| {
-            let unified_state =
-                UnifiedQueryApiState::new_with_adapter(adapter, document_service, engine);
-            unified_query::create_router().with_state(unified_state)
-        })
-    };
-
-    if let Some(unified_query_router) = unified_query_router_opt {
-        router = router.nest("/api/v1/unified", unified_query_router);
-        info!("✅ Unified Query API endpoints enabled at /api/v1/unified (via QueryFacadeAdapter)");
-    } else {
-        tracing::warn!(
-            "QueryFacadeAdapter not configured in AppState. Skipping unified query endpoints."
-        );
+        let indexes = state
+            .fulltext_indexes
+            .clone()
+            .unwrap_or_else(|| Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())));
+        let vector_ops: Arc<dyn proximadb_runtime::VectorOpsPort> =
+            state.vector_operations_service.clone();
+        let hybrid_port: Arc<dyn proximadb_runtime::HybridPort> =
+            Arc::new(RestHybridPortImpl::new(vector_ops, indexes.clone()));
+        let bm25_port: Arc<dyn proximadb_runtime::BM25IndexPort> =
+            Arc::new(Bm25IndexPortImpl::new(indexes));
+        let hybrid_state = HybridRestState {
+            hybrid_port,
+            bm25_port: Some(bm25_port),
+        };
+        router = router.merge(create_hybrid_search_router().with_state(hybrid_state));
+        info!("✅ Hybrid search at /api/v2/hybrid/* via RestHybridPortImpl (real BM25+vector)");
     }
+
+    // SQL execution + explain are served by the canonical v2 query facade
+    // (`/api/v2/query`, `/api/v2/query/explain` in `create_v2_router`). The
+    // legacy `/api/v1/sql/execute` + `/api/v1/sql/explain` routes were removed
+    // in the API standardization hard-rename.
 
     // Optional enterprise catalog endpoints
     #[cfg(feature = "enterprise-catalogs")]
@@ -1461,22 +1455,170 @@ pub fn create_router(state: AppState) -> axum::Router {
         info!("✅ External Catalog API endpoints enabled at /api/v1/catalogs");
     }
 
-    // Experimental hybrid API (mock-backed) stays separate from production path
-    let hybrid_router = {
-        use crate::network::rest::v1::hybrid::{self, HybridSearchApiState};
+    // Iceberg REST Catalog server — always on, no feature gate needed.
+    // External engines (Spark, Trino, DuckDB, PyIceberg) connect via /iceberg/v1.
+    {
+        use crate::network::rest::v1::iceberg_rest_catalog::{
+            IcebergRestState, create_iceberg_rest_router,
+        };
+        let iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone())
+            .with_segment_registry(state.segment_registry.clone());
+        router = router.nest(
+            "/iceberg/v1",
+            create_iceberg_rest_router().with_state(iceberg_state),
+        );
+        info!(
+            "✅ Iceberg REST Catalog server at /iceberg/v1 (Spark/Trino/DuckDB/PyIceberg compatible)"
+        );
+    }
 
-        let hybrid_state = HybridSearchApiState::new();
-        hybrid::create_router().with_state(hybrid_state)
+    // Experimental hybrid API removed 2026-05-26: it returned mock-backed
+    // results that misled customers into thinking the endpoint computed real
+    // BM25+vector fusion. The production hybrid endpoint at `/api/v1/hybrid/search`
+    // (port-backed via `RestHybridPortImpl`) is the supported path; gRPC parity
+    // landed in commit 6a73ead7f. The module at `src/network/rest/v1/hybrid.rs`
+    // remains in-tree for reference but is no longer mounted.
+
+    // Read-only collection analytics (Entanglement Index, etc.) — TD-043 sub-2
+    let analytics_router = {
+        let analytics_state = AnalyticsApiState::new(Some(state.vector_operations_service.clone()));
+        analytics::create_router().with_state(analytics_state)
     };
-    router = router.nest("/api/v1/experimental/hybrid", hybrid_router);
-    info!("✅ Experimental Hybrid API endpoints enabled at /api/v1/experimental/hybrid");
+    router = router.nest("/api/v2/analytics", analytics_router);
+    info!("✅ Analytics API endpoints enabled at /api/v2/analytics");
+
+    // Agentic Query Language (RUBICON / AQL) — TD-050
+    let aql_router = {
+        let mut executor = AqlExecutor::new();
+
+        // Attach event log for persistent audit trails (TD-050 Phase 5)
+        if let Some(log) = &state.event_log {
+            executor = executor.with_event_log(log.clone());
+        }
+
+        // Register sources
+        executor.register_source(
+            "vector".to_string(),
+            Arc::new(VectorAqlSource::new(
+                state.vector_operations_service.clone(),
+            )),
+        );
+        executor.register_source(
+            "graph".to_string(),
+            Arc::new(GraphAqlSource::new(state.graph_execution_service.clone())),
+        );
+        executor.register_source(
+            "document".to_string(),
+            Arc::new(DocumentAqlSource::new(state.document_service.clone())),
+        );
+        executor.register_source(
+            "observability".to_string(),
+            Arc::new(ObservabilityAqlSource::new(
+                state.observability_service.clone(),
+            )),
+        );
+
+        // Agent-memory read surface (TD-100, ADR-022): scoped + fused + audited.
+        // Converges on the existing scoped vector search + BM25 + RRF fusion —
+        // no new storage path. The lexical leg reuses the same in-process
+        // HybridFullTextIndexMap as /api/v1/hybrid.
+        {
+            let mem_indexes = state.fulltext_indexes.clone().unwrap_or_else(|| {
+                Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()))
+            });
+            let mem_vector_port: Arc<dyn proximadb_runtime::VectorOpsPort> =
+                state.vector_operations_service.clone();
+            let lexical = Arc::new(
+                crate::network::rest::v1::rank_backend::ProductionHybridBackend::new(
+                    mem_vector_port,
+                    mem_indexes,
+                ),
+            );
+            executor.register_source(
+                "memory".to_string(),
+                Arc::new(
+                    MemoryAqlSource::new(state.vector_operations_service.clone())
+                        .with_lexical_backend(lexical),
+                ),
+            );
+        }
+
+        let aql_state = AqlApiState::new(executor);
+        aql::create_router().with_state(aql_state)
+    };
+    router = router.nest("/api/v2/aql", aql_router);
+    info!("✅ AQL (RUBICON) API endpoints enabled at /api/v2/aql");
+
+    // Agent-memory write surface (TD-101) — POST /api/v2/memory/ingest.
+    // Always mounted; the engine is built only when an LLM backend is present
+    // (extraction + consolidation need it). Reuses VectorOperationsService +
+    // the in-process EmbeddingService — no new storage path (ADR-022).
+    {
+        use crate::network::rest::v1::memory::{self, MemoryApiState};
+        use crate::services::agent_memory::{
+            EmbeddingServiceEmbedder, EventLogConsolidationAuditSink, LlmConsolidationAgent,
+            LlmExtractionAgent, MemoryWriteEngine, VectorMemoryStore,
+        };
+        let memory_engine = state.llm_engine.as_ref().map(|llm| {
+            let extractor = Arc::new(LlmExtractionAgent::new(llm.clone()));
+            let consolidator = Arc::new(LlmConsolidationAgent::new(llm.clone()));
+            let store = Arc::new(VectorMemoryStore::new(
+                state.vector_operations_service.clone(),
+                Arc::new(EmbeddingServiceEmbedder),
+            ));
+            let mut engine = MemoryWriteEngine::new(extractor, consolidator, store);
+            // Persist every consolidation decision to the shared audit log when
+            // available (ADR-022 auditable memory). Same Arc<EventLogEngine> the
+            // AQL audit trail uses; mirrors the AQL wiring above.
+            if let Some(event_log) = &state.event_log {
+                engine = engine.with_audit_sink(Arc::new(
+                    EventLogConsolidationAuditSink::from_event_log(event_log.clone()),
+                ));
+            }
+            Arc::new(engine)
+        });
+        let mounted = memory_engine.is_some();
+        // The read surface (GET /consolidation/{session}) needs only the audit
+        // log, independent of the LLM backend — pass the same shared Arc the
+        // write sink persists to, so a deployment with no LLM can still serve
+        // any audit trail it already recorded.
+        let memory_state = MemoryApiState::new(memory_engine, state.event_log.clone());
+        router = router.nest(
+            "/api/v2/memory",
+            memory::create_router().with_state(memory_state),
+        );
+        if mounted {
+            info!("✅ Agent-memory write endpoint at /api/v2/memory/ingest (TD-101)");
+        } else {
+            info!(
+                "✅ Agent-memory write endpoint mounted at /api/v2/memory/ingest but inactive (no LLM backend)"
+            );
+        }
+    }
+
+    // Natural Language Query Translation (AV-SQL) — TD-048
+    if let Some(llm) = &state.llm_engine {
+        let nl_state = NlApiState::new(llm.clone());
+        let nl_router = nl::create_router().with_state(nl_state);
+        router = router.nest("/api/v2/nl", nl_router);
+        info!("✅ Natural Language (AV-SQL) API endpoints enabled at /api/v2/nl");
+    } else {
+        warn!("⚠️ LLM engine not available; Natural Language (AV-SQL) endpoints disabled");
+    }
 
     // Convert to Router<()> by providing state, with default tenant context for all routes
     let default_tenant = TenantContext::new(
         "default",
         crate::network::middleware::tenant::TenantIdSource::Default,
     );
-    let router = router.with_state(state).layer(Extension(default_tenant));
+    let default_api_tenant = proximadb_api::rest::TenantContext {
+        tenant_id: "default".to_string(),
+    };
+    let router = router
+        .with_state(state)
+        .layer(Extension(default_tenant))
+        .layer(axum::Extension(default_api_tenant))
+        .layer(axum::middleware::from_fn(add_rest_v1_deprecation_headers));
 
     // Optional AI endpoints (disabled by default; enable with `--features ai_endpoints`)
     #[cfg(feature = "ai_endpoints")]
@@ -1514,14 +1656,27 @@ pub fn create_router(state: AppState) -> axum::Router {
         }
     }
 
-    info!("✅ REST API: Router created with routes:");
-    info!("   POST   /api/v1/collections (collection_operation)");
-    info!("   GET    /api/v1/collections (list_collections)");
-    info!("   GET    /api/v1/collections/:id (get_collection)");
-    info!("   DELETE /api/v1/collections/:id (delete_collection)");
-    info!("   POST   /api/v1/hybrid/search (hybrid_search)");
-    info!("   POST   /api/v1/hybrid/index (hybrid_index)");
-    info!("   POST   /api/v1/experimental/hybrid/search (mock hybrid API)");
+    info!("✅ REST API: Router created with canonical v2 routes and v1 compatibility adapters:");
+    info!(
+        "   POST   /api/v2/collections/:collection/records/batch (canonical ProximaRecord writes)"
+    );
+    info!("   POST   /api/v2/collections/:collection/search (canonical record/vector search)");
+    info!(
+        "   GET    /api/v2/collections/:collection/records/:record (canonical ProximaRecord fetch)"
+    );
+    info!("   POST   /api/v1/collections (deprecated compatibility via proximadb-api)");
+    info!("   GET    /api/v1/collections (deprecated compatibility via proximadb-api)");
+    info!("   GET    /api/v1/collections/:id (deprecated compatibility via proximadb-api)");
+    info!("   DELETE /api/v1/collections/:id (deprecated compatibility via proximadb-api)");
+    info!("   POST   /api/v1/search (deprecated compatibility via proximadb-api)");
+    info!("   POST   /api/v1/search/with_metadata (deprecated compatibility via proximadb-api)");
+    info!("   POST   /api/v1/vectors/batch (deprecated alias over record-native writes)");
+    info!("   GET    /api/v1/vectors/:collection_id/:vector_id (deprecated compatibility)");
+    info!("   DELETE /api/v1/vectors/:collection_id/:vector_id (deprecated compatibility)");
+    info!("   POST   /api/v1/hybrid/search (deprecated compatibility; real BM25+vector)");
+    info!("   POST   /api/v1/hybrid/index (deprecated compatibility)");
+    // /api/v1/experimental/hybrid/search route removed 2026-05-26 — was
+    // mock-backed; production path is /api/v1/hybrid/search above.
 
     router
 }
@@ -1533,7 +1688,7 @@ pub async fn comprehensive_health_check(
     State(state): State<AppState>,
     query: Query<health::HealthParams>,
 ) -> ApiResult<Json<health::HealthResponse>> {
-    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    let health_state = state.health_state();
     health::health_check(axum::extract::State(health_state), query).await
 }
 
@@ -1543,7 +1698,7 @@ pub async fn comprehensive_health_check(
 pub async fn liveness_check(
     State(state): State<AppState>,
 ) -> ApiResult<Json<health::LivenessResponse>> {
-    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    let health_state = state.health_state();
     health::liveness_check(axum::extract::State(health_state)).await
 }
 
@@ -1553,7 +1708,7 @@ pub async fn liveness_check(
 pub async fn readiness_check(
     State(state): State<AppState>,
 ) -> Result<Json<health::ReadinessResponse>, (StatusCode, Json<health::ReadinessResponse>)> {
-    let health_state = health::HealthState::new(state.unified_handlers.clone());
+    let health_state = state.health_state();
     health::readiness_check(axum::extract::State(health_state)).await
 }
 
@@ -1561,20 +1716,509 @@ pub async fn readiness_check(
 mod tests {
     use super::*;
     use crate::network::rest::proto_json::ProtoApiResponse;
+    use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
     use axum::body::Body;
     use axum::http::{Request, StatusCode};
     use std::collections::HashMap;
     use std::path::Path;
-    use std::sync::RwLock;
     use tempfile::TempDir;
     use tower::ServiceExt;
+
+    fn branch_merge_test_entry(
+        seq: u64,
+        collection_id: &str,
+        oid: &str,
+        branch_id: Option<&str>,
+    ) -> proximadb_storage_common::CanonicalWalEntry {
+        let mut record = proximadb_records::ProximaRecord {
+            oid: oid.to_string(),
+            ..Default::default()
+        };
+        record.branch_id = branch_id.map(String::from);
+        proximadb_storage_common::CanonicalWalEntry::new(
+            seq,
+            proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id: collection_id.to_string(),
+                record: Box::new(record),
+                projections: vec![],
+            },
+            None,
+        )
+    }
+
+    #[test]
+    fn branch_merge_request_defaults_to_main_dry_run() {
+        let request: GraphBranchMergeRequest = serde_json::from_value(serde_json::json!({}))
+            .expect("empty request should use defaults");
+        assert_eq!(request.target_branch, "main");
+        assert!(request.dry_run);
+    }
+
+    #[test]
+    fn branch_merge_collection_filter_keeps_only_matching_wal_entries() {
+        let entries = vec![
+            branch_merge_test_entry(1, "graph_a", "base", None),
+            branch_merge_test_entry(2, "graph_a", "left", Some("feature")),
+            branch_merge_test_entry(3, "graph_b", "right", Some("feature")),
+        ];
+
+        let filtered = filter_canonical_wal_for_collection(entries, "graph_a");
+        assert_eq!(filtered.len(), 2);
+        assert!(filtered.iter().all(|entry| match &entry.operation {
+            proximadb_storage_common::CanonicalOperation::RecordUpsert {
+                collection_id, ..
+            } => collection_id == "graph_a",
+            _ => false,
+        }));
+    }
+
+    #[tokio::test]
+    async fn v1_deprecation_middleware_marks_api_v1_only() {
+        let router = axum::Router::new()
+            .route("/api/v1/ping", axum::routing::get(|| async { "ok" }))
+            .route("/api/v2/ping", axum::routing::get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(add_rest_v1_deprecation_headers));
+
+        let v1_response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v1/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v1_response.status(), StatusCode::OK);
+        assert_eq!(
+            v1_response
+                .headers()
+                .get("deprecation")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
+        assert_eq!(
+            v1_response
+                .headers()
+                .get("x-proximadb-api-status")
+                .and_then(|value| value.to_str().ok()),
+            Some("deprecated-compatibility")
+        );
+
+        let v2_response = router
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v2/ping")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(v2_response.status(), StatusCode::OK);
+        assert!(v2_response.headers().get("deprecation").is_none());
+    }
 
     fn file_url(path: &Path) -> String {
         format!("file://{}", path.to_string_lossy())
     }
 
+    // ── Mock ports ────────────────────────────────────────────────────────────
+    // Minimal stubs that let tests build a fully-ported AppState without real
+    // services.  Each method returns an error; the tested routes either fail
+    // before reaching the port (JSON parse, empty-field guard) or are self-
+    // contained redirects that never call the port at all.
+
+    use async_trait::async_trait;
+
+    struct MockDocumentPort;
+    #[async_trait]
+    impl proximadb_runtime::DocumentPort for MockDocumentPort {
+        async fn create_collection(
+            &self,
+            _: crate::proto::v1::CreateDocumentCollectionRequest,
+        ) -> anyhow::Result<crate::proto::v1::CreateDocumentCollectionResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn list_collections(
+            &self,
+            _: crate::proto::v1::ListDocumentCollectionsRequest,
+        ) -> anyhow::Result<crate::proto::v1::ListDocumentCollectionsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_collection(
+            &self,
+            _: crate::proto::v1::DeleteDocumentCollectionRequest,
+        ) -> anyhow::Result<crate::proto::v1::DeleteDocumentCollectionResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn insert_document(
+            &self,
+            _: crate::proto::v1::InsertDocumentRequest,
+        ) -> anyhow::Result<crate::proto::v1::InsertDocumentResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn get_document(
+            &self,
+            _: crate::proto::v1::GetDocumentRequest,
+        ) -> anyhow::Result<crate::proto::v1::GetDocumentResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn update_document(
+            &self,
+            _: crate::proto::v1::UpdateDocumentRequest,
+        ) -> anyhow::Result<crate::proto::v1::UpdateDocumentResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_document(
+            &self,
+            _: crate::proto::v1::DeleteDocumentRequest,
+        ) -> anyhow::Result<crate::proto::v1::DeleteDocumentResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn query_documents(
+            &self,
+            _: crate::proto::v1::QueryDocumentsRequest,
+        ) -> anyhow::Result<crate::proto::v1::QueryDocumentsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn aggregate_documents(
+            &self,
+            _: crate::proto::v1::AggregateDocumentsRequest,
+        ) -> anyhow::Result<crate::proto::v1::AggregateDocumentsResponse> {
+            anyhow::bail!("mock")
+        }
+    }
+
+    struct MockGraphPort;
+    #[async_trait]
+    impl proximadb_runtime::GraphPort for MockGraphPort {
+        async fn create_node(
+            &self,
+            _: crate::proto::v1::CreateNodeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Node> {
+            anyhow::bail!("mock")
+        }
+        async fn get_node(
+            &self,
+            _: crate::proto::v1::GetNodeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Node> {
+            anyhow::bail!("mock")
+        }
+        async fn update_node(
+            &self,
+            _: crate::proto::v1::UpdateNodeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Node> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_node(
+            &self,
+            _: crate::proto::v1::DeleteNodeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Node> {
+            anyhow::bail!("mock")
+        }
+        async fn create_edge(
+            &self,
+            _: crate::proto::v1::CreateEdgeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Edge> {
+            anyhow::bail!("mock")
+        }
+        async fn get_edge(
+            &self,
+            _: crate::proto::v1::GetEdgeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Edge> {
+            anyhow::bail!("mock")
+        }
+        async fn update_edge(
+            &self,
+            _: crate::proto::v1::UpdateEdgeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Edge> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_edge(
+            &self,
+            _: crate::proto::v1::DeleteEdgeRequest,
+        ) -> anyhow::Result<crate::proto::v1::Edge> {
+            anyhow::bail!("mock")
+        }
+        async fn query_nodes(
+            &self,
+            _: crate::proto::v1::NodeQuery,
+        ) -> anyhow::Result<crate::proto::v1::BatchResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn query_edges(
+            &self,
+            _: crate::proto::v1::EdgeQuery,
+        ) -> anyhow::Result<crate::proto::v1::BatchResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn execute_query(
+            &self,
+            _: crate::proto::v1::GraphQueryRequest,
+        ) -> anyhow::Result<crate::proto::v1::GraphQueryResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn get_neighbors(
+            &self,
+            _: crate::proto::v1::GetNeighborsRequest,
+        ) -> anyhow::Result<crate::proto::v1::BatchResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn traverse_graph(
+            &self,
+            _: crate::proto::v1::TraversalRequest,
+        ) -> anyhow::Result<crate::proto::v1::TraversalResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn stream_traverse(
+            &self,
+            _: crate::proto::v1::TraversalRequest,
+        ) -> anyhow::Result<Vec<crate::proto::v1::TraversalChunk>> {
+            anyhow::bail!("mock")
+        }
+        async fn get_graph_stats(
+            &self,
+            _: crate::proto::v1::GetStatsRequest,
+        ) -> anyhow::Result<crate::proto::v1::GraphStats> {
+            anyhow::bail!("mock")
+        }
+        async fn shortest_path(
+            &self,
+            _: crate::proto::v1::ShortestPathRequest,
+        ) -> anyhow::Result<crate::proto::v1::ShortestPathResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn get_connected_components(
+            &self,
+            _: crate::proto::v1::GetStatsRequest,
+        ) -> anyhow::Result<crate::proto::v1::ConnectedComponentsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn has_cycle(
+            &self,
+            _: crate::proto::v1::GetStatsRequest,
+        ) -> anyhow::Result<crate::proto::v1::CycleCheckResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn add_unique_constraint(
+            &self,
+            _: crate::proto::v1::UniqueConstraintRequest,
+        ) -> anyhow::Result<crate::proto::v1::UniqueConstraintResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn remove_unique_constraint(
+            &self,
+            _: crate::proto::v1::UniqueConstraintRequest,
+        ) -> anyhow::Result<crate::proto::v1::UniqueConstraintResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn batch_create_nodes(
+            &self,
+            _: crate::proto::v1::BatchNodeRequest,
+        ) -> anyhow::Result<crate::proto::v1::BatchResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn batch_create_edges(
+            &self,
+            _: crate::proto::v1::BatchEdgeRequest,
+        ) -> anyhow::Result<crate::proto::v1::BatchResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn execute_hybrid_query(
+            &self,
+            _: crate::proto::v1::HybridSearchRequest,
+        ) -> anyhow::Result<crate::proto::v1::HybridSearchResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn create_graph_collection(
+            &self,
+            _: crate::proto::v1::CreateGraphRequest,
+        ) -> anyhow::Result<crate::proto::v1::GraphCollection> {
+            anyhow::bail!("mock")
+        }
+        async fn get_graph_collection(
+            &self,
+            _: String,
+        ) -> anyhow::Result<Option<crate::proto::v1::GraphCollection>> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_graph_collection(&self, _: String) -> anyhow::Result<bool> {
+            anyhow::bail!("mock")
+        }
+        async fn list_graph_collections(
+            &self,
+        ) -> anyhow::Result<Vec<crate::proto::v1::GraphCollection>> {
+            anyhow::bail!("mock")
+        }
+        async fn update_graph_schema(
+            &self,
+            _: String,
+            _: crate::proto::v1::GraphSchema,
+        ) -> anyhow::Result<crate::proto::v1::GraphCollection> {
+            anyhow::bail!("mock")
+        }
+    }
+
+    struct MockObservabilityPort;
+    #[async_trait]
+    impl proximadb_runtime::ObservabilityPort for MockObservabilityPort {
+        async fn create_namespace(
+            &self,
+            _: crate::proto::v1::CreateObservabilityNamespaceRequest,
+        ) -> anyhow::Result<crate::proto::v1::CreateObservabilityNamespaceResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn list_namespaces(
+            &self,
+            _: crate::proto::v1::ListNamespacesRequest,
+        ) -> anyhow::Result<crate::proto::v1::ListNamespacesResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_namespace(
+            &self,
+            _: crate::proto::v1::DeleteNamespaceRequest,
+        ) -> anyhow::Result<crate::proto::v1::DeleteNamespaceResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn ingest_logs(
+            &self,
+            _: crate::proto::v1::IngestLogsRequest,
+        ) -> anyhow::Result<crate::proto::v1::IngestLogsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn query_logs(
+            &self,
+            _: crate::proto::v1::QueryLogsRequest,
+        ) -> anyhow::Result<crate::proto::v1::QueryLogsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn stream_logs(
+            &self,
+            _: crate::proto::v1::QueryLogsRequest,
+        ) -> anyhow::Result<Vec<crate::proto::v1::LogEntry>> {
+            anyhow::bail!("mock")
+        }
+        async fn ingest_metrics(
+            &self,
+            _: crate::proto::v1::IngestMetricsRequest,
+        ) -> anyhow::Result<crate::proto::v1::IngestMetricsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn query_metrics(
+            &self,
+            _: crate::proto::v1::QueryMetricsRequest,
+        ) -> anyhow::Result<crate::proto::v1::QueryMetricsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn aggregate_metrics(
+            &self,
+            _: crate::proto::v1::AggregateMetricsRequest,
+        ) -> anyhow::Result<crate::proto::v1::AggregateMetricsResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn ingest_traces(
+            &self,
+            _: crate::proto::v1::IngestTracesRequest,
+        ) -> anyhow::Result<crate::proto::v1::IngestTracesResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn query_traces(
+            &self,
+            _: crate::proto::v1::QueryTracesRequest,
+        ) -> anyhow::Result<crate::proto::v1::QueryTracesResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn get_trace(
+            &self,
+            _: crate::proto::v1::GetTraceRequest,
+        ) -> anyhow::Result<crate::proto::v1::GetTraceResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn upsert_alert_rule(
+            &self,
+            _: crate::proto::v1::UpsertAlertRuleRequest,
+        ) -> anyhow::Result<crate::proto::v1::UpsertAlertRuleResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_alert_rule(
+            &self,
+            _: crate::proto::v1::DeleteAlertRuleRequest,
+        ) -> anyhow::Result<crate::proto::v1::DeleteAlertRuleResponse> {
+            anyhow::bail!("mock")
+        }
+        async fn list_alerts(
+            &self,
+            _: crate::proto::v1::ListAlertsRequest,
+        ) -> anyhow::Result<crate::proto::v1::ListAlertsResponse> {
+            anyhow::bail!("mock")
+        }
+    }
+
+    struct MockUnifiedQueryPort;
+    #[async_trait]
+    impl proximadb_runtime::UnifiedQueryPort for MockUnifiedQueryPort {
+        async fn execute_unified_query(
+            &self,
+            _: String,
+            _: Option<Vec<proximadb_data_model::ProximaValue>>,
+            _: Option<String>,
+            _: Option<u32>,
+        ) -> anyhow::Result<serde_json::Value> {
+            anyhow::bail!("mock")
+        }
+        async fn execute_multi_model_query(
+            &self,
+            _: serde_json::Value,
+        ) -> anyhow::Result<serde_json::Value> {
+            anyhow::bail!("mock")
+        }
+        async fn execute_federated_query(
+            &self,
+            _: String,
+            _: Option<Vec<proximadb_data_model::ProximaValue>>,
+        ) -> anyhow::Result<serde_json::Value> {
+            anyhow::bail!("mock")
+        }
+        async fn execute_distributed_query(
+            &self,
+            _: serde_json::Value,
+        ) -> anyhow::Result<serde_json::Value> {
+            anyhow::bail!("mock")
+        }
+        async fn explain_unified_query(
+            &self,
+            _: String,
+            _: Option<String>,
+        ) -> anyhow::Result<serde_json::Value> {
+            anyhow::bail!("mock")
+        }
+        async fn prepare_statement(
+            &self,
+            _: Option<String>,
+            _: String,
+            _: bool,
+            _: Option<u64>,
+        ) -> anyhow::Result<String> {
+            anyhow::bail!("mock")
+        }
+        async fn execute_prepared(
+            &self,
+            _: String,
+            _: Option<Vec<proximadb_data_model::ProximaValue>>,
+            _: Option<String>,
+        ) -> anyhow::Result<serde_json::Value> {
+            anyhow::bail!("mock")
+        }
+        async fn delete_prepared(&self, _: String) -> anyhow::Result<()> {
+            anyhow::bail!("mock")
+        }
+        async fn get_prepared_stats(&self, _: Vec<String>) -> anyhow::Result<serde_json::Value> {
+            anyhow::bail!("mock")
+        }
+    }
+
     async fn build_test_app_state() -> (AppState, TempDir) {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let temp_dir = tempfile::tempdir().expect("failed to create temp dir");
         let storage_path = temp_dir.path().join("storage");
@@ -1602,14 +2246,20 @@ mod tests {
         .await
         .expect("failed to initialize shared services for test app state");
 
-        let state = AppState {
-            unified_handlers: shared_services.unified_handlers,
-            security_coordinator: None,
+        let state = AppState::new(
+            shared_services.request_handlers,
+            shared_services.graph_execution_service,
+            None,
             data_dir,
-            query_adapter: None,
-            fulltext_indexes: Some(Arc::new(RwLock::new(HashMap::new()))),
-            catalog_manager: Arc::new(crate::catalog::CatalogManager::new()),
-        };
+            None,
+            None,
+        )
+        .with_ports(
+            Arc::new(MockDocumentPort),
+            Arc::new(MockGraphPort),
+            Arc::new(MockObservabilityPort),
+        )
+        .with_unified_query_port(Arc::new(MockUnifiedQueryPort));
         (state, temp_dir)
     }
 
@@ -1630,7 +2280,7 @@ mod tests {
             "top_k": 5,
             "vector_weight": 0.7
         });
-        let req: HybridSearchRequest =
+        let req: LegacyHybridSearchRequest =
             serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.collection, "test_col");
         assert_eq!(req.vector.expect("vector should be present").len(), 3);
@@ -1649,7 +2299,7 @@ mod tests {
             "collection": "test_col",
             "text_query": "hello"
         });
-        let req: HybridSearchRequest =
+        let req: LegacyHybridSearchRequest =
             serde_json::from_value(json).expect("failed to deserialize HybridSearchRequest");
         assert_eq!(req.top_k, 10);
         assert!((req.vector_weight - 0.5).abs() < 0.001);
@@ -1716,7 +2366,7 @@ mod tests {
 
     #[test]
     fn test_hybrid_search_response_serialization() {
-        let response = HybridSearchResponse {
+        let response = LegacyHybridSearchResponse {
             success: true,
             results: vec![
                 HybridSearchHit {
@@ -1755,67 +2405,6 @@ mod tests {
         assert!(doc2.get("vector_rank").is_none());
     }
 
-    // Test parse_search_request with simple format
-    #[test]
-    fn test_parse_search_request_simple_format() {
-        let json = serde_json::json!({
-            "collection": "test_collection",
-            "vector": [0.1, 0.2, 0.3, 0.4],
-            "top_k": 20
-        });
-
-        let result = parse_search_request(json);
-        assert!(result.is_ok());
-
-        let request = result.expect("parse_search_request should succeed for simple format");
-        assert_eq!(request.collection_id, "test_collection");
-        assert_eq!(request.queries.len(), 1);
-        assert_eq!(request.queries[0].vector, vec![0.1, 0.2, 0.3, 0.4]);
-        assert_eq!(request.top_k, 20);
-    }
-
-    // Test parse_search_request with proto format
-    #[test]
-    fn test_parse_search_request_proto_format() {
-        let json = serde_json::json!({
-            "collection_id": "proto_collection",
-            "queries": [
-                {"vector": [0.5, 0.6, 0.7]},
-                {"vector": [0.8, 0.9, 1.0]}
-            ],
-            "top_k": 15
-        });
-
-        let result = parse_search_request(json);
-        assert!(result.is_ok());
-
-        let request = result.expect("parse_search_request should succeed for proto format");
-        assert_eq!(request.collection_id, "proto_collection");
-        assert_eq!(request.queries.len(), 2);
-        assert_eq!(request.top_k, 15);
-    }
-
-    // Test parse_search_request with filters
-    #[test]
-    fn test_parse_search_request_with_filters() {
-        let json = serde_json::json!({
-            "collection": "filtered_collection",
-            "vector": [0.1, 0.2, 0.3],
-            "top_k": 10,
-            "filters": {
-                "category": "electronics",
-                "price": 299
-            }
-        });
-
-        let result = parse_search_request(json);
-        assert!(result.is_ok());
-
-        let request = result.expect("parse_search_request should succeed with filters");
-        assert_eq!(request.queries[0].filters.len(), 2);
-        assert!(request.queries[0].filters.contains_key("category"));
-    }
-
     // Test ApiError variants
     #[test]
     fn test_api_error_variants() {
@@ -1847,57 +2436,6 @@ mod tests {
         assert!(display.contains("my_collection"));
     }
 
-    // Test empty collection validation
-    #[test]
-    fn test_empty_collection_validation() {
-        let json = serde_json::json!({
-            "collection": "",
-            "vector": [0.1, 0.2]
-        });
-
-        let result = parse_search_request(json);
-        assert!(result.is_ok()); // parse succeeds but validation happens in handler
-        assert_eq!(result.expect("parse should succeed").collection_id, "");
-    }
-
-    // Test default values for optional fields
-    #[test]
-    fn test_parse_search_request_defaults() {
-        let json = serde_json::json!({
-            "collection": "defaults_test",
-            "vector": [0.1]
-        });
-
-        let result = parse_search_request(json);
-        assert!(result.is_ok());
-
-        let request = result.expect("parse_search_request with defaults should succeed");
-        assert_eq!(request.top_k, 10); // default top_k
-        assert!(request.include_fields.is_none()); // optional field
-        assert!(request.search_params.is_none()); // optional field
-    }
-
-    // Test VectorSearchRequest roundtrip
-    #[test]
-    fn test_vector_search_request_roundtrip() {
-        let original_json = serde_json::json!({
-            "collection": "roundtrip",
-            "vector": [0.1, 0.2, 0.3, 0.4, 0.5],
-            "top_k": 100,
-            "filters": {"status": "active"}
-        });
-
-        let parsed = parse_search_request(original_json.clone())
-            .expect("parse_search_request roundtrip should succeed");
-        let serialized = serde_json::to_value(&parsed).expect("serialization should succeed");
-
-        assert_eq!(
-            serialized["collection_id"].as_str(),
-            original_json["collection"].as_str()
-        );
-        assert_eq!(serialized["top_k"].as_u64(), Some(100));
-    }
-
     // Test error message formatting
     #[test]
     fn test_error_message_formatting() {
@@ -1920,7 +2458,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/hybrid/search")
+            .uri("/api/v2/hybrid/search")
             .header("content-type", "application/json")
             .body(Body::from(
                 r#"{"collection":"","text_query":"hybrid route test"}"#,
@@ -1934,28 +2472,11 @@ mod tests {
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn test_vector_search_canonical_production_route_returns_bad_request_not_not_found() {
-        let (state, _temp_dir) = build_test_app_state().await;
-        let router = create_router(state);
-        let mut request = Request::builder()
-            .method("POST")
-            .uri("/api/v1/search")
-            .header("content-type", "application/json")
-            .body(Body::from(
-                r#"{"collection":"","vector":[0.1,0.2,0.3],"top_k":5}"#,
-            ))
-            .expect("failed to build request");
-        request
-            .extensions_mut()
-            .insert(crate::network::middleware::tenant::TenantContext::default_tenant());
-
-        let response = router
-            .oneshot(request)
-            .await
-            .expect("router failed handling canonical vector route request");
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
+    // `test_vector_search_canonical_production_route_*` removed: the legacy
+    // `/api/v1/search` route was deleted in the API standardization hard-rename.
+    // Canonical vector search is `/api/v2/collections/:id/search`, served by
+    // `create_v2_router` (mounted in `server.rs`, not in `create_router`), so it
+    // is exercised by the v2 records/search tests rather than this base-router guard.
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn test_document_index_canonical_production_route_returns_bad_request_not_not_found() {
@@ -1963,7 +2484,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/documents/collections/ws1_docs/indexes")
+            .uri("/api/v2/document-collections/ws1_docs/indexes")
             .header("content-type", "application/json")
             .body(Body::from(
                 r#"{"path":"content","index_type":"fulltext","unique":false}"#,
@@ -1984,7 +2505,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/graph/graphs/ws1_graph/shortest_path")
+            .uri("/api/v2/graphs/ws1_graph/shortest-path")
             .header("content-type", "application/json")
             .body(Body::from(r#"{}"#))
             .expect("failed to build request");
@@ -2002,7 +2523,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/graph/nodes")
+            .uri("/api/v2/nodes")
             .header("content-type", "application/json")
             .body(Body::from(r#"{}"#))
             .expect("failed to build request");
@@ -2016,7 +2537,7 @@ mod tests {
             .headers()
             .get("location")
             .and_then(|v| v.to_str().ok());
-        assert_eq!(location, Some("/api/v1/graph/graphs/default/nodes"));
+        assert_eq!(location, Some("/api/v2/graphs/default/nodes"));
         let deprecation = response
             .headers()
             .get("deprecation")
@@ -2030,7 +2551,7 @@ mod tests {
         let router = create_router(state);
         let request = Request::builder()
             .method("POST")
-            .uri("/api/v1/graph/edges")
+            .uri("/api/v2/edges")
             .header("content-type", "application/json")
             .body(Body::from(r#"{}"#))
             .expect("failed to build request");
@@ -2044,115 +2565,12 @@ mod tests {
             .headers()
             .get("location")
             .and_then(|v| v.to_str().ok());
-        assert_eq!(location, Some("/api/v1/graph/graphs/default/edges"));
+        assert_eq!(location, Some("/api/v2/graphs/default/edges"));
         let deprecation = response
             .headers()
             .get("deprecation")
             .and_then(|v| v.to_str().ok());
         assert_eq!(deprecation, Some("true"));
-    }
-
-    // ============================================================
-    // parse_search_request extended tests (coverage improvement)
-    // ============================================================
-
-    #[test]
-    fn test_parse_search_request_no_vector() {
-        let json = serde_json::json!({
-            "collection": "test_col"
-        });
-        let result = parse_search_request(json);
-        assert!(result.is_ok());
-        let req = result.unwrap();
-        assert_eq!(req.collection_id, "test_col");
-        assert!(req.queries[0].vector.is_empty());
-        assert_eq!(req.top_k, 10); // default
-    }
-
-    #[test]
-    fn test_parse_search_request_empty_vector() {
-        let json = serde_json::json!({
-            "collection": "test_col",
-            "vector": [],
-            "top_k": 5
-        });
-        let result = parse_search_request(json);
-        assert!(result.is_ok());
-        let req = result.unwrap();
-        assert!(req.queries[0].vector.is_empty());
-        assert_eq!(req.top_k, 5);
-    }
-
-    #[test]
-    fn test_parse_search_request_collection_id_fallback() {
-        // Simple format with "collection_id" instead of "collection"
-        // but since it doesn't have "collection" key, it needs "vector" key to trigger simple format
-        let json = serde_json::json!({
-            "vector": [1.0, 2.0],
-            "collection_id": "fallback_col"
-        });
-        let result = parse_search_request(json);
-        assert!(result.is_ok());
-        let req = result.unwrap();
-        assert_eq!(req.collection_id, "fallback_col");
-    }
-
-    #[test]
-    fn test_parse_search_request_invalid_json() {
-        let json = serde_json::json!("just a string");
-        let result = parse_search_request(json);
-        // Should fail because a string is not an object
-        assert!(result.is_err());
-    }
-
-    // ============================================================
-    // parse_batch_request tests (coverage improvement)
-    // ============================================================
-
-    #[test]
-    fn test_parse_batch_request_simple_format() {
-        let json = serde_json::json!({
-            "collection": "batch_col",
-            "vectors": []
-        });
-        let result = parse_batch_request(json);
-        assert!(result.is_ok());
-        let req = result.unwrap();
-        assert_eq!(req.collection_id, "batch_col");
-        assert!(req.vectors.is_empty());
-    }
-
-    #[test]
-    fn test_parse_batch_request_proto_format() {
-        let json = serde_json::json!({
-            "collection_id": "proto_batch_col",
-            "vectors": []
-        });
-        let result = parse_batch_request(json);
-        assert!(result.is_ok());
-        let req = result.unwrap();
-        assert_eq!(req.collection_id, "proto_batch_col");
-    }
-
-    #[test]
-    fn test_parse_batch_request_collection_id_fallback() {
-        let json = serde_json::json!({
-            "collection": "preferred_col",
-            "collection_id": "fallback_col",
-            "vectors": []
-        });
-        let result = parse_batch_request(json);
-        assert!(result.is_ok());
-        // "collection" key takes precedence in simple format
-        let req = result.unwrap();
-        assert_eq!(req.collection_id, "preferred_col");
-    }
-
-    #[test]
-    fn test_parse_batch_request_invalid() {
-        let json = serde_json::json!(42);
-        let result = parse_batch_request(json);
-        assert!(result.is_err());
     }
 
     // ============================================================
@@ -2307,96 +2725,6 @@ mod tests {
         assert!(json.contains("vector"));
     }
 
-    // ============================================================
-    // Vector operations tests (5 tests)
-    // ============================================================
-
-    /// Verify VectorSearchRequest deserializes from JSON in both simple and proto formats
-    #[test]
-    fn test_vector_search_request_parsing() {
-        // Simple format
-        let simple_json = serde_json::json!({
-            "collection": "my_vectors",
-            "vector": [0.1, 0.2, 0.3, 0.4, 0.5],
-            "top_k": 25
-        });
-        let simple_req =
-            parse_search_request(simple_json).expect("simple format should parse successfully");
-        assert_eq!(simple_req.collection_id, "my_vectors");
-        assert_eq!(simple_req.queries.len(), 1);
-        assert_eq!(simple_req.queries[0].vector.len(), 5);
-        assert!((simple_req.queries[0].vector[0] - 0.1).abs() < 1e-6);
-        assert!((simple_req.queries[0].vector[4] - 0.5).abs() < 1e-6);
-        assert_eq!(simple_req.top_k, 25);
-        assert!(simple_req.include_fields.is_none());
-        assert!(simple_req.search_params.is_none());
-        assert!(simple_req.distance_metric_override.is_none());
-        assert!(simple_req.search_optimization.is_none());
-
-        // Proto format with multiple queries
-        let proto_json = serde_json::json!({
-            "collection_id": "proto_vectors",
-            "queries": [
-                {"vector": [1.0, 2.0, 3.0], "filters": {}},
-                {"vector": [4.0, 5.0, 6.0], "filters": {}}
-            ],
-            "top_k": 50
-        });
-        let proto_req =
-            parse_search_request(proto_json).expect("proto format should parse successfully");
-        assert_eq!(proto_req.collection_id, "proto_vectors");
-        assert_eq!(proto_req.queries.len(), 2);
-        assert_eq!(proto_req.queries[0].vector, vec![1.0, 2.0, 3.0]);
-        assert_eq!(proto_req.queries[1].vector, vec![4.0, 5.0, 6.0]);
-        assert_eq!(proto_req.top_k, 50);
-    }
-
-    /// Verify VectorBatchRequest deserializes from JSON in both simple and proto formats
-    #[test]
-    fn test_vector_batch_request_parsing() {
-        // Simple format with actual vector records
-        let simple_json = serde_json::json!({
-            "collection": "batch_collection",
-            "vectors": [
-                {
-                    "id": "vec1",
-                    "vector": [0.1, 0.2, 0.3],
-                    "metadata": {}
-                },
-                {
-                    "id": "vec2",
-                    "vector": [0.4, 0.5, 0.6],
-                    "metadata": {}
-                }
-            ]
-        });
-        let simple_req = parse_batch_request(simple_json)
-            .expect("simple batch format should parse successfully");
-        assert_eq!(simple_req.collection_id, "batch_collection");
-        assert_eq!(simple_req.vectors.len(), 2);
-        assert_eq!(simple_req.vectors[0].id, "vec1");
-        assert_eq!(simple_req.vectors[0].vector, vec![0.1, 0.2, 0.3]);
-        assert_eq!(simple_req.vectors[1].id, "vec2");
-        assert_eq!(simple_req.vectors[1].vector, vec![0.4, 0.5, 0.6]);
-
-        // Proto format
-        let proto_json = serde_json::json!({
-            "collection_id": "proto_batch",
-            "vectors": [
-                {
-                    "id": "vec_a",
-                    "vector": [1.0, 2.0],
-                    "metadata": {}
-                }
-            ]
-        });
-        let proto_req =
-            parse_batch_request(proto_json).expect("proto batch format should parse successfully");
-        assert_eq!(proto_req.collection_id, "proto_batch");
-        assert_eq!(proto_req.vectors.len(), 1);
-        assert_eq!(proto_req.vectors[0].id, "vec_a");
-    }
-
     /// Verify search response (VectorOperationResponse) serializes correctly to JSON
     #[test]
     fn test_search_response_serialization() {
@@ -2455,81 +2783,6 @@ mod tests {
         assert_eq!(parsed["vector_ids"].as_array().unwrap().len(), 2);
         assert_eq!(parsed["metrics"]["total_processed"], 100);
         assert_eq!(parsed["metrics"]["processing_time_us"], 1500);
-    }
-
-    /// Missing required fields in search request produce appropriate errors
-    #[test]
-    fn test_invalid_search_request() {
-        // Completely invalid JSON type (number, not object)
-        let invalid_json = serde_json::json!(12345);
-        let result = parse_search_request(invalid_json);
-        assert!(
-            result.is_err(),
-            "numeric JSON should fail to parse as search request"
-        );
-
-        // Array instead of object
-        let array_json = serde_json::json!([1, 2, 3]);
-        let result = parse_search_request(array_json);
-        assert!(
-            result.is_err(),
-            "array JSON should fail to parse as search request"
-        );
-
-        // Boolean instead of object
-        let bool_json = serde_json::json!(true);
-        let result = parse_search_request(bool_json);
-        assert!(
-            result.is_err(),
-            "boolean JSON should fail to parse as search request"
-        );
-
-        // Null JSON
-        let null_json = serde_json::json!(null);
-        let result = parse_search_request(null_json);
-        assert!(
-            result.is_err(),
-            "null JSON should fail to parse as search request"
-        );
-
-        // Valid object but with wrong vector type (strings instead of numbers)
-        let wrong_vector = serde_json::json!({
-            "collection": "test",
-            "vector": ["a", "b", "c"]
-        });
-        let result = parse_search_request(wrong_vector);
-        // Should succeed but with empty vector since non-numeric values are filtered
-        assert!(result.is_ok());
-        let req = result.unwrap();
-        assert!(
-            req.queries[0].vector.is_empty(),
-            "non-numeric vector values should be filtered out"
-        );
-    }
-
-    /// Empty query vector is handled correctly (parsed but empty)
-    #[test]
-    fn test_empty_vector_search() {
-        let json = serde_json::json!({
-            "collection": "empty_vec_test",
-            "vector": [],
-            "top_k": 10
-        });
-        let result =
-            parse_search_request(json).expect("empty vector search should parse successfully");
-        assert_eq!(result.collection_id, "empty_vec_test");
-        assert!(result.queries[0].vector.is_empty());
-        assert_eq!(result.top_k, 10);
-
-        // Also test with no vector key at all (simple format triggered by "collection" key)
-        let no_vector_json = serde_json::json!({
-            "collection": "no_vec_test"
-        });
-        let result = parse_search_request(no_vector_json)
-            .expect("missing vector search should parse successfully");
-        assert_eq!(result.collection_id, "no_vec_test");
-        assert!(result.queries[0].vector.is_empty());
-        assert_eq!(result.top_k, 10); // default
     }
 
     // ============================================================
@@ -2920,7 +3173,7 @@ mod tests {
             "rrf_k": 100,
             "min_bm25_score": 0.5
         });
-        let full_req: HybridSearchRequest =
+        let full_req: LegacyHybridSearchRequest =
             serde_json::from_value(full_json).expect("full HybridSearchRequest should deserialize");
         assert_eq!(full_req.collection, "hybrid_col");
         assert_eq!(full_req.vector.as_ref().unwrap().len(), 4);
@@ -2939,7 +3192,7 @@ mod tests {
             "collection": "vec_only",
             "vector": [1.0, 2.0, 3.0]
         });
-        let vec_req: HybridSearchRequest = serde_json::from_value(vector_only_json)
+        let vec_req: LegacyHybridSearchRequest = serde_json::from_value(vector_only_json)
             .expect("vector-only HybridSearchRequest should deserialize");
         assert_eq!(vec_req.collection, "vec_only");
         assert!(vec_req.vector.is_some());
@@ -2953,7 +3206,7 @@ mod tests {
             "collection": "text_only",
             "text_query": "database systems"
         });
-        let text_req: HybridSearchRequest = serde_json::from_value(text_only_json)
+        let text_req: LegacyHybridSearchRequest = serde_json::from_value(text_only_json)
             .expect("text-only HybridSearchRequest should deserialize");
         assert_eq!(text_req.collection, "text_only");
         assert!(text_req.vector.is_none());
@@ -2964,7 +3217,7 @@ mod tests {
     #[test]
     fn test_hybrid_search_response_serialization_extended() {
         // Response with mixed hit types: some have vector scores, some have bm25 only
-        let response = HybridSearchResponse {
+        let response = LegacyHybridSearchResponse {
             success: true,
             results: vec![
                 HybridSearchHit {

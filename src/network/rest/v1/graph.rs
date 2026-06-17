@@ -38,6 +38,8 @@
 //! GET    /api/v1/graph/graphs/{graph_id}/edges/{id}    - Get edge by ID
 //! GET    /api/v1/graph/graphs/{graph_id}/stats         - Graph statistics
 //! POST   /api/v1/graph/graphs/{graph_id}/traverse      - Graph traversal
+//! POST   /api/v1/graph/graphs/{graph_id}/walk          - Agentic GraphWalk (BFS bounded)
+//! POST   /api/v1/graph/graphs/{graph_id}/step          - Agentic single-step navigation
 //! POST   /api/v1/graph/graphs/{graph_id}/shortest_path - Dijkstra shortest path
 //! POST   /api/v1/graph/graphs/{graph_id}/query         - Declarative graph query
 //! POST   /api/v1/graph/graphs/{graph_id}/nodes/batch   - Batch create nodes
@@ -62,12 +64,17 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // For base64 encoding of bytes (using standard library instead)
 // use base64;
 
 // Use proto types directly with custom serde implementations
+use crate::graph::engines::GraphEngine;
+use crate::graph::rag::{
+    KHopSubgraphBuilder, RagBudget, RagPipeline, RagQuery, Subgraph, VectorNodeRetriever,
+};
 use crate::network::rest::v1::handlers::AppState;
 use crate::proto::proximadb_v1::{Edge, Node};
 use crate::proto::proximadb_v1::{EmbeddingVersion, PropertyValue};
@@ -93,6 +100,53 @@ pub struct RestTraversalRequest {
     _return_path: bool,
     /// Traversal algorithm (bfs, dfs, parallel_bfs)
     algorithm: String,
+}
+
+/// Agentic GraphWalk request: bounded BFS expansion in one call.
+///
+/// Maps to `GraphOperationsService::graph_walk()`. Tradeoff vs `WalkStepRequest`:
+/// `walk` returns up to `limit` nodes within `max_depth` hops in a single response;
+/// `step` returns the immediate neighbors of one node, leaving the agent to drive.
+#[derive(Debug, serde::Deserialize)]
+pub struct WalkRequest {
+    /// Starting node ID
+    pub start_node_id: String,
+    /// Maximum BFS depth (0 = unbounded)
+    #[serde(default = "default_walk_depth")]
+    pub max_depth: u32,
+    /// Maximum number of nodes to return
+    #[serde(default = "default_walk_limit")]
+    pub limit: u32,
+}
+
+fn default_walk_depth() -> u32 {
+    2
+}
+
+fn default_walk_limit() -> u32 {
+    100
+}
+
+/// Agentic single-step navigation request: return the neighbors of one node.
+///
+/// Maps to `GraphOperationsService::graph_step()`. The agent calls this
+/// repeatedly to walk the graph, picking which neighbor to step to next, so
+/// the database never has to materialize a subgraph that doesn't fit in the
+/// agent's context window (arXiv:2604.01610 GraphWalk pattern).
+#[derive(Debug, serde::Deserialize)]
+pub struct WalkStepRequest {
+    /// Current node ID
+    pub node_id: String,
+    /// Optional edge-type filter (empty = all edges)
+    #[serde(default)]
+    pub edge_type: Option<String>,
+    /// Maximum neighbors to return (0 = no cap, but you should set one)
+    #[serde(default = "default_step_limit")]
+    pub limit: u32,
+}
+
+fn default_step_limit() -> u32 {
+    50
 }
 
 /// REST-compatible NodeQuery wrapper for JSON deserialization
@@ -129,6 +183,97 @@ pub struct RestEdgeQuery {
     continuation_token: Option<String>,
 }
 
+/// Request for Modular Graph RAG (RGL) retrieval.
+#[derive(Debug, serde::Deserialize)]
+pub struct RagRequest {
+    /// Seed retrieval query (text).
+    #[serde(default)]
+    pub query: String,
+    /// Seed retrieval vector (optional).
+    #[serde(default)]
+    pub query_vector: Option<Vec<f32>>,
+    /// Node labels to filter seeds (optional).
+    #[serde(default)]
+    pub allowed_labels: Vec<String>,
+    /// Graph budget for retrieval and expansion.
+    #[serde(default)]
+    pub budget: RestRagBudget,
+    /// Collection to use for seed retrieval (default: graph_id).
+    pub seed_collection: Option<String>,
+    /// Number of hops for subgraph expansion (default: 2).
+    #[serde(default = "default_rag_hops")]
+    pub hops: u32,
+    /// Whether to use LLM-based dynamic node filtering (TD-045).
+    #[serde(default)]
+    pub use_llm_filter: bool,
+}
+
+fn default_rag_hops() -> u32 {
+    2
+}
+
+/// Budget constraints for RAG retrieval.
+#[derive(Debug, serde::Deserialize)]
+pub struct RestRagBudget {
+    /// Maximum number of seed nodes to retrieve.
+    #[serde(default = "default_max_seeds")]
+    pub max_seeds: usize,
+    /// Maximum number of total nodes in the final subgraph.
+    #[serde(default = "default_max_subgraph_nodes")]
+    pub max_subgraph_nodes: usize,
+}
+
+impl Default for RestRagBudget {
+    fn default() -> Self {
+        Self {
+            max_seeds: default_max_seeds(),
+            max_subgraph_nodes: default_max_subgraph_nodes(),
+        }
+    }
+}
+
+fn default_max_seeds() -> usize {
+    10
+}
+
+fn default_max_subgraph_nodes() -> usize {
+    100
+}
+
+/// Subgraph response for RAG.
+#[derive(Debug, serde::Serialize)]
+pub struct RestSubgraph {
+    /// Node IDs in the subgraph.
+    pub nodes: Vec<String>,
+    /// Edges in the subgraph.
+    pub edges: Vec<RestSubgraphEdge>,
+}
+
+/// One edge in the RAG subgraph.
+#[derive(Debug, serde::Serialize)]
+pub struct RestSubgraphEdge {
+    pub from: String,
+    pub to: String,
+    pub edge_type: String,
+}
+
+impl From<Subgraph> for RestSubgraph {
+    fn from(s: Subgraph) -> Self {
+        Self {
+            nodes: s.nodes,
+            edges: s
+                .edges
+                .into_iter()
+                .map(|e| RestSubgraphEdge {
+                    from: e.from,
+                    to: e.to,
+                    edge_type: e.edge_type,
+                })
+                .collect(),
+        }
+    }
+}
+
 // Conversion implementations for REST types to Proto types
 impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest {
     fn from(rest: RestTraversalRequest) -> Self {
@@ -142,7 +287,12 @@ impl From<RestTraversalRequest> for crate::proto::proximadb_v1::TraversalRequest
         };
 
         crate::proto::proximadb_v1::TraversalRequest {
-            graph_id: "default".to_string(), // Deferred: Extract from REST API path
+            // The proto field is unused downstream — `traverse_with_overrides`
+            // takes `graph_id: &str` as an explicit first arg (passed from the
+            // REST Path<String> extractor). Leaving empty rather than "default"
+            // to prevent the hardcode from looking like a fallback that
+            // actually shapes behavior.
+            graph_id: String::new(),
             start_node_id: rest.start_node_id,
             max_depth: rest.max_depth,
             edge_types: rest.edge_types,
@@ -690,11 +840,16 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/:graph_id/edges/:id", delete(delete_edge))
         // Multi-graph traversal and querying
         .route("/graphs/:graph_id/traverse", post(traverse_graph))
+        // Agentic GraphWalk surface (TD-046, arXiv:2604.01610)
+        .route("/graphs/:graph_id/walk", post(walk_graph))
+        .route("/graphs/:graph_id/step", post(step_graph))
         .route("/graphs/:graph_id/shortest_path", post(shortest_path))
         .route("/graphs/:graph_id/query/nodes", post(query_nodes))
         .route("/graphs/:graph_id/query/edges", post(query_edges))
         // Declarative graph query (Cypher)
         .route("/graphs/:graph_id/query", post(execute_graph_query))
+        // Modular Graph RAG (RGL, TD-045)
+        .route("/graphs/:graph_id/rag", post(rag_query))
         // Multi-graph batch operations
         .route("/graphs/:graph_id/nodes/batch", post(batch_create_nodes))
         .route("/graphs/:graph_id/edges/batch", post(batch_create_edges))
@@ -715,14 +870,6 @@ pub fn create_graph_router() -> Router<AppState> {
             get(get_connected_components),
         )
         .route("/graphs/:graph_id/cycles", get(check_cycles))
-        // PULSAR/QUASAR advanced graph operations
-        .route("/graphs/:graph_id/engine", post(create_graph_with_engine))
-        .route("/graphs/:graph_id/pulsar/stats", get(get_pulsar_stats))
-        .route("/graphs/:graph_id/pulsar/query", post(cross_shard_query))
-        .route("/graphs/:graph_id/pulsar/rebalance", post(rebalance_shards))
-        .route("/graphs/:graph_id/quasar/stats", get(get_quasar_stats))
-        .route("/graphs/:graph_id/quasar/tiers", get(get_tier_stats))
-        .route("/graphs/:graph_id/quasar/migrate", post(trigger_migration))
         // Legacy compatibility endpoints (deprecated; redirect to canonical multi-graph routes)
         .route("/nodes", post(create_node_legacy))
         .route("/nodes/:id", get(get_node_legacy))
@@ -745,7 +892,7 @@ pub async fn create_node(
     let proto_node: Node = request.node.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .create_node(&graph_id, proto_node)
         .await
@@ -779,7 +926,7 @@ pub async fn get_node(
     debug!("Getting node: {} from graph: {}", node_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_node(&graph_id, &node_id)
         .await
@@ -825,7 +972,7 @@ pub async fn update_node(
     let proto_node: Node = node_input.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .update_node(&graph_id, proto_node)
         .await
@@ -855,7 +1002,7 @@ pub async fn delete_node(
     debug!("Deleting node: {} from graph: {}", node_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .delete_node(&graph_id, &node_id)
         .await
@@ -897,7 +1044,7 @@ pub async fn get_node_neighbors(
     );
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_neighbors(&graph_id, &node_id)
         .await
@@ -941,7 +1088,7 @@ pub async fn create_edge(
     let proto_edge: Edge = request.edge.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .create_edge(&graph_id, proto_edge)
         .await
@@ -1026,7 +1173,7 @@ pub async fn shortest_path(
         req.prefetch_budget = Some(n);
     }
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .shortest_path(
             &graph_id,
@@ -1078,7 +1225,7 @@ pub async fn add_unique_constraint(
     Json(req): Json<UniqueConstraintRequest>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .add_unique_constraint(&graph_id, &req.label, &req.property)
         .await
@@ -1103,7 +1250,7 @@ pub async fn remove_unique_constraint(
 ) -> impl IntoResponse {
     // remove_unique_constraint now returns Result and is async
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .remove_unique_constraint(&graph_id, &req.label, &req.property)
         .await
@@ -1126,7 +1273,7 @@ pub async fn get_connected_components(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .connected_components(&graph_id)
         .await
@@ -1156,7 +1303,7 @@ pub async fn check_cycles(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .has_cycle(&graph_id)
         .await
@@ -1180,6 +1327,106 @@ pub async fn check_cycles(
     }
 }
 
+pub async fn rag_query(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<RagRequest>,
+) -> impl IntoResponse {
+    let seed_collection = request
+        .seed_collection
+        .clone()
+        .unwrap_or_else(|| graph_id.clone());
+
+    let engine = match app_state
+        .request_handlers
+        .graph_operations_service
+        .get_or_create_graph_engine(&graph_id)
+        .await
+    {
+        Ok(e) => e,
+        Err(err) => {
+            let graph_error = GraphError::new(
+                ErrorCode::InvalidArgument,
+                format!("Graph '{}' not found: {}", graph_id, err),
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
+            )
+                .into_response();
+        }
+    };
+
+    let retriever = VectorNodeRetriever::new(
+        app_state.vector_operations_service.clone(),
+        seed_collection,
+        request.budget.max_seeds,
+    );
+
+    let builder =
+        KHopSubgraphBuilder::new(engine.clone() as Arc<dyn GraphEngine>, request.hops, None);
+
+    let budget = RagBudget {
+        max_seeds: request.budget.max_seeds,
+        max_subgraph_nodes: request.budget.max_subgraph_nodes,
+    };
+
+    let rag_query = RagQuery {
+        query: request.query,
+        query_vector: request.query_vector,
+        allowed_labels: request.allowed_labels,
+    };
+
+    if request.use_llm_filter {
+        if app_state.llm_engine.is_some() {
+            warn!(
+                "LLM filter requested for graph {} but no LLM-aware node filter is currently wired; using the standard RAG pipeline",
+                graph_id
+            );
+        } else {
+            warn!(
+                "LLM filter requested but LLM engine not available; using the standard RAG pipeline"
+            );
+        }
+    }
+
+    let pipeline = RagPipeline::without_filter(retriever, builder, budget);
+    execute_rag_pipeline(pipeline, &rag_query, &graph_id).await
+}
+
+/// Helper to execute the pipeline and format the response.
+async fn execute_rag_pipeline<R, B, F>(
+    pipeline: RagPipeline<R, B, F>,
+    query: &RagQuery,
+    graph_id: &str,
+) -> Response
+where
+    R: crate::graph::rag::NodeRetriever,
+    B: crate::graph::rag::SubgraphBuilder,
+    F: crate::graph::rag::NodeFilter,
+{
+    match pipeline.run(query).await {
+        Ok(subgraph) => {
+            info!(
+                "Successfully executed RGL query for graph {}: {} nodes, {} edges",
+                graph_id,
+                subgraph.nodes.len(),
+                subgraph.edges.len()
+            );
+            Json(GraphResponse::success(RestSubgraph::from(subgraph))).into_response()
+        }
+        Err(err) => {
+            error!("RGL query failed for graph {}: {}", graph_id, err);
+            let graph_error = GraphError::internal(err.to_string());
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(GraphResponse::<RestSubgraph>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// Get an edge by ID
 pub async fn get_edge(
     State(app_state): State<AppState>,
@@ -1188,7 +1435,7 @@ pub async fn get_edge(
     debug!("Getting edge: {} from graph: {}", edge_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_edge(&graph_id, &edge_id)
         .await
@@ -1234,7 +1481,7 @@ pub async fn update_edge(
     let proto_edge: Edge = edge_input.into();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .update_edge(&graph_id, proto_edge)
         .await
@@ -1264,7 +1511,7 @@ pub async fn delete_edge(
     debug!("Deleting edge: {} from graph: {}", edge_id, graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .delete_edge(&graph_id, &edge_id)
         .await
@@ -1311,7 +1558,7 @@ pub async fn traverse_graph(
     let override_prefetch_budget = None;
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .traverse_with_overrides(
             &graph_id,
@@ -1371,6 +1618,83 @@ pub async fn traverse_graph(
     }
 }
 
+/// Bounded BFS expansion for agentic graph navigation.
+///
+/// Returns up to `limit` nodes within `max_depth` hops of `start_node_id`.
+/// See `WalkRequest` for the tradeoff vs single-step `step_graph`.
+pub async fn walk_graph(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<WalkRequest>,
+) -> impl IntoResponse {
+    debug!(
+        "GraphWalk: graph={} start={} max_depth={} limit={}",
+        graph_id, request.start_node_id, request.max_depth, request.limit
+    );
+
+    match app_state
+        .request_handlers
+        .graph_operations_service
+        .graph_walk(
+            &graph_id,
+            &request.start_node_id,
+            request.max_depth,
+            request.limit as usize,
+        )
+        .await
+    {
+        Ok(results) => Json(GraphResponse::success(results)).into_response(),
+        Err(err) => {
+            error!("GraphWalk failed for graph {}: {}", graph_id, err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<TraversalResults>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// Single-step graph navigation: return the immediate neighbors of one node.
+///
+/// The starting node is included as the first entry in `nodes` so the agent
+/// has its own properties without an extra round trip. Use this primitive in a
+/// loop when the agent needs to drive traversal step by step.
+pub async fn step_graph(
+    State(app_state): State<AppState>,
+    Path(graph_id): Path<String>,
+    Json(request): Json<WalkStepRequest>,
+) -> impl IntoResponse {
+    debug!(
+        "GraphStep: graph={} node={} edge_type={:?} limit={}",
+        graph_id, request.node_id, request.edge_type, request.limit
+    );
+
+    match app_state
+        .request_handlers
+        .graph_operations_service
+        .graph_step(
+            &graph_id,
+            &request.node_id,
+            request.edge_type.as_deref(),
+            request.limit as usize,
+        )
+        .await
+    {
+        Ok(results) => Json(GraphResponse::success(results)).into_response(),
+        Err(err) => {
+            error!("GraphStep failed for graph {}: {}", graph_id, err);
+            let graph_error = GraphError::new(ErrorCode::InvalidArgument, err.to_string());
+            (
+                StatusCode::BAD_REQUEST,
+                Json(GraphResponse::<TraversalResults>::error(graph_error)),
+            )
+                .into_response()
+        }
+    }
+}
+
 /// Query nodes by labels and properties
 pub async fn query_nodes(
     State(app_state): State<AppState>,
@@ -1392,7 +1716,7 @@ pub async fn query_nodes(
     }
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .query_nodes(&graph_id, q.clone().into())
         .await
@@ -1443,7 +1767,7 @@ pub async fn query_edges(
         q.offset = Some(n);
     }
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .query_edges(&graph_id, q.clone().into())
         .await
@@ -1495,7 +1819,7 @@ pub async fn batch_create_nodes(
     let proto_nodes: Vec<Node> = request.nodes.into_iter().map(|n| n.into()).collect();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .batch_create_nodes_with_strategy(&graph_id, proto_nodes, strategy.as_str())
         .await
@@ -1540,7 +1864,7 @@ pub async fn batch_create_edges(
     let proto_edges: Vec<Edge> = request.edges.into_iter().map(|e| e.into()).collect();
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .batch_create_edges(&graph_id, proto_edges)
         .await
@@ -1576,7 +1900,7 @@ pub async fn get_graph_stats(
     debug!("Getting graph statistics for graph: {}", graph_id);
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_operations_service
         .get_stats(&graph_id)
         .await
@@ -1699,7 +2023,7 @@ pub async fn create_graph_collection(
     };
 
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .create_graph(create_request)
         .await
@@ -1733,7 +2057,7 @@ pub async fn create_graph_collection(
 /// List all graph collections
 pub async fn list_graph_collections(State(app_state): State<AppState>) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .list_graphs()
         .await
@@ -1771,7 +2095,7 @@ pub async fn get_graph_collection(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .get_graph(&graph_id)
         .await
@@ -1812,7 +2136,7 @@ pub async fn delete_graph_collection(
     Path(graph_id): Path<String>,
 ) -> impl IntoResponse {
     match app_state
-        .unified_handlers
+        .request_handlers
         .graph_collection_service
         .delete_graph(&graph_id)
         .await
@@ -1986,9 +2310,9 @@ fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde
             .iter()
             .map(|m| {
                 serde_json::json!({
-                    "id": m.id,
+                    "id": m.record.oid,
                     "score": m.score,
-                    "metadata": m.metadata
+                    "metadata": &m.record.props
                 })
             })
             .collect(),
@@ -1997,368 +2321,6 @@ fn convert_query_result_to_rows(result: &crate::query::QueryResult) -> Vec<serde
             graph_result.nodes.clone()
         }
         QueryResultData::Empty => vec![],
-    }
-}
-
-// ===== PULSAR/QUASAR Advanced Graph Operations =====
-
-/// Request for creating a graph with a specific engine
-#[derive(Debug, Deserialize)]
-pub struct CreateGraphWithEngineRequest {
-    /// Unique graph identifier
-    pub graph_id: String,
-    /// Graph engine type: "orion", "pulsar", or "quasar"
-    #[serde(default)]
-    pub engine_type: String,
-    /// PULSAR-specific distributed engine configuration
-    pub pulsar_config: Option<serde_json::Value>,
-    /// QUASAR-specific hybrid vector+graph engine configuration
-    pub quasar_config: Option<serde_json::Value>,
-}
-
-/// Create a graph with a specific engine type (ORION, PULSAR, or QUASAR)
-pub async fn create_graph_with_engine(
-    State(app_state): State<AppState>,
-    Json(request): Json<CreateGraphWithEngineRequest>,
-) -> impl IntoResponse {
-    info!(
-        "Creating graph {} with engine type {}",
-        request.graph_id, request.engine_type
-    );
-
-    // Map engine type string to proto enum
-    let engine_type = match request.engine_type.to_lowercase().as_str() {
-        "orion" => crate::graph::service::service_advanced::GraphEngineTypeProto::Orion,
-        "pulsar" => crate::graph::service::service_advanced::GraphEngineTypeProto::Pulsar,
-        "quasar" => crate::graph::service::service_advanced::GraphEngineTypeProto::Quasar,
-        _ => {
-            let error = GraphError::new(
-                ErrorCode::InvalidArgument,
-                format!(
-                    "Unknown engine type: {}. Valid options: orion, pulsar, quasar",
-                    request.engine_type
-                ),
-            );
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(GraphResponse::<serde_json::Value>::error(error)),
-            )
-                .into_response();
-        }
-    };
-
-    let service_request = crate::graph::service::service_advanced::CreateGraphWithEngineRequest {
-        graph_id: request.graph_id.clone(),
-        engine_type,
-        pulsar_config: request
-            .pulsar_config
-            .map(|v| serde_json::from_value(v).unwrap_or_default()),
-        quasar_config: request
-            .quasar_config
-            .map(|v| serde_json::from_value(v).unwrap_or_default()),
-    };
-
-    match app_state
-        .unified_handlers
-        .graph_operations_service
-        .create_graph_with_engine(service_request)
-        .await
-    {
-        Ok(response) => {
-            info!(
-                "Graph {} created successfully with engine {:?}",
-                request.graph_id, engine_type
-            );
-            let body = serde_json::json!({
-                "success": response.success,
-                "message": response.message,
-                "engine_type": format!("{:?}", response.created_engine_type),
-            });
-            (StatusCode::CREATED, Json(GraphResponse::success(body))).into_response()
-        }
-        Err(e) => {
-            error!("Failed to create graph {}: {}", request.graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Get PULSAR distributed graph statistics
-pub async fn get_pulsar_stats(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-) -> impl IntoResponse {
-    debug!("Getting PULSAR stats for graph: {}", graph_id);
-
-    let request = crate::proto::v1::GetStatsRequest {
-        graph_id: graph_id.clone(),
-    };
-
-    match app_state
-        .unified_handlers
-        .graph_operations_service
-        .get_pulsar_stats(request)
-        .await
-    {
-        Ok(stats) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(stats).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!("Failed to get PULSAR stats for graph {}: {}", graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Request for cross-shard query
-#[derive(Debug, Deserialize)]
-pub struct CrossShardQueryRequest {
-    /// Target graph identifier
-    pub graph_id: String,
-    /// Graph query to execute across shards
-    pub query: String,
-    /// Specific shard IDs to query (empty means all shards)
-    #[serde(default)]
-    pub shard_ids: Vec<String>,
-}
-
-/// Execute cross-shard query (PULSAR only)
-pub async fn cross_shard_query(
-    State(app_state): State<AppState>,
-    Json(request): Json<CrossShardQueryRequest>,
-) -> impl IntoResponse {
-    info!(
-        "Executing cross-shard query for graph: {}",
-        request.graph_id
-    );
-
-    let service_request = crate::graph::service::service_advanced::CrossShardQueryRequest {
-        graph_id: request.graph_id.clone(),
-        query: request.query.clone(),
-        shard_ids: request.shard_ids.clone(),
-    };
-
-    match app_state
-        .unified_handlers
-        .graph_operations_service
-        .cross_shard_query(service_request)
-        .await
-    {
-        Ok(response) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(response).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!(
-                "Cross-shard query failed for graph {}: {}",
-                request.graph_id, e
-            );
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Request for rebalancing shards
-#[derive(Debug, Deserialize)]
-pub struct RebalanceShardsRequest {
-    /// Target graph identifier
-    pub graph_id: String,
-    /// Specific shard IDs to rebalance (empty means all)
-    #[serde(default)]
-    pub shard_ids: Vec<String>,
-    /// Force rebalance even if the cluster is not in a stable state
-    #[serde(default)]
-    pub force: bool,
-}
-
-/// Rebalance shards (PULSAR only)
-pub async fn rebalance_shards(
-    State(app_state): State<AppState>,
-    Json(request): Json<RebalanceShardsRequest>,
-) -> impl IntoResponse {
-    info!("Rebalancing shards for graph: {}", request.graph_id);
-
-    let service_request = crate::graph::service::service_advanced::RebalanceShardsRequest {
-        graph_id: request.graph_id.clone(),
-        shard_ids: request.shard_ids.clone(),
-        force: request.force,
-    };
-
-    match app_state
-        .unified_handlers
-        .graph_operations_service
-        .rebalance_shards(service_request)
-        .await
-    {
-        Ok(response) => {
-            let body = serde_json::json!({
-                "success": response.success,
-                "message": response.message,
-                "rebalanced_shards": response.rebalanced_shards,
-            });
-            (StatusCode::OK, Json(GraphResponse::success(body))).into_response()
-        }
-        Err(e) => {
-            error!(
-                "Failed to rebalance shards for graph {}: {}",
-                request.graph_id, e
-            );
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Get QUASAR tiering statistics
-pub async fn get_quasar_stats(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-) -> impl IntoResponse {
-    debug!("Getting QUASAR stats for graph: {}", graph_id);
-
-    let request = crate::proto::v1::GetStatsRequest {
-        graph_id: graph_id.clone(),
-    };
-
-    match app_state
-        .unified_handlers
-        .graph_operations_service
-        .get_quasar_stats(request)
-        .await
-    {
-        Ok(stats) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(stats).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!("Failed to get QUASAR stats for graph {}: {}", graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Get detailed tier statistics (QUASAR only)
-pub async fn get_tier_stats(
-    State(app_state): State<AppState>,
-    Path(graph_id): Path<String>,
-) -> impl IntoResponse {
-    debug!("Getting tier stats for graph: {}", graph_id);
-
-    let request = crate::graph::service::service_advanced::GetTierStatsRequest {
-        graph_id: graph_id.clone(),
-        tier_name: None,
-    };
-
-    match app_state
-        .unified_handlers
-        .graph_operations_service
-        .get_tier_stats(request)
-        .await
-    {
-        Ok(response) => (
-            StatusCode::OK,
-            Json(GraphResponse::success(
-                serde_json::to_value(response).unwrap_or_default(),
-            )),
-        )
-            .into_response(),
-        Err(e) => {
-            error!("Failed to get tier stats for graph {}: {}", graph_id, e);
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
-    }
-}
-
-/// Request for triggering migration
-#[derive(Debug, Deserialize)]
-pub struct TriggerMigrationRequest {
-    /// Target graph identifier
-    pub graph_id: String,
-    /// Node IDs to migrate (empty means automatic selection)
-    #[serde(default)]
-    pub node_ids: Vec<String>,
-    /// Target storage tier (e.g., "hot", "warm", "cold")
-    pub target_tier: String,
-}
-
-/// Trigger manual tier migration (QUASAR only)
-pub async fn trigger_migration(
-    State(app_state): State<AppState>,
-    Json(request): Json<TriggerMigrationRequest>,
-) -> impl IntoResponse {
-    info!("Triggering migration for graph: {}", request.graph_id);
-
-    let service_request = crate::graph::service::service_advanced::TriggerMigrationRequest {
-        graph_id: request.graph_id.clone(),
-        node_ids: request.node_ids.clone(),
-        target_tier: request.target_tier.clone(),
-    };
-
-    match app_state
-        .unified_handlers
-        .graph_operations_service
-        .trigger_migration(service_request)
-        .await
-    {
-        Ok(response) => {
-            let body = serde_json::json!({
-                "success": response.success,
-                "message": response.message,
-                "migrated_node_ids": response.migrated_node_ids,
-            });
-            (StatusCode::OK, Json(GraphResponse::success(body))).into_response()
-        }
-        Err(e) => {
-            error!(
-                "Failed to trigger migration for graph {}: {}",
-                request.graph_id, e
-            );
-            let graph_error = GraphError::new(ErrorCode::InternalError, e.to_string());
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(GraphResponse::<serde_json::Value>::error(graph_error)),
-            )
-                .into_response()
-        }
     }
 }
 

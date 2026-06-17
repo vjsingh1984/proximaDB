@@ -28,56 +28,68 @@ use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
+use super::cache_affinity::CacheAffinityRegistry;
 use super::node_registry::{NodeHealth, NodeInfo, NodeRole};
 use super::shard::{PartitionConfig, PartitionStrategy, ShardId};
+use crate::catalog::tenant_tier::Tier;
 
-/// Configuration for the routing service
+/// Hard-cap violation emitted by `RouteContext::check_tenant_caps`.
+///
+/// Carries the structured fields the gateway needs to render an explainable
+/// 429. The fields are operator-neutral; an operator-side gateway can
+/// re-render them into whatever customer-facing payload shape it emits so
+/// the user sees a consistent rejection regardless of which side (router
+/// or gateway) detected the breach.
 #[derive(Debug, Clone)]
-pub struct RoutingConfig {
-    /// Enable read replicas for load distribution
-    pub enable_read_replicas: bool,
-    /// Maximum number of retries for failed requests
-    pub max_retries: u32,
-    /// Timeout for routing decisions in milliseconds
-    pub routing_timeout_ms: u64,
-    /// Enable sticky sessions for consistency
-    pub sticky_sessions: bool,
-    /// Load balancing strategy
-    pub load_balancing: LoadBalancingStrategy,
-    /// Enable locality-aware routing
-    pub locality_aware: bool,
+pub struct TenantBudgetExceeded {
+    /// Which ceiling tripped (e.g. "scan_budget_gb_hard", "ef_search_cap").
+    pub which: &'static str,
+    /// Hard-cap value from the tenant tier.
+    pub limit: f64,
+    /// Caller-requested value that exceeded the cap.
+    pub requested: f64,
+    /// Tenant the request was attributed to.
+    pub tenant_id: String,
+    /// Resolved tenant tier — surfaced in the trace and in metrics labels.
+    pub tier: Tier,
 }
 
-impl Default for RoutingConfig {
-    fn default() -> Self {
-        Self {
-            enable_read_replicas: true,
-            max_retries: 3,
-            routing_timeout_ms: 100,
-            sticky_sessions: false,
-            load_balancing: LoadBalancingStrategy::RoundRobin,
-            locality_aware: true,
-        }
+impl std::fmt::Display for TenantBudgetExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "tenant {} ({:?}) exceeded {}: requested={} > limit={}",
+            self.tenant_id, self.tier, self.which, self.requested, self.limit
+        )
     }
 }
 
-/// Load balancing strategies
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LoadBalancingStrategy {
-    /// Round-robin across available nodes
-    RoundRobin,
-    /// Route to node with lowest load
-    LeastLoaded,
-    /// Route to node with lowest latency
-    LeastLatency,
-    /// Random node selection
-    Random,
-    /// Weighted round-robin based on node capacity
-    WeightedRoundRobin,
+impl std::error::Error for TenantBudgetExceeded {}
+
+impl TenantBudgetExceeded {
+    /// Serialise to a structured JSON shape suitable as the body of a 429
+    /// response. Keeps the customer-facing payload identical whether the
+    /// soft or hard cap tripped; operators wrap or rename fields as needed.
+    pub fn to_explain_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "error":     "budget_exceeded",
+            "which":     self.which,
+            "limit":     self.limit,
+            "requested": self.requested,
+            "tenant_id": self.tenant_id,
+            "tier":      self.tier.prometheus_label(),
+            "hint":      "Lower scan_budget_gb / ef_search or upgrade tier.",
+        })
+    }
 }
+
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{LoadBalancingStrategy, RoutingConfig};
 
 /// Result of a routing decision
 #[derive(Debug, Clone)]
@@ -150,6 +162,19 @@ pub struct RouteContext {
 
     /// Optional request trace ID for distributed tracing
     pub trace_id: Option<String>,
+
+    /// Caller-requested scan budget in GB (LLD §1 request contract).
+    /// The router enforces the **hard** cap from the resolved tenant tier
+    /// (loaded from `config/tier-config.json`) and rejects with
+    /// `RouteError::BudgetExceeded` if this exceeds the cap.
+    /// `None` means "no soft cap from the gateway" — the tier default applies.
+    #[serde(default)]
+    pub requested_scan_gb: Option<f64>,
+
+    /// Caller-requested ef_search / beam width. Same enforcement story as
+    /// `requested_scan_gb`: hard-capped against the tier ceiling.
+    #[serde(default)]
+    pub requested_ef_search: Option<u32>,
 }
 
 impl RouteContext {
@@ -192,6 +217,60 @@ impl RouteContext {
     pub fn with_trace_id(mut self, trace_id: impl Into<String>) -> Self {
         self.trace_id = Some(trace_id.into());
         self
+    }
+
+    /// Set the requested scan budget for hard-cap enforcement against the
+    /// tenant tier ceiling.
+    pub fn with_requested_scan_gb(mut self, gb: f64) -> Self {
+        self.requested_scan_gb = Some(gb);
+        self
+    }
+
+    /// Set the requested ef_search for hard-cap enforcement.
+    pub fn with_requested_ef_search(mut self, ef: u32) -> Self {
+        self.requested_ef_search = Some(ef);
+        self
+    }
+
+    /// Apply the tenant-tier hard caps to this route context.
+    ///
+    /// Returns a structured budget-exceeded error when the request exceeds
+    /// either the scan budget or the ef_search ceiling. Callers turn that
+    /// into a `failure_class = BudgetExhausted` trace plus a 429 response
+    /// at the gateway boundary.
+    ///
+    /// Single-source-of-truth note: budget defaults must match the
+    /// `crate::catalog::tenant_tier::Tier::default_*` constants so the soft
+    /// cap (gateway, Python) and hard cap (router, Rust) never disagree.
+    pub fn check_tenant_caps(
+        &self,
+        record: &crate::catalog::tenant_tier::TenantTierRecord,
+    ) -> std::result::Result<(), TenantBudgetExceeded> {
+        if let Some(requested) = self.requested_scan_gb {
+            let limit = record.effective_scan_budget_gb();
+            if requested > limit {
+                return Err(TenantBudgetExceeded {
+                    which: "scan_budget_gb_hard",
+                    limit,
+                    requested,
+                    tenant_id: record.tenant_id.clone(),
+                    tier: record.tier,
+                });
+            }
+        }
+        if let Some(requested_ef) = self.requested_ef_search {
+            let limit = record.effective_ef_search_cap();
+            if requested_ef > limit {
+                return Err(TenantBudgetExceeded {
+                    which: "ef_search_cap",
+                    limit: f64::from(limit),
+                    requested: f64::from(requested_ef),
+                    tenant_id: record.tenant_id.clone(),
+                    tier: record.tier,
+                });
+            }
+        }
+        Ok(())
     }
 
     /// Extract the effective partition key based on context and strategy
@@ -326,19 +405,32 @@ impl CachedPartitionConfig {
 /// ```
 pub struct RoutingService {
     config: RoutingConfig,
-    /// Routing table: shard_id -> (primary_node, replica_nodes)
-    routing_table: Arc<RwLock<HashMap<ShardId, ShardRoute>>>,
-    /// All known nodes with routing state
-    nodes: Arc<RwLock<HashMap<String, RoutableNode>>>,
+    /// Coherent routing state used to make route decisions from one snapshot.
+    state: Arc<RwLock<RoutingState>>,
     /// Round-robin counter for load balancing
-    rr_counter: Arc<RwLock<u64>>,
+    rr_counter: Arc<AtomicU64>,
     /// Routing statistics
     stats: Arc<RwLock<RoutingStats>>,
-    /// Cached partition configurations per collection
-    /// Key: collection_id, Value: cached partition config
-    partition_configs: Arc<RwLock<HashMap<String, CachedPartitionConfig>>>,
     /// TTL for partition config cache entries
     partition_config_ttl: Duration,
+    /// Optional cache-affinity registry — when present and the
+    /// configuration has `locality_aware` enabled, the router
+    /// records each successful read decision and biases subsequent
+    /// reads toward whichever node most recently served the
+    /// collection. None means affinity tracking is off (the default
+    /// when no registry has been wired in).
+    affinity_registry: Option<Arc<CacheAffinityRegistry>>,
+}
+
+#[derive(Default)]
+struct RoutingState {
+    /// Routing table: shard_id -> (primary_node, replica_nodes)
+    routing_table: HashMap<ShardId, ShardRoute>,
+    /// All known nodes with routing state
+    nodes: HashMap<String, RoutableNode>,
+    /// Cached partition configurations per collection.
+    /// Key: collection_id, Value: cached partition config.
+    partition_configs: HashMap<String, CachedPartitionConfig>,
 }
 
 /// Route information for a shard
@@ -360,12 +452,11 @@ impl RoutingService {
     pub fn new(config: RoutingConfig) -> Result<Self> {
         Ok(Self {
             config,
-            routing_table: Arc::new(RwLock::new(HashMap::new())),
-            nodes: Arc::new(RwLock::new(HashMap::new())),
-            rr_counter: Arc::new(RwLock::new(0)),
+            state: Arc::new(RwLock::new(RoutingState::default())),
+            rr_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(RwLock::new(RoutingStats::default())),
-            partition_configs: Arc::new(RwLock::new(HashMap::new())),
             partition_config_ttl: Self::DEFAULT_PARTITION_CONFIG_TTL,
+            affinity_registry: None,
         })
     }
 
@@ -373,13 +464,73 @@ impl RoutingService {
     pub fn with_partition_config_ttl(config: RoutingConfig, ttl: Duration) -> Result<Self> {
         Ok(Self {
             config,
-            routing_table: Arc::new(RwLock::new(HashMap::new())),
-            nodes: Arc::new(RwLock::new(HashMap::new())),
-            rr_counter: Arc::new(RwLock::new(0)),
+            state: Arc::new(RwLock::new(RoutingState::default())),
+            rr_counter: Arc::new(AtomicU64::new(0)),
             stats: Arc::new(RwLock::new(RoutingStats::default())),
-            partition_configs: Arc::new(RwLock::new(HashMap::new())),
             partition_config_ttl: ttl,
+            affinity_registry: None,
         })
+    }
+
+    /// Attach a cache-affinity registry. When set, the router will:
+    ///
+    /// * record each successful read against the chosen node so that
+    ///   subsequent reads for the same collection prefer the warm
+    ///   node;
+    /// * consult the registry when picking from a set of healthy
+    ///   read candidates — if the affinity-preferred node is among
+    ///   them and the request is a read, it wins over the default
+    ///   load-balancing policy.
+    ///
+    /// Writes / admin operations are never biased by affinity (they
+    /// must always go to the primary). The bias is also gated on
+    /// `RoutingConfig::locality_aware`; setting locality_aware=false
+    /// keeps affinity recording on (cheap) but skips the read bias.
+    pub fn with_affinity_registry(mut self, registry: Arc<CacheAffinityRegistry>) -> Self {
+        self.affinity_registry = Some(registry);
+        self
+    }
+
+    /// Returns the affinity-preferred node id for a collection, when
+    /// the registry has a fresh entry. None when no registry is
+    /// wired, no entry exists, or the entry has expired.
+    ///
+    /// Useful for external load balancers that want to consult the
+    /// per-node affinity hint before issuing an upstream request.
+    pub fn preferred_node_for(&self, collection_id: &str) -> Option<String> {
+        self.affinity_registry
+            .as_ref()
+            .and_then(|reg| reg.preferred_node(collection_id))
+    }
+
+    /// Visibility helper for operator dashboards and tests.
+    pub fn affinity_registry(&self) -> Option<&Arc<CacheAffinityRegistry>> {
+        self.affinity_registry.as_ref()
+    }
+
+    /// Internal: returns the affinity-preferred node id when locality
+    /// bias is active. Returns `None` when affinity is off, the
+    /// registry has no fresh entry, or the operation is a write/admin
+    /// (which must always go to primary).
+    fn affinity_hint(&self, collection_id: &str, operation: OperationType) -> Option<String> {
+        if !self.config.locality_aware {
+            return None;
+        }
+        if !matches!(operation, OperationType::Read) {
+            return None;
+        }
+        self.affinity_registry
+            .as_ref()
+            .and_then(|reg| reg.preferred_node(collection_id))
+    }
+
+    /// Internal: record that this routing service just dispatched a
+    /// query for `collection_id` to `node_id`. Cheap no-op when no
+    /// registry is wired.
+    fn record_affinity(&self, collection_id: &str, node_id: &str) {
+        if let Some(reg) = &self.affinity_registry {
+            reg.record_query(collection_id, node_id);
+        }
     }
 
     /// Route a request to an appropriate node
@@ -398,18 +549,24 @@ impl RoutingService {
         // Determine shard for this request
         let shard_id = self.compute_shard_id(collection_id, vector_id).await?;
 
-        // Get route for the shard
-        let route = {
-            let table = self.routing_table.read().await;
-            table.get(&shard_id).cloned()
-        };
+        // Cache-affinity hint (None for writes/admin and when no registry is wired)
+        let affinity = self.affinity_hint(collection_id, operation);
+        let affinity_ref = affinity.as_deref();
 
-        let target_node = match &route {
-            Some(r) if r.available => self.select_node(r, operation).await?,
-            _ => {
-                // No specific route, use any available node
-                self.select_any_node(operation).await?
-            }
+        // Get route for the shard
+        let (route, target_node) = {
+            let state = self.state.read().await;
+            let route = state.routing_table.get(&shard_id).cloned();
+            let target_node = match &route {
+                Some(r) if r.available => {
+                    self.select_node(r, operation, &state.nodes, affinity_ref)?
+                }
+                _ => {
+                    // No specific route, use any available node
+                    self.select_any_node_from(operation, &state.nodes, affinity_ref)?
+                }
+            };
+            (route, target_node)
         };
 
         let is_primary = match &route {
@@ -428,6 +585,13 @@ impl RoutingService {
             }
             stats.total_latency_us += start.elapsed().as_micros() as u64;
         }
+
+        // Record affinity for subsequent reads. We record on every
+        // route (not only on read) because a write that pinned a
+        // collection to a primary still gives subsequent reads a
+        // valid warm-cache hint. `record_affinity` is a cheap no-op
+        // when no registry is wired.
+        self.record_affinity(collection_id, &target_node.node_id);
 
         Ok(RouteDecision {
             target_node,
@@ -559,18 +723,23 @@ impl RoutingService {
             )
             .await?;
 
-        // Get route for the shard
-        let route = {
-            let table = self.routing_table.read().await;
-            table.get(&shard_id).cloned()
-        };
+        let affinity = self.affinity_hint(collection_id, operation);
+        let affinity_ref = affinity.as_deref();
 
-        let target_node = match &route {
-            Some(r) if r.available => self.select_node(r, operation).await?,
-            _ => {
-                // No specific route, use any available node
-                self.select_any_node(operation).await?
-            }
+        // Get route for the shard
+        let (route, target_node) = {
+            let state = self.state.read().await;
+            let route = state.routing_table.get(&shard_id).cloned();
+            let target_node = match &route {
+                Some(r) if r.available => {
+                    self.select_node(r, operation, &state.nodes, affinity_ref)?
+                }
+                _ => {
+                    // No specific route, use any available node
+                    self.select_any_node_from(operation, &state.nodes, affinity_ref)?
+                }
+            };
+            (route, target_node)
         };
 
         let is_primary = match &route {
@@ -589,6 +758,8 @@ impl RoutingService {
             }
             stats.total_latency_us += start.elapsed().as_micros() as u64;
         }
+
+        self.record_affinity(collection_id, &target_node.node_id);
 
         Ok(RouteDecision {
             target_node,
@@ -792,8 +963,8 @@ impl RoutingService {
         config: PartitionConfig,
         shard_count: u32,
     ) -> Result<()> {
-        let mut configs = self.partition_configs.write().await;
-        configs.insert(
+        let mut state = self.state.write().await;
+        state.partition_configs.insert(
             collection_id.to_string(),
             CachedPartitionConfig {
                 config,
@@ -815,36 +986,40 @@ impl RoutingService {
     ///
     /// Returns None if no config is cached or if the cache entry has expired.
     pub async fn get_partition_config(&self, collection_id: &str) -> Option<CachedPartitionConfig> {
-        let configs = self.partition_configs.read().await;
-        configs.get(collection_id).and_then(|cached| {
-            if cached.is_valid(self.partition_config_ttl) {
-                Some(cached.clone())
-            } else {
-                None
-            }
-        })
+        let state = self.state.read().await;
+        state
+            .partition_configs
+            .get(collection_id)
+            .and_then(|cached| {
+                if cached.is_valid(self.partition_config_ttl) {
+                    Some(cached.clone())
+                } else {
+                    None
+                }
+            })
     }
 
     /// Invalidate cached partition configuration for a collection
     ///
     /// Call this when the collection's partition config changes.
     pub async fn invalidate_partition_config(&self, collection_id: &str) -> Result<()> {
-        let mut configs = self.partition_configs.write().await;
-        configs.remove(collection_id);
+        let mut state = self.state.write().await;
+        state.partition_configs.remove(collection_id);
         Ok(())
     }
 
     /// Clear all cached partition configurations
     pub async fn clear_partition_configs(&self) -> Result<()> {
-        let mut configs = self.partition_configs.write().await;
-        configs.clear();
+        let mut state = self.state.write().await;
+        state.partition_configs.clear();
         Ok(())
     }
 
     /// Get all registered collection IDs with partition configs
     pub async fn list_partition_configs(&self) -> Vec<String> {
-        let configs = self.partition_configs.read().await;
-        configs
+        let state = self.state.read().await;
+        state
+            .partition_configs
             .iter()
             .filter(|(_, cached)| cached.is_valid(self.partition_config_ttl))
             .map(|(id, _)| id.clone())
@@ -877,13 +1052,19 @@ impl RoutingService {
     ) -> Result<Vec<RouteDecision>> {
         let start = Instant::now();
 
+        // Cache-affinity hint applies across every shard pick.
+        // Scatter-gather operations still benefit when the same node
+        // owns the warm caches for the collection.
+        let affinity = self.affinity_hint(collection_id, operation);
+        let affinity_ref = affinity.as_deref();
+
         // Get all shards for this collection from routing table
-        let table = self.routing_table.read().await;
+        let state = self.state.read().await;
         let collection_prefix = format!("{}_", collection_id);
 
         let mut decisions = Vec::new();
 
-        for (shard_id, route) in table.iter() {
+        for (shard_id, route) in state.routing_table.iter() {
             // Filter to shards belonging to this collection
             if !shard_id.id().starts_with(&collection_prefix) {
                 continue;
@@ -898,7 +1079,7 @@ impl RoutingService {
             // if we had access to the shard metadata. For now, we include all shards.
             // In production, the ShardManager would be consulted for metadata bounds.
 
-            let target_node = match self.select_node(route, operation).await {
+            let target_node = match self.select_node(route, operation, &state.nodes, affinity_ref) {
                 Ok(node) => node,
                 Err(_) => continue, // Skip shards with no available nodes
             };
@@ -929,10 +1110,21 @@ impl RoutingService {
         Ok(decisions)
     }
 
-    /// Select a node based on operation type and load balancing
-    async fn select_node(&self, route: &ShardRoute, operation: OperationType) -> Result<NodeInfo> {
-        let nodes = self.nodes.read().await;
-
+    /// Select a node based on operation type and load balancing.
+    ///
+    /// `affinity_node` is the cache-affinity hint computed for read
+    /// operations. When present and the operation is a Read, the
+    /// hint takes precedence over the default load-balancing
+    /// strategy *if* the hinted node is among the healthy
+    /// candidates (primary + replicas). Writes/Admin ignore the
+    /// hint and always target the primary.
+    fn select_node(
+        &self,
+        route: &ShardRoute,
+        operation: OperationType,
+        nodes: &HashMap<String, RoutableNode>,
+        affinity_node: Option<&str>,
+    ) -> Result<NodeInfo> {
         match operation {
             OperationType::Write | OperationType::Admin => {
                 // Write operations must go to primary
@@ -943,10 +1135,23 @@ impl RoutingService {
                     .ok_or_else(|| anyhow::anyhow!("Primary node unavailable"))
             }
             OperationType::Read => {
+                // Affinity short-circuit: if the hinted node is in
+                // (primary, replicas) and is healthy, use it.
+                if let Some(hint) = affinity_node {
+                    let candidates: Vec<&String> = std::iter::once(&route.primary)
+                        .chain(route.replicas.iter())
+                        .collect();
+                    if candidates.iter().any(|c| c.as_str() == hint)
+                        && let Some(n) = nodes.get(hint)
+                        && n.info.health == NodeHealth::Healthy
+                    {
+                        return Ok(n.info.clone());
+                    }
+                }
+
                 if self.config.enable_read_replicas && !route.replicas.is_empty() {
                     // Try to use a replica
-                    self.select_from_nodes(&route.replicas, &nodes)
-                        .await
+                    self.select_from_nodes(&route.replicas, nodes, affinity_node)
                         .or_else(|_| {
                             // Fall back to primary
                             nodes
@@ -965,12 +1170,26 @@ impl RoutingService {
         }
     }
 
-    /// Select a node from a list using load balancing
-    async fn select_from_nodes(
+    /// Select a node from a list using load balancing.
+    ///
+    /// `affinity_node`, when present and present-and-healthy among
+    /// `node_ids`, wins over the configured strategy. This is the
+    /// load-bearing path for cache-affinity bias in replica reads.
+    fn select_from_nodes(
         &self,
         node_ids: &[String],
         nodes: &HashMap<String, RoutableNode>,
+        affinity_node: Option<&str>,
     ) -> Result<NodeInfo> {
+        // Affinity short-circuit before LB strategy.
+        if let Some(hint) = affinity_node
+            && node_ids.iter().any(|id| id.as_str() == hint)
+            && let Some(n) = nodes.get(hint)
+            && n.info.health == NodeHealth::Healthy
+        {
+            return Ok(n.info.clone());
+        }
+
         let healthy_nodes: Vec<_> = node_ids
             .iter()
             .filter_map(|id| nodes.get(id))
@@ -983,9 +1202,8 @@ impl RoutingService {
 
         let selected = match self.config.load_balancing {
             LoadBalancingStrategy::RoundRobin => {
-                let mut counter = self.rr_counter.write().await;
-                let idx = (*counter as usize) % healthy_nodes.len();
-                *counter += 1;
+                let idx =
+                    (self.rr_counter.fetch_add(1, Ordering::AcqRel) as usize) % healthy_nodes.len();
                 &healthy_nodes[idx]
             }
             LoadBalancingStrategy::LeastLoaded => healthy_nodes
@@ -1015,9 +1233,7 @@ impl RoutingService {
             LoadBalancingStrategy::WeightedRoundRobin => {
                 // Simplified weighted round-robin
                 let total_weight: u32 = healthy_nodes.iter().map(|n| n.weight).sum();
-                let mut counter = self.rr_counter.write().await;
-                let target = (*counter as u32) % total_weight;
-                *counter += 1;
+                let target = (self.rr_counter.fetch_add(1, Ordering::AcqRel) as u32) % total_weight;
 
                 let mut cumulative = 0u32;
                 // unwrap_or is safe: healthy_nodes is guaranteed non-empty at this point
@@ -1035,8 +1251,32 @@ impl RoutingService {
     }
 
     /// Select any available node for operations without specific routing
+    #[cfg(test)]
     async fn select_any_node(&self, operation: OperationType) -> Result<NodeInfo> {
-        let nodes = self.nodes.read().await;
+        let state = self.state.read().await;
+        self.select_any_node_from(operation, &state.nodes, None)
+    }
+
+    fn select_any_node_from(
+        &self,
+        operation: OperationType,
+        nodes: &HashMap<String, RoutableNode>,
+        affinity_node: Option<&str>,
+    ) -> Result<NodeInfo> {
+        // Affinity short-circuit applies when there is no shard
+        // route — useful when the routing table is sparsely
+        // populated but the registry still knows where the
+        // collection has been served before.
+        if let Some(hint) = affinity_node
+            && let Some(n) = nodes.get(hint)
+            && n.info.health == NodeHealth::Healthy
+            && match operation {
+                OperationType::Admin => n.info.role == NodeRole::Leader,
+                _ => true,
+            }
+        {
+            return Ok(n.info.clone());
+        }
 
         let healthy_nodes: Vec<_> = nodes
             .values()
@@ -1052,24 +1292,22 @@ impl RoutingService {
         }
 
         // Use round-robin for selection
-        let mut counter = self.rr_counter.write().await;
-        let idx = (*counter as usize) % healthy_nodes.len();
-        *counter += 1;
+        let idx = (self.rr_counter.fetch_add(1, Ordering::AcqRel) as usize) % healthy_nodes.len();
 
         Ok(healthy_nodes[idx].info.clone())
     }
 
     /// Update routing table for a shard
     pub async fn update_route(&self, shard_id: ShardId, route: ShardRoute) -> Result<()> {
-        let mut table = self.routing_table.write().await;
-        table.insert(shard_id, route);
+        let mut state = self.state.write().await;
+        state.routing_table.insert(shard_id, route);
         Ok(())
     }
 
     /// Register a node for routing
     pub async fn register_node(&self, info: NodeInfo, weight: u32) -> Result<()> {
-        let mut nodes = self.nodes.write().await;
-        nodes.insert(
+        let mut state = self.state.write().await;
+        state.nodes.insert(
             info.node_id.clone(),
             RoutableNode {
                 info,
@@ -1083,8 +1321,8 @@ impl RoutingService {
 
     /// Update node latency for latency-based routing
     pub async fn update_node_latency(&self, node_id: &str, latency_ms: f64) -> Result<()> {
-        let mut nodes = self.nodes.write().await;
-        if let Some(node) = nodes.get_mut(node_id) {
+        let mut state = self.state.write().await;
+        if let Some(node) = state.nodes.get_mut(node_id) {
             // Exponential moving average
             node.last_latency_ms = node.last_latency_ms * 0.7 + latency_ms * 0.3;
         }
@@ -1100,11 +1338,10 @@ impl RoutingService {
             replica_routes: stats.replica_routes,
             retries: stats.retries,
             failures: stats.failures,
-            avg_latency_us: if stats.total_routes > 0 {
-                stats.total_latency_us / stats.total_routes
-            } else {
-                0
-            },
+            avg_latency_us: stats
+                .total_latency_us
+                .checked_div(stats.total_routes)
+                .unwrap_or(0),
         }
     }
 }
@@ -1560,5 +1797,208 @@ mod tests {
 
         // Without partition config, both should use hash-based routing
         // (they may or may not be the same depending on hash)
+    }
+
+    // =========================================================================
+    // Cache-Affinity Integration Tests (Phase 7.2 — Slice 7.2.2)
+    // =========================================================================
+
+    fn healthy_node(id: &str) -> NodeInfo {
+        NodeInfo {
+            node_id: id.to_string(),
+            address: format!("127.0.0.1:0/{}", id),
+            health: NodeHealth::Healthy,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn affinity_registry_is_optional_and_off_by_default() {
+        let service = RoutingService::new(RoutingConfig::default()).unwrap();
+        assert!(service.affinity_registry().is_none());
+        assert!(service.preferred_node_for("anything").is_none());
+    }
+
+    #[tokio::test]
+    async fn route_records_affinity_when_registry_is_attached() {
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
+
+        service
+            .register_node(healthy_node("node-1"), 100)
+            .await
+            .unwrap();
+
+        let decision = service
+            .route("coll-x", OperationType::Read, Some("vec-1"))
+            .await
+            .unwrap();
+        assert_eq!(decision.target_node.node_id, "node-1");
+
+        // Affinity must now point at the node we just used.
+        assert_eq!(
+            service.preferred_node_for("coll-x").as_deref(),
+            Some("node-1")
+        );
+    }
+
+    #[tokio::test]
+    async fn affinity_biases_read_among_replicas() {
+        // Two healthy replicas; affinity says use the second one.
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
+
+        service
+            .register_node(healthy_node("primary"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("replica-a"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("replica-b"), 100)
+            .await
+            .unwrap();
+
+        let shard_id = service
+            .compute_shard_id("coll-y", Some("vec-1"))
+            .await
+            .unwrap();
+        service
+            .update_route(
+                shard_id.clone(),
+                ShardRoute {
+                    primary: "primary".to_string(),
+                    replicas: vec!["replica-a".to_string(), "replica-b".to_string()],
+                    available: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Seed affinity manually so we don't depend on prior route().
+        reg.record_query("coll-y", "replica-b");
+
+        // 10 consecutive reads should all go to replica-b — round-robin
+        // would otherwise alternate or hit replica-a first.
+        for _ in 0..10 {
+            let d = service
+                .route("coll-y", OperationType::Read, Some("vec-1"))
+                .await
+                .unwrap();
+            assert_eq!(d.target_node.node_id, "replica-b");
+        }
+    }
+
+    #[tokio::test]
+    async fn affinity_is_skipped_when_locality_aware_is_off() {
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let mut cfg = RoutingConfig::default();
+        cfg.locality_aware = false; // explicitly disable bias
+        let service = RoutingService::new(cfg)
+            .unwrap()
+            .with_affinity_registry(reg.clone());
+
+        service
+            .register_node(healthy_node("node-1"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("node-2"), 100)
+            .await
+            .unwrap();
+
+        // Seed affinity for node-2, but locality_aware=false should
+        // skip the bias entirely. preferred_node_for still returns
+        // the registry entry (it's a read-only query of the data
+        // structure), but routing decisions ignore it.
+        reg.record_query("coll-z", "node-2");
+        assert_eq!(
+            service.preferred_node_for("coll-z").as_deref(),
+            Some("node-2")
+        );
+
+        // Without a shard route the router round-robins through
+        // healthy nodes. We can't deterministically check which
+        // node wins without affinity, but we can check that
+        // affinity_hint returns None when locality_aware=false.
+        let hint = service.affinity_hint("coll-z", OperationType::Read);
+        assert!(hint.is_none());
+    }
+
+    #[tokio::test]
+    async fn writes_ignore_affinity_and_target_primary() {
+        let reg = crate::cluster::cache_affinity::new_shared();
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
+
+        service
+            .register_node(healthy_node("primary"), 100)
+            .await
+            .unwrap();
+        service
+            .register_node(healthy_node("replica-a"), 100)
+            .await
+            .unwrap();
+
+        let shard_id = service
+            .compute_shard_id("coll-w", Some("vec-1"))
+            .await
+            .unwrap();
+        service
+            .update_route(
+                shard_id.clone(),
+                ShardRoute {
+                    primary: "primary".to_string(),
+                    replicas: vec!["replica-a".to_string()],
+                    available: true,
+                },
+            )
+            .await
+            .unwrap();
+
+        // Affinity says replica-a; writes must still hit primary.
+        reg.record_query("coll-w", "replica-a");
+
+        let decision = service
+            .route("coll-w", OperationType::Write, Some("vec-1"))
+            .await
+            .unwrap();
+        assert_eq!(decision.target_node.node_id, "primary");
+        assert!(decision.is_primary);
+    }
+
+    #[tokio::test]
+    async fn expired_affinity_falls_back_to_default_strategy() {
+        // Short TTL so the entry expires before the next route call.
+        let reg = Arc::new(super::CacheAffinityRegistry::with_ttl(
+            std::time::Duration::from_millis(10),
+        ));
+        let service = RoutingService::new(RoutingConfig::default())
+            .unwrap()
+            .with_affinity_registry(reg.clone());
+
+        service
+            .register_node(healthy_node("node-1"), 100)
+            .await
+            .unwrap();
+
+        reg.record_query("coll-exp", "ghost-node-that-does-not-exist");
+        std::thread::sleep(std::time::Duration::from_millis(30));
+
+        // With the entry expired, the router should not even try to
+        // resolve "ghost-node" — it falls back to whichever healthy
+        // node is available (only node-1 here).
+        let decision = service
+            .route("coll-exp", OperationType::Read, Some("vec-1"))
+            .await
+            .unwrap();
+        assert_eq!(decision.target_node.node_id, "node-1");
     }
 }

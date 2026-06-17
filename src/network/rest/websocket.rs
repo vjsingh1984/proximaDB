@@ -86,7 +86,6 @@ use futures::{SinkExt, StreamExt};
 use serde::{Deserialize, Serialize};
 use tracing::{debug, error, info, warn};
 
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::streaming::{
     BackpressureLevel, SessionConfig, StreamConfig, StreamCoordinator, StreamId,
 };
@@ -98,38 +97,6 @@ fn safe_serialize<T: Serialize>(msg: &T) -> Option<String> {
         Err(e) => {
             error!(error = %e, "Failed to serialize message to JSON");
             None
-        }
-    }
-}
-
-/// Convert JSON value to SqlValue
-fn json_to_sql_value(v: &serde_json::Value) -> SqlValue {
-    match v {
-        serde_json::Value::String(s) => SqlValue {
-            value: Some(sql_value::Value::StringValue(s.clone())),
-        },
-        serde_json::Value::Number(n) => {
-            if let Some(i) = n.as_i64() {
-                SqlValue {
-                    value: Some(sql_value::Value::Int64Value(i)),
-                }
-            } else if let Some(f) = n.as_f64() {
-                SqlValue {
-                    value: Some(sql_value::Value::NumberValue(f)),
-                }
-            } else {
-                SqlValue { value: None }
-            }
-        }
-        serde_json::Value::Bool(b) => SqlValue {
-            value: Some(sql_value::Value::BoolValue(*b)),
-        },
-        serde_json::Value::Null => SqlValue { value: None },
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            // For complex types, serialize as JSON string
-            SqlValue {
-                value: Some(sql_value::Value::StringValue(v.to_string())),
-            }
         }
     }
 }
@@ -383,28 +350,34 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
             Ok(Message::Text(text)) => {
                 match serde_json::from_str::<ClientMessage>(&text) {
                     Ok(ClientMessage::Insert(msg)) => {
-                        // Convert vectors to VectorRecords
-                        let records: Vec<VectorRecord> = msg
+                        // Convert incoming JSON vectors to canonical ProximaRecord at protocol boundary
+                        let records: Vec<proximadb_records::ProximaRecord> = msg
                             .vectors
                             .into_iter()
                             .map(|v| {
-                                // Convert JSON metadata to SqlValue map
-                                let metadata: std::collections::HashMap<
-                                    String,
-                                    crate::proto::proximadb_v1::SqlValue,
-                                > = v
-                                    .metadata
-                                    .into_iter()
-                                    .map(|(k, v)| {
-                                        let sql_value = json_to_sql_value(&v);
-                                        (k, sql_value)
-                                    })
-                                    .collect();
-
-                                VectorRecord {
-                                    id: v.id,
-                                    vector: v.vector,
-                                    metadata,
+                                let dim = v.vector.len() as u32;
+                                let mut props = proximadb_records::ProximaTree::new();
+                                for (k, jv) in v.metadata {
+                                    let pv = proximadb_records::conversions::json_to_proxima(&jv);
+                                    props.insert(k, proximadb_records::ProximaTreeNode::Value(pv));
+                                }
+                                proximadb_records::ProximaRecord {
+                                    oid: v.id,
+                                    embeddings: vec![proximadb_records::EmbeddingCell {
+                                        model_id: "default".to_string(),
+                                        modality: "vector".to_string(),
+                                        dim,
+                                        values: proximadb_records::EmbeddingValues::Fp32(v.vector),
+                                        ..Default::default()
+                                    }],
+                                    props,
+                                    record_version: 1,
+                                    created_at_ns: chrono::Utc::now()
+                                        .timestamp_nanos_opt()
+                                        .unwrap_or(0),
+                                    updated_at_ns: chrono::Utc::now()
+                                        .timestamp_nanos_opt()
+                                        .unwrap_or(0),
                                     ..Default::default()
                                 }
                             })

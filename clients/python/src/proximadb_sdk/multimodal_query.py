@@ -17,9 +17,10 @@ Licensed under the Apache License, Version 2.0
 
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 
 class QueryType(Enum):
@@ -100,7 +101,7 @@ class RerankConfig:
     diversity_weight: float = 0.3
     mmr_lambda: float = 0.7
     context_aware: bool = True
-    model_weights: Optional[Dict[str, float]] = None
+    model_weights: dict[str, float] | None = None
     generate_explanations: bool = False
     rerank_top_k: int = 100
 
@@ -114,7 +115,7 @@ class RerankConfig:
                 "metrics": 0.7,
             }
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "semantic_rerank": self.semantic_rerank,
             "diversity_optimization": self.diversity_optimization,
@@ -140,14 +141,14 @@ class QueryContext:
         user_preferences: User-specific preference weights
     """
 
-    query_text: Optional[str] = None
-    query_embedding: Optional[List[float]] = None
-    intent: Optional[QueryIntent] = None
+    query_text: str | None = None
+    query_embedding: list[float] | None = None
+    intent: QueryIntent | None = None
     temporal_preference: TemporalPreference = TemporalPreference.NEUTRAL
-    required_models: Optional[List[str]] = None
-    user_preferences: Optional[Dict[str, float]] = None
+    required_models: list[str] | None = None
+    user_preferences: dict[str, float] | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "query_text": self.query_text,
             "query_embedding": self.query_embedding,
@@ -167,7 +168,7 @@ class ScoreComponent:
     weight: float
     contribution: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "value": self.value,
@@ -183,11 +184,11 @@ class RerankExplanation:
     record_id: str
     original_rank: int
     new_rank: int
-    score_components: List[ScoreComponent]
+    score_components: list[ScoreComponent]
     explanation_text: str
     confidence: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "record_id": self.record_id,
             "original_rank": self.original_rank,
@@ -202,12 +203,12 @@ class RerankExplanation:
 class RerankedResult:
     """Result of cross-modal reranking."""
 
-    records: List[Dict[str, Any]]
-    explanations: List[RerankExplanation]
+    records: list[dict[str, Any]]
+    explanations: list[RerankExplanation]
     quality_score: float
     diversity_score: float
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "records": self.records,
             "explanations": [e.to_dict() for e in self.explanations],
@@ -221,13 +222,13 @@ class VectorQueryComponent:
     """Vector similarity search component."""
 
     collection: str
-    query_vector: List[float]
+    query_vector: list[float]
     top_k: int = 10
     min_similarity: float = 0.0
-    filter: Optional[Dict[str, Any]] = None
+    filter: dict[str, Any] | None = None
     include_metadata: bool = True
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "vector",
             "collection": self.collection,
@@ -244,16 +245,16 @@ class GraphQueryComponent:
     """Graph traversal query component."""
 
     graph_id: str
-    start_nodes: Optional[List[str]] = None
-    start_label: Optional[str] = None
-    edge_types: Optional[List[str]] = None
+    start_nodes: list[str] | None = None
+    start_label: str | None = None
+    edge_types: list[str] | None = None
     max_depth: int = 2
     direction: str = "outgoing"  # outgoing, incoming, both
-    node_filter: Optional[Dict[str, Any]] = None
-    edge_filter: Optional[Dict[str, Any]] = None
+    node_filter: dict[str, Any] | None = None
+    edge_filter: dict[str, Any] | None = None
     limit: int = 100
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "graph",
             "graph_id": self.graph_id,
@@ -273,15 +274,15 @@ class DocumentQueryComponent:
     """Document search query component."""
 
     collection: str
-    filter: Optional[Dict[str, Any]] = None
-    text_query: Optional[str] = None
-    json_path_filters: Optional[Dict[str, Any]] = None
+    filter: dict[str, Any] | None = None
+    text_query: str | None = None
+    json_path_filters: dict[str, Any] | None = None
     limit: int = 100
     offset: int = 0
-    sort_by: Optional[str] = None
+    sort_by: str | None = None
     sort_order: str = "asc"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "document",
             "collection": self.collection,
@@ -300,14 +301,14 @@ class LogQueryComponent:
     """Log search query component."""
 
     namespace: str
-    time_range: Optional[Tuple[int, int]] = None  # (start_ns, end_ns)
-    services: Optional[List[str]] = None
-    severities: Optional[List[str]] = None
-    text_query: Optional[str] = None
-    field_filters: Optional[Dict[str, Any]] = None
+    time_range: tuple[int, int] | None = None  # (start_ns, end_ns)
+    services: list[str] | None = None
+    severities: list[str] | None = None
+    text_query: str | None = None
+    field_filters: dict[str, Any] | None = None
     limit: int = 1000
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "logs",
             "namespace": self.namespace,
@@ -325,13 +326,13 @@ class MetricQueryComponent:
     """Metric aggregation query component."""
 
     namespace: str
-    metric_names: List[str]
-    time_range: Tuple[int, int]  # (start_ns, end_ns)
+    metric_names: list[str]
+    time_range: tuple[int, int]  # (start_ns, end_ns)
     aggregation: str = "avg"  # avg, sum, min, max, count, p50, p95, p99
-    group_by: Optional[List[str]] = None
+    group_by: list[str] | None = None
     bucket_size_ms: int = 60000  # 1 minute default
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "type": "metrics",
             "namespace": self.namespace,
@@ -352,7 +353,7 @@ class SemanticJoin:
     similarity_threshold: float = 0.7
     join_type: JoinType = JoinType.SEMANTIC
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "left_field": self.left_field,
             "right_field": self.right_field,
@@ -365,12 +366,12 @@ class SemanticJoin:
 class MultiModalQueryResult:
     """Result from a multi-modal query."""
 
-    records: List[Dict[str, Any]]
+    records: list[dict[str, Any]]
     total_count: int
     query_time_ms: float
-    component_times: Dict[str, float]
+    component_times: dict[str, float]
     fusion_strategy: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __iter__(self):
         return iter(self.records)
@@ -409,25 +410,25 @@ class MultiModalQueryBuilder:
     """
 
     def __init__(self):
-        self._components: List[Any] = []
-        self._joins: List[SemanticJoin] = []
+        self._components: list[Any] = []
+        self._joins: list[SemanticJoin] = []
         self._fusion_strategy: FusionStrategy = FusionStrategy.RRF
-        self._fusion_weights: Dict[str, float] = {}
-        self._time_decay: Optional[Tuple[TimeDecayFunction, Dict[str, Any]]] = None
+        self._fusion_weights: dict[str, float] = {}
+        self._time_decay: tuple[TimeDecayFunction, dict[str, Any]] | None = None
         self._limit: int = 100
         self._offset: int = 0
         self._timeout_ms: int = 30000
         self._include_scores: bool = True
         self._include_metadata: bool = True
-        self._custom_scorer: Optional[Callable] = None
+        self._custom_scorer: Callable | None = None
 
     def vector(
         self,
         collection: str,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
         min_similarity: float = 0.0,
-        filter: Optional[Dict[str, Any]] = None,
+        filter: dict[str, Any] | None = None,
         weight: float = 1.0,
     ) -> "MultiModalQueryBuilder":
         """Add a vector similarity search component."""
@@ -445,12 +446,12 @@ class MultiModalQueryBuilder:
     def graph(
         self,
         graph_id: str,
-        start_nodes: Optional[List[str]] = None,
-        start_label: Optional[str] = None,
-        edge_types: Optional[List[str]] = None,
+        start_nodes: list[str] | None = None,
+        start_label: str | None = None,
+        edge_types: list[str] | None = None,
         max_depth: int = 2,
         direction: str = "outgoing",
-        node_filter: Optional[Dict[str, Any]] = None,
+        node_filter: dict[str, Any] | None = None,
         weight: float = 1.0,
     ) -> "MultiModalQueryBuilder":
         """Add a graph traversal component."""
@@ -471,7 +472,7 @@ class MultiModalQueryBuilder:
         self,
         graph_id: str,
         id_field: str = "id",
-        edge_types: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
         max_depth: int = 1,
         weight: float = 1.0,
     ) -> "MultiModalQueryBuilder":
@@ -496,9 +497,9 @@ class MultiModalQueryBuilder:
     def document(
         self,
         collection: str,
-        filter: Optional[Dict[str, Any]] = None,
-        text_query: Optional[str] = None,
-        json_path_filters: Optional[Dict[str, Any]] = None,
+        filter: dict[str, Any] | None = None,
+        text_query: str | None = None,
+        json_path_filters: dict[str, Any] | None = None,
         weight: float = 1.0,
     ) -> "MultiModalQueryBuilder":
         """Add a document search component."""
@@ -515,10 +516,10 @@ class MultiModalQueryBuilder:
     def logs(
         self,
         namespace: str,
-        time_range: Optional[Tuple[int, int]] = None,
-        services: Optional[List[str]] = None,
-        severities: Optional[List[str]] = None,
-        text_query: Optional[str] = None,
+        time_range: tuple[int, int] | None = None,
+        services: list[str] | None = None,
+        severities: list[str] | None = None,
+        text_query: str | None = None,
         weight: float = 1.0,
     ) -> "MultiModalQueryBuilder":
         """Add a log search component."""
@@ -536,10 +537,10 @@ class MultiModalQueryBuilder:
     def metrics(
         self,
         namespace: str,
-        metric_names: List[str],
-        time_range: Tuple[int, int],
+        metric_names: list[str],
+        time_range: tuple[int, int],
         aggregation: str = "avg",
-        group_by: Optional[List[str]] = None,
+        group_by: list[str] | None = None,
         weight: float = 1.0,
     ) -> "MultiModalQueryBuilder":
         """Add a metric aggregation component."""
@@ -609,7 +610,7 @@ class MultiModalQueryBuilder:
     def fuse(
         self,
         strategy: FusionStrategy = FusionStrategy.RRF,
-        weights: Optional[Dict[str, float]] = None,
+        weights: dict[str, float] | None = None,
     ) -> "MultiModalQueryBuilder":
         """Set the fusion strategy for combining results."""
         self._fusion_strategy = strategy
@@ -621,7 +622,7 @@ class MultiModalQueryBuilder:
         self,
         function: TimeDecayFunction = TimeDecayFunction.EXPONENTIAL,
         halflife_hours: float = 24.0,
-        reference_time: Optional[int] = None,
+        reference_time: int | None = None,
         time_field: str = "timestamp",
     ) -> "MultiModalQueryBuilder":
         """Apply time decay to scoring."""
@@ -637,7 +638,7 @@ class MultiModalQueryBuilder:
 
     def with_custom_scorer(
         self,
-        scorer: Callable[[Dict[str, Any]], float],
+        scorer: Callable[[dict[str, Any]], float],
     ) -> "MultiModalQueryBuilder":
         """Apply a custom scoring function to results."""
         self._custom_scorer = scorer
@@ -689,19 +690,19 @@ class MultiModalQueryBuilder:
 class MultiModalQuery:
     """Compiled multi-modal query ready for execution."""
 
-    components: List[Dict[str, Any]]
-    joins: List[Dict[str, Any]]
+    components: list[dict[str, Any]]
+    joins: list[dict[str, Any]]
     fusion_strategy: str
-    fusion_weights: Dict[str, float]
-    time_decay: Optional[Tuple[TimeDecayFunction, Dict[str, Any]]]
+    fusion_weights: dict[str, float]
+    time_decay: tuple[TimeDecayFunction, dict[str, Any]] | None
     limit: int
     offset: int
     timeout_ms: int
     include_scores: bool
     include_metadata: bool
-    custom_scorer: Optional[Callable] = None
+    custom_scorer: Callable | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API transmission."""
         result = {
             "components": self.components,
@@ -748,14 +749,14 @@ class CrossModalReranker:
         print(f"Quality: {reranked.quality_score}, Diversity: {reranked.diversity_score}")
     """
 
-    def __init__(self, config: Optional[RerankConfig] = None):
+    def __init__(self, config: RerankConfig | None = None):
         """Initialize with optional configuration."""
         self.config = config or RerankConfig()
 
     def rerank(
         self,
-        records: List[Dict[str, Any]],
-        context: Optional[QueryContext] = None,
+        records: list[dict[str, Any]],
+        context: QueryContext | None = None,
     ) -> RerankedResult:
         """
         Rerank query results using cross-modal signals.
@@ -823,9 +824,9 @@ class CrossModalReranker:
 
     def _compute_base_scores(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         context: QueryContext,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Compute base scores for all records."""
         scored = []
         for idx, record in enumerate(records):
@@ -859,9 +860,9 @@ class CrossModalReranker:
 
     def _apply_semantic_reranking(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         context: QueryContext,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Apply semantic similarity reranking."""
         if not context.query_embedding:
             return records
@@ -900,9 +901,9 @@ class CrossModalReranker:
 
     def _apply_context_aware_scoring(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         context: QueryContext,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Apply context-aware scoring based on query intent."""
         for record in records:
             context_score = 0.0
@@ -985,8 +986,8 @@ class CrossModalReranker:
 
     def _apply_mmr_diversity(
         self,
-        records: List[Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        records: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Apply Maximum Marginal Relevance for diversity."""
         if len(records) <= 1:
             return records
@@ -1050,9 +1051,9 @@ class CrossModalReranker:
 
     def _generate_explanations(
         self,
-        original_records: List[Dict[str, Any]],
-        reranked: List[Dict[str, Any]],
-    ) -> List[RerankExplanation]:
+        original_records: list[dict[str, Any]],
+        reranked: list[dict[str, Any]],
+    ) -> list[RerankExplanation]:
         """Generate explanations for reranking decisions."""
         original_ranks = {
             r.get("id", str(i)): i for i, r in enumerate(original_records)
@@ -1100,7 +1101,7 @@ class CrossModalReranker:
 
         return explanations
 
-    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+    def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between two vectors."""
         if len(a) != len(b) or not a:
             return 0.0
@@ -1140,8 +1141,8 @@ class CrossModalReranker:
 
     def _record_similarity(
         self,
-        a: Dict[str, Any],
-        b: Dict[str, Any],
+        a: dict[str, Any],
+        b: dict[str, Any],
     ) -> float:
         """Compute similarity between two records."""
         similarity = 0.0
@@ -1166,7 +1167,7 @@ class CrossModalReranker:
 
         return min(similarity, 1.0)
 
-    def _compute_diversity_score(self, records: List[Dict[str, Any]]) -> float:
+    def _compute_diversity_score(self, records: list[dict[str, Any]]) -> float:
         """Compute diversity score for result set."""
         if len(records) <= 1:
             return 1.0
@@ -1189,7 +1190,7 @@ class CrossModalReranker:
 
         return min((model_diversity * 0.5 + avg_dissimilarity * 0.5), 1.0)
 
-    def _compute_quality_score(self, records: List[Dict[str, Any]]) -> float:
+    def _compute_quality_score(self, records: list[dict[str, Any]]) -> float:
         """Compute quality score for result set."""
         if not records:
             return 1.0
@@ -1197,7 +1198,7 @@ class CrossModalReranker:
         scores = [r.get("_rerank_score", r.get("score", 0.5)) for r in records]
         return min(sum(scores) / len(scores), 1.0)
 
-    def _compute_explanation_confidence(self, scored: Dict[str, Any]) -> float:
+    def _compute_explanation_confidence(self, scored: dict[str, Any]) -> float:
         """Compute confidence in the explanation."""
         components = scored["score_components"]
         positive = sum(1 for c in components if c.contribution > 0)
@@ -1306,7 +1307,7 @@ class MultiModalQueryExecutor:
             },
         )
 
-    def _execute_vector(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_vector(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute vector search component.
 
         Searches for similar vectors in the specified collection and returns
@@ -1331,7 +1332,7 @@ class MultiModalQueryExecutor:
         except Exception:
             return []
 
-    def _execute_graph(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_graph(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute graph traversal component.
 
         Performs graph traversal starting from specified nodes or nodes
@@ -1362,7 +1363,7 @@ class MultiModalQueryExecutor:
         except Exception:
             return []
 
-    def _execute_document(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_document(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute document query component.
 
         Queries documents from a collection with optional filters and text search.
@@ -1387,7 +1388,7 @@ class MultiModalQueryExecutor:
         except Exception:
             return []
 
-    def _execute_logs(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_logs(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute log query component.
 
         Searches logs within a time range with optional service and text filters.
@@ -1414,7 +1415,7 @@ class MultiModalQueryExecutor:
         except Exception:
             return []
 
-    def _execute_metrics(self, component: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _execute_metrics(self, component: dict[str, Any]) -> list[dict[str, Any]]:
         """Execute metric aggregation component.
 
         Aggregates metrics over a time range with optional grouping.
@@ -1442,9 +1443,9 @@ class MultiModalQueryExecutor:
 
     def _apply_joins(
         self,
-        component_results: List[List[Dict[str, Any]]],
-        joins: List[Dict[str, Any]],
-    ) -> List[List[Dict[str, Any]]]:
+        component_results: list[list[dict[str, Any]]],
+        joins: list[dict[str, Any]],
+    ) -> list[list[dict[str, Any]]]:
         """Apply joins between component results."""
         if len(component_results) < 2:
             return component_results
@@ -1481,7 +1482,7 @@ class MultiModalQueryExecutor:
 
         return component_results
 
-    def _extract_field(self, record: Dict[str, Any], field_path: str) -> Optional[str]:
+    def _extract_field(self, record: dict[str, Any], field_path: str) -> str | None:
         """Extract a field value from a nested record."""
         parts = field_path.split(".")
         current = record
@@ -1494,10 +1495,10 @@ class MultiModalQueryExecutor:
 
     def _fuse_results(
         self,
-        component_results: List[List[Dict[str, Any]]],
+        component_results: list[list[dict[str, Any]]],
         strategy: str,
-        weights: Dict[str, float],
-    ) -> List[Dict[str, Any]]:
+        weights: dict[str, float],
+    ) -> list[dict[str, Any]]:
         """Fuse results from multiple components."""
         if not component_results:
             return []
@@ -1519,8 +1520,8 @@ class MultiModalQueryExecutor:
 
     def _fuse_intersection(
         self,
-        component_results: List[List[Dict[str, Any]]],
-    ) -> List[Dict[str, Any]]:
+        component_results: list[list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
         """Return only records present in all components."""
         if not component_results:
             return []
@@ -1538,8 +1539,8 @@ class MultiModalQueryExecutor:
 
     def _fuse_union(
         self,
-        component_results: List[List[Dict[str, Any]]],
-    ) -> List[Dict[str, Any]]:
+        component_results: list[list[dict[str, Any]]],
+    ) -> list[dict[str, Any]]:
         """Return all records from any component (deduplicated)."""
         seen_ids = set()
         result = []
@@ -1557,10 +1558,10 @@ class MultiModalQueryExecutor:
 
     def _fuse_rrf(
         self,
-        component_results: List[List[Dict[str, Any]]],
-        weights: Dict[str, float],
+        component_results: list[list[dict[str, Any]]],
+        weights: dict[str, float],
         k: int = 60,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Reciprocal Rank Fusion."""
         scores = {}
         records = {}
@@ -1591,9 +1592,9 @@ class MultiModalQueryExecutor:
 
     def _fuse_weighted(
         self,
-        component_results: List[List[Dict[str, Any]]],
-        weights: Dict[str, float],
-    ) -> List[Dict[str, Any]]:
+        component_results: list[list[dict[str, Any]]],
+        weights: dict[str, float],
+    ) -> list[dict[str, Any]]:
         """Weighted score combination."""
         scores = {}
         records = {}
@@ -1624,9 +1625,9 @@ class MultiModalQueryExecutor:
 
     def _apply_time_decay(
         self,
-        records: List[Dict[str, Any]],
-        time_decay: Tuple[TimeDecayFunction, Dict[str, Any]],
-    ) -> List[Dict[str, Any]]:
+        records: list[dict[str, Any]],
+        time_decay: tuple[TimeDecayFunction, dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         """Apply time decay to record scores."""
         func, params = time_decay
         reference_time = params.get("reference_time", int(time.time() * 1e9))
@@ -1668,9 +1669,9 @@ class MultiModalQueryExecutor:
 def semantic_search_with_graph(
     client,
     collection: str,
-    query_vector: List[float],
+    query_vector: list[float],
     graph_id: str,
-    edge_types: Optional[List[str]] = None,
+    edge_types: list[str] | None = None,
     top_k: int = 10,
 ) -> MultiModalQueryResult:
     """
@@ -1695,7 +1696,7 @@ def knowledge_graph_search(
     client,
     graph_id: str,
     start_label: str,
-    query_vector: List[float],
+    query_vector: list[float],
     vector_collection: str,
     max_depth: int = 2,
     top_k: int = 10,
@@ -1724,7 +1725,7 @@ def logs_with_context(
     namespace: str,
     error_query: str,
     context_graph_id: str,
-    time_range: Tuple[int, int],
+    time_range: tuple[int, int],
     top_k: int = 20,
 ) -> MultiModalQueryResult:
     """
@@ -1806,12 +1807,12 @@ class FusionFeatures:
         interaction_features: Cross-model interaction features
     """
 
-    query_features: List[float] = field(default_factory=list)
-    model_features: Dict[str, List[float]] = field(default_factory=dict)
-    record_features: Dict[str, List[float]] = field(default_factory=dict)
-    interaction_features: List[float] = field(default_factory=list)
+    query_features: list[float] = field(default_factory=list)
+    model_features: dict[str, list[float]] = field(default_factory=dict)
+    record_features: dict[str, list[float]] = field(default_factory=dict)
+    interaction_features: list[float] = field(default_factory=list)
 
-    def to_flat_vector(self) -> List[float]:
+    def to_flat_vector(self) -> list[float]:
         """Convert to flat feature vector for model input."""
         features = list(self.query_features)
 
@@ -1848,10 +1849,10 @@ class FeedbackSignal:
     """
 
     feedback_type: FeedbackType
-    record_id: Optional[str] = None
-    position: Optional[int] = None
-    score: Optional[float] = None
-    relevant: Optional[bool] = None
+    record_id: str | None = None
+    position: int | None = None
+    score: float | None = None
+    relevant: bool | None = None
 
 
 @dataclass
@@ -1866,8 +1867,8 @@ class TrainingSample:
     """
 
     features: FusionFeatures
-    target_scores: Dict[str, float]
-    feedback: Optional[FeedbackSignal] = None
+    target_scores: dict[str, float]
+    feedback: FeedbackSignal | None = None
     timestamp_ms: int = field(default_factory=lambda: int(time.time() * 1000))
 
 
@@ -1885,7 +1886,7 @@ class TrainingMetrics:
 
     num_samples: int = 0
     loss: float = 0.0
-    validation_loss: Optional[float] = None
+    validation_loss: float | None = None
     training_time_ms: int = 0
     iterations: int = 0
 
@@ -1925,17 +1926,17 @@ class LearnedFusion:
         metrics = fusion.train()
     """
 
-    def __init__(self, config: Optional[LearnedFusionConfig] = None):
+    def __init__(self, config: LearnedFusionConfig | None = None):
         """Initialize learned fusion engine.
 
         Args:
             config: Configuration for learned fusion
         """
         self.config = config or LearnedFusionConfig()
-        self._training_buffer: List[TrainingSample] = []
+        self._training_buffer: list[TrainingSample] = []
         self._query_count = 0
         self._is_trained = False
-        self._model_weights: List[float] = []
+        self._model_weights: list[float] = []
         self._feature_extractor = FeatureExtractor(self.config.num_features)
 
         # Initialize model weights based on type
@@ -1944,12 +1945,12 @@ class LearnedFusion:
             self._model_weights = [0.0] * num_total_features
         elif self.config.model_type == FusionModelType.GRADIENT_BOOSTING:
             self._model_weights = [0.0] * num_total_features
-            self._trees: List[Dict] = []  # Decision stumps for boosting
+            self._trees: list[dict] = []  # Decision stumps for boosting
 
     def fuse(
         self,
-        results: List[Dict[str, List[Dict[str, Any]]]],
-    ) -> List[Dict[str, Any]]:
+        results: list[dict[str, list[dict[str, Any]]]],
+    ) -> list[dict[str, Any]]:
         """
         Fuse results from multiple query sources using learned model.
 
@@ -1971,7 +1972,7 @@ class LearnedFusion:
         features = self._feature_extractor.extract(results)
 
         # Collect all unique records
-        all_records: Dict[str, Dict[str, Any]] = {}
+        all_records: dict[str, dict[str, Any]] = {}
         for result_set in results:
             for record in result_set.get("records", []):
                 record_id = record.get("id", str(id(record)))
@@ -2029,7 +2030,7 @@ class LearnedFusion:
             return
 
         # Convert feedback to target scores
-        target_scores: Dict[str, float] = {}
+        target_scores: dict[str, float] = {}
 
         if feedback.feedback_type == FeedbackType.CLICK:
             if feedback.record_id and feedback.position is not None:
@@ -2199,9 +2200,9 @@ class LearnedFusion:
 
     def _fit_stump(
         self,
-        feature_vecs: List[List[float]],
-        residuals: List[float],
-    ) -> Optional[Dict]:
+        feature_vecs: list[list[float]],
+        residuals: list[float],
+    ) -> dict | None:
         """Fit a decision stump to residuals."""
         if not feature_vecs or not feature_vecs[0]:
             return None
@@ -2244,7 +2245,7 @@ class LearnedFusion:
 
         return best_stump
 
-    def _stump_predict(self, stump: Dict, features: List[float]) -> float:
+    def _stump_predict(self, stump: dict, features: list[float]) -> float:
         """Get prediction from a decision stump."""
         feature_idx = stump["feature_index"]
         feature_val = features[feature_idx] if feature_idx < len(features) else 0.0
@@ -2257,8 +2258,8 @@ class LearnedFusion:
     def _predict(
         self,
         features: FusionFeatures,
-        record_ids: List[str],
-    ) -> List[float]:
+        record_ids: list[str],
+    ) -> list[float]:
         """Get predictions from the trained model."""
         flat_features = features.to_flat_vector()
 
@@ -2289,12 +2290,12 @@ class LearnedFusion:
 
     def _fallback_rrf_scores(
         self,
-        results: List[Dict[str, List[Dict[str, Any]]]],
-        record_ids: List[str],
-    ) -> List[float]:
+        results: list[dict[str, list[dict[str, Any]]]],
+        record_ids: list[str],
+    ) -> list[float]:
         """Fallback RRF scoring when model not trained."""
         k = 60.0
-        rrf_scores: Dict[str, float] = {rid: 0.0 for rid in record_ids}
+        rrf_scores: dict[str, float] = dict.fromkeys(record_ids, 0.0)
 
         for result_set in results:
             records = result_set.get("records", [])
@@ -2318,7 +2319,7 @@ class LearnedFusion:
             except Exception:
                 pass  # Ignore errors in background training
 
-    def get_feature_importance(self) -> Optional[List[float]]:
+    def get_feature_importance(self) -> list[float] | None:
         """Get feature importance from trained model."""
         if not self._is_trained:
             return None
@@ -2372,7 +2373,7 @@ class FeatureExtractor:
 
     def extract(
         self,
-        results: List[Dict[str, List[Dict[str, Any]]]],
+        results: list[dict[str, list[dict[str, Any]]]],
     ) -> FusionFeatures:
         """
         Extract features from query results.
@@ -2407,8 +2408,8 @@ class FeatureExtractor:
 
     def _extract_query_features(
         self,
-        results: List[Dict[str, List[Dict[str, Any]]]],
-    ) -> List[float]:
+        results: list[dict[str, list[dict[str, Any]]]],
+    ) -> list[float]:
         """Extract query-level features."""
         features = [0.0] * self.num_features
 
@@ -2444,8 +2445,8 @@ class FeatureExtractor:
 
     def _extract_model_features(
         self,
-        result_set: Dict[str, List[Dict[str, Any]]],
-    ) -> List[float]:
+        result_set: dict[str, list[dict[str, Any]]],
+    ) -> list[float]:
         """Extract per-model features."""
         features = [0.0] * self.num_features
 
@@ -2478,10 +2479,10 @@ class FeatureExtractor:
 
     def _extract_record_features(
         self,
-        results: List[Dict[str, List[Dict[str, Any]]]],
-    ) -> Dict[str, List[float]]:
+        results: list[dict[str, list[dict[str, Any]]]],
+    ) -> dict[str, list[float]]:
         """Extract per-record features."""
-        record_features: Dict[str, List[float]] = {}
+        record_features: dict[str, list[float]] = {}
 
         for result_set in results:
             records = result_set.get("records", [])
@@ -2514,8 +2515,8 @@ class FeatureExtractor:
 
     def _extract_interaction_features(
         self,
-        results: List[Dict[str, List[Dict[str, Any]]]],
-    ) -> List[float]:
+        results: list[dict[str, list[dict[str, Any]]]],
+    ) -> list[float]:
         """Extract cross-model interaction features."""
         features = [0.0] * self.num_features
 

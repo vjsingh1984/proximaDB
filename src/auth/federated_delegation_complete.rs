@@ -586,6 +586,11 @@ pub struct AuthenticationResult {
     pub compliance_validation: ComplianceValidation,
 }
 
+/// Legacy alias retained for compatibility while auth/security consolidation proceeds.
+/// Prefer this module's `AuthenticationResult` for new code.
+#[deprecated(note = "Use `AuthenticationResult` from this module; this alias is temporary.")]
+pub type FederatedAuthenticationResult = AuthenticationResult;
+
 /// Enterprise SSO multi-provider token with optional delegation chain configuration.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnterpriseSSOMToken {

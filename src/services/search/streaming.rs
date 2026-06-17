@@ -25,7 +25,7 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::metadata_types::MetadataValue;
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::{self as proximadb_v1, sql_value};
+use crate::proto::proximadb_v1::sql_value;
 use crate::services::operations::vectors::VectorOperationsService;
 use std::collections::HashMap;
 
@@ -54,39 +54,12 @@ fn convert_proto_value_to_typed(value: sql_value::Value) -> MetadataValue {
     }
 }
 
-/// Helper function to convert proto metadata Value to SqlValue
-fn convert_proto_value_to_sql(value: sql_value::Value) -> proximadb_v1::SqlValue {
-    match value {
-        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::BytesValue(b) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::NullValue(n) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(n)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(a)),
-        },
-        crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o) => proximadb_v1::SqlValue {
-            value: Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(o)),
-        },
-    }
-}
+/// Backwards-compat alias for [`ServicesStreamingSearchConfig`].
+pub type StreamingSearchConfig = ServicesStreamingSearchConfig;
 
 /// Configuration for streaming search
 #[derive(Debug, Clone)]
-pub struct StreamingSearchConfig {
+pub struct ServicesStreamingSearchConfig {
     /// Maximum number of results to buffer in memory
     pub buffer_size: usize,
 
@@ -106,7 +79,7 @@ pub struct StreamingSearchConfig {
     pub search_timeout_ms: u64,
 }
 
-impl Default for StreamingSearchConfig {
+impl Default for ServicesStreamingSearchConfig {
     fn default() -> Self {
         Self {
             buffer_size: 1000,
@@ -125,7 +98,7 @@ pub struct StreamingSearchService {
     direct_service: Arc<VectorOperationsService>,
 
     /// Configuration
-    config: StreamingSearchConfig,
+    config: ServicesStreamingSearchConfig,
 
     /// Unified distance computation
     distance_compute: UnifiedDistanceCompute,
@@ -201,7 +174,7 @@ impl StreamingSearchService {
     /// Create new streaming search service
     pub fn new(
         direct_service: Arc<VectorOperationsService>,
-        config: Option<StreamingSearchConfig>,
+        config: Option<ServicesStreamingSearchConfig>,
     ) -> Self {
         let config = config.clone();
         let buffer_size = config.as_ref().map_or(1000, |c| c.buffer_size);
@@ -230,7 +203,7 @@ impl StreamingSearchService {
         distance_metric: DistanceMetric,
     ) -> Result<SearchResultStream> {
         let start_time = std::time::Instant::now();
-        let request_id = crate::utils::uuid::Uuid::new_v4().to_string();
+        let request_id = proximadb_kernel::uuid::Uuid::new_v4().to_string();
 
         info!(
             "🔍 STREAMING_SEARCH: Starting for collection={}, k={}, metric={:?}, request={}",
@@ -475,31 +448,38 @@ impl StreamingSearchService {
 
             for batch in unflushed_batches {
                 for record in batch.vector_records.iter() {
+                    let vector = record
+                        .embeddings
+                        .first()
+                        .map(|embedding| embedding.as_fp32_slice())
+                        .unwrap_or(&[]);
+                    if vector.is_empty() {
+                        continue;
+                    }
+
                     // Calculate similarity
                     let similarity = self.distance_compute.calculate_distance(
-                        &record.vector,
+                        vector,
                         query_vector,
                         &distance_metric,
                     );
 
-                    // Create OptimizedSearchRecord directly with all VectorRecord information
+                    // Create OptimizedSearchRecord directly from canonical ProximaRecord data.
                     let mut metadata_map = HashMap::new();
-                    for (key, item) in &record.metadata {
-                        let value = &item.value;
-                        if let Some(value) = value {
-                            metadata_map
-                                .insert(key.clone(), convert_proto_value_to_sql(value.clone()));
+                    for (key, node) in &record.props {
+                        if let proximadb_records::ProximaTreeNode::Value(value) = node {
+                            metadata_map.insert(key.clone(), value.clone());
                         }
                     }
 
                     let search_result =
-                        OptimizedSearchRecord::new(record.id.clone(), similarity.normalized_score)
+                        OptimizedSearchRecord::new(record.oid.clone(), similarity.normalized_score)
                             .with_similarity(similarity.rank_value)
-                            .add_vector(record.vector.clone())
-                            .with_metadata(metadata_map)
+                            .add_vector(vector.to_vec())
+                            .with_proxima_metadata(metadata_map)
                             .with_version_info(
-                                record.version.unwrap_or(0),
-                                record.timestamp.unwrap_or(0),
+                                record.record_version as u32,
+                                record.created_at_ns / 1_000_000,
                             );
 
                     results.push(search_result);

@@ -20,7 +20,7 @@ use crate::network::auth::{
     AuthError, AuthResult, AuthService, Permission, PermissionContext, ResourceType,
 };
 use crate::network::tls::ClientCertificateInfo;
-use crate::security::{AuthenticationData, SecurityCoordinator};
+use crate::security::{AuthenticationData, SecurityCoordinator, UnifiedUserContext};
 use axum::{
     extract::State,
     http::{Request, StatusCode},
@@ -46,6 +46,70 @@ pub struct AuthErrorResponse {
     pub message: String,
     /// HTTP status code
     pub code: u16,
+}
+
+/// Narrow data-plane capability carried by an authenticated JWT.
+///
+/// This keeps ProximaDB generic: an external control plane can issue scoped
+/// route tokens, while ProximaDB only validates transport, collection,
+/// operation, byte, and record limits from additive JWT claims.
+#[derive(Debug, Clone)]
+pub struct DataPlaneCapability {
+    pub capability_type: String,
+    pub collection: Option<String>,
+    pub operation: Option<String>,
+    pub protocol: Option<String>,
+    pub mode: Option<String>,
+    pub scopes: Vec<String>,
+    pub max_records: Option<u64>,
+    pub max_bytes: Option<u64>,
+}
+
+impl DataPlaneCapability {
+    pub fn from_user_context(user_context: &UnifiedUserContext) -> Option<Self> {
+        let capability_type = user_context.metadata.get("capability_type")?.clone();
+        Some(Self {
+            capability_type,
+            collection: user_context.metadata.get("collection").cloned(),
+            operation: user_context.metadata.get("operation").cloned(),
+            protocol: user_context.metadata.get("protocol").cloned(),
+            mode: user_context.metadata.get("mode").cloned(),
+            scopes: user_context
+                .metadata
+                .get("scopes")
+                .map(|scopes| {
+                    scopes
+                        .split_whitespace()
+                        .map(ToOwned::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+            max_records: user_context
+                .metadata
+                .get("max_records")
+                .and_then(|value| value.parse::<u64>().ok()),
+            max_bytes: user_context
+                .metadata
+                .get("max_bytes")
+                .and_then(|value| value.parse::<u64>().ok()),
+        })
+    }
+
+    pub fn ensure_record_count(&self, count: usize) -> Result<(), String> {
+        if let Some(max_records) = self.max_records
+            && count as u64 > max_records
+        {
+            return Err(format!(
+                "Request has {} records, exceeding capability limit {}",
+                count, max_records
+            ));
+        }
+        Ok(())
+    }
+
+    fn has_scope(&self, scope: &str) -> bool {
+        self.scopes.iter().any(|candidate| candidate == scope)
+    }
 }
 
 /// Unified auth middleware using SecurityCoordinator
@@ -77,8 +141,100 @@ pub async fn auth_middleware_unified<B>(
             )
         })?;
 
+    if let Some(capability) = DataPlaneCapability::from_user_context(&user_context) {
+        validate_rest_data_plane_capability(&capability, &request)?;
+        request.extensions_mut().insert(capability);
+    }
     request.extensions_mut().insert(user_context);
     Ok(next.run(request).await)
+}
+
+/// Parallel port-based auth middleware (ADR-016 / Task #69 step 3).
+///
+/// Behaves like `auth_middleware_unified` but talks to a
+/// `proximadb_runtime::SecurityPort` trait object instead of the
+/// concrete `SecurityCoordinator`, and stores the port-level
+/// `PortUserContext` in `request.extensions` instead of the rich
+/// root-crate `UnifiedUserContext`.  Consumers that have migrated to
+/// the port projection can mount this middleware; the legacy
+/// `auth_middleware_unified` remains the production path until step 4
+/// (per-consumer migrations) completes.
+///
+/// `DataPlaneCapability` handling is deliberately omitted here — the
+/// capability lookup currently requires `UnifiedUserContext`-typed
+/// info that's lost in the port projection.  Step 4 either extends
+/// the port surface for capability extraction or leaves callers needing
+/// capability on the legacy middleware.
+///
+/// # Wiring status (2026-05-26 audit, Tier 1.3 of pre-release plan)
+///
+/// **This middleware is NOT wired into any production route as of
+/// 2026-05-26.** It exists as the parallel-shortcut foundation for
+/// ADR-016 step 4 (per-consumer `UnifiedUserContext → PortUserContext`
+/// migrations). Step 4 is intentionally demand-blocked: don't wire
+/// this middleware in until a real cross-crate consumer (typically a
+/// `proximadb-api` gRPC handler that needs port-typed auth context)
+/// surfaces. See `docs/12-design/adr/ADR-016-port-user-context.adoc`
+/// for the migration plan and
+/// `docs/_internal/status/PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc`
+/// for the deferral rationale.
+///
+/// Existing routes use `auth_middleware_unified` (just above) which
+/// stores the rich `UnifiedUserContext` directly. That path is the
+/// production surface for v0.3.
+pub async fn auth_middleware_unified_port<B>(
+    State(security_port): State<Arc<dyn proximadb_runtime::SecurityPort>>,
+    mut request: Request<B>,
+    next: Next<B>,
+) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
+    let path = request.uri().path();
+
+    if should_skip_auth(path) {
+        return Ok(next.run(request).await);
+    }
+
+    let auth_header = extract_auth_header(&request)?;
+    let credential = map_header_to_port_credential(&auth_header)?;
+
+    let port_context = security_port.authenticate(credential).await.map_err(|e| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(AuthErrorResponse {
+                error: "authentication_failed".to_string(),
+                message: format!("{}", e),
+                code: 401,
+            }),
+        )
+    })?;
+
+    request.extensions_mut().insert(port_context);
+    Ok(next.run(request).await)
+}
+
+/// Map an HTTP `Authorization` header value to a port-level credential.
+/// Mirrors `map_header_to_auth_data` but emits `PortAuthCredential`
+/// instead of the root-crate `AuthenticationData` enum.
+fn map_header_to_port_credential(
+    auth_header: &str,
+) -> Result<proximadb_runtime::PortAuthCredential, (StatusCode, Json<AuthErrorResponse>)> {
+    if let Some(token) = auth_header.strip_prefix("Bearer ") {
+        return Ok(proximadb_runtime::PortAuthCredential::Jwt(
+            token.to_string(),
+        ));
+    }
+    if let Some(key) = auth_header.strip_prefix("API-Key ") {
+        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(
+            key.to_string(),
+        ));
+    }
+    if let Some(key) = auth_header.strip_prefix("Api-Key ") {
+        return Ok(proximadb_runtime::PortAuthCredential::ApiKey(
+            key.to_string(),
+        ));
+    }
+    Ok(proximadb_runtime::PortAuthCredential::ApiKey(
+        auth_header.to_string(),
+    ))
 }
 
 /// Middleware to authenticate and authorize requests
@@ -175,6 +331,112 @@ fn map_header_to_auth_data(
 
     // Treat raw value as API key
     Ok(AuthenticationData::ApiKey(auth_header.to_string()))
+}
+
+fn validate_rest_data_plane_capability<B>(
+    capability: &DataPlaneCapability,
+    request: &Request<B>,
+) -> Result<(), (StatusCode, Json<AuthErrorResponse>)> {
+    if capability.protocol.as_deref() != Some("rest") {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_protocol_mismatch",
+            "Capability token is not valid for REST",
+        ));
+    }
+
+    let path = request.uri().path();
+    let method = request.method().as_str();
+    let operation = infer_data_plane_operation(method, path).ok_or_else(|| {
+        authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_endpoint_denied",
+            "Capability token is not valid for this endpoint",
+        )
+    })?;
+
+    if capability.operation.as_deref() != Some(operation) {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_operation_mismatch",
+            "Capability token operation does not match the REST endpoint",
+        ));
+    }
+
+    if let Some(collection) = extract_collection_from_path(path)
+        && capability.collection.as_deref() != Some(collection)
+    {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_collection_mismatch",
+            "Capability token collection does not match the REST endpoint",
+        ));
+    }
+
+    let scope_ok = match operation {
+        "ingest" => capability.has_scope("records:write"),
+        "search" => capability.has_scope("search:execute") || capability.has_scope("records:read"),
+        _ => false,
+    };
+    if !scope_ok {
+        return Err(authz_response(
+            StatusCode::FORBIDDEN,
+            "capability_scope_missing",
+            "Capability token lacks the required scope",
+        ));
+    }
+
+    if let Some(max_bytes) = capability.max_bytes
+        && let Some(content_length) = request
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+        && content_length > max_bytes
+    {
+        return Err(authz_response(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "capability_byte_limit_exceeded",
+            "Request body exceeds the capability byte limit",
+        ));
+    }
+
+    Ok(())
+}
+
+fn infer_data_plane_operation(method: &str, path: &str) -> Option<&'static str> {
+    if method == "POST" && (path.ends_with("/documents") || path.ends_with("/records/batch")) {
+        return Some("ingest");
+    }
+    if method == "POST" && (path.ends_with("/search") || path.ends_with("/query")) {
+        return Some("search");
+    }
+    None
+}
+
+fn extract_collection_from_path(path: &str) -> Option<&str> {
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    while let Some(segment) = segments.next() {
+        if segment == "collections" {
+            return segments.next().filter(|value| !value.is_empty());
+        }
+    }
+    None
+}
+
+fn authz_response(
+    status: StatusCode,
+    error: &str,
+    message: &str,
+) -> (StatusCode, Json<AuthErrorResponse>) {
+    (
+        status,
+        Json(AuthErrorResponse {
+            error: error.to_string(),
+            message: message.to_string(),
+            code: status.as_u16(),
+        }),
+    )
 }
 
 /// Determine if authentication should be skipped for this path
@@ -738,11 +1000,11 @@ mod tests {
 
     use crate::network::auth::config::JwtAlgorithm;
     use crate::network::auth::jwt::JwtService;
-    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
-    use crate::security::unified_auth::{
+    use crate::security::auth_service::{
         ApiKeyInfo, AuthenticationConfig, AuthenticationMethod, JwtConfig, MtlsConfig, SSOConfig,
     };
-    use crate::security::unified_rbac::RBACConfig;
+    use crate::security::rbac_service::RBACConfig;
+    use crate::security::security_coordinator::{ComplianceConfig, TlsConfig};
     use crate::security::{AuditConfig, SecurityConfig, SecurityCoordinator, SecurityMode};
 
     #[test]
@@ -1103,6 +1365,19 @@ mod tests {
             tenant_id: None,
             roles: vec!["reader".to_string()],
             typ: crate::network::auth::jwt::TokenType::Access,
+            // New control-plane capability fields — defaulted in this
+            // test because expiry is the only thing under test.
+            capability_type: None,
+            collection: None,
+            operation: None,
+            protocol: None,
+            mode: None,
+            scopes: Vec::new(),
+            max_records: None,
+            max_bytes: None,
+            tier: None,
+            route_visibility: None,
+            metering_required: None,
         };
         let expired_token = jsonwebtoken::encode(
             &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
@@ -1182,5 +1457,59 @@ mod tests {
             .await
             .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    /// ADR-016 / Task #69 step 3: lock in the port-credential header
+    /// parsing rules so future step-4 migrations can rely on the
+    /// contract.  Mirrors the existing `map_header_to_auth_data`
+    /// semantics from the legacy middleware (Bearer, API-Key, Api-Key,
+    /// raw-as-ApiKey fallback).
+    mod port_credential_parsing {
+        use super::super::map_header_to_port_credential;
+        use proximadb_runtime::PortAuthCredential;
+
+        fn assert_jwt(header: &str, expected: &str) {
+            match map_header_to_port_credential(header).expect("ok") {
+                PortAuthCredential::Jwt(t) => assert_eq!(t, expected),
+                PortAuthCredential::ApiKey(k) => panic!("expected Jwt, got ApiKey({})", k),
+            }
+        }
+
+        fn assert_api_key(header: &str, expected: &str) {
+            match map_header_to_port_credential(header).expect("ok") {
+                PortAuthCredential::ApiKey(k) => assert_eq!(k, expected),
+                PortAuthCredential::Jwt(t) => panic!("expected ApiKey, got Jwt({})", t),
+            }
+        }
+
+        #[test]
+        fn bearer_prefix_emits_jwt() {
+            assert_jwt("Bearer abc.def.ghi", "abc.def.ghi");
+        }
+
+        #[test]
+        fn api_key_caps_prefix_emits_api_key() {
+            assert_api_key("API-Key secret123", "secret123");
+        }
+
+        #[test]
+        fn api_key_titlecase_prefix_emits_api_key() {
+            // Same semantics as the legacy `map_header_to_auth_data`.
+            assert_api_key("Api-Key secret123", "secret123");
+        }
+
+        #[test]
+        fn raw_value_falls_back_to_api_key() {
+            // Mirrors the legacy "treat raw value as API key" rule.
+            assert_api_key("rawkey-no-prefix", "rawkey-no-prefix");
+        }
+
+        #[test]
+        fn empty_string_is_api_key_with_empty_value() {
+            // The legacy parser also accepts "" as ApiKey("") — keeping
+            // the contract identical so the parallel port middleware
+            // doesn't diverge from the legacy one on edge cases.
+            assert_api_key("", "");
+        }
     }
 }

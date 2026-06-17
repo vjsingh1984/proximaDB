@@ -33,9 +33,11 @@ use tracing::info;
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
-// VectorRecord eliminated - using ZeroOverheadVector for 75-96% memory savings
+// ZeroOverheadVector used for 75-96% memory savings vs VectorRecord
 use crate::index::axis::eventlog::{ExtractionMode, IndexEvent};
+use crate::index::axis::filterable_metadata::{
+    FilterableFieldsConfig, FilterableHnswMetadata, FilterableMetadataCache,
+};
 use crate::index::axis::index_factory::{AxisVectorIndex, IndexStats};
 use crate::index::axis::types::IndexAlgorithm;
 use crate::index::axis::utils::{AtomicStats, ConcurrentIdMapping, memory, validation};
@@ -69,6 +71,36 @@ pub struct AxisHnswConfig {
     pub max_layers: usize,
     /// Distance metric to use
     pub distance_metric: DistanceMetric,
+
+    // ── Phase C: ACORN / NaviX additions (spec §6.1) ────────────────────────
+    /// Neighbor expansion factor for ACORN §5.2.
+    ///
+    /// During construction each node selects `floor(gamma * M)` initial candidates
+    /// before pruning to M stored edges. At search time, nodes that fail the
+    /// predicate still expose their full `gamma*M` list so traversal can route
+    /// around predicate-sparse regions without getting stuck.
+    ///
+    /// 1.0 = standard HNSW (no expansion). 1.5–2.0 recommended for mixed workloads.
+    pub gamma: f32,
+
+    /// Minimum estimated filter selectivity below which the executor falls back
+    /// to pre-filter brute force instead of HNSW traversal (spec §7.3 s_min).
+    ///
+    /// If `estimated_selectivity <= selectivity_min` → brute force.
+    pub selectivity_min: f32,
+}
+
+impl AxisHnswConfig {
+    /// Effective expanded neighbor count used during ACORN construction.
+    pub fn expanded_m(&self) -> usize {
+        (self.gamma * self.m as f32).floor() as usize
+    }
+
+    /// Returns `true` when the estimated predicate selectivity is so low that
+    /// HNSW traversal is expected to be slower than a pre-filtered brute-force scan.
+    pub fn should_use_brute_force(&self, estimated_selectivity: f32) -> bool {
+        estimated_selectivity <= self.selectivity_min
+    }
 }
 
 impl Default for AxisHnswConfig {
@@ -79,6 +111,8 @@ impl Default for AxisHnswConfig {
             ef: 50,               // Lower for faster searches
             max_layers: 16,       // Reasonable depth
             distance_metric: DistanceMetric::Cosine,
+            gamma: 1.0,            // No expansion by default (legacy-compatible)
+            selectivity_min: 0.05, // Fall back to brute force below 5% selectivity
         }
     }
 }
@@ -158,6 +192,10 @@ pub struct AxisHnswIndex {
     /// NEW: Quantized vector storage for dual representation support
     /// Maps external_id -> quantized_vector for QUANTIZED_ONLY and BOTH modes
     quantized_vectors: Arc<DashMap<String, Vec<u8>>>,
+
+    /// TD-064: Shared filterable-metadata cache (AXIS-provided).
+    /// Holds compact <50-byte-per-record metadata for predicate-aware traversal.
+    filterable_metadata: FilterableMetadataCache,
 }
 
 impl AxisHnswIndex {
@@ -223,6 +261,9 @@ impl AxisHnswIndex {
             // EventLog-based vector consumption (no queue consumer needed)
             extraction_mode,
             quantized_vectors: Arc::new(DashMap::new()),
+
+            // TD-064: shared filterable metadata cache; populated via add_with_metadata
+            filterable_metadata: FilterableMetadataCache::new(),
         })
     }
 
@@ -300,7 +341,7 @@ impl AxisHnswIndex {
         let mut visited = HashSet::new();
         let mut candidates = BinaryHeap::new(); // Min heap for candidates (to visit)
         let mut dynamic_candidates = BinaryHeap::new(); // Max heap for best found
-        let metric = self.config.distance_metric;
+        let _metric = self.config.distance_metric;
 
         // Initialize with entry points
         // OPTIMIZATION: Compute distances inline to avoid allocations
@@ -315,9 +356,10 @@ impl AxisHnswIndex {
                     && let Some(view) = vectors_lock.get(&external_id)
                     && let Some(vector_data) = view.as_f32()
                 {
-                    let dist =
-                        self.distance_computer
-                            .distance_with_metric(query, vector_data, &metric);
+                    // metric_aware_distance normalises every metric
+                    // to lower=better so the BinaryHeap ordering is
+                    // consistent (see DotProduct recall bug fix).
+                    let dist = self.metric_aware_distance(query, vector_data);
                     visited.insert(ep);
                     candidates.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
                     dynamic_candidates.push((OrderedFloat(dist), ep));
@@ -349,11 +391,7 @@ impl AxisHnswIndex {
                             && let Some(view) = vectors_lock.get(&external_id)
                             && let Some(vector_data) = view.as_f32()
                         {
-                            let dist = self.distance_computer.distance_with_metric(
-                                query,
-                                vector_data,
-                                &metric,
-                            );
+                            let dist = self.metric_aware_distance(query, vector_data);
 
                             if dynamic_candidates.len() < ef {
                                 candidates.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
@@ -396,13 +434,182 @@ impl AxisHnswIndex {
     }
 
     /// Select m neighbors using simple heuristic (closest neighbors)
-    /// Deferred: Implement more sophisticated heuristics for better graph connectivity
     fn select_neighbors(&self, candidates: Vec<(usize, f32)>, m: usize) -> Vec<usize> {
         candidates
             .into_iter()
             .take(m)
             .map(|(node, _)| node)
             .collect()
+    }
+
+    /// ACORN §5.2 — γ-expanded neighbor selection for predicate-aware construction.
+    ///
+    /// Returns `floor(config.gamma * m)` neighbors so that predicate-filtered
+    /// traversal can route around sparse regions without getting stuck at dead ends.
+    /// When `gamma == 1.0` this is identical to `select_neighbors`.
+    pub fn select_neighbors_gamma(&self, candidates: Vec<(usize, f32)>, m: usize) -> Vec<usize> {
+        let expanded_m = self.config.expanded_m().max(m);
+        candidates
+            .into_iter()
+            .take(expanded_m)
+            .map(|(node, _)| node)
+            .collect()
+    }
+
+    /// NaviX predicate-aware graph search (Phase C, spec §6.1).
+    ///
+    /// Behaves like `search_layer` but accepts a per-node predicate. Nodes that
+    /// fail the predicate are still used for graph traversal (skip-through, ACORN
+    /// §4.2 "predicate-agnostic greedy search") but are excluded from the result
+    /// candidate set. This prevents getting stuck in predicate-sparse subgraphs.
+    fn search_layer_predicate<P>(
+        &self,
+        query: &[f32],
+        entry_points: &[usize],
+        ef: usize,
+        layer: usize,
+        predicate: &P,
+    ) -> Vec<(usize, f32)>
+    where
+        P: Fn(usize) -> bool,
+    {
+        let mut visited = HashSet::new();
+        let mut frontier = BinaryHeap::new(); // min-heap of (dist, node) to explore
+        let mut result_candidates: BinaryHeap<(OrderedFloat, usize)> = BinaryHeap::new();
+        let _metric = self.config.distance_metric;
+
+        {
+            let vectors_lock = self
+                .vectors
+                .read()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+            for &ep in entry_points {
+                if let Some(external_id) = self.id_mapping.external(ep)
+                    && let Some(view) = vectors_lock.get(&external_id)
+                    && let Some(vector_data) = view.as_f32()
+                {
+                    let dist = self.metric_aware_distance(query, vector_data);
+                    visited.insert(ep);
+                    frontier.push(std::cmp::Reverse((OrderedFloat(dist), ep)));
+                    if predicate(ep) {
+                        result_candidates.push((OrderedFloat(dist), ep));
+                    }
+                }
+            }
+        }
+
+        while let Some(std::cmp::Reverse((curr_dist, curr_node))) = frontier.pop() {
+            // Early-termination: current node is further than the worst accepted result
+            if result_candidates.len() >= ef
+                && let Some((worst, _)) = result_candidates.peek()
+                && curr_dist.0 > worst.0
+            {
+                break;
+            }
+
+            if let Some(neighbors) = self.layers.get(&(layer, curr_node)) {
+                let vectors_lock = self
+                    .vectors
+                    .read()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+                for &neighbor in neighbors.value() {
+                    if !visited.contains(&neighbor) {
+                        visited.insert(neighbor);
+                        if let Some(external_id) = self.id_mapping.external(neighbor)
+                            && let Some(view) = vectors_lock.get(&external_id)
+                            && let Some(vector_data) = view.as_f32()
+                        {
+                            let dist = self.metric_aware_distance(query, vector_data);
+                            // Always push to frontier (skip-through traversal)
+                            frontier.push(std::cmp::Reverse((OrderedFloat(dist), neighbor)));
+                            // Only add to results if predicate passes
+                            if predicate(neighbor) {
+                                result_candidates.push((OrderedFloat(dist), neighbor));
+                                // Evict worst when over ef
+                                while result_candidates.len() > ef {
+                                    result_candidates.pop();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut result: Vec<_> = result_candidates
+            .into_iter()
+            .map(|(OrderedFloat(dist), node)| (node, dist))
+            .collect();
+        result.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        result
+    }
+
+    /// Closure-based predicate-aware search (Phase C, spec §7 VectorTopK.predicate).
+    ///
+    /// Lower-level API: the caller supplies a `Fn(&str) -> bool` predicate that
+    /// receives the **external string id** of each candidate. Used by the AXIS
+    /// filtered-search bridge and unit tests.
+    ///
+    /// The structured (TD-064) entry point lives on the `AxisVectorIndex` trait
+    /// as `search_with_predicate(query, k, tenant, time_range, rls_tags)` and
+    /// uses cached filterable metadata for predicate evaluation. That trait
+    /// method delegates to this method after building an internal closure.
+    ///
+    /// Internally delegates to `search_layer_predicate` at layer 0 so the
+    /// NaviX skip-through heuristic applies throughout the bottom traversal.
+    pub async fn search_with_predicate_fn<P>(
+        &self,
+        query: &[f32],
+        k: usize,
+        predicate: P,
+    ) -> Result<Vec<(String, f32)>>
+    where
+        P: Fn(&str) -> bool + Send + Sync,
+    {
+        // Read entry point (RwLock<Option<usize>>)
+        let entry_point = match self
+            .entry_point
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .as_ref()
+        {
+            Some(&ep) => ep,
+            None => return Ok(Vec::new()), // empty index
+        };
+
+        let max_layer = self.max_layer.load(AtomicOrdering::Relaxed);
+        let mut current_points = vec![entry_point];
+
+        // Upper layers: unfiltered greedy descent to layer 1 entry
+        for layer in (1..=max_layer).rev() {
+            current_points = self
+                .search_layer(query, &current_points, 1, layer)
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect();
+        }
+
+        // Translate external-id predicate to internal-id predicate
+        let id_predicate = |internal_id: usize| -> bool {
+            self.id_mapping
+                .external(internal_id)
+                .map(|ext| predicate(&ext))
+                .unwrap_or(false)
+        };
+
+        // Layer 0: predicate-aware NaviX traversal
+        let ef = self.config.ef.max(k);
+        let raw = self.search_layer_predicate(query, &current_points, ef, 0, &id_predicate);
+
+        let results = raw
+            .into_iter()
+            .take(k)
+            .filter_map(|(node, dist)| self.id_mapping.external(node).map(|ext_id| (ext_id, dist)))
+            .collect();
+
+        Ok(results)
     }
 
     /// Shrink connections for a node if it exceeds the maximum degree
@@ -593,7 +800,13 @@ impl AxisVectorIndex for AxisHnswIndex {
             } else {
                 self.config.m
             };
-            let selected = self.select_neighbors(candidates.clone(), m);
+            // ACORN §5.2: use γ-expanded selection when gamma > 1.0 so predicate-filtered
+            // traversal can route around sparse regions without dead-ends.
+            let selected = if self.config.gamma > 1.0 {
+                self.select_neighbors_gamma(candidates.clone(), m)
+            } else {
+                self.select_neighbors(candidates.clone(), m)
+            };
 
             // Add bidirectional connections using DashMap
             // CRITICAL FIX: After adding connections, shrink if exceeds max degree
@@ -692,6 +905,9 @@ impl AxisVectorIndex for AxisHnswIndex {
         }
         self.id_mapping.remove_by_external(id);
 
+        // TD-064: drop cached filterable metadata for this id
+        self.filterable_metadata.remove(id);
+
         // Update entry point if necessary
         {
             let mut entry_point_lock = self
@@ -709,6 +925,55 @@ impl AxisVectorIndex for AxisHnswIndex {
         // USING UTILS: Record successful operation
         self.stats
             .record_success(start.elapsed().as_micros() as u64);
+        Ok(())
+    }
+
+    async fn add_with_metadata(
+        &self,
+        id: String,
+        vector_data: Vec<f32>,
+        metadata: &FilterableHnswMetadata,
+    ) -> Result<()> {
+        // TD-064: cache metadata first so a concurrent predicate-aware search
+        // observing this id can already evaluate the filter; then add to graph.
+        self.filterable_metadata
+            .insert(id.clone(), metadata.clone());
+        self.add(id, vector_data).await
+    }
+
+    async fn search_with_predicate(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        tenant_id: Option<&str>,
+        time_range_ns: Option<(i64, i64)>,
+        rls_tags: Option<&[String]>,
+    ) -> Result<Vec<(String, f32)>> {
+        // TD-064: HNSW skip-through traversal over cached filterable metadata.
+        //
+        // When the cache is empty the index has not yet observed any
+        // add_with_metadata; fall back to plain ANN. Callers requiring
+        // correctness under filters must surface the degradation in EXPLAIN
+        // (handled at AxisManager layer).
+        if self.filterable_metadata.is_empty() {
+            return self.search(query, top_k, None).await;
+        }
+
+        let predicate =
+            self.filterable_metadata
+                .build_predicate(tenant_id, time_range_ns, rls_tags);
+        self.search_with_predicate_fn(query, top_k, predicate).await
+    }
+
+    fn supports_predicate_search(&self) -> bool {
+        // True once any metadata has been cached; before first add_with_metadata
+        // call the index behaves as a plain ANN and the trait method falls
+        // back to standard search.
+        !self.filterable_metadata.is_empty()
+    }
+
+    fn configure_filterable_fields(&self, config: &FilterableFieldsConfig) -> Result<()> {
+        self.filterable_metadata.configure_fields(config);
         Ok(())
     }
 
@@ -735,7 +1000,9 @@ impl AxisHnswIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        _filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        _filter: Option<
+            &(dyn for<'a> Fn(&'a proximadb_records::ProximaRecord) -> bool + Send + Sync),
+        >,
     ) -> Result<Vec<(String, f32)>> {
         let start = std::time::Instant::now();
 
@@ -757,6 +1024,11 @@ impl AxisHnswIndex {
         let mut curr_nearest = vec![entry_point];
         let max_layer = self.max_layer.load(AtomicOrdering::Relaxed);
 
+        // Phase profiling — surfaces whether time is spent in the
+        // top-layer greedy descent vs the layer-0 ef walk vs the
+        // id-mapping post-conversion. Cheap timer per phase.
+        let descent_start = std::time::Instant::now();
+
         // Search from top layer down to layer 1 (greedy with ef=1)
         for layer in (1..=max_layer).rev() {
             curr_nearest = self
@@ -765,6 +1037,7 @@ impl AxisHnswIndex {
                 .map(|(node, _)| node)
                 .collect();
         }
+        let descent_us = descent_start.elapsed().as_micros() as u64;
 
         // Search layer 0 with collection-size-aware ef for consistent recall at scale
         // For N vectors, optimal ef ≈ sqrt(N) for high recall (>95%)
@@ -774,7 +1047,15 @@ impl AxisHnswIndex {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .len();
-        let size_aware_ef = ((collection_size as f64).sqrt() as usize).clamp(50, 500); // Clamp ef for small/large collections
+        // size_aware_ef provides a sensible floor for collections
+        // that didn't set a strategy spec — production callers that
+        // care about recall should set `IndexAlgorithm::HNSW.ef_search`
+        // on the strategy spec, which now flows through to
+        // `AxisHnswConfig.ef` end-to-end (see insert_into_hnsw and
+        // insert_hmgi). The `max` below picks whichever is larger so
+        // a customer who explicitly asked for ef_search=500 on a 100K
+        // collection still gets 500 (not sqrt(100K)=316).
+        let size_aware_ef = ((collection_size as f64).sqrt() as usize).clamp(50, 500);
         let search_ef = self.config.ef.max(size_aware_ef).max(top_k);
 
         tracing::debug!(
@@ -785,10 +1066,14 @@ impl AxisHnswIndex {
             search_ef
         );
 
+        let layer0_start = std::time::Instant::now();
         let candidates = self.search_layer(query, &curr_nearest, search_ef, 0);
+        let layer0_us = layer0_start.elapsed().as_micros() as u64;
+        let candidates_visited = candidates.len();
 
         // Convert internal IDs to external IDs - no filtering at index level
         // Metadata filtering happens at storage layer, not in indexes
+        let convert_start = std::time::Instant::now();
         let results: Vec<(String, f32)> = candidates
             .into_iter()
             .take(top_k)
@@ -798,10 +1083,30 @@ impl AxisHnswIndex {
                     .map(|external_id| (external_id, score))
             })
             .collect();
+        let convert_us = convert_start.elapsed().as_micros() as u64;
+        let total_us = start.elapsed().as_micros() as u64;
+
+        // Emit a single structured event per search so the bench can
+        // attribute the latency. Threshold gating keeps logs quiet
+        // for fast searches (HMGI partitions usually ~1ms) but
+        // surfaces the slow ones (legacy HNSW path apparently
+        // ~60-90ms even on identical data — the gap this
+        // instrumentation is designed to expose).
+        tracing::info!(
+            target: "axis_diag",
+            site = "AxisHnswIndex::search_with_filter",
+            collection_size = collection_size,
+            search_ef = search_ef,
+            descent_us = descent_us,
+            layer0_us = layer0_us,
+            convert_us = convert_us,
+            total_us = total_us,
+            candidates_visited = candidates_visited,
+            "HNSW search phase breakdown"
+        );
 
         // USING UTILS: Record successful operation
-        self.stats
-            .record_success(start.elapsed().as_micros() as u64);
+        self.stats.record_success(total_us);
         Ok(results)
     }
 
@@ -812,6 +1117,47 @@ impl AxisHnswIndex {
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         vectors.len()
+    }
+
+    /// Distance metric the HNSW graph was built with. Exposed so
+    /// upstream layers (HMGI router, scorers) can convert the raw
+    /// distance values returned by `search_*` into the canonical
+    /// `SimilarityResult.normalized_score` shape that the rest of
+    /// the stack assumes (higher = better, range [0, 1] for the
+    /// common metrics).
+    pub fn distance_metric(&self) -> crate::compute::distance_computation::DistanceMetric {
+        self.config.distance_metric
+    }
+
+    /// Compute a distance with **lower = better** semantics across
+    /// every metric the HNSW algorithm sees.
+    ///
+    /// The compute layer's `distance_with_metric` returns the
+    /// metric's native value:
+    ///   * Cosine / Euclidean / Manhattan → a distance (lower = better)
+    ///   * DotProduct → the raw inner product (HIGHER = better)
+    ///
+    /// HNSW's `BinaryHeap` logic everywhere assumes lower = better.
+    /// Without this wrapper, DotProduct vectors were inserted into
+    /// the priority queue with inverted ranking — the algorithm
+    /// kept the records with the LOWEST inner product (farthest
+    /// from the query) and discarded the closest ones. Measured at
+    /// 10K × 128d: recall=0.00 for DotProduct, vs 0.78+ for Cosine
+    /// and Euclidean. Negating the similarity-metric values here
+    /// restores the lower-better invariant; the router undoes the
+    /// negation when constructing `SimilarityResult` for the
+    /// caller.
+    #[inline]
+    fn metric_aware_distance(&self, q: &[f32], v: &[f32]) -> f32 {
+        use crate::compute::distance_computation::engine::DistanceMetricExt;
+        let raw = self
+            .distance_computer
+            .distance_with_metric(q, v, &self.config.distance_metric);
+        if self.config.distance_metric.is_similarity() {
+            -raw
+        } else {
+            raw
+        }
     }
 
     /// Get memory usage of the index
@@ -988,7 +1334,9 @@ impl AxisHnswIndex {
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<&(dyn for<'a> Fn(&'a VectorRecord) -> bool + Send + Sync)>,
+        filter: Option<
+            &(dyn for<'a> Fn(&'a proximadb_records::ProximaRecord) -> bool + Send + Sync),
+        >,
     ) -> Result<Vec<(String, f32)>> {
         if !self.has_quantized_storage() {
             // No quantized vectors available, use standard search
@@ -1136,6 +1484,16 @@ impl AxisHnswIndex {
             .collect()
     }
 
+    /// TD-064: Serialize cached filterable metadata for snapshot persistence.
+    pub fn serialize_filterable_metadata(&self) -> Vec<(String, FilterableHnswMetadata)> {
+        self.filterable_metadata.snapshot()
+    }
+
+    /// TD-064: Restore filterable metadata cache after snapshot load.
+    pub fn restore_filterable_metadata(&self, entries: Vec<(String, FilterableHnswMetadata)>) {
+        self.filterable_metadata.restore(entries);
+    }
+
     /// Serialize quantized vectors
     pub fn serialize_quantized_vectors(&self) -> Vec<(String, Vec<u8>)> {
         self.quantized_vectors
@@ -1267,7 +1625,7 @@ mod tests {
     #[tokio::test]
     async fn test_hnsw_basic_operations() {
         // Initialize hardware capabilities
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config, 3).expect("Failed to create HNSW index");
@@ -1308,7 +1666,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_search_quality() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut config = AxisHnswConfig::default();
         config.ef = 200; // Higher ef for better quality
@@ -1362,7 +1720,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_layer_navigation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut config = AxisHnswConfig::default();
         config.m = 16;
@@ -1393,7 +1751,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_pruning_heuristic() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let mut config = AxisHnswConfig::default();
         config.m = 5; // Small M to test pruning
@@ -1425,7 +1783,7 @@ mod tests {
 
     #[test]
     fn test_hnsw_config_validation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Test valid config
         let valid_config = AxisHnswConfig {
@@ -1434,6 +1792,7 @@ mod tests {
             ef: 100,
             max_layers: 10,
             distance_metric: DistanceMetric::Cosine,
+            ..AxisHnswConfig::default()
         };
         assert!(AxisHnswIndex::new(valid_config, 128).is_ok());
 
@@ -1447,7 +1806,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_empty_index_search() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config, 3).expect("Failed to create HNSW index");
@@ -1462,7 +1821,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hnsw_duplicate_removal() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config, 2).expect("Failed to create HNSW index");
@@ -1493,7 +1852,7 @@ mod tests {
     async fn test_hnsw_serialization_roundtrip() {
         use crate::index::axis::storage::serialization::IndexSerializer;
 
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = AxisHnswConfig::default();
         let index = AxisHnswIndex::new(config.clone(), 4).expect("Failed to create HNSW index");
@@ -1549,5 +1908,304 @@ mod tests {
 
         // The top result should be the same (v1 is closest to query)
         assert_eq!(original_results[0].0, restored_results[0].0);
+    }
+
+    // ── Phase C: Filter-Aware Vector Search (ACORN/NaviX) ────────────────────
+
+    #[test]
+    fn test_hnsw_config_gamma_default_is_one() {
+        let cfg = AxisHnswConfig::default();
+        assert_eq!(
+            cfg.gamma, 1.0,
+            "default gamma = 1.0 means no expansion (legacy)"
+        );
+        assert!(
+            cfg.selectivity_min > 0.0,
+            "selectivity_min must be positive"
+        );
+    }
+
+    #[test]
+    fn test_hnsw_config_acorn_expansion() {
+        let cfg = AxisHnswConfig {
+            gamma: 2.0,
+            selectivity_min: 0.01,
+            ..AxisHnswConfig::default()
+        };
+        assert_eq!(cfg.gamma, 2.0);
+        assert_eq!(cfg.selectivity_min, 0.01);
+        // expanded_m = floor(2.0 * 16) = 32
+        assert_eq!(cfg.expanded_m(), 32);
+    }
+
+    #[tokio::test]
+    async fn test_predicate_search_all_pass_matches_unfiltered() {
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        for i in 0u32..5 {
+            let v: Vec<f32> = (0..4)
+                .map(|j| if j == i as usize { 1.0 } else { 0.0 })
+                .collect();
+            index.add(format!("v{i}"), v).await.expect("add");
+        }
+
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let unfiltered = index.search(&query, 3, None).await.unwrap();
+        let filtered = index
+            .search_with_predicate_fn(&query, 3, |_id| true)
+            .await
+            .unwrap();
+
+        // With all-pass predicate, top result must match
+        if !unfiltered.is_empty() && !filtered.is_empty() {
+            assert_eq!(
+                unfiltered[0].0, filtered[0].0,
+                "all-pass predicate must return same top-1 as unfiltered"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_predicate_search_excludes_specific_id() {
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        index
+            .add("v0".into(), vec![1.0, 0.0, 0.0, 0.0])
+            .await
+            .unwrap();
+        index
+            .add("v1".into(), vec![0.9, 0.1, 0.0, 0.0])
+            .await
+            .unwrap();
+        index
+            .add("v2".into(), vec![0.0, 1.0, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let results = index
+            .search_with_predicate_fn(&query, 2, |id| id != "v0")
+            .await
+            .unwrap();
+
+        // v0 must not appear in any result
+        assert!(
+            results.iter().all(|(id, _)| id != "v0"),
+            "excluded id must not appear: got {:?}",
+            results
+        );
+    }
+
+    /// TD-064: add_with_metadata caches per-record metadata so the structured
+    /// trait method can enforce tenant isolation without consulting any
+    /// external lookup. Cross-tenant records must be excluded.
+    #[tokio::test]
+    async fn test_predicate_search_isolates_by_tenant() {
+        use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        let _ = proximadb_hardware::hardware_capabilities();
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        // Add 4 vectors split across two tenants. Vectors are deliberately
+        // close in vector space so post-filter would have shrunk results
+        // — predicate-aware search must keep recall while enforcing tenant.
+        let make_meta = |tenant: &str| {
+            let mut m = FilterableHnswMetadata::default();
+            m.tenant_id = Some(tenant.to_string());
+            m
+        };
+
+        index
+            .add_with_metadata("a1".into(), vec![1.0, 0.0, 0.0, 0.0], &make_meta("acme"))
+            .await
+            .unwrap();
+        index
+            .add_with_metadata("a2".into(), vec![0.9, 0.1, 0.0, 0.0], &make_meta("acme"))
+            .await
+            .unwrap();
+        index
+            .add_with_metadata("b1".into(), vec![0.8, 0.2, 0.0, 0.0], &make_meta("beta"))
+            .await
+            .unwrap();
+        index
+            .add_with_metadata("b2".into(), vec![0.7, 0.3, 0.0, 0.0], &make_meta("beta"))
+            .await
+            .unwrap();
+
+        assert!(
+            index.supports_predicate_search(),
+            "index must report predicate support once metadata is cached"
+        );
+
+        // Query as tenant "acme" — only a1, a2 may appear.
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let results = index
+            .search_with_predicate(&query, 4, Some("acme"), None, None)
+            .await
+            .unwrap();
+        assert!(
+            !results.is_empty(),
+            "predicate-aware search must return results for matching tenant"
+        );
+        assert!(
+            results.iter().all(|(id, _)| id.starts_with('a')),
+            "cross-tenant ids must not appear in tenant 'acme' query: got {:?}",
+            results
+        );
+
+        // Query as tenant "beta" — only b1, b2 may appear.
+        let results_beta = index
+            .search_with_predicate(&query, 4, Some("beta"), None, None)
+            .await
+            .unwrap();
+        assert!(
+            !results_beta.is_empty(),
+            "predicate-aware search must return results for tenant 'beta'"
+        );
+        assert!(
+            results_beta.iter().all(|(id, _)| id.starts_with('b')),
+            "cross-tenant ids must not appear in tenant 'beta' query: got {:?}",
+            results_beta
+        );
+    }
+
+    /// TD-064: When the cache has no metadata for an id and the caller has
+    /// supplied a tenant predicate, the record must be excluded (fail-closed).
+    #[tokio::test]
+    async fn test_predicate_search_fails_closed_for_unindexed_metadata() {
+        use crate::index::axis::filterable_metadata::FilterableHnswMetadata;
+        use crate::index::axis::index_factory::AxisVectorIndex;
+
+        let _ = proximadb_hardware::hardware_capabilities();
+        let cfg = AxisHnswConfig {
+            ef: 200,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        // Mix: one vector inserted WITH metadata (tenant "acme"), one WITHOUT.
+        let mut meta = FilterableHnswMetadata::default();
+        meta.tenant_id = Some("acme".into());
+        index
+            .add_with_metadata("a1".into(), vec![1.0, 0.0, 0.0, 0.0], &meta)
+            .await
+            .unwrap();
+        index
+            .add("legacy".into(), vec![0.9, 0.1, 0.0, 0.0])
+            .await
+            .unwrap();
+
+        let query = vec![1.0f32, 0.0, 0.0, 0.0];
+        let results = index
+            .search_with_predicate(&query, 4, Some("acme"), None, None)
+            .await
+            .unwrap();
+
+        // "legacy" must be excluded — no cached metadata + tenant predicate
+        // ⇒ fail-closed.
+        assert!(
+            results.iter().all(|(id, _)| id != "legacy"),
+            "unindexed-metadata record must be excluded under tenant predicate: got {:?}",
+            results
+        );
+    }
+
+    #[test]
+    fn test_smin_fallback_selector() {
+        let cfg = AxisHnswConfig {
+            selectivity_min: 0.05,
+            ..AxisHnswConfig::default()
+        };
+        assert!(
+            cfg.should_use_brute_force(0.01),
+            "0.01 < 0.05 → brute force"
+        );
+        assert!(!cfg.should_use_brute_force(0.10), "0.10 > 0.05 → HNSW ok");
+        assert!(
+            cfg.should_use_brute_force(0.05),
+            "at threshold → brute force (safe)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_uses_gamma_expansion_when_gamma_gt_one() {
+        // A high gamma index should build more edges per node than a gamma=1.0 index.
+        // We verify this by checking that a node in the gamma>1 index has at least as
+        // many neighbors as the gamma=1 baseline (ideally more, but at small scale
+        // they may coincide). The key invariant: gamma>1 NEVER produces fewer edges.
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+
+        let cfg_base = AxisHnswConfig {
+            m: 4,
+            gamma: 1.0,
+            ..AxisHnswConfig::default()
+        };
+        let cfg_expanded = AxisHnswConfig {
+            m: 4,
+            gamma: 2.0,
+            ..AxisHnswConfig::default()
+        };
+
+        let base_index = AxisHnswIndex::new(cfg_base, 2).expect("create base index");
+        let exp_index = AxisHnswIndex::new(cfg_expanded, 2).expect("create expanded index");
+
+        for i in 0..8u32 {
+            let v = vec![i as f32, (8 - i) as f32];
+            base_index.add(format!("v{i}"), v.clone()).await.unwrap();
+            exp_index.add(format!("v{i}"), v).await.unwrap();
+        }
+
+        // Count connections at layer 0 across all nodes in both indexes
+        let base_edges: usize = base_index
+            .layers
+            .iter()
+            .filter(|e| e.key().0 == 0)
+            .map(|e| e.value().len())
+            .sum();
+        let exp_edges: usize = exp_index
+            .layers
+            .iter()
+            .filter(|e| e.key().0 == 0)
+            .map(|e| e.value().len())
+            .sum();
+
+        assert!(
+            exp_edges >= base_edges,
+            "gamma=2.0 index must have at least as many edges as gamma=1.0 (got {exp_edges} vs {base_edges})"
+        );
+    }
+
+    #[test]
+    fn test_select_neighbors_gamma_returns_more_candidates() {
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+        let cfg = AxisHnswConfig {
+            m: 4,
+            gamma: 2.0,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(cfg, 4).expect("create index");
+
+        // 10 candidates, gamma=2.0, m=4 → expanded picks min(8, 10) = 8
+        let candidates: Vec<(usize, f32)> = (0..10).map(|i| (i, i as f32 * 0.1)).collect();
+        let standard = index.select_neighbors(candidates.clone(), 4);
+        let expanded = index.select_neighbors_gamma(candidates, 4);
+
+        assert_eq!(standard.len(), 4);
+        assert_eq!(expanded.len(), 8, "gamma=2.0 * m=4 → 8 neighbors");
     }
 }

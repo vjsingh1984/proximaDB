@@ -13,16 +13,16 @@ use anyhow::{Result, anyhow};
 use arrow::array::RecordBatch;
 use arrow::datatypes::{DataType, Schema};
 use parking_lot::RwLock;
+use proximadb_catalog::{
+    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogTableSchema, CatalogTableStatistics,
+};
+use proximadb_data_model::ProximaType;
 use tracing::{debug, info, warn};
 
-use crate::catalog::types::{
-    CatalogColumn, CatalogDataType, CatalogIndex, CatalogIndexType, CatalogTableSchema,
-    CatalogTableStatistics,
-};
 use crate::catalog::{CatalogManager, TableIdentifier};
 use crate::network::arrow_ipc::codec::ArrowProtoCodec;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::services::operations::BulkWriteRouter;
+use proximadb_records::ProximaRecord;
 
 /// Configuration for catalog-aware bulk writes
 #[derive(Debug, Clone)]
@@ -156,20 +156,20 @@ impl CatalogBulkWriteService {
         Self::new(catalog_manager, CatalogBulkWriteConfig::default())
     }
 
-    /// Convert Arrow RecordBatches to VectorRecords with catalog validation
+    /// Convert Arrow RecordBatches to canonical records with catalog validation.
     ///
     /// This is the main entry point for Spark/Arrow bulk writes.
     /// It handles:
     /// 1. Table resolution in the catalog
     /// 2. Auto-creation of tables if needed
     /// 3. Schema validation
-    /// 4. Batch conversion to VectorRecords
+    /// 4. Batch conversion to `ProximaRecord`
     pub async fn prepare_bulk_write(
         &self,
         table_fqn: &str,
         batches: &[RecordBatch],
         _write_mode: BulkWriteMode,
-    ) -> Result<(Vec<VectorRecord>, CatalogBulkWriteResult)> {
+    ) -> Result<(Vec<ProximaRecord>, CatalogBulkWriteResult)> {
         let start = std::time::Instant::now();
         let mut result = CatalogBulkWriteResult {
             records_written: 0,
@@ -225,10 +225,10 @@ impl CatalogBulkWriteService {
 
         result.catalog_latency_us = catalog_start.elapsed().as_micros() as u64;
 
-        // Convert batches to VectorRecords
+        // Convert batches to canonical ProximaRecord envelopes.
         let write_start = std::time::Instant::now();
         let batches_vec: Vec<RecordBatch> = batches.to_vec();
-        let records = ArrowProtoCodec::batches_to_vector_records(batches_vec)?;
+        let records = ArrowProtoCodec::batches_to_proxima_records(batches_vec)?;
         result.records_written = records.len() as u64;
         result.write_latency_us = write_start.elapsed().as_micros() as u64;
 
@@ -269,6 +269,22 @@ impl CatalogBulkWriteService {
                     .push(format!("Failed to update statistics: {}", e));
             } else {
                 result.statistics_updated = true;
+                // Bump corpus_version: refreshed stats change the
+                // planner's selectivity estimates, so any cached
+                // PlanOutput is now computed against stale numbers.
+                // Same tenant-extraction convention as the DDL paths
+                // (namespace[0] when present).
+                if let Some(tenant_id) = table_id.namespace.first() {
+                    let version = crate::catalog::CorpusVersionRegistry::global()
+                        .bump(tenant_id, &table_id.name)
+                        .await;
+                    tracing::debug!(
+                        table = %table_id.name,
+                        tenant = %tenant_id,
+                        version,
+                        "🔄 corpus_version bumped after stats refresh (bulk write)"
+                    );
+                }
             }
         }
 
@@ -284,16 +300,14 @@ impl CatalogBulkWriteService {
         Ok((records, result))
     }
 
-    /// Check if the given batch size would trigger direct write path
-    pub fn should_use_direct_write(&self, records: &[VectorRecord]) -> bool {
-        self.router
-            .should_use_direct_write(records)
-            .use_direct_write
+    /// Check if the given batch size would route to the bulk lane.
+    pub fn would_use_bulk_lane(&self, records: &[ProximaRecord]) -> bool {
+        self.router.route_records(records).use_bulk_lane
     }
 
     /// Get write routing decision for a batch
-    pub fn get_write_decision(&self, records: &[VectorRecord]) -> super::BulkWriteDecision {
-        self.router.should_use_direct_write(records)
+    pub fn get_write_decision(&self, records: &[ProximaRecord]) -> super::BulkWriteDecision {
+        self.router.route_records(records)
     }
 
     /// Begin a transactional bulk write session
@@ -401,6 +415,8 @@ impl CatalogBulkWriteService {
                 default_value: None,
                 comment: field.metadata().get("comment").cloned(),
                 properties,
+                is_deleted: false,
+                original_id: None,
             };
 
             schema = schema.with_column(column);
@@ -409,44 +425,50 @@ impl CatalogBulkWriteService {
         Ok(schema.with_primary_key(vec!["id".to_string()]))
     }
 
-    /// Convert Arrow DataType to CatalogDataType
+    /// Convert Arrow DataType to the canonical [`ProximaType`].
     fn arrow_to_catalog_type(
         &self,
         arrow_type: &DataType,
-    ) -> Result<(CatalogDataType, HashMap<String, String>)> {
+    ) -> Result<(ProximaType, HashMap<String, String>)> {
+        use proximadb_data_model::{TimeUnit, VectorElement};
         let mut properties = HashMap::new();
 
+        let dense_vector = || ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 0,
+        };
+
         let catalog_type = match arrow_type {
-            DataType::Boolean => CatalogDataType::Boolean,
-            DataType::Int8 => CatalogDataType::Int8,
-            DataType::Int16 => CatalogDataType::Int16,
-            DataType::Int32 => CatalogDataType::Int32,
-            DataType::Int64 => CatalogDataType::Int64,
-            DataType::Float32 => CatalogDataType::Float32,
-            DataType::Float64 => CatalogDataType::Float64,
-            DataType::Utf8 | DataType::LargeUtf8 => CatalogDataType::String,
-            DataType::Binary | DataType::LargeBinary => CatalogDataType::Binary,
-            DataType::Date32 | DataType::Date64 => CatalogDataType::Date,
-            DataType::Time32(_) | DataType::Time64(_) => CatalogDataType::Time,
-            DataType::Timestamp(_, _) => CatalogDataType::Timestamp,
+            DataType::Boolean => ProximaType::Boolean,
+            DataType::Int8 => ProximaType::Int8,
+            DataType::Int16 => ProximaType::Int16,
+            DataType::Int32 => ProximaType::Int32,
+            DataType::Int64 => ProximaType::Int64,
+            DataType::Float32 => ProximaType::Float32,
+            DataType::Float64 => ProximaType::Float64,
+            DataType::Utf8 | DataType::LargeUtf8 => ProximaType::String,
+            DataType::Binary | DataType::LargeBinary => ProximaType::Binary,
+            DataType::Date32 | DataType::Date64 => ProximaType::Date,
+            DataType::Time32(_) | DataType::Time64(_) => ProximaType::Time(TimeUnit::Nanosecond),
+            DataType::Timestamp(_, _) => ProximaType::Timestamp(TimeUnit::Nanosecond),
             DataType::FixedSizeList(inner, size) => {
                 if matches!(inner.data_type(), DataType::Float32 | DataType::Float64) {
                     properties.insert("dimension".to_string(), size.to_string());
-                    CatalogDataType::Vector
+                    dense_vector()
                 } else {
-                    CatalogDataType::Json // Fallback for other lists
+                    ProximaType::Json // Fallback for other lists
                 }
             }
             DataType::List(inner) => {
                 if matches!(inner.data_type(), DataType::Float32 | DataType::Float64) {
-                    CatalogDataType::Vector
+                    dense_vector()
                 } else {
-                    CatalogDataType::Json
+                    ProximaType::Json
                 }
             }
-            DataType::Struct(_) => CatalogDataType::Json,
-            DataType::Map(_, _) => CatalogDataType::Json,
-            _ => CatalogDataType::Binary, // Fallback
+            DataType::Struct(_) => ProximaType::Json,
+            DataType::Map(_, _) => ProximaType::Json,
+            _ => ProximaType::Binary, // Fallback
         };
 
         Ok((catalog_type, properties))
@@ -482,11 +504,7 @@ impl CatalogBulkWriteService {
     }
 
     /// Check if two catalog types are compatible
-    fn types_compatible(
-        &self,
-        catalog_type: &CatalogDataType,
-        arrow_type: &CatalogDataType,
-    ) -> bool {
+    fn types_compatible(&self, catalog_type: &ProximaType, arrow_type: &ProximaType) -> bool {
         if catalog_type == arrow_type {
             return true;
         }
@@ -495,13 +513,11 @@ impl CatalogBulkWriteService {
         matches!(
             (catalog_type, arrow_type),
             (
-                CatalogDataType::Int8,
-                CatalogDataType::Int16 | CatalogDataType::Int32 | CatalogDataType::Int64
-            ) | (
-                CatalogDataType::Int16,
-                CatalogDataType::Int32 | CatalogDataType::Int64
-            ) | (CatalogDataType::Int32, CatalogDataType::Int64)
-                | (CatalogDataType::Float32, CatalogDataType::Float64)
+                ProximaType::Int8,
+                ProximaType::Int16 | ProximaType::Int32 | ProximaType::Int64
+            ) | (ProximaType::Int16, ProximaType::Int32 | ProximaType::Int64)
+                | (ProximaType::Int32, ProximaType::Int64)
+                | (ProximaType::Float32, ProximaType::Float64)
         )
     }
 
@@ -510,7 +526,7 @@ impl CatalogBulkWriteService {
         schema
             .columns
             .iter()
-            .find(|c| matches!(c.data_type, CatalogDataType::Vector))
+            .find(|c| matches!(c.data_type, ProximaType::DenseVector { .. }))
             .map(|c| c.name.clone())
     }
 

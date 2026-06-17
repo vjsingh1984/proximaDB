@@ -10,7 +10,7 @@
 //! Coordinates automatic compaction after flush operations to optimize storage efficiency.
 //! Integrates with WALFlushCoordinator to trigger compaction when needed.
 
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -20,9 +20,9 @@ use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, warn};
 
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
-// use crate::storage::engines::impls::viper::ViperEngine;
+// use crate::storage::engines::viper::ViperEngine;
 use crate::index::axis::AxisManager;
-use crate::storage::engines::impls::sst::SstEngine;
+use crate::storage::engines::sst::SstEngine;
 use crate::storage::traits::FlushResult;
 
 use super::compaction_axis_integration::CompactionAxisUpdater;
@@ -40,17 +40,17 @@ pub struct CompactionCoordinator {
     collection_states: Arc<RwLock<HashMap<String, CollectionCompactionState>>>,
 
     /// Storage engines for compaction
-    viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
+    viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
     sst_engine: Arc<SstEngine>,
 
     /// Compaction configuration
-    config: Option<CompactionConfig>,
+    config: Option<WalCompactionConfig>,
 
     /// Active compaction tracking
-    active_compactions: Arc<Mutex<HashMap<String, CompactionTask>>>,
+    active_compactions: Arc<Mutex<HashMap<String, WalCompactionTask>>>,
 
     /// Compaction statistics
-    stats: Arc<RwLock<CompactionStats>>,
+    stats: Arc<RwLock<WalCompactionStats>>,
 
     /// AXIS index updater
     axis_updater: CompactionAxisUpdater,
@@ -91,9 +91,12 @@ impl Default for CollectionCompactionState {
     }
 }
 
+/// Backwards-compat alias for [`WalCompactionConfig`].
+pub type CompactionConfig = WalCompactionConfig;
+
 /// Compaction configuration
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct WalCompactionConfig {
     /// Maximum files before triggering compaction
     pub max_files_before_compaction: usize,
 
@@ -113,7 +116,7 @@ pub struct CompactionConfig {
     pub max_concurrent_compactions: usize,
 }
 
-impl Default for CompactionConfig {
+impl Default for WalCompactionConfig {
     fn default() -> Self {
         Self {
             max_files_before_compaction: 5, // Reduced from 10 to be more aggressive
@@ -126,9 +129,12 @@ impl Default for CompactionConfig {
     }
 }
 
+/// Backwards-compat alias for [`WalCompactionTask`].
+pub type CompactionTask = WalCompactionTask;
+
 /// Active compaction task
 #[derive(Debug, Clone)]
-pub struct CompactionTask {
+pub struct WalCompactionTask {
     /// Unique task identifier
     pub task_id: String,
 
@@ -145,9 +151,12 @@ pub struct CompactionTask {
     pub estimated_completion: Option<DateTime<Utc>>,
 }
 
+/// Backwards-compat alias for [`WalCompactionStats`].
+pub type CompactionStats = WalCompactionStats;
+
 /// Compaction statistics
 #[derive(Debug, Clone, Default)]
-pub struct CompactionStats {
+pub struct WalCompactionStats {
     /// Total compactions completed
     pub total_compactions: u64,
 
@@ -167,9 +176,12 @@ pub struct CompactionStats {
     pub failed_compactions: u64,
 }
 
+/// Backwards-compat alias for [`WalCompactionResult`].
+pub type CompactionResult = WalCompactionResult;
+
 /// Compaction result
 #[derive(Debug, Clone)]
-pub struct CompactionResult {
+pub struct WalCompactionResult {
     /// Whether compaction succeeded
     pub success: bool,
 
@@ -195,9 +207,9 @@ pub struct CompactionResult {
 impl CompactionCoordinator {
     /// Create new compaction coordinator
     pub fn new(
-        viper_engine: Arc<crate::storage::engines::impls::viper::engine::ViperEngine>,
+        viper_engine: Arc<crate::storage::engines::viper::engine::ViperEngine>,
         sst_engine: Arc<SstEngine>,
-        config: Option<CompactionConfig>,
+        config: Option<WalCompactionConfig>,
         axis_manager: Option<Arc<AxisManager>>,
     ) -> Self {
         let config_ref = config.as_ref();
@@ -219,7 +231,7 @@ impl CompactionCoordinator {
             sst_engine,
             config,
             active_compactions: Arc::new(Mutex::new(HashMap::new())),
-            stats: Arc::new(RwLock::new(CompactionStats::default())),
+            stats: Arc::new(RwLock::new(WalCompactionStats::default())),
             axis_updater: CompactionAxisUpdater::new(axis_manager),
         }
     }
@@ -269,7 +281,7 @@ impl CompactionCoordinator {
     pub async fn handle_flush_completion(
         &self,
         flush_result: &FlushResult,
-    ) -> Result<Option<CompactionResult>> {
+    ) -> Result<Option<WalCompactionResult>> {
         if !self
             .config
             .as_ref()
@@ -462,8 +474,11 @@ impl CompactionCoordinator {
     }
 
     /// Trigger background compaction for a collection
-    async fn trigger_background_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
-        let task_id = crate::utils::uuid::Uuid::new_v4().to_string();
+    async fn trigger_background_compaction(
+        &self,
+        collection_id: &str,
+    ) -> Result<WalCompactionResult> {
+        let task_id = proximadb_kernel::uuid::Uuid::new_v4().to_string();
         let collection_id = collection_id.to_string();
 
         // Mark compaction as in progress
@@ -483,7 +498,7 @@ impl CompactionCoordinator {
         };
 
         // Create compaction task
-        let task = CompactionTask {
+        let task = WalCompactionTask {
             task_id: task_id.clone(),
             collection_id: collection_id.clone(),
             engine_type: preferred_engine.clone(),
@@ -519,7 +534,7 @@ impl CompactionCoordinator {
         &self,
         collection_id: &str,
         engine_type: &str,
-    ) -> Result<CompactionResult> {
+    ) -> Result<WalCompactionResult> {
         let start_time = std::time::Instant::now();
         let _started_at = Utc::now();
 
@@ -598,7 +613,7 @@ impl CompactionCoordinator {
                     e
                 );
 
-                Ok(CompactionResult {
+                Ok(WalCompactionResult {
                     success: false,
                     collections_affected: vec![collection_id.to_string()],
                     files_compacted: 0,
@@ -612,7 +627,7 @@ impl CompactionCoordinator {
     }
 
     /// Execute VIPER engine compaction
-    async fn execute_viper_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
+    async fn execute_viper_compaction(&self, collection_id: &str) -> Result<WalCompactionResult> {
         debug!(
             "🔧 CompactionCoordinator: Executing VIPER compaction for {}",
             collection_id
@@ -638,8 +653,8 @@ impl CompactionCoordinator {
                     enhanced_result.entries_removed.unwrap_or(0)
                 );
 
-                // Convert storage::CompactionResult to local CompactionResult
-                Ok(CompactionResult {
+                // Convert storage::WalCompactionResult to local WalCompactionResult
+                Ok(WalCompactionResult {
                     success: true,
                     collections_affected: enhanced_result.collections_affected,
                     files_compacted: enhanced_result.input_files.unwrap_or(0),
@@ -660,7 +675,7 @@ impl CompactionCoordinator {
     }
 
     /// Execute LSM engine compaction  
-    async fn execute_lsm_compaction(&self, collection_id: &str) -> Result<CompactionResult> {
+    async fn execute_lsm_compaction(&self, collection_id: &str) -> Result<WalCompactionResult> {
         debug!(
             "🔧 CompactionCoordinator: Executing LSM compaction for {}",
             collection_id
@@ -686,8 +701,8 @@ impl CompactionCoordinator {
                     enhanced_result.entries_removed.unwrap_or(0)
                 );
 
-                // Convert storage::CompactionResult to local CompactionResult
-                Ok(CompactionResult {
+                // Convert storage::WalCompactionResult to local WalCompactionResult
+                Ok(WalCompactionResult {
                     success: true,
                     collections_affected: enhanced_result.collections_affected,
                     files_compacted: enhanced_result.input_files.unwrap_or(0),
@@ -712,7 +727,7 @@ impl CompactionCoordinator {
         &self,
         collection_id: &str,
         task_id: &str,
-        result: &Result<CompactionResult>,
+        result: &Result<WalCompactionResult>,
     ) {
         // Remove from active compactions
         {
@@ -773,7 +788,7 @@ impl CompactionCoordinator {
     }
 
     /// Get compaction statistics
-    pub async fn get_stats(&self) -> CompactionStats {
+    pub async fn get_stats(&self) -> WalCompactionStats {
         self.stats.read().await.clone()
     }
 
@@ -791,7 +806,7 @@ impl CompactionCoordinator {
         &self,
         collection_id: &str,
         engine_type: Option<&str>,
-    ) -> Result<CompactionResult> {
+    ) -> Result<WalCompactionResult> {
         let engine = engine_type;
 
         info!(
@@ -804,7 +819,10 @@ impl CompactionCoordinator {
     }
 
     /// Check collection compaction status and trigger if needed
-    pub async fn check_and_compact(&self, collection_id: &str) -> Result<Option<CompactionResult>> {
+    pub async fn check_and_compact(
+        &self,
+        collection_id: &str,
+    ) -> Result<Option<WalCompactionResult>> {
         // Initialize collection state if not exists
         if self.get_collection_state(collection_id).await.is_none() {
             self.initialize_collection(collection_id, "VIPER").await?;
@@ -847,20 +865,6 @@ impl CompactionCoordinator {
     }
 }
 
-// 🔴 OBSOLETE - Consolidated into storage::traits::CompactionResult
-// This was an internal type only used for returning results from engine-specific
-// compaction methods. Now using the unified CompactionResult directly.
-/*
-/// Engine-specific compaction result (internal)
-#[derive(Debug, Clone)]
-struct EngineCompactionResult {
-    pub files_compacted: u64,
-    pub bytes_reclaimed: u64,
-    pub deleted_vector_ids: Vec<String>,
-    pub merged_vectors: Vec<VectorRecord>,
-}
-*/
-
 /// Trait for compaction coordination callbacks
 #[async_trait]
 pub trait CompactionCoordinatorCallbacks {
@@ -871,7 +875,7 @@ pub trait CompactionCoordinatorCallbacks {
     async fn on_compaction_complete(
         &self,
         collection_id: &str,
-        result: &CompactionResult,
+        result: &WalCompactionResult,
     ) -> Result<()>;
 
     /// Called on compaction failure
@@ -891,7 +895,7 @@ mod tests {
 
     #[test]
     fn test_compaction_config() {
-        let config = CompactionConfig::default();
+        let config = WalCompactionConfig::default();
         assert_eq!(config.max_files_before_compaction, 5); // Changed from 10 to 5 to match actual default
         assert_eq!(config.max_size_before_compaction, 100 * 1024 * 1024);
         assert_eq!(config.max_flushes_before_compaction, 5);

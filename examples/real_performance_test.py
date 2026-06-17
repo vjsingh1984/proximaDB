@@ -9,11 +9,10 @@ import time
 import concurrent.futures
 import statistics
 import sys
-from proximadb import connect_rest, connect_grpc
-from proximadb.models import (
-    CollectionConfig, 
-    VectorRecord, 
-    StorageEngine
+from proximadb_sdk import connect_rest, connect_grpc
+from proximadb_sdk.models import (
+    CollectionConfig,
+    StorageEngine,
 )
 
 def print_section(title):
@@ -27,14 +26,15 @@ def measure_insert_performance(client, collection_id, dimension=128, total_vecto
     print(f"\nMeasuring insert performance ({total_vectors} vectors)...")
     
     # Generate test data
-    vectors = []
+    records = []
     for i in range(total_vectors):
-        vec = VectorRecord(
-            id=f"vec_{i}",
-            vector=np.random.rand(dimension).tolist(),
-            metadata={"index": i, "type": "test"}
+        records.append(
+            {
+                "id": f"vec_{i}",
+                "vector": np.random.rand(dimension).tolist(),
+                "props": {"index": i, "type": "test"},
+            }
         )
-        vectors.append(vec)
     
     # Test different batch sizes
     batch_sizes = [10, 50, 100, 500]
@@ -44,16 +44,16 @@ def measure_insert_performance(client, collection_id, dimension=128, total_vecto
         if batch_size > total_vectors:
             continue
             
-        batch = vectors[:batch_size]
+        batch = records[:batch_size]
         
         # Warm up
-        client.insert_vectors(collection_id, batch[:5])
+        client.insert_records(collection_id, batch[:5])
         
         # Measure
         times = []
         for _ in range(5):  # 5 iterations for average
             start = time.time()
-            client.insert_vectors(collection_id, batch)
+            client.insert_records(collection_id, batch)
             elapsed = time.time() - start
             times.append(elapsed)
         
@@ -178,18 +178,18 @@ def test_viper_rest():
         client.delete_collection(collection_id)
         client.close()
 
-def test_lsm_rest():
-    """Test LSM engine with REST protocol"""
-    print_section("LSM Engine + REST Protocol (REAL)")
+def test_sst_rest():
+    """Test SST engine with REST protocol"""
+    print_section("SST Engine + REST Protocol (REAL)")
     
     client = connect_rest("http://localhost:5678")
-    collection_id = f"lsm_rest_bench_{int(time.time())}"
+    collection_id = f"sst_rest_bench_{int(time.time())}"
     
     try:
         config = CollectionConfig(
             name=collection_id,
             dimension=128,
-            storage_engine=StorageEngine.LSM
+            storage_engine=StorageEngine.SST
         )
         client.create_collection(collection_id, config)
         
@@ -238,18 +238,18 @@ def test_viper_grpc():
         client.delete_collection(collection_id)
         client.close()
 
-def test_lsm_grpc():
-    """Test LSM engine with gRPC protocol"""
-    print_section("LSM Engine + gRPC Protocol (REAL)")
+def test_sst_grpc():
+    """Test SST engine with gRPC protocol"""
+    print_section("SST Engine + gRPC Protocol (REAL)")
     
     client = connect_grpc("grpc://localhost:5679")
-    collection_id = f"lsm_grpc_bench_{int(time.time())}"
+    collection_id = f"sst_grpc_bench_{int(time.time())}"
     
     try:
         config = CollectionConfig(
             name=collection_id,
             dimension=128,
-            storage_engine=StorageEngine.LSM
+            storage_engine=StorageEngine.SST
         )
         client.create_collection(collection_id, config)
         
@@ -288,18 +288,18 @@ def test_sql_performance():
         print("Inserting test data for SQL queries...")
         vectors = []
         for i in range(1000):
-            vec = VectorRecord(
-                id=f"item_{i}",
-                vector=np.random.rand(128).tolist(),
-                metadata={
+            vec = {
+                "id": f"item_{i}",
+                "vector": np.random.rand(128).tolist(),
+                "props": {
                     "category": f"cat_{i % 10}",
                     "price": 10.0 + (i % 100),
                     "rating": 3.0 + (i % 3)
-                }
-            )
+                },
+            }
             vectors.append(vec)
         
-        client.insert_vectors(collection_id, vectors)
+        client.insert_records(collection_id, vectors)
         
         # Test SQL queries
         query_vector = np.random.rand(128).tolist()
@@ -356,9 +356,9 @@ def main():
     try:
         # Run all tests
         all_results['VIPER+REST'] = test_viper_rest()
-        all_results['LSM+REST'] = test_lsm_rest()
+        all_results['SST+REST'] = test_sst_rest()
         all_results['VIPER+gRPC'] = test_viper_grpc()
-        all_results['LSM+gRPC'] = test_lsm_grpc()
+        all_results['SST+gRPC'] = test_sst_grpc()
         
         # SQL performance
         test_sql_performance()

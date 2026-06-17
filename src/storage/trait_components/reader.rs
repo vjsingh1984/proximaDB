@@ -8,8 +8,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::core::search::results::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::StorageQueryContext;
+use proximadb_records::ProximaRecord;
 
 /// Read operations for storage engines
 ///
@@ -45,7 +45,7 @@ pub trait StorageReader: Send + Sync {
         collection_id: &str,
         base_path: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>>;
+    ) -> Result<Option<ProximaRecord>>;
 
     /// Execute unified vector search with engine-specific optimizations
     ///

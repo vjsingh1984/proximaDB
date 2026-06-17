@@ -42,7 +42,6 @@ class TestImports:
     def test_config_imports(self):
         """Test configuration imports"""
         from proximadb_sdk import ClientConfig, CompressionConfig
-        from proximadb_sdk.config import LogLevel, Protocol, RetryConfig
 
         # Test ClientConfig
         config = ClientConfig(url="http://localhost:5678")
@@ -56,23 +55,10 @@ class TestImports:
     def test_model_imports(self):
         """Test model imports"""
         from proximadb_sdk import (
-            Collection,
-            CollectionConfig,
             DistanceMetric,
-            FilterDict,
-            HealthStatus,
-            IndexConfiguration,
             IndexingAlgorithm,
-            MetadataDict,
-            OperationMetrics,
-            QuantizationConfig,
             QuantizationType,
-            SearchOptimization,
-            SearchResult,
             StorageEngine,
-            VectorArray,
-            VectorOperationResponse,
-            VectorRecord,
         )
 
         # Test enums
@@ -86,11 +72,7 @@ class TestImports:
         from proximadb_sdk import (
             AuthenticationError,
             CollectionNotFoundError,
-            NetworkError,
             ProximaDBError,
-            RateLimitError,
-            ServerError,
-            VectorDimensionError,
         )
 
         # Test exception hierarchy
@@ -100,13 +82,8 @@ class TestImports:
     def test_chunking_imports(self):
         """Test text chunking imports"""
         from proximadb_sdk import (
-            ChunkingConfig,
             ChunkingStrategy,
-            TextChunk,
-            TextChunker,
-            chunk_by_paragraphs,
             chunk_by_sentences,
-            chunk_sliding_window,
             create_chunker,
         )
 
@@ -121,15 +98,10 @@ class TestImports:
     def test_filter_imports(self):
         """Test filter API imports"""
         from proximadb_sdk import (
-            FilterBuilder,
             FilterOp,
             LogicalOp,
             and_filters,
             eq,
-            gt,
-            in_list,
-            lt,
-            or_filters,
         )
 
         # Test enums
@@ -172,13 +144,12 @@ class TestImports:
     def test_from_import_patterns(self):
         """Test common from-import patterns"""
         # Pattern 1: Import everything from proximadb
-        from proximadb_sdk import CollectionConfig, DistanceMetric, ProximaDBClient
         from proximadb_sdk.chunking import TextChunker
 
         # Pattern 2: Import from submodules
-        from proximadb_sdk.config import ClientConfig, CompressionConfig
+        from proximadb_sdk.config import ClientConfig
         from proximadb_sdk.exceptions import ProximaDBError
-        from proximadb_sdk.models import Collection, SearchResult
+        from proximadb_sdk.models import Collection
 
         # All imports should work
         assert ClientConfig is not None

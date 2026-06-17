@@ -9,7 +9,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::storage::engines::impls::tst::{
+use proximadb::storage::engines::tst::{
     ASOFJoin, DownsampleAggregation, DownsampleConfig, DownsampleInterval, OHLC, PartitionDuration,
     TimeSeriesConfig, TimeSeriesEngine,
 };

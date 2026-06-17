@@ -8,7 +8,6 @@ mod tests {
     use crate::metrics::updater::{
         MetricsUpdateService, OperationMetricsUpdate, SearchMetricsUpdate,
     };
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -18,7 +17,7 @@ mod tests {
         flush_coordinator::WALFlushCoordinator,
     };
     use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageFormat,
     };
     use anyhow::Result;
     use std::collections::HashMap;
@@ -49,7 +48,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl UnifiedStorageEngine for MockStorageEngineWithMetrics {
+    impl UnifiedStorageFormat for MockStorageEngineWithMetrics {
         fn engine_name(&self) -> &'static str {
             "mock_engine"
         }
@@ -125,8 +124,8 @@ mod tests {
             "integration-test-1.0"
         }
 
-        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-            crate::storage::traits::StorageEngineStrategy::Viper
+        fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+            crate::storage::traits::StorageFormatStrategy::Viper
         }
 
         async fn collect_engine_metrics(&self) -> Result<HashMap<String, serde_json::Value>> {
@@ -138,7 +137,7 @@ mod tests {
             _collection_id: &str,
             _base_path: &str,
             _vector_id: &str,
-        ) -> Result<Option<VectorRecord>> {
+        ) -> Result<Option<proximadb_records::ProximaRecord>> {
             Ok(None)
         }
 
@@ -168,7 +167,7 @@ mod tests {
     async fn create_test_metrics_components_with_cleanup(
         cleanup: bool,
     ) -> Result<(Arc<MetricsUpdateService>, Arc<MetricsPersistenceLayer>)> {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let config = MetricsConfig {
             enabled: true,
@@ -216,17 +215,19 @@ mod tests {
         }
     }
 
-    fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize) -> Vec<proximadb_records::ProximaRecord> {
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("integration_vector_{}", i),
-                vector: vec![0.1; 384],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            .map(|i| proximadb_records::ProximaRecord {
+                oid: format!("integration_vector_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim: 384,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 384]),
+                    ..Default::default()
+                }],
+                record_version: 1,
+                ..proximadb_records::ProximaRecord::default()
             })
             .collect()
     }
@@ -234,7 +235,7 @@ mod tests {
     #[tokio::test]
     async fn test_directvectorservice_metrics_integration() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: VectorOperationsService metrics integration (simulated)");
 
@@ -324,7 +325,7 @@ mod tests {
     #[tokio::test]
     async fn test_flushcoordinator_metrics_integration() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: FlushCoordinator metrics integration");
 
@@ -345,7 +346,9 @@ mod tests {
         let context = create_test_context(collection_id, StorageEngineType::Viper);
 
         // Execute coordinated flush with metrics
-        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(test_vectors);
+        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
+            test_vectors
+        );
 
         let flush_result = flush_coordinator
             .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))
@@ -404,7 +407,7 @@ mod tests {
     #[tokio::test]
     async fn test_backgroundmanager_metrics_integration() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: BackgroundManager metrics integration");
 
@@ -432,7 +435,7 @@ mod tests {
             let mut engines = HashMap::new();
             engines.insert(
                 "viper".to_string(),
-                mock_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                mock_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines
         }));
@@ -499,7 +502,7 @@ mod tests {
     #[tokio::test]
     async fn test_end_to_end_metrics_collection() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: End-to-end metrics collection across all components");
 
@@ -554,7 +557,9 @@ mod tests {
 
         // Step 2: Execute FlushCoordinator operation
         let test_vectors = create_test_vectors(25);
-        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(test_vectors);
+        let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
+            test_vectors
+        );
 
         let flush_result = flush_coordinator
             .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))
@@ -566,7 +571,7 @@ mod tests {
             let mut engines = HashMap::new();
             engines.insert(
                 "viper".to_string(),
-                mock_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                mock_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines
         }));
@@ -670,7 +675,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_collection_with_multiple_collections() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Metrics collection with multiple collections");
 
@@ -712,7 +717,9 @@ mod tests {
 
             // Execute flush for each collection
             let test_vectors = create_test_vectors(10 + (i * 5));
-            let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(test_vectors);
+            let flush_data = crate::storage::persistence::write_ahead_log::flush_coordinator::FlushDataSource::VectorRecords(
+                test_vectors
+            );
 
             flush_coordinator
                 .execute_coordinated_flush(collection_id, flush_data, None, Some(&context))
@@ -762,7 +769,7 @@ mod tests {
     #[tokio::test]
     async fn test_metrics_persistence_across_restarts() {
         // Initialize hardware capabilities for testing
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         debug!("🧪 TEST: Metrics persistence across component restarts");
 

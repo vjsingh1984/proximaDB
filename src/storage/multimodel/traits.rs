@@ -9,11 +9,11 @@ use std::sync::Arc;
 use crate::graph::engines::GraphEngine;
 use crate::storage::traits::{
     DocumentStorageOperations, MultiModelStats, ObservabilityStorageOperations,
-    UnifiedStorageEngine,
+    UnifiedStorageFormat,
 };
 
-/// Model type discriminator for routing operations — alias for the canonical StoreType
-pub type ModelType = crate::query::multimodel_router::StoreType;
+/// Model type discriminator for routing operations — alias for DataModel.
+pub type ModelType = proximadb_data_model::DataModel;
 
 /// Capabilities of a store
 #[derive(Debug, Clone)]
@@ -45,7 +45,7 @@ pub trait MultiModelStorageEngine: Send + Sync {
     // ======================
 
     /// Get the vector store for embedding operations
-    fn vector_store(&self) -> Option<Arc<dyn UnifiedStorageEngine>>;
+    fn vector_store(&self) -> Option<Arc<dyn UnifiedStorageFormat>>;
 
     /// Get the document store for JSON document operations
     fn document_store(&self) -> Option<Arc<dyn DocumentStorageOperations>>;
@@ -57,7 +57,7 @@ pub trait MultiModelStorageEngine: Send + Sync {
     fn observability_store(&self) -> Option<Arc<dyn ObservabilityStorageOperations>>;
 
     /// Get the RDBMS store for relational operations
-    fn rdbms_store(&self) -> Option<Arc<dyn UnifiedStorageEngine>>;
+    fn rdbms_store(&self) -> Option<Arc<dyn UnifiedStorageFormat>>;
 
     // ======================
     // Capabilities
@@ -100,11 +100,11 @@ pub trait MultiModelStorageEngine: Send + Sync {
 
 /// Builder for MultiModelStorageEngine
 pub struct MultiModelStorageEngineBuilder {
-    vector_store: Option<Arc<dyn UnifiedStorageEngine>>,
+    vector_store: Option<Arc<dyn UnifiedStorageFormat>>,
     document_store: Option<Arc<dyn DocumentStorageOperations>>,
     graph_store: Option<Arc<dyn GraphEngine>>,
     observability_store: Option<Arc<dyn ObservabilityStorageOperations>>,
-    rdbms_store: Option<Arc<dyn UnifiedStorageEngine>>,
+    rdbms_store: Option<Arc<dyn UnifiedStorageFormat>>,
 }
 
 impl MultiModelStorageEngineBuilder {
@@ -120,7 +120,7 @@ impl MultiModelStorageEngineBuilder {
     }
 
     /// Set the vector store
-    pub fn with_vector_store(mut self, store: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_vector_store(mut self, store: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.vector_store = Some(store);
         self
     }
@@ -147,7 +147,7 @@ impl MultiModelStorageEngineBuilder {
     }
 
     /// Set the RDBMS store
-    pub fn with_rdbms_store(mut self, store: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_rdbms_store(mut self, store: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.rdbms_store = Some(store);
         self
     }
@@ -172,11 +172,11 @@ impl Default for MultiModelStorageEngineBuilder {
 
 /// Configuration for multi-model storage
 pub struct MultiModelStorageConfig {
-    pub vector_store: Option<Arc<dyn UnifiedStorageEngine>>,
+    pub vector_store: Option<Arc<dyn UnifiedStorageFormat>>,
     pub document_store: Option<Arc<dyn DocumentStorageOperations>>,
     pub graph_store: Option<Arc<dyn GraphEngine>>,
     pub observability_store: Option<Arc<dyn ObservabilityStorageOperations>>,
-    pub rdbms_store: Option<Arc<dyn UnifiedStorageEngine>>,
+    pub rdbms_store: Option<Arc<dyn UnifiedStorageFormat>>,
 }
 
 #[cfg(test)]
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_model_type_is_data_model() {
-        // ModelType and DataModel are now both aliases for StoreType
+        // ModelType and DataModel share the canonical data-model enum.
         let mt: ModelType = ModelType::Vector;
         let dm: DataModel = mt; // zero-cost: same type
         assert_eq!(dm, DataModel::Vector);

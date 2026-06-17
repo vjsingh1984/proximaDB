@@ -2,10 +2,19 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: December 2025
+:last-updated: 2026-05-28
 
 [.lead]
-**Vision-aligned roadmap with phase-based organization and feature tracking**
+**Historical roadmap prose. Release status lives elsewhere.**
+
+[WARNING]
+====
+This file is historical roadmap material. It does not describe the v0.2 release surface.
+For the v0.2 support contract use link:../../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`]
+and link:../status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release Readiness
+Reconciliation — 2026-05-28]. Phase-completion counts and "MVP %" claims on this page predate the
+honesty refresh and must not be used in release notes or marketing.
+====
 
 == Key Documents
 
@@ -13,21 +22,25 @@
 | Document | Purpose | Status
 
 | link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] | **Start here** - Vision-aligned phase planning | ✅ Authoritative
-| link:MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] | All 135 features with status by phase | ✅ Current
-| link:CURRENT_ROADMAP.adoc[Current Roadmap] | Quarterly focus areas | ✅ Current
+| link:MASTER_FEATURE_DASHBOARD.adoc[Feature Dashboard] | 143-feature implementation inventory; support tier is governed by `docs/SUPPORTED_SURFACE.adoc` | 🔄 Partially reconciled
+| link:LOW_LATENCY_OPERATIONAL_QUERIES_SPEC.adoc[Operational Queries Spec] | Low-latency SQL query engine specification | 📅 New (2025-04-07)
+| link:operational_queries_implementation_guide.adoc[Operational Queries Implementation] | Detailed implementation guide and code examples | 📅 New (2025-04-07)
+| link:operational_queries_competitive_analysis.adoc[Operational Queries Competitive Analysis] | Market analysis and positioning strategy | 📅 New (2025-04-07)
+| link:implementation/CURRENT_ROADMAP.adoc[Current Roadmap] | Historical/current-quarter implementation notes | ⚠️ Secondary
 | link:../DOCUMENTATION_STATUS.adoc[Documentation Status] | All docs with phase and status | ✅ Current
 |===
 
 == Vision Phase Alignment
 
-Features are organized into three phases from the link:../../concepts/vision.adoc[Vision Document]:
+Features were originally organized into three phases from the link:../../concepts/vision.adoc[Vision Document].
+The current canonical sequencing is in link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap].
 
 |===
 | Phase | Focus | Status | Features
 
 | **Phase 1** | Format & Catalog Contract (MVP) | ✅ Complete | 40 features
 | **Phase 2** | Cross-Model Query & Indexing | ✅ Complete | 43 features
-| **Phase 3** | Ecosystem Integration | 🔄 In Progress | 42 features
+| **Phase 3** | Ecosystem Integration | ✅ Complete (market entry) | 42 features
 |===
 
 == Status Overview
@@ -52,14 +65,13 @@ Features are organized into three phases from the link:../../concepts/vision.ado
 * ✅ Cross-model LATERAL joins
 * ✅ Multi-modal search with reranking
 
-=== Phase 3: Ecosystem Integration (Scale) 🔄
+=== Phase 3: Ecosystem Integration (Scale) ✅
 
-* 🔄 PULSAR/QUASAR distributed graph engines
-* 🔄 External catalog integration (Iceberg, Delta Lake, Glue)
-* 📅 Streaming infrastructure
-* 📅 CDC connectors
-* 📅 Multi-language SDKs (Go, Java, Node.js)
-* 📅 Trino/Spark compute adapters
+* ⚠️ PULSAR/QUASAR distributed/tiered graph engines remain experimental.
+* ✅ External catalog integration foundations exist (Iceberg, Delta Lake, Glue, Unity, Polaris).
+* ✅ Streaming and CDC foundations exist; packaging/API maturity follows `docs/SUPPORTED_SURFACE.adoc`.
+* ⚠️ Multi-language SDK surface is mixed: Python/Rust/Go exist, embedded bindings exist for Java/Node.js, and several standalone SDKs remain planned.
+* 📅 Trino/Spark compute adapters remain future work.
 
 == Directory Structure
 
@@ -94,7 +106,7 @@ roadmap/
 |===
 | Symbol | Meaning
 
-| ✅ | Complete - Production ready
+| ✅ | Complete - implemented or closed; check `docs/SUPPORTED_SURFACE.adoc` for production support tier
 | 🔄 | In Progress - Active development
 | 📅 | Planned - Scheduled for future phase
 | 💡 | Nice to Have - Optional/opportunistic
@@ -104,15 +116,16 @@ roadmap/
 
 == MVP Definition
 
-ProximaDB v1.0 MVP includes all Phase 1 and Phase 2 features:
-
-* **96% complete** (80 of 83 MVP features)
-* All storage engines, indexes, quantization
-* Full cross-model query support
-* Graph, document, observability stores
-* Python SDK
-
-Phase 3 features are post-MVP enhancements.
+[NOTE]
+====
+**Superseded.** The phase-counts here are historical implementation breadth, not the v0.2 release
+contract. The v0.2 MVP is a **narrow single-node release** covering canonical REST/gRPC v2 record
+CRUD, vector search, typed filters, and core WAL-backed writes; hybrid/document/graph/observability,
+pgwire/federated SQL, and object-economy/filtered-ANN routes are **Beta**; distributed cluster
+execution, PULSAR/QUASAR production claims, full SQL parity, external-table execution, and
+conditional/filter writes are **Experimental** or deferred. See
+link:../../SUPPORTED_SURFACE.adoc[`docs/SUPPORTED_SURFACE.adoc`] for the authoritative split.
+====
 
 == Quick Navigation
 

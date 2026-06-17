@@ -8,6 +8,15 @@
 // - Condorcet
 // - Dempster-Shafer
 // - Adaptive
+// - Projection Fusion B5 (arXiv:2604.13728)
+//
+// The `fusion_rrf_vs_projection` group is the head-to-head comparison referenced
+// in TD-044: it measures the latency tradeoff between the relevance-default RRF
+// (paper-reported nDCG@10 = 0.828 on TREC-COVID, the best of 6 configs) and the
+// Projection variant B5 (paper-reported as faster with greater diversity, but
+// not a relevance upgrade). Use this to validate the speed/diversity tradeoff
+// claim on synthetic data before running the full quality benchmark on a
+// labeled IR dataset.
 
 use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
 use proximadb::core::search::hybrid::{
@@ -266,6 +275,75 @@ fn bench_adaptive(c: &mut Criterion) {
     group.finish();
 }
 
+fn bench_projection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fusion_projection");
+
+    for size in [10, 50, 100, 500, 1000].iter() {
+        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
+            let engine = HybridFusionEngine::new(FusionStrategy::Projection { alpha: 0.5 });
+            let bm25_results = create_test_bm25_results(size);
+            let vector_results = create_test_vector_results(size);
+
+            b.iter(|| {
+                black_box(
+                    engine
+                        .fuse(
+                            black_box(bm25_results.clone()),
+                            black_box(vector_results.clone()),
+                        )
+                        .unwrap(),
+                )
+            });
+        });
+    }
+
+    group.finish();
+}
+
+/// Head-to-head latency comparison: RRF vs Projection on identical inputs.
+///
+/// Each iteration fuses the same BM25 + vector result sets with both strategies
+/// so the relative cost is comparable directly. Report goes in TD-044 closure.
+fn bench_rrf_vs_projection(c: &mut Criterion) {
+    let mut group = c.benchmark_group("fusion_rrf_vs_projection");
+
+    for size in [50, 100, 500, 1000].iter() {
+        let bm25_results = create_test_bm25_results(*size);
+        let vector_results = create_test_vector_results(*size);
+
+        let rrf_engine = HybridFusionEngine::new(FusionStrategy::ReciprocalRank { k: 60 });
+        let proj_engine = HybridFusionEngine::new(FusionStrategy::Projection { alpha: 0.5 });
+
+        group.bench_with_input(BenchmarkId::new("rrf", size), size, |b, _| {
+            b.iter(|| {
+                black_box(
+                    rrf_engine
+                        .fuse(
+                            black_box(bm25_results.clone()),
+                            black_box(vector_results.clone()),
+                        )
+                        .unwrap(),
+                )
+            });
+        });
+
+        group.bench_with_input(BenchmarkId::new("projection", size), size, |b, _| {
+            b.iter(|| {
+                black_box(
+                    proj_engine
+                        .fuse(
+                            black_box(bm25_results.clone()),
+                            black_box(vector_results.clone()),
+                        )
+                        .unwrap(),
+                )
+            });
+        });
+    }
+
+    group.finish();
+}
+
 fn bench_overlap_scenarios(c: &mut Criterion) {
     let mut group = c.benchmark_group("fusion_overlap_scenarios");
 
@@ -349,6 +427,8 @@ criterion_group!(
     bench_condorcet,
     bench_dempster_shafer,
     bench_adaptive,
+    bench_projection,
+    bench_rrf_vs_projection,
     bench_overlap_scenarios,
 );
 

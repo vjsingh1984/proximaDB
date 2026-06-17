@@ -12,15 +12,12 @@ This test checks that:
 # To run this script, set PYTHONPATH to include the src directory:
 # PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src python tests/test_unified_client.py
 
-import pytest
 
 from proximadb_sdk import (
     CollectionConfig,
-    DistanceMetric,
     IndexingAlgorithm,
     Protocol,
     ProximaDBClient,
-    ProximaDBError,
     StorageEngine,
     VectorRecord,
 )

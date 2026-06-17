@@ -7,19 +7,21 @@ pub mod filter_pushdown_engine;
 pub mod hybrid;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
+pub mod merge;
 pub mod metadata_filter_pushdown;
 pub mod multi_tier_deduplication;
 pub mod mvcc_resolution;
 pub mod progressive_quantization;
+pub mod progressive_search_pipeline;
 pub mod queries;
 pub mod query_preprocessing;
+pub mod rank;
 pub mod results;
+pub mod search_interface;
 pub mod smart_execution_strategy;
 pub mod sql_value_filter;
 pub mod strategies;
 pub mod typesafe_filter;
-pub mod unified_interface;
-pub mod unified_progressive_pipeline;
 
 #[cfg(test)]
 mod early_termination_tests;
@@ -27,6 +29,8 @@ mod early_termination_tests;
 mod optimization_tests;
 
 use std::collections::HashMap;
+
+pub use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 
 /// Custom recall rates for progressive search stages
 #[derive(Debug, Clone)]
@@ -45,8 +49,15 @@ pub struct ProgressiveRecalls {
 /// approximate search (faster but potentially lower recall).
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, Default)]
 pub enum SearchMode {
-    /// Exact search with 100% recall - searches all partitions (current default behavior)
-    /// This is the safest option for accuracy-critical applications.
+    /// Exact search with 100% recall — searches all partitions and
+    /// **disables block-level centroid pruning** at request time
+    /// (since 2026-05-30: `SstEngine::fallback_to_direct_search`
+    /// auto-sets `BlockPruneConfig::force_exact = true` when
+    /// `SearchMode::Exact` is requested, even if the caller's
+    /// `block_prune` config didn't explicitly opt in).
+    ///
+    /// Use this for accuracy-critical applications where the
+    /// performance cost of a full block scan is acceptable.
     #[default]
     Exact,
 
@@ -66,6 +77,136 @@ pub enum SearchMode {
         /// Vector count threshold above which approximate search is used
         threshold: usize,
     },
+}
+
+/// Vector search freshness mode controlling the consistency/cost trade-off
+/// for routes that read from a per-collection
+/// [`VectorObjectEconomyDirectory`](crate::storage::engines::sst::object_economy_directory::VectorObjectEconomyDirectory).
+///
+/// The directory has a `freshness_watermark_lsn` advertised by the
+/// writer/compactor. The search path uses this enum to decide whether to
+/// merge unflushed WAL/memtable records committed after that watermark:
+///
+/// * [`VectorFreshnessMode::Strong`] (default) — always merge the WAL
+///   delta so a write acknowledged by the canonical WAL is visible to a
+///   following search, including tombstones. Matches turbopuffer's
+///   default strong-consistency behaviour.
+/// * [`VectorFreshnessMode::BoundedStale`] — accept up to
+///   `max_staleness_ms` of staleness. Merge the delta only when the
+///   directory watermark is older than the bound.
+/// * [`VectorFreshnessMode::StaleOk`] — skip the WAL delta entirely.
+///   Cheapest read, may miss recent writes. EXPLAIN must surface this
+///   choice plus the directory watermark so callers can audit.
+#[derive(Debug, Default, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "mode", rename_all = "snake_case")]
+pub enum VectorFreshnessMode {
+    /// Default: WAL/memtable delta is always merged.
+    #[default]
+    Strong,
+    /// Accept directory state up to `max_staleness_ms` old before merging.
+    BoundedStale {
+        /// Maximum acceptable staleness in milliseconds.
+        max_staleness_ms: u64,
+    },
+    /// Skip the WAL delta read entirely.
+    StaleOk,
+}
+
+impl VectorFreshnessMode {
+    /// True when the search path MUST merge the WAL/memtable delta for
+    /// this mode (i.e. `Strong`, or `BoundedStale` whose bound has been
+    /// exceeded — the bound check is the caller's responsibility).
+    pub fn requires_delta_merge(&self) -> bool {
+        !matches!(self, Self::StaleOk)
+    }
+
+    /// Stable lowercase mode name used in EXPLAIN payloads and trace
+    /// fields. Kept separate from the `Display` impl so external surfaces
+    /// don't accidentally pin on the human-readable form.
+    pub fn explain_label(&self) -> &'static str {
+        match self {
+            Self::Strong => "strong",
+            Self::BoundedStale { .. } => "bounded_stale",
+            Self::StaleOk => "stale_ok",
+        }
+    }
+
+    /// Decide whether the search path should scan the WAL/memtable
+    /// delta for records committed after the directory watermark.
+    ///
+    /// LSN-only variant: equivalent to
+    /// [`Self::should_scan_delta_with_time`] with `watermark_ns = 0` and
+    /// `now_ns = 0`. For `BoundedStale` this conservatively treats
+    /// the time bound as "unknown" → scan when newer. Use the
+    /// `_with_time` variant when the directory's `freshness_watermark_ns`
+    /// and wall-clock are available so `BoundedStale` can actually skip
+    /// the scan within its bound.
+    ///
+    /// Pure function — no I/O, no allocation, fully unit-testable.
+    pub fn should_scan_delta(&self, current_lsn: u64, watermark_lsn: u64) -> bool {
+        self.should_scan_delta_with_time(current_lsn, watermark_lsn, 0, 0)
+    }
+
+    /// Decide whether to scan, with the directory's `freshness_watermark_ns`
+    /// and the current wall-clock available. Rules:
+    ///
+    /// * `StaleOk` → false (cheapest read; never scans).
+    /// * `Strong` → true iff `current_lsn > watermark_lsn`. Time inputs
+    ///   are ignored.
+    /// * `BoundedStale { max_staleness_ms }`:
+    ///   1. If `current_lsn <= watermark_lsn`, there's nothing newer to
+    ///      merge → false (regardless of bound).
+    ///   2. Else, if `watermark_ns` and `now_ns` are both positive and
+    ///      `(now_ns - watermark_ns) / 1_000_000 < max_staleness_ms`,
+    ///      the directory is fresher than the caller's bound → false
+    ///      (accept stale read).
+    ///   3. Otherwise → true (catch up via WAL scan).
+    ///
+    /// When `watermark_ns == 0` or `now_ns == 0` the bound check is
+    /// skipped — treat as "time unknown," conservatively scan. This
+    /// matches the writer's current placeholder of emitting
+    /// `freshness_watermark_ns = 0` when no real timestamp source is
+    /// wired.
+    ///
+    /// Pure function — no I/O, no allocation, fully unit-testable.
+    pub fn should_scan_delta_with_time(
+        &self,
+        current_lsn: u64,
+        watermark_lsn: u64,
+        watermark_ns: i64,
+        now_ns: i64,
+    ) -> bool {
+        if matches!(self, Self::StaleOk) {
+            return false;
+        }
+        // When `current_lsn == 0` the global manifest's LSN allocator has not
+        // been advanced. This happens when the WAL writer path adds records
+        // to the memtable without going through `manifest::append_*` (the
+        // current v2 INSERT path in `write_vector_batch_native_arc_with_mode`).
+        // In that case LSN-based gating would silently hide unflushed records
+        // from search: `0 <= watermark_lsn` is true for any watermark, so the
+        // delta scan would be skipped even when memtable has data.
+        //
+        // Treat `current_lsn == 0` as "tracking unavailable" and fall through
+        // to scan — the memtable lookup is cheap when empty. Only short-circuit
+        // when we have evidence the watermark already covers the WAL.
+        // Reconciled 2026-05-28 with the v2 INSERT→SEARCH gap.
+        if current_lsn > 0 && current_lsn <= watermark_lsn {
+            return false;
+        }
+        if let Self::BoundedStale { max_staleness_ms } = self {
+            // Both timestamps must be valid for the bound check to be
+            // meaningful. When the writer hasn't wired a real ns source
+            // yet (watermark_ns == 0), conservatively scan.
+            if watermark_ns > 0 && now_ns >= watermark_ns {
+                let age_ms = ((now_ns - watermark_ns) / 1_000_000) as u64;
+                if age_ms < *max_staleness_ms {
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 /// Hybrid search mode controlling how BM25 text and vector results are combined
@@ -130,9 +271,19 @@ impl SearchMode {
     }
 }
 
+/// Backward-compatibility alias for [`UnifiedSearchParams`].
+///
+/// Use [`UnifiedSearchParams`] in new code — this alias exists to keep
+/// pre-disambiguation imports (`use crate::core::search::SearchParams`)
+/// working during the migration window. Other SearchParams structs in
+/// this codebase (`RpcSearchParams`, `NetworkSearchParams`,
+/// `ComputeSearchParams`, `AnnBenchSearchParams`) are independent types
+/// with different fields and are not aliased.
+pub type SearchParams = UnifiedSearchParams;
+
 /// Unified search parameters for all storage engines
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct SearchParams {
+pub struct UnifiedSearchParams {
     // Core search parameters
     /// Query vectors for similarity search (supports single or batch search)
     pub query_vectors: Option<Vec<Vec<f32>>>,
@@ -187,13 +338,20 @@ pub struct SearchParams {
 
     /// Runtime optimization hints for search strategy selection
     #[serde(skip)]
-    pub runtime_hints: Option<crate::query::unified_query_optimizer::FilterOptimizationHints>,
+    pub runtime_hints: Option<crate::query::query_optimizer::FilterOptimizationHints>,
 
     /// Hint to enable/disable metadata filtering optimization
     pub enable_metadata_filtering_hint: Option<bool>,
 
     /// Custom optimization parameters
     pub custom_hints: Option<HashMap<String, serde_json::Value>>,
+
+    /// Vector Object Economy freshness mode. `None` means "use the
+    /// service-layer default", which is currently
+    /// [`VectorFreshnessMode::Strong`] — every search merges the WAL
+    /// delta to honor canonical-WAL durability. Callers opt out
+    /// explicitly via `Some(BoundedStale {..} | StaleOk)`.
+    pub freshness_mode: Option<VectorFreshnessMode>,
 
     /// Internal: Indicates if the query requires ordering (e.g., gRPC/REST always true, SQL with ORDER BY true)
     pub requires_ordering: Option<bool>,
@@ -231,9 +389,40 @@ pub struct SearchParams {
 }
 
 /// Configuration for block-level centroid pruning.
+///
+/// # Recall vs latency trade-off
+///
+/// Block-centroid pruning scans only a subset of SSTable blocks based
+/// on each block's centroid distance to the query. This is fast
+/// (constant work regardless of N) but assumes blocks are spatially
+/// organized — records inside a block share spatial locality, and
+/// the centroid is a meaningful "summary" of the block.
+///
+/// **Current ProximaDB block layout** is sorted by record `oid`
+/// (lexicographic), not by spatial Z-order. Block centroids are
+/// statistical mixtures of unrelated records, not true cluster
+/// centers. Empirically this gives **~5% recall at 100K with the
+/// default Sqrt mode** vs a true brute-force scan — measurable via
+/// `bench_warm_path_profile`'s `flat_default_vs_force_exact` shadow
+/// metric. This is a known limitation pending a write-time Z-order
+/// sort (see roadmap TD-xxx).
+///
+/// # When to use each setting
+///
+/// | Use case | Setting |
+/// |---|---|
+/// | Customer asked for exact results | `force_exact = true` (or use `SearchMode::Exact`, which auto-sets this since 2026-05-30) |
+/// | Need >0.9 recall on a large collection | Use the AXIS index path (HNSW or IVF) instead of flat. Flat with default pruning gives low absolute recall on diffuse data. |
+/// | Need fast approximate scan with no AXIS | Keep `force_exact: false` and accept the recall floor (~5-50% depending on data layout) |
+/// | Tests / micro-benchmarks | `force_exact: true` for deterministic ground truth |
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BlockPruneConfig {
     /// Disable all block-level pruning (force brute-force scan).
+    ///
+    /// **Auto-set to `true` when `SearchMode::Exact` is requested**
+    /// (since 2026-05-30) — see `SstEngine::fallback_to_direct_search`.
+    /// Before that change, `SearchMode::Exact` silently allowed
+    /// sqrt-mode centroid pruning to drop recall to 5% at scale.
     pub force_exact: bool,
     /// Pruning mode: "sqrt" (default), "ratio", or "fixed".
     pub mode: BlockPruneMode,
@@ -287,7 +476,7 @@ pub enum BlockPruneMode {
     Fixed(usize),
 }
 
-impl Default for SearchParams {
+impl Default for UnifiedSearchParams {
     fn default() -> Self {
         Self {
             query_vectors: None,
@@ -318,11 +507,20 @@ impl Default for SearchParams {
             text_query: None,
             hybrid_mode: HybridSearchMode::default(),
             vector_weight: None,
+            freshness_mode: None,
         }
     }
 }
 
-impl SearchParams {
+impl UnifiedSearchParams {
+    /// Return the freshness mode the search path should honor for this
+    /// request. Unset → [`VectorFreshnessMode::Strong`] (the safe
+    /// default). The accessor exists so service-layer callers do not
+    /// have to repeat the unwrap-or-default at every read site.
+    pub fn effective_freshness_mode(&self) -> VectorFreshnessMode {
+        self.freshness_mode.clone().unwrap_or_default()
+    }
+
     /// Create search params for a single vector query
     pub fn single_vector(query_vector: Vec<f32>) -> Self {
         Self {
@@ -383,61 +581,6 @@ impl SearchParams {
     }
 }
 
-/// Complex filter expression for advanced metadata filtering
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum FilterExpression {
-    /// Single comparison operation
-    Comparison {
-        /// Metadata field name to compare
-        field: String,
-        /// Comparison operator to apply
-        operator: ComparisonOperator,
-        /// Value to compare against
-        value: serde_json::Value,
-    },
-    /// Logical AND of multiple expressions
-    And(Vec<FilterExpression>),
-    /// Logical OR of multiple expressions
-    Or(Vec<FilterExpression>),
-    /// Logical NOT of an expression
-    Not(Box<FilterExpression>),
-}
-
-/// Comparison operators for metadata filtering
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ComparisonOperator {
-    /// Equal to
-    Equals,
-    /// Not equal to
-    NotEquals,
-    /// Greater than
-    GreaterThan,
-    /// Greater than or equal to
-    GreaterThanOrEqual,
-    /// Less than
-    LessThan,
-    /// Less than or equal to
-    LessThanOrEqual,
-    /// Value is in the provided list
-    In,
-    /// Value is not in the provided list
-    NotIn,
-    /// String contains substring
-    Contains,
-    /// String starts with prefix
-    StartsWith,
-    /// String ends with suffix
-    EndsWith,
-    /// Value is between two bounds (inclusive)
-    Between,
-    /// Value is null
-    IsNull,
-    /// Value is not null
-    IsNotNull,
-    /// SQL-style LIKE pattern matching (supports % and _ wildcards)
-    Like,
-}
-
 // Re-export main types
 pub use multi_tier_deduplication::{
     DataFreshnessTier, DeduplicationStats, DeduplicationStorageEngine, MetadataFilter,
@@ -451,7 +594,7 @@ pub use results::{
 // NOTE: Proto types (SearchResult, SearchVectorRecord) should NOT be re-exported here.
 // They belong in the API layer only. Services should use OptimizedSearchRecord
 // and convert to proto types at the API boundary.
-pub use unified_interface::{
+pub use search_interface::{
     CollectionConfig, ColumnData, FilterableColumn, IntegratedSearchOptimizer, OptimizationHint,
     SearchPlan, StorageInfo, UnifiedSearchEngine,
 };
@@ -1241,9 +1384,217 @@ pub mod filter_extraction {
 mod tests {
     use super::*;
 
+    // ── VectorFreshnessMode (Phase 5, Slice 5.1) ────────────────────────
+
+    #[test]
+    fn vector_freshness_mode_defaults_to_strong() {
+        assert_eq!(VectorFreshnessMode::default(), VectorFreshnessMode::Strong);
+    }
+
+    #[test]
+    fn unified_search_params_default_freshness_is_strong() {
+        let params = UnifiedSearchParams::default();
+        // Field unset on default — the safe default is provided by the accessor.
+        assert!(params.freshness_mode.is_none());
+        assert_eq!(
+            params.effective_freshness_mode(),
+            VectorFreshnessMode::Strong
+        );
+    }
+
+    #[test]
+    fn vector_freshness_mode_strong_requires_delta_merge() {
+        assert!(VectorFreshnessMode::Strong.requires_delta_merge());
+        assert!(
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 5_000,
+            }
+            .requires_delta_merge()
+        );
+        assert!(!VectorFreshnessMode::StaleOk.requires_delta_merge());
+    }
+
+    #[test]
+    fn vector_freshness_mode_explain_label_is_stable() {
+        assert_eq!(VectorFreshnessMode::Strong.explain_label(), "strong");
+        assert_eq!(
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000,
+            }
+            .explain_label(),
+            "bounded_stale"
+        );
+        assert_eq!(VectorFreshnessMode::StaleOk.explain_label(), "stale_ok");
+    }
+
+    #[test]
+    fn vector_freshness_mode_round_trips_through_json() {
+        for mode in [
+            VectorFreshnessMode::Strong,
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 2_500,
+            },
+            VectorFreshnessMode::StaleOk,
+        ] {
+            let json = serde_json::to_string(&mode).expect("serialize");
+            let decoded: VectorFreshnessMode = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(decoded, mode);
+        }
+    }
+
+    // ── should_scan_delta decision logic (Slice 5.3) ─────────────────────
+
+    #[test]
+    fn should_scan_delta_skips_for_stale_ok_regardless_of_lsns() {
+        // StaleOk MUST never trigger a scan, even when the WAL has
+        // newer data than the directory watermark.
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(/*now*/ 100, /*wm*/ 10));
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(0, 0));
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(u64::MAX, 0));
+    }
+
+    #[test]
+    fn should_scan_delta_skips_strong_when_watermark_matches_or_exceeds_lsn() {
+        // Watermark already covers all committed writes — nothing to merge.
+        assert!(!VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 50, /*wm*/ 50));
+        assert!(!VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 50, /*wm*/ 60));
+    }
+
+    #[test]
+    fn should_scan_delta_triggers_strong_when_wal_has_newer_records() {
+        assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 100, /*wm*/ 50));
+        assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 1, /*wm*/ 0));
+    }
+
+    #[test]
+    fn should_scan_delta_scans_strong_when_lsn_tracking_is_zero() {
+        // Reconciled 2026-05-28: when `current_lsn == 0` the global manifest
+        // LSN allocator hasn't been advanced (e.g. v2 INSERT path skips the
+        // manifest::append_* call). Returning false here would silently
+        // hide memtable records from search. Strong/BoundedStale must scan;
+        // StaleOk continues to skip.
+        assert!(VectorFreshnessMode::Strong.should_scan_delta(/*now*/ 0, /*wm*/ 0));
+        assert!(
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 5_000,
+            }
+            .should_scan_delta(0, 0)
+        );
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta(0, 0));
+    }
+
+    #[test]
+    fn should_scan_delta_treats_bounded_stale_like_strong_when_ns_unset() {
+        // LSN-only entry point passes ns=0/0 → bound check is skipped,
+        // BoundedStale falls back to Strong's behaviour.
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(mode.should_scan_delta(100, 50));
+        assert!(!mode.should_scan_delta(50, 50));
+    }
+
+    // ── Slice 5.10 — should_scan_delta_with_time (BoundedStale bound) ────
+
+    const MS_NS: i64 = 1_000_000;
+
+    #[test]
+    fn time_bound_stale_ok_always_skips_regardless_of_lsn_or_time() {
+        let now = 10_000 * MS_NS;
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta_with_time(100, 50, 0, now));
+        assert!(!VectorFreshnessMode::StaleOk.should_scan_delta_with_time(100, 50, now - 1, now));
+    }
+
+    #[test]
+    fn time_bound_strong_ignores_time_and_uses_lsn_only() {
+        // Even when the watermark is very recent, Strong still scans
+        // when the WAL has newer LSNs.
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 100 * MS_NS; // 100ms ago — very fresh
+        assert!(VectorFreshnessMode::Strong.should_scan_delta_with_time(
+            100,
+            50,
+            watermark_ns,
+            now
+        ));
+        // And skips when LSN already covers (independent of time).
+        assert!(!VectorFreshnessMode::Strong.should_scan_delta_with_time(
+            50,
+            50,
+            watermark_ns,
+            now
+        ));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_skips_within_bound() {
+        // Watermark 2s ago, bound 5s → within bound, skip scan.
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 2_000 * MS_NS;
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(!mode.should_scan_delta_with_time(100, 50, watermark_ns, now));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_scans_beyond_bound() {
+        // Watermark 10s ago, bound 5s → beyond bound, scan.
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 10_000 * MS_NS;
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(mode.should_scan_delta_with_time(100, 50, watermark_ns, now));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_skips_when_lsn_already_covers_regardless_of_age() {
+        // LSN already covers — no scan needed even if the directory is
+        // ancient. (Otherwise we'd scan an empty delta repeatedly.)
+        let now = 10_000 * MS_NS;
+        let watermark_ns = now - 1_000_000 * MS_NS; // ~16 minutes ago
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        assert!(!mode.should_scan_delta_with_time(50, 50, watermark_ns, now));
+    }
+
+    #[test]
+    fn time_bound_bounded_stale_with_unset_ns_falls_back_to_lsn_only() {
+        // watermark_ns == 0 means "time unknown" — conservatively scan
+        // when LSNs disagree. Matches the writer's current placeholder.
+        let mode = VectorFreshnessMode::BoundedStale {
+            max_staleness_ms: 5_000,
+        };
+        let now = 10_000 * MS_NS;
+        assert!(mode.should_scan_delta_with_time(100, 50, 0, now));
+        // And when both are 0 (lsn-only entry-point shape), still scans
+        // on LSN advance.
+        assert!(mode.should_scan_delta_with_time(100, 50, 0, 0));
+    }
+
+    #[test]
+    fn search_params_freshness_mode_round_trips_through_json() {
+        let params = UnifiedSearchParams {
+            freshness_mode: Some(VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000,
+            }),
+            ..UnifiedSearchParams::default()
+        };
+        let json = serde_json::to_string(&params).expect("serialize");
+        let decoded: UnifiedSearchParams = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(
+            decoded.effective_freshness_mode(),
+            VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 1_000,
+            }
+        );
+    }
+
     #[test]
     fn test_search_params_default() {
-        let params = SearchParams::default();
+        let params = UnifiedSearchParams::default();
 
         // Core defaults
         assert!(params.query_vectors.is_none());
@@ -1281,7 +1632,7 @@ mod tests {
         filters.insert("category".to_string(), serde_json::json!("electronics"));
         filters.insert("price".to_string(), serde_json::json!(99.99));
 
-        let params = SearchParams::default().with_simple_filters(filters);
+        let params = UnifiedSearchParams::default().with_simple_filters(filters);
 
         // Filter expression should be set
         assert!(params.filter_expression.is_some());
@@ -1304,7 +1655,7 @@ mod tests {
         }
 
         // Empty filters should not set filter_expression
-        let params_empty = SearchParams::default().with_simple_filters(HashMap::new());
+        let params_empty = UnifiedSearchParams::default().with_simple_filters(HashMap::new());
         assert!(params_empty.filter_expression.is_none());
     }
 

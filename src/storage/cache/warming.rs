@@ -23,7 +23,7 @@ use tokio::time::{Duration, interval};
 use tracing::{debug, info, warn};
 
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use crate::storage::traits::{MetricsOperationType, UnifiedMetricsCollector};
 
 /// Cache warming strategies for different scenarios
@@ -64,7 +64,7 @@ pub struct CacheWarmer {
     /// Reference to global cache orchestrator
     cache_orchestrator: Arc<CrossCacheOrchestrator>,
     /// Storage engines for data loading
-    storage_engines: HashMap<String, Arc<dyn UnifiedStorageEngine>>,
+    storage_engines: HashMap<String, Arc<dyn UnifiedStorageFormat>>,
     /// Unified metrics collector for monitoring
     metrics_collector: Arc<UnifiedMetricsCollector>,
     /// Active warming strategies
@@ -99,7 +99,7 @@ impl CacheWarmer {
     }
 
     /// Register storage engine for cache warming
-    pub fn register_engine(&mut self, engine_name: String, engine: Arc<dyn UnifiedStorageEngine>) {
+    pub fn register_engine(&mut self, engine_name: String, engine: Arc<dyn UnifiedStorageFormat>) {
         self.storage_engines.insert(engine_name, engine);
     }
 
@@ -342,7 +342,7 @@ impl CacheWarmer {
     fn get_best_engine_for_collection(
         &self,
         _collection_id: &str,
-    ) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    ) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         // For now, return first available engine
         // Deferred: Implement engine selection based on collection metadata
         self.storage_engines.values().next()
@@ -351,10 +351,10 @@ impl CacheWarmer {
     /// Helper: Load vector with base path resolution
     async fn load_vector_with_base_path(
         &self,
-        engine: &Arc<dyn UnifiedStorageEngine>,
+        engine: &Arc<dyn UnifiedStorageFormat>,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Deferred: Get base_path from collection metadata service
         // For now, use default path
         let _base_path = "/data/collections";

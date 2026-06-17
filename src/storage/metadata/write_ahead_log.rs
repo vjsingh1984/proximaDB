@@ -166,7 +166,7 @@ pub struct MetadataWriteAheadLog {
     cache_timestamps: Arc<tokio::sync::RwLock<HashMap<String, DateTime<Utc>>>>,
 
     /// Statistics
-    stats: Arc<tokio::sync::RwLock<MetadataStats>>,
+    stats: Arc<tokio::sync::RwLock<WalMetadataStats>>,
 }
 
 impl std::fmt::Debug for MetadataWriteAheadLog {
@@ -180,8 +180,11 @@ impl std::fmt::Debug for MetadataWriteAheadLog {
     }
 }
 
+/// Backwards-compat alias for [`WalMetadataStats`].
+pub type MetadataStats = WalMetadataStats;
+
 #[derive(Debug, Default, Clone)]
-pub struct MetadataStats {
+pub struct WalMetadataStats {
     /// Total number of collections
     pub total_collections: u64,
     /// Cache hit count
@@ -204,7 +207,7 @@ impl MetadataWriteAheadLog {
 
         // Create write buffer manager using modern batch factory pattern
         let write_buffer_manager = crate::storage::persistence::write_ahead_log::WriteAheadLogManager::create_with_batch_factory(
-            config.base_config.strategy_type.clone(),
+            config.base_config.strategy_type,
             config.base_config.clone(),
             filesystem,
         )
@@ -218,7 +221,7 @@ impl MetadataWriteAheadLog {
             config,
             metadata_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             cache_timestamps: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-            stats: Arc::new(tokio::sync::RwLock::new(MetadataStats::default())),
+            stats: Arc::new(tokio::sync::RwLock::new(WalMetadataStats::default())),
         };
 
         // Initialize by recovering any existing metadata from write buffer
@@ -232,11 +235,11 @@ impl MetadataWriteAheadLog {
         let collection_id = metadata.id.clone();
         tracing::debug!("📝 Upserting metadata for collection: {}", collection_id);
 
-        // Convert metadata to vector record
-        let vector_record = self.metadata_to_vector_record(&metadata)?;
+        // Convert metadata to canonical record.
+        let metadata_record = self.metadata_to_proxima_record(&metadata)?;
 
-        // Create modern batch operation - use vector records directly
-        let batch_records = vec![vector_record];
+        // Create modern batch operation using canonical records.
+        let batch_records = vec![metadata_record];
 
         // Write to write buffer using modern batch architecture through WALBehaviorWrapper
         {
@@ -508,20 +511,25 @@ impl MetadataWriteAheadLog {
         let exists = self.collection(collection_id).await?.is_some();
 
         if exists {
-            // Create vector record for delete operation using MVCC logical delete
+            // Create canonical record for delete operation using MVCC logical delete.
             let vector_id = format!("metadata_{}", collection_id);
             let current_time = chrono::Utc::now().timestamp_micros();
 
             let current_time_secs = (current_time / 1_000_000) as u32; // Convert microseconds to seconds
-            let delete_record = crate::proto::proximadb_v1::VectorRecord {
-                id: vector_id,
-                vector: vec![0.0], // Vector content irrelevant for delete
-                metadata: HashMap::new(),
-                timestamp: Some(current_time_secs as i64),
-                updated_at: Some(current_time_secs as i64),
-                expires_at: Some((current_time_secs.saturating_sub(1)) as i64), // Mark as expired (logical delete)
-                version: Some(1),
-                source: None,
+            let delete_record = proximadb_records::ProximaRecord {
+                oid: vector_id,
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "metadata".to_string(),
+                    modality: "tombstone".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.0]), // Content irrelevant for delete.
+                    dim: 1,
+                    ..Default::default()
+                }],
+                created_at_ns: current_time_secs as i64 * 1_000_000_000,
+                updated_at_ns: current_time_secs as i64 * 1_000_000_000,
+                valid_to_ns: Some(current_time_secs.saturating_sub(1) as i64 * 1_000_000_000),
+                record_version: 1,
+                ..Default::default()
             };
 
             // Write delete record to write buffer using modern batch architecture through WALBehaviorWrapper
@@ -619,45 +627,53 @@ impl MetadataWriteAheadLog {
     }
 
     /// Get metadata statistics
-    pub async fn get_stats(&self) -> Result<MetadataStats> {
+    pub async fn get_stats(&self) -> Result<WalMetadataStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }
 
     /// Get metadata statistics (alias for get_stats)
-    pub async fn stats(&self) -> Result<MetadataStats> {
+    pub async fn stats(&self) -> Result<WalMetadataStats> {
         self.get_stats().await
     }
 
-    /// Convert metadata to vector record for write buffer storage
-    fn metadata_to_vector_record(
+    /// Convert metadata to canonical record for write buffer storage.
+    fn metadata_to_proxima_record(
         &self,
         metadata: &VersionedCollectionMetadata,
-    ) -> Result<crate::proto::proximadb_v1::VectorRecord> {
+    ) -> Result<proximadb_records::ProximaRecord> {
         // Serialize metadata to JSON, then to bytes as a "vector"
         let json = serde_json::to_vec(metadata)?;
-        let vector = json.iter().map(|&b| b as f32).collect();
+        let vector: Vec<f32> = json.iter().map(|&b| b as f32).collect();
 
         let timestamp_secs = metadata.timestamp; // Already in seconds
-        Ok(crate::proto::proximadb_v1::VectorRecord {
-            id: format!("metadata_{}", metadata.id),
-            vector,
-            metadata: HashMap::new(),
-            timestamp: Some(timestamp_secs as i64),
-            updated_at: Some(timestamp_secs as i64),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        Ok(proximadb_records::ProximaRecord {
+            oid: format!("metadata_{}", metadata.id),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "metadata".to_string(),
+                modality: "collection_metadata".to_string(),
+                dim: vector.len() as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                ..Default::default()
+            }],
+            created_at_ns: timestamp_secs as i64 * 1_000_000_000,
+            updated_at_ns: timestamp_secs as i64 * 1_000_000_000,
+            record_version: 1,
+            ..Default::default()
         })
     }
 
-    /// Convert vector record back to metadata
+    /// Convert canonical record back to metadata.
     fn vector_record_to_metadata(
         &self,
-        record: &crate::proto::proximadb_v1::VectorRecord,
+        record: &proximadb_records::ProximaRecord,
     ) -> Result<VersionedCollectionMetadata> {
         // Convert float vector back to bytes
-        let bytes: Vec<u8> = record.vector.iter().map(|&f| f as u8).collect();
+        let bytes: Vec<u8> = record
+            .embeddings
+            .first()
+            .map(|embedding| embedding.as_fp32_cow().iter().map(|&f| f as u8).collect())
+            .unwrap_or_default();
 
         // Deserialize from JSON
         let metadata: VersionedCollectionMetadata = serde_json::from_slice(&bytes)?;
@@ -692,7 +708,7 @@ impl Default for SystemMetadata {
     fn default() -> Self {
         Self {
             version: "0.1.0".to_string(),
-            node_id: crate::utils::uuid::Uuid::new_v4().to_string(),
+            node_id: proximadb_kernel::uuid::Uuid::new_v4().to_string(),
             cluster_name: "default".to_string(),
             timestamp: Utc::now().timestamp() as u32,
             updated_at: None,

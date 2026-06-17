@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 /// Simple tenant resource tracker
 pub struct TenantResourceTracker {
     tenant_id: String,
-    limits: ResourceLimits,
+    limits: TenantResourceLimits,
     usage: TenantResourceUsage,
     last_updated: AtomicU64, // Unix timestamp
 }
@@ -16,8 +16,12 @@ pub struct TenantResourceTracker {
 ///
 /// Defines maximum resource allocations for tenant operations.
 /// Duplicated from context.rs to avoid circular dependencies.
+///
+/// Backwards-compat alias for [`TenantResourceLimits`].
+pub type ResourceLimits = TenantResourceLimits;
+
 #[derive(Debug, Clone)]
-pub struct ResourceLimits {
+pub struct TenantResourceLimits {
     /// Maximum memory allocation in megabytes
     pub max_memory_mb: u64,
     /// Maximum storage allocation in megabytes
@@ -53,7 +57,7 @@ pub struct TenantResourceUsage {
 
 impl TenantResourceTracker {
     /// Create new resource tracker
-    pub fn new(tenant_id: &str, limits: &ResourceLimits) -> Self {
+    pub fn new(tenant_id: &str, limits: &TenantResourceLimits) -> Self {
         Self {
             tenant_id: tenant_id.to_string(),
             limits: limits.clone(),
@@ -177,7 +181,7 @@ pub struct TenantResourceUsageSnapshot {
     pub last_updated: DateTime<Utc>,
 }
 
-impl Default for ResourceLimits {
+impl Default for TenantResourceLimits {
     fn default() -> Self {
         Self {
             max_memory_mb: 4096,
@@ -196,7 +200,7 @@ mod tests {
 
     #[test]
     fn test_resource_limits_default() {
-        let limits = ResourceLimits::default();
+        let limits = TenantResourceLimits::default();
 
         assert_eq!(limits.max_memory_mb, 4096);
         assert_eq!(limits.max_storage_mb, 102400);
@@ -208,7 +212,7 @@ mod tests {
 
     #[test]
     fn test_resource_tracker_operation_limits() {
-        let limits = ResourceLimits {
+        let limits = TenantResourceLimits {
             max_operations_per_minute: 2,
             ..Default::default()
         };
@@ -228,7 +232,7 @@ mod tests {
 
     #[test]
     fn test_concurrent_user_tracking() {
-        let limits = ResourceLimits {
+        let limits = TenantResourceLimits {
             max_concurrent_users: 2,
             ..Default::default()
         };

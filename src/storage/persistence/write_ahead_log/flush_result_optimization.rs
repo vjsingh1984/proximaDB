@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 use tracing::{debug, info};
 
 use super::enhanced_flush_result::EnhancedFlushResult;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::FlushResult;
+use proximadb_records::ProximaRecord;
 
 /// Optimized flush result that minimizes memory allocations
 #[derive(Debug)]
@@ -26,7 +26,7 @@ pub struct OptimizedFlushResult {
     pub base: FlushResult,
 
     /// Reference to vectors (avoids cloning large datasets)
-    pub vector_refs: Arc<Vec<Arc<VectorRecord>>>,
+    pub vector_refs: Arc<Vec<Arc<ProximaRecord>>>,
 
     /// Deleted vector IDs (if any)
     pub deleted_vector_ids: Vec<String>,
@@ -81,7 +81,7 @@ pub struct StreamingFlushResult {
     pub base: FlushResult,
 
     /// Channel for streaming vectors
-    pub vector_stream: mpsc::Receiver<Arc<VectorRecord>>,
+    pub vector_stream: mpsc::Receiver<Arc<ProximaRecord>>,
 
     /// Total expected vectors
     pub expected_count: usize,
@@ -113,8 +113,8 @@ impl BatchFlushProcessor {
     /// Process vectors in optimized batches
     pub async fn process_batch(
         &self,
-        vectors: Vec<VectorRecord>,
-    ) -> Result<Vec<Arc<VectorRecord>>> {
+        vectors: Vec<ProximaRecord>,
+    ) -> Result<Vec<Arc<ProximaRecord>>> {
         let chunk_size = vectors.len().div_ceil(self.worker_count);
         let chunks: Vec<_> = vectors
             .chunks(chunk_size)
@@ -236,7 +236,7 @@ impl OptimizedFlushCoordinator {
     pub async fn execute_optimized_flush(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<OptimizedFlushResult> {
         info!(
             "🚀 Optimized flush starting for {} with {} vectors",
@@ -324,8 +324,7 @@ impl OptimizedFlushCoordinator {
 /// Convert optimized result to enhanced result when needed
 impl From<OptimizedFlushResult> for EnhancedFlushResult {
     fn from(optimized: OptimizedFlushResult) -> Self {
-        // Convert Arc<VectorRecord> refs to owned VectorRecord
-        let vector_records: Vec<VectorRecord> = optimized
+        let vector_records: Vec<ProximaRecord> = optimized
             .vector_refs
             .iter()
             .map(|arc_vec| (**arc_vec).clone())
@@ -367,16 +366,20 @@ mod tests {
     async fn test_batch_processor() {
         let processor = BatchFlushProcessor::new(100, 4, 128);
 
-        let vectors: Vec<VectorRecord> = (0..100)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp() as i64),
-                source: None,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
+        let vectors: Vec<ProximaRecord> = (0..100)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32; 128]),
+                    ..Default::default()
+                }],
+                record_version: 1,
+                created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                ..Default::default()
             })
             .collect();
 
@@ -388,16 +391,20 @@ mod tests {
     async fn test_optimized_coordinator() {
         let coordinator = OptimizedFlushCoordinator::new(50, 2, 128);
 
-        let vectors: Vec<VectorRecord> = (0..50)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![i as f32; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(chrono::Utc::now().timestamp() as i64),
-                source: None,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
+        let vectors: Vec<ProximaRecord> = (0..50)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32; 128]),
+                    ..Default::default()
+                }],
+                record_version: 1,
+                created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                ..Default::default()
             })
             .collect();
 

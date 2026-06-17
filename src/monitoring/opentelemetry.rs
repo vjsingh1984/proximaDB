@@ -191,50 +191,43 @@ impl OpenTelemetryManager {
         };
 
         // Convert ProximaDB metrics to OpenTelemetry format
-        let mut otel_metrics = Vec::with_capacity(5);
-
-        // System metrics
-        otel_metrics.push(MetricData {
-            name: "proximadb_cpu_usage_percent".to_string(),
-            value: metrics.cpu_usage as f64,
-            timestamp: std::time::SystemTime::now(),
-            attributes: HashMap::new(),
-            metric_type: MetricType::Gauge,
-        });
-
-        otel_metrics.push(MetricData {
-            name: "proximadb_memory_used_bytes".to_string(),
-            value: metrics.memory_used_bytes as f64,
-            timestamp: std::time::SystemTime::now(),
-            attributes: HashMap::new(),
-            metric_type: MetricType::Gauge,
-        });
-
-        // Storage metrics
-        otel_metrics.push(MetricData {
-            name: "proximadb_total_vectors".to_string(),
-            value: metrics.storage.total_vectors as f64,
-            timestamp: std::time::SystemTime::now(),
-            attributes: HashMap::new(),
-            metric_type: MetricType::Gauge,
-        });
-
-        // Query metrics
-        otel_metrics.push(MetricData {
-            name: "proximadb_total_queries".to_string(),
-            value: metrics.query.total_queries as f64,
-            timestamp: std::time::SystemTime::now(),
-            attributes: HashMap::new(),
-            metric_type: MetricType::Counter,
-        });
-
-        otel_metrics.push(MetricData {
-            name: "proximadb_query_latency_p99_ms".to_string(),
-            value: metrics.query.p99_latency_ms,
-            timestamp: std::time::SystemTime::now(),
-            attributes: HashMap::new(),
-            metric_type: MetricType::Histogram,
-        });
+        let otel_metrics = vec![
+            MetricData {
+                name: "proximadb_cpu_usage_percent".to_string(),
+                value: metrics.cpu_usage as f64,
+                timestamp: std::time::SystemTime::now(),
+                attributes: HashMap::new(),
+                metric_type: MetricType::Gauge,
+            },
+            MetricData {
+                name: "proximadb_memory_used_bytes".to_string(),
+                value: metrics.memory_used_bytes as f64,
+                timestamp: std::time::SystemTime::now(),
+                attributes: HashMap::new(),
+                metric_type: MetricType::Gauge,
+            },
+            MetricData {
+                name: "proximadb_total_vectors".to_string(),
+                value: metrics.storage.total_vectors as f64,
+                timestamp: std::time::SystemTime::now(),
+                attributes: HashMap::new(),
+                metric_type: MetricType::Gauge,
+            },
+            MetricData {
+                name: "proximadb_total_queries".to_string(),
+                value: metrics.query.total_queries as f64,
+                timestamp: std::time::SystemTime::now(),
+                attributes: HashMap::new(),
+                metric_type: MetricType::Counter,
+            },
+            MetricData {
+                name: "proximadb_query_latency_p99_ms".to_string(),
+                value: metrics.query.p99_latency_ms,
+                timestamp: std::time::SystemTime::now(),
+                attributes: HashMap::new(),
+                metric_type: MetricType::Histogram,
+            },
+        ];
 
         debug!("Exporting {} metrics to OpenTelemetry", otel_metrics.len());
 

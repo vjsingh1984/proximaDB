@@ -19,7 +19,20 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Comprehensive authentication configuration for enterprise deployment
+/// Comprehensive authentication configuration for enterprise deployment.
+///
+/// Canonical auth surface used by the [`crate::network::auth`] module
+/// (JWT + API keys + RBAC + OAuth2 + mTLS + sessions + audit). Two sibling
+/// types in `crate::network` are intentionally distinct, narrower surfaces:
+///
+/// * [`crate::network::NetworkAuthConfig`] — flat JWT/key list embedded in
+///   `NetworkConfig`'s legacy top-level configuration shape.
+/// * [`crate::network::middleware::MiddlewareAuthConfig`] — Axum
+///   middleware-specific minimal config (enabled, API-key map,
+///   health-endpoint policy).
+///
+/// Prefer this `AuthConfig` for new code; the two narrower variants are
+/// retained for backward compatibility with their respective call sites.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AuthConfig {
     /// Enable authentication (if false, all requests pass through)

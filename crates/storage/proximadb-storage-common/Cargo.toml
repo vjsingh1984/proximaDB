@@ -1,0 +1,57 @@
+[package]
+name = "proximadb-storage-common"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Shared ProximaDB storage primitives reused across storage engines and modalities"
+
+[lib]
+name = "proximadb_storage_common"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow.workspace = true
+arrow.workspace = true
+bincode.workspace = true
+arrow-array.workspace = true
+arrow-schema.workspace = true
+bytes = "1.5"
+async-trait.workspace = true
+chrono.workspace = true
+futures.workspace = true
+memmap2 = "0.9"
+parking_lot.workspace = true
+parquet.workspace = true
+object_store.workspace = true
+tokio = { version = "1.37", features = ["sync", "rt", "time"] }
+proximadb-kernel.workspace = true
+proximadb-compression-types.workspace = true
+proximadb-data-model = { workspace = true }
+proximadb-records = { workspace = true }
+proximadb-block-format = { workspace = true }
+# ADR-024 Step 4: storage-side ProximaSchema/ProximaColumn are now aliases for
+# the canonical CatalogTableSchema/CatalogColumn (durable authority in control).
+# storage -> control is validator-legal (acyclic; catalog deps only foundation).
+proximadb-catalog = { workspace = true }
+crc32fast.workspace = true
+proximadb-runtime-common.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+tempfile.workspace = true
+
+[[bench]]
+name = "wal_throughput"
+harness = false
+
+[lints]
+workspace = true

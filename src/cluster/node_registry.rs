@@ -26,32 +26,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 
-/// Configuration for the node registry
-#[derive(Debug, Clone)]
-pub struct NodeRegistryConfig {
-    /// Interval between health checks in milliseconds
-    pub health_check_interval_ms: u64,
-    /// Timeout for health check responses in milliseconds
-    pub health_check_timeout_ms: u64,
-    /// Number of failed health checks before marking node unhealthy
-    pub unhealthy_threshold: u32,
-    /// Number of successful health checks before marking node healthy
-    pub healthy_threshold: u32,
-    /// Time after which an unresponsive node is considered dead
-    pub dead_node_timeout_secs: u64,
-}
-
-impl Default for NodeRegistryConfig {
-    fn default() -> Self {
-        Self {
-            health_check_interval_ms: 5000,
-            health_check_timeout_ms: 2000,
-            unhealthy_threshold: 3,
-            healthy_threshold: 2,
-            dead_node_timeout_secs: 30,
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::NodeRegistryConfig;
 
 /// Role of a node in the cluster
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]

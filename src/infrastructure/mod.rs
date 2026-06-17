@@ -221,7 +221,8 @@ pub mod tier_data_movement;
 pub mod tier_policy_engine;
 
 pub use concurrent_structures::{
-    AccessInfo, AtomicMetrics, ConcurrentMapping, ConcurrentStorage, MetricsSnapshot, TypedStorage,
+    AccessInfo, AtomicMetrics, ConcurrentMapping, ConcurrentMetricsSnapshot, ConcurrentStorage,
+    TypedStorage,
 };
 
 pub use tier_policy_engine::{

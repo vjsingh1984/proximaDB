@@ -2,12 +2,7 @@
 Tests for REST request batching functionality using unified batching system
 """
 
-import threading
-import time
-from collections import deque
-from unittest.mock import MagicMock, Mock, patch
-
-import pytest
+from unittest.mock import Mock
 
 from proximadb_sdk.batching_unified import (
     BatchConfig,
@@ -17,7 +12,6 @@ from proximadb_sdk.batching_unified import (
     BatchStrategy,
     ThreadedBatchProcessor,
 )
-from proximadb_sdk.exceptions import BatchError, ProximaDBError
 from proximadb_sdk.models import VectorRecord
 
 

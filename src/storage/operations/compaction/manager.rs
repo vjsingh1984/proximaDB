@@ -13,11 +13,9 @@ use tracing::{debug, info};
 use crate::storage::operations::CompactionResult;
 use crate::storage::types::StorageEngineType;
 
-// Import from our strategies module (unused but kept for future integration)
+// Import from our flattened strategy modules (unused but kept for future integration)
 #[allow(unused_imports)]
-use super::strategies::{
-    CompactionExecutionResult, CompactionPlan, CompactionStrategyRegistry, FileMetadata,
-};
+use super::{CompactionExecutionResult, CompactionPlan, CompactionStrategyRegistry, FileMetadata};
 
 /// Compaction manager coordinates optimization operations across storage engines
 pub struct CompactionManager {
@@ -220,6 +218,23 @@ impl CompactionManager {
             collection_id, duration, result.bytes_freed
         );
 
+        // Bump corpus_version for every tenant that has cached plans
+        // against this collection. Compaction publishes a new segment
+        // and removes old ones; the planner's selectivity + route
+        // choice may shift because the storage layout changed. The
+        // compaction manager only knows the collection_id, not the
+        // tenant, so we use the registry's all-tenants variant.
+        let bumped = crate::catalog::CorpusVersionRegistry::global()
+            .bump_collection_all_tenants(collection_id)
+            .await;
+        if bumped > 0 {
+            tracing::debug!(
+                collection = %collection_id,
+                bumped,
+                "🔄 corpus_version bumped after minor compaction"
+            );
+        }
+
         Ok(result)
     }
 
@@ -291,6 +306,20 @@ impl CompactionManager {
             "✅ Major compaction completed for collection: {} in {:?} (freed: {} bytes)",
             collection_id, duration, result.bytes_freed
         );
+
+        // Bump corpus_version across all tenants — major compaction
+        // rewrites the storage layout more invasively than minor;
+        // any cached plan should be reconsidered against the new state.
+        let bumped = crate::catalog::CorpusVersionRegistry::global()
+            .bump_collection_all_tenants(collection_id)
+            .await;
+        if bumped > 0 {
+            tracing::debug!(
+                collection = %collection_id,
+                bumped,
+                "🔄 corpus_version bumped after major compaction"
+            );
+        }
 
         Ok(result)
     }

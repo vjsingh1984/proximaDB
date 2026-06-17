@@ -59,9 +59,19 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::Result;
 use tracing::info;
 
-use crate::core::error::{ProximaDBError, StorageError};
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use proximadb_kernel::error::{ProximaDBError, StorageError};
+use proximadb_records::ProximaRecord;
+
+#[inline]
+fn record_vector(record: &ProximaRecord) -> &[f32] {
+    record
+        .embeddings
+        .first()
+        .map(|embedding| embedding.as_fp32_slice())
+        .unwrap_or(&[])
+}
 
 /// File type enum for cache key discrimination
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -131,7 +141,7 @@ pub struct SharedSstFormatReader {
     mmap_strategy: SstMmapStrategy,
 
     /// UNIFIED CACHE: UnifiedCachingFilesystem replaces all specialized caches
-    unified_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
     #[allow(dead_code)]
@@ -154,7 +164,7 @@ pub struct SharedSstFormatWriter {
 
     /// Unified filesystem for write operations
     #[allow(dead_code)]
-    unified_filesystem: Arc<UnifiedCachingFilesystem>,
+    caching_filesystem: Arc<UnifiedCachingFilesystem>,
 
     /// Collection ID for filename-based cache keys
     #[allow(dead_code)]
@@ -219,7 +229,7 @@ impl SharedSstFormatReader {
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
         mmap_strategy: SstMmapStrategy,
-        unified_filesystem: Arc<UnifiedCachingFilesystem>,
+        caching_filesystem: Arc<UnifiedCachingFilesystem>,
         collection_id: String,
     ) -> Self {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
@@ -227,7 +237,7 @@ impl SharedSstFormatReader {
         Self {
             filesystem,
             mmap_strategy,
-            unified_filesystem,
+            caching_filesystem,
             collection_id,
             stats: Arc::new(ReaderStats::default()),
             distance_compute: Arc::new(UnifiedDistanceCompute::default()), // ✅ Create once and reuse
@@ -238,11 +248,11 @@ impl SharedSstFormatReader {
     pub fn read_with_strategy<'a>(
         &'a self,
         file_path: &'a str,
-        strategy: &'a crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy,
+        strategy: &'a crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy,
         _filter_expression: Option<&'a crate::core::search::FilterExpression>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<crate::storage::engines::core::formats::proximablocks::block_structures::ProximaDataBlock>, ProximaDBError>> + Send + 'a>>{
         Box::pin(async move {
-            use crate::storage::engines::impls::sst::readers::sst_query_engine::SstableReadingStrategy;
+            use crate::storage::engines::sst::readers::sst_query_engine::SstableReadingStrategy;
 
             match strategy {
                 SstableReadingStrategy::FullScan { use_block_cache } => {
@@ -343,8 +353,8 @@ impl SharedSstFormatReader {
         use crate::storage::persistence::filesystem::FileSystem;
 
         // Try mmap first for local files (zero-copy)
-        if self.unified_filesystem.supports_mmap()
-            && let Ok(Some(mmap)) = self.unified_filesystem.get_mmap(file_path).await
+        if self.caching_filesystem.supports_mmap()
+            && let Ok(Some(mmap)) = self.caching_filesystem.get_mmap(file_path).await
         {
             tracing::debug!("Using mmap for {} ({} bytes)", file_path, mmap.len());
             return Ok(MmapOrVec::Mmap(mmap));
@@ -352,7 +362,7 @@ impl SharedSstFormatReader {
 
         // Fall back to regular read (for cloud storage or unsupported paths)
         let data = if use_cache {
-            self.unified_filesystem.read(file_path).await?
+            self.caching_filesystem.read(file_path).await?
         } else {
             self.filesystem
                 .get_filesystem(file_path)?
@@ -558,48 +568,46 @@ impl SharedSstFormatReader {
             let mut block_vectors = Vec::new();
 
             for record in &block.records {
-                // Apply filter expression if provided (type-safe SqlValue filtering)
-                // Uses centralized utility from core::search::sql_value_filter
+                // Apply filter expression against canonical ProximaRecord props.
                 if let Some(filter) = filter_expression
-                    && !crate::core::search::sql_value_filter::evaluate_filter(
+                    && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
                         filter,
-                        &record.metadata,
+                        &record.props,
                     )
                 {
                     continue; // Skip records that don't match filter
                 }
-                block_records.push(record);
-                block_vectors.push(record.vector.as_slice());
+                let vector = record_vector(record);
+                if vector.is_empty() {
+                    continue;
+                }
+                block_vectors.push(vector.to_vec());
+                block_records.push(record.clone());
             }
 
             // Batch calculate distances for entire block
             if !block_vectors.is_empty() {
+                let block_vector_refs: Vec<&[f32]> =
+                    block_vectors.iter().map(Vec::as_slice).collect();
                 let distances = distance_compute.batch_distance_pooled_simd(
                     query_vector,
-                    &block_vectors,
+                    &block_vector_refs,
                     &distance_metric,
                 );
 
                 // Create search records with batch distances
                 for (record, distance_result) in block_records.into_iter().zip(distances.iter()) {
                     let search_record = crate::core::search::results::OptimizedSearchRecord {
-                        id: record.id.clone(),
-                        vector_id: Some(record.id.clone()),
-                        score: distance_result.distance,
-                        similarity: Some(distance_result.distance),
-                        metadata: record.metadata.clone(),
-                        vector: Some(Arc::new(record.vector.clone())),
-                        debug_info: None,
-                        version: None,
-                        timestamp: record.timestamp,
-                        updated_at: None,
-                        expires_at: None,
-                        source: None,
-                        expanded_context: Vec::new(),
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
+                        id: record.oid.clone(),
+                        vector_id: record.local_id.clone().or_else(|| Some(record.oid.clone())),
+                        score: distance_result.normalized_score,
+                        similarity: Some(distance_result.normalized_score),
+                        metadata: crate::core::search::sql_value_filter::proxima_tree_to_value_map(
+                            &record.props,
+                        ),
+                        vector: Some(Arc::new(record_vector(&record).to_vec())),
+                        timestamp: Some(record.created_at_ns),
+                        ..Default::default()
                     };
                     all_results.push(search_record);
                 }

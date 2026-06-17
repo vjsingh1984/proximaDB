@@ -15,7 +15,7 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use crate::operations::backup::{BackupManifest, BackupTarget, DataFileMetadata};
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
 /// Restore manager for recovering from backups
 #[allow(dead_code)]
@@ -385,7 +385,10 @@ impl RestoreManager {
     }
 
     /// Validate backup integrity without restoring
-    pub async fn validate_backup(&self, manifest: &BackupManifest) -> Result<ValidationResult> {
+    pub async fn validate_backup(
+        &self,
+        manifest: &BackupManifest,
+    ) -> Result<RestoreValidationResult> {
         info!("Validating backup: {}", manifest.backup_id);
 
         let mut errors = Vec::new();
@@ -461,7 +464,7 @@ impl RestoreManager {
         let total_files = manifest.data_files.len();
         let total_bytes = manifest.total_bytes;
 
-        Ok(ValidationResult {
+        Ok(RestoreValidationResult {
             valid,
             total_files,
             total_bytes,
@@ -489,9 +492,12 @@ struct RestoredFile {
     bytes: u64,
 }
 
+/// Backwards-compat alias for [`RestoreValidationResult`].
+pub type ValidationResult = RestoreValidationResult;
+
 /// Result of validating a backup
 #[derive(Debug, Clone)]
-pub struct ValidationResult {
+pub struct RestoreValidationResult {
     /// Whether backup is valid
     pub valid: bool,
     /// Total number of files in backup

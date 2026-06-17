@@ -6,9 +6,6 @@ NOTE: Moved from tests/unit/ to tests/integration/ - this is an integration test
 requiring a running ProximaDB server at localhost:5678.
 """
 
-import json
-
-import numpy as np
 import requests
 
 from ..embedding_utils import embed_seed
@@ -86,7 +83,7 @@ def test_atomic_wal():
         assert False, "Failed to create collection via any endpoint"
 
     # Test 3: Vector insertion (if collection was created)
-    print(f"\n🔥 Testing vector insertion...")
+    print("\n🔥 Testing vector insertion...")
 
     vector_data = {
         "id": "atomic_test_vector_1",
@@ -131,10 +128,10 @@ def test_atomic_wal():
 def check_wal_logs():
     """Check for WAL-related log messages"""
 
-    print(f"\n📋 Checking WAL logs...")
+    print("\n📋 Checking WAL logs...")
 
     try:
-        with open("server_atomic_test.log", "r") as f:
+        with open("server_atomic_test.log") as f:
             logs = f.read()
 
         # Look for WriteBuffer-related messages
@@ -170,6 +167,6 @@ if __name__ == "__main__":
     check_wal_logs()
 
     if success:
-        print(f"\n🎉 Test completed!")
+        print("\n🎉 Test completed!")
     else:
-        print(f"\n💥 Test failed!")
+        print("\n💥 Test failed!")

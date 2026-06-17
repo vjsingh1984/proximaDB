@@ -1,3 +1,10 @@
+// Graph gRPC backend — `GraphPort` implementation.
+//
+// The tonic `GraphService` wire adapter lives in
+// crates/platform/proximadb-api/src/grpc/v1/graph.rs and is the only served
+// graph gRPC surface. This file holds the canonical graph-operation logic
+// behind that adapter, consumed as `Arc<dyn proximadb_runtime::GraphPort>`.
+
 /*
  * Copyright 2025 Vijaykumar Singh
  *
@@ -35,7 +42,7 @@
 //!         ↓
 //! UnifiedHandlers.graph_operations_service
 //!         ↓
-//! GraphEngine (ORION/PULSAR/QUASAR)
+//! ORION graph runtime
 //!         ↓
 //! Response (Proto)
 //! ```
@@ -53,7 +60,6 @@
 
 use std::sync::Arc;
 use std::time::Instant;
-use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, info, warn};
 
@@ -70,6 +76,7 @@ use crate::proto::proximadb_v1::{
     Component,
     ConnectedComponentsResponse,
     CreateEdgeRequest,
+    CreateGraphRequest,
     CreateNodeRequest,
     CycleCheckResponse,
     DeleteEdgeRequest,
@@ -81,8 +88,10 @@ use crate::proto::proximadb_v1::{
     // Common types
     GetNodeRequest,
     GetStatsRequest,
+    GraphCollection,
     GraphQueryRequest,
     GraphQueryResponse,
+    GraphSchema,
     GraphStats,
     HybridSearchRequest,
     HybridSearchResponse,
@@ -98,8 +107,6 @@ use crate::proto::proximadb_v1::{
     UniqueConstraintResponse,
     UpdateEdgeRequest,
     UpdateNodeRequest,
-    // Graph service definition
-    graph_service_server::GraphService,
 };
 
 use crate::query::QueryFacadeAdapter;
@@ -395,16 +402,16 @@ fn create_query_response_for_edges(
 
 /// gRPC implementation of GraphService
 pub struct GraphServiceImpl {
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
     /// Query facade adapter for unified query execution (optional for backward compatibility)
     query_adapter: Option<Arc<QueryFacadeAdapter>>,
 }
 
 impl GraphServiceImpl {
     /// Create new GraphServiceImpl
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             query_adapter: None,
         }
     }
@@ -412,18 +419,23 @@ impl GraphServiceImpl {
     /// Create new GraphServiceImpl with query facade adapter
     #[allow(dead_code)]
     pub fn with_adapter(
-        unified_handlers: Arc<UnifiedHandlers>,
+        request_handlers: Arc<UnifiedHandlers>,
         query_adapter: Arc<QueryFacadeAdapter>,
     ) -> Self {
         Self {
-            unified_handlers,
+            request_handlers,
             query_adapter: Some(query_adapter),
         }
     }
 }
 
-#[tonic::async_trait]
-impl GraphService for GraphServiceImpl {
+// Inherent graph operation handlers. These hold the real logic behind
+// `GraphPort` (below); the canonical tonic `GraphService` wire adapter lives in
+// `crates/platform/proximadb-api/src/grpc/v1/graph.rs`. TD-105 Phase B converted
+// this from a (never-served) tonic `impl GraphService` into plain inherent
+// methods and deleted the dead `#[cfg(any())]` PULSAR/QUASAR RPCs + the unused
+// `stream_traverse` server-streaming method.
+impl GraphServiceImpl {
     /// Create a new node
     async fn create_node(
         &self,
@@ -440,7 +452,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .create_node(&req.graph_id, node)
             .await
@@ -465,7 +477,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_node(&req.graph_id, &req.node_id)
             .await
@@ -504,7 +516,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Node is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .update_node(&req.graph_id, node)
             .await
@@ -532,7 +544,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .delete_node(&req.graph_id, &req.node_id)
             .await
@@ -571,7 +583,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .create_edge(&req.graph_id, edge)
             .await
@@ -596,7 +608,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_edge(&req.graph_id, &req.edge_id)
             .await
@@ -635,7 +647,7 @@ impl GraphService for GraphServiceImpl {
             .ok_or_else(|| Status::invalid_argument("Edge is required"))?;
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .update_edge(&req.graph_id, edge)
             .await
@@ -663,7 +675,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .delete_edge(&req.graph_id, &req.edge_id)
             .await
@@ -706,7 +718,7 @@ impl GraphService for GraphServiceImpl {
         }
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .query_nodes(&query.graph_id, query.clone())
             .await
@@ -741,7 +753,7 @@ impl GraphService for GraphServiceImpl {
         }
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .query_edges(&query.graph_id, query.clone())
             .await
@@ -772,7 +784,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_neighbors(&req.graph_id, &req.node_id)
             .await
@@ -810,7 +822,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .traverse(&req.graph_id, req.clone())
             .await
@@ -830,61 +842,6 @@ impl GraphService for GraphServiceImpl {
                 Err(create_grpc_error("traverse graph", err))
             }
         }
-    }
-
-    /// Stream traversal in chunks
-    type StreamTraverseStream = ReceiverStream<Result<TraversalChunk, Status>>;
-    async fn stream_traverse(
-        &self,
-        request: Request<TraversalRequest>,
-    ) -> Result<Response<Self::StreamTraverseStream>, Status> {
-        let req = request.into_inner();
-        let (tx, rx) = tokio::sync::mpsc::channel(8);
-        let handlers = self.unified_handlers.clone();
-        let graph_id = req.graph_id.clone();
-        tokio::spawn(async move {
-            match handlers
-                .graph_operations_service
-                .traverse(&graph_id, req)
-                .await
-            {
-                Ok(resp) => {
-                    let chunk_size = 1000usize;
-                    let mut idx = 0;
-                    let nodes = resp.nodes;
-                    let total = nodes.len();
-                    while idx < total {
-                        let end = (idx + chunk_size).min(total);
-                        let mut chunk = TraversalChunk {
-                            nodes: nodes[idx..end].to_vec(),
-                            edges: vec![],
-                            paths: vec![],
-                            stats: None,
-                            done: false,
-                        };
-                        if end == total {
-                            chunk.edges = resp.edges.clone();
-                            chunk.paths = resp.paths.clone();
-                            chunk.stats = resp.stats;
-                            chunk.done = true;
-                        }
-                        if tx.send(Ok(chunk)).await.is_err() {
-                            break;
-                        }
-                        idx = end;
-                    }
-                }
-                Err(e) => {
-                    let _ = tx
-                        .send(Err(Status::internal(format!(
-                            "StreamTraverse failed: {}",
-                            e
-                        ))))
-                        .await;
-                }
-            }
-        });
-        Ok(Response::new(ReceiverStream::new(rx)))
     }
 
     /// Compute shortest path between nodes
@@ -918,7 +875,7 @@ impl GraphService for GraphServiceImpl {
             .and_then(|s| s.parse::<usize>().ok());
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .shortest_path(
                 &req.graph_id,
@@ -965,7 +922,7 @@ impl GraphService for GraphServiceImpl {
         debug!("gRPC GetGraphStats request for graph: {}", req.graph_id);
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .get_stats(&req.graph_id)
             .await
@@ -994,7 +951,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .batch_create_nodes(&req.graph_id, req.nodes)
             .await
@@ -1025,7 +982,7 @@ impl GraphService for GraphServiceImpl {
         );
 
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .batch_create_edges(&req.graph_id, req.edges)
             .await
@@ -1050,7 +1007,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<ConnectedComponentsResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .connected_components(&req.graph_id)
             .await
@@ -1073,7 +1030,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<CycleCheckResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .has_cycle(&req.graph_id)
             .await
@@ -1090,7 +1047,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .add_unique_constraint(&req.graph_id, &req.label, &req.property)
             .await
@@ -1113,7 +1070,7 @@ impl GraphService for GraphServiceImpl {
     ) -> Result<Response<UniqueConstraintResponse>, Status> {
         let req = request.into_inner();
         match self
-            .unified_handlers
+            .request_handlers
             .graph_operations_service
             .remove_unique_constraint(&req.graph_id, &req.label, &req.property)
             .await
@@ -1140,7 +1097,7 @@ impl GraphService for GraphServiceImpl {
             req.combination_strategy
         );
 
-        match self.unified_handlers.execute_hybrid_query(req).await {
+        match self.request_handlers.execute_hybrid_query(req).await {
             Ok(response) => {
                 info!("Successfully executed hybrid query via gRPC");
                 Ok(Response::new(response))
@@ -1242,5 +1199,256 @@ impl GraphService for GraphServiceImpl {
              Use QueryNodes/QueryEdges for property-based queries, \
              or TraverseGraph for graph traversal.",
         ))
+    }
+}
+
+// ── GraphPort ─────────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::GraphPort for GraphServiceImpl {
+    async fn create_node(&self, request: CreateNodeRequest) -> anyhow::Result<Node> {
+        self.create_node(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_node(&self, request: GetNodeRequest) -> anyhow::Result<Node> {
+        self.get_node(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn update_node(&self, request: UpdateNodeRequest) -> anyhow::Result<Node> {
+        self.update_node(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_node(&self, request: DeleteNodeRequest) -> anyhow::Result<Node> {
+        self.delete_node(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn create_edge(&self, request: CreateEdgeRequest) -> anyhow::Result<Edge> {
+        self.create_edge(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_edge(&self, request: GetEdgeRequest) -> anyhow::Result<Edge> {
+        self.get_edge(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn update_edge(&self, request: UpdateEdgeRequest) -> anyhow::Result<Edge> {
+        self.update_edge(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_edge(&self, request: DeleteEdgeRequest) -> anyhow::Result<Edge> {
+        self.delete_edge(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn query_nodes(&self, request: NodeQuery) -> anyhow::Result<BatchResponse> {
+        self.query_nodes(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn query_edges(&self, request: EdgeQuery) -> anyhow::Result<BatchResponse> {
+        self.query_edges(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn execute_query(
+        &self,
+        request: GraphQueryRequest,
+    ) -> anyhow::Result<GraphQueryResponse> {
+        self.execute_query(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_neighbors(&self, request: GetNeighborsRequest) -> anyhow::Result<BatchResponse> {
+        self.get_neighbors(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn traverse_graph(&self, request: TraversalRequest) -> anyhow::Result<TraversalResponse> {
+        self.traverse_graph(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn stream_traverse(
+        &self,
+        request: TraversalRequest,
+    ) -> anyhow::Result<Vec<TraversalChunk>> {
+        let resp = proximadb_runtime::GraphPort::traverse_graph(self, request).await?;
+        let chunk = TraversalChunk {
+            nodes: resp.nodes,
+            edges: resp.edges,
+            paths: resp.paths,
+            stats: resp.stats,
+            done: true,
+        };
+        Ok(vec![chunk])
+    }
+
+    async fn get_graph_stats(&self, request: GetStatsRequest) -> anyhow::Result<GraphStats> {
+        self.get_graph_stats(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn shortest_path(
+        &self,
+        request: ShortestPathRequest,
+    ) -> anyhow::Result<ShortestPathResponse> {
+        self.shortest_path(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_connected_components(
+        &self,
+        request: GetStatsRequest,
+    ) -> anyhow::Result<ConnectedComponentsResponse> {
+        self.get_connected_components(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn has_cycle(&self, request: GetStatsRequest) -> anyhow::Result<CycleCheckResponse> {
+        self.has_cycle(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn add_unique_constraint(
+        &self,
+        request: UniqueConstraintRequest,
+    ) -> anyhow::Result<UniqueConstraintResponse> {
+        self.add_unique_constraint(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn remove_unique_constraint(
+        &self,
+        request: UniqueConstraintRequest,
+    ) -> anyhow::Result<UniqueConstraintResponse> {
+        self.remove_unique_constraint(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn batch_create_nodes(&self, request: BatchNodeRequest) -> anyhow::Result<BatchResponse> {
+        self.batch_create_nodes(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn batch_create_edges(&self, request: BatchEdgeRequest) -> anyhow::Result<BatchResponse> {
+        self.batch_create_edges(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn execute_hybrid_query(
+        &self,
+        request: HybridSearchRequest,
+    ) -> anyhow::Result<HybridSearchResponse> {
+        self.execute_hybrid_query(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn create_graph_collection(
+        &self,
+        request: CreateGraphRequest,
+    ) -> anyhow::Result<GraphCollection> {
+        self.request_handlers
+            .graph_operations_service
+            .create_graph_collection(request)
+            .await
+            .map(|collection| (*collection).clone())
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn get_graph_collection(
+        &self,
+        graph_id: String,
+    ) -> anyhow::Result<Option<GraphCollection>> {
+        self.request_handlers
+            .graph_operations_service
+            .get_graph_collection(&graph_id)
+            .await
+            .map(|collection| collection.map(|collection| (*collection).clone()))
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn delete_graph_collection(&self, graph_id: String) -> anyhow::Result<bool> {
+        self.request_handlers
+            .graph_operations_service
+            .delete_graph_collection(&graph_id)
+            .await
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn list_graph_collections(&self) -> anyhow::Result<Vec<GraphCollection>> {
+        self.request_handlers
+            .graph_operations_service
+            .list_graph_collections()
+            .await
+            .map(|collections| {
+                collections
+                    .into_iter()
+                    .map(|collection| (*collection).clone())
+                    .collect()
+            })
+            .map_err(|err| anyhow::anyhow!("{}", err))
+    }
+
+    async fn update_graph_schema(
+        &self,
+        graph_id: String,
+        schema: GraphSchema,
+    ) -> anyhow::Result<GraphCollection> {
+        self.request_handlers
+            .graph_operations_service
+            .update_graph_schema(&graph_id, schema)
+            .await
+            .map(|collection| (*collection).clone())
+            .map_err(|err| anyhow::anyhow!("{}", err))
     }
 }

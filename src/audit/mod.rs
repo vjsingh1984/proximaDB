@@ -1,6 +1,9 @@
 //! Comprehensive audit system for enterprise multi-tenant platform
 
 pub mod correlation;
+/// Cross-tenant audit guardrail — emits structured events for any
+/// operation that attempts to span tenants (LLD §6.3 risk mitigation).
+pub mod cross_tenant_guard;
 pub mod logger;
 pub mod storage;
 pub mod types;
@@ -12,7 +15,7 @@ pub use correlation::{
     // EventChain, // Deferred: Not yet implemented
 };
 
-pub use logger::AuditLogger;
+pub use logger::{AuditConfig, AuditLogger, AuditStorageBackend};
 
 use anyhow::Result;
 use chrono::{DateTime, Utc};

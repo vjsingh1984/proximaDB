@@ -155,7 +155,11 @@ impl MetricsAggregationEngine {
     }
 
     /// Generate trend analysis
-    pub fn analyze_trends(&self, collection_id: &str, metric_name: &str) -> Result<TrendAnalysis> {
+    pub fn analyze_trends(
+        &self,
+        collection_id: &str,
+        metric_name: &str,
+    ) -> Result<MetricsTrendAnalysis> {
         let data_points = self
             .time_series
             .get(metric_name)
@@ -207,7 +211,7 @@ impl MetricsAggregationEngine {
             Trend::Stable
         };
 
-        Ok(TrendAnalysis {
+        Ok(MetricsTrendAnalysis {
             metric_name: metric_name.to_string(),
             trend,
             slope,
@@ -281,9 +285,12 @@ pub enum Trend {
     Stable,
 }
 
+/// Backwards-compat alias for [`MetricsTrendAnalysis`].
+pub type TrendAnalysis = MetricsTrendAnalysis;
+
 /// Trend analysis result
 #[derive(Debug, Clone)]
-pub struct TrendAnalysis {
+pub struct MetricsTrendAnalysis {
     pub metric_name: String,
     pub trend: Trend,
     pub slope: f64,

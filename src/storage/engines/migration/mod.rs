@@ -19,9 +19,12 @@ use std::collections::HashMap;
 
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 
+/// Backwards-compat alias for [`EngineMigrationConfig`].
+pub type MigrationConfig = EngineMigrationConfig;
+
 /// Migration configuration
 #[derive(Debug, Clone)]
-pub struct MigrationConfig {
+pub struct EngineMigrationConfig {
     /// Source engine type
     #[allow(dead_code)]
     pub source_engine: ProtoStorageEngine,
@@ -40,7 +43,7 @@ pub struct MigrationConfig {
     pub validation: ValidationConfig,
 
     /// Performance settings
-    pub performance: PerformanceConfig,
+    pub performance: MigrationPerformanceConfig,
 
     /// Rollback settings
     pub rollback: RollbackConfig,
@@ -81,9 +84,12 @@ pub struct ValidationConfig {
     pub validation_timeout_seconds: u64,
 }
 
+/// Backwards-compat alias for [`MigrationPerformanceConfig`].
+pub type PerformanceConfig = MigrationPerformanceConfig;
+
 /// Performance configuration
 #[derive(Debug, Clone)]
-pub struct PerformanceConfig {
+pub struct MigrationPerformanceConfig {
     /// Batch size for data migration
     pub batch_size: usize,
 
@@ -172,7 +178,7 @@ pub enum MigrationEventType {
     RollbackCompleted,
 }
 
-impl Default for MigrationConfig {
+impl Default for EngineMigrationConfig {
     fn default() -> Self {
         Self {
             source_engine: ProtoStorageEngine::Viper,
@@ -180,7 +186,7 @@ impl Default for MigrationConfig {
             collections: Vec::new(),
             strategy: MigrationStrategy::CopyThenSwitch,
             validation: ValidationConfig::default(),
-            performance: PerformanceConfig::default(),
+            performance: MigrationPerformanceConfig::default(),
             rollback: RollbackConfig::default(),
         }
     }
@@ -198,7 +204,7 @@ impl Default for ValidationConfig {
     }
 }
 
-impl Default for PerformanceConfig {
+impl Default for MigrationPerformanceConfig {
     fn default() -> Self {
         Self {
             batch_size: 1000,
@@ -292,7 +298,7 @@ pub mod utils {
         source: ProtoStorageEngine,
         target: ProtoStorageEngine,
         data_size_gb: f64,
-        config: &PerformanceConfig,
+        config: &MigrationPerformanceConfig,
     ) -> chrono::Duration {
         // Base throughput estimates (GB/hour)
         let throughput = match (source, target) {
@@ -340,7 +346,7 @@ pub mod utils {
     }
 
     /// Validate migration configuration
-    pub fn validate_migration_config(config: &MigrationConfig) -> Result<()> {
+    pub fn validate_migration_config(config: &EngineMigrationConfig) -> Result<()> {
         // Check engine support
         if !is_migration_supported(config.source_engine, config.target_engine) {
             return Err(anyhow::anyhow!(
@@ -445,7 +451,7 @@ mod tests {
 
     #[test]
     fn test_migration_time_estimation() {
-        let config = PerformanceConfig::default();
+        let config = MigrationPerformanceConfig::default();
 
         let duration = estimate_migration_time(
             ProtoStorageEngine::Viper,
@@ -461,7 +467,7 @@ mod tests {
 
     #[test]
     fn test_migration_config_validation() {
-        let mut config = MigrationConfig::default();
+        let mut config = EngineMigrationConfig::default();
 
         // Valid config should pass
         assert!(validate_migration_config(&config).is_ok());
@@ -471,7 +477,7 @@ mod tests {
         assert!(validate_migration_config(&config).is_err());
 
         // Reset and test invalid sample percentage
-        config = MigrationConfig::default();
+        config = EngineMigrationConfig::default();
         config.validation.sample_percentage = 1.5;
         assert!(validate_migration_config(&config).is_err());
     }

@@ -6,7 +6,7 @@ use proximadb::proto::proximadb_v1::{SqlValue, VectorRecord};
 use proximadb::storage::engines::core::formats::proximablocks::block_structures::{
     BlockCompressionConfig, ProximaDataBlock,
 };
-use proximadb::storage::engines::impls::sst::{SstEntry, SstMetadata};
+use proximadb::storage::engines::sst::{SstEntry, SstMetadata};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -227,8 +227,11 @@ fn test_data_block_zstd_compression() {
         create_test_sst_record("medium_128".to_string(), create_test_vector(128, 0.5)),
     ];
 
-    // Extract VectorRecords from SstEntries
-    let records: Vec<VectorRecord> = sst_entries.into_iter().map(|entry| entry.record).collect();
+    // Extract VectorRecords from SstEntries, then convert to canonical ProximaRecord
+    let records: Vec<proximadb_records::ProximaRecord> = sst_entries
+        .into_iter()
+        .map(|entry| proximadb::proto::defaults::vector_record_to_proxima_record(entry.record))
+        .collect();
 
     // Test with compression enabled
     let mut compression_config = BlockCompressionConfig::default();
@@ -254,6 +257,9 @@ fn test_data_block_zstd_compression() {
         .zip(deserialized.records.iter())
         .enumerate()
     {
+        // Convert ProximaRecord back to legacy VectorRecord shape for field-level comparison.
+        let original = proximadb_records::conversions::proxima_record_to_vector(original);
+        let recovered = proximadb_records::conversions::proxima_record_to_vector(recovered);
         assert_eq!(original.id, recovered.id, "Record {} ID mismatch", i);
         assert_eq!(
             original.vector.len(),
@@ -319,6 +325,10 @@ fn test_compression_performance_benchmark() {
         .collect();
 
     let config = BlockCompressionConfig::default();
+    let vectors: Vec<proximadb_records::ProximaRecord> = vectors
+        .into_iter()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
     let data_block = ProximaDataBlock::new(vectors, config);
 
     // Benchmark uncompressed serialization

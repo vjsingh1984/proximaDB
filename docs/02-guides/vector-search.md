@@ -23,6 +23,9 @@ flowchart LR
 
 Vector search finds similar items using embedding distance:
 
+In the canonical API, vectors are embedding fields on `ProximaRecord` payloads.
+REST v1 vector-shaped endpoints remain only as deprecated compatibility facades.
+
 | Metric | Formula | Use Case |
 |--------|---------|----------|
 | **Cosine** | `1 - (A·B / ‖A‖‖B‖)` | Semantic similarity |
@@ -36,21 +39,26 @@ Vector search finds similar items using embedding distance:
 ### Python SDK
 
 ```python
-from proximadb import ProximaDB
+from proximadb_sdk import ProximaDBClient, ProximaRecord
 
-client = ProximaDB("http://localhost:5678")
-collection = client.get_collection("products")
+client = ProximaDBClient(url="http://localhost:5678")
+
+client.insert_records("products", [
+    ProximaRecord(id="sku-1", vector=[0.1, 0.2, 0.3]).set_flexible("category", "Electronics")
+])
 
 # Simple search
-results = collection.search(
-    query_vector=[0.1, 0.2, ...],
-    k=10
+results = client.search(
+    collection="products",
+    vector=[0.1, 0.2, 0.3],
+    top_k=10
 )
 
 # With filter
-results = collection.search(
-    query_vector=[0.1, 0.2, ...],
-    k=10,
+results = client.search(
+    collection="products",
+    vector=[0.1, 0.2, 0.3],
+    top_k=10,
     filter={"category": "Electronics", "price": {"$lt": 100}}
 )
 ```
@@ -58,11 +66,11 @@ results = collection.search(
 ### REST API
 
 ```bash
-curl -X POST http://localhost:5678/api/v1/collections/products/vectors/search \
+curl -X POST http://localhost:5678/api/v2/collections/products/search \
   -H "Content-Type: application/json" \
   -d '{
-    "vector": [0.1, 0.2, ...],
-    "k": 10,
+    "vector": [0.1, 0.2, 0.3],
+    "top_k": 10,
     "filter": {
       "category": "Electronics"
     }
@@ -77,14 +85,18 @@ curl -X POST http://localhost:5678/api/v1/collections/products/vectors/search \
 
 ```python
 # Exact match
-results = collection.search(
-    query_vector=[...],
+results = client.search(
+    collection="products",
+    vector=query_vector,
+    top_k=10,
     filter={"status": "active"}
 )
 
 # Range queries
-results = collection.search(
-    query_vector=[...],
+results = client.search(
+    collection="products",
+    vector=query_vector,
+    top_k=10,
     filter={
         "price": {"$gte": 10, "$lte": 100},
         "rating": {"$gt": 4.0}
@@ -92,8 +104,10 @@ results = collection.search(
 )
 
 # Logical operators
-results = collection.search(
-    query_vector=[...],
+results = client.search(
+    collection="products",
+    vector=query_vector,
+    top_k=10,
     filter={
         "$or": [
             {"category": "Electronics"},
@@ -133,12 +147,13 @@ flowchart TB
 
 ```python
 # Pre-filter (default)
-results = collection.search(query_vector, k=10, filter={"status": "active"})
+results = client.search("products", vector=query_vector, top_k=10, filter={"status": "active"})
 
 # Post-filter
-results = collection.search(
-    query_vector,
-    k=100,  # Search more, filter after
+results = client.search(
+    "products",
+    vector=query_vector,
+    top_k=100,  # Search more, filter after
     filter={"status": "active"},
     filter_mode="post"
 )
@@ -152,11 +167,12 @@ results = collection.search(
 
 ```python
 # Combine semantic and keyword search
-results = collection.hybrid_search(
+results = client.hybrid_search(
+    collection="products",
     query_vector=[...],
     query_text="wireless headphones",
     alpha=0.7,  # 0.7 vector, 0.3 keyword
-    k=10
+    top_k=10
 )
 ```
 
@@ -164,9 +180,10 @@ results = collection.hybrid_search(
 
 ```python
 # Custom scoring function
-results = collection.search(
-    query_vector=[...],
-    k=10,
+results = client.search(
+    collection="products",
+    vector=query_vector,
+    top_k=10,
     score_function=lambda score, metadata: (
         score * 0.8 + metadata.get("popularity", 0) * 0.2
     )
@@ -180,21 +197,21 @@ results = collection.search(
 ### Bulk Insert
 
 ```python
-# Efficient bulk insert
-collection.insert(
-    vectors=[v1, v2, v3, ...],  # Up to 100K vectors
-    ids=[1, 2, 3, ...],
-    metadata=[{"name": "A"}, {"name": "B"}, ...]
-)
+# Efficient bulk insert through the record API
+client.insert_records("products", [
+    ProximaRecord(id="1", vector=v1).set_flexible("name", "A"),
+    ProximaRecord(id="2", vector=v2).set_flexible("name", "B"),
+])
 ```
 
 ### Bulk Search
 
 ```python
 # Search multiple queries at once
-results = collection.batch_search(
+results = client.batch_search(
+    collection="products",
     query_vectors=[[...], [...], ...],
-    k=10
+    top_k=10
 )
 ```
 
@@ -206,19 +223,19 @@ results = collection.batch_search(
 
 ```python
 # SST: Write-heavy, real-time
-collection = client.create_collection("events", engine="sst")
+client.create_collection("events", dimension=384, engine="sst")
 
 # HELIX: Read-optimized, spatial
-collection = client.create_collection("locations", engine="helix")
+client.create_collection("locations", dimension=384, engine="helix")
 
 # VIPER: Analytics workloads
-collection = client.create_collection("analytics", engine="viper")
+client.create_collection("analytics", dimension=384, engine="viper")
 ```
 
 ### Index Parameters
 
 ```python
-collection = client.create_collection(
+client.create_collection(
     name="products",
     dimension=384,
     metric="cosine",
@@ -229,9 +246,10 @@ collection = client.create_collection(
 )
 
 # Search-time accuracy
-results = collection.search(
-    query_vector,
-    k=10,
+results = client.search(
+    "products",
+    vector=query_vector,
+    top_k=10,
     search_params={"ef": 100}  # Higher = more accurate, slower
 )
 ```
@@ -240,7 +258,7 @@ results = collection.search(
 
 ```python
 # Reduce memory with quantization
-collection = client.create_collection(
+client.create_collection(
     name="products",
     dimension=384,
     quantization={
@@ -260,7 +278,7 @@ collection = client.create_collection(
 import time
 
 start = time.time()
-results = collection.search(query_vector, k=10)
+results = client.search("products", vector=query_vector, top_k=10)
 latency = (time.time() - start) * 1000
 print(f"Search latency: {latency:.2f}ms")
 ```
@@ -287,18 +305,20 @@ curl http://localhost:5678/metrics | grep vector_search
 
 ```python
 # Good: Pre-filter selective condition
-results = collection.search(
-    query_vector,
+results = client.search(
+    "products",
+    vector=query_vector,
     filter={"category": "Electronics"},  # Reduces search space
-    k=10
+    top_k=10
 )
 
 # Avoid: Post-filter non-selective
-results = collection.search(
-    query_vector,
+results = client.search(
+    "products",
+    vector=query_vector,
     filter={"status": "active"},  # 99% of data
     filter_mode="post",
-    k=10
+    top_k=10
 )
 ```
 
@@ -306,11 +326,14 @@ results = collection.search(
 
 ```python
 # Good: Bulk insert
-collection.insert(vectors=large_list, ids=ids, metadata=metadata)
+client.insert_records("products", [
+    ProximaRecord(id=str(id_), vector=vector, flexible_fields=props)
+    for id_, vector, props in zip(ids, large_list, metadata)
+])
 
 # Avoid: Loop insert
 for v, id in zip(vectors, ids):
-    collection.insert(vectors=[v], ids=[id])  # Slow!
+    client.insert_records("products", [ProximaRecord(id=str(id), vector=v)])  # Slow!
 ```
 
 ### 4. Use Right Engine
@@ -332,9 +355,10 @@ for v, id in zip(vectors, ids):
 ```python
 # User-based collaborative filtering
 user_vector = get_user_embedding(user_id)
-results = collection.search(
-    user_vector,
-    k=20,
+results = client.search(
+    "products",
+    vector=user_vector,
+    top_k=20,
     filter={"category": {"$ne": "purchased"}}
 )
 ```
@@ -343,9 +367,10 @@ results = collection.search(
 
 ```python
 # Find near-duplicates
-results = collection.search(
-    document_vector,
-    k=10,
+results = client.search(
+    "documents",
+    vector=document_vector,
+    top_k=10,
     filter={"checksum": {"$ne": doc_checksum}}
 )
 # If score > 0.95, likely duplicate
@@ -355,9 +380,10 @@ results = collection.search(
 
 ```python
 # Find similar faces
-results = collection.search(
-    face_embedding,
-    k=5,
+results = client.search(
+    "faces",
+    vector=face_embedding,
+    top_k=5,
     filter={"verified": True}
 )
 if results[0].score > 0.8:
@@ -368,9 +394,9 @@ if results[0].score > 0.8:
 
 ## Next Steps
 
-- [Storage Engines](../05-concepts/storage-engines.md) - Engine internals
+- [Storage Engines](../05-concepts/storage-engines.adoc) - Engine internals
 - [Multi-Model Joins](./multi-model-joins.md) - Combine vectors + documents
-- [Graph Queries](./graph-queries.md) - Add relationships
+- [Graph API](../03-api-reference/graph.adoc) - Add relationships
 - [API Reference](../03-api-reference/) - Complete API docs
 
 ---

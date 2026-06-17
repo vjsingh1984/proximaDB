@@ -3,14 +3,13 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::core::hardware_capabilities;
     use crate::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig, FileStorageTier};
     use std::sync::Arc;
     use tokio;
 
     /// Helper function to create a test optimizer
     async fn create_test_optimizer(strategy: UniversalOptimizationStrategy) -> UniversalPerformanceOptimizer {
-        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities();
         
         UniversalPerformanceOptimizer::with_strategy(
             strategy,
@@ -248,7 +247,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_custom_strategy() {
-        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities();
         
         // Create with custom configuration
         let custom_config = UniversalIOConfig {

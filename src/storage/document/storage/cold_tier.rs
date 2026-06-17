@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::document::DocumentRecord;
-use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
+use crate::storage::traits::{StorageQueryContext, UnifiedStorageFormat};
 
 // =============================================================================
 // TRAIT: ColdTierRetriever (Dependency Inversion Principle)
@@ -150,17 +150,17 @@ impl DocumentMetadataFilterBuilder {
 // STRUCT: StorageEngineColdTierRetriever (Open/Closed Principle)
 // =============================================================================
 
-/// Implementation of ColdTierRetriever using the UnifiedStorageEngine.
+/// Implementation of ColdTierRetriever using the UnifiedStorageFormat.
 ///
 /// This implementation uses the storage engine's search capability with
 /// metadata filtering to retrieve documents from cold storage.
 pub struct StorageEngineColdTierRetriever {
-    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    storage_engine: Arc<dyn UnifiedStorageFormat>,
 }
 
 impl StorageEngineColdTierRetriever {
     /// Create a new retriever with the given storage engine.
-    pub fn new(storage_engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn new(storage_engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         Self { storage_engine }
     }
 
@@ -194,32 +194,28 @@ impl StorageEngineColdTierRetriever {
         &self,
         record: &crate::core::search::results::OptimizedSearchRecord,
     ) -> Option<DocumentRecord> {
-        use crate::proto::proximadb_v1::sql_value::Value;
+        use proximadb_data_model::ProximaValue;
 
         // Check if this is a document record
         let type_value = record.metadata.get("_type")?;
-        if let Some(Value::StringValue(t)) = &type_value.value {
-            if t != "document" {
-                return None;
-            }
-        } else {
-            return None;
+        match type_value {
+            ProximaValue::String(t) if t == "document" => {}
+            _ => return None,
         }
 
         // Get collection
         let collection = record.metadata.get("_collection")?;
-        let collection_name = if let Some(Value::StringValue(c)) = &collection.value {
-            c.clone()
-        } else {
-            return None;
+        let collection_name = match collection {
+            ProximaValue::String(c) => c.clone(),
+            _ => return None,
         };
 
         // Get document JSON
         let doc_value = record.metadata.get("_document")?;
-        let doc_json = if let Some(Value::StringValue(j)) = &doc_value.value {
-            j.clone()
-        } else {
-            return None;
+        let doc_json = match doc_value {
+            ProximaValue::String(j) => j.clone(),
+            ProximaValue::Json(j) | ProximaValue::Jsonb(j) => j.to_string(),
+            _ => return None,
         };
 
         // Deserialize document
@@ -243,18 +239,16 @@ impl StorageEngineColdTierRetriever {
         let version = record
             .metadata
             .get("_version")
-            .and_then(|v| {
-                if let Some(Value::Int64Value(i)) = &v.value {
-                    Some(*i as u64)
-                } else {
-                    None
-                }
+            .and_then(|v| match v {
+                ProximaValue::Int64(i) => Some(*i as u64),
+                _ => None,
             })
             .unwrap_or(0);
 
+        let props = crate::storage::document::sql_object_to_proxima_tree(&document);
         Some(DocumentRecord {
             id: original_id,
-            document,
+            props,
             collection_id: collection_name,
             version,
             updated_at_ns: record.updated_at.unwrap_or(0) * 1_000_000, // Convert ms to ns

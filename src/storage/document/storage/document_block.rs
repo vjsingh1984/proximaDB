@@ -4,12 +4,14 @@
 // - Path-aware bloom filters for fast path existence checks
 // - Nested field compression
 // - Delta encoding for similar documents
+// - Support for binary JSONB format (MessagePack)
 
 use std::collections::{HashMap, HashSet};
 
 use anyhow::Result;
 
 use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as SqlVal};
+use proximadb_data_model::ProximaValue;
 
 /// Block header for document storage
 #[derive(Debug, Clone)]
@@ -26,6 +28,8 @@ pub struct DocumentBlockHeader {
     pub path_bloom: Vec<u8>,
     /// Min/max values for indexed paths
     pub path_stats: HashMap<String, PathStats>,
+    /// Whether documents are stored in binary JSONB format
+    pub use_jsonb: bool,
 }
 
 /// Statistics for a single path
@@ -63,6 +67,7 @@ impl DocumentBlock {
                 uncompressed_size: 0,
                 path_bloom: Vec::new(),
                 path_stats: HashMap::new(),
+                use_jsonb: false,
             },
             ids: Vec::new(),
             data: Vec::new(),
@@ -73,9 +78,11 @@ impl DocumentBlock {
     pub fn from_documents(
         documents: Vec<(String, SqlObject)>,
         indexed_paths: &[String],
+        use_jsonb: bool,
     ) -> Result<Self> {
         let mut block = Self::new();
         block.header.document_count = documents.len() as u32;
+        block.header.use_jsonb = use_jsonb;
 
         // Collect IDs
         block.ids = documents.iter().map(|(id, _)| id.clone()).collect();
@@ -132,13 +139,20 @@ impl DocumentBlock {
         }
         block.header.path_bloom = bloom;
 
-        // Serialize documents as JSON bytes
+        // Serialize documents
         for (_, doc) in &documents {
-            let json = serde_json::to_vec(doc).unwrap_or_default();
+            let bytes = if use_jsonb {
+                // Convert SqlObject to JSON then to MessagePack
+                let json = serde_json::to_value(doc).unwrap_or_default();
+                ProximaValue::to_jsonb_vec(&json).unwrap_or_default()
+            } else {
+                serde_json::to_vec(doc).unwrap_or_default()
+            };
+
             block
                 .data
-                .extend_from_slice(&(json.len() as u32).to_le_bytes());
-            block.data.extend_from_slice(&json);
+                .extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+            block.data.extend_from_slice(&bytes);
         }
         block.header.uncompressed_size = block.data.len() as u64;
         block.header.compressed_size = block.data.len() as u64;
@@ -226,7 +240,8 @@ impl DocumentBlock {
         let mut current_obj = doc;
 
         for (i, part) in parts.iter().enumerate() {
-            if let Some(val) = current_obj.fields.get(*part) {
+            {
+                let val = current_obj.fields.get(*part)?;
                 if i == parts.len() - 1 {
                     return Some(val.clone());
                 }
@@ -236,8 +251,6 @@ impl DocumentBlock {
                 } else {
                     return None; // Path continues but value is not an object
                 }
-            } else {
-                return None; // Path segment not found
             }
         }
         None
@@ -351,7 +364,8 @@ mod tests {
             ),
         ];
         let block =
-            DocumentBlock::from_documents(docs, &["name".to_string(), "age".to_string()]).unwrap();
+            DocumentBlock::from_documents(docs, &["name".to_string(), "age".to_string()], false)
+                .unwrap();
 
         assert!(block.might_contain_path("name"));
         assert!(block.might_contain_path("age"));
@@ -363,7 +377,7 @@ mod tests {
             "d1".to_string(),
             make_doc(vec![("name", make_sql_string("Alice"))]),
         )];
-        let block = DocumentBlock::from_documents(docs, &["name".to_string()]).unwrap();
+        let block = DocumentBlock::from_documents(docs, &["name".to_string()], false).unwrap();
 
         // "zzz_nonexistent_field" should almost certainly be negative
         // (false positive rate is very low for 1024-bit filter with few entries)
@@ -405,7 +419,7 @@ mod tests {
                 make_doc(vec![("score", make_sql_int(30))]),
             ),
         ];
-        let block = DocumentBlock::from_documents(docs, &["score".to_string()]).unwrap();
+        let block = DocumentBlock::from_documents(docs, &["score".to_string()], false).unwrap();
         let stats = block.header.path_stats.get("score").unwrap();
         assert_eq!(stats.count, 3);
     }
@@ -416,10 +430,24 @@ mod tests {
             "d1".to_string(),
             make_doc(vec![("k", make_sql_string("v"))]),
         )];
-        let block = DocumentBlock::from_documents(docs, &[]).unwrap();
+        let block = DocumentBlock::from_documents(docs, &[], false).unwrap();
         assert!(
             !block.data.is_empty(),
             "documents should be serialized into data"
+        );
+    }
+
+    #[test]
+    fn test_jsonb_data_serialized() {
+        let docs = vec![(
+            "d1".to_string(),
+            make_doc(vec![("k", make_sql_string("v"))]),
+        )];
+        let block = DocumentBlock::from_documents(docs, &[], true).unwrap();
+        assert!(block.header.use_jsonb);
+        assert!(
+            !block.data.is_empty(),
+            "documents should be serialized into data (jsonb)"
         );
     }
 }

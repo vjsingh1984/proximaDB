@@ -55,7 +55,7 @@ pub struct TableInfo {
     pub properties: HashMap<String, String>,
 
     /// Statistics for query planning (if available)
-    pub statistics: Option<TableStatistics>,
+    pub statistics: Option<ConnectorTableStatistics>,
 }
 
 impl TableInfo {
@@ -83,7 +83,7 @@ impl TableInfo {
     }
 
     /// Set statistics.
-    pub fn with_statistics(mut self, stats: TableStatistics) -> Self {
+    pub fn with_statistics(mut self, stats: ConnectorTableStatistics) -> Self {
         self.statistics = Some(stats);
         self
     }
@@ -130,10 +130,13 @@ impl TableInfo {
 
 /// Table-level statistics for query planning.
 ///
+/// Backwards-compat alias for [`ConnectorTableStatistics`].
+pub type TableStatistics = ConnectorTableStatistics;
+
 /// Provides aggregate statistics about the entire table including
 /// row count, size, and per-column statistics.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TableStatistics {
+pub struct ConnectorTableStatistics {
     /// Total number of rows in the table
     pub row_count: u64,
 
@@ -142,7 +145,7 @@ pub struct TableStatistics {
 
     /// Per-column statistics
     #[allow(dead_code)]
-    pub column_stats: HashMap<String, ColumnStatistics>,
+    pub column_stats: HashMap<String, ConnectorColumnStatistics>,
 
     /// Number of files comprising the table
     pub file_count: Option<u64>,
@@ -160,7 +163,7 @@ pub struct TableStatistics {
     pub is_exact: bool,
 }
 
-impl TableStatistics {
+impl ConnectorTableStatistics {
     /// Create new statistics with row count and size.
     pub fn new(row_count: u64, size_bytes: u64) -> Self {
         Self {
@@ -172,7 +175,11 @@ impl TableStatistics {
     }
 
     /// Add column statistics.
-    pub fn with_column_stats(mut self, column: impl Into<String>, stats: ColumnStatistics) -> Self {
+    pub fn with_column_stats(
+        mut self,
+        column: impl Into<String>,
+        stats: ConnectorColumnStatistics,
+    ) -> Self {
         self.column_stats.insert(column.into(), stats);
         self
     }
@@ -202,7 +209,7 @@ impl TableStatistics {
     }
 
     /// Get statistics for a specific column.
-    pub fn get_column_stats(&self, column: &str) -> Option<&ColumnStatistics> {
+    pub fn get_column_stats(&self, column: &str) -> Option<&ConnectorColumnStatistics> {
         self.column_stats.get(column)
     }
 
@@ -216,7 +223,7 @@ impl TableStatistics {
     }
 
     /// Merge with another statistics object.
-    pub fn merge(&mut self, other: &TableStatistics) {
+    pub fn merge(&mut self, other: &ConnectorTableStatistics) {
         self.row_count += other.row_count;
         self.size_bytes += other.size_bytes;
 
@@ -243,9 +250,12 @@ impl TableStatistics {
 /// Per-column statistics for selectivity estimation.
 ///
 /// Provides detailed statistics about a single column including
+/// Backwards-compat alias for [`ConnectorColumnStatistics`].
+pub type ColumnStatistics = ConnectorColumnStatistics;
+
 /// value distribution, null counts, and optional histograms.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ColumnStatistics {
+pub struct ConnectorColumnStatistics {
     /// Number of null values
     pub null_count: u64,
 
@@ -277,7 +287,7 @@ pub struct ColumnStatistics {
     pub top_k_values: Option<Vec<(String, u64)>>,
 }
 
-impl ColumnStatistics {
+impl ConnectorColumnStatistics {
     /// Create new column statistics.
     pub fn new() -> Self {
         Self::default()
@@ -349,7 +359,7 @@ impl ColumnStatistics {
     }
 
     /// Merge with another column statistics object.
-    pub fn merge(&mut self, other: &ColumnStatistics) {
+    pub fn merge(&mut self, other: &ConnectorColumnStatistics) {
         self.null_count += other.null_count;
 
         // Take max of distinct counts
@@ -678,11 +688,11 @@ mod tests {
 
     #[test]
     fn test_table_statistics() {
-        let stats = TableStatistics::new(10000, 1_048_576)
+        let stats = ConnectorTableStatistics::new(10000, 1_048_576)
             .with_file_count(10)
             .with_column_stats(
                 "id",
-                ColumnStatistics::new()
+                ConnectorColumnStatistics::new()
                     .with_distinct_count(10000)
                     .with_min_max("0001", "9999"),
             );
@@ -698,7 +708,7 @@ mod tests {
 
     #[test]
     fn test_column_statistics_selectivity() {
-        let col_stats = ColumnStatistics::new()
+        let col_stats = ConnectorColumnStatistics::new()
             .with_distinct_count(100)
             .with_null_count(10);
 
@@ -736,17 +746,17 @@ mod tests {
 
     #[test]
     fn test_statistics_merge() {
-        let mut stats1 = TableStatistics::new(1000, 10000).with_column_stats(
+        let mut stats1 = ConnectorTableStatistics::new(1000, 10000).with_column_stats(
             "id",
-            ColumnStatistics::new()
+            ConnectorColumnStatistics::new()
                 .with_distinct_count(1000)
                 .with_min_max("0001", "5000"),
         );
 
-        let stats2 = TableStatistics::new(1000, 10000)
+        let stats2 = ConnectorTableStatistics::new(1000, 10000)
             .with_column_stats(
                 "id",
-                ColumnStatistics::new()
+                ConnectorColumnStatistics::new()
                     .with_distinct_count(500)
                     .with_min_max("5001", "9999"),
             )

@@ -5,6 +5,7 @@
 //! for performance through batching.
 
 use anyhow::Result;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
@@ -23,7 +24,7 @@ pub struct BatchSyncCoordinator {
     disk_manager: Arc<WriteAheadLogDiskManager>,
 
     /// Pending sync requests
-    pending_syncs: Arc<Mutex<Vec<PendingSyncRequest>>>,
+    pending_syncs: Arc<Mutex<VecDeque<PendingSyncRequest>>>,
 
     /// Statistics
     stats: Arc<RwLock<BatchSyncStats>>,
@@ -75,7 +76,7 @@ impl BatchSyncCoordinator {
         Self {
             durability_level,
             disk_manager,
-            pending_syncs: Arc::new(Mutex::new(Vec::new())),
+            pending_syncs: Arc::new(Mutex::new(VecDeque::new())),
             stats: Arc::new(RwLock::new(BatchSyncStats::default())),
             shutdown: Arc::new(tokio::sync::Notify::new()),
         }
@@ -171,7 +172,7 @@ impl BatchSyncCoordinator {
             DurabilityLevel::BatchSync { batch_size, .. } => {
                 // Add to pending queue
                 let mut pending = self.pending_syncs.lock().await;
-                pending.push(PendingSyncRequest {
+                pending.push_back(PendingSyncRequest {
                     collection_id,
                     file_path,
                     requested_at: Instant::now(),
@@ -196,7 +197,7 @@ impl BatchSyncCoordinator {
 
     /// Process pending sync requests
     async fn process_pending_syncs(
-        pending_syncs: &Arc<Mutex<Vec<PendingSyncRequest>>>,
+        pending_syncs: &Arc<Mutex<VecDeque<PendingSyncRequest>>>,
         disk_manager: &Arc<WriteAheadLogDiskManager>,
         stats: &Arc<RwLock<BatchSyncStats>>,
         batch_limit: Option<usize>,

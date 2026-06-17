@@ -5,21 +5,16 @@ Consolidated tests for vector CRUD operations, batch insertions, and large-scale
 """
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pytest
-from sentence_transformers import SentenceTransformer
 
 from proximadb_sdk import (
     CollectionConfig,
-    DistanceMetric,
     FlushConfig,
-    Protocol,
-    ProximaDBClient,
     ProximaDBError,
     StorageEngine,
-    VectorDimensionError,
     connect_grpc,
     connect_rest,
 )
@@ -486,7 +481,7 @@ class TestLargeScaleOperations:
                     vector=updated_vector,
                     metadata=updated_metadata,
                 )
-            except Exception as e:
+            except Exception:
                 # Some operations might not be fully implemented
                 pass
 

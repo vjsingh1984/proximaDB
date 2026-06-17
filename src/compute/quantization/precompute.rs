@@ -7,9 +7,12 @@ use crate::compute::quantization::selection::QuantizationSelector;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine,
 };
-use crate::compute::quantization::unified::{UnifiedQuantizationEngine, UnifiedQuantizationLevel};
-use crate::core::memory::pool::VectorMemoryPool;
-use crate::core::{Collection, VectorRecord};
+use crate::compute::quantization::quantization_engine::{
+    UnifiedQuantizationEngine, UnifiedQuantizationLevel,
+};
+use crate::core::Collection;
+use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 
 /// Pairs original records with their quantized representations
 /// This is the standard format for all engines
@@ -30,7 +33,7 @@ pub struct QuantizedVector {
     pub pq8: Option<Vec<u8>>,
     pub pq16: Option<Vec<u8>>,
     pub codebooks: Option<QuantizationCodebooks>,
-    pub metadata: QuantizationMetadata,
+    pub metadata: PrecomputeQuantizationMetadata,
 }
 
 #[derive(Debug, Clone)]
@@ -40,8 +43,11 @@ pub struct QuantizationCodebooks {
     pub pq_codebooks: Option<Vec<Vec<f32>>>,
 }
 
+/// Backwards-compat alias for [`PrecomputeQuantizationMetadata`].
+pub type QuantizationMetadata = PrecomputeQuantizationMetadata;
+
 #[derive(Debug, Clone)]
-pub struct QuantizationMetadata {
+pub struct PrecomputeQuantizationMetadata {
     pub dimension: usize,
     pub levels_computed: Vec<UnifiedQuantizationLevel>,
     pub compression_ratio: f32,
@@ -217,7 +223,7 @@ impl QuantizationPrecomputeService {
         let start_time = std::time::Instant::now();
 
         // Extract vectors for quantization
-        let vectors: Vec<Vec<f32>> = batch.iter().map(|r| r.values.clone()).collect();
+        let vectors: Vec<Vec<f32>> = batch.iter().map(|r| r.values.to_fp32_owned()).collect();
 
         if vectors.is_empty() {
             return Ok(vec![]);
@@ -237,7 +243,7 @@ impl QuantizationPrecomputeService {
                 pq8: None,
                 pq16: None,
                 codebooks: None,
-                metadata: QuantizationMetadata {
+                metadata: PrecomputeQuantizationMetadata {
                     dimension,
                     levels_computed: levels.to_vec(),
                     compression_ratio: 0.0,
@@ -395,7 +401,7 @@ impl QuantizationPrecomputeService {
             pq8: None,
             pq16: None,
             codebooks: None,
-            metadata: QuantizationMetadata {
+            metadata: PrecomputeQuantizationMetadata {
                 dimension: query.len(),
                 levels_computed: levels.clone(),
                 compression_ratio: 0.0,

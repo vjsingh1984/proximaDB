@@ -439,7 +439,7 @@ impl PITRManager {
     pub async fn list_recovery_points(&self) -> Vec<RecoveryPoint> {
         let points = self.recovery_points.read().await;
         let mut list: Vec<_> = points.values().cloned().collect();
-        list.sort_by(|a, b| b.created_at.cmp(&a.created_at)); // Newest first
+        list.sort_by_key(|p| std::cmp::Reverse(p.created_at)); // Newest first
         list
     }
 
@@ -624,7 +624,7 @@ impl PITRManager {
 
             // Find oldest points to delete
             let mut sorted_points: Vec<_> = points.iter().collect();
-            sorted_points.sort_by(|a, b| a.1.created_at.cmp(&b.1.created_at));
+            sorted_points.sort_by_key(|p| p.1.created_at);
 
             for (id, point) in sorted_points.iter().take(excess_count) {
                 if !point.tags.contains(&"protected".to_string()) {

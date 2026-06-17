@@ -17,8 +17,11 @@ use tantivy::query::QueryParser;
 use tantivy::schema::{Field, STORED, Schema, TEXT, Value};
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument};
 
-use super::super::query::path_parser::JsonPath;
-use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as SqlValueVariant};
+use jsonpath_rust::JsonPathQuery;
+use proximadb_records::ProximaTree;
+use serde_json::Value as JsonValue;
+
+use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
 
 /// Full-text search index for a collection
 pub struct FullTextIndex {
@@ -153,7 +156,7 @@ impl FullTextIndex {
         let new_id_field = schema_builder.add_text_field("_id", STORED);
 
         let existing = self.text_fields.read().unwrap_or_else(|p| p.into_inner());
-        for (existing_path, _) in existing.iter() {
+        for existing_path in existing.keys() {
             schema_builder.add_text_field(existing_path, TEXT);
         }
         let new_text_field = schema_builder.add_text_field(path, TEXT);
@@ -190,7 +193,7 @@ impl FullTextIndex {
         // Rebuild text_fields map with fields from the new schema
         let mut new_text_fields = HashMap::new();
         let old_fields = self.text_fields.read().unwrap_or_else(|p| p.into_inner());
-        for (p, _) in old_fields.iter() {
+        for p in old_fields.keys() {
             if let Ok(f) = new_schema.get_field(p) {
                 new_text_fields.insert(p.clone(), f);
             }
@@ -209,8 +212,8 @@ impl FullTextIndex {
         Ok(())
     }
 
-    /// Index a document
-    pub fn index_document(&self, doc_id: &str, document: &SqlObject) -> Result<()> {
+    /// Index a document (TD-106 Slice 7c: canonical `props` tree)
+    pub fn index_document(&self, doc_id: &str, document: &ProximaTree) -> Result<()> {
         let mut tantivy_doc = TantivyDocument::default();
 
         // Add document ID
@@ -301,8 +304,12 @@ impl FullTextIndex {
         Ok(results)
     }
 
-    /// Extract text value from a JSON path in a document
-    fn extract_text(&self, document: &SqlObject, path: &str) -> Option<String> {
+    /// Extract text value from a JSON path in the canonical `props` tree.
+    ///
+    /// Renders the tree via the shared `proxima_tree_to_json_map` bridge for the
+    /// jsonpath engine, then flattens the matched node(s) to indexable text
+    /// (strings/numbers/bools; arrays + object values concatenated; nulls skipped).
+    fn extract_text(&self, document: &ProximaTree, path: &str) -> Option<String> {
         // Parse the path (add $ prefix if not present for consistency)
         let path_str = if path.starts_with('$') {
             path.to_string()
@@ -310,63 +317,32 @@ impl FullTextIndex {
             format!("$.{}", path)
         };
 
-        let json_path = match JsonPath::parse(&path_str) {
-            Ok(p) => p,
-            Err(_) => return None,
-        };
+        let json_doc = JsonValue::Object(proxima_tree_to_json_map(document).into_iter().collect());
+        let result = json_doc.path(&path_str).ok()?;
 
-        // Evaluate path against document
-        let values = json_path.evaluate(document);
-
-        // Collect all string values (concatenate for array results)
-        let text_parts: Vec<String> = values
-            .into_iter()
-            .filter_map(|v| self.sql_value_to_string(&v))
-            .collect();
-
-        if text_parts.is_empty() {
-            None
-        } else {
-            Some(text_parts.join(" "))
-        }
+        let text = Self::json_value_to_text(&result);
+        if text.is_empty() { None } else { Some(text) }
     }
 
-    /// Convert a SqlValue to a string for indexing
-    fn sql_value_to_string(&self, value: &SqlValue) -> Option<String> {
-        match &value.value {
-            Some(SqlValueVariant::StringValue(s)) => Some(s.clone()),
-            Some(SqlValueVariant::Int64Value(i)) => Some(i.to_string()),
-            Some(SqlValueVariant::NumberValue(f)) => Some(f.to_string()),
-            Some(SqlValueVariant::BoolValue(b)) => Some(b.to_string()),
-            Some(SqlValueVariant::ArrayValue(arr)) => {
-                // Concatenate array elements
-                let parts: Vec<String> = arr
-                    .values
-                    .iter()
-                    .filter_map(|v| self.sql_value_to_string(v))
-                    .collect();
-                if parts.is_empty() {
-                    None
-                } else {
-                    Some(parts.join(" "))
-                }
-            }
-            Some(SqlValueVariant::ObjectValue(obj)) => {
-                // Concatenate all object field values (for nested text extraction)
-                let parts: Vec<String> = obj
-                    .fields
-                    .values()
-                    .filter_map(|v| self.sql_value_to_string(v))
-                    .collect();
-                if parts.is_empty() {
-                    None
-                } else {
-                    Some(parts.join(" "))
-                }
-            }
-            Some(SqlValueVariant::NullValue(_)) | None => None,
-            // Bytes don't convert to text meaningfully
-            Some(SqlValueVariant::BytesValue(_)) => None,
+    /// Flatten a jsonpath result node to whitespace-joined indexable text.
+    fn json_value_to_text(value: &JsonValue) -> String {
+        match value {
+            JsonValue::String(s) => s.clone(),
+            JsonValue::Number(n) => n.to_string(),
+            JsonValue::Bool(b) => b.to_string(),
+            JsonValue::Array(arr) => arr
+                .iter()
+                .map(Self::json_value_to_text)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" "),
+            JsonValue::Object(obj) => obj
+                .values()
+                .map(Self::json_value_to_text)
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>()
+                .join(" "),
+            JsonValue::Null => String::new(),
         }
     }
 }
@@ -374,20 +350,19 @@ impl FullTextIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::{SqlObject, SqlValue, sql_value::Value as V};
-    use std::collections::HashMap;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::ProximaTreeNode;
 
-    fn make_doc(fields: Vec<(&str, &str)>) -> SqlObject {
-        let mut map = HashMap::new();
-        for (k, v) in fields {
-            map.insert(
-                k.to_string(),
-                SqlValue {
-                    value: Some(V::StringValue(v.to_string())),
-                },
-            );
-        }
-        SqlObject { fields: map }
+    fn make_doc(fields: Vec<(&str, &str)>) -> ProximaTree {
+        fields
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k.to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String(v.to_string())),
+                )
+            })
+            .collect()
     }
 
     #[test]

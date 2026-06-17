@@ -19,9 +19,9 @@
 //! Manages graph collections metadata, schemas, and configurations following
 //! the same pattern as vector collections service.
 
-use crate::core::error::ProximaDBError;
 use crate::proto::proximadb_v1::{CreateGraphRequest, GraphCollection, GraphSchema};
 use dashmap::DashMap;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;

@@ -25,6 +25,20 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use proximadb_catalog::{
+    CatalogCompressionRejectedCandidate, CatalogCompressionStatsProfile, CatalogPhysicalFormat,
+    CatalogProjection, CatalogStorageLayout, CatalogTableSchema, RelationalCapabilities,
+};
+
+use crate::query::multimodal::plan::{
+    PlanContext, ResolvedCompressionRejectedCandidateContext,
+    ResolvedCompressionStatsProfileContext, ResolvedObjectContext, ResolvedProjectionContext,
+    ResolvedStorageLayoutContext,
+};
+// TODO: Move to proximadb-graph crate
+// For now, use local definitions
+use crate::graph::query::planner::{GraphQueryPlan, GraphStatistics, PlanStepType};
+
 use crate::storage::multimodel::ModelType;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -32,21 +46,27 @@ pub struct ExplainPlan {
     pub orchestration_steps: Vec<String>,
     pub vector_hints: Option<VectorHints>,
     pub graph_hints: Option<GraphHints>,
-    pub join_costs: Option<JoinCostEstimate>,
+    pub join_costs: Option<JoinExplainCostEstimate>,
     pub query_stats: Option<AnalyzeMetrics>,
     pub execution_strategy: Option<String>,
     pub estimated_total_cost: Option<f64>,
     /// Per-operation cost breakdown from the cost-based optimizer
-    pub cost_breakdown: Option<Vec<CostEstimate>>,
+    pub cost_breakdown: Option<Vec<ExplainCostEstimate>>,
     /// Join strategy chosen by the optimizer and the reasoning behind it
     pub join_strategy: Option<JoinStrategyExplanation>,
     /// Fusion strategy chosen by the optimizer and the reasoning behind it
     pub fusion_strategy: Option<FusionStrategyExplanation>,
+    /// xCatalog storage authority, projection freshness, and relational capability metadata.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_authority: Option<StorageAuthorityExplanation>,
+    /// Vector object-storage route economics for SST/centroid/IVF-like projections.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vector_object_economy: Option<VectorObjectEconomyExplain>,
 }
 
 /// Cost estimate for a single operation in the query plan
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CostEstimate {
+pub struct ExplainCostEstimate {
     /// Human-readable operation name (e.g. "VectorSearch(products)")
     pub operation: String,
     /// Estimated cost units for this operation
@@ -105,7 +125,7 @@ impl ExplainPlan {
     }
 
     /// Add join cost estimates
-    pub fn with_join_costs(mut self, costs: JoinCostEstimate) -> Self {
+    pub fn with_join_costs(mut self, costs: JoinExplainCostEstimate) -> Self {
         self.join_costs = Some(costs);
         self
     }
@@ -129,7 +149,7 @@ impl ExplainPlan {
     }
 
     /// Set per-operation cost breakdown
-    pub fn with_cost_breakdown(mut self, breakdown: Vec<CostEstimate>) -> Self {
+    pub fn with_cost_breakdown(mut self, breakdown: Vec<ExplainCostEstimate>) -> Self {
         self.cost_breakdown = Some(breakdown);
         self
     }
@@ -144,6 +164,543 @@ impl ExplainPlan {
     pub fn with_fusion_strategy(mut self, explanation: FusionStrategyExplanation) -> Self {
         self.fusion_strategy = Some(explanation);
         self
+    }
+
+    /// Add xCatalog storage authority and projection metadata to the plan.
+    pub fn with_storage_authority(mut self, authority: StorageAuthorityExplanation) -> Self {
+        self.storage_authority = Some(authority);
+        self
+    }
+
+    /// Add object-storage vector route economics to the plan.
+    pub fn with_vector_object_economy(mut self, explain: VectorObjectEconomyExplain) -> Self {
+        self.vector_object_economy = Some(explain);
+        self
+    }
+}
+
+/// Vector object-storage route metadata for EXPLAIN and trace events.
+///
+/// This describes an access-method projection over canonical storage. It does
+/// not make the projection authoritative; `authority_mode` and
+/// `freshness_mode` must remain explicit so callers can audit stale or lossy
+/// routes.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct VectorObjectEconomyExplain {
+    pub route_kind: String,
+    pub authority_mode: String,
+    pub freshness_mode: String,
+    pub freshness_watermark_lsn: Option<u64>,
+    pub policy_boundary: String,
+    pub cache_status: String,
+    pub cache_affinity_key: Option<String>,
+    pub selected_files: usize,
+    pub selected_blocks: usize,
+    pub pruned_blocks: usize,
+    pub estimated_object_gets: usize,
+    pub actual_object_gets: Option<usize>,
+    pub estimated_remote_bytes: u64,
+    pub actual_remote_bytes: Option<u64>,
+    pub overfetch_bytes: u64,
+    pub wal_delta_searched: bool,
+    pub rejected_route_reasons: Vec<String>,
+    // ── Phase 5 Slice 5.5 — delta-merge observability ───────────────────
+    /// Number of WAL/memtable delta records scanned for the query when
+    /// the strong/bounded-stale route required a delta merge. `None`
+    /// when no scan ran (StaleOk, or watermark already covered the WAL).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wal_delta_records_scanned: Option<u64>,
+    /// Bytes read from WAL/memtable during the delta scan. `None` when
+    /// no scan ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wal_delta_bytes: Option<u64>,
+    /// Effective freshness mode chosen for this query, mirroring
+    /// [`VectorFreshnessMode::explain_label`]. Stays separate from the
+    /// existing `freshness_mode` (which is the projection-side label).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_mode_used: Option<String>,
+    /// Current WAL cursor observed at query plan time. Compared
+    /// against `freshness_watermark_lsn` to decide whether a delta
+    /// scan was needed. `None` when no source was wired.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_lsn_at_query: Option<u64>,
+}
+
+impl VectorObjectEconomyExplain {
+    pub fn from_index_stats(stats: &crate::core::service_types::ServiceIndexStats) -> Self {
+        Self {
+            route_kind: "vector_object_economy".to_string(),
+            authority_mode: "projection_over_canonical_records".to_string(),
+            freshness_mode: "strong".to_string(),
+            policy_boundary: "proxima_internal_policy".to_string(),
+            cache_status: "unknown".to_string(),
+            selected_blocks: stats.object_selected_blocks.max(0) as usize,
+            pruned_blocks: stats.object_pruned_blocks.max(0) as usize,
+            estimated_object_gets: stats.object_estimated_gets.max(0) as usize,
+            actual_object_gets: Some(stats.object_actual_gets.max(0) as usize),
+            estimated_remote_bytes: stats.object_estimated_remote_bytes.max(0) as u64,
+            actual_remote_bytes: Some(stats.object_actual_remote_bytes.max(0) as u64),
+            overfetch_bytes: stats.object_overfetch_bytes.max(0) as u64,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_cache_status(mut self, cache_status: impl Into<String>) -> Self {
+        self.cache_status = cache_status.into();
+        self
+    }
+
+    pub fn with_selected_files(mut self, selected_files: usize) -> Self {
+        self.selected_files = selected_files;
+        self
+    }
+
+    /// Record the result of a WAL/memtable delta scan for this query
+    /// (Phase 5 Slice 5.5). Populates the four delta-merge observability
+    /// fields in a single call so the service path doesn't have to
+    /// touch them individually.
+    ///
+    /// * `mode` — the freshness mode the service honored.
+    /// * `current_lsn` — WAL cursor read at query plan time.
+    /// * `scanned_records` / `scanned_bytes` — `None` when no scan ran
+    ///   (StaleOk, or watermark already covered the WAL); `Some(0)` if
+    ///   the scan ran but returned nothing.
+    pub fn record_wal_delta_scan(
+        mut self,
+        mode: &crate::core::search::VectorFreshnessMode,
+        current_lsn: u64,
+        scanned_records: Option<u64>,
+        scanned_bytes: Option<u64>,
+    ) -> Self {
+        self.freshness_mode_used = Some(mode.explain_label().to_string());
+        self.current_lsn_at_query = Some(current_lsn);
+        self.wal_delta_records_scanned = scanned_records;
+        self.wal_delta_bytes = scanned_bytes;
+        // `wal_delta_searched` is the existing bool field; flip it
+        // whenever any scan-related metric is populated so callers
+        // reading just the bool still see the right state.
+        self.wal_delta_searched = scanned_records.is_some();
+        self
+    }
+
+    /// Record the outcome of a per-collection directory load. Pushes a
+    /// reason into `rejected_route_reasons` when the load was degraded so
+    /// EXPLAIN reflects the fallback to embedded SST index reads.
+    pub fn record_directory_load(
+        mut self,
+        status: &crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus,
+        sidecar_path: &str,
+    ) -> Self {
+        if status.is_degraded() {
+            self.rejected_route_reasons
+                .push(status.reason(sidecar_path));
+        }
+        self
+    }
+}
+
+/// Storage authority metadata surfaced by EXPLAIN from xCatalog.
+///
+/// This keeps query plans honest about whether a scan uses canonical
+/// ProximaRecord storage, an externally authoritative table, or a rebuildable
+/// projection/access method. The fields are descriptive and do not change
+/// planning behavior by themselves.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StorageAuthorityExplanation {
+    /// Cataloged physical layouts that may satisfy the plan.
+    pub layouts: Vec<StorageLayoutExplanation>,
+    /// Cataloged projections/access methods considered or available.
+    pub projections: Vec<ProjectionExplanation>,
+    /// Optional relational integrity and transaction capabilities.
+    pub relational_capabilities: RelationalCapabilityExplanation,
+    /// Cataloged codec/layout profiling records available to the planner.
+    #[serde(default)]
+    pub compression_profiles: Vec<CompressionProfileExplanation>,
+    /// Fallback behavior when a preferred projection is stale, missing, or lossy.
+    pub fallback_behavior: String,
+}
+
+impl StorageAuthorityExplanation {
+    /// Build EXPLAIN metadata from planner-native resolved object context.
+    pub fn from_plan_context(context: &PlanContext) -> Option<Self> {
+        if context.resolved_objects.is_empty() {
+            return None;
+        }
+
+        let layouts = context
+            .resolved_objects
+            .iter()
+            .flat_map(|object| object.storage_layouts.iter())
+            .map(StorageLayoutExplanation::from)
+            .collect();
+        let projections = context
+            .resolved_objects
+            .iter()
+            .flat_map(|object| object.projections.iter())
+            .map(ProjectionExplanation::from)
+            .collect();
+        let compression_profiles = context
+            .resolved_objects
+            .iter()
+            .flat_map(|object| object.compression_stats_profiles.iter())
+            .map(CompressionProfileExplanation::from)
+            .collect();
+        let fallback_behavior = fallback_behavior_from_resolved_objects(&context.resolved_objects);
+
+        Some(Self {
+            layouts,
+            projections,
+            relational_capabilities: RelationalCapabilityExplanation::default(),
+            compression_profiles,
+            fallback_behavior,
+        })
+    }
+
+    /// Build EXPLAIN metadata for one resolved source.
+    pub fn from_resolved_object_context(object: &ResolvedObjectContext) -> Self {
+        Self {
+            layouts: object
+                .storage_layouts
+                .iter()
+                .map(StorageLayoutExplanation::from)
+                .collect(),
+            projections: object
+                .projections
+                .iter()
+                .map(ProjectionExplanation::from)
+                .collect(),
+            relational_capabilities: RelationalCapabilityExplanation::default(),
+            compression_profiles: object
+                .compression_stats_profiles
+                .iter()
+                .map(CompressionProfileExplanation::from)
+                .collect(),
+            fallback_behavior: object.fallback_behavior.clone(),
+        }
+    }
+
+    /// Build EXPLAIN metadata from a catalog table schema.
+    pub fn from_catalog_table_schema(schema: &CatalogTableSchema) -> Self {
+        Self::from_catalog_metadata(
+            &schema.storage_layouts,
+            &schema.projections,
+            &schema.compression_stats_profiles,
+            &schema.relational_capabilities,
+        )
+    }
+
+    /// Build EXPLAIN metadata from xCatalog layout/projection/capability records.
+    pub fn from_catalog_metadata(
+        layouts: &[CatalogStorageLayout],
+        projections: &[CatalogProjection],
+        compression_profiles: &[CatalogCompressionStatsProfile],
+        relational_capabilities: &RelationalCapabilities,
+    ) -> Self {
+        let fallback_behavior = if projections.iter().any(|projection| !projection.rebuildable) {
+            "planner must verify non-rebuildable projection freshness before use".to_string()
+        } else if projections.iter().any(|projection| projection.lossy) {
+            "planner should fall back to canonical records when exact recall is required"
+                .to_string()
+        } else if layouts
+            .iter()
+            .any(|layout| !layout.policy_enforced_in_proxima)
+        {
+            "planner must apply ProximaDB policy/RLS after external reads".to_string()
+        } else {
+            "canonical records remain the fallback for stale or unavailable projections".to_string()
+        };
+
+        Self {
+            layouts: layouts.iter().map(StorageLayoutExplanation::from).collect(),
+            projections: projections
+                .iter()
+                .map(ProjectionExplanation::from)
+                .collect(),
+            relational_capabilities: RelationalCapabilityExplanation::from(relational_capabilities),
+            compression_profiles: compression_profiles
+                .iter()
+                .map(CompressionProfileExplanation::from)
+                .collect(),
+            fallback_behavior,
+        }
+    }
+
+    /// Returns true when all authority metadata preserves ProximaDB policy semantics.
+    pub fn policy_safe_inside_proxima(&self) -> bool {
+        self.layouts
+            .iter()
+            .all(|layout| layout.policy_enforced_in_proxima)
+    }
+}
+
+fn fallback_behavior_from_resolved_objects(objects: &[ResolvedObjectContext]) -> String {
+    if objects
+        .iter()
+        .any(ResolvedObjectContext::requires_policy_boundary)
+    {
+        "planner must apply ProximaDB policy/RLS after external reads".to_string()
+    } else if objects.iter().any(|object| {
+        object
+            .projections
+            .iter()
+            .any(|projection| !projection.rebuildable)
+    }) {
+        "planner must verify non-rebuildable projection freshness before use".to_string()
+    } else if objects
+        .iter()
+        .any(|object| object.projections.iter().any(|projection| projection.lossy))
+    {
+        "planner should fall back to canonical records when exact recall is required".to_string()
+    } else if objects.len() == 1 {
+        objects[0].fallback_behavior.clone()
+    } else {
+        "canonical records remain the fallback for stale or unavailable projections".to_string()
+    }
+}
+
+/// Physical layout authority row for EXPLAIN output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageLayoutExplanation {
+    pub name: String,
+    pub authority: String,
+    pub layout_kind: String,
+    pub physical_format: String,
+    pub write_mode: String,
+    pub location: Option<String>,
+    pub snapshot_semantics: Option<String>,
+    pub policy_enforced_in_proxima: bool,
+    pub lossy_type_mappings: Vec<String>,
+}
+
+impl From<&CatalogStorageLayout> for StorageLayoutExplanation {
+    fn from(layout: &CatalogStorageLayout) -> Self {
+        Self {
+            name: layout.name.clone(),
+            authority: format!("{:?}", layout.authority),
+            layout_kind: format!("{:?}", layout.layout_kind),
+            physical_format: physical_format_label(&layout.physical_format),
+            write_mode: format!("{:?}", layout.write_mode),
+            location: layout.location.clone(),
+            snapshot_semantics: layout.snapshot_semantics.clone(),
+            policy_enforced_in_proxima: layout.policy_enforced_in_proxima,
+            lossy_type_mappings: layout.lossy_type_mappings.clone(),
+        }
+    }
+}
+
+impl From<&ResolvedStorageLayoutContext> for StorageLayoutExplanation {
+    fn from(layout: &ResolvedStorageLayoutContext) -> Self {
+        Self {
+            name: layout.name.clone(),
+            authority: format!("{:?}", layout.authority),
+            layout_kind: layout.layout_kind.clone(),
+            physical_format: layout.physical_format.clone(),
+            write_mode: layout.write_mode.clone(),
+            location: layout.location.clone(),
+            snapshot_semantics: layout.snapshot_semantics.clone(),
+            policy_enforced_in_proxima: layout.policy_enforced_in_proxima,
+            lossy_type_mappings: layout.lossy_type_mappings.clone(),
+        }
+    }
+}
+
+/// Projection/access-method row for EXPLAIN output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectionExplanation {
+    pub name: String,
+    pub kind: String,
+    pub physical_format: String,
+    pub rebuild_source: String,
+    pub freshness: String,
+    pub max_lag_ms: Option<i64>,
+    pub rebuildable: bool,
+    pub lossy: bool,
+    pub support_status: String,
+    /// `ProjectionFreshnessState` variant name. Absent when the catalog entry
+    /// predates the freshness-state field or the projection is external-authoritative.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub freshness_state: Option<String>,
+    /// Rebuild rate from `RebuildRtoSpec` in seconds per 10 GiB. Absent when
+    /// no RTO estimate has been benchmarked or cataloged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebuild_rto_seconds_per_10gb: Option<f64>,
+}
+
+/// Codec/layout profiling feedback row for EXPLAIN output.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionProfileExplanation {
+    pub profile_id: String,
+    pub layout_name: Option<String>,
+    pub projection_id: Option<String>,
+    pub selected_scheme: String,
+    pub raw_bytes: u64,
+    pub encoded_bytes: u64,
+    pub value_count: u64,
+    pub measured_ratio: f64,
+    pub exact_reconstruction: bool,
+    pub encode_cpu_ms_per_block: Option<f64>,
+    pub decode_ns_per_value: Option<f64>,
+    #[serde(default)]
+    pub rejected_candidates: Vec<CompressionRejectedCandidateExplanation>,
+}
+
+impl CompressionProfileExplanation {
+    pub fn bytes_per_value(&self) -> f64 {
+        if self.value_count == 0 {
+            0.0
+        } else {
+            self.encoded_bytes as f64 / self.value_count as f64
+        }
+    }
+}
+
+impl From<&CatalogCompressionStatsProfile> for CompressionProfileExplanation {
+    fn from(profile: &CatalogCompressionStatsProfile) -> Self {
+        Self {
+            profile_id: profile.profile_id.clone(),
+            layout_name: profile.layout_name.clone(),
+            projection_id: profile.projection_id.clone(),
+            selected_scheme: profile.selected_scheme.clone(),
+            raw_bytes: profile.raw_bytes,
+            encoded_bytes: profile.encoded_bytes,
+            value_count: profile.value_count,
+            measured_ratio: profile.measured_ratio,
+            exact_reconstruction: profile.exact_reconstruction,
+            encode_cpu_ms_per_block: profile.encode_cpu_ms_per_block,
+            decode_ns_per_value: profile.decode_ns_per_value,
+            rejected_candidates: profile
+                .rejected_candidates
+                .iter()
+                .map(CompressionRejectedCandidateExplanation::from)
+                .collect(),
+        }
+    }
+}
+
+impl From<&ResolvedCompressionStatsProfileContext> for CompressionProfileExplanation {
+    fn from(profile: &ResolvedCompressionStatsProfileContext) -> Self {
+        Self {
+            profile_id: profile.profile_id.clone(),
+            layout_name: profile.layout_name.clone(),
+            projection_id: profile.projection_id.clone(),
+            selected_scheme: profile.selected_scheme.clone(),
+            raw_bytes: profile.raw_bytes,
+            encoded_bytes: profile.encoded_bytes,
+            value_count: profile.value_count,
+            measured_ratio: profile.measured_ratio,
+            exact_reconstruction: profile.exact_reconstruction,
+            encode_cpu_ms_per_block: profile.encode_cpu_ms_per_block,
+            decode_ns_per_value: profile.decode_ns_per_value,
+            rejected_candidates: profile
+                .rejected_candidates
+                .iter()
+                .map(CompressionRejectedCandidateExplanation::from)
+                .collect(),
+        }
+    }
+}
+
+/// Rejected codec candidate surfaced in EXPLAIN.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompressionRejectedCandidateExplanation {
+    pub scheme: String,
+    pub reason: String,
+    pub expected_ratio: Option<f32>,
+}
+
+impl From<&CatalogCompressionRejectedCandidate> for CompressionRejectedCandidateExplanation {
+    fn from(candidate: &CatalogCompressionRejectedCandidate) -> Self {
+        Self {
+            scheme: candidate.scheme.clone(),
+            reason: candidate.reason.clone(),
+            expected_ratio: candidate.expected_ratio,
+        }
+    }
+}
+
+impl From<&ResolvedCompressionRejectedCandidateContext>
+    for CompressionRejectedCandidateExplanation
+{
+    fn from(candidate: &ResolvedCompressionRejectedCandidateContext) -> Self {
+        Self {
+            scheme: candidate.scheme.clone(),
+            reason: candidate.reason.clone(),
+            expected_ratio: candidate.expected_ratio,
+        }
+    }
+}
+
+impl From<&CatalogProjection> for ProjectionExplanation {
+    fn from(projection: &CatalogProjection) -> Self {
+        Self {
+            name: projection.name.clone(),
+            kind: format!("{:?}", projection.kind),
+            physical_format: physical_format_label(&projection.physical_format),
+            rebuild_source: projection.rebuild_source.clone(),
+            freshness: format!("{:?}", projection.freshness),
+            max_lag_ms: projection.max_lag_ms,
+            rebuildable: projection.rebuildable,
+            lossy: projection.lossy,
+            support_status: projection.support_status.clone(),
+            freshness_state: Some(format!("{:?}", projection.freshness_state)),
+            rebuild_rto_seconds_per_10gb: projection
+                .rebuild_rto
+                .as_ref()
+                .map(|rto| rto.rebuild_seconds_per_10gb),
+        }
+    }
+}
+
+impl From<&ResolvedProjectionContext> for ProjectionExplanation {
+    fn from(projection: &ResolvedProjectionContext) -> Self {
+        Self {
+            name: projection.name.clone(),
+            kind: projection.kind.clone(),
+            physical_format: projection.physical_format.clone(),
+            rebuild_source: projection.rebuild_source.clone(),
+            freshness: projection.freshness.clone(),
+            max_lag_ms: projection.max_lag_ms,
+            rebuildable: projection.rebuildable,
+            lossy: projection.lossy,
+            support_status: projection.support_status.clone(),
+            freshness_state: projection.freshness_state.clone(),
+            rebuild_rto_seconds_per_10gb: projection.rebuild_rto_seconds_per_10gb,
+        }
+    }
+}
+
+/// Optional relational semantics surfaced by EXPLAIN.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RelationalCapabilityExplanation {
+    pub has_enforced_semantics: bool,
+    pub primary_key: Vec<String>,
+    pub unique_index_count: usize,
+    pub secondary_index_count: usize,
+    pub constraint_count: usize,
+    pub materialized_view_count: usize,
+    pub transaction_profile: Option<String>,
+    pub schema_evolution_policy: Option<String>,
+}
+
+impl From<&RelationalCapabilities> for RelationalCapabilityExplanation {
+    fn from(capabilities: &RelationalCapabilities) -> Self {
+        Self {
+            has_enforced_semantics: capabilities.has_enforced_semantics(),
+            primary_key: capabilities.primary_key.clone(),
+            unique_index_count: capabilities.unique_indexes.len(),
+            secondary_index_count: capabilities.secondary_indexes.len(),
+            constraint_count: capabilities.constraints.len(),
+            materialized_view_count: capabilities.materialized_views.len(),
+            transaction_profile: capabilities.transaction_profile.clone(),
+            schema_evolution_policy: capabilities.schema_evolution_policy.clone(),
+        }
+    }
+}
+
+fn physical_format_label(format: &CatalogPhysicalFormat) -> String {
+    match format {
+        CatalogPhysicalFormat::External(label) => label.clone(),
+        other => format!("{:?}", other),
     }
 }
 
@@ -161,6 +718,102 @@ pub struct VectorHints {
     pub quantization_level: Option<String>,
     pub estimated_io_cost: Option<f64>,
     pub estimated_compute_cost: Option<f64>,
+    /// ADR-011 ANN filtering mode chosen by the planner: "PreFilter", "Inline", or "PostFilter".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_filtering_mode: Option<String>,
+    /// Estimated fraction of records matching the scalar filter that drove
+    /// ADR-011 route selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_filtering_selectivity: Option<f64>,
+    /// Source of the selectivity estimate, when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_filtering_selectivity_source: Option<String>,
+    /// Why the planner chose this mode (selectivity estimate, policy override, degradation).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ann_mode_reason: Option<String>,
+    /// TurboQuant EXPLAIN hints (Phase F — Quantization Trait Convergence
+    /// Plan). Populated when the search ran through a `ReadTime`-lifecycle
+    /// quantization method (TurboQuant today). The value is the
+    /// `TurboQuantExplainHints` struct serialized via its own
+    /// `to_explain_value()` method (`src/index/turboquant_bridge.rs:298`),
+    /// so the wire shape stays stable across REST / gRPC / Arrow Flight /
+    /// pgwire per ADR-004 §"Plan Operators".
+    ///
+    /// The 9 fields surfaced (when present) are: `quantization`,
+    /// `calibration_mode`, `rotation_seed`, `encoded_epoch`,
+    /// `current_epoch`, `mask_pushed_to_kernel`, `kernel_arch`,
+    /// `blocks_skipped_by_mask`, `length_renorm_applied`, plus optional
+    /// `candidate_set_size` and `n_vectors_scanned`. See the
+    /// `TurboQuantExplainHints` doc in the bridge for field semantics
+    /// and the `current_epoch == None` rendering convention.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub turboquant: Option<serde_json::Value>,
+}
+
+impl VectorHints {
+    /// Builder-style setter for the TurboQuant EXPLAIN hint payload.
+    /// Accepts the bridge's already-shipped `TurboQuantExplainHints`
+    /// builder output and serializes it via `to_explain_value()` so the
+    /// hint round-trips cleanly across every protocol surface (per
+    /// ADR-004). Returns `self` for chaining at the constructor site.
+    ///
+    /// Available behind `experimental-turboquant` to mirror the bridge
+    /// type's feature gate; non-TurboQuant builds carry no `serde_json`
+    /// payload here.
+    #[cfg(feature = "experimental-turboquant")]
+    pub fn with_turboquant_hints(
+        mut self,
+        hints: &crate::index::turboquant_bridge::TurboQuantExplainHints,
+    ) -> Self {
+        self.turboquant = Some(hints.to_explain_value());
+        // Mirror the quantization name into the existing top-level
+        // `quantization_level` field so legacy EXPLAIN consumers that
+        // only read that one slot still see the right value.
+        self.quantization_level = Some(hints.quantization.clone());
+        self
+    }
+}
+
+impl From<&crate::services::operations::vectors::SearchPlanHints> for VectorHints {
+    fn from(h: &crate::services::operations::vectors::SearchPlanHints) -> Self {
+        let ann_mode_reason = match (
+            h.ann_filtering_mode.as_deref(),
+            h.ann_filtering_selectivity,
+            h.ann_filtering_selectivity_source.as_deref(),
+        ) {
+            (Some(mode), Some(selectivity), Some(source)) => Some(format!(
+                "{mode} selected from {source} selectivity={selectivity:.6}"
+            )),
+            (Some(mode), Some(selectivity), None) => {
+                Some(format!("{mode} selected from selectivity={selectivity:.6}"))
+            }
+            (Some(mode), None, _) => Some(format!("{mode} selected without selectivity estimate")),
+            _ => None,
+        };
+
+        Self {
+            cache_hit: h.cache_hit,
+            pruned_files: h.pruned_files,
+            ef_search: h.ef_search,
+            nprobe: h.nprobe,
+            candidates: h.candidates,
+            progressive_stages: h.progressive_stages.clone(),
+            recall_estimates: h.recall_estimates.clone(),
+            ann_filtering_mode: h.ann_filtering_mode.clone(),
+            ann_filtering_selectivity: h.ann_filtering_selectivity,
+            ann_filtering_selectivity_source: h.ann_filtering_selectivity_source.clone(),
+            ann_mode_reason,
+            // Phase J: propagate the TurboQuant EXPLAIN payload from the
+            // caller-side hint bag straight into the wire-facing struct.
+            // Cloned because `serde_json::Value` is owned. `None` is the
+            // common case (most searches don't run through TurboQuant);
+            // the `skip_serializing_if` on the field hides it from the
+            // wire shape when absent.
+            turboquant: h.turboquant.clone(),
+            // index_type, quantization_level, estimated_*_cost populated by engine layer
+            ..Default::default()
+        }
+    }
 }
 
 /// Graph-side hints from graph query planning and execution
@@ -222,7 +875,7 @@ pub struct GraphPlannerStats {
 
 /// Join cost estimation for hybrid queries
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct JoinCostEstimate {
+pub struct JoinExplainCostEstimate {
     /// Join algorithm used
     pub join_algorithm: String,
     /// Estimated cost of the join
@@ -251,18 +904,18 @@ pub struct AnalyzeMetrics {
     /// Actual memory usage in MB
     pub actual_memory_mb: f64,
     /// Cache hit rates
-    pub cache_statistics: CacheStatistics,
+    pub cache_statistics: ExplainCacheStatistics,
     /// I/O statistics
     pub io_statistics: IOStatistics,
     /// Operator timing breakdown
     pub operator_timings: Vec<OperatorTiming>,
     /// Resource utilization
-    pub resource_usage: ResourceUsage,
+    pub resource_usage: ExplainResourceUsage,
 }
 
 /// Cache statistics for ANALYZE
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CacheStatistics {
+pub struct ExplainCacheStatistics {
     /// Vector cache hit rate
     pub vector_cache_hit_rate: f64,
     /// Graph cache hit rate  
@@ -305,7 +958,7 @@ pub struct OperatorTiming {
 
 /// Resource utilization metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct ResourceUsage {
+pub struct ExplainResourceUsage {
     /// Peak memory usage in MB
     pub peak_memory_mb: f64,
     /// CPU time in milliseconds
@@ -318,16 +971,13 @@ pub struct ResourceUsage {
 
 impl GraphHints {
     /// Create GraphHints from a graph query plan
-    pub fn from_query_plan(
-        plan: &crate::graph::query::QueryPlan,
-        stats: Option<&crate::graph::query::planner::GraphStatistics>,
-    ) -> Self {
+    pub fn from_query_plan(plan: &GraphQueryPlan, stats: Option<&GraphStatistics>) -> Self {
         let mut hints = GraphHints::default();
 
         // Extract information from plan steps
         for step in &plan.steps {
             match &step.step_type {
-                crate::graph::query::planner::PlanStepType::IndexSeek { index_name, .. } => {
+                PlanStepType::IndexSeek { index_name, .. } => {
                     hints.index_usage.push(GraphIndexUsage {
                         index_name: index_name.clone(),
                         index_type: "label_index".to_string(),
@@ -336,13 +986,13 @@ impl GraphHints {
                         skip_reason: None,
                     });
                 }
-                crate::graph::query::planner::PlanStepType::Traverse {
+                PlanStepType::Traverse {
                     algorithm,
                     max_depth,
                     ..
                 } => {
                     hints.traversal_algorithm = Some(format!("{:?}", algorithm));
-                    hints.max_depth = *max_depth;
+                    hints.max_depth = Some(*max_depth as u32);
                 }
                 _ => {}
             }
@@ -372,7 +1022,7 @@ impl GraphHints {
     }
 }
 
-impl JoinCostEstimate {
+impl JoinExplainCostEstimate {
     /// Create a join cost estimate for vector-graph hybrid queries
     pub fn for_hybrid_join(
         vector_cardinality: usize,
@@ -384,7 +1034,7 @@ impl JoinCostEstimate {
             ((vector_cardinality as f64) * (graph_cardinality as f64) * join_selectivity) as usize;
         let memory_mb = ((vector_cardinality + graph_cardinality) as f64 * 0.001).max(1.0); // Rough estimate
 
-        JoinCostEstimate {
+        JoinExplainCostEstimate {
             join_algorithm: "hybrid_hash_join".to_string(),
             estimated_cost,
             left_cardinality: vector_cardinality,
@@ -404,10 +1054,10 @@ impl AnalyzeMetrics {
             actual_execution_time_ms: execution_time_ms,
             actual_rows: rows,
             actual_memory_mb: 1.0,
-            cache_statistics: CacheStatistics::default(),
+            cache_statistics: ExplainCacheStatistics::default(),
             io_statistics: IOStatistics::default(),
             operator_timings: vec![],
-            resource_usage: ResourceUsage::default(),
+            resource_usage: ExplainResourceUsage::default(),
         }
     }
 }
@@ -1026,7 +1676,7 @@ pub struct ParallelStage {
     /// Data dependencies that limit parallelism
     pub dependencies: Vec<String>,
     /// Resource requirements per unit
-    pub resource_per_unit: Option<ResourceRequirements>,
+    pub resource_per_unit: Option<ExplainResourceRequirements>,
 }
 
 impl ParallelStage {
@@ -1062,7 +1712,7 @@ impl ParallelStage {
     }
 
     /// Builder-style method to add resource requirements
-    pub fn with_resources(mut self, resources: ResourceRequirements) -> Self {
+    pub fn with_resources(mut self, resources: ExplainResourceRequirements) -> Self {
         self.resource_per_unit = Some(resources);
         self
     }
@@ -1083,9 +1733,12 @@ pub enum ParallelismType {
     Simd,
 }
 
+/// Backwards-compat alias for [`ExplainResourceRequirements`].
+pub type ResourceRequirements = ExplainResourceRequirements;
+
 /// Resource requirements for parallel execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceRequirements {
+pub struct ExplainResourceRequirements {
     /// Memory requirement in MB
     pub memory_mb: f64,
     /// CPU cores needed
@@ -1096,7 +1749,7 @@ pub struct ResourceRequirements {
     pub gpu_memory_mb: Option<f64>,
 }
 
-impl Default for ResourceRequirements {
+impl Default for ExplainResourceRequirements {
     fn default() -> Self {
         Self {
             memory_mb: 16.0,
@@ -1219,6 +1872,11 @@ pub enum WarningSeverity {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_catalog::{
+        CatalogCompressionRejectedCandidate, CatalogCompressionStatsProfile, CatalogPhysicalFormat,
+        CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
+        CatalogTableSchema, RelationalCapabilities,
+    };
 
     #[test]
     fn test_enhanced_explain_plan_builder() {
@@ -1240,6 +1898,190 @@ mod tests {
         assert!(plan.is_cross_model());
         assert_eq!(plan.optimization_rules_applied.len(), 1);
         assert_eq!(plan.parallelization_opportunities.len(), 1);
+    }
+
+    #[test]
+    fn vector_hints_from_search_plan_hints_preserves_ann_reason() {
+        let hints = crate::services::operations::vectors::SearchPlanHints {
+            ann_filtering_mode: Some("PostFilter".to_string()),
+            ann_filtering_selectivity: Some(0.9),
+            ann_filtering_selectivity_source: Some("cost_analysis".to_string()),
+            ..Default::default()
+        };
+
+        let vector_hints = VectorHints::from(&hints);
+
+        assert_eq!(
+            vector_hints.ann_filtering_mode.as_deref(),
+            Some("PostFilter")
+        );
+        assert_eq!(vector_hints.ann_filtering_selectivity, Some(0.9));
+        assert_eq!(
+            vector_hints.ann_filtering_selectivity_source.as_deref(),
+            Some("cost_analysis")
+        );
+        assert_eq!(
+            vector_hints.ann_mode_reason.as_deref(),
+            Some("PostFilter selected from cost_analysis selectivity=0.900000")
+        );
+    }
+
+    #[test]
+    fn vector_hints_from_search_plan_hints_propagates_turboquant_payload() {
+        // Phase J wire test: a `SearchPlanHints` carrying a TurboQuant
+        // JSON payload (built by `score_turboquant` in the caller-side
+        // shim) must propagate that payload into the wire-facing
+        // `VectorHints.turboquant` slot unchanged. Without this
+        // propagation, the EXPLAIN payload would be silently dropped
+        // before reaching REST / gRPC / Arrow Flight / pgwire.
+        let payload = serde_json::json!({
+            "quantization": "turboquant_4bit",
+            "calibration_mode": "tq_plus",
+            "rotation_seed": "1234567",
+            "encoded_epoch": 7,
+            "mask_pushed_to_kernel": true,
+            "kernel_arch": "scalar",
+            "blocks_skipped_by_mask": 42,
+            "length_renorm_applied": true,
+        });
+        let hints = crate::services::operations::vectors::SearchPlanHints {
+            turboquant: Some(payload.clone()),
+            ..Default::default()
+        };
+        let vh = VectorHints::from(&hints);
+        assert_eq!(vh.turboquant.as_ref(), Some(&payload));
+    }
+
+    #[test]
+    fn vector_hints_from_search_plan_hints_without_turboquant_yields_none() {
+        // The default path (no TurboQuant) must NOT synthesize a stale
+        // turboquant payload — that would leak a misleading "TurboQuant
+        // ran" signal into the EXPLAIN wire shape.
+        let hints = crate::services::operations::vectors::SearchPlanHints::default();
+        let vh = VectorHints::from(&hints);
+        assert!(vh.turboquant.is_none());
+    }
+
+    #[test]
+    fn vector_hints_default_skips_turboquant_field_in_serialized_wire_shape() {
+        // The `turboquant` field is `Option<serde_json::Value>` with
+        // `skip_serializing_if = "Option::is_none"`. Default-constructed
+        // VectorHints must not surface a stale-null `turboquant` key —
+        // EXPLAIN consumers that read JSON would otherwise infer
+        // "TurboQuant ran but had nothing to say" from a `null`. Lock
+        // the shape with a literal-presence assertion.
+        let h = VectorHints::default();
+        let s = serde_json::to_string(&h).expect("VectorHints serializes");
+        assert!(
+            !s.contains("\"turboquant\""),
+            "wire shape leaked `turboquant` key: {s}",
+        );
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn vector_hints_with_turboquant_hints_serializes_full_payload() {
+        // Build a TurboQuantExplainHints, run it through the builder,
+        // and verify the EXPLAIN JSON carries every load-bearing field
+        // under the `turboquant` key. This is the wire-contract test
+        // for ADR-004 EXPLAIN integration of TurboQuant — every protocol
+        // (REST / gRPC / Arrow Flight / pgwire) reads the same key
+        // shape.
+        use crate::index::turboquant_bridge::{KernelArch, TurboQuantExplainHints};
+        use proximadb_quantization_types::CalibrationMode;
+        use proximadb_vector::quantization::turboquant::TurboQuantStore;
+
+        let store = TurboQuantStore::new(64, 4, CalibrationMode::Identity, 0xabcd).unwrap();
+        let tq = TurboQuantExplainHints::for_search(&store)
+            .with_encoded_epoch(11)
+            .with_current_epoch(11)
+            .with_mask_pushed(true)
+            .with_kernel_arch(KernelArch::Scalar)
+            .with_blocks_skipped(42)
+            .with_candidate_set_size(128)
+            .with_n_vectors_scanned(2048);
+
+        let hints = VectorHints::default().with_turboquant_hints(&tq);
+
+        // Top-level mirror: legacy consumers reading just
+        // `quantization_level` get the right value.
+        assert_eq!(hints.quantization_level.as_deref(), Some("turboquant_4bit"));
+
+        // Full payload under the new key.
+        let v = serde_json::to_value(&hints).expect("VectorHints serializes");
+        let tq_obj = v
+            .get("turboquant")
+            .expect("turboquant key present")
+            .as_object()
+            .expect("turboquant is a JSON object");
+        assert_eq!(
+            tq_obj.get("quantization").and_then(|v| v.as_str()),
+            Some("turboquant_4bit")
+        );
+        assert_eq!(
+            tq_obj.get("calibration_mode").and_then(|v| v.as_str()),
+            Some("identity")
+        );
+        assert_eq!(
+            tq_obj.get("encoded_epoch").and_then(|v| v.as_u64()),
+            Some(11)
+        );
+        assert_eq!(
+            tq_obj.get("current_epoch").and_then(|v| v.as_u64()),
+            Some(11)
+        );
+        assert_eq!(
+            tq_obj
+                .get("mask_pushed_to_kernel")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            tq_obj.get("kernel_arch").and_then(|v| v.as_str()),
+            Some("scalar")
+        );
+        assert_eq!(
+            tq_obj
+                .get("blocks_skipped_by_mask")
+                .and_then(|v| v.as_u64()),
+            Some(42)
+        );
+        assert_eq!(
+            tq_obj
+                .get("length_renorm_applied")
+                .and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert_eq!(
+            tq_obj.get("candidate_set_size").and_then(|v| v.as_u64()),
+            Some(128)
+        );
+        assert_eq!(
+            tq_obj.get("n_vectors_scanned").and_then(|v| v.as_u64()),
+            Some(2048)
+        );
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn vector_hints_with_turboquant_hints_round_trips_through_serde() {
+        // Round-trip through to_string + from_str must preserve every
+        // field — otherwise a REST → server → REST shape change is
+        // silent. The contract is locked.
+        use crate::index::turboquant_bridge::TurboQuantExplainHints;
+        use proximadb_quantization_types::CalibrationMode;
+        use proximadb_vector::quantization::turboquant::TurboQuantStore;
+
+        let store = TurboQuantStore::new(64, 2, CalibrationMode::Identity, 0x1234).unwrap();
+        let tq = TurboQuantExplainHints::for_search(&store)
+            .with_encoded_epoch(1)
+            .with_mask_pushed(false)
+            .with_blocks_skipped(0);
+        let hints = VectorHints::default().with_turboquant_hints(&tq);
+        let s = serde_json::to_string(&hints).expect("serialize");
+        let back: VectorHints = serde_json::from_str(&s).expect("deserialize");
+        assert_eq!(back.quantization_level, hints.quantization_level);
+        assert_eq!(back.turboquant, hints.turboquant);
     }
 
     #[test]
@@ -1407,13 +2249,203 @@ mod tests {
         assert_eq!(deserialized.optimization_rules_applied.len(), 1);
     }
 
+    #[test]
+    fn test_explain_storage_authority_from_catalog_metadata() {
+        let mut parquet_lake = CatalogStorageLayout::external_authoritative(
+            "iceberg_lake",
+            CatalogPhysicalFormat::Iceberg,
+            "s3://bucket/table",
+        );
+        parquet_lake.snapshot_semantics = Some("iceberg-snapshot".to_string());
+
+        let mut vector_projection = CatalogProjection::rebuildable(
+            "semantic_ann",
+            CatalogProjectionKind::VectorAnn,
+            "primary",
+        );
+        vector_projection.lossy = true;
+
+        let schema = CatalogTableSchema::new("events")
+            .with_storage_layout(CatalogStorageLayout::internal(
+                "pax_hot",
+                CatalogStorageLayoutKind::Pax,
+            ))
+            .with_storage_layout(parquet_lake)
+            .with_projection(vector_projection)
+            .with_compression_stats_profile(
+                CatalogCompressionStatsProfile::new(
+                    "bench/vector/base_xor",
+                    "VectorBaseXorEntropy",
+                    1024,
+                    256,
+                    128,
+                    true,
+                )
+                .with_layout_name("pax_hot")
+                .with_projection_id("semantic_ann"),
+            )
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["event_id".to_string()],
+                transaction_profile: Some("mvcc".to_string()),
+                ..Default::default()
+            });
+
+        let authority = StorageAuthorityExplanation::from_catalog_table_schema(&schema);
+
+        assert_eq!(authority.layouts.len(), 3);
+        assert_eq!(authority.projections.len(), 1);
+        assert_eq!(authority.compression_profiles.len(), 1);
+        assert_eq!(
+            authority.compression_profiles[0].selected_scheme,
+            "VectorBaseXorEntropy"
+        );
+        assert_eq!(authority.compression_profiles[0].bytes_per_value(), 2.0);
+        assert!(!authority.policy_safe_inside_proxima());
+        assert!(authority.fallback_behavior.contains("canonical records"));
+        assert!(authority.relational_capabilities.has_enforced_semantics);
+
+        let plan = ExplainPlan::new().with_storage_authority(authority);
+        assert!(plan.storage_authority.is_some());
+    }
+
+    #[test]
+    fn test_explain_storage_authority_from_plan_context() {
+        use crate::query::multimodal::plan::{
+            PlanContext, ResolvedAuthorityMode, ResolvedObjectContext, ResolvedProjectionContext,
+            ResolvedStorageLayoutContext,
+        };
+
+        let mut object =
+            ResolvedObjectContext::internal_canonical("vectors", "vector", "default.vectors");
+        object.storage_layouts.push(ResolvedStorageLayoutContext {
+            name: "pax_hot".to_string(),
+            authority: ResolvedAuthorityMode::InternalCanonical,
+            layout_kind: "Pax".to_string(),
+            physical_format: "ProximaBlock".to_string(),
+            write_mode: "Mutable".to_string(),
+            location: None,
+            snapshot_semantics: Some("mvcc".to_string()),
+            policy_enforced_in_proxima: true,
+            lossy_type_mappings: Vec::new(),
+        });
+        object.projections.push(ResolvedProjectionContext {
+            name: "vectors_hnsw".to_string(),
+            kind: "VectorAnn".to_string(),
+            physical_format: "ProximaBlock".to_string(),
+            rebuild_source: "pax_hot".to_string(),
+            freshness: "Lazy".to_string(),
+            max_lag_ms: None,
+            rebuildable: true,
+            lossy: false,
+            support_status: "experimental".to_string(),
+            freshness_state: Some("Fresh".to_string()),
+            rebuild_rto_seconds_per_10gb: Some(45.0),
+        });
+        object.compression_stats_profiles.push(
+            crate::query::multimodal::plan::ResolvedCompressionStatsProfileContext {
+                profile_id: "bench/vector/base_xor".to_string(),
+                layout_name: Some("pax_hot".to_string()),
+                projection_id: Some("vectors_hnsw".to_string()),
+                selected_scheme: "VectorBaseXorEntropy".to_string(),
+                raw_bytes: 1024,
+                encoded_bytes: 256,
+                value_count: 128,
+                measured_ratio: 4.0,
+                exact_reconstruction: true,
+                encode_cpu_ms_per_block: None,
+                decode_ns_per_value: Some(12.0),
+                rejected_candidates: Vec::new(),
+            },
+        );
+
+        let mut context = PlanContext::default();
+        context.resolved_objects.push(object);
+
+        let authority = StorageAuthorityExplanation::from_plan_context(&context)
+            .expect("resolved object context should produce EXPLAIN authority metadata");
+
+        assert_eq!(authority.layouts.len(), 1);
+        assert_eq!(authority.layouts[0].layout_kind, "Pax");
+        assert_eq!(authority.projections[0].kind, "VectorAnn");
+        assert_eq!(authority.compression_profiles[0].measured_ratio, 4.0);
+        assert!(authority.compression_profiles[0].exact_reconstruction);
+        assert!(authority.policy_safe_inside_proxima());
+    }
+
+    #[test]
+    fn test_explain_compression_profiles_preserve_rejected_candidates() {
+        let mut profile = CatalogCompressionStatsProfile::new(
+            "bench/json/path_dictionary",
+            "Dictionary",
+            4096,
+            1024,
+            256,
+            true,
+        )
+        .with_layout_name("json_shape_order")
+        .with_projection_id("json_paths");
+        profile
+            .rejected_candidates
+            .push(CatalogCompressionRejectedCandidate {
+                scheme: "Raw".to_string(),
+                reason: "CompressionTargetMiss".to_string(),
+                expected_ratio: Some(1.0),
+            });
+
+        let explanation = CompressionProfileExplanation::from(&profile);
+
+        assert_eq!(explanation.profile_id, "bench/json/path_dictionary");
+        assert_eq!(explanation.measured_ratio, 4.0);
+        assert_eq!(explanation.rejected_candidates.len(), 1);
+        assert_eq!(
+            explanation.rejected_candidates[0].reason,
+            "CompressionTargetMiss"
+        );
+    }
+
+    #[test]
+    fn test_explain_storage_authority_from_plan_context_external_boundary() {
+        use crate::query::multimodal::plan::{
+            PlanContext, ResolvedAuthorityMode, ResolvedObjectContext, ResolvedStorageLayoutContext,
+        };
+
+        let mut object =
+            ResolvedObjectContext::internal_canonical("lake_docs", "document", "lake.docs");
+        object.authority = ResolvedAuthorityMode::ExternalAuthoritative;
+        object.external_policy_boundary = true;
+        object.storage_layouts.push(ResolvedStorageLayoutContext {
+            name: "iceberg".to_string(),
+            authority: ResolvedAuthorityMode::ExternalAuthoritative,
+            layout_kind: "ExternalTable".to_string(),
+            physical_format: "Iceberg".to_string(),
+            write_mode: "ExternalRefresh".to_string(),
+            location: Some("s3://warehouse/docs".to_string()),
+            snapshot_semantics: Some("iceberg-snapshot".to_string()),
+            policy_enforced_in_proxima: false,
+            lossy_type_mappings: vec!["timestamp_tz".to_string()],
+        });
+
+        let mut context = PlanContext::default();
+        context.resolved_objects.push(object);
+
+        let authority = StorageAuthorityExplanation::from_plan_context(&context)
+            .expect("external resolved object context should produce EXPLAIN metadata");
+
+        assert!(!authority.policy_safe_inside_proxima());
+        assert!(authority.fallback_behavior.contains("policy/RLS"));
+        assert_eq!(
+            authority.layouts[0].lossy_type_mappings,
+            vec!["timestamp_tz".to_string()]
+        );
+    }
+
     // ========================================================================
     // COST-BASED OPTIMIZER EXPLAIN TESTS
     // ========================================================================
 
     #[test]
     fn test_cost_estimate_struct() {
-        let estimate = CostEstimate {
+        let estimate = ExplainCostEstimate {
             operation: "VectorSearch(products)".to_string(),
             estimated_cost: 3.5,
             estimated_rows: 100,
@@ -1450,13 +2482,13 @@ mod tests {
     fn test_explain_plan_with_cost_breakdown() {
         let plan = ExplainPlan::new()
             .with_cost_breakdown(vec![
-                CostEstimate {
+                ExplainCostEstimate {
                     operation: "VectorSearch(products)".to_string(),
                     estimated_cost: 3.5,
                     estimated_rows: 100,
                     notes: None,
                 },
-                CostEstimate {
+                ExplainCostEstimate {
                     operation: "GraphTraversal(knowledge)".to_string(),
                     estimated_cost: 6.0,
                     estimated_rows: 500,
@@ -1480,5 +2512,140 @@ mod tests {
         assert!(plan.join_strategy.is_some());
         assert!(plan.fusion_strategy.is_some());
         assert_eq!(plan.estimated_total_cost, Some(9.5));
+    }
+
+    #[test]
+    fn test_vector_object_economy_explain_from_index_stats() {
+        let stats = crate::core::service_types::ServiceIndexStats {
+            object_selected_blocks: 8,
+            object_pruned_blocks: 24,
+            object_estimated_gets: 2,
+            object_actual_gets: 2,
+            object_estimated_remote_bytes: 128 * 1024,
+            object_actual_remote_bytes: 128 * 1024,
+            object_overfetch_bytes: 4096,
+            ..Default::default()
+        };
+
+        let explain = VectorObjectEconomyExplain::from_index_stats(&stats)
+            .with_cache_status("cold")
+            .with_selected_files(1);
+
+        assert_eq!(explain.route_kind, "vector_object_economy");
+        assert_eq!(explain.authority_mode, "projection_over_canonical_records");
+        assert_eq!(explain.selected_files, 1);
+        assert_eq!(explain.selected_blocks, 8);
+        assert_eq!(explain.pruned_blocks, 24);
+        assert_eq!(explain.estimated_object_gets, 2);
+        assert_eq!(explain.actual_object_gets, Some(2));
+        assert_eq!(explain.estimated_remote_bytes, 128 * 1024);
+        assert_eq!(explain.overfetch_bytes, 4096);
+        assert_eq!(explain.cache_status, "cold");
+    }
+
+    #[test]
+    fn vector_object_economy_explain_records_wal_delta_scan_metadata() {
+        use crate::core::search::VectorFreshnessMode;
+
+        let explain = VectorObjectEconomyExplain::default().record_wal_delta_scan(
+            &VectorFreshnessMode::Strong,
+            /*current_lsn*/ 250,
+            /*scanned_records*/ Some(7),
+            /*scanned_bytes*/ Some(4096),
+        );
+
+        assert_eq!(explain.freshness_mode_used.as_deref(), Some("strong"));
+        assert_eq!(explain.current_lsn_at_query, Some(250));
+        assert_eq!(explain.wal_delta_records_scanned, Some(7));
+        assert_eq!(explain.wal_delta_bytes, Some(4096));
+        assert!(explain.wal_delta_searched, "bool flips when scan ran");
+    }
+
+    #[test]
+    fn vector_object_economy_explain_skipped_scan_leaves_metrics_none() {
+        use crate::core::search::VectorFreshnessMode;
+
+        let explain = VectorObjectEconomyExplain::default().record_wal_delta_scan(
+            &VectorFreshnessMode::StaleOk,
+            /*current_lsn*/ 250,
+            /*scanned_records*/ None,
+            /*scanned_bytes*/ None,
+        );
+
+        assert_eq!(explain.freshness_mode_used.as_deref(), Some("stale_ok"));
+        assert_eq!(explain.current_lsn_at_query, Some(250));
+        assert!(explain.wal_delta_records_scanned.is_none());
+        assert!(explain.wal_delta_bytes.is_none());
+        assert!(!explain.wal_delta_searched);
+    }
+
+    #[test]
+    fn vector_object_economy_explain_delta_fields_round_trip_through_json() {
+        use crate::core::search::VectorFreshnessMode;
+
+        let explain = VectorObjectEconomyExplain::default().record_wal_delta_scan(
+            &VectorFreshnessMode::BoundedStale {
+                max_staleness_ms: 5_000,
+            },
+            42,
+            Some(3),
+            Some(128),
+        );
+        let json = serde_json::to_string(&explain).expect("serialize");
+        let decoded: VectorObjectEconomyExplain = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(
+            decoded.freshness_mode_used.as_deref(),
+            Some("bounded_stale")
+        );
+        assert_eq!(decoded.current_lsn_at_query, Some(42));
+        assert_eq!(decoded.wal_delta_records_scanned, Some(3));
+        assert_eq!(decoded.wal_delta_bytes, Some(128));
+        assert!(decoded.wal_delta_searched);
+    }
+
+    #[test]
+    fn vector_object_economy_explain_records_directory_degradation_reason() {
+        use crate::storage::engines::sst::object_economy_directory::DirectoryLoadStatus;
+
+        let path = "s3://bucket/coll/oedir/v5.bin";
+        let loaded = VectorObjectEconomyExplain::default()
+            .record_directory_load(&DirectoryLoadStatus::Loaded, path);
+        assert!(loaded.rejected_route_reasons.is_empty());
+
+        let missing = VectorObjectEconomyExplain::default()
+            .record_directory_load(&DirectoryLoadStatus::Missing, path);
+        assert_eq!(missing.rejected_route_reasons.len(), 1);
+        assert!(missing.rejected_route_reasons[0].starts_with("object_economy_directory_missing:"));
+
+        let mismatch = VectorObjectEconomyExplain::default().record_directory_load(
+            &DirectoryLoadStatus::Mismatch {
+                expected_collection: "coll".into(),
+                found_collection: "other".into(),
+            },
+            path,
+        );
+        assert_eq!(mismatch.rejected_route_reasons.len(), 1);
+        assert!(mismatch.rejected_route_reasons[0].contains("collection_mismatch"));
+    }
+
+    #[test]
+    fn test_explain_plan_carries_vector_object_economy_metadata() {
+        let plan = ExplainPlan::new().with_vector_object_economy(VectorObjectEconomyExplain {
+            selected_blocks: 3,
+            estimated_object_gets: 1,
+            ..Default::default()
+        });
+
+        let json = serde_json::to_string(&plan).expect("serialize explain");
+
+        assert!(json.contains("vector_object_economy"));
+        assert!(json.contains("selected_blocks"));
+        assert_eq!(
+            plan.vector_object_economy
+                .as_ref()
+                .map(|explain| explain.selected_blocks),
+            Some(3)
+        );
     }
 }

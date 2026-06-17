@@ -187,6 +187,20 @@ fn evaluate_equals(
                 Ok(all_true(batch.num_rows()))
             }
         }
+        arrow::datatypes::DataType::Boolean => {
+            if let Some(b) = value.as_bool() {
+                let array = col
+                    .as_any()
+                    .downcast_ref::<BooleanArray>()
+                    .ok_or_else(|| anyhow::anyhow!("Failed to downcast to BooleanArray"))?;
+                let scalar = Scalar::new(BooleanArray::from(vec![b]));
+                let result = cmp::eq(array, &scalar)
+                    .map_err(|e| anyhow::anyhow!("Boolean eq failed: {}", e))?;
+                Ok(result)
+            } else {
+                Ok(all_true(batch.num_rows()))
+            }
+        }
         _ => Ok(all_true(batch.num_rows())), // unsupported type = pass through
     }
 }
@@ -331,6 +345,141 @@ fn evaluate_is_not_null(batch: &RecordBatch, col_name: &str) -> Result<BooleanAr
         None => return Ok(all_true(batch.num_rows())),
     };
     compute::is_not_null(col.as_ref()).map_err(|e| anyhow::anyhow!("is_not_null failed: {}", e))
+}
+
+/// Evaluate a single comparison operator against a column, returning a selection mask.
+///
+/// Unlike the flat [`FilterCondition`] path, this handles every
+/// [`ComparisonOperator`] so the full [`FilterExpression`] tree (including OR/NOT
+/// and boolean equality) can be evaluated vectorized without losing structure.
+fn evaluate_comparison_mask(
+    batch: &RecordBatch,
+    field: &str,
+    operator: &crate::core::search::ComparisonOperator,
+    value: &serde_json::Value,
+) -> Result<BooleanArray> {
+    use crate::core::search::ComparisonOperator;
+
+    match operator {
+        ComparisonOperator::Equals => evaluate_equals(batch, field, value),
+        ComparisonOperator::NotEquals => {
+            let eq = evaluate_equals(batch, field, value)?;
+            compute::not(&eq).map_err(|e| anyhow::anyhow!("NotEquals negation failed: {}", e))
+        }
+        ComparisonOperator::GreaterThan => {
+            // (value, +inf): exclusive lower bound via a Range then drop equality.
+            // Range is inclusive on both ends, so emulate strict > as Range(value,MAX) AND != value.
+            let ge = evaluate_range(batch, field, value, &serde_json::json!(f64::MAX))?;
+            let eq = evaluate_equals(batch, field, value)?;
+            let ne = compute::not(&eq).map_err(|e| anyhow::anyhow!("gt negation failed: {}", e))?;
+            compute::and(&ge, &ne).map_err(|e| anyhow::anyhow!("gt AND failed: {}", e))
+        }
+        ComparisonOperator::GreaterThanOrEqual => {
+            evaluate_range(batch, field, value, &serde_json::json!(f64::MAX))
+        }
+        ComparisonOperator::LessThan => {
+            let le = evaluate_range(batch, field, &serde_json::json!(f64::MIN), value)?;
+            let eq = evaluate_equals(batch, field, value)?;
+            let ne = compute::not(&eq).map_err(|e| anyhow::anyhow!("lt negation failed: {}", e))?;
+            compute::and(&le, &ne).map_err(|e| anyhow::anyhow!("lt AND failed: {}", e))
+        }
+        ComparisonOperator::LessThanOrEqual => {
+            evaluate_range(batch, field, &serde_json::json!(f64::MIN), value)
+        }
+        ComparisonOperator::In => {
+            let values: Vec<serde_json::Value> = value
+                .as_array()
+                .cloned()
+                .unwrap_or_else(|| vec![value.clone()]);
+            evaluate_in(batch, field, &values)
+        }
+        ComparisonOperator::NotIn => {
+            let values: Vec<serde_json::Value> = value
+                .as_array()
+                .cloned()
+                .unwrap_or_else(|| vec![value.clone()]);
+            let in_mask = evaluate_in(batch, field, &values)?;
+            compute::not(&in_mask).map_err(|e| anyhow::anyhow!("NotIn negation failed: {}", e))
+        }
+        ComparisonOperator::IsNull => evaluate_is_null(batch, field),
+        ComparisonOperator::IsNotNull => evaluate_is_not_null(batch, field),
+        // Operators without a vectorized kernel (string Contains/StartsWith/EndsWith/Like/Between)
+        // signal "can't vectorize" so the caller falls back to row-at-a-time evaluation.
+        _ => Err(anyhow::anyhow!(
+            "Operator {:?} has no vectorized kernel",
+            operator
+        )),
+    }
+}
+
+/// Recursively evaluate a [`FilterExpression`] tree into a boolean selection mask,
+/// preserving AND / OR / NOT structure.
+///
+/// Returns an error for any sub-expression that has no vectorized kernel so the
+/// caller can fall back to the (correct, structure-preserving) row-at-a-time path.
+fn evaluate_filter_expression_mask(
+    batch: &RecordBatch,
+    expr: &crate::core::search::FilterExpression,
+) -> Result<BooleanArray> {
+    use crate::core::search::FilterExpression;
+
+    match expr {
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => evaluate_comparison_mask(batch, field, operator, value),
+        FilterExpression::And(exprs) => {
+            let mut acc = all_true(batch.num_rows());
+            for e in exprs {
+                let mask = evaluate_filter_expression_mask(batch, e)?;
+                acc = compute::and(&acc, &mask)
+                    .map_err(|err| anyhow::anyhow!("AND combine failed: {}", err))?;
+            }
+            Ok(acc)
+        }
+        FilterExpression::Or(exprs) => {
+            let mut acc = all_false(batch.num_rows());
+            for e in exprs {
+                let mask = evaluate_filter_expression_mask(batch, e)?;
+                acc = compute::or(&acc, &mask)
+                    .map_err(|err| anyhow::anyhow!("OR combine failed: {}", err))?;
+            }
+            Ok(acc)
+        }
+        FilterExpression::Not(inner) => {
+            let mask = evaluate_filter_expression_mask(batch, inner)?;
+            compute::not(&mask).map_err(|err| anyhow::anyhow!("NOT negation failed: {}", err))
+        }
+    }
+}
+
+/// Process a RecordBatch through vectorized evaluation of a full [`FilterExpression`]
+/// tree (AND/OR/NOT, boolean equality, and all numeric/string comparison operators
+/// that have a vectorized kernel).
+///
+/// Returns `Ok(Some(batch))` with only matching rows when the entire expression could
+/// be vectorized, or `Ok(None)` when any sub-expression lacks a vectorized kernel — in
+/// which case the caller must fall back to row-at-a-time evaluation to stay correct.
+pub fn vectorized_filter_batch_expr(
+    batch: RecordBatch,
+    expr: &crate::core::search::FilterExpression,
+) -> Result<Option<RecordBatch>> {
+    let mask = match evaluate_filter_expression_mask(&batch, expr) {
+        Ok(mask) => mask,
+        Err(_) => return Ok(None), // no vectorized kernel for some sub-expression
+    };
+
+    let filtered = compute::filter_record_batch(&batch, &mask)
+        .map_err(|e| anyhow::anyhow!("Failed to materialize filtered batch: {}", e))?;
+
+    trace!(
+        "Vectorized expr filter: {} -> {} rows",
+        batch.num_rows(),
+        filtered.num_rows()
+    );
+
+    Ok(Some(filtered))
 }
 
 /// Process a RecordBatch through vectorized filter evaluation.

@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use super::{ProgressiveSearchCoordinator, ProgressiveSearchStage};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 
 /// Engine type for progressive pipeline creation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,7 +141,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::sst::progressive_stages::*;
+        use crate::storage::engines::sst::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -169,7 +169,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::helix::progressive_stages::*;
+        use crate::storage::engines::helix::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -196,7 +196,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::viper::progressive_stages::*;
+        use crate::storage::engines::viper::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -223,7 +223,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::swift::progressive_stages::*;
+        use crate::storage::engines::swift::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -250,7 +250,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::nova::progressive_stages::*;
+        use crate::storage::engines::nova::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -277,7 +277,7 @@ impl ProgressivePipelineFactory {
         stages: &[PipelineStage],
         hamming_threshold: f32,
     ) -> ProgressiveSearchCoordinator {
-        use crate::storage::engines::impls::raptor::progressive_stages::*;
+        use crate::storage::engines::raptor::progressive_stages::*;
 
         let mut coordinator = ProgressiveSearchCoordinator::new();
 
@@ -308,7 +308,7 @@ impl ProgressivePipelineFactory {
 mod tests {
     use super::*;
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::compute::quantization::unified::{CodebookStore, InMemoryCodebookStore};
+    use crate::compute::quantization::quantization_engine::{CodebookStore, InMemoryCodebookStore};
 
     fn create_test_factory() -> ProgressivePipelineFactory {
         let dist_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));

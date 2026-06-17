@@ -1,14 +1,15 @@
-use crate::core::{StorageConfig, String, VectorId, VectorRecord};
+use crate::core::{StorageConfig, String, VectorId};
 use crate::index::{AxisConfig, AxisManager};
 use crate::storage::persistence::write_ahead_log::{WALConfig, WriteAheadLogManager};
 use crate::storage::{
-    engines::impls::sst::{Compaction, SstEngine},
+    engines::sst::{Compaction, SstEngine},
     persistence::disk_manager::DiskManager,
     traits::InternalCollectionProvider,
 };
-use crate::utils::StoragePath;
-// Import CollectionMetadata from the appropriate location
-use crate::storage::engines::core::formats::proximablocks::header_metadata::CollectionMetadata;
+use proximadb_records::{EmbeddingCell, ProximaRecord};
+use proximadb_storage_common::storage_path::StoragePath;
+// Import ProximaBlockCollectionMetadata from the appropriate location
+use crate::storage::engines::core::formats::proximablocks::header_metadata::ProximaBlockCollectionMetadata;
 use dashmap::DashMap;
 use rand::seq::SliceRandom;
 use std::collections::HashMap;
@@ -35,7 +36,7 @@ pub struct StorageEngine {
     distance_compute: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
 
     /// Collection metadata provider - injected after construction to break circular dependency
-    metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
+    metadata_provider: RwLock<Option<Arc<dyn InternalCollectionProvider>>>,
 }
 
 impl StorageEngine {
@@ -46,6 +47,15 @@ impl StorageEngine {
     /// Get storage configuration
     pub fn config(&self) -> &StorageConfig {
         &self.config
+    }
+
+    /// Get a handle to the compaction manager so the bootstrap path
+    /// can attach a `CanonicalPrecisionResolver` after `SharedServices`
+    /// becomes available (the storage engine is constructed before the
+    /// catalog handle exists, so the resolver is injected via
+    /// `Compaction::set_precision_resolver` post-construction).
+    pub fn compaction_manager(&self) -> Arc<Compaction> {
+        self.compaction_manager.clone()
     }
 
     /// Create new storage engine without collection service dependency
@@ -107,7 +117,7 @@ impl StorageEngine {
         // Create WAL manager using modern batch factory pattern
         let write_ahead_log_manager = Arc::new(
             WriteAheadLogManager::create_with_batch_factory(
-                wal_config.strategy_type.clone(),
+                wal_config.strategy_type,
                 wal_config,
                 filesystem.clone(),
             )
@@ -138,7 +148,7 @@ impl StorageEngine {
         let axis_index_manager = Arc::new(AxisManager::new(axis_config).await?);
 
         // Make AXIS manager available to SST engine for HNSW/IVF search
-        crate::storage::engines::impls::sst::core::set_sst_axis_manager(axis_index_manager.clone());
+        crate::storage::engines::sst::core::set_sst_axis_manager(axis_index_manager.clone());
         info!("✅ AXIS manager registered with SST engine for HNSW/IVF search");
 
         // Initialize compaction manager with default config if not provided
@@ -148,7 +158,7 @@ impl StorageEngine {
         // Create singleton SST storage instance
         let _sst_config_for_storage = config.sst_config.clone().unwrap_or_default();
         let _sst_storage = Arc::new(SstEngine::new().await.map_err(|e| {
-            crate::core::error::StorageError::SstEngine(format!(
+            proximadb_kernel::error::StorageError::SstEngine(format!(
                 "Failed to create SST storage: {}",
                 e
             ))
@@ -165,7 +175,7 @@ impl StorageEngine {
             distance_compute: Arc::new(
                 crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
             ),
-            metadata_provider: Arc::new(RwLock::new(metadata_provider)),
+            metadata_provider: RwLock::new(metadata_provider),
         })
     }
 
@@ -275,7 +285,7 @@ impl StorageEngine {
         let flush_coordinator = WALFlushCoordinator::new();
 
         // Register all SST engines from our storage map
-        // Each SST engine implements UnifiedStorageEngine
+        // Each SST engine implements UnifiedStorageFormat
         for entry in self.sst_storages.iter() {
             let engine_key = entry.key();
             let engine = entry.value();
@@ -435,7 +445,7 @@ impl StorageEngine {
 
             // Create storage engine for this collection
             // Note: Engines are stateless - collection-specific config is passed during operations
-            match crate::storage::engines::factory::StorageEngineFactory::create_from_proto_async(
+            match crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
                 proto_engine,
             )
             .await
@@ -483,13 +493,16 @@ impl StorageEngine {
     pub async fn write(
         &self,
         collection_id: &str,
-        record: &VectorRecord,
+        record: &ProximaRecord,
     ) -> crate::storage::Result<()> {
-        // Direct field access - no function call overhead, no match expressions
-        let vector_ref = &record.vector[..];
-        let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<VectorRecord>();
+        let vector_ref = record
+            .embeddings
+            .first()
+            .map(|e| e.as_fp32_slice())
+            .unwrap_or(&[]);
+        let vector_size = std::mem::size_of_val(vector_ref) + std::mem::size_of::<ProximaRecord>();
         let start = std::time::Instant::now();
-        let vector_id = &record.id;
+        let vector_id = &record.oid;
 
         tracing::debug!(
             "🔄 Starting write operation for vector {} in collection {}, vector_dim={}, size_bytes={}",
@@ -499,16 +512,12 @@ impl StorageEngine {
             vector_size
         );
 
-        // Note: SST storage is now a singleton - no per-collection initialization needed
-
-        // Write through WAL → memtable → flush pipeline
         tracing::debug!(
             "💾 Writing vector {} to WAL for collection {}",
             vector_id,
             collection_id
         );
 
-        // Use modern WAL API with Arc for zero-copy
         let vectors = Arc::new(vec![record.clone()]);
 
         // Write to WAL (which handles memtable insertion)
@@ -621,7 +630,7 @@ impl StorageEngine {
     ) -> crate::storage::Result<bool> {
         // Write delete marker to WAL using new interface
         self.write_ahead_log_manager
-            .delete(collection_id.to_string(), id.clone())
+            .delete_record(collection_id.to_string(), id.clone())
             .await
             .map_err(|e| crate::core::StorageError::WalError(e.to_string()))?;
 
@@ -874,12 +883,17 @@ impl StorageEngine {
 
                                 // Extract metadata from the first vector entry
                                 if let Some(record) = entries.first() {
+                                    let dimension = record
+                                        .embeddings
+                                        .first()
+                                        .map(|embedding| embedding.values.len())
+                                        .unwrap_or_default();
                                     let collection =
                                         crate::proto::proximadb_v1::Collection {
                                             id: collection_id.to_string(),
                                             config: Some(crate::proto::proximadb_v1::CollectionConfig {
                                                 name: collection_id.to_string(),
-                                                dimension: record.vector.len() as u32,
+                                                dimension: dimension as u32,
                                                 distance_metric: Some(
                                                     crate::proto::proximadb_v1::DistanceMetric::Cosine
                                                         as i32,
@@ -888,10 +902,7 @@ impl StorageEngine {
                                             }),
                                             stats: Some(crate::proto::proximadb_v1::CollectionStats {
                                                 vector_count: entries.len() as i64,
-                                                data_size_bytes: (entries.len()
-                                                    * record.vector.len()
-                                                    * 4)
-                                                    as i64,
+                                                data_size_bytes: (entries.len() * dimension * 4) as i64,
                                                 ..Default::default()
                                             }),
                                             created_at: chrono::Utc::now().timestamp_micros(),
@@ -1062,14 +1073,13 @@ impl StorageEngine {
     pub async fn batch_write(
         &self,
         collection_id: &str,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> crate::storage::Result<Vec<VectorId>> {
         tracing::debug!("🚀 Starting batch_write for {} records", records.len());
         let mut inserted_ids = Vec::with_capacity(records.len());
 
-        // Use existing write method for each record to ensure consistency
         for (index, record) in records.iter().enumerate() {
-            let record_id = record.id.clone();
+            let record_id = record.oid.clone();
             tracing::debug!(
                 "📝 Processing record {}/{}: vector_id={}, collection_id={}",
                 index + 1,
@@ -1105,7 +1115,7 @@ impl StorageEngine {
         tracing::debug!("🧹 Starting storage cleanup for test scenarios");
 
         // Get list of all collections from metadata provider
-        let collections: Vec<CollectionMetadata> =
+        let collections: Vec<ProximaBlockCollectionMetadata> =
             match self.metadata_provider.read().await.as_ref() {
                 Some(_provider) => {
                     // Deferred: Add list_collections method to InternalCollectionProvider trait
@@ -1179,20 +1189,15 @@ impl StorageEngine {
     pub async fn all_vectors(
         &self,
         collection_id: &str,
-    ) -> crate::storage::Result<Vec<VectorRecord>> {
-        let mut vectors = Vec::new();
+    ) -> crate::storage::Result<Vec<ProximaRecord>> {
+        let mut vectors: Vec<ProximaRecord> = Vec::new();
 
-        // LSM is now pure SSTable storage - no vectors to get from memtable
-        // All LSM data is in SSTables which should be accessed via the search API
-        // Use search API instead
         tracing::debug!(
-            "LSM is pure SSTable storage - vectors for collection {} must be accessed via search API",
+            "Scanning vectors for collection {} via SST storage",
             collection_id
         );
 
-        // Get vectors from SST storage (if available)
         if let Some(sst_storage) = self.sst_storages.get(collection_id) {
-            // Implement SST iteration for get_all_vectors
             match sst_storage
                 .value()
                 .scan_all_vectors(collection_id, 0, None)
@@ -1204,24 +1209,42 @@ impl StorageEngine {
                         sst_vectors.len(),
                         collection_id
                     );
-                    // Convert service_types::VectorRecord to proximadb_v1::VectorRecord
-                    let converted_vectors: Vec<VectorRecord> = sst_vectors
+                    let converted: Vec<ProximaRecord> = sst_vectors
                         .into_iter()
                         .map(|v| {
-                            // Manual conversion since Into trait is not implemented
-                            VectorRecord {
-                                id: v.id,
-                                vector: v.vector,
-                                metadata: HashMap::new(), // Convert metadata later if needed
-                                timestamp: v.timestamp,
-                                updated_at: v.updated_at,
-                                expires_at: v.expires_at,
-                                version: v.version,
-                                source: None,
+                            let dim = v.vector.len() as u32;
+                            let now_ns = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_nanos() as i64;
+                            ProximaRecord {
+                                oid: v.id,
+                                created_at_ns: v
+                                    .timestamp
+                                    .map(|ms| ms * 1_000_000)
+                                    .unwrap_or(now_ns),
+                                updated_at_ns: v
+                                    .updated_at
+                                    .map(|ms| ms * 1_000_000)
+                                    .unwrap_or(now_ns),
+                                valid_to_ns: v.expires_at.map(|ms| ms * 1_000_000),
+                                record_version: v.version.map(|v| v as u64).unwrap_or(0),
+                                embeddings: if !v.vector.is_empty() {
+                                    vec![EmbeddingCell {
+                                        model_id: "default".to_string(),
+                                        modality: "vector".to_string(),
+                                        values: proximadb_records::EmbeddingValues::Fp32(v.vector),
+                                        dim,
+                                        ..Default::default()
+                                    }]
+                                } else {
+                                    vec![]
+                                },
+                                ..ProximaRecord::default()
                             }
                         })
                         .collect();
-                    vectors.extend(converted_vectors);
+                    vectors.extend(converted);
                 }
                 Err(e) => {
                     warn!(
@@ -1230,14 +1253,10 @@ impl StorageEngine {
                     );
                 }
             }
-            debug!(
-                "SST storage scan completed for collection {}",
-                collection_id
-            );
         }
 
         tracing::info!(
-            "get_all_vectors retrieved {} total vectors for collection {}",
+            "all_vectors retrieved {} records for collection {}",
             vectors.len(),
             collection_id
         );

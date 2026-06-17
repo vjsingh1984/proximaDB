@@ -44,7 +44,7 @@ impl ColumnarSchema {
         collection_id: &str,
         dimension: usize,
         quantization: Option<&QuantizationConfig>,
-        filterable_columns: &[FilterableColumn],
+        filterable_columns: &[ColumnarSchemaFilterableColumn],
     ) -> Result<Arc<Schema>> {
         // Check cache first
         let cache_key =
@@ -76,7 +76,7 @@ impl ColumnarSchema {
         &self,
         dimension: usize,
         config: &QuantizationConfig,
-        filterable_columns: &[FilterableColumn],
+        filterable_columns: &[ColumnarSchemaFilterableColumn],
     ) -> Result<Arc<Schema>> {
         let mut fields = vec![
             // Core vector fields
@@ -178,7 +178,7 @@ impl ColumnarSchema {
     }
 
     /// Create field for filterable column
-    fn create_filterable_field(&self, column: &FilterableColumn) -> Result<Field> {
+    fn create_filterable_field(&self, column: &ColumnarSchemaFilterableColumn) -> Result<Field> {
         let data_type = match column.data_type.as_str() {
             "string" | "text" => DataType::Utf8,
             "int" | "integer" | "long" => DataType::Int64,
@@ -189,6 +189,8 @@ impl ColumnarSchema {
                 DataType::Timestamp(arrow_schema::TimeUnit::Microsecond, None)
             }
             "list" => DataType::List(Arc::new(Field::new("item", DataType::Utf8, true))),
+            "json" => DataType::Utf8,
+            "jsonb" => DataType::LargeBinary,
             _ => {
                 debug!(
                     "Unknown data type '{}', defaulting to Utf8",
@@ -313,7 +315,7 @@ impl ColumnarSchema {
         collection_id: &str,
         dimension: usize,
         quantization: Option<&QuantizationConfig>,
-        filterable_columns: &[FilterableColumn],
+        filterable_columns: &[ColumnarSchemaFilterableColumn],
     ) -> String {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -386,7 +388,7 @@ impl ColumnarSchema {
     pub async fn create_schema_from_metadata(
         &self,
         metadata: &ColumnarFileMetadata,
-        filterable_columns: &[FilterableColumn],
+        filterable_columns: &[ColumnarSchemaFilterableColumn],
     ) -> Result<Arc<Schema>> {
         self.create_vector_schema(
             &metadata.collection_id,
@@ -459,9 +461,12 @@ impl ColumnarSchema {
     }
 }
 
+/// Backwards-compat alias for [`ColumnarSchemaFilterableColumn`].
+pub type FilterableColumn = ColumnarSchemaFilterableColumn;
+
 /// Filterable column specification
 #[derive(Debug, Clone, Hash)]
-pub struct FilterableColumn {
+pub struct ColumnarSchemaFilterableColumn {
     pub name: String,
     pub data_type: String,
     pub nullable: bool,
@@ -506,7 +511,7 @@ pub struct SchemaCacheStats {
 pub struct SchemaEvolutionRequest {
     pub dimension: usize,
     pub new_quantization: Option<QuantizationConfig>,
-    pub new_filterable_columns: Vec<FilterableColumn>,
+    pub new_filterable_columns: Vec<ColumnarSchemaFilterableColumn>,
 }
 
 impl Default for ColumnarSchema {
@@ -524,13 +529,13 @@ mod tests {
         let manager = ColumnarSchema::new();
 
         let filterable_columns = vec![
-            FilterableColumn {
+            ColumnarSchemaFilterableColumn {
                 name: "category".to_string(),
                 data_type: "string".to_string(),
                 nullable: true,
                 indexed: true,
             },
-            FilterableColumn {
+            ColumnarSchemaFilterableColumn {
                 name: "price".to_string(),
                 data_type: "float".to_string(),
                 nullable: true,
@@ -593,7 +598,7 @@ mod tests {
                 "test_collection",
                 768,
                 None,
-                &[FilterableColumn {
+                &[ColumnarSchemaFilterableColumn {
                     name: "category".to_string(),
                     data_type: "string".to_string(),
                     nullable: true,
@@ -610,13 +615,13 @@ mod tests {
                 768,
                 None,
                 &[
-                    FilterableColumn {
+                    ColumnarSchemaFilterableColumn {
                         name: "category".to_string(),
                         data_type: "string".to_string(),
                         nullable: true,
                         indexed: true,
                     },
-                    FilterableColumn {
+                    ColumnarSchemaFilterableColumn {
                         name: "price".to_string(),
                         data_type: "float".to_string(),
                         nullable: true,

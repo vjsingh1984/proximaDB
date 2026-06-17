@@ -36,7 +36,7 @@ use axum::{
 use std::task::{Context, Poll};
 use tower::{Layer, Service};
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 
 /// The header name for request ID
 pub const X_REQUEST_ID: &str = "x-request-id";
@@ -103,8 +103,13 @@ pub async fn request_id_middleware(mut request: Request<Body>, next: Next<Body>)
     // Execute the request within the span
     let _guard = span.enter();
 
-    // Call the next layer
-    let mut response = next.run(request).await;
+    // Scope the proximadb-api task-local for the whole request so error
+    // envelopes (`RestError`/`AgenticApiError::into_response`) carry the SAME
+    // id we advertise in the `X-Request-ID` response header below — no handler
+    // signature changes required.
+    let mut response = proximadb_api::rest::errors::REQUEST_ID
+        .scope(request_id.0.clone(), next.run(request))
+        .await;
 
     // Add request ID to response headers
     if let Ok(header_value) = HeaderValue::from_str(&request_id.0) {

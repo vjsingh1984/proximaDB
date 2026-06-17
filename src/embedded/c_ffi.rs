@@ -7,7 +7,7 @@ use std::ffi::{CStr, CString, c_char, c_float, c_int};
 use std::ptr;
 use std::sync::Arc;
 
-use super::{EmbeddedConfig, EmbeddedProximaDB, SearchResult, StorageLocationConfig};
+use super::{EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
 
 /// Opaque handle to a ProximaDB instance
 pub struct ProximaDBHandle {
@@ -78,7 +78,7 @@ fn error_result(code: c_int, message: &str) -> CResult {
 /// - metadata_dir can be null
 /// - engine can be null (will use default)
 /// - Returns null on error
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_open(
     data_dir: *const c_char,
     metadata_dir: *const c_char,
@@ -115,6 +115,7 @@ pub unsafe extern "C" fn proximadb_open(
         default_engine: engine_str,
         enable_wal: true,
         wal_sync_mode: "batch".to_string(),
+        ..EmbeddedConfig::default()
     };
 
     match EmbeddedProximaDB::new(config) {
@@ -129,7 +130,7 @@ pub unsafe extern "C" fn proximadb_open(
 /// - disk_paths must be an array of valid null-terminated strings
 /// - disk_count must be the actual count of disk_paths
 /// - disk_weights can be null (all weights default to 1)
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_open_multi_disk(
     disk_paths: *const *const c_char,
     disk_weights: *const c_int,
@@ -189,6 +190,7 @@ pub unsafe extern "C" fn proximadb_open_multi_disk(
         default_engine: engine_str,
         enable_wal: true,
         wal_sync_mode: "batch".to_string(),
+        ..EmbeddedConfig::default()
     };
 
     match EmbeddedProximaDB::new(config) {
@@ -202,7 +204,7 @@ pub unsafe extern "C" fn proximadb_open_multi_disk(
 /// # Safety
 /// - handle must be a valid pointer from proximadb_open
 /// - handle must not be used after this call
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_close(handle: *mut ProximaDBHandle) {
     if !handle.is_null() {
         let _ = Box::from_raw(handle);
@@ -215,7 +217,7 @@ pub unsafe extern "C" fn proximadb_close(handle: *mut ProximaDBHandle) {
 /// - handle must be valid
 /// - name must be a valid null-terminated string
 /// - engine can be null
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_create_collection(
     handle: *mut ProximaDBHandle,
     name: *const c_char,
@@ -248,7 +250,7 @@ pub unsafe extern "C" fn proximadb_create_collection(
 }
 
 /// Delete a collection
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_delete_collection(
     handle: *mut ProximaDBHandle,
     name: *const c_char,
@@ -274,7 +276,7 @@ pub unsafe extern "C" fn proximadb_delete_collection(
 /// # Safety
 /// - vectors is a flat array of floats: [v0_d0, v0_d1, ..., v1_d0, v1_d1, ...]
 /// - ids is an array of null-terminated strings
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_insert(
     handle: *mut ProximaDBHandle,
     collection: *const c_char,
@@ -328,7 +330,7 @@ pub unsafe extern "C" fn proximadb_insert(
 /// # Safety
 /// - query is an array of floats with length dimension
 /// - Returns CSearchResults that must be freed with proximadb_free_search_results
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_search(
     handle: *mut ProximaDBHandle,
     collection: *const c_char,
@@ -381,7 +383,7 @@ pub unsafe extern "C" fn proximadb_search(
 }
 
 /// Free search results
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_free_search_results(results: CSearchResults) {
     if results.results.is_null() || results.count <= 0 {
         return;
@@ -398,7 +400,7 @@ pub unsafe extern "C" fn proximadb_free_search_results(results: CSearchResults) 
 }
 
 /// Flush pending writes
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_flush(handle: *mut ProximaDBHandle) -> CResult {
     if handle.is_null() {
         return error_result(1, "Invalid handle");
@@ -412,7 +414,7 @@ pub unsafe extern "C" fn proximadb_flush(handle: *mut ProximaDBHandle) -> CResul
 }
 
 /// Free a string allocated by this library
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_free_string(s: *mut c_char) {
     if !s.is_null() {
         let _ = CString::from_raw(s);
@@ -420,7 +422,7 @@ pub unsafe extern "C" fn proximadb_free_string(s: *mut c_char) {
 }
 
 /// Free a CResult error message
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn proximadb_free_result(result: CResult) {
     if !result.error_message.is_null() {
         let _ = CString::from_raw(result.error_message);
@@ -428,7 +430,7 @@ pub unsafe extern "C" fn proximadb_free_result(result: CResult) {
 }
 
 /// Get library version
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn proximadb_version() -> *const c_char {
     // Return static string, no need to free
     concat!(env!("CARGO_PKG_VERSION"), "\0").as_ptr() as *const c_char

@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc, Duration};
 
 /// Tenant configuration for knowledge graph setup
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TenantConfig {
+pub struct KnowledgeGraphTenantConfig {
     /// Compliance frameworks required for this tenant
     pub compliance_requirements: Vec<ComplianceFramework>,
     
@@ -159,9 +159,12 @@ pub enum BusinessCriticality {
     MissionCritical,
 }
 
+/// Backwards-compat alias for [`KnowledgeGraphUserContext`].
+pub type UserContext = KnowledgeGraphUserContext;
+
 /// User context for RBAC validation
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserContext {
+pub struct KnowledgeGraphUserContext {
     /// Unique user identifier
     pub user_id: String,
     
@@ -546,7 +549,7 @@ pub struct GlobalToTenantMigrationPlan {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TenantMigration {
     pub tenant_id: String,
-    pub tenant_config: TenantConfig,
+    pub tenant_config: KnowledgeGraphTenantConfig,
     pub domain_migrations: Vec<DomainMigration>,
     pub collection_assignments: HashMap<String, String>, // collection_id -> domain_name
 }
@@ -569,7 +572,7 @@ pub struct EntityAssignment {
     pub migration_priority: MigrationPriority,
 }
 
-impl Default for TenantConfig {
+impl Default for KnowledgeGraphTenantConfig {
     fn default() -> Self {
         Self {
             compliance_requirements: vec![ComplianceFramework::SOC2],
@@ -619,7 +622,7 @@ impl Default for DomainConfig {
     }
 }
 
-impl UserContext {
+impl KnowledgeGraphUserContext {
     /// Create system admin context for internal operations
     pub fn system_admin() -> Self {
         Self {
@@ -729,7 +732,7 @@ mod tests {
 
     #[test]
     fn test_tenant_config_default() {
-        let config = TenantConfig::default();
+        let config = KnowledgeGraphTenantConfig::default();
         assert_eq!(config.compliance_requirements, vec![ComplianceFramework::SOC2]);
         assert_eq!(config.default_performance_tier, PerformanceTier::Warm);
         assert!(!config.default_domains.is_empty());
@@ -737,7 +740,7 @@ mod tests {
 
     #[test]
     fn test_user_context_permissions() {
-        let user = UserContext::system_admin();
+        let user = KnowledgeGraphUserContext::system_admin();
         assert!(user.has_permission(&Permission::SystemAdmin));
         assert!(user.can_access_domain("any_domain"));
     }

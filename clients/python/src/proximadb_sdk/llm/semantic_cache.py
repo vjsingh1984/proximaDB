@@ -6,10 +6,9 @@
 """Semantic Cache for RAG responses using ProximaDB."""
 
 import hashlib
-import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from proximadb_sdk.llm.config import SemanticCacheConfig
 
@@ -34,7 +33,7 @@ class CachedResponse:
     question: str
     collection: str
     response: "RAGResponse"
-    embedding: List[float]
+    embedding: list[float]
     cached_at: datetime
     hit_count: int = 0
 
@@ -107,7 +106,7 @@ class SemanticCache:
         self,
         question: str,
         collection: str,
-    ) -> Optional[CachedResponse]:
+    ) -> CachedResponse | None:
         """Look up cached response for a question.
 
         Uses semantic similarity to find cached responses for similar questions.
@@ -208,7 +207,7 @@ class SemanticCache:
         self,
         question: str,
         collection: str,
-        embedding: List[float],
+        embedding: list[float],
         response: "RAGResponse",
     ) -> None:
         """Store response in cache.
@@ -319,7 +318,7 @@ class SemanticCache:
         except Exception:
             pass
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get cache statistics.
 
         Returns:

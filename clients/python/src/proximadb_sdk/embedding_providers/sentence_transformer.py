@@ -6,7 +6,7 @@ access to hundreds of free embedding models including BERT variants.
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -42,7 +42,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         "bert-base-nli-mean-tokens": 768,
     }
 
-    def __init__(self, config: Optional[EmbeddingConfig] = None):
+    def __init__(self, config: EmbeddingConfig | None = None):
         """Initialize the provider with optional config"""
         self.config = config if config is not None else self._get_default_config()
         self._available = None
@@ -106,7 +106,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         """
         return self.embed_texts([text])[0]
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -137,7 +137,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         return embeddings
 
     def embed_documents(
-        self, documents: List[Dict[str, Any]], text_field: str = "text"
+        self, documents: list[dict[str, Any]], text_field: str = "text"
     ) -> np.ndarray:
         """
         Generate embeddings for documents
@@ -156,7 +156,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         """Get embedding dimension"""
         return self.config.dimension
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get model information"""
         return {
             "model_name": self.config.model_name,
@@ -173,7 +173,7 @@ class SentenceTransformerProvider(EmbeddingProvider):
         return self._available
 
     @classmethod
-    def list_recommended_models(cls) -> Dict[str, Dict[str, Any]]:
+    def list_recommended_models(cls) -> dict[str, dict[str, Any]]:
         """List recommended models with their properties"""
         return {
             "all-MiniLM-L6-v2": {

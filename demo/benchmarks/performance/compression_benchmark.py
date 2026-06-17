@@ -12,9 +12,9 @@ from typing import Dict, List, Any
 # Use PYTHONPATH instead of sys.path
 # export PYTHONPATH=/home/vsingh/code/proximaDB/clients/python/src
 
-from proximadb import ProximaDBClient, Protocol, connect_rest, connect_grpc
-from proximadb import ClientConfig, CompressionConfig
-from proximadb import CollectionConfig, StorageEngine, DistanceMetric
+from proximadb_sdk import ProximaDBClient, connect_grpc, connect_rest
+from proximadb_sdk.config import ClientConfig, CompressionConfig, Protocol
+from proximadb_sdk.models import CollectionConfig, DistanceMetric, StorageEngine
 
 
 class CompressionBenchmark:
@@ -148,14 +148,19 @@ class CompressionBenchmark:
             )
             client.create_collection(collection_name, config)
             
-            # Benchmark insert with new API
+            # Benchmark insert with the record-native SDK API.
             start_time = time.time()
-            # Use simplified insert - just pass the vectors
-            vectors_list = []
+            records = []
             for i in range(num_vectors):
-                vectors_list.append(data_info['vectors'][i].tolist())
+                records.append(
+                    {
+                        "id": data_info["ids"][i],
+                        "vector": data_info["vectors"][i].tolist(),
+                        "props": data_info["metadata"][i],
+                    }
+                )
             
-            client.insert_vectors(collection_name, vectors_list)
+            client.insert_records(collection_name, records)
             insert_time = time.time() - start_time
             insert_throughput = num_vectors / insert_time
             
@@ -242,13 +247,19 @@ class CompressionBenchmark:
                     )
                     client.create_collection(collection_name, col_config)
                     
-                    # Measure insert time
-                    vectors_list = []
+                    # Measure insert time through the record-native SDK API.
+                    records = []
                     for i in range(num_vectors):
-                        vectors_list.append(data_info['vectors'][i].tolist())
+                        records.append(
+                            {
+                                "id": data_info["ids"][i],
+                                "vector": data_info["vectors"][i].tolist(),
+                                "props": data_info["metadata"][i],
+                            }
+                        )
                     
                     start = time.time()
-                    client.insert_vectors(collection_name, vectors_list)
+                    client.insert_records(collection_name, records)
                     insert_time = time.time() - start
                     
                     # Cleanup

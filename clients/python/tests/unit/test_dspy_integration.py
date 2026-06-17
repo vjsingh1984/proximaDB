@@ -10,8 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-# Skip entire module if dspy is not installed
-dspy = pytest.importorskip("dspy")
+try:
+    import dspy  # noqa: E402
+except Exception as exc:  # pragma: no cover - optional dependency guard
+    pytest.skip(f"DSPy optional dependency unavailable: {exc}", allow_module_level=True)
 
 from proximadb_sdk.integrations.dspy import ProximaDBRM  # noqa: E402
 from proximadb_sdk.models import SearchResult  # noqa: E402

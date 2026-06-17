@@ -22,7 +22,6 @@ pytest.skip(
 
 import threading
 import time
-from unittest.mock import patch
 
 import pytest
 
@@ -418,14 +417,14 @@ class TestPoolingPerformance:
         start_time = time.time()
         for _ in range(50):
             chunker = TextChunker(config)  # New instance each time
-            chunks = chunker.chunk_text(text, f"test_doc")
+            chunks = chunker.chunk_text(text, "test_doc")
         no_pool_time = time.time() - start_time
 
         # Test with pooling
         start_time = time.time()
         for _ in range(50):
             with PooledChunkerContext(config) as chunker:  # Pooled instances
-                chunks = chunker.chunk_text(text, f"test_doc")
+                chunks = chunker.chunk_text(text, "test_doc")
         pool_time = time.time() - start_time
 
         # Pooling should be faster (though improvement may be small for this simple case)

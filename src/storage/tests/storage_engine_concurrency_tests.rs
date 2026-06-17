@@ -9,8 +9,9 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::core::{SstConfig, StorageConfig, VectorId, VectorRecord, WriteBufferUserConfig};
+    use crate::core::{SstConfig, StorageConfig, VectorId, WriteBufferUserConfig};
     use crate::storage::engine::StorageEngine;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     use std::sync::Arc;
     use std::time::SystemTime;
     use tokio::task::JoinSet;
@@ -62,6 +63,7 @@ mod tests {
             compaction_config: Default::default(),
             vector_encoding_strategy: "FullVector".to_string(),
             block_format: "ProximaBlocks".to_string(),
+            tiering: None,
         });
 
         // Configure write buffer separately
@@ -85,21 +87,18 @@ mod tests {
         (engine, base_path)
     }
 
-    fn create_test_vector(id: &str) -> VectorRecord {
-        let now = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_millis() as i64;
-
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![0.1; 128],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(now),
-            updated_at: Some(now),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    fn create_test_vector(id: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            record_version: 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1_f32; 128]),
+                dim: 128,
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
         }
     }
 

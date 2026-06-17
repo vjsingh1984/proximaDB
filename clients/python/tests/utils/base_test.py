@@ -11,9 +11,8 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-import numpy as np
 import pytest
 
 # Add SDK to path
@@ -21,7 +20,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from proximadb_sdk.models import VectorRecord
 
-from .embedded_client_adapter import EmbeddedClientAdapter, create_embedded_client
+from .embedded_client_adapter import (
+    PROXIMADB_IMPORT_ERROR,
+    EmbeddedClientAdapter,
+)
 
 
 class BaseProximaDBTest:
@@ -43,6 +45,12 @@ class BaseProximaDBTest:
     @classmethod
     def setup_class(cls):
         """Initialize embedded database for tests"""
+        if PROXIMADB_IMPORT_ERROR is not None:
+            pytest.skip(
+                "Native ProximaDB embedded module is not installed",
+                allow_module_level=False,
+            )
+
         # Create temporary directory for test data
         cls._shared_data_dir = tempfile.mkdtemp(prefix="proximadb_test_")
 
@@ -96,8 +104,8 @@ class BaseProximaDBTest:
 
     def create_collection(
         self,
-        client: Optional[EmbeddedClientAdapter] = None,
-        name: Optional[str] = None,
+        client: EmbeddedClientAdapter | None = None,
+        name: str | None = None,
         dimension: int = 384,
         engine: str = "sst",
     ) -> str:
@@ -127,8 +135,8 @@ class BaseProximaDBTest:
         collection_name: str,
         count: int = 10,
         dimension: int = 384,
-        metadata_template: Optional[Dict[str, Any]] = None,
-    ) -> List[VectorRecord]:
+        metadata_template: dict[str, Any] | None = None,
+    ) -> list[VectorRecord]:
         """
         Insert test vectors into collection
 
@@ -171,7 +179,7 @@ class BaseProximaDBTest:
         return vectors
 
     def verify_search_results(
-        self, results: List[Any], expected_count: int, check_scores: bool = True
+        self, results: list[Any], expected_count: int, check_scores: bool = True
     ):
         """
         Verify search results are valid

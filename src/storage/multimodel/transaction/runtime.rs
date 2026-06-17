@@ -3,10 +3,9 @@
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_records::ProximaRecord;
 
-use crate::proto::proximadb_v1::{
-    DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData, VectorRecord,
-};
+use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData};
 use crate::storage::multimodel::facade::MultiModelStorageFacade;
 
 use super::coordinator::{TransactionConfig, TransactionCoordinator};
@@ -15,7 +14,7 @@ use super::participants::{
     DocumentStoreParticipant, GraphEdge, GraphNode, GraphStoreParticipant,
     ObservabilityStoreParticipant, VectorStoreParticipant,
 };
-use super::two_phase_commit::ParticipantType;
+use super::two_phase_commit::{CommitResult, ParticipantType, PrepareResult, TwoPhaseParticipant};
 
 /// Runtime wrapper that wires real store-backed participants into the
 /// multi-model transaction coordinator and exposes staging methods for
@@ -44,15 +43,25 @@ impl TransactionalMultiModelFacade {
             .map(ObservabilityStoreParticipant::new)
             .map(Arc::new);
 
-        // Vector and graph participants are wired when their write-operation
-        // adapters are provided via `with_vector_participant` / `with_graph_participant`.
+        // Vector participants are wired when their write-operation adapter is
+        // provided via `with_vector_participant`. GraphStore implements the
+        // graph write adapter directly so commits flow through the service path.
         let vector_participant: Option<Arc<VectorStoreParticipant>> = None;
-        let graph_participant: Option<Arc<GraphStoreParticipant>> = None;
+        let graph_participant = storage
+            .get_graph_store()
+            .map(|store| {
+                let service: Arc<dyn super::participants::GraphWriteOperations> = store.clone();
+                GraphStoreParticipant::new(service)
+            })
+            .map(Arc::new);
 
         if let Some(participant) = &document_participant {
             coordinator.register_participant(participant.clone()).await;
         }
         if let Some(participant) = &observability_participant {
+            coordinator.register_participant(participant.clone()).await;
+        }
+        if let Some(participant) = &graph_participant {
             coordinator.register_participant(participant.clone()).await;
         }
 
@@ -105,7 +114,8 @@ impl TransactionalMultiModelFacade {
     }
 
     pub async fn commit(&self, transaction_id: &str) -> Result<()> {
-        self.coordinator.commit(transaction_id).await
+        self.coordinator.commit(transaction_id).await?;
+        self.commit_staged_participants(transaction_id).await
     }
 
     pub async fn rollback(&self, transaction_id: &str) -> Result<()> {
@@ -126,6 +136,69 @@ impl TransactionalMultiModelFacade {
         }
 
         Ok(())
+    }
+
+    async fn commit_staged_participants(&self, transaction_id: &str) -> Result<()> {
+        if let Some(ref participant) = self.document_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        if let Some(ref participant) = self.observability_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        if let Some(ref participant) = self.vector_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        if let Some(ref participant) = self.graph_participant {
+            Self::commit_participant(participant.as_ref(), transaction_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn commit_participant(
+        participant: &(dyn TwoPhaseParticipant + Send + Sync),
+        transaction_id: &str,
+    ) -> Result<()> {
+        match participant.prepare(transaction_id).await {
+            PrepareResult::Yes => {}
+            PrepareResult::No(reason) => {
+                return Err(anyhow!(
+                    "{} participant rejected transaction {}: {}",
+                    participant.participant_type().name(),
+                    transaction_id,
+                    reason
+                ));
+            }
+            PrepareResult::Timeout => {
+                return Err(anyhow!(
+                    "{} participant prepare timed out for transaction {}",
+                    participant.participant_type().name(),
+                    transaction_id
+                ));
+            }
+            PrepareResult::Error(error) => {
+                return Err(anyhow!(
+                    "{} participant prepare failed for transaction {}: {}",
+                    participant.participant_type().name(),
+                    transaction_id,
+                    error
+                ));
+            }
+        }
+
+        match participant.commit(transaction_id).await {
+            CommitResult::Success => Ok(()),
+            CommitResult::Failed(error) => Err(anyhow!(
+                "{} participant commit failed for transaction {}: {}",
+                participant.participant_type().name(),
+                transaction_id,
+                error
+            )),
+            CommitResult::Timeout => Err(anyhow!(
+                "{} participant commit timed out for transaction {}",
+                participant.participant_type().name(),
+                transaction_id
+            )),
+        }
     }
 
     pub async fn insert_document(
@@ -269,7 +342,7 @@ impl TransactionalMultiModelFacade {
         &self,
         transaction_id: &str,
         collection: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<()> {
         let participant = self.vector_participant.as_ref().ok_or_else(|| {
             anyhow!("Vector transactional participant is not configured on this facade")
@@ -357,21 +430,60 @@ impl TransactionalMultiModelFacade {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::RwLock as StdRwLock;
 
     use super::*;
+    use crate::graph::GraphService;
     use crate::proto::proximadb_v1::{
         DocumentCollectionConfig, LogFilter, ObservabilityNamespaceConfig, Severity, SqlValue,
         sql_value,
     };
     use crate::storage::multimodel::stores::{
-        DocumentStore, DocumentStoreConfig, ObservabilityStore, ObservabilityStoreConfig,
+        DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, ObservabilityStore,
+        ObservabilityStoreConfig,
     };
     use crate::storage::traits::{
         DocumentCollectionInfo, DocumentRecord, DocumentStorageOperations, IngestResult,
         LogQueryResult, MetricAggregationParams, MetricAggregationResult, NamespaceInfo,
         ObservabilityStorageOperations,
     };
+    use proximadb_graph::record::{GraphEdgeKey, GraphNodeKey};
+    use proximadb_records::{ProximaRecord, RecordKey, RecordStore, RecordStoreResult};
     use tokio::sync::RwLock;
+
+    #[derive(Default)]
+    struct MemoryRecordStore {
+        records: StdRwLock<HashMap<String, ProximaRecord>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RecordStore for MemoryRecordStore {
+        async fn upsert_record(&self, record: ProximaRecord) -> RecordStoreResult<ProximaRecord> {
+            self.records
+                .write()
+                .expect("memory record store write lock")
+                .insert(record.oid.clone(), record.clone());
+            Ok(record)
+        }
+
+        async fn get_record(&self, key: &RecordKey) -> RecordStoreResult<Option<ProximaRecord>> {
+            Ok(self
+                .records
+                .read()
+                .expect("memory record store read lock")
+                .get(&key.oid)
+                .cloned())
+        }
+
+        async fn delete_record(&self, key: &RecordKey) -> RecordStoreResult<bool> {
+            Ok(self
+                .records
+                .write()
+                .expect("memory record store write lock")
+                .remove(&key.oid)
+                .is_some())
+        }
+    }
 
     #[derive(Default)]
     struct RecordingDocumentService {
@@ -686,6 +798,109 @@ mod tests {
                 .staged_operation_count(&transaction_id)
                 .await,
             0
+        );
+    }
+
+    #[tokio::test]
+    async fn test_transactional_facade_commits_graph_records_through_service() {
+        let graph_id = format!("txn_graph_{}", std::process::id());
+        let record_store = Arc::new(MemoryRecordStore::default());
+        let graph_service =
+            Arc::new(GraphService::new().with_canonical_record_store(record_store.clone()));
+        graph_service
+            .create_graph_collection(crate::proto::proximadb_v1::CreateGraphRequest {
+                graph_id: graph_id.clone(),
+                name: None,
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await
+            .unwrap();
+        let graph_store = Arc::new(
+            GraphStore::new(GraphStoreConfig::default())
+                .with_service(graph_service.clone())
+                .with_default_graph(graph_id.clone()),
+        );
+        let storage = Arc::new(MultiModelStorageFacade::new().with_graph_store(graph_store));
+        let runtime =
+            TransactionalMultiModelFacade::new(storage, TransactionConfig::default()).await;
+        let transaction_id = runtime.begin(None).await.unwrap();
+
+        runtime
+            .create_graph_node(
+                &transaction_id,
+                &graph_id,
+                GraphNode {
+                    id: "n1".to_string(),
+                    label: "Person".to_string(),
+                    properties: HashMap::from([("name".to_string(), "alice".to_string())]),
+                },
+            )
+            .await
+            .unwrap();
+        runtime
+            .create_graph_node(
+                &transaction_id,
+                &graph_id,
+                GraphNode {
+                    id: "n2".to_string(),
+                    label: "Person".to_string(),
+                    properties: HashMap::from([("name".to_string(), "bob".to_string())]),
+                },
+            )
+            .await
+            .unwrap();
+        runtime
+            .create_graph_edge(
+                &transaction_id,
+                &graph_id,
+                GraphEdge {
+                    id: "e1".to_string(),
+                    source: "n1".to_string(),
+                    target: "n2".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::from([("since".to_string(), "2026".to_string())]),
+                },
+            )
+            .await
+            .unwrap();
+
+        runtime.commit(&transaction_id).await.unwrap();
+
+        assert!(
+            graph_service
+                .get_node(&graph_id, &"n1".to_string())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            graph_service
+                .get_edge(&graph_id, &"e1".to_string())
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            record_store
+                .get_record(&RecordKey::new(
+                    GraphNodeKey::new(&graph_id, "n1").canonical_oid()
+                ))
+                .await
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            record_store
+                .get_record(&RecordKey::new(
+                    GraphEdgeKey::new(&graph_id, "e1").canonical_oid()
+                ))
+                .await
+                .unwrap()
+                .is_some()
         );
     }
 }

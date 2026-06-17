@@ -8,8 +8,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use super::{MetadataSerializer, ZeroCopyIOSystem};
-use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Workload types for configuration presets
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -41,7 +41,7 @@ pub struct ZeroCopyIOConfig {
     pub integration: IntegrationConfig,
 
     /// Performance tuning
-    pub performance: PerformanceConfig,
+    pub performance: ZeroCopyPerformanceConfig,
 }
 
 /// Metadata cache configuration
@@ -236,7 +236,7 @@ pub enum CollectionIsolation {
 
 /// Performance tuning configuration
 #[derive(Debug, Clone)]
-pub struct PerformanceConfig {
+pub struct ZeroCopyPerformanceConfig {
     /// Enable performance monitoring
     pub enable_monitoring: bool,
 
@@ -320,7 +320,7 @@ impl ZeroCopyIOSystemBuilder {
     }
 
     /// Set custom performance configuration
-    pub fn with_performance_config(mut self, config: PerformanceConfig) -> Self {
+    pub fn with_performance_config(mut self, config: ZeroCopyPerformanceConfig) -> Self {
         self.config.performance = config;
         self
     }
@@ -487,7 +487,7 @@ impl ZeroCopyIOConfig {
                 },
                 ..Default::default()
             },
-            performance: PerformanceConfig {
+            performance: ZeroCopyPerformanceConfig {
                 enable_adaptive_thresholds: true,
                 threshold_adjustment_rate: 0.1,
                 ..Default::default()
@@ -656,7 +656,7 @@ impl Default for IntegrationConfig {
     }
 }
 
-impl Default for PerformanceConfig {
+impl Default for ZeroCopyPerformanceConfig {
     fn default() -> Self {
         Self {
             enable_monitoring: true,

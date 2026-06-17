@@ -10,12 +10,11 @@ use datafusion::arrow::datatypes::{
 };
 use datafusion::common::{ColumnStatistics, Statistics};
 use datafusion::error::Result as DFResult;
-use tracing::warn;
 
 use crate::storage::formats::FormatStatistics;
-use crate::storage::schema::{
-    ProximaColumn, ProximaDataType, ProximaSchema, TimeUnit, VectorElementType,
-};
+use proximadb_data_model::{ProximaType, TimeUnit as DmTimeUnit, VectorElement};
+
+use crate::storage::schema::{ProximaColumn, ProximaSchema};
 
 /// Infer Arrow schema from a ProximaDB collection.
 ///
@@ -70,41 +69,39 @@ pub fn extract_statistics(format_stats: &FormatStatistics, schema: &ArrowSchema)
     }
 }
 
-/// Convert ProximaDataType to Arrow DataType.
-pub fn proxima_to_arrow_type(proxima_type: &ProximaDataType) -> ArrowDataType {
+/// Convert ProximaType to Arrow DataType.
+pub fn proxima_to_arrow_type(proxima_type: &ProximaType) -> ArrowDataType {
     match proxima_type {
-        ProximaDataType::Boolean => ArrowDataType::Boolean,
-        ProximaDataType::Int8 => ArrowDataType::Int8,
-        ProximaDataType::Int16 => ArrowDataType::Int16,
-        ProximaDataType::Int32 => ArrowDataType::Int32,
-        ProximaDataType::Int64 => ArrowDataType::Int64,
-        ProximaDataType::UInt8 => ArrowDataType::UInt8,
-        ProximaDataType::UInt16 => ArrowDataType::UInt16,
-        ProximaDataType::UInt32 => ArrowDataType::UInt32,
-        ProximaDataType::UInt64 => ArrowDataType::UInt64,
-        ProximaDataType::Float32 => ArrowDataType::Float32,
-        ProximaDataType::Float64 => ArrowDataType::Float64,
-        ProximaDataType::Decimal { precision, scale } => {
-            ArrowDataType::Decimal128(*precision, *scale)
+        ProximaType::Boolean => ArrowDataType::Boolean,
+        ProximaType::Int8 => ArrowDataType::Int8,
+        ProximaType::Int16 => ArrowDataType::Int16,
+        ProximaType::Int32 => ArrowDataType::Int32,
+        ProximaType::Int64 => ArrowDataType::Int64,
+        ProximaType::UInt8 => ArrowDataType::UInt8,
+        ProximaType::UInt16 => ArrowDataType::UInt16,
+        ProximaType::UInt32 => ArrowDataType::UInt32,
+        ProximaType::UInt64 => ArrowDataType::UInt64,
+        ProximaType::Float16 => ArrowDataType::Float16,
+        ProximaType::Float32 => ArrowDataType::Float32,
+        ProximaType::Float64 => ArrowDataType::Float64,
+        ProximaType::Decimal { precision, scale } => {
+            ArrowDataType::Decimal128(*precision, *scale as i8)
         }
-        ProximaDataType::String => ArrowDataType::Utf8,
-        ProximaDataType::Binary => ArrowDataType::Binary,
-        ProximaDataType::Date => ArrowDataType::Date32,
-        ProximaDataType::Time { unit } => {
-            let arrow_unit = time_unit_to_arrow(unit);
-            ArrowDataType::Time64(arrow_unit)
+        ProximaType::String | ProximaType::Symbol => ArrowDataType::Utf8,
+        ProximaType::Binary => ArrowDataType::Binary,
+        ProximaType::Date => ArrowDataType::Date32,
+        ProximaType::Time(unit) => ArrowDataType::Time64(time_unit_to_arrow(*unit)),
+        ProximaType::Timestamp(unit) => ArrowDataType::Timestamp(time_unit_to_arrow(*unit), None),
+        ProximaType::TimestampTz(unit) => {
+            ArrowDataType::Timestamp(time_unit_to_arrow(*unit), Some(Arc::from("UTC")))
         }
-        ProximaDataType::Timestamp { unit, timezone } => {
-            let arrow_unit = time_unit_to_arrow(unit);
-            ArrowDataType::Timestamp(arrow_unit, timezone.clone().map(Arc::from))
-        }
-        ProximaDataType::Uuid => ArrowDataType::FixedSizeBinary(16),
-        ProximaDataType::Json => ArrowDataType::Utf8, // JSON as string
-        ProximaDataType::List { element } => {
+        ProximaType::Uuid | ProximaType::ULID => ArrowDataType::FixedSizeBinary(16),
+        ProximaType::Json | ProximaType::Jsonb => ArrowDataType::Utf8, // JSON as string
+        ProximaType::Array(element) => {
             let element_type = proxima_to_arrow_type(element);
             ArrowDataType::List(Arc::new(Field::new("item", element_type, true)))
         }
-        ProximaDataType::Map { key, value } => {
+        ProximaType::Map { key, value } => {
             let key_type = proxima_to_arrow_type(key);
             let value_type = proxima_to_arrow_type(value);
             let struct_field = ArrowDataType::Struct(
@@ -116,29 +113,29 @@ pub fn proxima_to_arrow_type(proxima_type: &ProximaDataType) -> ArrowDataType {
             );
             ArrowDataType::Map(Arc::new(Field::new("entries", struct_field, false)), false)
         }
-        ProximaDataType::Struct { fields } => {
-            let arrow_fields: Vec<Field> =
-                fields.iter().map(proxima_column_to_arrow_field).collect();
+        ProximaType::Struct { fields } => {
+            let arrow_fields: Vec<Field> = fields
+                .iter()
+                .map(|(name, ty)| Field::new(name, proxima_to_arrow_type(ty), true))
+                .collect();
             ArrowDataType::Struct(arrow_fields.into())
         }
 
         // Vector types
-        ProximaDataType::Vector {
-            dimension,
-            element_type,
-        } => {
-            let elem_arrow = match element_type {
-                VectorElementType::Float32 => ArrowDataType::Float32,
-                VectorElementType::Float64 => ArrowDataType::Float64,
-                VectorElementType::Float16 => ArrowDataType::Float16,
-                VectorElementType::BFloat16 => ArrowDataType::Float32, // BFloat16 approximated as Float32
+        ProximaType::DenseVector { element, dim } => {
+            let elem_arrow = match element {
+                VectorElement::Float32 => ArrowDataType::Float32,
+                VectorElement::Float64 => ArrowDataType::Float64,
+                VectorElement::Float16 => ArrowDataType::Float16,
+                VectorElement::BFloat16 => ArrowDataType::Float32, // BFloat16 approximated as Float32
+                VectorElement::Int8 => ArrowDataType::Int8,
             };
             ArrowDataType::FixedSizeList(
                 Arc::new(Field::new("value", elem_arrow, true)),
-                *dimension as i32,
+                *dim as i32,
             )
         }
-        ProximaDataType::SparseVector { .. } => {
+        ProximaType::SparseVector { .. } => {
             // Sparse vector as struct of indices and values
             ArrowDataType::Struct(
                 vec![
@@ -164,36 +161,27 @@ pub fn proxima_to_arrow_type(proxima_type: &ProximaDataType) -> ArrowDataType {
                 .into(),
             )
         }
-        ProximaDataType::BinaryVector { dimension } => {
+        ProximaType::BinaryVector { dim } => {
             // Binary vector as fixed-size binary
-            let bytes = (*dimension + 7) / 8;
-            ArrowDataType::FixedSizeBinary(bytes as i32)
+            ArrowDataType::FixedSizeBinary(dim.div_ceil(8) as i32)
         }
-        ProximaDataType::QuantizedInt8Vector { dimension, .. } => ArrowDataType::FixedSizeList(
-            Arc::new(Field::new("value", ArrowDataType::Int8, true)),
-            *dimension as i32,
-        ),
-        ProximaDataType::QuantizedPQVector { segments, .. } => {
-            // PQ codes as fixed-size list of uint8
-            ArrowDataType::FixedSizeList(
-                Arc::new(Field::new("code", ArrowDataType::UInt8, false)),
-                *segments as i32,
-            )
+        // Interval/Duration/geo/null have no distinct DataFusion projection here.
+        ProximaType::Interval(_) => {
+            ArrowDataType::Interval(datafusion::arrow::datatypes::IntervalUnit::MonthDayNano)
         }
-        ProximaDataType::QuantizedBinaryVector { dimension } => {
-            let bytes = (*dimension + 7) / 8;
-            ArrowDataType::FixedSizeBinary(bytes as i32)
-        }
+        ProximaType::Duration(unit) => ArrowDataType::Duration(time_unit_to_arrow(*unit)),
+        ProximaType::Point | ProximaType::GeographyPoint => ArrowDataType::FixedSizeBinary(16),
+        ProximaType::Null => ArrowDataType::Null,
     }
 }
 
-/// Convert TimeUnit to Arrow TimeUnit.
-fn time_unit_to_arrow(unit: &TimeUnit) -> ArrowTimeUnit {
+/// Convert the canonical [`DmTimeUnit`] to Arrow's time unit.
+fn time_unit_to_arrow(unit: DmTimeUnit) -> ArrowTimeUnit {
     match unit {
-        TimeUnit::Second => ArrowTimeUnit::Second,
-        TimeUnit::Millisecond => ArrowTimeUnit::Millisecond,
-        TimeUnit::Microsecond => ArrowTimeUnit::Microsecond,
-        TimeUnit::Nanosecond => ArrowTimeUnit::Nanosecond,
+        DmTimeUnit::Second => ArrowTimeUnit::Second,
+        DmTimeUnit::Millisecond => ArrowTimeUnit::Millisecond,
+        DmTimeUnit::Microsecond => ArrowTimeUnit::Microsecond,
+        DmTimeUnit::Nanosecond => ArrowTimeUnit::Nanosecond,
     }
 }
 
@@ -270,24 +258,24 @@ mod tests {
     #[test]
     fn test_proxima_to_arrow_type() {
         assert_eq!(
-            proxima_to_arrow_type(&ProximaDataType::Int64),
+            proxima_to_arrow_type(&ProximaType::Int64),
             ArrowDataType::Int64
         );
         assert_eq!(
-            proxima_to_arrow_type(&ProximaDataType::String),
+            proxima_to_arrow_type(&ProximaType::String),
             ArrowDataType::Utf8
         );
         assert_eq!(
-            proxima_to_arrow_type(&ProximaDataType::Boolean),
+            proxima_to_arrow_type(&ProximaType::Boolean),
             ArrowDataType::Boolean
         );
     }
 
     #[test]
     fn test_vector_type_conversion() {
-        let vector_type = ProximaDataType::Vector {
-            dimension: 128,
-            element_type: VectorElementType::Float32,
+        let vector_type = ProximaType::DenseVector {
+            element: VectorElement::Float32,
+            dim: 128,
         };
 
         let arrow_type = proxima_to_arrow_type(&vector_type);

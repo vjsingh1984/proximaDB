@@ -59,6 +59,7 @@
 //! | ARRAY<T> | List<T> | Homogeneous arrays |
 //! | MAP<K,V> | Map<K,V> | Key-value maps |
 
+pub mod storage;
 pub mod validators;
 
 use anyhow::{Result, anyhow};
@@ -67,6 +68,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 // Re-exports
+pub use storage::StorageEngineType;
 pub use validators::*;
 
 /// Column data type enumeration with rich type support

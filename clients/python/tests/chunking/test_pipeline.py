@@ -12,14 +12,11 @@ This module tests:
 - Context managers
 """
 
-import asyncio
 import sys
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
-from typing import List
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -27,7 +24,6 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import from loader which handles the module loading
-from loader import RESOURCES_DIR, code_module
 
 # Get pipeline module from sys.modules
 pipeline_module = sys.modules["proximadb.chunking_strategies.pipeline"]

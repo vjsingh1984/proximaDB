@@ -39,7 +39,7 @@
 | `INDEX.adoc` | ✅ | P1 | Dec 2025 | Main documentation index
 |===
 
-=== Concepts (`docs/concepts/`)
+=== Concepts (`docs/05-concepts/`)
 
 |===
 | Document | Status | Phase | Last Updated | Notes
@@ -50,7 +50,7 @@
 | `graph-engines.adoc` | ✅ | P2 | Dec 2025 | Graph engine guide
 |===
 
-=== API Reference (`docs/api/`)
+=== API Reference (`docs/03-api-reference/`)
 
 |===
 | Document | Status | Phase | Last Updated | Notes
@@ -60,7 +60,7 @@
 | `configuration.adoc` | ✅ | P1 | Dec 2025 | Configuration guide
 |===
 
-=== Operations (`docs/operations/`)
+=== Operations (`docs/04-operations/`)
 
 |===
 | Document | Status | Phase | Last Updated | Notes
@@ -70,7 +70,7 @@
 | `security.adoc` | ✅ | P1 | Dec 2025 | Auth, TLS, RBAC
 |===
 
-=== Internals (`docs/internals/`)
+=== Internals (`docs/06-internals/deep-dives/`)
 
 |===
 | Document | Status | Phase | Last Updated | Notes
@@ -97,7 +97,7 @@
 | `cdc-debezium-integration.adoc` | 🔄 | P3 | Dec 2025 | CDC with Debezium
 |===
 
-=== Benchmarks (`docs/benchmarks/`)
+=== Benchmarks (`docs/10-quality/benchmarks/`)
 
 |===
 | Document | Status | Phase | Last Updated | Notes
@@ -179,14 +179,14 @@ All documents in `docs/_internal/archive/` are **obsolete** and kept for histori
 
 | `01-getting-started/` | ⚠️ Obsolete | Superseded by INDEX.adoc
 | `02-guides/` | ⚠️ Obsolete | Superseded by docs/02-guides/
-| `03-reference/` | ⚠️ Obsolete | Superseded by docs/api/
-| `04-operations/` | ⚠️ Obsolete | Superseded by docs/operations/
-| `06-security/` | ⚠️ Obsolete | Superseded by docs/operations/security.adoc
+| `03-reference/` | ⚠️ Obsolete | Superseded by docs/03-api-reference/
+| `04-operations/` | ⚠️ Obsolete | Superseded by docs/04-operations/
+| `06-security/` | ⚠️ Obsolete | Superseded by docs/04-operations/security.adoc
 | `08-development/` | ⚠️ Obsolete | Some content may be useful
-| `architecture/` | ⚠️ Obsolete | Superseded by docs/concepts/
-| `graph/` | ⚠️ Obsolete | Superseded by docs/internals/
-| `performance/` | ⚠️ Obsolete | Superseded by docs/benchmarks/
-| `storage/` | ⚠️ Obsolete | Superseded by docs/internals/
+| `architecture/` | ⚠️ Obsolete | Superseded by docs/05-concepts/
+| `graph/` | ⚠️ Obsolete | Superseded by docs/06-internals/deep-dives/
+| `performance/` | ⚠️ Obsolete | Superseded by docs/10-quality/benchmarks/
+| `storage/` | ⚠️ Obsolete | Superseded by docs/06-internals/deep-dives/
 | `technical/` | ⚠️ Obsolete | Mixed - some content useful
 |===
 
@@ -249,7 +249,7 @@ All documents in `docs/_internal/archive/` are **obsolete** and kept for histori
 
 === Low Priority
 
-1. [ ] Remove or archive `SOLID_VECTOR_FRAMEWORK_REDESIGN.md`
+1. [x] Archived `SOLID_VECTOR_FRAMEWORK_REDESIGN.md` under `docs/_archive/reviews/`
 2. [ ] Clean up SIMD/GPU integration docs in archive
 3. [ ] Consolidate technical debt documentation
 

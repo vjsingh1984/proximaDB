@@ -34,23 +34,25 @@ flowchart TB
 
 **Base URL**: `http://localhost:5678`
 
+Canonical REST writes and reads use record/table endpoints under `/api/v2`.
+The older `/api/v1/*` routes remain available only as deprecated compatibility
+facades and emit deprecation metadata.
+
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/collections` | GET | List collections |
-| `/api/v1/collections` | POST | Create collection |
-| `/api/v1/collections/{id}` | GET | Get collection |
-| `/api/v1/collections/{id}` | DELETE | Delete collection |
-| `/api/v1/collections/{id}/vectors` | POST | Insert vectors |
-| `/api/v1/collections/{id}/vectors/search` | POST | Search vectors |
-| `/api/v1/graph/graphs` | POST | Create graph |
-| `/api/v1/graph/graphs/{id}/nodes` | POST | Add nodes |
-| `/api/v1/graph/graphs/{id}/traverse` | POST | Traverse graph |
+| `/api/v2/collections` | POST | Create collection/table with typed schema |
+| `/api/v2/collections/{id}/records/batch` | POST | Insert or upsert ProximaRecords |
+| `/api/v2/collections/{id}/records/{record}` | GET | Get ProximaRecord |
+| `/api/v2/collections/{id}/records/{record}` | DELETE | Delete ProximaRecord |
+| `/api/v2/collections/{id}/search` | POST | Record/vector search |
+| `/api/v2/query` | POST | Shared query facade |
+| `/api/v1/*` | Various | Deprecated compatibility facades |
 | `/health` | GET | Health check |
 
 ### Example: Create Collection
 
 ```bash
-curl -X POST http://localhost:5678/api/v1/collections \
+curl -X POST http://localhost:5678/api/v2/collections \
   -H "Content-Type: application/json" \
   -d '{
     "name": "products",
@@ -63,7 +65,7 @@ curl -X POST http://localhost:5678/api/v1/collections \
 ### Example: Search
 
 ```bash
-curl -X POST http://localhost:5678/api/v1/collections/products/vectors/search \
+curl -X POST http://localhost:5678/api/v2/collections/products/search \
   -H "Content-Type: application/json" \
   -d '{
     "vector": [0.1, 0.2, ...],
@@ -72,7 +74,7 @@ curl -X POST http://localhost:5678/api/v1/collections/products/vectors/search \
   }'
 ```
 
-**Full docs**: [REST API Reference](./rest.md)
+**Full docs**: [REST API Reference](./rest.adoc)
 
 ---
 
@@ -81,30 +83,22 @@ curl -X POST http://localhost:5678/api/v1/collections/products/vectors/search \
 **Default port**: `5678` (via HTTP/2)
 
 Services:
-- `CollectionService` - Collections and vectors
-- `GraphService` - Graph operations
-- `DocumentService` - Document storage
-- `ObservabilityService` - Logs and metrics
+- `proximadb.v2.ProximaRecordService` - Canonical record writes/search/schema operations
+- `proximadb.v1.*` - Deprecated compatibility services for existing clients
 
 ### Example (Python)
 
 ```python
 import grpc
-from proximadb.proto import collection_pb2, collection_pb2_grpc
+from proximadb.v2 import record_pb2, record_pb2_grpc
 
 channel = grpc.insecure_channel('localhost:5678')
-stub = collection_pb2_grpc.CollectionServiceStub(channel)
+stub = record_pb2_grpc.ProximaRecordServiceStub(channel)
 
-# Create collection
-request = collection_pb2.CreateCollectionRequest(
-    name="products",
-    dimension=384,
-    metric=collection_pb2.COSINE
-)
-response = stub.CreateCollection(request)
+# Use InsertRecords/SearchRecords for canonical record APIs.
 ```
 
-**Full docs**: [gRPC API Reference](./grpc.md)
+**Full docs**: gRPC API details are generated from `proto/`.
 
 ---
 
@@ -133,7 +127,7 @@ CREATE TABLE items (
 );
 ```
 
-**Full docs**: [SQL Reference](./sql.md)
+**Full docs**: SQL and PostgreSQL wire coverage is tracked in [Supported Surface](../SUPPORTED_SURFACE.adoc).
 
 ---
 
@@ -172,7 +166,7 @@ results = collection.search(
 )
 ```
 
-**Full docs**: [Python SDK Guide](../02-guides/sdk-python-guide.md)
+**Full docs**: [Python SDK Guide](../02-guides/sdk-python-guide.adoc)
 
 ---
 
@@ -208,7 +202,7 @@ metrics_enabled = true
 prometheus_port = 9090
 ```
 
-**Full docs**: [Configuration Reference](./configuration.md)
+**Full docs**: [Configuration Reference](./configuration.adoc)
 
 ---
 
@@ -268,7 +262,7 @@ X-RateLimit-Reset: 1640000000
 ```bash
 # Bearer token
 curl -H "Authorization: Bearer $TOKEN" \
-  http://localhost:5678/api/v1/collections
+  http://localhost:5678/api/v2/collections
 ```
 
 ```python
@@ -283,10 +277,9 @@ client = ProximaDB(
 
 ## Next Steps
 
-- [REST API](./rest.md) - Complete REST reference
-- [SQL Extensions](./sql-extensions.md) - Custom SQL functions
-- [Python SDK](../02-guides/sdk-python-guide.md) - Python client guide
-- [Configuration](./configuration.md) - All config options
+- [REST API](./rest.adoc) - Complete REST reference
+- [Python SDK](../02-guides/sdk-python-guide.adoc) - Python client guide
+- [Configuration](./configuration.adoc) - All config options
 
 ---
 

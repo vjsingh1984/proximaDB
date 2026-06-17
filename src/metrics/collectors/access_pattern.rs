@@ -15,7 +15,7 @@ use tokio::sync::{Mutex, RwLock};
 pub struct AccessPatternMetricsCollector {
     /// Current access pattern metrics (atomic counters for lock-free updates)
     #[allow(dead_code)]
-    metrics: Arc<AccessPatternMetrics>,
+    metrics: Arc<MetricsAccessPatternMetrics>,
 
     /// Historical data for pattern analysis (beyond what unified framework rolls)
     historical_data: Arc<RwLock<HistoricalAccessData>>,
@@ -30,7 +30,7 @@ pub struct AccessPatternMetricsCollector {
 impl std::fmt::Debug for AccessPatternMetricsCollector {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AccessPatternMetricsCollector")
-            .field("metrics", &"AccessPatternMetrics{...}")
+            .field("metrics", &"MetricsAccessPatternMetrics{...}")
             .field("historical_data", &"HistoricalAccessData{...}")
             .field("correlation_tracker", &"CorrelationTracker{...}")
             .field("pattern_engine", &"PatternRecognitionEngine{...}")
@@ -38,8 +38,11 @@ impl std::fmt::Debug for AccessPatternMetricsCollector {
     }
 }
 
+/// Backwards-compat alias for [`MetricsAccessPatternMetrics`].
+pub type AccessPatternMetrics = MetricsAccessPatternMetrics;
+
 /// Core access pattern metrics using atomic counters
-pub struct AccessPatternMetrics {
+pub struct MetricsAccessPatternMetrics {
     // File access metrics
     pub total_file_accesses: AtomicU64,
     pub unique_files_accessed: AtomicUsize,
@@ -77,7 +80,7 @@ pub struct AccessPatternMetrics {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoricalAccessData {
     /// Rolling window of access events (kept longer than metrics framework)
-    access_events: VecDeque<AccessEvent>,
+    access_events: VecDeque<MetricsAccessEvent>,
 
     /// Daily access summaries (for trend analysis)
     daily_summaries: VecDeque<DailyAccessSummary>,
@@ -95,9 +98,12 @@ pub struct HistoricalAccessData {
     max_days: usize,
 }
 
+/// Backwards-compat alias for [`MetricsAccessEvent`].
+pub type AccessEvent = MetricsAccessEvent;
+
 /// Individual access event
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct AccessEvent {
+pub struct MetricsAccessEvent {
     pub timestamp: SystemTime,
     pub file_key: String,
     pub collection_id: String,
@@ -185,7 +191,7 @@ pub struct PeriodicPattern {
 /// Pattern recognition engine
 pub struct PatternRecognitionEngine {
     /// Sliding window for pattern detection
-    detection_window: Arc<Mutex<VecDeque<AccessEvent>>>,
+    detection_window: Arc<Mutex<VecDeque<MetricsAccessEvent>>>,
 
     /// Recognized patterns
     recognized_patterns: Arc<RwLock<Vec<RecognizedPattern>>>,
@@ -201,7 +207,7 @@ pub struct RecognizedPattern {
     pub pattern_type: PatternType,
     pub confidence: f64,
     pub affected_files: Vec<String>,
-    pub prediction: Option<AccessPrediction>,
+    pub prediction: Option<MetricsAccessPrediction>,
 }
 
 /// Types of patterns that can be recognized
@@ -215,9 +221,12 @@ pub enum PatternType {
     CorrelatedGroup,
 }
 
+/// Backwards-compat alias for [`MetricsAccessPrediction`].
+pub type AccessPrediction = MetricsAccessPrediction;
+
 /// Access prediction based on recognized patterns
 #[derive(Clone, Debug)]
-pub struct AccessPrediction {
+pub struct MetricsAccessPrediction {
     pub predicted_files: Vec<String>,
     pub confidence: f64,
     pub time_window: Duration,
@@ -235,7 +244,7 @@ pub struct PatternThresholds {
 impl AccessPatternMetricsCollector {
     pub fn new() -> Self {
         Self {
-            metrics: Arc::new(AccessPatternMetrics::new()),
+            metrics: Arc::new(MetricsAccessPatternMetrics::new()),
             historical_data: Arc::new(RwLock::new(HistoricalAccessData::new(10000, 30))),
             correlation_tracker: Arc::new(CorrelationTracker::new()),
             pattern_engine: Arc::new(PatternRecognitionEngine::new()),
@@ -270,7 +279,7 @@ impl AccessPatternMetricsCollector {
         }
 
         // Create access event
-        let event = AccessEvent {
+        let event = MetricsAccessEvent {
             timestamp: SystemTime::now(),
             file_key: file_key.clone(),
             collection_id: collection_id.clone(),
@@ -293,7 +302,7 @@ impl AccessPatternMetricsCollector {
     }
 
     /// Update historical data with new event
-    async fn update_historical_data(&self, event: AccessEvent) {
+    async fn update_historical_data(&self, event: MetricsAccessEvent) {
         let mut historical = self.historical_data.write().await;
 
         // Add event to rolling window
@@ -326,7 +335,7 @@ impl AccessPatternMetricsCollector {
     }
 
     /// Get pattern predictions for prefetching
-    pub async fn predictions(&self) -> Vec<AccessPrediction> {
+    pub async fn predictions(&self) -> Vec<MetricsAccessPrediction> {
         let patterns = self.pattern_engine.recognized_patterns.read().await;
         patterns
             .iter()
@@ -401,7 +410,7 @@ impl Default for AccessPatternMetricsCollector {
     }
 }
 
-impl AccessPatternMetrics {
+impl MetricsAccessPatternMetrics {
     pub fn new() -> Self {
         Self {
             total_file_accesses: AtomicU64::new(0),
@@ -428,7 +437,7 @@ impl AccessPatternMetrics {
     }
 }
 
-impl Default for AccessPatternMetrics {
+impl Default for MetricsAccessPatternMetrics {
     fn default() -> Self {
         Self::new()
     }
@@ -485,7 +494,7 @@ impl PatternRecognitionEngine {
         }
     }
 
-    pub async fn process_event(&self, event: AccessEvent) {
+    pub async fn process_event(&self, event: MetricsAccessEvent) {
         let mut window = self.detection_window.lock().await;
         window.push_back(event);
 
@@ -518,7 +527,7 @@ impl MetricsCollector for AccessPatternMetricsCollector {
     }
 
     fn name(&self) -> &'static str {
-        "AccessPatternMetrics"
+        "MetricsAccessPatternMetrics"
     }
 
     fn recommended_interval(&self) -> Duration {

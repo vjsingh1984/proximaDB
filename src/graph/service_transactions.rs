@@ -29,11 +29,11 @@
 //! ```
 
 use super::Result;
-use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, Node};
 use crate::proto::proximadb_v1::{Edge as ProtoEdge, Node as ProtoNode};
 use dashmap::DashMap;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -237,8 +237,8 @@ impl Default for DistributedLockManager {
 /// Local transaction coordinator for single-node transactions
 ///
 /// This provides transaction coordination without requiring distributed
-/// consensus. For distributed transactions with the PULSAR engine,
-/// use the full TwoPhaseCommitCoordinator from pulsar::transactions.
+/// consensus. Distributed graph transaction coordination belongs to the
+/// relational distributed substrate.
 pub struct LocalTransactionCoordinator {
     /// Active transactions
     transactions: Arc<RwLock<HashMap<TransactionId, TransactionMetadata>>>,

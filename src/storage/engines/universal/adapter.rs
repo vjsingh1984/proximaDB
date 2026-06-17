@@ -3,8 +3,8 @@
 //! This module provides the main implementation of the universal distance adapter
 //! that integrates PQ and INT8 optimized distance computations across all storage engines.
 
-use crate::utils::uuid::Uuid;
 use anyhow::Result;
+use proximadb_kernel::uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -14,7 +14,8 @@ use crate::compute::distance_computation::{
     DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceResult, QuantizedVectorData,
     SelectedFormat, SimilarityResult, UnifiedDistanceCompute,
 };
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::proto::proximadb_v1::VectorRecord;
 
 use super::{
     config::ProgressiveRefinementConfig as ConfigProgressiveRefinementConfig,
@@ -154,7 +155,7 @@ pub struct DistanceComputationResult {
     pub quality_metrics: QualityMetrics,
 
     /// Performance metrics
-    pub performance_metrics: PerformanceMetrics,
+    pub performance_metrics: UniversalAdapterPerformanceMetrics,
 
     /// Stages used in progressive refinement
     pub refinement_stages: Vec<RefinementStage>,
@@ -169,9 +170,12 @@ pub struct DistanceComputationResult {
     pub computation_time_us: u64,
 }
 
+/// Backwards-compat alias for [`UniversalAdapterPerformanceMetrics`].
+pub type PerformanceMetrics = UniversalAdapterPerformanceMetrics;
+
 /// Performance metrics for distance computation
 #[derive(Debug, Clone)]
-pub struct PerformanceMetrics {
+pub struct UniversalAdapterPerformanceMetrics {
     /// Total computation time in microseconds
     pub total_time_us: u64,
 
@@ -380,7 +384,7 @@ impl UniversalDistanceAdapter {
             results: refinement_result.similarity_results,
             vector_ids: refinement_result.vector_ids,
             quality_metrics: refinement_result.quality_metrics,
-            performance_metrics: PerformanceMetrics {
+            performance_metrics: UniversalAdapterPerformanceMetrics {
                 total_time_us: computation_time_us,
                 stage_times_us: refinement_result.stage_times,
                 distance_calculations: refinement_result.total_distance_calculations,
@@ -616,6 +620,7 @@ impl UniversalDistanceAdapter {
                             values: int8_data,
                             scale: 1.0,    // Default scale
                             zero_point: 0, // Default zero point
+                            length_renorm: None,
                         }),
                         pq: None,
                     }
@@ -637,6 +642,7 @@ impl UniversalDistanceAdapter {
                             codes: pq_data,
                             codebook: vec![], // Would need actual codebook
                             codebook_hash: 0, // Placeholder
+                            length_renorm: None,
                         }),
                     }
                 }

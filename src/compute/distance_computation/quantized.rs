@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{info, trace};
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::core::hardware_capabilities::{HardwareCapabilities, get_hardware_capabilities};
+use proximadb_hardware::{SimdLevel, best_simd_level};
 
 /// Configuration for distance calculations on quantized data
 #[derive(Debug, Clone)]
@@ -137,6 +137,25 @@ pub struct HardwarePreferences {
     pub enable_cache_optimization: bool,
 }
 
+/// Apply the RaBitQ-style length-renormalization correction (P7).
+///
+/// Multiplies the raw inner-product estimate by `renorm` when present.
+/// For distance-shaped metrics (Euclidean, Hamming), the correction would
+/// require knowing the candidate's stored norm separately, so this
+/// helper only applies to inner-product-shaped metrics (Cosine,
+/// DotProduct). Other metrics fall through unchanged — pre-P7 callers
+/// are unaffected.
+///
+/// `None` always returns the input unchanged. This is the unconditional
+/// pre-P7 path.
+#[inline]
+fn apply_length_renorm(raw: f32, renorm: Option<f32>, metric: &DistanceMetric) -> f32 {
+    match (renorm, metric) {
+        (Some(s), DistanceMetric::Cosine) | (Some(s), DistanceMetric::DotProduct) => raw * s,
+        _ => raw,
+    }
+}
+
 /// Format selection for quantized distance computation
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectedFormat {
@@ -175,6 +194,49 @@ pub struct Int8VectorData {
     pub scale: f32,
     /// Zero point for affine quantization
     pub zero_point: i8,
+    /// Per-vector RaBitQ-style length renormalization scalar (P7).
+    ///
+    /// When `Some(s)`, the scoring path multiplies its raw inner-product
+    /// estimate by `s` to remove the systematic downward bias of scalar
+    /// quantization. The mathematical form is
+    /// `s = ||v|| / <u, x_hat>` where `u = v / ||v||` is the unit
+    /// direction and `x_hat` is the dequantized reconstruction.
+    ///
+    /// `None` preserves pre-P7 behaviour (no correction applied).
+    /// Construct via `with_length_renorm` for the corrected variant.
+    /// See `TURBOQUANT_LLD_2026_05_30.adoc` §"Implementation Status" P7.
+    pub length_renorm: Option<f32>,
+}
+
+impl Int8VectorData {
+    /// Compute the RaBitQ-style length-renormalization scalar from the
+    /// original FP32 vector `v` and its quantized + scaled reconstruction
+    /// `x_hat`. Returns `None` for degenerate inputs (zero norm or
+    /// orthogonal reconstruction) so the scoring path falls through to
+    /// the uncorrected branch.
+    pub fn compute_length_renorm(v: &[f32], x_hat: &[f32]) -> Option<f32> {
+        if v.len() != x_hat.len() {
+            return None;
+        }
+        let mut sumsq = 0.0f64;
+        let mut inner = 0.0f64;
+        for (vi, xi) in v.iter().zip(x_hat.iter()) {
+            sumsq += (*vi as f64) * (*vi as f64);
+            inner += (*vi as f64) * (*xi as f64);
+        }
+        let norm = sumsq.sqrt();
+        if norm < 1e-10 || inner.abs() < 1e-10 {
+            return None;
+        }
+        let scale = (norm / inner) as f32;
+        if scale.is_finite() { Some(scale) } else { None }
+    }
+
+    /// Builder-style: attach a precomputed length-renorm scalar.
+    pub fn with_length_renorm(mut self, renorm: f32) -> Self {
+        self.length_renorm = Some(renorm);
+        self
+    }
 }
 
 /// Product quantized vector data
@@ -186,6 +248,61 @@ pub struct PQVectorData {
     pub codebook: Vec<Vec<f32>>,
     /// Hash of codebook for caching
     pub codebook_hash: u64,
+    /// Per-vector RaBitQ-style length renormalization scalar (P7). See
+    /// [`Int8VectorData::length_renorm`] for the semantics. `None`
+    /// preserves pre-P7 behaviour.
+    pub length_renorm: Option<f32>,
+}
+
+impl PQVectorData {
+    /// Compute the length-renorm scalar from the original FP32 vector
+    /// and the dequantized PQ reconstruction. Returns `None` for
+    /// degenerate inputs.
+    pub fn compute_length_renorm(v: &[f32], x_hat: &[f32]) -> Option<f32> {
+        // Same numerical contract as Int8VectorData::compute_length_renorm
+        // — wrapping the helper keeps the formula in one place.
+        Int8VectorData::compute_length_renorm(v, x_hat)
+    }
+
+    /// Builder-style: attach a precomputed length-renorm scalar.
+    pub fn with_length_renorm(mut self, renorm: f32) -> Self {
+        self.length_renorm = Some(renorm);
+        self
+    }
+}
+
+/// TurboQuant-quantized vector data (ADR-021, TURBOQUANT_LLD_2026_05_30
+/// §"Locked Type Signatures"). Mirrors [`Int8VectorData`]'s
+/// `values + scale + zero_point` shape: bit-packed codes plus a per-vector
+/// `scale` that carries the RaBitQ-style length-renormalization correction
+/// `||v|| / <u_rot, x_hat>`. Applying `scale` at the final
+/// score-multiplication site recovers an unbiased inner-product estimator
+/// — the recall gain is largest at low bit-widths.
+///
+/// `encoded_epoch` tracks the collection's precision/calibration epoch
+/// (per `EMBEDDING_PRECISION_LLD_2026_05_22` Q12); a mismatch against the
+/// collection's current epoch routes through repair-from-`ProximaRecord`.
+///
+/// All field semantics are paper-driven (no derivation of turbovec's MIT
+/// implementation); the struct shape is locked in
+/// `TURBOQUANT_LLD_2026_05_30.adoc` §3 wire format and §"Locked Type
+/// Signatures".
+#[cfg(feature = "experimental-turboquant")]
+#[derive(Debug, Clone)]
+pub struct TurboQuantVectorData {
+    /// Bit-packed codes. Length = `ceil(dim * bit_width / 8)` bytes.
+    pub codes: Vec<u8>,
+    /// Bit-width per coordinate (2, 3, or 4). 3-bit deferred to P10.
+    pub bit_width: u8,
+    /// Per-vector length-renormalization scalar:
+    ///   `scale = ||v|| / <u_rot, x_hat>`
+    /// Applied at the SIMD kernel's final multiplication so the inner
+    /// product `<v, q>` is recovered unbiased.
+    pub scale: f32,
+    /// Collection epoch this code was encoded under. Mismatch with the
+    /// collection's current epoch routes through repair source. See
+    /// `EMBEDDING_PRECISION_LLD_2026_05_22` Q12.
+    pub encoded_epoch: u64,
 }
 
 /// Distance computation result with metadata
@@ -260,9 +377,8 @@ pub struct QuantizedDistanceCalculator {
     /// Unified distance compute engine
     distance_engine: Arc<UnifiedDistanceCompute>,
 
-    /// Hardware capabilities
-    #[allow(dead_code)]
-    hardware_caps: Arc<HardwareCapabilities>,
+    /// Whether SIMD is available on this platform
+    has_simd: bool,
 
     /// Distance table cache for PQ
     #[allow(dead_code)]
@@ -421,7 +537,7 @@ impl Default for HardwarePreferences {
 impl QuantizedDistanceCalculator {
     /// Create new distance calculator
     pub fn new(config: QuantizedDistanceConfig) -> Result<Self> {
-        let hardware_caps = get_hardware_capabilities();
+        let has_simd = best_simd_level() > SimdLevel::Scalar;
         let distance_engine = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let pq_distance_cache = Arc::new(std::sync::RwLock::new(PQDistanceCache {
@@ -431,7 +547,7 @@ impl QuantizedDistanceCalculator {
             memory_usage_bytes: 0,
         }));
 
-        let hamming_lut = Arc::new(HammingLookupTable::new(&hardware_caps)?);
+        let hamming_lut = Arc::new(HammingLookupTable::new(has_simd)?);
 
         let int8_distance_tables = Arc::new(std::sync::RwLock::new(Int8DistanceTables {
             tables: std::collections::HashMap::new(),
@@ -446,7 +562,7 @@ impl QuantizedDistanceCalculator {
         Ok(Self {
             config,
             distance_engine,
-            hardware_caps,
+            has_simd,
             pq_distance_cache,
             hamming_lut,
             int8_distance_tables,
@@ -534,7 +650,23 @@ impl QuantizedDistanceCalculator {
                     &self.config.distance_metric,
                 );
 
-                (result.raw_value, 0.9, ComputationMethod::INT8Approximation) // ~90% quality estimate for INT8
+                // P7: RaBitQ-style length renormalization. When the
+                // candidate's `length_renorm` was computed at encode time,
+                // multiply the raw inner-product estimate by it to remove
+                // the systematic downward bias of scalar quantization.
+                // Pre-P7 callers never set the field; that path is
+                // unchanged.
+                let raw_value = apply_length_renorm(
+                    result.raw_value,
+                    int8_data.length_renorm,
+                    &self.config.distance_metric,
+                );
+                let quality = if int8_data.length_renorm.is_some() {
+                    0.93
+                } else {
+                    0.9
+                };
+                (raw_value, quality, ComputationMethod::INT8Approximation)
             }
 
             SelectedFormat::PQ => {
@@ -552,7 +684,20 @@ impl QuantizedDistanceCalculator {
                 );
 
                 cache_hits += 1; // PQ computation typically uses cached distance tables
-                (result.raw_value, 0.85, ComputationMethod::PQApproximation) // ~85% quality estimate for PQ
+                // P7: same renorm as INT8 above. Pre-P7 PQ vectors keep
+                // their downward bias; P7-encoded vectors get the
+                // correction at zero scoring overhead.
+                let raw_value = apply_length_renorm(
+                    result.raw_value,
+                    pq_data.length_renorm,
+                    &self.config.distance_metric,
+                );
+                let quality = if pq_data.length_renorm.is_some() {
+                    0.9
+                } else {
+                    0.85
+                };
+                (raw_value, quality, ComputationMethod::PQApproximation)
             }
         };
 
@@ -888,7 +1033,7 @@ impl QuantizedDistanceCalculator {
     fn should_use_simd(&self, dimension: usize) -> bool {
         self.config.simd_optimization.enable_simd
             && dimension >= self.config.simd_optimization.simd_threshold
-            && self.hardware_caps.has_simd()
+            && self.has_simd
     }
 
     /// Return true when the batch is large enough to benefit from SIMD batch processing.
@@ -1115,15 +1260,13 @@ impl QuantizedDistanceCalculator {
     fn evict_pq_cache_entries(&self, cache: &mut PQDistanceCache) {
         // Implement cache eviction based on configured policy
         match self.config.cache_config.eviction_policy {
-            CacheEvictionPolicy::LRU => {
+            CacheEvictionPolicy::LRU if cache.tables.len() > 100 => {
                 // Remove oldest entries first
                 // This is simplified - would need proper LRU tracking
-                if cache.tables.len() > 100 {
-                    let keys_to_remove: Vec<u64> = cache.tables.keys().take(10).cloned().collect();
-                    for key in keys_to_remove {
-                        if let Some(table) = cache.tables.remove(&key) {
-                            cache.memory_usage_bytes -= table.estimated_size();
-                        }
+                let keys_to_remove: Vec<u64> = cache.tables.keys().take(10).cloned().collect();
+                for key in keys_to_remove {
+                    if let Some(table) = cache.tables.remove(&key) {
+                        cache.memory_usage_bytes -= table.estimated_size();
                     }
                 }
             }
@@ -1137,7 +1280,7 @@ impl QuantizedDistanceCalculator {
 // Implementation of helper structs
 impl HammingLookupTable {
     /// Build a 256-entry popcount lookup table, detecting hardware POPCNT support.
-    fn new(hardware_caps: &HardwareCapabilities) -> Result<Self> {
+    fn new(has_simd: bool) -> Result<Self> {
         let mut hamming_weights = [0u8; 256];
         for (i, weight) in hamming_weights.iter_mut().enumerate() {
             *weight = (i as u8).count_ones() as u8;
@@ -1145,7 +1288,7 @@ impl HammingLookupTable {
 
         Ok(Self {
             hamming_weights,
-            has_popcnt: hardware_caps.has_simd(), // Simplified check
+            has_popcnt: has_simd,
         })
     }
 }
@@ -1247,7 +1390,7 @@ mod tests {
     use super::*;
 
     fn init_hardware_capabilities() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
     }
 
     #[test]
@@ -1297,8 +1440,7 @@ mod tests {
     fn test_hamming_lookup_table() {
         init_hardware_capabilities();
 
-        let hardware_caps = get_hardware_capabilities();
-        let lut = HammingLookupTable::new(&hardware_caps).unwrap();
+        let lut = HammingLookupTable::new(best_simd_level() > SimdLevel::Scalar).unwrap();
 
         // Test known values
         assert_eq!(lut.hamming_weights[0], 0); // 0000_0000
@@ -1330,6 +1472,7 @@ mod tests {
                 values: vec![100; 128],
                 scale: 0.01,
                 zero_point: 0,
+                length_renorm: None,
             }),
             pq: None,
         };
@@ -1362,5 +1505,173 @@ mod tests {
         // Test format equality
         assert_eq!(SelectedFormat::FP32, SelectedFormat::FP32);
         assert_ne!(SelectedFormat::FP32, SelectedFormat::Binary);
+    }
+
+    // ------------------------------------------------------------------
+    // TurboQuantVectorData (P1 — ADR-021 / TURBOQUANT_LLD_2026_05_30)
+    // ------------------------------------------------------------------
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_turboquant_vector_data_construction() {
+        // d=1536, bit_width=2 → ceil(1536*2/8) = 384 bytes of codes.
+        let codes_len = (1536 * 2usize).div_ceil(8);
+        let data = TurboQuantVectorData {
+            codes: vec![0u8; codes_len],
+            bit_width: 2,
+            scale: 1.0,
+            encoded_epoch: 1,
+        };
+        assert_eq!(data.codes.len(), 384);
+        assert_eq!(data.bit_width, 2);
+        assert_eq!(data.scale, 1.0);
+        assert_eq!(data.encoded_epoch, 1);
+
+        // 4-bit: ceil(1536*4/8) = 768 bytes.
+        let data4 = TurboQuantVectorData {
+            codes: vec![0u8; 768],
+            bit_width: 4,
+            scale: 0.5,
+            encoded_epoch: 12,
+        };
+        assert_eq!(data4.codes.len(), 768);
+        assert_eq!(data4.bit_width, 4);
+    }
+
+    #[cfg(feature = "experimental-turboquant")]
+    #[test]
+    fn test_turboquant_vector_data_clone_preserves_fields() {
+        let original = TurboQuantVectorData {
+            codes: vec![0x55, 0xAA, 0xFF, 0x00],
+            bit_width: 4,
+            scale: std::f32::consts::PI,
+            encoded_epoch: 42,
+        };
+        let cloned = original.clone();
+        assert_eq!(cloned.codes, original.codes);
+        assert_eq!(cloned.bit_width, original.bit_width);
+        assert_eq!(cloned.scale.to_bits(), original.scale.to_bits());
+        assert_eq!(cloned.encoded_epoch, original.encoded_epoch);
+    }
+
+    // ------------------------------------------------------------------
+    // P7 — RaBitQ length renormalization for existing PQ/SQ
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn test_int8_default_length_renorm_is_none() {
+        // Strict additivity check: existing constructors that don't opt
+        // in get the legacy behaviour. Pre-P7 callers stay unaffected.
+        let d = Int8VectorData {
+            values: vec![1i8, 2, 3, 4],
+            scale: 0.5,
+            zero_point: 0,
+            length_renorm: None,
+        };
+        assert!(d.length_renorm.is_none());
+    }
+
+    #[test]
+    fn test_int8_with_length_renorm_builder() {
+        let d = Int8VectorData {
+            values: vec![1i8, 2, 3, 4],
+            scale: 0.5,
+            zero_point: 0,
+            length_renorm: None,
+        }
+        .with_length_renorm(1.07);
+        assert_eq!(d.length_renorm, Some(1.07));
+    }
+
+    #[test]
+    fn test_int8_compute_length_renorm_unit_input() {
+        // Vector pointing exactly at its centroid → inner = ||v||^2,
+        // scale = ||v|| / ||v||^2 = 1 / ||v||.
+        let v = vec![1.0f32, 0.0, 0.0, 0.0]; // ||v|| = 1
+        let x_hat = vec![1.0f32, 0.0, 0.0, 0.0];
+        let scale = Int8VectorData::compute_length_renorm(&v, &x_hat).unwrap();
+        assert!((scale - 1.0).abs() < 1e-6, "scale = {scale}");
+    }
+
+    #[test]
+    fn test_int8_compute_length_renorm_with_quantization_shrinkage() {
+        // Vector v = [1, 0.5], quantized to x_hat = [0.9, 0.4]
+        //   ||v|| = sqrt(1.25), <v, x_hat> = 0.9 + 0.2 = 1.1
+        //   scale = sqrt(1.25) / 1.1 ≈ 1.016
+        let v = vec![1.0f32, 0.5];
+        let x_hat = vec![0.9f32, 0.4];
+        let scale = Int8VectorData::compute_length_renorm(&v, &x_hat).unwrap();
+        assert!((scale - 1.0163).abs() < 1e-3, "scale = {scale}");
+    }
+
+    #[test]
+    fn test_int8_compute_length_renorm_zero_vector_returns_none() {
+        let v = vec![0.0f32; 8];
+        let x_hat = vec![0.0f32; 8];
+        assert!(Int8VectorData::compute_length_renorm(&v, &x_hat).is_none());
+    }
+
+    #[test]
+    fn test_int8_compute_length_renorm_orthogonal_returns_none() {
+        let v = vec![1.0f32, 0.0];
+        let x_hat = vec![0.0f32, 1.0];
+        // <v, x_hat> = 0 → degenerate, no correction possible.
+        assert!(Int8VectorData::compute_length_renorm(&v, &x_hat).is_none());
+    }
+
+    #[test]
+    fn test_int8_compute_length_renorm_length_mismatch_returns_none() {
+        let v = vec![1.0f32, 0.5, 0.3];
+        let x_hat = vec![0.9f32, 0.4];
+        assert!(Int8VectorData::compute_length_renorm(&v, &x_hat).is_none());
+    }
+
+    #[test]
+    fn test_pq_default_length_renorm_is_none() {
+        let d = PQVectorData {
+            codes: vec![1u8, 2, 3],
+            codebook: vec![vec![0.0; 4]; 3],
+            codebook_hash: 0,
+            length_renorm: None,
+        };
+        assert!(d.length_renorm.is_none());
+    }
+
+    #[test]
+    fn test_pq_with_length_renorm_builder() {
+        let d = PQVectorData {
+            codes: vec![1u8, 2, 3],
+            codebook: vec![vec![0.0; 4]; 3],
+            codebook_hash: 0,
+            length_renorm: None,
+        }
+        .with_length_renorm(0.94);
+        assert_eq!(d.length_renorm, Some(0.94));
+    }
+
+    #[test]
+    fn test_apply_length_renorm_no_op_when_none() {
+        let out = apply_length_renorm(0.7, None, &DistanceMetric::Cosine);
+        assert_eq!(out, 0.7);
+    }
+
+    #[test]
+    fn test_apply_length_renorm_multiplies_for_cosine() {
+        let out = apply_length_renorm(0.7, Some(1.05), &DistanceMetric::Cosine);
+        assert!((out - 0.735).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_apply_length_renorm_multiplies_for_dot_product() {
+        let out = apply_length_renorm(0.7, Some(1.05), &DistanceMetric::DotProduct);
+        assert!((out - 0.735).abs() < 1e-6);
+    }
+
+    #[test]
+    fn test_apply_length_renorm_skips_euclidean() {
+        // Euclidean is distance-shaped — multiplying by a scalar would
+        // not produce the intended bias correction. Helper falls through.
+        let out = apply_length_renorm(0.7, Some(1.05), &DistanceMetric::Euclidean);
+        assert_eq!(out, 0.7);
     }
 }

@@ -12,14 +12,13 @@ use tracing::{debug, info, warn};
 use super::batch_strategy::WALBatchStrategy;
 use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     MemtableManager, RecoveryManager, WALFlushCoordinator, WalFileInfo, WriteAheadLogDiskManager,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Avro WAL batch strategy using serialization-first architecture
 pub struct AvroSerializationStrategy {
@@ -36,7 +35,7 @@ pub struct AvroSerializationStrategy {
     recovery_manager: Arc<RecoveryManager>,
 
     /// Storage engine for delegated operations
-    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageFormat>>>>,
 
     /// Flush coordinator
     #[allow(dead_code)]
@@ -141,7 +140,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
 
     fn set_storage_engine(
         &self,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         collection_id: &str,
     ) {
         let mut engine_guard = self.storage_engine.blocking_write();
@@ -187,7 +186,9 @@ impl WALBatchStrategy for AvroSerializationStrategy {
 
         // Persist to disk if configured
         if self.should_persist_to_disk() {
-            let serialized = self.serializer.serialize_batch(&batch.vector_records)?;
+            let serialized = self
+                .serializer
+                .serialize_batch(batch.vector_records.as_ref())?;
 
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
@@ -202,6 +203,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
                     &batch.batch_id,
                     &serialized,
                     SerializationFormat::Avro,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await?;
@@ -257,7 +259,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         &self,
         collection_id: &str,
         vector_id: &crate::core::VectorId,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .search_vector_by_id(collection_id, vector_id)
             .await
@@ -269,7 +271,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
-    ) -> Result<Vec<(String, f32, VectorRecord)>> {
+    ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
         // For tests, we can do a simple search in memtable
         let vectors = self
             .memtable_manager
@@ -286,13 +288,19 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         // Use the unified distance compute to calculate distances
         let metric =
             distance_metric.unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
-        let mut results: Vec<(String, f32, VectorRecord)> = Vec::new();
+        let mut results: Vec<(String, f32, proximadb_records::ProximaRecord)> = Vec::new();
 
         for vector in vectors {
-            let distance_result =
-                distance_compute.calculate_distance(query_vector, &vector.vector, &metric);
+            let Some(embedding) = vector.embeddings.first() else {
+                continue;
+            };
+            let distance_result = distance_compute.calculate_distance(
+                query_vector,
+                &embedding.as_fp32_cow(),
+                &metric,
+            );
             // Use empty string for vectors without IDs
-            let id = vector.id.clone().clone();
+            let id = vector.oid.clone();
             // Use rank_value for sorting (lower = more similar)
             results.push((id, distance_result.rank_value, vector));
         }
@@ -304,7 +312,10 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         Ok(results)
     }
 
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .get_collection_vectors(collection_id)
             .await
@@ -350,7 +361,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         let mut total_bytes = 0u64;
 
         // Prepare vectors for flush
-        let mut all_vectors = Vec::new();
+        let mut all_vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
         let mut batch_ids = Vec::new();
 
         for batch in &unflushed {
@@ -529,7 +540,7 @@ impl WALBatchStrategy for AvroSerializationStrategy {
         batches.extend(disk_batches);
 
         // 3. Sort by timestamp to maintain chronological order
-        batches.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        batches.sort_by_key(|b| b.timestamp);
 
         match limit {
             Some(n) => Ok(batches.into_iter().take(n).collect()),

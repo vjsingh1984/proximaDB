@@ -52,13 +52,13 @@ Create detailed technical documentation for each storage engine:
   - Cross-reference existing code: `src/compute/quantization/unified.rs`, `src/compute/quantization/global_cache.rs`
 
 ==== API Complete Reference
-* **REST API Specification** (`docs/api/rest_api_spec.adoc`)
+* **REST API Specification** (`docs/03-api-reference/rest_api_spec.adoc`)
   - OpenAPI/Swagger specification
   - Authentication and authorization
   - Rate limiting and quotas
   - Error handling patterns
 
-* **gRPC API Specification** (`docs/api/grpc_api_spec.adoc`)
+* **gRPC API Specification** (`docs/03-api-reference/grpc_api_spec.adoc`)
   - Proto definitions documentation
   - Streaming operations
   - Binary protocol advantages
@@ -86,7 +86,7 @@ Create detailed technical documentation for each storage engine:
   - Performance optimization tips
 
 === Benchmarking Guide
-* **Performance Testing Guide** (`docs/benchmarks/performance_testing_guide.adoc`)
+* **Performance Testing Guide** (`docs/10-quality/benchmarks/performance_testing_guide.adoc`)
   - How to run benchmarks
   - Interpreting results
   - Hardware recommendations
@@ -107,20 +107,20 @@ Create detailed technical documentation for each storage engine:
   - Production deployments
 
 === Monitoring & Observability
-* **Metrics Guide** (`docs/operations/metrics_guide.adoc`)
+* **Metrics Guide** (`docs/04-operations/metrics_guide.adoc`)
   - Available metrics
   - Prometheus integration
   - Grafana dashboards
   - Alert configurations
 
-* **Logging Guide** (`docs/operations/logging_guide.adoc`)
+* **Logging Guide** (`docs/04-operations/logging_guide.adoc`)
   - Log levels and categories
   - Structured logging format
   - Log aggregation strategies
   - Troubleshooting patterns
 
 === Backup & Recovery
-* **Backup Strategies** (`docs/operations/backup_strategies.adoc`)
+* **Backup Strategies** (`docs/04-operations/backup_strategies.adoc`)
   - Online backup procedures
   - Point-in-time recovery
   - Cross-region replication

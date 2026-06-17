@@ -24,12 +24,15 @@
 //! let entries = manifest::get_active_entries().await;
 //! ```
 
+/// Bridge from `GlobalManifestEntry` to the catalog-crate
+/// `ManifestEntryRef` consumed by the DR restore-readiness checker.
+pub mod dr_bridge;
 mod service;
 mod singleton;
 mod types;
 
 // Re-export all public types and functions
-pub use service::{GlobalManifestService, GlobalManifestServiceConfig};
+pub use service::{GlobalManifestService, GlobalManifestServiceConfig, WalCursorLsnSource};
 pub use singleton::{
     // Convenience functions
     append_async,

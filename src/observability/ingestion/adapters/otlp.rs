@@ -588,7 +588,9 @@ async fn otlp_traces_handler(
             for otlp_span in &scope_span.spans {
                 // Convert OTLP span to ProximaDB TraceData
                 let adapter = OtlpAdapter::with_defaults(
-                    "127.0.0.1:4318".parse().unwrap(),
+                    "127.0.0.1:4318"
+                        .parse()
+                        .unwrap_or_else(|_| std::net::SocketAddr::from(([127, 0, 0, 1], 4318))),
                     OtlpTransport::Http,
                     service.clone(),
                 );

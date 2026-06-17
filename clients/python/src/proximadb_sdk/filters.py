@@ -6,7 +6,7 @@ Provides a fluent interface for building complex metadata filters with AND/OR/NO
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Union
 
 
 class FilterOp(str, Enum):
@@ -42,7 +42,7 @@ class FilterCondition:
     operation: FilterOp
     value: Any = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation"""
         return {
             "field": self.field,
@@ -56,7 +56,7 @@ class FilterGroup:
     """A group of filter conditions with a logical operator"""
 
     operator: LogicalOp = LogicalOp.AND
-    conditions: List[Union[FilterCondition, "FilterGroup"]] = field(
+    conditions: list[Union[FilterCondition, "FilterGroup"]] = field(
         default_factory=list
     )
 
@@ -72,7 +72,7 @@ class FilterGroup:
         self.conditions.append(group)
         return self
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation"""
         return {
             "operator": self.operator.value,
@@ -194,12 +194,12 @@ class FilterBuilder:
         self._current_group.add_condition(field, FilterOp.LESS_THAN_OR_EQUAL, value)
         return self
 
-    def in_(self, field: str, values: List[Any]) -> "FilterBuilder":
+    def in_(self, field: str, values: list[Any]) -> "FilterBuilder":
         """Add an IN filter"""
         self._current_group.add_condition(field, FilterOp.IN, values)
         return self
 
-    def not_in(self, field: str, values: List[Any]) -> "FilterBuilder":
+    def not_in(self, field: str, values: list[Any]) -> "FilterBuilder":
         """Add a NOT IN filter"""
         self._current_group.add_condition(field, FilterOp.NOT_IN, values)
         return self
@@ -223,7 +223,7 @@ class FilterBuilder:
         """Build and return the filter group"""
         return self._root
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation"""
         return self._root.to_dict()
 
@@ -392,7 +392,7 @@ def lt(field: str, value: Any) -> FilterBuilder:
     return FilterBuilder().less_than(field, value)
 
 
-def in_list(field: str, values: List[Any]) -> FilterBuilder:
+def in_list(field: str, values: list[Any]) -> FilterBuilder:
     """Create an IN filter"""
     return FilterBuilder().in_(field, values)
 

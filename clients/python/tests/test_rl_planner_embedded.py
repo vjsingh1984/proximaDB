@@ -256,7 +256,6 @@ def test_collection_persistence():
     print("\n=== Test: Collection Persistence ===")
 
     # Use a fixed path (not TemporaryDirectory) to test persistence
-    import shutil
 
     persist_dir = "/tmp/proximadb_rl_persist_test"
     if os.path.exists(persist_dir):

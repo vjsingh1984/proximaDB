@@ -19,11 +19,11 @@ use std::time::{Duration, Instant};
 use tokio::sync::{Mutex, RwLock};
 use tracing::{debug, info, trace, warn};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::parquet_write_engine::{
     batch_writer::BatchParquetWriter, streaming_writer::StreamingParquetWriter,
     writer_config::ParquetWriterConfig, writer_statistics::StreamingParquetWriterStats,
 };
+use proximadb_records::ProximaRecord;
 
 /// Hybrid writer mode
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -151,7 +151,7 @@ pub struct HybridParquetWriter {
     streaming_writer: Arc<Mutex<Option<StreamingParquetWriter>>>,
 
     /// Record buffer for batch mode
-    buffer: Arc<RwLock<Vec<VectorRecord>>>,
+    buffer: Arc<RwLock<Vec<ProximaRecord>>>,
 
     /// Insertion history for pattern detection
     insertion_history: Arc<RwLock<VecDeque<InsertionEvent>>>,
@@ -348,7 +348,7 @@ impl HybridParquetWriter {
     }
 
     /// Write records with adaptive strategy
-    pub async fn write(&self, records: &[VectorRecord]) -> Result<()> {
+    pub async fn write(&self, records: &[ProximaRecord]) -> Result<()> {
         let batch_size = records.len();
         let timestamp = Instant::now();
 
@@ -388,7 +388,7 @@ impl HybridParquetWriter {
     }
 
     /// Write in streaming mode
-    async fn write_streaming(&self, records: &[VectorRecord]) -> Result<()> {
+    async fn write_streaming(&self, records: &[ProximaRecord]) -> Result<()> {
         trace!("Writing {} records in streaming mode", records.len());
 
         let mut writer_lock = self.streaming_writer.lock().await;
@@ -424,7 +424,7 @@ impl HybridParquetWriter {
     }
 
     /// Write in batch mode (public for compatibility)
-    pub async fn write_batch(&self, records: &[VectorRecord]) -> Result<()> {
+    pub async fn write_batch(&self, records: &[ProximaRecord]) -> Result<()> {
         let records_len = records.len();
         trace!("Writing {} records in batch mode", records_len);
 
@@ -847,7 +847,7 @@ impl HybridParquetWriter {
 
     /// Write all records (without finalizing - call finalize() separately)
     /// Returns the path where data was written (could be temp file for atomic writes)
-    pub async fn write_all(&mut self, records: &[VectorRecord]) -> Result<PathBuf> {
+    pub async fn write_all(&mut self, records: &[ProximaRecord]) -> Result<PathBuf> {
         if records.is_empty() {
             return Ok(self.file_path.clone());
         }
@@ -869,7 +869,7 @@ impl HybridParquetWriter {
     /// Static method to write to temp, finalize, and upload with disk cache
     /// This is the recommended way to use HybridParquetWriter for flush operations
     pub async fn write_with_cache(
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         dimension: usize,
         config: HybridWriterConfig,
         final_url: &str, // Final destination (s3://bucket/file or /path/file)
@@ -988,6 +988,7 @@ pub struct HybridWriterStatistics {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::EmbeddingCell;
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -1007,16 +1008,20 @@ mod tests {
 
         // Write small batches (streaming pattern)
         for i in 0..10 {
-            let records = vec![VectorRecord {
-                id: format!("vec_{i}"),
-                vector: vec![0.1; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
-            }];
+            let values = vec![0.1_f32; 128];
+            let dim = values.len() as u32;
+            let mut rec = ProximaRecord {
+                oid: format!("vec_{i}"),
+                ..Default::default()
+            };
+            rec.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            let records = vec![rec];
 
             writer
                 .write(&records)
@@ -1049,16 +1054,22 @@ mod tests {
             .expect("Failed to create hybrid writer in batch mode");
 
         // Write large batch (batch pattern)
-        let records: Vec<_> = (0..1000)
-            .map(|i| VectorRecord {
-                id: format!("vec_{i}"),
-                vector: vec![0.1; 128],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+        let records: Vec<ProximaRecord> = (0..1000)
+            .map(|i| {
+                let values = vec![0.1_f32; 128];
+                let dim = values.len() as u32;
+                let mut rec = ProximaRecord {
+                    oid: format!("vec_{i}"),
+                    ..Default::default()
+                };
+                rec.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                rec
             })
             .collect();
 

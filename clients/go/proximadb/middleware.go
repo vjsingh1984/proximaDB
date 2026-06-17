@@ -289,9 +289,9 @@ type RetryConfig struct {
 func DefaultRetryConfig() *RetryConfig {
 	return &RetryConfig{
 		MaxAttempts:     3,
-		InitialDelay:   100 * time.Millisecond,
-		MaxDelay:       10 * time.Second,
-		Multiplier:     2.0,
+		InitialDelay:    100 * time.Millisecond,
+		MaxDelay:        10 * time.Second,
+		Multiplier:      2.0,
 		RetryableErrors: IsRetryable,
 	}
 }

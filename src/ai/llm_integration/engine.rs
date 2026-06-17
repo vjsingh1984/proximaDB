@@ -390,22 +390,6 @@ impl RateLimiter {
     }
 }
 
-impl std::fmt::Display for LLMProvider {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            LLMProvider::OpenAI => write!(f, "OpenAI"),
-            LLMProvider::Anthropic => write!(f, "Anthropic"),
-            LLMProvider::Cohere => write!(f, "Cohere"),
-            LLMProvider::AWSBedrock => write!(f, "AWS Bedrock"),
-            LLMProvider::AzureOpenAI => write!(f, "Azure OpenAI"),
-            LLMProvider::GoogleVertexAI => write!(f, "Google Vertex AI"),
-            LLMProvider::Ollama => write!(f, "Ollama"),
-            LLMProvider::VLLM => write!(f, "VLLM"),
-            LLMProvider::HuggingFace => write!(f, "HuggingFace"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

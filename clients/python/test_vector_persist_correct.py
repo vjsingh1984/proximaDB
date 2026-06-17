@@ -17,20 +17,15 @@ print(f"1. Using existing collection '{collection_name}'")
 print("\n2. Inserting vectors via /api/v1/vector/batch:")
 vectors = []
 for i in range(5):
-    vectors.append({
-        "id": f"persist_test_{i}_{int(time.time())}",
-        "vector": [random.random() for _ in range(128)],
-        "metadata": {
-            "test": "persistence",
-            "index": i,
-            "timestamp": time.time()
+    vectors.append(
+        {
+            "id": f"persist_test_{i}_{int(time.time())}",
+            "vector": [random.random() for _ in range(128)],
+            "metadata": {"test": "persistence", "index": i, "timestamp": time.time()},
         }
-    })
+    )
 
-batch_data = {
-    "collection_id": collection_name,
-    "vectors": vectors
-}
+batch_data = {"collection_id": collection_name, "vectors": vectors}
 
 response = requests.post(f"{base_url}/api/v1/vector/batch", json=batch_data)
 print(f"   Insert response: {response.status_code}")
@@ -49,17 +44,19 @@ search_data = {
     "collection_id": collection_name,
     "vector": [0.5] * 128,
     "top_k": 10,
-    "include_metadata": True
+    "include_metadata": True,
 }
 response = requests.post(f"{base_url}/api/v1/vector/search", json=search_data)
 print(f"   Search response: {response.status_code}")
 if response.status_code == 200:
     results = response.json()
     print(f"   ✓ Search successful!")
-    if 'results' in results:
+    if "results" in results:
         print(f"   Found {len(results['results'])} results")
-        for i, res in enumerate(results['results'][:3]):
-            print(f"     - Result {i}: id={res.get('id')}, distance={res.get('distance'):.4f}")
+        for i, res in enumerate(results["results"][:3]):
+            print(
+                f"     - Result {i}: id={res.get('id')}, distance={res.get('distance'):.4f}"
+            )
     else:
         print(f"   Response: {json.dumps(results, indent=2)[:300]}...")
 else:
@@ -71,7 +68,9 @@ print()
 if vectors:
     print("4. Getting specific vector via /api/v1/vector/get:")
     vector_id = vectors[0]["id"]
-    response = requests.get(f"{base_url}/api/v1/vector/get/{collection_name}/{vector_id}")
+    response = requests.get(
+        f"{base_url}/api/v1/vector/get/{collection_name}/{vector_id}"
+    )
     print(f"   Get response: {response.status_code}")
     if response.status_code == 200:
         print(f"   ✓ Vector retrieved successfully")
@@ -115,6 +114,7 @@ print()
 # 8. Check WAL files again
 print("8. Checking WAL files after operations:")
 import os
+
 wal_dir = "./lsm_wal"
 if os.path.exists(wal_dir):
     files = os.listdir(wal_dir)

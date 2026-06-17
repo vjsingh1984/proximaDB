@@ -10,6 +10,7 @@
 import type {
   CollectionConfig,
   CollectionInfo,
+  ProximaRecord,
   VectorRecord,
   SearchResult,
   JsonValue,
@@ -20,6 +21,31 @@ import {
   IndexType,
 } from "./types";
 import { SearchBuilder, SearchHttpClient } from "./search";
+
+type RecordBatchResponse = {
+  inserted_count?: number;
+  success_count?: number;
+  success?: number;
+};
+
+function recordPayload(record: {
+  id: string;
+  vector?: number[];
+  metadata?: Record<string, JsonValue>;
+  props?: Record<string, JsonValue>;
+  source?: string;
+}): ProximaRecord {
+  return {
+    id: record.id,
+    vector: record.vector ?? [],
+    props: record.props ?? record.metadata ?? {},
+    source: record.source,
+  };
+}
+
+function insertedCount(response: RecordBatchResponse): number {
+  return response.success_count ?? response.inserted_count ?? response.success ?? 0;
+}
 
 /**
  * HTTP client interface for collection operations
@@ -125,7 +151,7 @@ export class CollectionBuilder {
       tags: this.tagsValue.length > 0 ? this.tagsValue : undefined,
     };
 
-    const url = this.client.url() + "/api/v1/collections";
+    const url = this.client.url() + "/api/v2/collections";
     await this.client.post<{ success: boolean }>(url, request);
   }
 
@@ -214,16 +240,16 @@ export class InsertBuilder {
     const record = {
       id: this.currentId,
       vector: this.currentVector,
-      metadata: this.currentMetadata,
+      props: this.currentMetadata,
     };
 
     const request = {
-      collection: this.collectionName,
-      vectors: [record],
+      records: [record],
+      validate_schema: true,
     };
 
-    const url = this.client.url() + "/api/v1/vectors/insert";
-    await this.client.post<{ inserted_count: number }>(url, request);
+    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
+    await this.client.post<RecordBatchResponse>(url, request);
   }
 }
 
@@ -281,13 +307,13 @@ export class BatchInsertBuilder {
    */
   async execute(): Promise<number> {
     const request = {
-      collection: this.collectionName,
-      vectors: this.records,
+      records: this.records.map(recordPayload),
+      validate_schema: true,
     };
 
-    const url = this.client.url() + "/api/v1/vectors/insert";
-    const response = await this.client.post<{ inserted_count: number }>(url, request);
-    return response.inserted_count;
+    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
+    const response = await this.client.post<RecordBatchResponse>(url, request);
+    return insertedCount(response);
   }
 }
 
@@ -349,15 +375,18 @@ export class UpdateBuilder {
    */
   async execute(): Promise<void> {
     const request = {
-      collection: this.collectionName,
-      id: this.vectorId,
-      vector: this.newVector ?? undefined,
-      metadata: Object.keys(this.newMetadata).length > 0 ? this.newMetadata : undefined,
+      records: [{
+        id: this.vectorId,
+        vector: this.newVector ?? [],
+        props: Object.keys(this.newMetadata).length > 0 ? this.newMetadata : undefined,
+      }],
+      validate_schema: true,
+      upsert: true,
       replace_metadata: this.replaceMetadataFlag,
     };
 
-    const url = this.client.url() + "/api/v1/collections/" + this.collectionName + "/vectors/update";
-    await this.client.post<{ success: boolean }>(url, request);
+    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/batch`;
+    await this.client.post<RecordBatchResponse>(url, request);
   }
 }
 
@@ -416,7 +445,7 @@ export class CollectionHandle {
    * Get collection information
    */
   async info(): Promise<CollectionInfo> {
-    const url = this.client.url() + "/api/v1/collections/" + this.collectionName;
+    const url = this.client.url() + "/api/v2/collections/" + this.collectionName;
     return await this.client.get<CollectionInfo>(url);
   }
 
@@ -432,7 +461,7 @@ export class CollectionHandle {
    * Delete the collection
    */
   async delete(): Promise<void> {
-    const url = this.client.url() + "/api/v1/collections/" + this.collectionName;
+    const url = this.client.url() + "/api/v2/collections/" + this.collectionName;
     await this.client.delete<unknown>(url);
   }
 
@@ -441,7 +470,7 @@ export class CollectionHandle {
    */
   async getVector(id: string): Promise<VectorRecord | null> {
     try {
-      const url = this.client.url() + "/api/v1/collections/" + this.collectionName + "/vectors/" + id;
+      const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/${id}?include_vector=true&include_text=false`;
       return await this.client.get<VectorRecord>(url);
     } catch (e: unknown) {
       if (e instanceof Error && e.message.includes("404")) {
@@ -463,7 +492,7 @@ export class CollectionHandle {
    * Delete a vector by ID
    */
   async deleteVector(id: string): Promise<void> {
-    const url = this.client.url() + "/api/v1/collections/" + this.collectionName + "/vectors/" + id;
+    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/records/${id}`;
     await this.client.delete<unknown>(url);
   }
 
@@ -471,13 +500,8 @@ export class CollectionHandle {
    * Delete multiple vectors by IDs
    */
   async deleteVectors(ids: string[]): Promise<number> {
-    const request = {
-      collection: this.collectionName,
-      ids,
-    };
-    const url = this.client.url() + "/api/v1/collections/" + this.collectionName + "/vectors/delete";
-    const response = await this.client.post<{ deleted_count: number }>(url, request);
-    return response.deleted_count;
+    await Promise.all(ids.map((id) => this.deleteVector(id)));
+    return ids.length;
   }
 
   /**

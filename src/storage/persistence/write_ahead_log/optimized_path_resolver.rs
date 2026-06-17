@@ -178,7 +178,7 @@ impl OptimizedWalPathResolver {
     }
     
     /// Get disk utilization stats for monitoring
-    pub async fn get_disk_stats(&self, collection_id: &str) -> Result<DiskStats> {
+    pub async fn get_disk_stats(&self, collection_id: &str) -> Result<WalPathDiskStats> {
         let paths = self.resolve_collection_paths(collection_id).await?;
         let filesystem = self.filesystem_factory.get_filesystem(&paths.base_path)?;
         
@@ -187,7 +187,7 @@ impl OptimizedWalPathResolver {
         let used_size = filesystem.get_used_size(&paths.base_path).await?;
         let available_size = total_size - used_size;
         
-        Ok(DiskStats {
+        Ok(WalPathDiskStats {
             collection_id: collection_id.to_string(),
             disk_id: paths.assigned_disk_id,
             total_bytes: total_size,
@@ -198,9 +198,12 @@ impl OptimizedWalPathResolver {
     }
 }
 
+/// Backwards-compat alias for [`WalPathDiskStats`].
+pub type DiskStats = WalPathDiskStats;
+
 /// Disk utilization statistics
 #[derive(Debug, Clone)]
-pub struct DiskStats {
+pub struct WalPathDiskStats {
     pub collection_id: String,
     pub disk_id: String,
     pub total_bytes: u64,

@@ -8,9 +8,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
-use super::{ExecutionAction, ExecutionLog, PlannerState, RLPlanner, RLPlannerConfig, StageLog};
-use crate::query::unified_query_optimizer::{
-    ExecutionStep, Index, SearchExecutionMethod, UnifiedExecutionPlan, UnifiedQueryContext,
+use super::{
+    ExecutionAction, ExecutionLog, ObjectEconomyFeatures, PlannerState, RLPlanner, RLPlannerConfig,
+    StageLog, action::QuantizationStage,
+};
+use crate::query::query_optimizer::{
+    ExecutionStep, Index, QueryOptimizerProgressiveStage, SearchAlgorithm, SearchExecutionMethod,
+    UnifiedExecutionPlan, UnifiedQueryContext,
 };
 use crate::storage::engine_capabilities::{
     EngineCapabilities, SearchIndexType, SearchQuantizationLevel, StorageEngine,
@@ -36,6 +40,21 @@ impl RLPlannerIntegration {
         }
     }
 
+    /// Extract object economy features from query context
+    ///
+    /// Uses VectorObjectEconomyDirectory if available to extract block-level
+    /// statistics for cost-aware routing. Returns disabled features if
+    /// object economy directory is not available.
+    fn extract_object_economy_features(
+        &self,
+        _context: &UnifiedQueryContext<'_>,
+    ) -> ObjectEconomyFeatures {
+        // TODO: Extract from context.object_economy_directory when available
+        // For now, return disabled features
+        // This will be wired in Task 5 when we load the directory at query planning time
+        ObjectEconomyFeatures::disabled()
+    }
+
     /// Extract state from query context
     ///
     /// Uses EngineCapabilities to determine available indexes and quantization levels
@@ -50,6 +69,9 @@ impl RLPlannerIntegration {
         let available_indexes = self.get_indexes_from_capabilities(capabilities_engine, context);
         let available_quantization = self.get_quantization_from_capabilities(capabilities_engine);
 
+        // Extract object economy features
+        let object_economy = self.extract_object_economy_features(context);
+
         PlannerState::builder()
             .query_dimension(
                 context
@@ -63,6 +85,7 @@ impl RLPlannerIntegration {
             .storage_engine(storage_engine)
             .available_indexes(available_indexes)
             .available_quantization(available_quantization)
+            .object_economy(object_economy)
             .build()
     }
 
@@ -196,6 +219,13 @@ impl RLPlannerIntegration {
     }
 
     /// Select action based on current state
+    /// Deterministic exploitation: returns the arm with the highest expected value (α/(α+β)).
+    /// This is the hot-path method; Thompson Sampling exploration is excluded here.
+    pub async fn exploit_best_action(&self, state: &PlannerState) -> ExecutionAction {
+        let planner = self.planner.read().await;
+        planner.exploit_best_action(state).await
+    }
+
     pub async fn select_action(&self, state: &PlannerState) -> ExecutionAction {
         let planner = self.planner.read().await;
         planner.select_action(state).await
@@ -242,11 +272,31 @@ impl RLPlannerIntegration {
                 {
                     *candidates = (*candidates as f32 * expansion_factor) as usize;
                 }
+
+                // Object-economy quantization floor: raise the search method's
+                // effective precision to at least the requested floor. The
+                // mapping rules are documented on
+                // `apply_quantization_floor_to_method`.
+                if action.object_economy.enabled
+                    && let Some(floor) = action.object_economy.quantization_floor
+                {
+                    apply_quantization_floor_to_method(execution_method, floor);
+                }
             }
         }
 
         // Apply parallelism settings
         plan.parallelism.use_simd = action.parallelism.enable_simd;
+
+        // Log object economy action if enabled
+        if action.object_economy.enabled {
+            trace!(
+                "Object economy routing applied: centroid={}, zorder={}, max_blocks={:?}",
+                action.object_economy.use_centroid_routing,
+                action.object_economy.use_zorder_pruning,
+                action.object_economy.max_blocks_to_scan,
+            );
+        }
 
         trace!(
             "Applied RL action to plan: {} steps, action={}",
@@ -418,10 +468,86 @@ pub async fn rl_select_action(context: &UnifiedQueryContext<'_>) -> Option<Execu
     None
 }
 
+/// Raise a `SearchExecutionMethod` to satisfy a request-side quantization
+/// floor coming from the object-economy RL action.
+///
+/// Mapping rules:
+///
+/// * [`SearchExecutionMethod::DirectFP32`] always satisfies any floor (FP32
+///   is the highest precision).
+/// * [`SearchExecutionMethod::IndexBased`] is left unchanged — index-based
+///   methods carry their own quality contract and the floor does not apply
+///   uniformly across index families.
+/// * [`SearchExecutionMethod::QuantizedOnly`] is raised in place to the
+///   floor's quantization type when one exists. If the floor is FP16 or
+///   FP32 (which have no quantization equivalent) the method is replaced
+///   with `DirectFP32`.
+/// * [`SearchExecutionMethod::Progressive`] gets an `ExactSearch` final
+///   stage appended only when the floor requires exact precision (FP16+).
+///   Lower floors are assumed satisfied by any progressive pipeline because
+///   the pipeline's last quantized stage is followed by a reranker
+///   elsewhere in the planner.
+fn apply_quantization_floor_to_method(
+    method: &mut SearchExecutionMethod,
+    floor: QuantizationStage,
+) {
+    match method {
+        SearchExecutionMethod::DirectFP32 => {
+            // FP32 dominates every floor.
+        }
+        SearchExecutionMethod::IndexBased { .. } => {
+            trace!(
+                "Object-economy floor ({floor}) skipped for IndexBased method; \
+                 index-family quality is governed elsewhere"
+            );
+        }
+        SearchExecutionMethod::QuantizedOnly { quantization_type } => {
+            if quantization_type.quality_rank() >= floor.quality_rank() {
+                return;
+            }
+            if let Some(raised) = floor.as_quantization_type() {
+                trace!(
+                    "Object-economy floor raised QuantizedOnly from {:?} to {:?}",
+                    quantization_type, raised
+                );
+                *quantization_type = raised;
+            } else {
+                trace!(
+                    "Object-economy floor ({floor}) requires exact precision; \
+                     replacing QuantizedOnly with DirectFP32"
+                );
+                *method = SearchExecutionMethod::DirectFP32;
+            }
+        }
+        SearchExecutionMethod::Progressive { stages } => {
+            if !floor.requires_exact_final_stage() {
+                return;
+            }
+            let already_exact = stages
+                .last()
+                .map(|stage| matches!(stage.algorithm, SearchAlgorithm::ExactSearch))
+                .unwrap_or(false);
+            if already_exact {
+                return;
+            }
+            let final_candidates = stages.last().map(|s| s.candidates).unwrap_or(64);
+            trace!(
+                "Object-economy floor ({floor}) appending ExactSearch final stage to \
+                 Progressive pipeline"
+            );
+            stages.push(QueryOptimizerProgressiveStage {
+                algorithm: SearchAlgorithm::ExactSearch,
+                candidates: final_candidates,
+            });
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::Collection;
+    use crate::query::query_optimizer::QuantizationType;
     use std::sync::Arc;
 
     #[tokio::test]
@@ -444,7 +570,7 @@ mod tests {
             collection,
             search_params: None,
             filter_params: None,
-            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+            optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
             available_files: vec![],
             total_vectors: 10000,
             total_columns: 5,
@@ -478,5 +604,169 @@ mod tests {
         // Stats may or may not be populated depending on exploration
         // This test just ensures it doesn't crash
         let _ = stats.len();
+    }
+
+    #[tokio::test]
+    async fn test_extract_object_economy_features() {
+        let integration = RLPlannerIntegration::default();
+
+        let collection = Arc::new(Collection {
+            id: "test".to_string(),
+            config: Some(Default::default()),
+            ..Default::default()
+        });
+
+        let context = UnifiedQueryContext {
+            collection,
+            search_params: None,
+            filter_params: None,
+            optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
+            available_files: vec![],
+            total_vectors: 10000,
+            total_columns: 5,
+            query_vectors: None,
+        };
+
+        let state = integration.extract_state(&context);
+        // Object economy features should be disabled since no directory is available yet
+        assert!(!state.object_economy.enabled);
+        assert_eq!(state.object_economy.block_count, 0);
+    }
+
+    // ── Quantization floor mapping tests ────────────────────────────────
+
+    #[test]
+    fn floor_no_op_for_direct_fp32() {
+        let mut method = SearchExecutionMethod::DirectFP32;
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::FP32);
+        assert!(matches!(method, SearchExecutionMethod::DirectFP32));
+    }
+
+    #[test]
+    fn floor_raises_quantized_only_from_binary_to_int8() {
+        let mut method = SearchExecutionMethod::QuantizedOnly {
+            quantization_type: QuantizationType::Binary,
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::INT8);
+        match method {
+            SearchExecutionMethod::QuantizedOnly { quantization_type } => {
+                assert_eq!(quantization_type, QuantizationType::INT8);
+            }
+            other => panic!("expected QuantizedOnly INT8, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn floor_keeps_quantized_only_when_current_meets_or_exceeds() {
+        let mut method = SearchExecutionMethod::QuantizedOnly {
+            quantization_type: QuantizationType::INT8,
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::Binary);
+        match method {
+            SearchExecutionMethod::QuantizedOnly { quantization_type } => {
+                assert_eq!(quantization_type, QuantizationType::INT8);
+            }
+            other => panic!("expected QuantizedOnly INT8, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn floor_promotes_quantized_only_to_direct_fp32_when_floor_is_fp16() {
+        let mut method = SearchExecutionMethod::QuantizedOnly {
+            quantization_type: QuantizationType::INT8,
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::FP16);
+        assert!(matches!(method, SearchExecutionMethod::DirectFP32));
+    }
+
+    #[test]
+    fn floor_promotes_quantized_only_to_direct_fp32_when_floor_is_fp32() {
+        let mut method = SearchExecutionMethod::QuantizedOnly {
+            quantization_type: QuantizationType::PQ4,
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::FP32);
+        assert!(matches!(method, SearchExecutionMethod::DirectFP32));
+    }
+
+    #[test]
+    fn floor_appends_exact_stage_to_progressive_when_floor_requires_exact() {
+        let mut method = SearchExecutionMethod::Progressive {
+            stages: vec![QueryOptimizerProgressiveStage {
+                algorithm: SearchAlgorithm::QuantizedSearch,
+                candidates: 128,
+            }],
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::FP32);
+        match method {
+            SearchExecutionMethod::Progressive { stages } => {
+                assert_eq!(stages.len(), 2);
+                assert!(matches!(
+                    stages[0].algorithm,
+                    SearchAlgorithm::QuantizedSearch
+                ));
+                assert!(matches!(stages[1].algorithm, SearchAlgorithm::ExactSearch));
+                assert_eq!(stages[1].candidates, 128);
+            }
+            other => panic!("expected Progressive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn floor_does_not_duplicate_exact_stage_when_already_present() {
+        let mut method = SearchExecutionMethod::Progressive {
+            stages: vec![
+                QueryOptimizerProgressiveStage {
+                    algorithm: SearchAlgorithm::QuantizedSearch,
+                    candidates: 128,
+                },
+                QueryOptimizerProgressiveStage {
+                    algorithm: SearchAlgorithm::ExactSearch,
+                    candidates: 32,
+                },
+            ],
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::FP32);
+        match method {
+            SearchExecutionMethod::Progressive { stages } => {
+                assert_eq!(stages.len(), 2);
+            }
+            other => panic!("expected Progressive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn floor_no_op_on_progressive_when_floor_does_not_require_exact() {
+        let original = QueryOptimizerProgressiveStage {
+            algorithm: SearchAlgorithm::QuantizedSearch,
+            candidates: 128,
+        };
+        let mut method = SearchExecutionMethod::Progressive {
+            stages: vec![original.clone()],
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::INT8);
+        match method {
+            SearchExecutionMethod::Progressive { stages } => {
+                assert_eq!(stages.len(), 1);
+                assert!(matches!(
+                    stages[0].algorithm,
+                    SearchAlgorithm::QuantizedSearch
+                ));
+            }
+            other => panic!("expected Progressive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn floor_leaves_index_based_method_unchanged() {
+        let mut method = SearchExecutionMethod::IndexBased {
+            index_type: crate::query::query_optimizer::Index::HNSW,
+        };
+        apply_quantization_floor_to_method(&mut method, QuantizationStage::FP32);
+        assert!(matches!(
+            method,
+            SearchExecutionMethod::IndexBased {
+                index_type: crate::query::query_optimizer::Index::HNSW
+            }
+        ));
     }
 }

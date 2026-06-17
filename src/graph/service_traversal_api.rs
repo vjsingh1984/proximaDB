@@ -5,8 +5,9 @@
 //! GraphOperationsService lean by separating traversal concerns.
 
 use super::Result;
-use crate::core::error::ProximaDBError;
 use crate::graph::NodeId;
+use crate::graph::engines::GraphEngine;
+use proximadb_kernel::error::ProximaDBError;
 use tracing::debug;
 
 impl super::GraphOperationsService {
@@ -57,56 +58,6 @@ impl super::GraphOperationsService {
                     config,
                 )
                 .await?
-            }
-            #[cfg(feature = "distributed-graph")]
-            crate::graph::engines::GraphEngineImpl::Pulsar(p) => {
-                let nodes = p
-                    .cross_shard_traversal(&request.start_node_id, request.max_depth)
-                    .await?;
-                crate::graph::engines::orion::traversal::TraversalResult {
-                    nodes,
-                    node_ids: vec![],
-                    edges: Vec::new(),
-                    paths: Vec::new(),
-                    stats: crate::graph::engines::orion::traversal::TraversalStats {
-                        nodes_visited: 0,
-                        edges_traversed: 0,
-                        max_depth_reached: request.max_depth,
-                        execution_time_microseconds: 0,
-                        memory_used_bytes: 0,
-                    },
-                }
-            }
-            _ => {
-                let allowed = if request.edge_types.is_empty() {
-                    None
-                } else {
-                    Some(request.edge_types.as_slice())
-                };
-                let gtr = crate::graph::engines::generic_traversal::bfs_generic(
-                    engine.as_ref(),
-                    &request.start_node_id,
-                    allowed,
-                    if request.max_depth > 0 {
-                        Some(request.max_depth)
-                    } else {
-                        None
-                    },
-                    request.limit.map(|l| l as usize),
-                )?;
-                crate::graph::engines::orion::traversal::TraversalResult {
-                    nodes: gtr.nodes,
-                    node_ids: vec![],
-                    edges: gtr.edges,
-                    paths: gtr.paths,
-                    stats: crate::graph::engines::orion::traversal::TraversalStats {
-                        nodes_visited: gtr.nodes_visited,
-                        edges_traversed: gtr.edges_traversed,
-                        max_depth_reached: gtr.max_depth_reached,
-                        execution_time_microseconds: 0,
-                        memory_used_bytes: 0,
-                    },
-                }
             }
         };
 
@@ -225,11 +176,8 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        if let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine {
-            crate::graph::engines::orion::traversal::connected_components(e).await
-        } else {
-            crate::graph::engines::generic_traversal::connected_components_generic(engine.as_ref())
-        }
+        let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine;
+        crate::graph::engines::orion::traversal::connected_components(e).await
     }
 
     /// Check for cycles (basic implementation)
@@ -240,11 +188,8 @@ impl super::GraphOperationsService {
             ));
         }
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        if let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine {
-            crate::graph::engines::orion::traversal::has_cycle(e).await
-        } else {
-            crate::graph::engines::generic_traversal::has_cycle_generic(engine.as_ref())
-        }
+        let crate::graph::engines::GraphEngineImpl::Orion(e) = &*engine;
+        crate::graph::engines::orion::traversal::has_cycle(e).await
     }
 
     /// Compute shortest path (Dijkstra/A*) with optional k-shortest and overrides
@@ -281,57 +226,29 @@ impl super::GraphOperationsService {
                 crate::graph::engines::orion::traversal::AStarHeuristic::EuclideanEmbedding,
         };
         let engine = self.get_or_create_graph_engine(graph_id).await?;
-        let orion_engine = match &*engine {
-            crate::graph::engines::GraphEngineImpl::Orion(e) => Some(e),
-            _ => None,
-        };
+        let crate::graph::engines::GraphEngineImpl::Orion(orion_engine) = &*engine;
 
         if let Some(kk) = k
             && kk > 1
         {
-            if let Some(eng) = orion_engine {
-                let paths =
-                    k_shortest_paths(eng, start_node_id, target_node_id, kk as usize, config)
-                        .await?;
-                return Ok(paths.first().cloned());
-            } else {
-                let res = crate::graph::engines::generic_traversal::dijkstra_generic(
-                    engine.as_ref(),
-                    start_node_id,
-                    target_node_id,
-                    config.edge_types.as_deref(),
-                )?;
-                return Ok(res);
-            }
+            let paths = k_shortest_paths(
+                orion_engine,
+                start_node_id,
+                target_node_id,
+                kk as usize,
+                config,
+            )
+            .await?;
+            return Ok(paths.first().cloned());
         }
 
         let result = match algorithm
             .unwrap_or(crate::proto::proximadb_v1::ShortestPathAlgorithm::Dijkstra)
         {
             crate::proto::proximadb_v1::ShortestPathAlgorithm::Astar => {
-                if let Some(eng) = orion_engine {
-                    astar_shortest_path(eng, start_node_id, target_node_id, config).await
-                } else {
-                    Ok(crate::graph::engines::generic_traversal::dijkstra_generic(
-                        engine.as_ref(),
-                        start_node_id,
-                        target_node_id,
-                        config.edge_types.as_deref(),
-                    )?)
-                }
+                astar_shortest_path(orion_engine, start_node_id, target_node_id, config).await
             }
-            _ => {
-                if let Some(eng) = orion_engine {
-                    dijkstra_shortest_path(eng, start_node_id, target_node_id, config).await
-                } else {
-                    Ok(crate::graph::engines::generic_traversal::dijkstra_generic(
-                        engine.as_ref(),
-                        start_node_id,
-                        target_node_id,
-                        config.edge_types.as_deref(),
-                    )?)
-                }
-            }
+            _ => dijkstra_shortest_path(orion_engine, start_node_id, target_node_id, config).await,
         }?;
 
         if let Some(updater) = &self.metrics_updater {
@@ -352,5 +269,120 @@ impl super::GraphOperationsService {
                 .await;
         }
         Ok(result)
+    }
+
+    /// Single-step graph navigation for agentic tool-calling.
+    ///
+    /// Returns the immediate neighbors of `node_id` (optionally filtered by
+    /// `edge_type`), capped at `limit`. This is the primitive that maps most
+    /// directly to GraphWalk's "move + look" tool surface (arXiv:2604.01610):
+    /// the agent picks one neighbor and calls again, so the database is never
+    /// asked to materialize a subgraph that won't fit in the agent's context
+    /// window.
+    ///
+    /// Use `graph_walk` when you want a bounded BFS expansion in one call.
+    /// Use `graph_step` when you want the agent to drive traversal step by step.
+    pub async fn graph_step(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        edge_type: Option<&str>,
+        limit: usize,
+    ) -> Result<crate::graph::canonical::TraversalResults> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let node_id_owned = node_id.to_string();
+
+        // Current node, then neighbors -- include the start so the agent has
+        // its own properties available without an extra round trip.
+        let current = engine
+            .get_node(&node_id_owned)?
+            .ok_or_else(|| ProximaDBError::InvalidInput(format!("node '{}' not found", node_id)))?;
+
+        let neighbors = engine.get_neighbors(&node_id_owned, edge_type)?;
+        let cap = if limit == 0 {
+            neighbors.len()
+        } else {
+            limit.min(neighbors.len())
+        };
+
+        let mut canonical_nodes = Vec::with_capacity(cap + 1);
+        canonical_nodes.push(crate::graph::canonical::CanonicalNode::from_proto(
+            current.as_ref(),
+        ));
+        for n in neighbors.iter().take(cap) {
+            canonical_nodes.push(crate::graph::canonical::CanonicalNode::from_proto(
+                n.as_ref(),
+            ));
+        }
+
+        Ok(crate::graph::canonical::TraversalResults {
+            nodes: canonical_nodes,
+            edges: Vec::new(),
+            paths: None,
+            stats: Some(crate::graph::canonical::TraversalStats {
+                nodes_visited: cap as u64 + 1,
+                edges_traversed: cap as u64,
+                max_depth_reached: 1,
+                execution_time_ms: None,
+            }),
+        })
+    }
+
+    /// Perform an iterative GraphWalk optimized for agentic tool-calling.
+    ///
+    /// This method provides a breadth-first exploration of the graph from a starting
+    /// node, specifically designed for LLM agents to iteratively discover
+    /// information without overwhelming their context window.
+    pub async fn graph_walk(
+        &self,
+        graph_id: &str,
+        start_node_id: &str,
+        max_depth: u32,
+        limit: usize,
+    ) -> Result<crate::graph::canonical::TraversalResults> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+
+        let start_node_id_string = start_node_id.to_string();
+
+        // Use generic BFS as it returns the structured results we need
+        let gtr = crate::graph::engines::generic_traversal::bfs_generic(
+            engine.as_ref(),
+            &start_node_id_string,
+            None, // No specific edge types
+            if max_depth > 0 { Some(max_depth) } else { None },
+            Some(limit),
+        )?;
+
+        Ok(crate::graph::canonical::TraversalResults {
+            nodes: gtr
+                .nodes
+                .iter()
+                .map(|n| crate::graph::canonical::CanonicalNode::from_proto(n))
+                .collect(),
+            edges: gtr
+                .edges
+                .iter()
+                .map(|e| crate::graph::canonical::CanonicalEdge::from_proto(e))
+                .collect(),
+            paths: None,
+            stats: Some(crate::graph::canonical::TraversalStats {
+                nodes_visited: gtr.nodes.len() as u64,
+                edges_traversed: gtr.edges.len() as u64,
+                max_depth_reached: max_depth,
+                execution_time_ms: None,
+            }),
+        })
     }
 }

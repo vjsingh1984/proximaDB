@@ -83,11 +83,13 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
-use crate::core::{String, VectorId, VectorRecord};
+use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use crate::storage::traits::{FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushResult, UnifiedStorageFormat};
+use proximadb_records::{
+    EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
+};
 // DIP: CollectionPathResolver is re-exported below via pub use
-use std::collections::HashMap;
 
 // Sub-modules
 pub mod avro_serialization_strategy; // Clean architecture avro implementation
@@ -101,7 +103,6 @@ pub mod collection_path;
 pub mod compact_batch_id;
 pub mod compaction_axis_integration;
 pub mod compaction_coordinator;
-pub mod compaction_types;
 pub mod config;
 pub mod disk_manager; // New centralized disk operations
 pub mod enhanced_flush_result;
@@ -119,18 +120,16 @@ pub mod serialization; // New pure serialization layer // Slug codec for collect
 
 // Optimized WAL components (Phase 1 implementation) - now consolidated into WriteAheadLogManager
 pub mod simple_atomic_sync;
-pub mod unified_operations; // Unified WAL operations for vector and graph
+pub mod wal_operations; // WAL operations for vector and graph
+
+// Embedding-precision rollout (PR 4 of EMBEDDING_PRECISION_LLD_2026_05_22).
+pub mod v2_segment_header;
 // MARKED FOR REMOVAL: optimized_path_resolver uses assignment_service
 // pub mod optimized_path_resolver;
 // MARKED FOR REMOVAL: atomic_write_buffer_sync uses optimized_path_resolver
 // pub mod atomic_write_buffer_sync;
-// MARKED FOR REMOVAL: parallel_recovery uses assignment_service
-// pub mod parallel_recovery;
 
 // Unit tests
-#[cfg(test)]
-mod tests;
-
 #[cfg(test)]
 mod batch_strategy_tests;
 
@@ -149,15 +148,13 @@ pub use compaction_coordinator::{
 };
 pub use config::WriteBufferStrategyType;
 pub use config::{CompressionConfig, PerformanceConfig, WALConfig};
+pub use disk_manager::{DiskStats, WalFileInfo, WriteAheadLogDiskManager};
 pub use flush_coordinator::{
     CleanupInstructions, FlushCoordinatorCallbacks, FlushDataSource, FlushState, PendingFlush,
     WALFlushCoordinator,
 };
-pub use proto_serialization_strategy::ProtoSerializationStrategy;
-// 🔴 UNUSED EXPORT - EnhancedEngineCompactionResult marked for removal
-// pub use compaction_types::EnhancedEngineCompactionResult;
-pub use disk_manager::{DiskStats, WalFileInfo, WriteAheadLogDiskManager};
 pub use memtable_manager::{MemtableManager, MemtableStats};
+pub use proto_serialization_strategy::ProtoSerializationStrategy;
 pub use recovery_manager::{ParallelRecoveryManager, RecoveryManager, RecoveryMode, RecoveryStats};
 pub use recovery_thread_pool::{
     RecoveryPoolStats, RecoveryThreadPool, get_recovery_thread_pool,
@@ -202,6 +199,17 @@ pub struct WALOperation {
     pub payload_format: String,
     /// Number of vectors in this batch (for metrics)
     pub vector_count: usize,
+    /// When true, this batch arrived via Arrow Flight text-only schema and
+    /// needs server-side embedding before the index write completes. The
+    /// embedding drainer (proximadb-embedding crate) polls for these entries,
+    /// invokes the EmbeddingService, populates the vector field, and flips
+    /// this flag to false before promoting the batch to the index.
+    ///
+    /// Default false — existing serialized WAL entries deserialize correctly
+    /// without modification. New entries that don't go through native embedding
+    /// also default to false.
+    #[serde(default)]
+    pub pending_embed: bool,
 }
 
 // Re-export CompactBatchId as BatchId - it's globally unique, no need for collection_id
@@ -220,8 +228,8 @@ impl WALOperation {
         size
     }
 
-    /// Extract VectorRecord from WAL entry operation
-    pub fn extract_vector_record(&self) -> Result<VectorRecord, anyhow::Error> {
+    /// Extract the first canonical record from a WAL entry operation.
+    pub fn extract_vector_record(&self) -> Result<proximadb_records::ProximaRecord, anyhow::Error> {
         // Proto-first architecture: payload format determines deserialization
         if self.operation_type == "upsert_batch" || self.operation_type == "delete_batch" {
             match self.payload_format.as_str() {
@@ -292,8 +300,8 @@ pub struct FlushCycle {
     pub collection_id: String,
     /// WAL batches marked for flush (replaces Vec<WalEntry>)
     pub batches: Vec<WALVectorBatch>,
-    /// Extracted vector records ready for storage
-    pub vector_records: Vec<VectorRecord>,
+    /// Extracted canonical records ready for storage
+    pub vector_records: Vec<proximadb_records::ProximaRecord>,
     /// Disk segments marked as flush-pending
     pub marked_segments: Vec<String>,
     /// Sequence ranges marked as flush-pending
@@ -725,7 +733,7 @@ impl WriteAheadLogManagerRegistry {
             let manager_id = format!("write_buffer_manager_pool_{}", i + 1);
 
             let strategy = WALBatchFactory::create_batch_serialization_strategy(
-                strategy_type.clone(),
+                strategy_type,
                 config,
                 filesystem.clone(),
             )
@@ -1293,7 +1301,7 @@ impl WriteAheadLogManager {
         );
 
         // Extract strategy type for routing
-        let strategy_type = config.strategy_type.clone();
+        let strategy_type = config.strategy_type;
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections
@@ -1388,7 +1396,7 @@ impl WriteAheadLogManager {
         );
 
         // Extract strategy type for routing
-        let strategy_type = config.strategy_type.clone();
+        let strategy_type = config.strategy_type;
 
         // Create filesystem factory for per-collection disk managers
         let _filesystem_factory = Arc::new(
@@ -1460,7 +1468,7 @@ impl WriteAheadLogManager {
         );
 
         // Extract strategy type for routing
-        let strategy_type = config.strategy_type.clone();
+        let strategy_type = config.strategy_type;
 
         // Create filesystem factory for per-collection disk managers
         // Disk managers will be created at write time using collection's base_location from assigned_collections
@@ -1513,7 +1521,7 @@ impl WriteAheadLogManager {
     /// Set storage engine for delegated flush/compaction operations
     pub fn set_storage_engine(
         &self,
-        _storage_engine: Arc<dyn UnifiedStorageEngine>,
+        _storage_engine: Arc<dyn UnifiedStorageFormat>,
         _collection_id: &str,
     ) {
         // Storage engine setting moved to config level — strategies receive it directly
@@ -1696,63 +1704,64 @@ impl WriteAheadLogManager {
     /// Returns cached recovery manager if available
     /// Use get_recovery_manager() to create/cache if not exists
     pub fn recovery_manager(&self) -> Option<Arc<RecoveryManager>> {
-        eprintln!("🔍 DEBUG: recovery_manager() called (returns cached value only)");
-
         // Use try_read to avoid blocking - recovery manager is set once at startup
         match self.recovery_manager_cache.try_read() {
             Ok(cache) => {
                 if cache.is_some() {
-                    eprintln!("✅ DEBUG: recovery_manager_cache has cached manager");
+                    trace!("WAL recovery manager cache hit");
                     cache.as_ref().map(|rm| Arc::new(rm.clone()))
                 } else {
-                    eprintln!(
-                        "⚠️ DEBUG: recovery_manager_cache is None - caller should use get_recovery_manager()"
-                    );
+                    trace!("WAL recovery manager cache empty");
                     None
                 }
             }
             Err(_) => {
-                eprintln!("⚠️ DEBUG: Can't acquire read lock, trying blocking read");
+                debug!("WAL recovery manager cache read lock busy; falling back to blocking read");
                 // If we can't acquire read lock, try blocking read
                 let cache = self.recovery_manager_cache.blocking_read();
                 if cache.is_some() {
                     cache.as_ref().map(|rm| Arc::new(rm.clone()))
                 } else {
-                    eprintln!("⚠️ DEBUG: blocking_read also returned None");
+                    trace!("WAL recovery manager cache still empty after blocking read");
                     None
                 }
             }
         }
     }
 
-    /// Insert single vector record (converted to batch of 1 via WALVectorBatch)
-    pub async fn insert(
+    /// Insert a single canonical record (converted to batch of 1 via WALVectorBatch).
+    pub async fn insert_record(
         &self,
         collection_id: String,
-        vector_id: VectorId,
-        record: &VectorRecord,
+        record_id: VectorId,
+        record: ProximaRecord,
     ) -> Result<u64> {
         let start_time = std::time::Instant::now();
 
         debug!(
-            "📝 [WAL_UPSERT] Starting upsert for collection: {}, vector_id: {}, vector_size: {} dims (using BATCH architecture)",
+            "📝 [WAL_UPSERT] Starting upsert for collection: {}, record_id: {}, embeddings: {} (using BATCH architecture)",
             collection_id,
-            vector_id,
-            record.vector.len()
+            record_id,
+            record.embeddings.len()
         );
 
-        // Create a batch of 1 vector - MODERN ARCHITECTURE
+        // Create a batch of 1 canonical record - MODERN ARCHITECTURE
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
         use crate::storage::persistence::write_ahead_log::BatchId;
 
-        let batch_id = BatchId::new(); // Single vector batch
+        let batch_id = BatchId::new(); // Single record batch
 
-        // Calculate actual size - approximate based on vector dimensions and metadata
-        let total_size_bytes = record.vector.len() * 4 + 256; // 4 bytes per f32 + metadata overhead
+        let total_size_bytes = record
+            .embeddings
+            .iter()
+            .map(|embedding| embedding.values.len() * 4)
+            .sum::<usize>()
+            + (record.props.len() * 50)
+            + 256;
 
         let batch = WALVectorBatch {
             batch_id,
-            vector_records: Arc::new(vec![record.clone()]),
+            vector_records: Arc::new(vec![record]),
             timestamp: std::time::SystemTime::now(),
             total_size_bytes,
             is_flushed: false,
@@ -1772,38 +1781,21 @@ impl WriteAheadLogManager {
             .ok_or_else(|| anyhow::anyhow!("No sequence returned from batch write"))?;
 
         debug!(
-            "📝 [WAL_UPSERT] Successfully upserted vector {} in collection {} (sequence: {}) in {:?} using BATCH architecture",
-            vector_id, collection_id, sequence, duration
+            "📝 [WAL_UPSERT] Successfully upserted record {} in collection {} (sequence: {}) in {:?} using BATCH architecture",
+            record_id, collection_id, sequence, duration
         );
 
         Ok(sequence)
     }
 
-    /// Insert batch of vector records using modern batch API
-    pub async fn insert_batch(
+    /// Insert batch of canonical records using modern batch API.
+    pub async fn insert_record_batch(
         &self,
         collection_id: String,
-        records: Vec<(VectorId, VectorRecord)>,
+        records: Vec<(VectorId, ProximaRecord)>,
     ) -> Result<Vec<u64>> {
-        // Use the modern batch API directly
-        let vector_records: Vec<VectorRecord> =
+        let vector_records: Vec<ProximaRecord> =
             records.into_iter().map(|(_, record)| record).collect();
-        self.insert_vectors(collection_id, vector_records).await
-    }
-
-    /// Insert batch of vector records with immediate sync option
-    /// Note: immediate_sync is largely ignored in the new architecture where
-    /// flush is handled atomically by TransactionCoordinator
-    pub async fn insert_batch_with_sync(
-        &self,
-        collection_id: String,
-        records: Vec<(VectorId, VectorRecord)>,
-        _immediate_sync: bool,
-    ) -> Result<Vec<u64>> {
-        let vector_records: Vec<VectorRecord> =
-            records.into_iter().map(|(_, record)| record).collect();
-
-        // Just insert to WAL/memtable - sync will happen during flush via atomic coordinator
         self.insert_vectors(collection_id, vector_records).await
     }
 
@@ -1814,84 +1806,66 @@ impl WriteAheadLogManager {
         Ok(())
     }
 
-    /// Update vector record (redirects to upsert for consistency)
-    pub async fn update(
+    /// Update canonical record (redirects to upsert for consistency).
+    pub async fn update_record(
         &self,
         collection_id: String,
-        vector_id: VectorId,
-        mut record: VectorRecord,
+        record_id: VectorId,
+        mut record: ProximaRecord,
     ) -> Result<u64> {
-        // For modern batch strategies, version management is handled internally
-        // Just increment version if not already set
-        // Proto-first: direct field access
-        let current_version = record.version.unwrap_or(0);
-        let new_version = if current_version == 0 {
-            1
-        } else {
-            current_version + 1
-        };
+        record.record_version = record.record_version.saturating_add(1).max(1);
+        record.updated_at_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as i64)
+            .unwrap_or(record.updated_at_ns);
 
-        // Update version directly
-        record.version = Some(new_version);
-
-        // Redirect to insert (which is now upsert)
-        self.insert(collection_id, vector_id, &record).await
+        self.insert_record(collection_id, record_id, record).await
     }
 
-    /// Delete vector record (delegated to batch strategy)
-    pub async fn delete(&self, collection_id: String, vector_id: VectorId) -> Result<u64> {
-        // Deletion is implemented via expires_at field
-        // Create a vector record with expires_at set to current time
-        let record = crate::proto::proximadb_v1::VectorRecord {
-            id: vector_id.clone(),
-            vector: Vec::new(),
-            metadata: HashMap::new(),
-            version: None,
-            timestamp: Some(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|duration| duration.as_secs() as i64)
-                    .unwrap_or(0),
-            ),
-            updated_at: None,
-            expires_at: Some(0), // Setting to 0 or past time marks for deletion
-            source: None,        // No source content for deletion record
+    /// Delete canonical record by identity (tombstone record).
+    pub async fn delete_record(&self, collection_id: String, record_id: VectorId) -> Result<u64> {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos() as i64)
+            .unwrap_or(0);
+
+        let record = ProximaRecord {
+            oid: record_id.clone(),
+            updated_at_ns: now_ns,
+            valid_to_ns: Some(0),
+            method: Some("delete".to_string()),
+            ..ProximaRecord::default()
         };
 
-        // Use insert with expired record to mark for deletion
-        self.insert(collection_id, vector_id, &record).await
+        self.insert_record(collection_id, record_id, record).await
     }
 
     // Note: Collection lifecycle operations (create/drop) are handled by CollectionService
     // WAL only handles vector-level operations (insert/update/delete/flush/checkpoint)
 
-    /// Search for vector by ID (returns VectorRecord)
-    pub async fn search(
+    /// Search for canonical record by ID.
+    pub async fn search_record(
         &self,
         collection_id: &str,
-        vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
-        // Use shared WAL behavior to get the vector
-        // Create MemtableConfig from MemTableConfig
+        record_id: &VectorId,
+    ) -> Result<Option<ProximaRecord>> {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        wal_behavior.vector_by_id(collection_id, vector_id).await
+        wal_behavior.vector_by_id(collection_id, record_id).await
     }
 
-    /// Read vector batches for recovery or replication (modern API)
-    pub async fn read_entries(
+    /// Read canonical record batches for recovery or replication.
+    pub async fn read_record_entries(
         &self,
         collection_id: &str,
         from_sequence: u64,
         limit: Option<usize>,
-    ) -> Result<Vec<VectorRecord>> {
-        // Get vectors from the collection
+    ) -> Result<Vec<ProximaRecord>> {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
+        let records = wal_behavior.get_collection_vectors(collection_id).await?;
 
-        // Apply sequence filtering and limit if needed
-        let filtered: Vec<VectorRecord> = vectors
+        let filtered: Vec<ProximaRecord> = records
             .into_iter()
             .skip(from_sequence as usize)
             .take(limit.unwrap_or(usize::MAX))
@@ -1922,78 +1896,11 @@ impl WriteAheadLogManager {
         Ok(0)
     }
 
-    /// Read vector records by operation type (proto-first approach)
-    pub async fn read_proto_entries(
-        &self,
-        collection_id: &str,
-        _operation_type: &str,
-        limit: Option<usize>,
-    ) -> Result<Vec<Vec<u8>>> {
-        // Get the vector records from the collection
-        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-        let vectors = wal_behavior.get_collection_vectors(collection_id).await?;
-
-        // Apply limit if specified
-        let limited_vectors: Vec<VectorRecord> = if let Some(lim) = limit {
-            vectors.into_iter().take(lim).collect()
-        } else {
-            vectors
-        };
-
-        // Serialize each vector to proto bytes (proto-first architecture)
-        let mut proto_payloads = Vec::new();
-        for vector in limited_vectors {
-            // VectorRecord is already proto type in proto-first architecture
-            let proto_record: crate::proto::proximadb_v1::VectorRecord = vector.clone();
-            let proto_bytes = {
-                use prost::Message;
-                proto_record.encode_to_vec()
-            };
-            proto_payloads.push(proto_bytes);
-        }
-
-        Ok(proto_payloads)
-    }
-
-    /// Append batch entry using modern batch approach
-    ///
-    /// This method deserializes the payload and uses modern batch operations
-    pub async fn append_batch_entry(
-        &self,
-        collection_id: &str,
-        _operation_type: &str,
-        payload: &[u8],
-        immediate_sync: bool,
-    ) -> Result<u64> {
-        // Proto-first: try proto deserialization first, then fall back to strategy-specific handling
-        // Try proto deserialization using the serializer
-        use crate::storage::persistence::write_ahead_log::serialization::{
-            ProtocolBuffersSerializer, VectorBatchSerializer,
-        };
-        let proto_serializer = ProtocolBuffersSerializer::new();
-        if let Ok(records) = proto_serializer.deserialize_batch(payload) {
-            // Use the modern batch API with sync option
-            if immediate_sync {
-                self.insert_batch_with_sync(
-                    collection_id.to_string(),
-                    records.into_iter().map(|r| (r.id.clone(), r)).collect(),
-                    true,
-                )
-                .await
-                .map(|sequences| sequences.into_iter().next().unwrap_or(0))
-            } else {
-                self.insert_vectors(collection_id.to_string(), records)
-                    .await
-                    .map(|sequences| sequences.into_iter().next().unwrap_or(0))
-            }
-        } else {
-            anyhow::bail!("Failed to deserialize batch payload")
-        }
-    }
-
     /// Get all vectors for a collection (modern batch approach)
-    pub async fn get_collection_entries(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_entries(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
         let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
         wal_behavior.get_collection_vectors(collection_id).await
@@ -2090,12 +1997,31 @@ impl WriteAheadLogManager {
 
     // 🎯 MODERN BATCH API (Recommended)
 
-    /// PROTO-FIRST ZERO-COPY: Write native VectorRecord with Arc
-    /// This is the optimal method for proto-first architecture
+    /// Write a batch of canonical ProximaRecord envelopes to WAL.
     pub async fn write_vector_batch_native_arc(
         &self,
         collection_id: &str,
-        native_vectors: Arc<Vec<crate::proto::proximadb_v1::VectorRecord>>,
+        native_vectors: Arc<Vec<proximadb_records::ProximaRecord>>,
+    ) -> Result<Vec<u64>> {
+        self.write_vector_batch_native_arc_with_mode(collection_id, native_vectors, false)
+            .await
+    }
+
+    /// Write canonical ProximaRecord batch with insert-only WAL/memtable semantics.
+    pub async fn write_vector_batch_native_arc_insert_only(
+        &self,
+        collection_id: &str,
+        native_vectors: Arc<Vec<proximadb_records::ProximaRecord>>,
+    ) -> Result<Vec<u64>> {
+        self.write_vector_batch_native_arc_with_mode(collection_id, native_vectors, true)
+            .await
+    }
+
+    async fn write_vector_batch_native_arc_with_mode(
+        &self,
+        collection_id: &str,
+        native_vectors: Arc<Vec<proximadb_records::ProximaRecord>>,
+        insert_only: bool,
     ) -> Result<Vec<u64>> {
         debug!(
             "WAL write: {} vectors to collection {}",
@@ -2108,7 +2034,7 @@ impl WriteAheadLogManager {
 
         let native_batch = crate::storage::memtable::specialized::wal_behavior::WALVectorBatch {
             batch_id,
-            vector_records: native_vectors.clone(), // Clone Arc (cheap)
+            vector_records: native_vectors,
             timestamp: std::time::SystemTime::now(),
             total_size_bytes: 0, // Will be calculated by strategy
             is_flushed: false,
@@ -2122,9 +2048,15 @@ impl WriteAheadLogManager {
         let sequences = {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            wal_behavior
-                .add_vector_batch(collection_id, native_batch.clone())
-                .await
+            if insert_only {
+                wal_behavior
+                    .add_vector_batch_insert_only(collection_id, native_batch.clone())
+                    .await
+            } else {
+                wal_behavior
+                    .add_vector_batch(collection_id, native_batch.clone())
+                    .await
+            }
         }?;
 
         // Then, persist to disk if sync mode requires it
@@ -2157,19 +2089,89 @@ impl WriteAheadLogManager {
                 "🔄 DEBUG: Serializing {} vectors",
                 native_batch.vector_records.len()
             );
-            let serialized = match serializer.serialize_batch(&native_batch.vector_records) {
-                Ok(data) => {
-                    info!(
-                        "🔄 DEBUG: Serialization successful, size: {} bytes",
-                        data.len()
-                    );
-                    data
-                }
-                Err(e) => {
-                    trace!("🔄  ERROR: Serialization failed: {:?}", e);
-                    return Err(e).context("Failed to serialize batch for WAL");
+            // Same v1/v2 dispatch shape used by
+            // bincode_serialization_strategy.rs:207-218 — without this
+            // gate, fp16 records fail in the v1 EmbeddingCell::Serialize
+            // refuse-error. Header carries the global-default policy
+            // (per-collection lookup is INT-3 territory).
+            let serialized = if proximadb_config::EmbeddingPrecisionConfig::cached()
+                .schema_v2_enabled
+            {
+                let created_at_ns = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos() as i64)
+                    .unwrap_or(0);
+                let header = crate::storage::persistence::write_ahead_log::v2_segment_header::V2SegmentHeader {
+                    flags: 0,
+                    segment_id: 0,
+                    created_at_ns,
+                    canonical_default_precision: proximadb_records::EmbeddingScalarType::Fp32,
+                    precision_epoch: 0,
+                    policy_id: String::new(),
+                    policy_version: 0,
+                };
+                serializer
+                    .serialize_batch_with_v2_segment_header(
+                        native_batch.vector_records.as_ref(),
+                        &header,
+                    )
+                    .map_err(|e| {
+                        trace!("🔄  ERROR: v2 serialization failed: {:?}", e);
+                        e
+                    })
+                    .context("Failed to serialize batch for WAL")?
+            } else {
+                match serializer.serialize_batch(native_batch.vector_records.as_ref()) {
+                    Ok(data) => {
+                        info!(
+                            "🔄 DEBUG: Serialization successful, size: {} bytes",
+                            data.len()
+                        );
+                        data
+                    }
+                    Err(e) => {
+                        trace!("🔄  ERROR: Serialization failed: {:?}", e);
+                        return Err(e).context("Failed to serialize batch for WAL");
+                    }
                 }
             };
+
+            // Per-precision canonical_bytes accumulation. Mirrors the
+            // accumulator at bincode_serialization_strategy.rs:236-254;
+            // this codepath is the WriteAheadLogManager fallback sync,
+            // which the strategy-level path bypasses, so the metric
+            // needs its own increment here to stay accurate across
+            // both routes.
+            //
+            // Note (TD-080): for v2 record writes that go through
+            // `UnifiedHandlers::coerce_records_to_canonical_precision`,
+            // the canonical label-set is already emitted at the handler
+            // boundary using the user-facing collection name. This block
+            // continues to fire so non-handler writers (queue drainer,
+            // bulk loader) get coverage too, but it labels by the
+            // internal `collection_id` (typically a UUID). Operators
+            // dashboarding on `proximadb_embedding_precision_canonical_bytes`
+            // should prefer the handler-emitted series; the WAL-emitted
+            // series is a secondary signal during incident triage.
+            if let Some(pm) = crate::observability::precision_metrics::metrics() {
+                let mut per_precision: std::collections::HashMap<
+                    proximadb_records::EmbeddingScalarType,
+                    i64,
+                > = std::collections::HashMap::new();
+                for record in native_batch.vector_records.iter() {
+                    for cell in &record.embeddings {
+                        *per_precision.entry(cell.precision).or_insert(0) +=
+                            cell.values_byte_size() as i64;
+                    }
+                }
+                for (precision, delta) in per_precision {
+                    pm.add_canonical_bytes(
+                        collection_id,
+                        crate::observability::precision_metrics::precision_label(precision),
+                        delta,
+                    );
+                }
+            }
 
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
@@ -2223,6 +2225,7 @@ impl WriteAheadLogManager {
                     &native_batch.batch_id,
                     &serialized,
                     format,
+                    native_batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await
@@ -2259,7 +2262,7 @@ impl WriteAheadLogManager {
     pub async fn insert_vectors(
         &self,
         collection_id: String,
-        records: Vec<VectorRecord>,
+        records: Vec<proximadb_records::ProximaRecord>,
     ) -> Result<Vec<u64>> {
         if records.is_empty() {
             return Ok(Vec::new());
@@ -2270,7 +2273,13 @@ impl WriteAheadLogManager {
         use crate::storage::persistence::write_ahead_log::BatchId;
         let total_size_bytes: usize = records
             .iter()
-            .map(|r| r.vector.len() * 4 + 256) // 4 bytes per f32 + metadata overhead
+            .map(|r| {
+                r.embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len() * 4)
+                    .unwrap_or(0)
+                    + 256
+            })
             .sum();
         let batch_id = BatchId::new();
 
@@ -2316,7 +2325,7 @@ impl WriteAheadLogManager {
             // Create serializer and serialize batch
             let serializer = SerializerFactory::create(format);
             let serialized = serializer
-                .serialize_batch(&batch.vector_records)
+                .serialize_batch(batch.vector_records.as_ref())
                 .context("Failed to serialize batch for WAL")?;
 
             // Determine if we should sync based on sync mode
@@ -2333,13 +2342,13 @@ impl WriteAheadLogManager {
                     match provider.get_collection(&collection_id).await {
                         Ok(Some(collection)) => {
                             if let Some(assignment) = collection.storage_assignment {
-                                eprintln!(
-                                    "✅ DEBUG: Found storage assignment: {}",
+                                debug!(
+                                    "Found storage assignment for WAL persistence: {}",
                                     assignment.base_location
                                 );
                                 assignment.base_location.clone()
                             } else {
-                                eprintln!("⚠️ DEBUG: No storage_assignment in collection");
+                                debug!("No storage assignment in collection; using WAL fallback");
                                 self.config
                                     .multi_disk
                                     .data_directories
@@ -2349,7 +2358,7 @@ impl WriteAheadLogManager {
                             }
                         }
                         _ => {
-                            eprintln!("⚠️ DEBUG: Collection lookup failed, using fallback");
+                            debug!("Collection lookup failed for WAL persistence; using fallback");
                             self.config
                                 .multi_disk
                                 .data_directories
@@ -2378,6 +2387,7 @@ impl WriteAheadLogManager {
                     &batch.batch_id,
                     &serialized,
                     format,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await
@@ -2399,26 +2409,23 @@ impl WriteAheadLogManager {
         &self,
         collection_id: &str,
         vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
-        {
-            let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
-            let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            wal_behavior.vector_by_id(collection_id, vector_id).await
-        }
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        wal_behavior.vector_by_id(collection_id, vector_id).await
     }
 
-    /// Similarity search for vectors (modern API)
+    /// Similarity search for canonical records.
     pub async fn search_vectors_similarity(
         &self,
         collection_id: &str,
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
+    ) -> Result<Vec<(VectorId, f32, ProximaRecord)>> {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
-            // Convert to search_unflushed_vectors format and back
             let metric = distance_metric
                 .unwrap_or(crate::compute::distance_computation::DistanceMetric::Cosine);
             let results = wal_behavior
@@ -2433,21 +2440,32 @@ impl WriteAheadLogManager {
                 )
                 .await?;
 
-            // Convert SearchVectorRecord back to (VectorId, f32, VectorRecord) format
             Ok(results
                 .into_iter()
                 .map(|r| {
-                    let record = VectorRecord {
-                        id: r.id.clone(),
-                        vector: r.vector,
-                        metadata: r.metadata,
-                        version: r.version,
-                        timestamp: Some(r.timestamp.unwrap_or(0)),
-                        expires_at: None,
-                        source: None,
-                        updated_at: None,
+                    let vector_id = r.id.clone();
+                    let dim = r.vector.len() as u32;
+                    let record = ProximaRecord {
+                        oid: r.id.clone(),
+                        record_version: r.version.unwrap_or_default() as u64,
+                        created_at_ns: r.timestamp.unwrap_or_default() * 1_000_000,
+                        props: r
+                            .metadata
+                            .into_iter()
+                            .map(|(key, value)| {
+                                (key, ProximaTreeNode::Value(sql_value_to_proxima(&value)))
+                            })
+                            .collect(),
+                        embeddings: vec![EmbeddingCell {
+                            model_id: "wal".to_string(),
+                            modality: "dense_vector".to_string(),
+                            dim,
+                            values: proximadb_records::EmbeddingValues::Fp32(r.vector),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
                     };
-                    (r.id, r.score as f32, record)
+                    (vector_id, r.score as f32, record)
                 })
                 .collect())
         }
@@ -2525,49 +2543,54 @@ impl WriteAheadLogManager {
 
         for batch in filtered_batches {
             for vector_record in batch.vector_records.iter() {
-                // Check if this is a tombstone (empty vector + expires_at in past)
-                // IMPORTANT: Tombstones MUST be returned to the merge phase so they can
-                // override storage results. The merge phase filters them out after deduplication.
-                let is_tombstone = vector_record.vector.is_empty()
-                    && vector_record
-                        .expires_at
-                        .is_some_and(|e| e <= current_time_secs);
+                let embedding = vector_record.embeddings.first();
+                // Use `as_fp32_cow()` so non-fp32 variants (fp16/bf16/int8/etc.)
+                // are promoted to fp32 for the distance calculation. `as_fp32_slice`
+                // returns an empty slice for any non-fp32 variant, which caused
+                // fp16 collections' INSERTed records to be silently skipped here
+                // — surfaced 2026-05-28 by the v2 INSERT→SEARCH reconciliation.
+                let vec_values_cow = embedding
+                    .map(|e| e.as_fp32_cow())
+                    .unwrap_or_else(|| std::borrow::Cow::Borrowed(&[][..]));
+                let vec_values: &[f32] = vec_values_cow.as_ref();
+                let expires_at_secs = vector_record.valid_to_ns.map(|ns| ns / 1_000_000_000);
+
+                // Check if this is a tombstone (empty vector + valid_to in past)
+                let is_tombstone = vec_values.is_empty()
+                    && expires_at_secs.is_some_and(|e| e <= current_time_secs);
 
                 if is_tombstone {
-                    // Return tombstone as a special marker for the merge phase
-                    // Score is 0.0 since we can't compute distance for empty vectors
-                    tracing::trace!("Returning tombstone marker for: {}", vector_record.id);
+                    tracing::trace!("Returning tombstone marker for: {}", vector_record.oid);
                     let tombstone_result = crate::core::search::results::OptimizedSearchRecord {
-                        id: vector_record.id.clone(),
-                        vector_id: Some(vector_record.id.clone()),
-                        score: 0.0, // Tombstone has no similarity score
+                        id: vector_record.oid.clone(),
+                        vector_id: Some(vector_record.oid.clone()),
+                        score: 0.0,
                         similarity: Some(0.0),
-                        vector: None, // Empty vector marker
-                        metadata: std::collections::HashMap::new(),
-                        debug_info: None,
-                        version: vector_record.version,
-                        timestamp: Some(vector_record.timestamp.unwrap_or(0)),
-                        updated_at: vector_record.updated_at,
-                        expires_at: vector_record.expires_at, // Preserve tombstone marker
-                        source: None,
-                        expanded_context: Vec::new(),
-                        semantic_similarity: None,
-                        quantization_info: None,
-                        engine_stats: None,
-                        index_path: None,
+                        vector: None,
+                        version: Some(vector_record.record_version as u32),
+                        timestamp: Some(vector_record.created_at_ns / 1_000_000),
+                        updated_at: Some(vector_record.updated_at_ns / 1_000_000),
+                        expires_at: expires_at_secs,
+                        ..Default::default()
                     };
                     all_results.push(tombstone_result);
                     continue;
                 }
 
                 // Skip empty vectors that aren't tombstones (malformed records)
-                if vector_record.vector.is_empty() {
+                if vec_values.is_empty() {
                     continue;
                 }
 
-                // Apply fine-grained metadata filter if specified
+                // Apply fine-grained metadata filter if specified. Use the
+                // canonical, numeric-aware evaluator over the record's props so
+                // this path matches every other filter site (scan, relational,
+                // columnar) and supports the full operator set.
                 if let Some(filter_expr) = metadata_filters
-                    && !self.evaluate_filter_on_record(vector_record, filter_expr)
+                    && !crate::core::search::sql_value_filter::evaluate_filter_proxima(
+                        filter_expr,
+                        &vector_record.props,
+                    )
                 {
                     continue;
                 }
@@ -2575,48 +2598,45 @@ impl WriteAheadLogManager {
                 // Calculate distance
                 let similarity_result = distance_calculator.calculate_distance(
                     query_vector,
-                    &vector_record.vector,
+                    vec_values,
                     &distance_metric,
                 );
 
-                // Create optimized search result with SqlValue metadata
-                // IMPORTANT: Use normalized_score for consistency across all engines
-                // Higher similarity = better match, VOS sorts descending
+                let metadata = if include_metadata {
+                    use proximadb_records::ProximaTreeNode;
+                    vector_record
+                        .props
+                        .iter()
+                        .filter_map(|(k, node)| {
+                            if let ProximaTreeNode::Value(pv) = node {
+                                Some((k.clone(), pv.clone()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                } else {
+                    Default::default()
+                };
+
                 let search_result = crate::core::search::results::OptimizedSearchRecord {
-                    id: vector_record.id.clone(),
-                    vector_id: Some(vector_record.id.clone()),
+                    id: vector_record.oid.clone(),
+                    vector_id: Some(vector_record.oid.clone()),
                     score: similarity_result.normalized_score,
                     similarity: Some(similarity_result.normalized_score),
                     vector: if include_vectors {
-                        Some(Arc::new(vector_record.vector.clone()))
+                        Some(Arc::new(vec_values.to_vec()))
                     } else {
                         None
                     },
-                    // Use SqlValue metadata directly for OptimizedSearchRecord (no conversion needed)
-                    metadata: if include_metadata {
-                        vector_record.metadata.clone()
-                    } else {
-                        std::collections::HashMap::new()
-                    },
-                    debug_info: None,
-                    version: vector_record.version,
-                    timestamp: Some(vector_record.timestamp.unwrap_or(0)),
-                    updated_at: vector_record.updated_at,
-                    expires_at: vector_record.expires_at,
-                    source: vector_record.source.as_ref().map(|s| {
-                        crate::proto::proximadb_v1::SourceContent {
-                            data: Some(
-                                crate::proto::proximadb_v1::source_content::Data::TextContent(
-                                    s.clone(),
-                                ),
-                            ),
-                        }
-                    }),
-                    expanded_context: Vec::new(),
+                    metadata,
+                    version: Some(vector_record.record_version as u32),
+                    timestamp: Some(vector_record.created_at_ns / 1_000_000),
+                    updated_at: Some(vector_record.updated_at_ns / 1_000_000),
+                    expires_at: expires_at_secs,
+                    source: None,
                     semantic_similarity: Some(similarity_result.clone()),
-                    quantization_info: None, // Populated by engine during quantized search
-                    engine_stats: None,      // Populated by engine with I/O metrics
-                    index_path: None,        // Populated when index-based search is used
+                    ..Default::default()
                 };
 
                 // OptimizedSearchRecord is complete with all necessary fields
@@ -2662,10 +2682,15 @@ impl WriteAheadLogManager {
 
             // Check bloom filter if available
             if let Some(ref bloom_filter) = batch.metadata_bloom_filter {
-                // Check each filter condition against bloom filter
+                // Check each filter condition against bloom filter. The key
+                // format MUST match the build site — both go through the shared
+                // `metadata_bloom_key` helper so the separator can never drift.
                 for (field, value) in &filter_conditions {
-                    // Use bloom filter's might_contain method
-                    if !bloom_filter.might_contain(format!("{}:{}", field, value).as_bytes()) {
+                    let key =
+                        crate::storage::memtable::specialized::wal_behavior::metadata_bloom_key(
+                            field, value,
+                        );
+                    if !bloom_filter.might_contain(key.as_bytes()) {
                         should_include = false;
                         bloom_misses += 1;
                         break;
@@ -2696,191 +2721,50 @@ impl WriteAheadLogManager {
         Ok(filtered_batches)
     }
 
-    /// Extract field/value pairs from FilterExpression for bloom filter checking
+    /// Extract the conjunction of exact `field=value` pairs that a batch's
+    /// bloom filter can *soundly* prove-absent, for batch pre-pruning.
+    ///
+    /// A bloom filter stores one `field=value` entry per record prop, so it can
+    /// only ever answer "this exact value is definitely absent". It is therefore
+    /// only sound to *exclude* a batch when the query REQUIRES an exact value to
+    /// be present — i.e. an `Equals` comparison that appears conjunctively (a
+    /// top-level `Equals`, or one nested under `And`). Every other shape must
+    /// fail **open** (return no condition for it, so the batch is kept and the
+    /// authoritative per-record evaluator decides):
+    ///   - substring ops (`Contains`/`StartsWith`/`EndsWith`) and range ops
+    ///     match values the bloom never stored verbatim → a miss does not imply
+    ///     absence;
+    ///   - `Or` is disjunctive → requiring any single branch's value would
+    ///     wrongly drop batches that satisfy another branch;
+    ///   - `Not` inverts the membership question entirely.
+    ///
+    /// Returning the prunable sub-conditions of an `And` (and dropping the
+    /// non-prunable siblings) stays sound: every record in a surviving batch
+    /// must still satisfy those `Equals` legs.
     fn extract_filter_conditions(
         &self,
         filter: &crate::core::search::FilterExpression,
     ) -> Vec<(String, String)> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
-        let mut conditions = Vec::new();
 
         match filter {
             FilterExpression::Comparison {
                 field,
-                operator,
+                operator: ComparisonOperator::Equals,
                 value,
-            } => {
-                // Only include certain operators that work well with bloom filters
-                match operator {
-                    ComparisonOperator::Equals
-                    | ComparisonOperator::Contains
-                    | ComparisonOperator::StartsWith
-                    | ComparisonOperator::EndsWith => {
-                        if let Some(str_value) = value.as_str() {
-                            conditions.push((field.clone(), str_value.to_string()));
-                        }
-                    }
-                    _ => {
-                        // For other operators (>, <, etc.), we still include the field
-                        // The bloom filter will help eliminate batches that don't have the field at all
-                        if let Some(str_value) = value.as_str() {
-                            conditions.push((field.clone(), str_value.to_string()));
-                        }
-                    }
-                }
-            }
-            FilterExpression::And(exprs) => {
-                for expr in exprs {
-                    conditions.extend(self.extract_filter_conditions(expr));
-                }
-            }
-            FilterExpression::Or(exprs) => {
-                // For OR, we include all conditions (bloom filter will be more permissive)
-                for expr in exprs {
-                    conditions.extend(self.extract_filter_conditions(expr));
-                }
-            }
-            FilterExpression::Not(_) => {
-                // Bloom filters don't help with NOT operations, skip optimization
-            }
-        }
-
-        conditions
-    }
-
-    /// Evaluate filter expression on a vector record with proper enum handling
-    fn evaluate_filter_on_record(
-        &self,
-        record: &crate::proto::proximadb_v1::VectorRecord,
-        filter: &crate::core::search::FilterExpression,
-    ) -> bool {
-        use crate::core::search::FilterExpression;
-
-        match filter {
-            FilterExpression::Comparison {
-                field,
-                operator,
-                value,
-            } => {
-                // Find the metadata field in the record
-                for (key, sql_value) in &record.metadata {
-                    if key == field {
-                        // Get the metadata value as string for comparison
-                        let metadata_value = sql_value
-                            .value
-                            .as_ref()
-                            .map(|v| match v {
-                                crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                                    s.clone()
-                                }
-                                crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                                    n.to_string()
-                                }
-                                crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                                    b.to_string()
-                                }
-                                crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                                    i.to_string()
-                                }
-                                _ => "".to_string(),
-                            })
-                            .clone();
-
-                        // Compare based on operator
-                        if let Some(metadata_str) = metadata_value {
-                            return self.compare_values(&metadata_str, operator, value);
-                        } else {
-                            return false;
-                        }
-                    }
-                }
-                // Field not found, consider it a non-match
-                false
-            }
+            } => value
+                .as_str()
+                .map(|v| vec![(field.clone(), v.to_string())])
+                .unwrap_or_default(),
             FilterExpression::And(exprs) => exprs
                 .iter()
-                .all(|e| self.evaluate_filter_on_record(record, e)),
-            FilterExpression::Or(exprs) => exprs
-                .iter()
-                .any(|e| self.evaluate_filter_on_record(record, e)),
-            FilterExpression::Not(expr) => !self.evaluate_filter_on_record(record, expr),
-        }
-    }
-
-    /// Compare values based on operator
-    fn compare_values(
-        &self,
-        left: &str,
-        operator: &crate::core::search::ComparisonOperator,
-        right: &serde_json::Value,
-    ) -> bool {
-        use crate::core::search::ComparisonOperator;
-
-        match operator {
-            ComparisonOperator::Equals => {
-                if let serde_json::Value::String(right_str) = right {
-                    left == right_str
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::NotEquals => {
-                if let serde_json::Value::String(right_str) = right {
-                    left != right_str
-                } else {
-                    true
-                }
-            }
-            ComparisonOperator::GreaterThan => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num > right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::GreaterThanOrEqual => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num >= right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::LessThan => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num < right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::LessThanOrEqual => {
-                if let (Ok(left_num), Some(right_num)) = (left.parse::<f64>(), right.as_f64()) {
-                    left_num <= right_num
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::Contains => {
-                if let serde_json::Value::String(right_str) = right {
-                    left.contains(right_str.as_str())
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::StartsWith => {
-                if let serde_json::Value::String(right_str) = right {
-                    left.starts_with(right_str.as_str())
-                } else {
-                    false
-                }
-            }
-            ComparisonOperator::EndsWith => {
-                if let serde_json::Value::String(right_str) = right {
-                    left.ends_with(right_str.as_str())
-                } else {
-                    false
-                }
-            }
-            _ => false, // Other operators not implemented yet
+                .flat_map(|expr| self.extract_filter_conditions(expr))
+                .collect(),
+            // Non-Equals comparisons, Or, and Not are not soundly prunable by an
+            // exact-match bloom — fail open (no conditions ⇒ batch is kept).
+            FilterExpression::Comparison { .. }
+            | FilterExpression::Or(_)
+            | FilterExpression::Not(_) => Vec::new(),
         }
     }
 
@@ -2912,12 +2796,34 @@ impl WriteAheadLogManager {
     }
 
     /// Get all vectors for a collection (modern API)
-    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         {
             let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
             let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
             wal_behavior.get_collection_vectors(collection_id).await
         }
+    }
+
+    /// Paginated, deduped, time-ordered scan of a collection's unflushed records
+    /// (TD-099(3d) push-down). See
+    /// [`WALBehaviorWrapper::stream_unflushed_records`]. `after` is the raw
+    /// `(last_updated_at_ns, last_oid)` cursor tuple.
+    pub async fn stream_unflushed_records(
+        &self,
+        collection_id: &str,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&proximadb_records::ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        let memtable_config = crate::storage::memtable::core::MemtableConfig::default();
+        let wal_behavior = self.shared_wal_behavior.get_or_init(&memtable_config);
+        wal_behavior
+            .stream_unflushed_records(collection_id, after, limit, predicate, now_ns)
+            .await
     }
 
     /// Read all vector batches for a collection (modern API)
@@ -2947,7 +2853,7 @@ impl WriteAheadLogManager {
     pub async fn register_storage_engine(
         &self,
         engine_name: &str,
-        _engine: Arc<dyn crate::storage::traits::UnifiedStorageEngine>,
+        _engine: Arc<dyn crate::storage::traits::UnifiedStorageFormat>,
     ) -> Result<()> {
         // Set the storage engine on the strategy
         // Storage engine setting moved to shared behavior initialization
@@ -2961,63 +2867,6 @@ impl WriteAheadLogManager {
     // ================================================================================
     // ENHANCED METHODS (Consolidated from OptimizedWalManager)
     // ================================================================================
-
-    /// Initialize assignment service integration for multi-disk coordination
-    /// Insert batch with atomic disk synchronization (enhanced version)
-    pub async fn insert_batch_atomic(
-        &self,
-        collection_id: String,
-        records: Vec<(VectorId, VectorRecord)>,
-    ) -> Result<Vec<u64>> {
-        let start_time = std::time::Instant::now();
-
-        debug!(
-            "Inserting batch of {} vectors for collection '{}' using {} strategy with atomic sync",
-            records.len(),
-            collection_id,
-            self.get_strategy_name()
-        );
-
-        // 1. Collection assignment no longer needed - handled by pool manager
-        // Collections are tracked via assigned_collections HashMap
-
-        // MARKED FOR REMOVAL: Path resolution now handled via collection metadata
-        // // 2. Ensure collection directories exist (if assignment service is enabled)
-        // if let Some(path_resolver) = &self.path_resolver {
-        //     let collection_paths = path_resolver
-        //         .resolve_collection_paths(&collection_id)
-        //         .await
-        //         .context("Failed to resolve collection paths")?;
-        //
-        //     path_resolver
-        //         .ensure_collection_directories(&collection_paths)
-        //         .await
-        //         .context("Failed to ensure collection directories")?;
-        // }
-
-        // 3. Write to memory using existing strategy
-        let vector_records: Vec<VectorRecord> =
-            records.into_iter().map(|(_, record)| record).collect();
-        let sequences = self
-            .insert_vectors(collection_id.clone(), vector_records)
-            .await?;
-
-        // 4. Implement proper atomic disk sync for durability
-        let collections_affected = vec![collection_id.clone()];
-        self.force_disk_sync(&collections_affected).await?;
-        debug!(
-            "Completed atomic disk sync for {} collections",
-            collections_affected.len()
-        );
-
-        let duration = start_time.elapsed();
-        debug!(
-            "Atomic batch insert completed for collection '{}' in {:?}",
-            collection_id, duration
-        );
-
-        Ok(sequences)
-    }
 
     /// Determine if batch should be synced to disk
     async fn should_sync_to_disk(&self, _collection_id: &str) -> Result<bool> {
@@ -3050,12 +2899,21 @@ impl WriteAheadLogManager {
             .context("Failed to get collection vectors from memtable")?;
 
         // Filter vectors by sequences (for now, just take all vectors since we don't have reliable sequence mapping)
-        let batch_vectors: Vec<VectorRecord> = collection_vectors;
+        let batch_vectors = collection_vectors;
 
         let batch_id = BatchId::new();
 
         use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-        let total_size_bytes: usize = batch_vectors.iter().map(|r| r.vector.len() * 4 + 256).sum();
+        let total_size_bytes: usize = batch_vectors
+            .iter()
+            .map(|r| {
+                r.embeddings
+                    .first()
+                    .map(|e| e.values.len() * 4)
+                    .unwrap_or(0)
+                    + 256
+            })
+            .sum();
 
         Ok(WALVectorBatch {
             batch_id,
@@ -3217,35 +3075,29 @@ impl WriteAheadLogManager {
     /// This allows external code to register storage engines before recovery
     /// IMPORTANT: Returns cached instance to ensure engine registration persists
     pub async fn get_recovery_manager(&self) -> Result<RecoveryManager> {
-        eprintln!("🔍 DEBUG: get_recovery_manager() called");
-
         // Check if we already have a cached instance
         {
             let cache = self.recovery_manager_cache.read().await;
             if let Some(ref manager) = *cache {
-                eprintln!("♻️ DEBUG: Returning cached RecoveryManager");
-                debug!("♻️ Returning cached RecoveryManager instance");
+                debug!("Returning cached RecoveryManager instance");
                 return Ok(manager.clone());
             }
-            eprintln!("🆕 DEBUG: No cached manager, creating new one");
+            trace!("No cached RecoveryManager; creating new instance");
         }
 
         // Create new instance if not cached
-        eprintln!("🔨 DEBUG: Creating RecoveryManager with metadata provider");
-        debug!("🆕 Creating new RecoveryManager instance with metadata provider");
+        debug!("Creating new RecoveryManager instance with metadata provider");
 
         // Create filesystem factory for recovery
-        eprintln!("🔨 DEBUG: Creating FilesystemFactory for recovery");
         let filesystem_config =
             crate::storage::persistence::filesystem::FilesystemConfig::default();
         let filesystem = Arc::new(
             crate::storage::persistence::filesystem::FilesystemFactory::create(filesystem_config)
                 .await?,
         );
-        eprintln!("✅ DEBUG: FilesystemFactory created");
+        trace!("FilesystemFactory created for WAL recovery");
 
         // Create RecoveryManager instance with metadata provider
-        eprintln!("🔨 DEBUG: Creating RecoveryManager instance");
         let recovery_manager = RecoveryManager::new(
             self.config.clone(),
             self.shared_wal_behavior
@@ -3254,17 +3106,15 @@ impl WriteAheadLogManager {
             filesystem,
             self.metadata_provider.clone(),
         );
-        eprintln!("✅ DEBUG: RecoveryManager created successfully");
+        trace!("RecoveryManager created successfully");
 
         // Cache for future use
         {
             let mut cache = self.recovery_manager_cache.write().await;
             *cache = Some(recovery_manager.clone());
-            eprintln!("💾 DEBUG: Cached RecoveryManager for future use");
-            debug!("💾 Cached RecoveryManager instance for reuse");
+            debug!("Cached RecoveryManager instance for reuse");
         }
 
-        eprintln!("✅ DEBUG: get_recovery_manager() returning new manager");
         Ok(recovery_manager)
     }
 
@@ -3354,5 +3204,417 @@ impl std::fmt::Debug for WriteAheadLogManager {
             .field("strategy", &"shared_wal_behavior")
             .field("config", &self.config)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod simple_context_tests {
+    use super::*;
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::background_flush_context::{
+        BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
+    };
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_background_flush_context_creation() {
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+
+        debug!("🧪 TEST: BackgroundFlushContext creation and validation");
+
+        let context = BackgroundFlushContext {
+            collection_id: "test_collection".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(1000),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+
+        // Validate context fields
+        assert_eq!(context.collection_id, "test_collection");
+        assert_eq!(context.storage_engine, StorageEngineType::Viper);
+        assert_eq!(context.dimension, 384);
+        assert_eq!(context.distance_metric, DistanceMetric::Cosine);
+        assert_eq!(context.engine_name(), "viper");
+
+        // Test SST engine as well
+        let sst_context = BackgroundFlushContext {
+            collection_id: "sst_collection".to_string(),
+            storage_engine: StorageEngineType::Sst,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(500),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+        assert_eq!(sst_context.engine_name(), "sst");
+
+        info!("✅ BackgroundFlushContext creation test passed");
+    }
+
+    #[tokio::test]
+    async fn test_context_performance_settings() {
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+
+        debug!("🧪 TEST: Context performance configuration");
+
+        let viper_context = BackgroundFlushContext {
+            collection_id: "perf_test".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(1000),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+
+        // Test dimension-based optimizations
+        assert_eq!(viper_context.dimension, 384);
+
+        // Test batch size hint calculation
+        assert!(viper_context.batch_size_hint.is_some());
+        let batch_size = viper_context.batch_size_hint.unwrap();
+        assert!(batch_size > 0 && batch_size <= 10000);
+
+        // Test row group size optimization for VIPER
+        let row_group_size = viper_context.row_group_size();
+        assert!(row_group_size >= 1000 && row_group_size <= 50000);
+
+        // Test flush threshold optimization
+        let flush_threshold = viper_context.flush_threshold();
+        assert!(flush_threshold >= 10000 && flush_threshold <= 100000);
+
+        info!("✅ Context performance configuration test passed");
+    }
+}
+
+#[cfg(test)]
+mod wal_manager_infra_tests {
+    use super::*;
+    use crate::storage::persistence::write_ahead_log::config::{
+        WALConfig, WriteBufferStrategyType,
+    };
+
+    #[tokio::test]
+    async fn test_wal_manager_creation() {
+        let config = WALConfig::default();
+        let result =
+            WriteAheadLogManager::new_for_collection(config, "test_infra_collection".to_string())
+                .await;
+
+        assert!(
+            result.is_ok(),
+            "WriteAheadLogManager::new_for_collection should initialize without error"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wal_manager_stats() {
+        let config = WALConfig::default();
+        let manager =
+            WriteAheadLogManager::new_for_collection(config, "test_stats_collection".to_string())
+                .await
+                .expect("manager creation should succeed");
+
+        let stats = manager.stats().await.expect("stats() should succeed");
+
+        assert_eq!(
+            stats.total_entries, 0,
+            "total_entries should be 0 initially"
+        );
+        assert_eq!(
+            stats.memory_entries, 0,
+            "memory_entries should be 0 initially"
+        );
+        assert_eq!(
+            stats.disk_segments, 0,
+            "disk_segments should be 0 initially"
+        );
+        assert_eq!(stats.total_disk_size_bytes, 0);
+        assert_eq!(stats.memory_size_bytes, 0);
+        assert_eq!(stats.collections_count, 0, "no collections assigned yet");
+        assert!(stats.last_flush_time.is_none());
+        assert!((stats.compression_ratio - 1.0).abs() < f64::EPSILON);
+    }
+
+    #[tokio::test]
+    async fn test_wal_manager_with_config() {
+        let mut config = WALConfig::default();
+        config.strategy_type = WriteBufferStrategyType::ProtoBatch;
+        config.enable_mvcc = false;
+        config.enable_ttl = false;
+        config.enable_background_compaction = false;
+
+        let manager = WriteAheadLogManager::new_for_collection(
+            config.clone(),
+            "test_config_collection".to_string(),
+        )
+        .await
+        .expect("manager creation with custom config should succeed");
+
+        let stats = manager.stats().await.expect("stats should succeed");
+        assert_eq!(stats.total_entries, 0);
+    }
+
+    #[tokio::test]
+    async fn test_wal_registry_creation() {
+        let registry = WriteAheadLogManagerRegistry::new();
+        let managers = registry.get_all_managers().await;
+        assert_eq!(
+            managers.len(),
+            0,
+            "registry pool should be empty before any collection assignment"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_wal_registry_with_config() {
+        let pool_config = WriteAheadLogManagerPoolConfig::builder()
+            .initial_pool_size(5)
+            .soft_thread_limit(10)
+            .target_collections_per_manager(200)
+            .rebalance_load_threshold(0.6)
+            .rebalance_cooldown_secs(15)
+            .enable_dynamic_scaling(false)
+            .build();
+
+        assert_eq!(pool_config.initial_pool_size, 5);
+        assert_eq!(pool_config.soft_thread_limit, 10);
+        assert_eq!(pool_config.target_collections_per_manager, 200);
+        assert!((pool_config.rebalance_load_threshold - 0.6).abs() < f64::EPSILON);
+        assert_eq!(pool_config.rebalance_cooldown_secs, 15);
+        assert!(!pool_config.enable_dynamic_scaling);
+
+        let registry = WriteAheadLogManagerRegistry::with_config(pool_config);
+        let managers = registry.get_all_managers().await;
+        assert_eq!(
+            managers.len(),
+            0,
+            "custom-config registry pool should start empty"
+        );
+    }
+
+    #[test]
+    fn test_strategy_name() {
+        assert_eq!(
+            WriteBufferStrategyType::ProtoBatch.to_string(),
+            "ProtoBatch"
+        );
+        assert_eq!(WriteBufferStrategyType::AvroBatch.to_string(), "AvroBatch");
+        assert_eq!(
+            WriteBufferStrategyType::BincodeBatch.to_string(),
+            "BincodeBatch"
+        );
+
+        assert_eq!(
+            WriteBufferStrategyType::default(),
+            WriteBufferStrategyType::BincodeBatch
+        );
+    }
+}
+
+#[cfg(test)]
+mod optimization_validation_tests {
+    use super::*;
+    use crate::compute::distance_computation::DistanceMetric;
+    use crate::storage::background_flush_context::{
+        BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct MockCollectionService {
+        call_count: Arc<AtomicU32>,
+    }
+
+    impl MockCollectionService {
+        fn new() -> Self {
+            Self {
+                call_count: Arc::new(AtomicU32::new(0)),
+            }
+        }
+
+        async fn get_collection(&self, _collection_id: &str) -> Option<String> {
+            self.call_count.fetch_add(1, Ordering::SeqCst);
+            Some("mock_collection".to_string())
+        }
+
+        fn get_call_count(&self) -> u32 {
+            self.call_count.load(Ordering::SeqCst)
+        }
+    }
+
+    #[tokio::test]
+    async fn test_service_call_elimination_validation() {
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+
+        debug!("🧪 VALIDATION: Service call elimination through context optimization");
+
+        let mock_service = Arc::new(MockCollectionService::new());
+
+        debug!("📊 Simulating OLD approach - multiple service calls:");
+
+        let _result1 = mock_service.get_collection("test_collection").await;
+        debug!("   VectorOperationsService → Collection Service Call #1");
+
+        let _result2 = mock_service.get_collection("test_collection").await;
+        debug!("   BackgroundManager → Collection Service Call #2");
+
+        let _result3 = mock_service.get_collection("test_collection").await;
+        debug!("   FlushCoordinator → Collection Service Call #3");
+
+        let old_call_count = mock_service.get_call_count();
+        debug!("   Total calls in OLD approach: {}", old_call_count);
+        assert_eq!(
+            old_call_count, 3,
+            "OLD approach should make 3 service calls"
+        );
+
+        mock_service.call_count.store(0, Ordering::SeqCst);
+
+        debug!("🚀 Testing NEW approach - context-based optimization:");
+
+        let _result = mock_service.get_collection("test_collection").await;
+        debug!("   VectorOperationsService → Collection Service Call #1 (creates context)");
+
+        let context = BackgroundFlushContext {
+            collection_id: "test_collection".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 384,
+            distance_metric: DistanceMetric::Cosine,
+            compression_config: CompressionConfig::default(),
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(1000),
+            priority: OperationPriority::Normal,
+            timeout_ms: Some(60_000),
+            extra_metadata: HashMap::new(),
+        };
+
+        debug!("   BackgroundManager → Uses pre-computed context (NO service call)");
+        debug!("   FlushCoordinator → Uses pre-computed context (NO service call)");
+
+        let engine_name = context.engine_name();
+        let dimension = context.dimension;
+        let batch_hint = context.batch_size_hint;
+
+        assert_eq!(engine_name, "viper");
+        assert_eq!(dimension, 384);
+        assert!(batch_hint.is_some());
+
+        let new_call_count = mock_service.get_call_count();
+        debug!("   Total calls in NEW approach: {}", new_call_count);
+        assert_eq!(
+            new_call_count, 1,
+            "NEW approach should make only 1 service call"
+        );
+
+        let reduction_percentage =
+            ((old_call_count - new_call_count) as f64 / old_call_count as f64) * 100.0;
+        info!("✅ OPTIMIZATION VALIDATED:");
+        debug!(
+            "   Service calls reduced from {} to {}",
+            old_call_count, new_call_count
+        );
+        debug!(
+            "   Reduction: {:.1}% ({}x fewer calls)",
+            reduction_percentage,
+            old_call_count / new_call_count
+        );
+
+        assert!(
+            reduction_percentage > 60.0,
+            "Should achieve at least 60% reduction"
+        );
+        debug!("🎉 Background flush optimization successfully validated!");
+    }
+
+    #[tokio::test]
+    async fn test_context_metadata_completeness() {
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
+
+        debug!("🧪 VALIDATION: Context contains all metadata needed for background operations");
+
+        let context = BackgroundFlushContext {
+            collection_id: "completeness_test".to_string(),
+            storage_engine: StorageEngineType::Viper,
+            base_location: "file:///tmp/test".to_string(),
+            dimension: 512,
+            distance_metric: DistanceMetric::Euclidean,
+            compression_config: CompressionConfig {
+                enabled: true,
+                compression_type: "zstd".to_string(),
+                level: 3,
+            },
+            filterable_columns: Vec::new(),
+            quantization: None,
+            batch_size_hint: Some(2000),
+            priority: OperationPriority::High,
+            timeout_ms: Some(120_000),
+            extra_metadata: {
+                let mut meta = HashMap::new();
+                meta.insert("test_key".to_string(), "test_value".to_string());
+                meta
+            },
+        };
+
+        assert_eq!(context.collection_id, "completeness_test");
+        assert_eq!(context.storage_engine, StorageEngineType::Viper);
+        assert_eq!(context.engine_name(), "viper");
+        assert_eq!(context.dimension, 512);
+        assert_eq!(context.distance_metric, DistanceMetric::Euclidean);
+        assert_eq!(context.base_location, "file:///tmp/test");
+
+        assert!(context.compression_config.enabled);
+        assert_eq!(context.compression_config.compression_type, "zstd");
+        assert_eq!(context.compression_config.level, 3);
+
+        assert_eq!(context.batch_size_hint, Some(2000));
+        assert_eq!(context.priority, OperationPriority::High);
+        assert_eq!(context.timeout_ms, Some(120_000));
+
+        let row_group_size = context.row_group_size();
+        let flush_threshold = context.flush_threshold();
+
+        assert!(row_group_size > 0, "Row group size should be calculated");
+        assert!(flush_threshold > 0, "Flush threshold should be calculated");
+
+        assert_eq!(
+            context.extra_metadata.get("test_key"),
+            Some(&"test_value".to_string())
+        );
+
+        info!("✅ Context metadata completeness validated");
+        debug!(
+            "   Engine: {} ({})",
+            context.engine_name(),
+            context.storage_engine.clone() as u8
+        );
+        debug!("   Dimension: {}", context.dimension);
+        debug!("   Distance metric: {:?}", context.distance_metric);
+        debug!("   Row group size: {}", row_group_size);
+        debug!("   Flush threshold: {}", flush_threshold);
+        debug!("   Batch hint: {:?}", context.batch_size_hint);
+        debug!("   Priority: {:?}", context.priority);
+        debug!("🎉 Context contains all required metadata for background operations!");
     }
 }

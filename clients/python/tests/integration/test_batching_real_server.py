@@ -12,21 +12,16 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List
 
 import numpy as np
-import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
-from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.batching_unified import (
     BatchConfig,
     BatchMetrics,
-    BatchOperationType,
-    BatchRequest,
     BatchStrategy,
     UnifiedBatchManager,
     batch_insert_vectors,
@@ -159,7 +154,7 @@ class TestRealServerBatching(BaseProximaDBTest):
                     batch_size=10,
                 )
                 local_results.extend([(10, True) for _ in batch_results])
-            except Exception as e:
+            except Exception:
                 local_results.append((count, False))
 
             return local_results

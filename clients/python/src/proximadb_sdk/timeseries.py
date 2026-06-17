@@ -59,25 +59,13 @@ Example:
 
 from __future__ import annotations
 
-import asyncio
 import time
-from abc import ABC, abstractmethod
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from enum import Enum
-from functools import lru_cache
 from typing import (
     Any,
-    AsyncIterator,
-    Awaitable,
-    Callable,
-    Dict,
-    Generic,
-    Iterator,
-    List,
-    Optional,
-    TypeVar,
-    Union,
 )
 
 from tenacity import (
@@ -87,7 +75,6 @@ from tenacity import (
     wait_exponential,
 )
 
-from .document import DocumentRepository
 from .exceptions import ProximaDBError
 
 # =============================================================================
@@ -176,17 +163,17 @@ class ValueColumn:
     name: str
     data_type: ValueType = ValueType.FLOAT
     aggregation: AggregationType = AggregationType.AVG
-    unit: Optional[str] = None
-    description: Optional[str] = None
+    unit: str | None = None
+    description: str | None = None
 
     def __init__(
         self,
         name: str,
-        data_type: Union[ValueType, str] = ValueType.FLOAT,
-        aggregation: Union[AggregationType, str] = AggregationType.AVG,
-        unit: Optional[str] = None,
-        description: Optional[str] = None,
-        type: Optional[Union[ValueType, str]] = None,
+        data_type: ValueType | str = ValueType.FLOAT,
+        aggregation: AggregationType | str = AggregationType.AVG,
+        unit: str | None = None,
+        description: str | None = None,
+        type: ValueType | str | None = None,
     ):
         self.name = name
         raw_type = data_type if type is None else type
@@ -208,12 +195,12 @@ class ValueColumn:
         return self.data_type
 
     @type.setter
-    def type(self, value: Union[ValueType, str]) -> None:
+    def type(self, value: ValueType | str) -> None:
         self.data_type = (
             value if isinstance(value, ValueType) else ValueType(str(value).lower())
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API."""
         return {
             "name": self.name,
@@ -241,28 +228,28 @@ class TimeSeriesCollectionConfig:
 
     name: str
     timestamp_column: str = "timestamp"
-    value_columns: List[ValueColumn] = field(default_factory=list)
-    tag_columns: List[str] = field(default_factory=list)
-    retention_ms: Optional[int] = None
-    downsampling: Optional[Dict[str, Any]] = None
+    value_columns: list[ValueColumn] = field(default_factory=list)
+    tag_columns: list[str] = field(default_factory=list)
+    retention_ms: int | None = None
+    downsampling: dict[str, Any] | None = None
     compression: CompressionCodec = CompressionCodec.GORILLA
-    partitioning: Optional[Dict[str, Any]] = None
-    resolution_ms: Optional[int] = None
+    partitioning: dict[str, Any] | None = None
+    resolution_ms: int | None = None
 
     def __init__(
         self,
         name: str,
         timestamp_column: str = "timestamp",
-        value_columns: Optional[List[Union[ValueColumn, Dict[str, Any]]]] = None,
-        tag_columns: Optional[List[str]] = None,
-        retention_ms: Optional[int] = None,
-        downsampling: Optional[Dict[str, Any]] = None,
-        compression: Union[CompressionCodec, str] = CompressionCodec.GORILLA,
-        partitioning: Optional[Dict[str, Any]] = None,
-        resolution_ms: Optional[int] = None,
-        tags_columns: Optional[List[str]] = None,
-        retention: Optional[str] = None,
-        default_compression: Optional[Union[CompressionCodec, str]] = None,
+        value_columns: list[ValueColumn | dict[str, Any]] | None = None,
+        tag_columns: list[str] | None = None,
+        retention_ms: int | None = None,
+        downsampling: dict[str, Any] | None = None,
+        compression: CompressionCodec | str = CompressionCodec.GORILLA,
+        partitioning: dict[str, Any] | None = None,
+        resolution_ms: int | None = None,
+        tags_columns: list[str] | None = None,
+        retention: str | None = None,
+        default_compression: CompressionCodec | str | None = None,
     ):
         self.name = name
         self.timestamp_column = timestamp_column
@@ -289,7 +276,7 @@ class TimeSeriesCollectionConfig:
         self.resolution_ms = resolution_ms
 
     @staticmethod
-    def _parse_retention_ms(retention: Optional[str]) -> Optional[int]:
+    def _parse_retention_ms(retention: str | None) -> int | None:
         if retention is None:
             return None
         multipliers = {
@@ -308,16 +295,16 @@ class TimeSeriesCollectionConfig:
         return None
 
     @property
-    def tags_columns(self) -> List[str]:
+    def tags_columns(self) -> list[str]:
         return self.tag_columns
 
     @property
-    def retention(self) -> Optional[str]:
+    def retention(self) -> str | None:
         if self.retention_ms is None:
             return None
         return f"{self.retention_ms}ms"
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API."""
         return {
             "name": self.name,
@@ -342,11 +329,11 @@ class Metric:
         tags: Dictionary of tag names to values
     """
 
-    timestamp: Union[datetime, str]
-    values: Dict[str, Any]
-    tags: Dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime | str
+    values: dict[str, Any]
+    tags: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format for API."""
         if isinstance(self.timestamp, datetime):
             timestamp_str = self.timestamp.isoformat()
@@ -372,11 +359,11 @@ class AggregatedMetric:
     """
 
     timestamp: datetime
-    values: Dict[str, Any]
+    values: dict[str, Any]
     count: int
-    tags: Dict[str, Any] = field(default_factory=dict)
+    tags: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary format."""
         return {
             "timestamp": self.timestamp.isoformat(),
@@ -391,8 +378,8 @@ class TimeSeriesQueryResponse:
 
     def __init__(
         self,
-        metrics: Optional[List[Dict[str, Any]]] = None,
-        raw_points: Optional[List[Dict[str, Any]]] = None,
+        metrics: list[dict[str, Any]] | None = None,
+        raw_points: list[dict[str, Any]] | None = None,
         total_points: int = 0,
         query_time_ms: int = 0,
     ):
@@ -401,7 +388,7 @@ class TimeSeriesQueryResponse:
         self.total_points = total_points
         self.query_time_ms = query_time_ms
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "metrics": self.metrics,
             "raw_points": self.raw_points,
@@ -412,7 +399,7 @@ class TimeSeriesQueryResponse:
     def get(self, key: str, default: Any = None) -> Any:
         return self.to_dict().get(key, default)
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         return iter(self.metrics or self.raw_points)
 
     def __len__(self) -> int:
@@ -440,48 +427,48 @@ class TimeSeriesFilter:
     """
 
     def __init__(self):
-        self._tag_filters: List[Dict[str, Any]] = []
-        self._value_filters: List[Dict[str, Any]] = []
-        self._start_time: Optional[datetime] = None
-        self._end_time: Optional[datetime] = None
-        self._limit: Optional[int] = None
+        self._tag_filters: list[dict[str, Any]] = []
+        self._value_filters: list[dict[str, Any]] = []
+        self._start_time: datetime | None = None
+        self._end_time: datetime | None = None
+        self._limit: int | None = None
         self._logic: str = "AND"
 
-    def tag(self, key: str, value: Any) -> "TimeSeriesFilter":
+    def tag(self, key: str, value: Any) -> TimeSeriesFilter:
         """Add tag equality filter."""
         self._tag_filters.append({"key": key, "op": "eq", "value": value})
         return self
 
-    def tag_in(self, key: str, values: List[Any]) -> "TimeSeriesFilter":
+    def tag_in(self, key: str, values: list[Any]) -> TimeSeriesFilter:
         """Add tag in-list filter."""
         self._tag_filters.append({"key": key, "op": "in", "value": values})
         return self
 
-    def gte(self, column: str, value: Any) -> "TimeSeriesFilter":
+    def gte(self, column: str, value: Any) -> TimeSeriesFilter:
         """Add greater-than-or-equal filter."""
         self._value_filters.append({"column": column, "op": "gte", "value": value})
         return self
 
-    def lte(self, column: str, value: Any) -> "TimeSeriesFilter":
+    def lte(self, column: str, value: Any) -> TimeSeriesFilter:
         """Add less-than-or-equal filter."""
         self._value_filters.append({"column": column, "op": "lte", "value": value})
         return self
 
-    def gt(self, column: str, value: Any) -> "TimeSeriesFilter":
+    def gt(self, column: str, value: Any) -> TimeSeriesFilter:
         """Add greater-than filter."""
         self._value_filters.append({"column": column, "op": "gt", "value": value})
         return self
 
-    def lt(self, column: str, value: Any) -> "TimeSeriesFilter":
+    def lt(self, column: str, value: Any) -> TimeSeriesFilter:
         """Add less-than filter."""
         self._value_filters.append({"column": column, "op": "lt", "value": value})
         return self
 
     def time_range(
         self,
-        start: Union[str, datetime],
-        end: Union[str, datetime],
-    ) -> "TimeSeriesFilter":
+        start: str | datetime,
+        end: str | datetime,
+    ) -> TimeSeriesFilter:
         """Add time range filter."""
         if isinstance(start, str):
             start = datetime.fromisoformat(start)
@@ -492,22 +479,22 @@ class TimeSeriesFilter:
         self._end_time = end
         return self
 
-    def limit(self, n: int) -> "TimeSeriesFilter":
+    def limit(self, n: int) -> TimeSeriesFilter:
         """Set result limit."""
         self._limit = n
         return self
 
-    def and_(self) -> "TimeSeriesFilter":
+    def and_(self) -> TimeSeriesFilter:
         """Switch to AND logic."""
         self._logic = "AND"
         return self
 
-    def or_(self) -> "TimeSeriesFilter":
+    def or_(self) -> TimeSeriesFilter:
         """Switch to OR logic."""
         self._logic = "OR"
         return self
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to API filter format."""
         return {
             "tag_filters": self._tag_filters,
@@ -537,9 +524,9 @@ class TimeSeriesRepository:
         _compression: Default compression codec
     """
 
-    _shared_batch_buffer: Dict[str, List[Dict[str, Any]]] = {}
-    _shared_collections: Dict[str, TimeSeriesCollectionConfig] = {}
-    _shared_points: Dict[str, List[Dict[str, Any]]] = {}
+    _shared_batch_buffer: dict[str, list[dict[str, Any]]] = {}
+    _shared_collections: dict[str, TimeSeriesCollectionConfig] = {}
+    _shared_points: dict[str, list[dict[str, Any]]] = {}
 
     def __init__(
         self,
@@ -556,7 +543,7 @@ class TimeSeriesRepository:
         self._points = self.__class__._shared_points
 
     @staticmethod
-    def _parse_timestamp(value: Union[str, datetime]) -> datetime:
+    def _parse_timestamp(value: str | datetime) -> datetime:
         if isinstance(value, datetime):
             dt = value
         else:
@@ -574,8 +561,8 @@ class TimeSeriesRepository:
 
     @staticmethod
     def _normalize_aggregation(
-        aggregation: Optional[Union[AggregationType, str]],
-    ) -> Optional[AggregationType]:
+        aggregation: AggregationType | str | None,
+    ) -> AggregationType | None:
         if aggregation is None:
             return None
         if isinstance(aggregation, AggregationType):
@@ -583,7 +570,7 @@ class TimeSeriesRepository:
         return AggregationType(str(aggregation).lower())
 
     @staticmethod
-    def _interval_to_bucket_ms(interval: Optional[str]) -> Optional[int]:
+    def _interval_to_bucket_ms(interval: str | None) -> int | None:
         if not interval:
             return None
         raw = str(interval).strip().lower()
@@ -613,7 +600,7 @@ class TimeSeriesRepository:
         self._batch_buffer.setdefault(collection_id, [])
         self._points.setdefault(collection_id, [])
 
-    def _infer_collection(self, collection_id: str, metrics: List[Metric]) -> None:
+    def _infer_collection(self, collection_id: str, metrics: list[Metric]) -> None:
         if collection_id in self._collections or not metrics:
             return
         normalized = self._normalize_metric(metrics[0])
@@ -627,9 +614,7 @@ class TimeSeriesRepository:
             tag_columns=list(normalized["tags"].keys()),
         )
 
-    def _normalize_metric(
-        self, metric: Union[Metric, Dict[str, Any]]
-    ) -> Dict[str, Any]:
+    def _normalize_metric(self, metric: Metric | dict[str, Any]) -> dict[str, Any]:
         if isinstance(metric, Metric):
             return {
                 "timestamp": self._parse_timestamp(metric.timestamp),
@@ -652,14 +637,14 @@ class TimeSeriesRepository:
             "tags": dict(tags),
         }
 
-    def _serialize_point(self, point: Dict[str, Any]) -> Dict[str, Any]:
+    def _serialize_point(self, point: dict[str, Any]) -> dict[str, Any]:
         return {
             "timestamp": self._format_timestamp(point["timestamp"]),
             "values": dict(point["values"]),
             "tags": dict(point["tags"]),
         }
 
-    def _collection_info(self, collection_id: str) -> Optional[Dict[str, Any]]:
+    def _collection_info(self, collection_id: str) -> dict[str, Any] | None:
         config = self._collections.get(collection_id)
         if config is None:
             return None
@@ -682,9 +667,9 @@ class TimeSeriesRepository:
 
     def _matches_filter(
         self,
-        point: Dict[str, Any],
-        filter_value: Optional[Union[TimeSeriesFilter, Dict[str, Any]]],
-        tag_filters: Optional[Dict[str, Any]] = None,
+        point: dict[str, Any],
+        filter_value: TimeSeriesFilter | dict[str, Any] | None,
+        tag_filters: dict[str, Any] | None = None,
     ) -> bool:
         if tag_filters:
             for key, expected in tag_filters.items():
@@ -700,7 +685,7 @@ class TimeSeriesRepository:
             else dict(filter_value)
         )
         logic = str(filter_dict.get("logic", "AND")).upper()
-        results: List[bool] = []
+        results: list[bool] = []
 
         raw_tag_filters = filter_dict.get("tag_filters", [])
         if isinstance(raw_tag_filters, dict):
@@ -746,8 +731,8 @@ class TimeSeriesRepository:
         return all(results) if logic == "AND" else any(results)
 
     def _value_column_names(
-        self, collection_id: str, value_columns: Optional[List[str]] = None
-    ) -> List[str]:
+        self, collection_id: str, value_columns: list[str] | None = None
+    ) -> list[str]:
         if value_columns:
             return list(value_columns)
         config = self._collections.get(collection_id)
@@ -758,7 +743,7 @@ class TimeSeriesRepository:
             return []
         return list(points[0]["values"].keys())
 
-    def _bucket_start(self, timestamp: datetime, bucket_ms: Optional[int]) -> datetime:
+    def _bucket_start(self, timestamp: datetime, bucket_ms: int | None) -> datetime:
         if not bucket_ms:
             return timestamp
         epoch_ms = int(timestamp.replace(tzinfo=timezone.utc).timestamp() * 1000)
@@ -767,7 +752,7 @@ class TimeSeriesRepository:
             tzinfo=None
         )
 
-    def _aggregate_value(self, values: List[Any], aggregation: AggregationType) -> Any:
+    def _aggregate_value(self, values: list[Any], aggregation: AggregationType) -> Any:
         if aggregation == AggregationType.COUNT:
             return len(values)
 
@@ -796,28 +781,28 @@ class TimeSeriesRepository:
     def _aggregate_points(
         self,
         collection_id: str,
-        points: List[Dict[str, Any]],
+        points: list[dict[str, Any]],
         aggregation: AggregationType,
-        bucket_ms: Optional[int],
-        value_columns: Optional[List[str]] = None,
-        group_columns: Optional[List[str]] = None,
-    ) -> List[Dict[str, Any]]:
+        bucket_ms: int | None,
+        value_columns: list[str] | None = None,
+        group_columns: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         selected_columns = self._value_column_names(collection_id, value_columns)
         group_columns = group_columns or []
-        buckets: Dict[Any, List[Dict[str, Any]]] = {}
+        buckets: dict[Any, list[dict[str, Any]]] = {}
         for point in points:
             bucket_time = self._bucket_start(point["timestamp"], bucket_ms)
             group_key = tuple(point["tags"].get(column) for column in group_columns)
             bucket_key = (bucket_time, group_key)
             buckets.setdefault(bucket_key, []).append(point)
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         for (bucket_time, group_key), bucket_points in sorted(
             buckets.items(), key=lambda item: item[0][0]
         ):
             bucket_points = sorted(bucket_points, key=lambda point: point["timestamp"])
             primary_column = selected_columns[0] if selected_columns else None
-            metric: Dict[str, Any] = {
+            metric: dict[str, Any] = {
                 "timestamp": self._format_timestamp(bucket_time),
                 "count": len(bucket_points),
             }
@@ -906,13 +891,13 @@ class TimeSeriesRepository:
                 f"Failed to create timeseries collection '{config.name}': {e}"
             )
 
-    def get_collection(self, collection_id: str) -> Optional[Dict[str, Any]]:
+    def get_collection(self, collection_id: str) -> dict[str, Any] | None:
         """Get collection metadata."""
         return self._collection_info(collection_id)
 
-    def list_collections(self) -> List[Dict[str, Any]]:
+    def list_collections(self) -> list[dict[str, Any]]:
         """List all time-series collections."""
-        collections: List[Dict[str, Any]] = []
+        collections: list[dict[str, Any]] = []
         for collection_id in self._collections:
             info = self.get_collection(collection_id)
             if info is not None:
@@ -933,8 +918,8 @@ class TimeSeriesRepository:
     def ingest(
         self,
         collection_id: str,
-        metrics: List[Union[Metric, Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+        metrics: list[Metric | dict[str, Any]],
+    ) -> dict[str, Any]:
         """Ingest time-series metrics."""
         if not metrics:
             return {"success": True, "ingested_count": 0, "failed_count": 0}
@@ -980,7 +965,7 @@ class TimeSeriesRepository:
 
             return result
 
-        except Exception as e:
+        except Exception:
             # Fallback to local ingestion for offline scenarios
             self._infer_collection(
                 collection_id,
@@ -1008,8 +993,8 @@ class TimeSeriesRepository:
     def ingest_batch(
         self,
         collection_id: str,
-        metrics: List[Union[Metric, Dict[str, Any]]],
-    ) -> Dict[str, Any]:
+        metrics: list[Metric | dict[str, Any]],
+    ) -> dict[str, Any]:
         """Ingest metrics and immediately flush."""
         result = self.ingest(collection_id, metrics)
         flush_result = self.flush_batch(collection_id)
@@ -1023,15 +1008,15 @@ class TimeSeriesRepository:
     def query(
         self,
         collection_id: str,
-        start_time: Union[str, datetime],
-        end_time: Union[str, datetime],
-        filter: Optional[Union[TimeSeriesFilter, Dict[str, Any]]] = None,
-        aggregation: Optional[Union[AggregationType, str]] = None,
-        interval: Optional[str] = None,
+        start_time: str | datetime,
+        end_time: str | datetime,
+        filter: TimeSeriesFilter | dict[str, Any] | None = None,
+        aggregation: AggregationType | str | None = None,
+        interval: str | None = None,
         limit: int = 1000,
-        bucket_ms: Optional[int] = None,
-        tag_filters: Optional[Dict[str, Any]] = None,
-        value_columns: Optional[List[str]] = None,
+        bucket_ms: int | None = None,
+        tag_filters: dict[str, Any] | None = None,
+        value_columns: list[str] | None = None,
     ) -> TimeSeriesQueryResponse:
         """Query time-series data with optional aggregation."""
         started_at = time.time()
@@ -1111,8 +1096,8 @@ class TimeSeriesRepository:
     def get_latest(
         self,
         collection_id: str,
-        tags: Dict[str, Any],
-    ) -> Optional[Metric]:
+        tags: dict[str, Any],
+    ) -> Metric | None:
         """Get the latest metric for given tags."""
         matched = [
             point
@@ -1131,8 +1116,8 @@ class TimeSeriesRepository:
     def get_latest_batch(
         self,
         collection_id: str,
-        tags_list: List[Dict[str, Any]],
-    ) -> List[Optional[Metric]]:
+        tags_list: list[dict[str, Any]],
+    ) -> list[Metric | None]:
         """Get latest metrics for multiple tag combinations.
 
         Args:
@@ -1161,17 +1146,17 @@ class TimeSeriesRepository:
     def aggregate(
         self,
         collection_id: str,
-        start_time: Union[str, datetime],
-        end_time: Union[str, datetime],
-        aggregation: Optional[Union[AggregationType, str]] = None,
-        interval: Optional[str] = None,
-        value_column: Optional[str] = None,
-        pipeline: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        start_time: str | datetime,
+        end_time: str | datetime,
+        aggregation: AggregationType | str | None = None,
+        interval: str | None = None,
+        value_column: str | None = None,
+        pipeline: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Aggregate time-series data."""
         started_at = time.time()
         if pipeline:
-            result_metrics: List[Dict[str, Any]] = []
+            result_metrics: list[dict[str, Any]] = []
             for stage in pipeline:
                 if stage.get("stage") == "group_by":
                     response = self.query(
@@ -1246,7 +1231,7 @@ class TimeSeriesRepository:
         target_collection: str,
         interval: str,
         mode: DownsampleMode = DownsampleMode.TIME_FIXED,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Downsample time-series data to a new collection.
 
         Args:
@@ -1275,7 +1260,7 @@ class TimeSeriesRepository:
     # Batch Operations
     # ========================================================================
 
-    def flush_batch(self, collection_id: str) -> Dict[str, Any]:
+    def flush_batch(self, collection_id: str) -> dict[str, Any]:
         """Flush pending batch operations."""
         if collection_id not in self._batch_buffer:
             return {"success": True, "flushed": 0}
@@ -1331,16 +1316,16 @@ class ProximaDBTimeSeries:
 
     def create_collection(
         self,
-        name: Optional[str] = None,
-        value_columns: Optional[List[ValueColumn]] = None,
-        tags_columns: Optional[List[str]] = None,
+        name: str | None = None,
+        value_columns: list[ValueColumn] | None = None,
+        tags_columns: list[str] | None = None,
         timestamp_column: str = "timestamp",
-        retention: Optional[str] = "30d",
+        retention: str | None = "30d",
         compression: CompressionCodec = CompressionCodec.GORILLA,
-        config: Optional[TimeSeriesCollectionConfig] = None,
-        tag_columns: Optional[List[str]] = None,
-        retention_ms: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        config: TimeSeriesCollectionConfig | None = None,
+        tag_columns: list[str] | None = None,
+        retention_ms: int | None = None,
+    ) -> dict[str, Any]:
         """Create a time-series collection."""
         resolved_config = config or TimeSeriesCollectionConfig(
             name=name or "",
@@ -1359,9 +1344,9 @@ class ProximaDBTimeSeries:
     def ingest(
         self,
         collection_id: str,
-        metrics: Optional[List[Union[Metric, Dict[str, Any]]]] = None,
-        points: Optional[List[Union[Metric, Dict[str, Any]]]] = None,
-    ) -> Dict[str, Any]:
+        metrics: list[Metric | dict[str, Any]] | None = None,
+        points: list[Metric | dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Ingest time-series metrics."""
         payload = points if points is not None else metrics or []
         return self._repository.ingest(collection_id, payload)
@@ -1369,15 +1354,15 @@ class ProximaDBTimeSeries:
     def query(
         self,
         collection_id: str,
-        start_time: Union[str, datetime],
-        end_time: Union[str, datetime],
-        filter: Optional[Union[TimeSeriesFilter, Dict[str, Any]]] = None,
-        aggregation: Optional[Union[AggregationType, str]] = None,
-        interval: Optional[str] = None,
+        start_time: str | datetime,
+        end_time: str | datetime,
+        filter: TimeSeriesFilter | dict[str, Any] | None = None,
+        aggregation: AggregationType | str | None = None,
+        interval: str | None = None,
         limit: int = 1000,
-        bucket_ms: Optional[int] = None,
-        tag_filters: Optional[Dict[str, Any]] = None,
-        value_columns: Optional[List[str]] = None,
+        bucket_ms: int | None = None,
+        tag_filters: dict[str, Any] | None = None,
+        value_columns: list[str] | None = None,
     ) -> TimeSeriesQueryResponse:
         """Query time-series data."""
         return self._repository.query(
@@ -1396,8 +1381,8 @@ class ProximaDBTimeSeries:
     def get_latest(
         self,
         collection_id: str,
-        tags: Dict[str, Any],
-    ) -> Optional[Metric]:
+        tags: dict[str, Any],
+    ) -> Metric | None:
         """Get latest metric for tags.
 
         Args:
@@ -1415,7 +1400,7 @@ class ProximaDBTimeSeries:
         """
         return self._repository.get_latest(collection_id, tags)
 
-    def list_collections(self) -> List[Dict[str, Any]]:
+    def list_collections(self) -> list[dict[str, Any]]:
         """List time-series collections."""
         return self._repository.list_collections()
 
@@ -1426,13 +1411,13 @@ class ProximaDBTimeSeries:
     def aggregate(
         self,
         collection_id: str,
-        start_time: Union[str, datetime],
-        end_time: Union[str, datetime],
-        pipeline: Optional[List[Dict[str, Any]]] = None,
-        aggregation: Optional[Union[AggregationType, str]] = None,
-        interval: Optional[str] = None,
-        value_column: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        start_time: str | datetime,
+        end_time: str | datetime,
+        pipeline: list[dict[str, Any]] | None = None,
+        aggregation: AggregationType | str | None = None,
+        interval: str | None = None,
+        value_column: str | None = None,
+    ) -> dict[str, Any]:
         """Run an aggregation pipeline."""
         return self._repository.aggregate(
             collection_id=collection_id,
@@ -1444,7 +1429,7 @@ class ProximaDBTimeSeries:
             pipeline=pipeline,
         )
 
-    def flush(self, collection_id: str) -> Dict[str, Any]:
+    def flush(self, collection_id: str) -> dict[str, Any]:
         """Flush pending batch operations.
 
         Args:

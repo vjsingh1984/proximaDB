@@ -224,6 +224,7 @@ pub trait Transform: Send + Sync {
 
 /// Result of a transformation
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum TransformResult {
     /// Event was transformed successfully
     Transformed(ChangeEvent),

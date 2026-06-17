@@ -65,7 +65,7 @@ pub fn parse_distance_metric(metric: &str) -> Result<DistanceMetric> {
         "cosine" => Ok(DistanceMetric::Cosine),
         "euclidean" | "l2" => Ok(DistanceMetric::Euclidean),
         "manhattan" | "l1" => Ok(DistanceMetric::Manhattan),
-        "dot" | "inner_product" => Ok(DistanceMetric::DotProduct),
+        "dot" | "dot_product" | "inner_product" => Ok(DistanceMetric::DotProduct),
         _ => Err(anyhow::anyhow!("Invalid distance metric: {}", metric)),
     }
 }
@@ -222,7 +222,7 @@ impl From<OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|v| (**v).clone())
                 .unwrap_or_default(),
-            metadata: native.metadata,
+            metadata: crate::core::search::results::proxima_map_to_sql(native.metadata),
             version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp,
@@ -291,7 +291,7 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
                 .as_ref()
                 .map(|v| (**v).clone())
                 .unwrap_or_default(),
-            metadata: native.metadata.clone(),
+            metadata: crate::core::search::results::proxima_map_to_sql(native.metadata.clone()),
             version: native.version,
             similarity: native.similarity,
             timestamp: native.timestamp,
@@ -350,14 +350,15 @@ impl From<&OptimizedSearchRecord> for SearchVectorRecord {
     }
 }
 
-impl From<Vec<crate::core::search::results::OptimizedSearchRecord>> for ProtoSearchResult {
-    fn from(results: Vec<crate::core::search::results::OptimizedSearchRecord>) -> Self {
-        let total_found = results.len() as i64;
-        ProtoSearchResult {
-            results: results.into_iter().map(SearchVectorRecord::from).collect(),
-            total_found,
-            collection_id: None,
-        }
+/// Convert optimized native search results into the proto search-result envelope.
+pub fn optimized_results_to_proto_search_result(
+    results: Vec<crate::core::search::results::OptimizedSearchRecord>,
+) -> ProtoSearchResult {
+    let total_found = results.len() as i64;
+    ProtoSearchResult {
+        results: results.into_iter().map(SearchVectorRecord::from).collect(),
+        total_found,
+        collection_id: None,
     }
 }
 
@@ -497,6 +498,19 @@ pub fn sql_values_to_json_map(
     out
 }
 
+/// Convert a ProximaValue metadata map to JSON values.
+pub fn proxima_values_to_json_map(
+    items: HashMap<String, proximadb_data_model::ProximaValue>,
+) -> HashMap<String, serde_json::Value> {
+    items
+        .into_iter()
+        .map(|(k, v)| {
+            let json = crate::embedded::proxima_value_to_json(v);
+            (k, json)
+        })
+        .collect()
+}
+
 /// Convert a JSON map to v1 SqlValue map
 pub fn json_map_to_sql_values(
     items: HashMap<String, serde_json::Value>,
@@ -571,6 +585,8 @@ pub fn build_collection_config(
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     // Apply smart defaults from proto comments

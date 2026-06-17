@@ -56,7 +56,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
-use crate::infrastructure::concurrent_structures::{AtomicMetrics, MetricsSnapshot};
+use crate::infrastructure::concurrent_structures::{AtomicMetrics, ConcurrentMetricsSnapshot};
 use crate::infrastructure::tier_policy_engine::{
     CollectionStorageConfig, CollectionStorageLimits, GlobalTier, InfrastructureTier,
     SmartTierPolicy, WorkloadMetrics, WorkloadPattern,
@@ -94,7 +94,7 @@ where
     async fn clear(&self);
 
     /// Get performance metrics
-    async fn metrics(&self) -> MetricsSnapshot;
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot;
 
     /// Get workload metrics for analysis
     async fn workload_metrics(&self) -> WorkloadMetrics;
@@ -289,14 +289,17 @@ pub struct AdaptiveStoreConfig {
     /// Backend type configuration
     pub backend_type: BackendType,
     /// Tier management settings
-    pub tier_config: TierConfig,
+    pub tier_config: AdaptiveTierConfig,
     /// Metrics collection settings
     pub metrics_config: MetricsConfig,
 }
 
+/// Backwards-compat alias for [`AdaptiveTierConfig`].
+pub type TierConfig = AdaptiveTierConfig;
+
 /// Tier management settings for an adaptive store
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct TierConfig {
+pub struct AdaptiveTierConfig {
     /// Enable tier management
     pub enable_tiering: bool,
     /// Rebalancing interval
@@ -406,7 +409,7 @@ impl UniversalTier {
     }
 
     /// Get performance metrics
-    pub fn metrics(&self) -> MetricsSnapshot {
+    pub fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.performance_metrics.snapshot()
     }
 }
@@ -696,7 +699,7 @@ impl AdaptiveStoreFactory {
                         },
                     },
                 },
-                tier_config: TierConfig {
+                tier_config: AdaptiveTierConfig {
                     enable_tiering: true,
                     rebalance_interval: Duration::from_secs(300),
                     memory_pressure_threshold: 0.8,
@@ -743,7 +746,7 @@ impl AdaptiveStoreFactory {
                         },
                     },
                 },
-                tier_config: TierConfig {
+                tier_config: AdaptiveTierConfig {
                     enable_tiering: true,
                     rebalance_interval: Duration::from_secs(120),
                     memory_pressure_threshold: 0.9,
@@ -777,7 +780,7 @@ impl AdaptiveStoreFactory {
                     switch_confidence_threshold: 0.95,
                 },
             },
-            tier_config: TierConfig {
+            tier_config: AdaptiveTierConfig {
                 enable_tiering: true,
                 rebalance_interval: Duration::from_secs(180),
                 memory_pressure_threshold: 0.85,
@@ -1153,7 +1156,7 @@ where
         );
     }
 
-    async fn metrics(&self) -> MetricsSnapshot {
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 
@@ -1296,7 +1299,7 @@ where
         );
     }
 
-    async fn metrics(&self) -> MetricsSnapshot {
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 
@@ -1408,7 +1411,7 @@ where
         // Note: AtomicMetrics doesn't have a reset method, metrics will continue accumulating
     }
 
-    async fn metrics(&self) -> MetricsSnapshot {
+    async fn metrics(&self) -> ConcurrentMetricsSnapshot {
         self.metrics.snapshot()
     }
 
@@ -1463,7 +1466,7 @@ mod tests {
                 },
                 tier_policy: create_default_unified_tier_policy(),
             },
-            tier_config: TierConfig {
+            tier_config: AdaptiveTierConfig {
                 enable_tiering: true,
                 rebalance_interval: Duration::from_secs(60),
                 memory_pressure_threshold: 0.8,
@@ -1840,7 +1843,7 @@ mod tests {
                     },
                 },
             },
-            tier_config: TierConfig {
+            tier_config: AdaptiveTierConfig {
                 enable_tiering: true,
                 rebalance_interval: Duration::from_secs(60),
                 memory_pressure_threshold: 0.8,

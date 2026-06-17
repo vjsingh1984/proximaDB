@@ -22,7 +22,7 @@ fn init_hardware() {
 }
 
 use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
-use proximadb::compute::quantization::unified::{InMemoryCodebookStore, UnifiedQuantizationEngine};
+use proximadb::compute::quantization::{InMemoryCodebookStore, UnifiedQuantizationEngine};
 use proximadb::compute::quantization::{StorageQuantizationConfig, StorageQuantizationEngine};
 use proximadb::core::memory::pool::VectorMemoryPool;
 

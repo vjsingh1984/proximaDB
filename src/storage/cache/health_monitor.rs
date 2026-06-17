@@ -24,7 +24,7 @@ pub struct CacheMonitoringDashboard {
     /// Historical metrics
     history: Arc<RwLock<MetricsHistory>>,
 
-    /// Alert manager
+    /// CacheHealthAlert manager
     alert_manager: Arc<AlertManager>,
 
     /// Performance profiler
@@ -37,7 +37,7 @@ pub struct CacheMonitoringDashboard {
 #[derive(Debug, Clone, Default)]
 struct MetricsHistory {
     /// Time series data points
-    time_series: Vec<MetricsSnapshot>,
+    time_series: Vec<CacheHealthMetricsSnapshot>,
 
     /// Maximum history size
     max_size: usize,
@@ -47,7 +47,7 @@ struct MetricsHistory {
 ///
 /// Captures cache metrics and system resource usage at a specific moment in time.
 #[derive(Debug, Clone)]
-pub struct MetricsSnapshot {
+pub struct CacheHealthMetricsSnapshot {
     /// When the snapshot was taken
     pub timestamp: SystemTime,
     /// Cache performance metrics
@@ -60,17 +60,17 @@ pub struct MetricsSnapshot {
     pub io_wait: f64,
 }
 
-/// Alert manager for threshold monitoring
+/// CacheHealthAlert manager for threshold monitoring
 ///
 /// Monitors cache metrics and triggers alerts when thresholds are exceeded.
 pub struct AlertManager {
     /// Active alerts
-    active_alerts: Arc<RwLock<Vec<Alert>>>,
+    active_alerts: Arc<RwLock<Vec<CacheHealthAlert>>>,
 
-    /// Alert thresholds from config
+    /// CacheHealthAlert thresholds from config
     _thresholds: AlertThresholds,
 
-    /// Alert handlers
+    /// CacheHealthAlert handlers
     _handlers: Vec<Box<dyn AlertHandler + Send + Sync>>,
 }
 
@@ -78,10 +78,10 @@ pub struct AlertManager {
 ///
 /// Represents a cache-related alert triggered when a threshold is exceeded.
 #[derive(Debug, Clone)]
-pub struct Alert {
+pub struct CacheHealthAlert {
     /// Unique alert identifier
     pub id: String,
-    /// Alert severity level
+    /// CacheHealthAlert severity level
     pub severity: AlertSeverity,
     /// Human-readable alert message
     pub message: String,
@@ -95,7 +95,7 @@ pub struct Alert {
     pub threshold: f64,
 }
 
-/// Alert severity levels
+/// CacheHealthAlert severity levels
 ///
 /// Indicates the urgency and impact of an alert.
 #[derive(Debug, Clone)]
@@ -108,7 +108,7 @@ pub enum AlertSeverity {
     Critical,
 }
 
-/// Alert thresholds configuration
+/// CacheHealthAlert thresholds configuration
 ///
 /// Defines threshold values for triggering cache alerts.
 #[derive(Debug, Clone)]
@@ -125,13 +125,13 @@ pub struct AlertThresholds {
     _max_prefetch_queue: usize,
 }
 
-/// Alert handler trait
+/// CacheHealthAlert handler trait
 ///
 /// Defines the interface for handling cache alerts.
 trait AlertHandler: Send + Sync {
     /// Handle an alert
     #[allow(dead_code)]
-    fn handle_alert(&self, alert: &Alert);
+    fn handle_alert(&self, alert: &CacheHealthAlert);
 }
 
 /// Performance profiler for detailed analysis
@@ -292,7 +292,7 @@ impl CacheMonitoringDashboard {
                 };
 
                 // Create snapshot
-                let snapshot = MetricsSnapshot {
+                let snapshot = CacheHealthMetricsSnapshot {
                     timestamp: SystemTime::now(),
                     cache_metrics: metrics.clone(),
                     memory_pressure: Self::get_memory_pressure(),
@@ -318,7 +318,7 @@ impl CacheMonitoringDashboard {
     }
 
     /// Get current dashboard state
-    pub async fn get_dashboard_state(&self) -> DashboardState {
+    pub async fn get_dashboard_state(&self) -> CacheHealthDashboardState {
         let history = self.history.read().await;
         let alerts = self.alert_manager.active_alerts.read().await;
         // Convert from CacheMetrics to CacheMetricsSnapshot
@@ -390,7 +390,7 @@ impl CacheMonitoringDashboard {
             last_updated: SystemTime::now(),
         };
 
-        DashboardState {
+        CacheHealthDashboardState {
             current_metrics: metrics.clone(),
             active_alerts: alerts.clone(),
             recent_history: history
@@ -483,14 +483,18 @@ impl CacheMonitoringDashboard {
 /// Dashboard state for API responses
 ///
 /// Aggregates current metrics, alerts, and historical data for dashboard display.
+///
+/// Backwards-compat alias for [`CacheHealthDashboardState`].
+pub type DashboardState = CacheHealthDashboardState;
+
 #[derive(Debug, Clone)]
-pub struct DashboardState {
+pub struct CacheHealthDashboardState {
     /// Current cache metrics snapshot
     pub current_metrics: CacheMetricsSnapshot,
     /// Currently active alerts
-    pub active_alerts: Vec<Alert>,
+    pub active_alerts: Vec<CacheHealthAlert>,
     /// Historical metrics data
-    pub recent_history: Vec<MetricsSnapshot>,
+    pub recent_history: Vec<CacheHealthMetricsSnapshot>,
     /// Per-cache status information
     pub cache_status: HashMap<String, CacheStatus>,
     /// Optimization suggestions
@@ -527,7 +531,7 @@ impl AlertManager {
         }
     }
 
-    pub async fn get_active_alerts(&self) -> Vec<Alert> {
+    pub async fn get_active_alerts(&self) -> Vec<CacheHealthAlert> {
         self.active_alerts.read().await.clone()
     }
 
@@ -541,7 +545,7 @@ impl AlertManager {
 
         // Check hit rate
         if metrics.overall_hit_rate < thresholds.min_hit_rate {
-            alerts.push(Alert {
+            alerts.push(CacheHealthAlert {
                 id: "low_hit_rate".to_string(),
                 severity: AlertSeverity::Warning,
                 message: format!(
@@ -559,7 +563,7 @@ impl AlertManager {
         let memory_usage = metrics.memory_usage.used_bytes as f64
             / metrics.memory_usage.total_allocated_bytes as f64;
         if memory_usage > thresholds.max_memory_usage {
-            alerts.push(Alert {
+            alerts.push(CacheHealthAlert {
                 id: "high_memory_usage".to_string(),
                 severity: AlertSeverity::Critical,
                 message: format!(

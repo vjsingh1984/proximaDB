@@ -12,12 +12,16 @@
 //!
 //! Design principles:
 //! - Reuse existing UnifiedHandlers for consistency with REST/gRPC
-//! - Reuse existing Arrow infrastructure (arrow_ipc_scanner, unified_columnar_io)
+//! - Reuse existing Arrow infrastructure (arrow_ipc_scanner, columnar_io)
 //! - Minimal new code, maximum leverage of proven patterns
 
 pub mod codec;
 pub mod file_export;
+pub mod multimodal_codec;
 pub mod multimodel_codec;
+/// `rank_features_export` Flight action (R-7c.4b) — streams the rank
+/// pipeline's per-doc match_features as Arrow IPC for offline LTR.
+pub mod rank_features_export;
 pub mod server;
 pub mod service;
 

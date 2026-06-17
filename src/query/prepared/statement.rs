@@ -9,7 +9,9 @@ use dashmap::DashMap;
 use thiserror::Error;
 use tracing::{debug, info};
 
-use crate::query::federated::{CrossModelOptimizer, FederatedParser, FederatedQuery, QueryPlan};
+use crate::query::federated::{
+    CrossModelOptimizer, FederatedParser, FederatedQuery, FederatedQueryPlan,
+};
 
 /// Unique identifier for a prepared statement
 pub type PreparedStatementId = String;
@@ -184,7 +186,7 @@ pub struct PreparedStatement {
     /// Parsed federated query (Arc for sharing without Clone)
     pub parsed_query: Arc<FederatedQuery>,
     /// Optimized query plan (Arc for sharing without Clone)
-    pub optimized_plan: Arc<QueryPlan>,
+    pub optimized_plan: Arc<FederatedQueryPlan>,
     /// Parameter bindings extracted from the SQL
     pub parameter_bindings: Vec<ParameterBinding>,
     /// Creation timestamp
@@ -352,7 +354,7 @@ impl PreparedStatement {
 
         // Sort bindings by position in reverse order to avoid index shifting
         let mut bindings_with_params: Vec<_> = self.parameter_bindings.iter().enumerate().collect();
-        bindings_with_params.sort_by(|a, b| b.1.position.cmp(&a.1.position));
+        bindings_with_params.sort_by_key(|b| std::cmp::Reverse(b.1.position));
 
         // Replace from the end to avoid position shifts
         for (param_idx, _binding) in &bindings_with_params {
@@ -580,7 +582,7 @@ impl PreparedStatementCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> CacheStats {
+    pub fn stats(&self) -> PreparedStatementCacheStats {
         let mut total_executions = 0u64;
         let mut oldest_access = Instant::now();
         let mut total_access_count = 0u64;
@@ -593,7 +595,7 @@ impl PreparedStatementCache {
             }
         }
 
-        CacheStats {
+        PreparedStatementCacheStats {
             cached_statements: self.cache.len(),
             max_statements: self.config.max_statements,
             total_executions,
@@ -607,7 +609,7 @@ impl PreparedStatementCache {
     }
 
     /// Get the optimized query plan for a prepared statement
-    pub fn get_plan(&self, id: &str) -> PreparedResult<Arc<QueryPlan>> {
+    pub fn get_plan(&self, id: &str) -> PreparedResult<Arc<FederatedQueryPlan>> {
         let entry = self
             .cache
             .get(id)
@@ -647,7 +649,7 @@ impl Default for PreparedStatementCache {
 
 /// Cache statistics
 #[derive(Debug, Clone)]
-pub struct CacheStats {
+pub struct PreparedStatementCacheStats {
     /// Number of currently cached statements
     pub cached_statements: usize,
     /// Maximum allowed statements

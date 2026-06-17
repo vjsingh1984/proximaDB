@@ -72,9 +72,7 @@ use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::storage::formats::{
-    CacheStatus, ColumnBounds, FileSplit, SplitStatistics, SplitType, StorageTier,
-};
+use crate::storage::formats::{CacheStatus, ColumnBounds, FileSplit, SplitType, StorageTier};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 use super::common::vector_collection_schema;
@@ -107,6 +105,7 @@ pub struct ViperTableProvider {
 
 /// Metadata for a Parquet file
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 struct ParquetFileMetadata {
     /// File path
     path: String,
@@ -124,6 +123,7 @@ struct ParquetFileMetadata {
 
 /// Metadata for a Parquet row group
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 struct RowGroupMetadata {
     /// Row group index within the file
     index: usize,
@@ -412,6 +412,7 @@ impl ProximaTableProvider for ViperTableProvider {
 /// Reads row groups from Parquet files and returns RecordBatch streams.
 /// Leverages columnar format for efficient projection pushdown.
 #[derive(Debug)]
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct ViperSplitReader {
     /// Arrow schema for records
     schema: SchemaRef,
@@ -493,6 +494,7 @@ impl SplitReader for ViperSplitReader {
 /// RecordBatch stream for reading Parquet row groups.
 ///
 /// Reads row groups from Parquet files and yields RecordBatches.
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct ViperRowGroupStream {
     /// Output schema (after projection)
     schema: SchemaRef,

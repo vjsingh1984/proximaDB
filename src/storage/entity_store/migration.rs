@@ -12,9 +12,12 @@ use crate::graph::GraphOperationsService;
 use crate::proto::proximadb_v1::{CreateGraphRequest, Entity};
 use crate::storage::entity_store::{EntityStore, OrionBackedEntityStore, ProximaEntityStore};
 
+/// Backwards-compat alias for [`EntityStoreMigrationConfig`].
+pub type MigrationConfig = EntityStoreMigrationConfig;
+
 /// Migration configuration
 #[derive(Debug, Clone)]
-pub struct MigrationConfig {
+pub struct EntityStoreMigrationConfig {
     /// Collection ID to migrate
     pub collection_id: String,
 
@@ -28,7 +31,7 @@ pub struct MigrationConfig {
     pub cleanup_legacy: bool,
 }
 
-impl Default for MigrationConfig {
+impl Default for EntityStoreMigrationConfig {
     fn default() -> Self {
         Self {
             collection_id: String::new(),
@@ -53,7 +56,7 @@ pub async fn migrate_to_graph_first(
     legacy_store: &ProximaEntityStore,
     collection_id: &str,
     graph_service: Arc<GraphOperationsService>,
-    config: &MigrationConfig,
+    config: &EntityStoreMigrationConfig,
 ) -> Result<MigrationStats> {
     let start = std::time::Instant::now();
     let mut stats = MigrationStats::default();
@@ -208,7 +211,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_migration_config_default() {
-        let config = MigrationConfig::default();
+        let config = EntityStoreMigrationConfig::default();
         assert_eq!(config.batch_size, 1000);
         assert!(config.validate);
         assert!(!config.cleanup_legacy);

@@ -6,7 +6,7 @@
 //!
 //! ## Key Components:
 //!
-//! - **AccessPatternTracker**: Learns access patterns for predictive prefetching
+//! - **OrchestratorAccessPatternTracker**: Learns access patterns for predictive prefetching
 //! - **CrossCacheOrchestrator**: Coordinates all cache types and memory allocation
 //! - **DynamicMemoryAllocator**: Adaptive memory distribution based on workload
 //! - **CacheAccessEvent**: Async event processing for minimal latency impact
@@ -19,14 +19,15 @@
 //! 3. **Predictive Loading**: Learn correlations to prefetch related data
 //! 4. **Dynamic Adaptation**: Continuously adjust to changing workloads
 
-use crate::utils::hash::XxHash64;
 use anyhow::Result;
 use dashmap::DashMap;
+use proximadb_kernel::hash::XxHash64;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{BuildHasherDefault, Hash, Hasher};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
-use tokio::sync::{Mutex, RwLock, mpsc};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
 
 use crate::metrics::collectors::AccessPatternMetricsCollector;
@@ -54,15 +55,15 @@ pub struct StringInterner {
     strings: Arc<DashMap<u64, Arc<str>, BuildHasherDefault<XxHash64>>>,
 
     /// Statistics for monitoring effectiveness
-    stats: Arc<RwLock<InternerStats>>,
+    stats: Arc<InternerStats>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct InternerStats {
-    total_lookups: u64,
-    cache_hits: u64,
-    unique_strings: u64,
-    bytes_saved: u64,
+    total_lookups: AtomicU64,
+    cache_hits: AtomicU64,
+    unique_strings: AtomicU64,
+    bytes_saved: AtomicU64,
 }
 
 impl StringInterner {
@@ -71,7 +72,7 @@ impl StringInterner {
             strings: Arc::new(DashMap::with_hasher(
                 BuildHasherDefault::<XxHash64>::default(),
             )),
-            stats: Arc::new(RwLock::new(InternerStats::default())),
+            stats: Arc::new(InternerStats::default()),
         }
     }
 
@@ -84,10 +85,11 @@ impl StringInterner {
 
         // Check if already interned
         if let Some(entry) = self.strings.get(&hash) {
-            let mut stats = self.stats.write().await;
-            stats.total_lookups += 1;
-            stats.cache_hits += 1;
-            stats.bytes_saved += s.len() as u64;
+            self.stats.total_lookups.fetch_add(1, Ordering::Relaxed);
+            self.stats.cache_hits.fetch_add(1, Ordering::Relaxed);
+            self.stats
+                .bytes_saved
+                .fetch_add(s.len() as u64, Ordering::Relaxed);
             return entry.clone();
         }
 
@@ -95,22 +97,24 @@ impl StringInterner {
         let arc_str: Arc<str> = Arc::from(s);
         self.strings.insert(hash, arc_str.clone());
 
-        let mut stats = self.stats.write().await;
-        stats.total_lookups += 1;
-        stats.unique_strings += 1;
+        self.stats.total_lookups.fetch_add(1, Ordering::Relaxed);
+        self.stats.unique_strings.fetch_add(1, Ordering::Relaxed);
 
         arc_str
     }
 
     /// Get interning statistics
     pub async fn stats(&self) -> (u64, u64, f64) {
-        let stats = self.stats.read().await;
-        let hit_rate = if stats.total_lookups > 0 {
-            stats.cache_hits as f64 / stats.total_lookups as f64
+        let total_lookups = self.stats.total_lookups.load(Ordering::Relaxed);
+        let cache_hits = self.stats.cache_hits.load(Ordering::Relaxed);
+        let unique_strings = self.stats.unique_strings.load(Ordering::Relaxed);
+        let bytes_saved = self.stats.bytes_saved.load(Ordering::Relaxed);
+        let hit_rate = if total_lookups > 0 {
+            cache_hits as f64 / total_lookups as f64
         } else {
             0.0
         };
-        (stats.unique_strings, stats.bytes_saved, hit_rate)
+        (unique_strings, bytes_saved, hit_rate)
     }
 
     /// Clear the interner (useful for memory pressure)
@@ -166,8 +170,12 @@ pub struct CacheAccessEvent {
 /// - History limited to `max_history` entries (default: 10,000)
 /// - Correlation matrix pruned when > 100,000 entries
 /// - Background processing prevents memory bloat
+///
+/// Backwards-compat alias for [`OrchestratorAccessPatternTracker`].
+pub type AccessPatternTracker = OrchestratorAccessPatternTracker;
+
 #[derive(Debug)]
-pub struct AccessPatternTracker {
+pub struct OrchestratorAccessPatternTracker {
     /// Access history for pattern detection (processed async)
     /// VecDeque provides O(1) push/pop for sliding window
     access_history: Arc<Mutex<VecDeque<AccessRecord>>>,
@@ -265,7 +273,7 @@ impl CrossCacheOrchestrator {
     }
 }
 
-impl AccessPatternTracker {
+impl OrchestratorAccessPatternTracker {
     pub fn new(max_history: usize) -> Self {
         let (event_sender, mut event_receiver) = mpsc::channel::<CacheAccessEvent>(10000);
 
@@ -540,7 +548,7 @@ impl AccessPatternTracker {
 
         // Sort by access count and take top N
         let mut sorted: Vec<_> = key_counts.into_iter().collect();
-        sorted.sort_by(|a, b| b.1.cmp(&a.1));
+        sorted.sort_by_key(|s| std::cmp::Reverse(s.1));
         sorted.into_iter().take(top_count).collect()
     }
 
@@ -704,7 +712,7 @@ impl DynamicMemoryAllocator {
 /// Predictive prefetch engine for proactive data loading
 #[derive(Debug)]
 pub struct PredictivePrefetchEngine {
-    pattern_tracker: Arc<AccessPatternTracker>,
+    pattern_tracker: Arc<OrchestratorAccessPatternTracker>,
     prefetch_queue: Arc<Mutex<VecDeque<PrefetchRequest>>>,
     max_queue_size: usize,
 }
@@ -718,7 +726,10 @@ pub struct PrefetchRequest {
 }
 
 impl PredictivePrefetchEngine {
-    pub fn new(pattern_tracker: Arc<AccessPatternTracker>, max_queue_size: usize) -> Self {
+    pub fn new(
+        pattern_tracker: Arc<OrchestratorAccessPatternTracker>,
+        max_queue_size: usize,
+    ) -> Self {
         Self {
             pattern_tracker,
             prefetch_queue: Arc::new(Mutex::new(VecDeque::with_capacity(max_queue_size))),
@@ -895,7 +906,7 @@ pub struct CrossCacheOrchestrator {
     string_interner: Arc<StringInterner>,
 
     /// Pattern analyzer for predictive operations
-    pattern_tracker: Arc<AccessPatternTracker>,
+    pattern_tracker: Arc<OrchestratorAccessPatternTracker>,
     /// Memory allocator for dynamic tier management
     memory_allocator: Arc<DynamicMemoryAllocator>,
     /// Prefetch engine for proactive loading
@@ -916,7 +927,7 @@ pub struct CrossCacheOrchestrator {
 
 impl CrossCacheOrchestrator {
     pub fn new(total_memory_budget: usize) -> Self {
-        let pattern_tracker = Arc::new(AccessPatternTracker::new(10000));
+        let pattern_tracker = Arc::new(OrchestratorAccessPatternTracker::new(10000));
         let memory_allocator = Arc::new(DynamicMemoryAllocator::new(total_memory_budget));
         let prefetch_engine =
             Arc::new(PredictivePrefetchEngine::new(pattern_tracker.clone(), 1000));
@@ -1165,7 +1176,7 @@ impl CrossCacheOrchestrator {
     }
 
     /// Get pattern tracker for external use
-    pub fn pattern_tracker(&self) -> Arc<AccessPatternTracker> {
+    pub fn pattern_tracker(&self) -> Arc<OrchestratorAccessPatternTracker> {
         self.pattern_tracker.clone()
     }
 

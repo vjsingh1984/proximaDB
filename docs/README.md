@@ -125,6 +125,17 @@ JOIN LATERAL DOCUMENT_QUERY('reviews', 'product_id = "' || v.product_id || '"') 
 | [Operations](./04-operations/) | Production deployment | Setup |
 | [Concepts](./05-concepts/) | Deep dives | Learning |
 | [Internals](./06-internals/) | Contributors | Development |
+| [Architecture & Design](./12-design/README.adoc) | Current architecture blueprints and ADRs | Planning |
+
+---
+
+## Layout
+
+Release-facing documentation lives in the numbered tree above. Current architecture blueprints live in `docs/12-design/`; supporting images and logos live in `docs/assets/`; internal planning lives in `docs/_internal/`; retained historical reports live in `docs/_archive/`.
+
+Do not add new one-off reports to the repository root or directly under `docs/`. Put current docs in the matching numbered section and move historical status reports into `docs/_archive/`.
+
+For future-shaping architecture work, start with `docs/12-design/README.adoc`.
 
 ---
 
@@ -202,7 +213,9 @@ flowchart TB
 
 ## Version
 
-**Current Release**: v0.2.0 (February 2026)
+**Pre-release (in development)**: v0.2.0 — narrow single-node cut targeting May 2026. See
+[`SUPPORTED_SURFACE.adoc`](./SUPPORTED_SURFACE.adoc) for the supported/beta/experimental split
+and [`release-notes/v0.2.0.adoc`](./release-notes/v0.2.0.adoc) for the release contract.
 
 - Platform packages (RPM, DEB, MSI)
 - Unified port architecture (5678)

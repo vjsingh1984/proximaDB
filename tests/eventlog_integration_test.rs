@@ -20,7 +20,7 @@
 //! temporal replay, and MiFID II compliance.
 
 use chrono::Utc;
-use proximadb::storage::engines::impls::eventlog::{Event, EventLogConfig, EventLogEngine};
+use proximadb::storage::engines::eventlog::{Event, EventLogConfig, EventLogEngine};
 use proximadb::storage::persistence::filesystem::{
     UnifiedCachingFilesystem, local::LocalFileSystem,
 };

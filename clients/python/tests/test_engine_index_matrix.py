@@ -10,7 +10,6 @@ Tests the matrix of:
 This validates that each engine+index combination works correctly.
 """
 
-import os
 import tempfile
 import time
 

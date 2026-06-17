@@ -24,8 +24,8 @@
 //! These methods are exposed via GraphOperationsService and can be called from
 //! REST, gRPC, or embedded APIs.
 
-use crate::core::error::ProximaDBError;
 use crate::graph::service::GraphOperationsService;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -166,15 +166,7 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Extract ORION engine (algorithms are ORION-specific for now)
-        let orion_engine = match engine.as_ref() {
-            crate::graph::engines::GraphEngineImpl::Orion(e) => e,
-            _ => {
-                return Err(ProximaDBError::InvalidInput(
-                    "Centrality algorithms currently only support ORION engine".to_string(),
-                ));
-            }
-        };
+        let crate::graph::engines::GraphEngineImpl::Orion(orion_engine) = engine.as_ref();
 
         let scores = match algorithm {
             CentralityAlgorithm::PageRank => {
@@ -264,16 +256,7 @@ impl GraphOperationsService {
 
         let engine = self.get_or_create_graph_engine(graph_id).await?;
 
-        // Extract ORION engine (algorithms are ORION-specific for now)
-        let orion_engine = match engine.as_ref() {
-            crate::graph::engines::GraphEngineImpl::Orion(e) => e,
-            _ => {
-                return Err(ProximaDBError::InvalidInput(
-                    "Community detection algorithms currently only support ORION engine"
-                        .to_string(),
-                ));
-            }
-        };
+        let crate::graph::engines::GraphEngineImpl::Orion(orion_engine) = engine.as_ref();
 
         let (communities, modularity) = match algorithm {
             CommunityAlgorithm::Louvain => {

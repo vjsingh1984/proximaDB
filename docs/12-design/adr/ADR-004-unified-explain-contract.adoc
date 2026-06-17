@@ -182,6 +182,62 @@ impl UnifiedExplainPlan {
 * Invalid plans still produce useful explain output (for debugging)
 * Existing VectorHints/GraphHints content is preserved in operator.hints map
 
+== 2026-05 Route And Write-Plan Extension
+
+The unified explain contract also governs workload route selection and table-write planning. The
+active implementation blueprint is
+link:../RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc[RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20].
+
+For `INSERT ... SELECT`, `INSERT OVERWRITE`, CTAS, MERGE, large scans, delegated compute, and
+open-format routes, explain output must include a route section derived from the validated
+`RoutedExecutionPlan`, not from protocol-specific formatting.
+
+Required route diagnostics:
+
+* selected compute route and access method;
+* authority mode and commit owner;
+* write lane, durability, isolation, and projection freshness requirement;
+* policy boundary and tenant/RLS pushdown status;
+* source snapshot, target write mode, and idempotency requirement;
+* estimated rows/bytes and data movement;
+* considered candidate paths;
+* rejected candidate paths and rejected write lanes with concrete reasons;
+* source-reader and projection freshness warnings when relevant.
+
+Mapping to `UnifiedExplainPlan`:
+
+[cols="1,3"]
+|===
+| Unified field | Route/write-plan mapping
+
+| `operators`
+| Logical scan, source read, write transform, commit, projection update, and external commit nodes.
+
+| `required_capabilities`
+| Write mode support, source snapshot pinning, target write capability, RLS enforcement,
+idempotency, external atomic commit, projection freshness.
+
+| `missing_capabilities`
+| Unsupported merge predicate, unsupported overwrite lane, missing RLS boundary, missing
+snapshot/manifest support, stale projection, unsupported type conversion.
+
+| `bindings`
+| Native runtime, DataFusion, Arrow Flight, external compute adapter, open-format commit protocol,
+`TableRecordStore`, and projection scheduler availability.
+
+| `fallbacks`
+| Rejected or degraded routes. Fallbacks must include why a route was rejected and whether the
+selected route is exact, planned-only, degraded, or unsupported.
+
+| `diagnostics`
+| Planning time, stats freshness, data-movement estimate, policy warnings, maturity/support status,
+and benchmark gate warnings.
+|===
+
+Routes that are planned-only must still produce `valid=true` only for planning/explain mode. For
+execution mode, a planned-only route must either return an explicit unsupported error or select a
+fully executable route with guards satisfied.
+
 == Governs
 
 Issues: SB-17 (#47), SB-20 (#50)

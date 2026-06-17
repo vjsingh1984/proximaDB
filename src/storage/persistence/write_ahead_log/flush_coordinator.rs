@@ -22,7 +22,7 @@ use super::config::SyncMode;
 use super::enhanced_flush_result::EnhancedFlushResult;
 use super::flush_result_optimization::OptimizedFlushCoordinator;
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageFormat};
 
 /// Flush state tracking for coordinated WAL cleanup
 #[derive(Debug, Clone)]
@@ -65,8 +65,8 @@ pub enum FlushDataSource {
     Memory,
     /// Flush from disk WAL files (disk durability mode)
     DiskWalFiles(Vec<String>),
-    /// Flush from pre-extracted vector records (optimized path)
-    VectorRecords(Vec<crate::proto::proximadb_v1::VectorRecord>),
+    /// Flush from pre-extracted canonical records (optimized path)
+    VectorRecords(Vec<proximadb_records::ProximaRecord>),
 }
 
 /// Common flush coordination logic shared between WAL strategies
@@ -77,7 +77,7 @@ pub struct WALFlushCoordinator {
     /// Global flush ID counter
     next_flush_id: Arc<tokio::sync::Mutex<u64>>,
     /// Storage engine registry for polymorphic flush delegation
-    storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
     /// AXIS manager for IndexConfig-based indexing after flush
     axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     /// Optimized flush coordinator for high-performance flushing
@@ -160,7 +160,7 @@ impl WALFlushCoordinator {
     pub async fn register_storage_engine(
         &self,
         engine_type: &str,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
     ) {
         let mut engines = self.storage_engines.write().await;
         engines.insert(engine_type.to_string(), engine);
@@ -195,7 +195,7 @@ impl WALFlushCoordinator {
             collection_id
         );
 
-        let _flush_id = crate::utils::uuid::Uuid::new_v4().to_string();
+        let _flush_id = proximadb_kernel::uuid::Uuid::new_v4().to_string();
 
         // Step 1: Extract vector records from FlushDataSource + Mark for cleanup
         let vector_records = match &flush_data {
@@ -360,8 +360,8 @@ impl WALFlushCoordinator {
         // Step 3: Create flush parameters with actual vector data + BatchId coordination
         let batch_ids = Vec::new(); // No cycle data needed in this simplified flow
 
-        // Clone vector records for AXIS indexing before moving into flush params
-        let vector_records_for_axis = vector_records.clone();
+        // Clone canonical records for projection indexing before moving into flush params.
+        let vector_records_for_indexing = vector_records.clone();
 
         // Check if optimized flush is enabled and use it
         let storage_result = if let Some(optimized) = &self.optimized_coordinator {
@@ -376,8 +376,7 @@ impl WALFlushCoordinator {
             let mut base_result = optimized_result.base.clone();
             base_result.flushed_batch_ids = batch_ids.clone();
 
-            // Store optimized vectors for later AXIS indexing
-            // The optimized result uses Arc<VectorRecord> to avoid cloning
+            // Store optimized records for later AXIS indexing.
             base_result
         } else {
             // Regular flush path with collection metadata
@@ -487,10 +486,10 @@ impl WALFlushCoordinator {
             debug!("📊 Recorded flush metrics for collection {}", collection_id);
         }
 
-        // Return enhanced result with vector data for AXIS indexing
+        // Return enhanced result with canonical record data for projection indexing.
         Ok(EnhancedFlushResult::new(
             storage_result,
-            vector_records_for_axis,
+            vector_records_for_indexing,
         ))
     }
 
@@ -723,7 +722,7 @@ impl WALFlushCoordinator {
     async fn extract_vectors_from_disk_files(
         &self,
         wal_files: &[String],
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         debug!(
             "📋 Coordinator: Extracting vectors from {} disk WAL files",
             wal_files.len()
@@ -746,7 +745,7 @@ impl WALFlushCoordinator {
                 continue;
             };
 
-            // Read and deserialize the WAL file
+            // Read and deserialize canonical WAL records.
             match self.read_wal_file_vectors(file_path, format).await {
                 Ok(file_vectors) => {
                     let count = file_vectors.len();
@@ -779,12 +778,12 @@ impl WALFlushCoordinator {
         Ok(all_vectors)
     }
 
-    /// Read vectors from a single WAL file
+    /// Read canonical records from a single WAL file.
     async fn read_wal_file_vectors(
         &self,
         file_path: &str,
         format: crate::storage::persistence::write_ahead_log::serialization::SerializationFormat,
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         use crate::storage::persistence::write_ahead_log::serialization::SerializerFactory;
 
         // Create filesystem interface to read the file
@@ -892,8 +891,8 @@ impl WALFlushCoordinator {
                         continue;
                     }
 
-                    // Combine all vector records from unflushed batches
-                    let vector_records: Vec<crate::proto::proximadb_v1::VectorRecord> = batches
+                    // Combine all canonical records from unflushed batches.
+                    let vector_records: Vec<proximadb_records::ProximaRecord> = batches
                         .iter()
                         .flat_map(|batch| batch.vector_records.iter().cloned())
                         .collect();

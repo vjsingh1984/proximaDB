@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use super::block_structures::ProximaDataBlock;
 use super::index_structures::RowBasedIdIndex;
-use crate::core::VectorRecord;
-use crate::core::memory::pool::VectorMemoryPool;
-use crate::utils::Uuid;
+use proximadb_kernel::uuid::Uuid;
+use proximadb_records::ProximaRecord;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 // Quantization now handled by unified compute module
 
 /// Row-based batch operations handler
@@ -18,7 +18,7 @@ pub struct RowBasedBatchOperations {
     memory_pool: Arc<VectorMemoryPool>,
 
     /// Configuration
-    config: BatchConfig,
+    config: BlockBatchConfig,
 
     /// Concurrency control
     semaphore: Arc<tokio::sync::Semaphore>,
@@ -31,9 +31,12 @@ pub struct RowBasedBatchOperations {
     _statistics: BatchOperationStats,
 }
 
+/// Backwards-compat alias for [`BlockBatchConfig`].
+pub type BatchConfig = BlockBatchConfig;
+
 /// Batch operation configuration
 #[derive(Debug, Clone)]
-pub struct BatchConfig {
+pub struct BlockBatchConfig {
     /// Batch sizes
     pub default_batch_size: usize,
     pub max_batch_size: usize,
@@ -118,7 +121,7 @@ pub struct BatchResult {
 pub struct PartialResult {
     pub index: usize,
     pub success: bool,
-    pub result: Option<VectorRecord>,
+    pub result: Option<ProximaRecord>,
     pub error: Option<String>,
     pub processing_time_ms: u64,
 }
@@ -150,7 +153,7 @@ impl RowBasedBatchOperations {
     pub fn new(
         _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
-        config: BatchConfig,
+        config: BlockBatchConfig,
     ) -> Self {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(config.max_concurrent_batches));
         let operation_cache = Arc::new(tokio::sync::RwLock::new(HashMap::new()));
@@ -266,7 +269,7 @@ impl RowBasedBatchOperations {
     /// Batch write operations
     pub async fn batch_write_records(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         blocks: &mut Vec<ProximaDataBlock>,
         index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
@@ -325,7 +328,7 @@ impl RowBasedBatchOperations {
     /// Batch update operations
     pub async fn batch_update_records(
         &self,
-        updates: Vec<(String, VectorRecord)>,
+        updates: Vec<(String, ProximaRecord)>,
         blocks: &mut [ProximaDataBlock],
         index: &RowBasedIdIndex,
     ) -> Result<BatchResult> {
@@ -487,7 +490,7 @@ impl RowBasedBatchOperations {
     }
 
     /// Split records into batches
-    fn split_records_into_batches(&self, records: Vec<VectorRecord>) -> Vec<Vec<VectorRecord>> {
+    fn split_records_into_batches(&self, records: Vec<ProximaRecord>) -> Vec<Vec<ProximaRecord>> {
         let _batch_size = self.calculate_optimal_batch_size(records.len());
 
         records
@@ -499,8 +502,8 @@ impl RowBasedBatchOperations {
     /// Split updates into batches
     fn split_updates_into_batches(
         &self,
-        updates: Vec<(String, VectorRecord)>,
-    ) -> Vec<Vec<(String, VectorRecord)>> {
+        updates: Vec<(String, ProximaRecord)>,
+    ) -> Vec<Vec<(String, ProximaRecord)>> {
         let _batch_size = self.calculate_optimal_batch_size(updates.len());
 
         updates
@@ -646,7 +649,7 @@ impl RowBasedBatchOperations {
     /// Process a single write batch
     async fn process_write_batch(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         _blocks: &mut Vec<ProximaDataBlock>,
         _index: &mut RowBasedIdIndex,
     ) -> Result<BatchResult> {
@@ -672,10 +675,10 @@ impl RowBasedBatchOperations {
     async fn update_single_record(
         &self,
         _id: &str,
-        _updated_record: VectorRecord,
+        _updated_record: ProximaRecord,
         _blocks: &mut [ProximaDataBlock],
         _index: &RowBasedIdIndex,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         // Deferred: Implement actual update logic
         Ok(None)
     }
@@ -723,7 +726,7 @@ impl RowBasedBatchOperations {
     }
 }
 
-impl Default for BatchConfig {
+impl Default for BlockBatchConfig {
     fn default() -> Self {
         Self {
             default_batch_size: 1000,
@@ -771,7 +774,7 @@ mod tests {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
 
-        let config = BatchConfig::default();
+        let config = BlockBatchConfig::default();
         let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         assert_eq!(batch_ops.config.default_batch_size, 1000);
@@ -783,7 +786,7 @@ mod tests {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let memory_pool = Arc::new(VectorMemoryPool::new());
 
-        let config = BatchConfig::default();
+        let config = BlockBatchConfig::default();
         let batch_ops = RowBasedBatchOperations::new(hardware, memory_pool, config);
 
         let batch_size = batch_ops.calculate_optimal_batch_size(10000);
@@ -797,7 +800,7 @@ mod tests {
     //     let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
     //     let memory_pool = Arc::new(VectorMemoryPool::new(1024 * 1024 * 1024));
     //     let quantization_engine = Arc::new(
-    //         crate::compute::quantization::unified::UnifiedQuantizationEngine::new(
+    //         crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
     //             hardware.clone(),
     //             memory_pool.clone(),
     //         ),
@@ -812,7 +815,7 @@ mod tests {
     //     //     )
     //     // );
 
-    //     let config = BatchConfig {
+    //     let config = BlockBatchConfig {
     //         default_batch_size: 100,
     //         adaptive_batch_sizing: false,
     //         ..Default::default()

@@ -59,7 +59,7 @@
 //! - **Projection Pushdown**: Only requested columns are read
 //! - **Aggregate Pushdown**: Aggregations can be computed at the storage layer
 //! - **Vector Search Pushdown**: KNN queries are executed natively
-//! - **Graph Traversal Pushdown**: Graph queries are executed by ORION/PULSAR engines
+//! - **Graph Traversal Pushdown**: Graph queries are executed by the ORION runtime
 //!
 //! ## Usage Example
 //!
@@ -87,9 +87,9 @@
 //!
 //! ## Integration Points
 //!
-//! - **Storage Layer**: Connectors delegate to `UnifiedStorageEngine` implementations
+//! - **Storage Layer**: Connectors delegate to `UnifiedStorageFormat` implementations
 //! - **Index Layer**: AXIS engine handles vector search pushdown
-//! - **Graph Layer**: ORION/PULSAR engines handle graph traversal pushdown
+//! - **Graph Layer**: ORION handles graph traversal pushdown
 //! - **WAL System**: Writers integrate with WAL for transactional guarantees
 
 pub mod pushdown;
@@ -129,10 +129,10 @@ pub use trino::{
 // DuckDB extension connector
 pub use duckdb::{
     DuckDBBindData, DuckDBColumnRef, DuckDBColumnStats, DuckDBConnectorConfig, DuckDBCopy,
-    DuckDBCopyResult, DuckDBDistanceMetric, DuckDBError, DuckDBErrorType, DuckDBFilter,
-    DuckDBFilterType, DuckDBGlobalState, DuckDBInitData, DuckDBInsert, DuckDBInsertResult,
-    DuckDBLocalState, DuckDBScanStatistics, DuckDBTableScan, DuckDBVectorSearch,
-    DuckDBVectorSearchParams, DuckDBWriteMode,
+    DuckDBCopyResult, DuckDBError, DuckDBErrorType, DuckDBFilter, DuckDBFilterType,
+    DuckDBGlobalState, DuckDBInitData, DuckDBInsert, DuckDBInsertResult, DuckDBLocalState,
+    DuckDBScanStatistics, DuckDBTableScan, DuckDBVectorSearch, DuckDBVectorSearchParams,
+    DuckDBWriteMode,
 };
 
 // Hadoop compatibility shim (for Hive, EMR, legacy MapReduce)

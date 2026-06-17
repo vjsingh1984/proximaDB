@@ -28,6 +28,10 @@
 *-bench
 *-bench.exe
 
+# Workspace benchmark application source
+!apps/proximadb-bench/
+!apps/proximadb-bench/**
+
 # Python client artifacts
 __pycache__/
 *.py[cod]
@@ -133,10 +137,14 @@ file_list.txt
 *.tmp
 *.temp
 *.bak
+*.bak*
 *.backup
 *.migrated
 *.old
 *.obsolete
+*.disabled
+.victor/
+**/.victor/
 tmp/
 temp/
 demo/results/
@@ -219,12 +227,21 @@ flamegraph.svg
 
 # Benchmark results
 benches/target/
+benches/venv/
+benches/vectordbbench/
 # criterion/ - commented out to allow target/criterion/ tracking
 
 # Benchmark output files
 benchmark_*.txt
 *_benchmark_*.txt
 system_monitor.txt
+artifacts/proximadb_*/
+artifacts/embedded_victor_shape*.json
+artifacts/panic_policy/
+artifacts/coverage/
+artifacts/proximadb_embedded*/
+artifacts/tmp_embedded_site*/
+src/graph/rag/engine_impls_test.rs.disabled
 
 # Serverless/Cloud function packages
 *.zip
@@ -287,10 +304,13 @@ docs/log/
 *.json
 !package.json
 !config.json
+!config/tier-config.json
+!config/tier-config.example.json
 !docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 !clients/**/package.json
 !clients/**/tsconfig.json
 !clients/**/tsconfig.*.json
+!clients/python/tests/unit/grpc_drift_baseline.json
 !clients/**/package-lock.json
 !examples/**/*.json
 bert_*.json
@@ -336,6 +356,7 @@ FINAL_*.md
 GRPC_*.md
 TEST_*.md
 WAL_*.md
+!docs/_archive/design/2026-05/GRPC_MIGRATION_PROGRESS_2026_05_14.md
 
 # Generated HTML reports
 reports/
@@ -389,6 +410,9 @@ COPILOT.md
 *prompt*.txt
 *snapshot*
 !src/**/snapshot.rs
+# Phase 8 snapshot-publish coordinator module (source, not a snapshot artifact)
+!src/services/snapshot/
+!src/services/snapshot/**
 *_PROMPT.md
 *_SNAPSHOT.md
 *_summary.py
@@ -414,6 +438,27 @@ docs/archive/sessions/
 *.dat
 *.txt
 
+# Consolidated config dir (configs/ merged into config/)
+/configs/
+
+# Stray root-level artifacts from test runs
+/segment_0/
+/test_exists_dir/
+/test_metadata/
+/test_metadata_atomic/
+/test_size
+/test_filter_debug.rs
+/nohup.out
+/=1.75.1
+/file:
+
+# Stray benchmark data at root
+benchmark_report_*.csv
+*.puml
+
+# Coverage data at root (use .coverage/ dir)
+/.coverage
+
 # Obsolete files marked for removal
 *.obsolete
 /target/
@@ -425,3 +470,7 @@ GEMINI.md
 
 # AI tool data folders
 .victor/
+
+# Root-level placeholder go.mod for tools that probe for it
+# (real Go modules live at clients/go/go.mod and clients/go-embedded/go.mod)
+/go.mod

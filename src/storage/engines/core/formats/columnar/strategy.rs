@@ -13,9 +13,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info, trace};
 
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::core::serialization::{VectorSerializationConfig, CompressionAlgorithm as CoreCompression};
-use crate::proto::proximadb_v1::VectorRecord;
+
 
 /// Optimal serialization strategy configuration
 #[derive(Debug, Clone)]
@@ -143,13 +143,18 @@ pub struct SerializationMetrics {
 /// Serialization strategy optimizer
 pub struct SerializationStrategyOptimizer {
     config: SerializationStrategyConfig,
-    hardware_capabilities: HardwareCapabilities,
+    hardware_capabilities: ColumnarSimdCapabilities,
     strategy_cache: HashMap<String, SerializationStrategy>,
 }
 
-/// Hardware capabilities detection
+/// SIMD + cache-geometry descriptor used for serialization-strategy selection.
+///
+/// Renamed from the former `HardwareCapabilities` to remove the collision with the
+/// canonical `proximadb_hardware::HardwareCapabilities` (its `Default` already derives
+/// values from `proximadb_hardware::best_simd_level()`). This is a local strategy
+/// descriptor, not the canonical detection type (see the LLD duplication watch).
 #[derive(Debug, Clone)]
-pub struct HardwareCapabilities {
+pub struct ColumnarSimdCapabilities {
     pub has_sse: bool,
     pub has_avx: bool,
     pub has_avx2: bool,
@@ -160,19 +165,18 @@ pub struct HardwareCapabilities {
     pub l2_cache_size: usize,
 }
 
-impl Default for HardwareCapabilities {
+impl Default for ColumnarSimdCapabilities {
     fn default() -> Self {
-        // Detect actual hardware capabilities
-        let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let level = proximadb_hardware::best_simd_level();
         Self {
-            has_sse: caps.cpu.features.sse42_support,
-            has_avx: caps.cpu.features.avx_support,
-            has_avx2: caps.cpu.features.avx2_support,
-            has_avx512: caps.cpu.features.avx512_support,
-            has_popcount: caps.cpu.features.popcnt_support,
-            cache_line_size: 64, // Standard cache line size
-            l1_cache_size: 32 * 1024, // 32KB typical
-            l2_cache_size: 256 * 1024, // 256KB typical
+            has_sse: level >= proximadb_hardware::SimdLevel::SSE41,
+            has_avx: level >= proximadb_hardware::SimdLevel::AVX2,
+            has_avx2: level >= proximadb_hardware::SimdLevel::AVX2,
+            has_avx512: level >= proximadb_hardware::SimdLevel::AVX512,
+            has_popcount: level >= proximadb_hardware::SimdLevel::SSE41,
+            cache_line_size: 64,
+            l1_cache_size: 32 * 1024,
+            l2_cache_size: 256 * 1024,
         }
     }
 }
@@ -182,7 +186,7 @@ impl SerializationStrategyOptimizer {
     pub fn new(config: SerializationStrategyConfig) -> Self {
         Self {
             config,
-            hardware_capabilities: HardwareCapabilities::default(),
+            hardware_capabilities: ColumnarSimdCapabilities::default(),
             strategy_cache: HashMap::new(),
         }
     }

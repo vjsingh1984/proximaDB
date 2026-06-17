@@ -5,9 +5,12 @@ use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
 
-/// Placeholder for metadata filtering - use crate::query::unified_query_optimizer::UnifiedMetadataFilter instead
+/// Backwards-compat alias for [`SearchModeMetadataFilter`].
+pub type MetadataFilter = SearchModeMetadataFilter;
+
+/// Placeholder for metadata filtering - use crate::query::query_optimizer::UnifiedMetadataFilter instead
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct SearchModeMetadataFilter {
     pub placeholder: bool,
 }
 
@@ -42,7 +45,7 @@ pub enum UniversalSearchMode {
         query_vector: Vec<f32>,
         top_k: usize,
         distance_metric: DistanceMetric,
-        metadata_filter: MetadataFilter,
+        metadata_filter: SearchModeMetadataFilter,
         search_params: SimilaritySearchParams,
     },
 
@@ -50,7 +53,7 @@ pub enum UniversalSearchMode {
     HybridSearch {
         vector_query: Option<Vec<f32>>,
         text_query: Option<String>,
-        metadata_filter: Option<MetadataFilter>,
+        metadata_filter: Option<SearchModeMetadataFilter>,
         fusion_params: HybridFusionParams,
         top_k: usize,
     },
@@ -812,7 +815,7 @@ pub enum IOSchedulingStrategy {
 #[derive(Debug, Clone)]
 pub struct ProgressiveSearchParams {
     /// Progressive stages
-    pub stages: Vec<ProgressiveStage>,
+    pub stages: Vec<SearchModeProgressiveStage>,
 
     /// Stage transition criteria
     pub transition_criteria: StageTransitionCriteria,
@@ -824,9 +827,12 @@ pub struct ProgressiveSearchParams {
     pub result_refinement: ProgressiveRefinement,
 }
 
+/// Backwards-compat alias for [`SearchModeProgressiveStage`].
+pub type ProgressiveStage = SearchModeProgressiveStage;
+
 /// Progressive search stage
 #[derive(Debug, Clone)]
-pub struct ProgressiveStage {
+pub struct SearchModeProgressiveStage {
     /// Stage name
     pub name: String,
 
@@ -1094,9 +1100,12 @@ pub struct SearchStageContext {
     pub additional_context: HashMap<String, serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`SearchModeSearchCandidate`].
+pub type SearchCandidate = SearchModeSearchCandidate;
+
 /// Search candidate for progressive refinement
 #[derive(Debug, Clone)]
-pub struct SearchCandidate {
+pub struct SearchModeSearchCandidate {
     /// Candidate record
     pub record: CandidateRecord,
 
@@ -1145,7 +1154,7 @@ pub struct ProgressiveSearchResult {
     pub statistics: ProgressiveSearchStatistics,
 
     /// Stage results
-    pub stage_results: Vec<StageResult>,
+    pub stage_results: Vec<SearchModeStageResult>,
 
     /// Overall quality metrics
     pub quality_metrics: QualityMetrics,
@@ -1173,9 +1182,12 @@ pub struct ProgressiveSearchStatistics {
     pub early_termination: bool,
 }
 
+/// Backwards-compat alias for [`SearchModeStageResult`].
+pub type StageResult = SearchModeStageResult;
+
 /// Stage result
 #[derive(Debug, Clone)]
-pub struct StageResult {
+pub struct SearchModeStageResult {
     /// Stage name
     pub stage_name: String,
 

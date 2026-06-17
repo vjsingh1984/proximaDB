@@ -22,8 +22,8 @@ pub use orchestrator::ZeroCopyIOSystem;
 // Common traits and types
 pub use traits::{DataRange, EngineMetadata, MetadataSerializer, QueryContext};
 
-use crate::core::error::ProximaDBError;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 use std::sync::Arc;
 
 /// Main entry point for the Zero-Copy I/O System

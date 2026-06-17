@@ -23,7 +23,6 @@ Integration Points:
 import asyncio
 import hashlib
 import logging
-import mimetypes
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -32,16 +31,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Generic,
-    List,
-    Optional,
     Protocol,
-    Tuple,
-    Type,
-    TypeVar,
-    Union,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,7 +74,7 @@ class ProcessingStrategy(Enum):
 class EmbeddingProvider(Protocol):
     """Protocol for embedding providers"""
 
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Synchronous embedding"""
         ...
 
@@ -97,7 +87,7 @@ class EmbeddingProvider(Protocol):
 class AsyncEmbeddingProvider(Protocol):
     """Protocol for async embedding providers"""
 
-    async def embed_texts_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts_async(self, texts: list[str]) -> list[list[float]]:
         """Asynchronous embedding"""
         ...
 
@@ -110,7 +100,7 @@ class AsyncEmbeddingProvider(Protocol):
 class VectorStore(Protocol):
     """Protocol for vector stores"""
 
-    async def insert(self, records: List[Dict[str, Any]]) -> None:
+    async def insert(self, records: list[dict[str, Any]]) -> None:
         """Insert records"""
         ...
 
@@ -128,8 +118,8 @@ class ProcessedChunk:
     text: str
     start_pos: int
     end_pos: int
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    embedding_text: Optional[str] = (
+    metadata: dict[str, Any] = field(default_factory=dict)
+    embedding_text: str | None = (
         None  # Text prepared for embedding (may differ from text)
     )
 
@@ -143,12 +133,12 @@ class VectorRecord:
     """A vector record ready for storage"""
 
     id: str
-    vector: List[float]
-    metadata: Dict[str, Any]
+    vector: list[float]
+    metadata: dict[str, Any]
     text: str
     source_id: str
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "vector": self.vector,
@@ -167,10 +157,10 @@ class ProcessingResult:
     success: bool
     source_id: str
     document_type: DocumentType
-    chunks: List[ProcessedChunk] = field(default_factory=list)
-    vectors: List[VectorRecord] = field(default_factory=list)
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-    metrics: Dict[str, Any] = field(default_factory=dict)
+    chunks: list[ProcessedChunk] = field(default_factory=list)
+    vectors: list[VectorRecord] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    metrics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def chunk_count(self) -> int:
@@ -231,7 +221,7 @@ class EmbeddingProviderAdapter:
 
     def __init__(
         self,
-        provider: Union[EmbeddingProvider, AsyncEmbeddingProvider],
+        provider: EmbeddingProvider | AsyncEmbeddingProvider,
         batch_size: int = 32,
         max_retries: int = 3,
         retry_delay: float = 1.0,
@@ -252,7 +242,7 @@ class EmbeddingProviderAdapter:
             return self.provider.dimension
         return 0
 
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Synchronous embedding with batching"""
         if not texts:
             return []
@@ -265,7 +255,7 @@ class EmbeddingProviderAdapter:
 
         return all_embeddings
 
-    async def embed_texts_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts_async(self, texts: list[str]) -> list[list[float]]:
         """Asynchronous embedding with batching"""
         if not texts:
             return []
@@ -278,7 +268,7 @@ class EmbeddingProviderAdapter:
 
         return all_embeddings
 
-    def _embed_batch_sync(self, texts: List[str]) -> List[List[float]]:
+    def _embed_batch_sync(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch synchronously with retries"""
         last_error = None
 
@@ -302,7 +292,7 @@ class EmbeddingProviderAdapter:
             f"Embedding failed after {self.max_retries} attempts: {last_error}"
         )
 
-    async def _embed_batch_async(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_batch_async(self, texts: list[str]) -> list[list[float]]:
         """Embed a batch asynchronously with retries"""
         last_error = None
 
@@ -334,7 +324,7 @@ class EmbeddingProviderAdapter:
         )
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get adapter statistics"""
         return {
             "request_count": self._request_count,
@@ -359,15 +349,15 @@ class PlaceholderEmbeddingProvider:
     def dimension(self) -> int:
         return self._dimension
 
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Generate placeholder embeddings"""
         return [self._generate_embedding(text) for text in texts]
 
-    async def embed_texts_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts_async(self, texts: list[str]) -> list[list[float]]:
         """Async version (same as sync for placeholders)"""
         return self.embed_texts(texts)
 
-    def _generate_embedding(self, text: str) -> List[float]:
+    def _generate_embedding(self, text: str) -> list[float]:
         """Generate a deterministic embedding from text hash"""
         hash_bytes = hashlib.sha256(text.encode()).digest()
 
@@ -396,12 +386,12 @@ class DocumentProcessor(ABC):
     4. Generate metadata
     """
 
-    def __init__(self, config: Optional[ProcessorConfig] = None):
+    def __init__(self, config: ProcessorConfig | None = None):
         self.config = config or ProcessorConfig()
 
     @property
     @abstractmethod
-    def supported_types(self) -> List[DocumentType]:
+    def supported_types(self) -> list[DocumentType]:
         """Document types this processor can handle"""
         pass
 
@@ -412,14 +402,14 @@ class DocumentProcessor(ABC):
         pass
 
     @abstractmethod
-    def can_process(self, content: str, file_path: Optional[str] = None) -> bool:
+    def can_process(self, content: str, file_path: str | None = None) -> bool:
         """Check if this processor can handle the content"""
         pass
 
     @abstractmethod
     def chunk(
-        self, content: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> List[ProcessedChunk]:
+        self, content: str, source_id: str, metadata: dict[str, Any] | None = None
+    ) -> list[ProcessedChunk]:
         """Chunk the content into processable pieces"""
         pass
 
@@ -433,8 +423,8 @@ class DocumentProcessor(ABC):
         return chunk.embedding_text or chunk.text
 
     def enrich_metadata(
-        self, chunk: ProcessedChunk, source_metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, chunk: ProcessedChunk, source_metadata: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """
         Enrich chunk metadata with additional information.
 
@@ -458,8 +448,8 @@ class DocumentProcessor(ABC):
         self,
         content: str,
         source_id: str,
-        embedding_adapter: Optional[EmbeddingProviderAdapter] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        embedding_adapter: EmbeddingProviderAdapter | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> ProcessingResult:
         """
         Process a document end-to-end.
@@ -575,19 +565,19 @@ class CodeDocumentProcessor(DocumentProcessor):
         "rust": [".rs"],
     }
 
-    def __init__(self, config: Optional[ProcessorConfig] = None):
+    def __init__(self, config: ProcessorConfig | None = None):
         super().__init__(config)
         self._chunker = None
 
     @property
-    def supported_types(self) -> List[DocumentType]:
+    def supported_types(self) -> list[DocumentType]:
         return [DocumentType.CODE]
 
     @property
     def name(self) -> str:
         return "code"
 
-    def can_process(self, content: str, file_path: Optional[str] = None) -> bool:
+    def can_process(self, content: str, file_path: str | None = None) -> bool:
         """Check if content looks like source code"""
         if file_path:
             ext = Path(file_path).suffix.lower()
@@ -641,8 +631,8 @@ class CodeDocumentProcessor(DocumentProcessor):
         return self._chunker
 
     def chunk(
-        self, content: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> List[ProcessedChunk]:
+        self, content: str, source_id: str, metadata: dict[str, Any] | None = None
+    ) -> list[ProcessedChunk]:
         """Chunk code using AST-aware chunking"""
         chunker = self._get_chunker()
 
@@ -704,8 +694,8 @@ class CodeDocumentProcessor(DocumentProcessor):
         return chunk.embedding_text or chunk.text
 
     def enrich_metadata(
-        self, chunk: ProcessedChunk, source_metadata: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
+        self, chunk: ProcessedChunk, source_metadata: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
         """Add code-specific metadata"""
         metadata = super().enrich_metadata(chunk, source_metadata)
 
@@ -729,19 +719,19 @@ class TextDocumentProcessor(DocumentProcessor):
     Uses semantic chunking for prose content.
     """
 
-    def __init__(self, config: Optional[ProcessorConfig] = None):
+    def __init__(self, config: ProcessorConfig | None = None):
         super().__init__(config)
         self._chunker = None
 
     @property
-    def supported_types(self) -> List[DocumentType]:
+    def supported_types(self) -> list[DocumentType]:
         return [DocumentType.TEXT, DocumentType.MARKDOWN]
 
     @property
     def name(self) -> str:
         return "text"
 
-    def can_process(self, content: str, file_path: Optional[str] = None) -> bool:
+    def can_process(self, content: str, file_path: str | None = None) -> bool:
         """Text processor can handle most content"""
         if file_path:
             ext = Path(file_path).suffix.lower()
@@ -764,8 +754,8 @@ class TextDocumentProcessor(DocumentProcessor):
         return self._chunker
 
     def chunk(
-        self, content: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> List[ProcessedChunk]:
+        self, content: str, source_id: str, metadata: dict[str, Any] | None = None
+    ) -> list[ProcessedChunk]:
         """Chunk text using semantic chunking"""
         chunker = self._get_chunker()
 
@@ -805,8 +795,8 @@ class DocumentProcessorRegistry:
             with cls._lock:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
-                    cls._instance._processors: Dict[str, DocumentProcessor] = {}
-                    cls._instance._type_mapping: Dict[DocumentType, str] = {}
+                    cls._instance._processors: dict[str, DocumentProcessor] = {}
+                    cls._instance._type_mapping: dict[DocumentType, str] = {}
                     cls._instance._initialized = False
         return cls._instance
 
@@ -823,12 +813,12 @@ class DocumentProcessorRegistry:
         for doc_type in processor.supported_types:
             self._type_mapping[doc_type] = processor.name
 
-    def get(self, name: str) -> Optional[DocumentProcessor]:
+    def get(self, name: str) -> DocumentProcessor | None:
         """Get processor by name"""
         self._ensure_initialized()
         return self._processors.get(name)
 
-    def get_for_type(self, doc_type: DocumentType) -> Optional[DocumentProcessor]:
+    def get_for_type(self, doc_type: DocumentType) -> DocumentProcessor | None:
         """Get processor for document type"""
         self._ensure_initialized()
         name = self._type_mapping.get(doc_type)
@@ -837,7 +827,7 @@ class DocumentProcessorRegistry:
         return None
 
     def detect_and_get(
-        self, content: str, file_path: Optional[str] = None
+        self, content: str, file_path: str | None = None
     ) -> DocumentProcessor:
         """Detect document type and return appropriate processor"""
         self._ensure_initialized()
@@ -850,7 +840,7 @@ class DocumentProcessorRegistry:
         # Default to text processor
         return self._processors.get("text")
 
-    def list_processors(self) -> List[str]:
+    def list_processors(self) -> list[str]:
         """List registered processor names"""
         self._ensure_initialized()
         return list(self._processors.keys())
@@ -866,7 +856,7 @@ def get_processor_registry() -> DocumentProcessorRegistry:
 # =============================================================================
 
 
-def detect_document_type(content: str, file_path: Optional[str] = None) -> DocumentType:
+def detect_document_type(content: str, file_path: str | None = None) -> DocumentType:
     """
     Detect the type of document from content and/or file path.
 
@@ -985,7 +975,7 @@ def detect_document_type(content: str, file_path: Optional[str] = None) -> Docum
 
 
 def create_processor(
-    processor_type: str = "auto", config: Optional[ProcessorConfig] = None
+    processor_type: str = "auto", config: ProcessorConfig | None = None
 ) -> DocumentProcessor:
     """
     Create a document processor.
@@ -1013,7 +1003,7 @@ def create_processor(
 
 
 def create_embedding_adapter(
-    provider: Union[EmbeddingProvider, AsyncEmbeddingProvider, None] = None,
+    provider: EmbeddingProvider | AsyncEmbeddingProvider | None = None,
     batch_size: int = 32,
     use_placeholder: bool = False,
     placeholder_dimension: int = 384,

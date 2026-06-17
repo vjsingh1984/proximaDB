@@ -9,42 +9,38 @@
 //!
 //! - **V1 Services** (root level): Original gRPC services for vector, collection, graph operations
 //! - **V2 Services** (`v2/`): New V2 API with ProximaRecord, typed fields, and schema support
+//!
+//! ## Status
+//!
+//! These port-implementing services remain in the root crate. Collection, vector, and SQL
+//! protocol adapters live in `crates/platform/proximadb-api`. Port traits live in
+//! `crates/platform/proximadb-runtime`.
 
-// V1 services (original API)
-/// gRPC service for collection management operations
-pub mod collection_service;
-/// gRPC service for document CRUD operations
-pub mod document_service;
-/// gRPC service for SKS entity operations
-pub mod entity_service;
-/// gRPC service for graph database operations
+/// Shared gRPC authentication and data-plane capability enforcement.
+pub mod auth;
+
+// Port implementations: root crate provides concrete types that implement runtime port traits
+/// gRPC service for graph database operations (implements GraphPort)
 pub mod graph_service;
-/// gRPC service for hybrid (vector + BM25) search
-pub mod hybrid_search_service;
-/// gRPC service for observability (logs, metrics, traces)
+/// gRPC service for observability (logs, metrics, traces) (implements ObservabilityPort)
 pub mod observability_service;
-/// gRPC service for security and authentication management
+/// gRPC handler for the multi-phase ranking pipeline (R-7c.4a.1)
+pub mod rank_service;
+/// gRPC service for security and authentication management (implements SecurityPort)
 pub mod security_service;
-/// gRPC service for SQL query execution
-pub mod sql_service;
-/// gRPC service for bidirectional streaming operations
+/// gRPC service for bidirectional streaming operations (implements StreamingPort)
 pub mod streaming_service;
-/// gRPC service for vector CRUD and search operations
-pub mod vector_service;
 
 // V2 services (new API with ProximaRecord support)
 /// V2 gRPC services with ProximaRecord typed field support
 pub mod v2;
 
-// Re-export the entity service for SKS
-pub use entity_service::EntityServiceImpl;
 // Re-export the graph service
 pub use graph_service::GraphServiceImpl;
-// Re-export hybrid search service
-pub use hybrid_search_service::HybridSearchServiceImpl;
-// Re-export document and observability services
-pub use document_service::DocumentServiceImpl;
+// Re-export observability service
 pub use observability_service::ObservabilityServiceImpl;
+// Re-export rank handler (R-7c.4a.1)
+pub use rank_service::RankServiceImpl;
 // Re-export streaming service
 pub use streaming_service::StreamingServiceImpl;
 // Re-export security service

@@ -3,18 +3,26 @@ Metadata conversion utilities for ProximaDB Python client.
 Handles conversion between Python dict and typed proto MetadataItem.
 """
 
-from typing import Any, Dict, List, Union
+from typing import Any
 
 try:
-    from proximadb_sdk.v1 import types_pb2 as v1_types_pb2
+    from proximadb_sdk.v1 import vector_types_pb2 as v1_vector_types_pb2
 
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
-    v1_types_pb2 = None
+    v1_vector_types_pb2 = None
 
 
-def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List:
+def _has_field(item: Any, field_name: str) -> bool:
+    """Return whether a proto oneof/optional field is set and exists."""
+    try:
+        return bool(item.HasField(field_name))
+    except (AttributeError, ValueError):
+        return False
+
+
+def dict_to_proto_metadata(metadata: dict[str, Any]) -> list:
     """
     Convert a Python dict to a list of typed MetadataValue protos (v1 API).
 
@@ -24,21 +32,21 @@ def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List:
     Returns:
         List of MetadataValue proto messages with typed values (v1 API)
     """
-    if not GRPC_AVAILABLE or v1_types_pb2 is None:
+    if not GRPC_AVAILABLE or v1_vector_types_pb2 is None:
         raise ImportError(
             "gRPC proto modules not available. Install grpcio and regenerate protos."
         )
 
     items = []
     for key, value in metadata.items():
-        item = v1_types_pb2.MetadataValue()
+        item = v1_vector_types_pb2.MetadataItem()
         item.key = key
 
         # Set the appropriate typed value
         if isinstance(value, bool):
             item.bool_value = value
         elif isinstance(value, (int, float)):
-            item.double_value = float(value)
+            item.number_value = float(value)
         elif isinstance(value, str):
             item.string_value = value
         elif value is None:
@@ -52,7 +60,7 @@ def dict_to_proto_metadata(metadata: Dict[str, Any]) -> List:
     return items
 
 
-def proto_metadata_to_dict(metadata_items: List) -> Dict[str, Any]:
+def proto_metadata_to_dict(metadata_items: list) -> dict[str, Any]:
     """
     Convert a list of typed MetadataValue protos (v1 API) to a Python dict.
 
@@ -65,13 +73,17 @@ def proto_metadata_to_dict(metadata_items: List) -> Dict[str, Any]:
     result = {}
     for item in metadata_items:
         # Check which field is set using HasField
-        if item.HasField("string_value"):
+        if _has_field(item, "string_value"):
             result[item.key] = item.string_value
-        elif item.HasField("double_value"):
+        elif _has_field(item, "number_value"):
+            result[item.key] = item.number_value
+        elif _has_field(item, "double_value"):
             result[item.key] = item.double_value
-        elif item.HasField("int64_value"):
+        elif _has_field(item, "int64_value"):
             result[item.key] = item.int64_value
-        elif item.HasField("bool_value"):
+        elif _has_field(item, "int_value"):
+            result[item.key] = item.int_value
+        elif _has_field(item, "bool_value"):
             result[item.key] = item.bool_value
         else:
             # No value set, return None (Python convention)
@@ -79,7 +91,7 @@ def proto_metadata_to_dict(metadata_items: List) -> Dict[str, Any]:
     return result
 
 
-def json_compatible_value(value: Any) -> Union[str, float, bool, None]:
+def json_compatible_value(value: Any) -> str | float | bool | None:
     """
     Convert a value to a JSON-compatible type for REST API.
 

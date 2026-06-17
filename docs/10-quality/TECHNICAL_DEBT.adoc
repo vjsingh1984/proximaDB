@@ -19,14 +19,23 @@ Technical debt items are prioritized based on their impact on the four developme
 |===
 | ID | Area | Phase | Priority | Status | Impact | Effort | Notes
 
+| TD-CROSS-LAYER
+| Storage→Index dependency inversion
+| All
+| Critical
+| *Resolved*
+| Storage layer imported from index layer, violating layering
+| 2 days
+| *RESOLVED May 2026*: **Cross-layer dependency resolved**. `StorageEngineType` moved from `index/axis/eventlog` to `core/types/storage.rs`. Storage layer now imports from shared types module instead of index layer. See `src/core/types/storage.rs:16-20` for documentation.
+
 | TD-001
-| PULSAR/QUASAR wiring
+| PULSAR/QUASAR engine retirement
 | P3
 | Medium
 | *Resolved*
 | Users see advertised features that don't work
 | 2-3 months
-| *RESOLVED Mar 2026*: **PULSAR/QUASAR fully wired to service layer**. `src/graph/service_engine_factory.rs:82-130` implements complete engine creation with feature gates and warnings. Both engines properly integrated into GraphOperationsService via `get_or_create_graph_engine()`. Experimental warnings logged when PULSAR/QUASAR selected. ORION remains default and recommended for production.
+| *RESOLVED Jun 2026*: Separate PULSAR/QUASAR engine modules, feature flags, REST routes, and dedicated tests were removed. `GraphOperationsService` and `GraphEngineFactory` now expose ORION only and reject retired engine names with a compatibility error. Former distributed graph behavior belongs to the relational distributed substrate; former tiered graph behavior belongs to xCatalog/storage projection policy.
 
 | TD-002
 | External catalog integration
@@ -231,7 +240,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | **ANN-Benchmarks Adapter** | ✅ Complete | `src/bench/ann_benchmarks/adapter.rs` | HNSW, IVF, DiskANN, Annoy, LSH, PQ algorithms; SIFT/GIST/MNIST/DEEP1B datasets |
 | **Binary Runner** | ✅ Complete | `src/bin/ann-benchmarks.rs` | CLI runner with CSV/JSON export |
 | **VectorDBBench Comparison** | ✅ Complete | `src/bin/vectordb_comparison.rs` | Competitor comparison (Qdrant, Weaviate, Milvus, Pinecone) |
-| **Public Documentation** | ✅ Complete | `docs/benchmarks/PERFORMANCE.md` | 271 lines with methodology, results, competitor comparisons |
+| **Public Documentation** | ✅ Complete | `docs/10-quality/benchmarks/PERFORMANCE.md` | 271 lines with methodology, results, competitor comparisons |
 | **Python Benchmarks** | ✅ Complete | `clients/python/tests/` | 15+ benchmark scripts for SDK validation |
 
 **ANN-Benchmarks Status:**
@@ -272,7 +281,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Documentation and feature dashboard advertise these as available. Erodes trust when users try them.
 | 1 week
-| *Resolved*: Gated behind `distributed-graph` / `tiered-graph` feature flags with warnings (commit `cd42e8db`).
+| *Resolved Jun 2026*: Retired as graph engines. Feature flags, modules, REST routes, and dedicated tests removed; ORION is the graph runtime.
 
 | TD-018
 | OTLP trace ingestion incomplete
@@ -483,13 +492,13 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | P1
 
 | TD-R18
-| PULSAR/QUASAR feature gating (TD-017)
-| Gated behind `distributed-graph` / `tiered-graph` feature flags with experimental warnings
+| PULSAR/QUASAR engine retirement (TD-017)
+| Retired instead of feature-gated; behavior folded into relational/storage substrate requirements
 | P3
 
 | TD-R19
-| PULSAR/QUASAR service layer wiring (TD-001)
-| Fully wired in `src/graph/service_engine_factory.rs` with feature gates, warnings, and engine creation
+| ORION-only graph service layer (TD-001)
+| `src/graph/service_engine_factory.rs` accepts ORION and rejects retired PULSAR/QUASAR names
 | P3
 
 | TD-R20
@@ -516,6 +525,21 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | Published benchmarks (TD-015)
 | Complete benchmark infrastructure with ANN-benchmarks adapter, VectorDBBench comparison, comprehensive public documentation
 | P4
+
+| TD-R25
+| Type system unification — Phase A (TD-054)
+| `ProximaType`/`ProximaValue` extended with `to_arrow()`, `pgwire_oid()`, `type_of()`, `is_compatible_with()`; `CatalogDataType::to_proxima_type()` bridge added. 17 TDD tests in `proximadb-data-model`. Resolves the three-parallel-value-system problem (spec §4).
+| Phase A
+
+| TD-R26
+| Unified record envelope — Phase B (TD-054)
+| `proximadb_records::ProximaRecord` spec §3 envelope implemented with NF² props tree, RLS fields, per-modality embeddings, temporal ns fields, `LabelSet`. `From<&VectorRecord>`, `From<&Node>`, `From<&Edge>` conversions in `conversions.rs`. `RecordConverter::vector_to_envelope()` bridge added. 26 TDD tests.
+| Phase B
+
+| TD-R27
+| Engine-level RLS scaffold — Phase E (TD-054)
+| `RlsRecordPredicate` + optional `rls_record_filter()` hook added to `UnifiedStorageEngine` trait. SST and VIPER engines implement the override (extract `tenant_id`/principal from `StorageQueryContext`). Default returns `None` (no-op). Spec §8 proof-of-concept.
+| Phase E
 |===
 
 == New Gaps Identified (March 2026 Codebase Audit)
@@ -641,10 +665,10 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 | Cross-model LATERAL join JSON parsing overhead
 | P2.5
 | HIGH
-| Open
-| `src/query/federated/execution/mod.rs` performs `serde_json::from_str()` per document row to extract embedding vectors for LATERAL joins. For 10K documents with 1KB each, this is ~10MB of unnecessary JSON parsing. Should store embeddings as Arrow `FixedSizeList<Float32>` columns and extract directly from Arrow arrays.
+| Resolved May 2026
+| `DOCUMENT_QUERY` and `GRAPH_QUERY`/`GRAPH_TRAVERSAL` now materialize vector-bearing fields and properties as native Arrow `FixedSizeList<Float32>` or `List<Float32>` columns, including nested document paths and graph property vectors. `resolve_vector_from_outer_column()` reads those Arrow columns directly for correlated `LATERAL VECTOR_SEARCH(...)` execution and falls back to JSON parsing only for legacy string-only batches.
 | 3-4 weeks
-| Requires Arrow as native cross-model memory format. Eliminates serialization tax at every model boundary.
+| Resolved May 1, 2026. Coverage includes nested document embeddings, graph property vectors, end-to-end correlated LATERAL joins, and root projection checks so internal Arrow vector columns do not leak into plain `DOCUMENT_QUERY` results.
 
 | TD-033
 | Parquet row group statistics pruning incomplete
@@ -737,18 +761,658 @@ See `docs/_internal/roadmap/ARCHITECTURAL_REVIEW_2026_03_21.adoc` for full analy
 | Maintainability improvement only.
 |===
 
-== Notes
+== Phase 5: Agentic Intelligence & Research Frontier (2026 Strategic Alignment)
 
-* If you fix a debt item, add a short entry under "Recently Resolved" and remove it from "Current Priorities".
-* Keep this list execution-focused.
-* All Phase 1 and Phase 2 core technical debt has been resolved. Remaining items are new gaps identified in the February-March 2026 strategic analysis and codebase audit.
-* Phase 4 items represent the "Context Database" evolution.
-* TD-021 through TD-030 added March 15, 2026 from comprehensive codebase review.
-* TD-031 through TD-037 added March 21, 2026 from architectural review comparing foundational layers against DuckDB/Polars patterns.
-* TD-038 through TD-042 added March 26, 2026 from comprehensive architectural review covering multi-modal integration reality, cross-modal transaction gaps, parallelism gaps, and cache architecture assessment.
-* **Phase 2.5 (Foundational Performance)** is a recommended new phase to address execution layer gaps before Phase 3 ecosystem work.
-* **TD-041 is the single highest-ROI item**: the vectorized executor already exists but is not wired into the primary query path.
+The following items represent the frontier of AI database research, aligned with ProximaDB's mission to be the primary memory for agentic systems.
 
-'''
+[cols="1,3,1,1,1,4,2,4", options="header"]
+|===
+| ID | Area | Phase | Priority | Status | Impact | Effort | Notes
 
-_Last Updated_: March 27, 2026
+| TD-043
+| Semantic Disentanglement Pipeline (SDP) + Entanglement Index
+| P5
+| HIGH
+| *Closed April 27, 2026*
+| Multi-topic documents produce embeddings with cross-topic overlap, hurting Top-K precision (paper shows 32% precision under fixed-token chunking, 82% under SDP). Implement (a) Entanglement Index metric for measurement, (b) 4-stage preprocessing pipeline that restructures documents prior to embedding (arXiv:2604.17677, Loghmani 2026, *verified*).
+| Sub-1: closed April 26, 2026. Sub-2 + Sub-3: closed April 27, 2026.
+| **Verified**: April 25, 2026. **Sub-1 status (closed April 26, 2026)**: `src/analytics/entanglement.rs` ships the EI library function. **Sub-2 status (closed April 27, 2026)**: stateless `POST /api/v1/analytics/entanglement` and collection-aware `GET /api/v1/collections/{id}/entanglement` ship in `src/network/rest/v1/analytics.rs`. Collection-aware variant loads records via `VectorOperationsService` and extracts topics from metadata. **Sub-3 status (closed April 27, 2026)**: SDP implemented in `src/storage/document/sdp.rs` and integrated into `TextChunker` in `text_storage.rs`. Enabled via `ChunkingConfig.use_sdp`. **Acceptance**: EI computable for any collection; SDP reduces EI ≥30% on multi-topic test corpus. See `PROXIMADB_RECOMMENDATIONS.md` §1.1.
+
+| TD-044
+| Projection Fusion (B5) — Speed/Diversity Tradeoff
+| P5
+| MEDIUM
+| *Score-level analog landed; vector-space B5 (paper's actual algorithm) NOT yet shipped*
+| **Paper re-read April 26, 2026**: paper's B5 is **vector-space pre-fusion** — BGE-dense (768d) + SPLADE-sparse (30522d) projected to 768d via Achlioptas sparse random projection R∈ℝ^768×30522 (density=1/3, ±√3 entries), L2-normalized, then `q = α_query·d̂ + (1−α_query)·p̂` followed by L2-normalize. α_query=0.95 (tuned), α_doc=0.50 (fixed). Single dot-product ANN against the resulting dense index. Paper's nDCG@10: B5=0.6779, RRF=0.8282 (RRF wins relevance by 0.15). ILD@10: B5=0.389, RRF=0.176 (B5 wins diversity 2.2×). What we shipped is a **score-level rank-fusion analog** with the same name (arXiv:2604.13728, Prajapati 2026, *verified*).
+| 1-2 weeks remaining (quality benchmark on labeled dataset)
+| **Paper re-read April 26, 2026 — important correction**: our shipped `FusionStrategy::Projection` is **NOT the same algorithm** as the paper's B5. Paper B5 operates in **vector space** (combines BGE-dense + projected-SPLADE into one 768d vector before ANN). Our impl operates on **post-retrieval scalar scores** via `score = bm25_norm·cos(theta) + vector_norm·sin(theta)` with min-max normalization. Same name, different layer of the stack. Score-level projection is a useful operator on its own and matches RRF's API surface (post-retrieval scalar fusion), but it is not what the paper's nDCG/ILD numbers measured. **Where shipped**: implementation `src/core/search/hybrid/fusion.rs:106-253`; REST parser `src/network/rest/v1/hybrid.rs::parse_fusion_strategy` (accepts `"projection"` and `"projection_b5"`, alpha=0.5); strategies-list endpoint advertises Projection with description noting RRF remains relevance default; Python SDK enum `clients/python/src/proximadb_sdk/hybrid.py::FusionStrategy::PROJECTION`; latency bench `benches/bench_21_hybrid_search_fusion.rs::bench_rrf_vs_projection` (results April 27: RRF 248µs vs Projection 255µs @ k=1000 — RRF is slightly faster in this impl); positioning guide `docs/05-concepts/hybrid-fusion.adoc` (updated April 27). **Remaining**: (1) quality benchmark on labeled IR dataset showing nDCG@10/MRR/ILD@10 tradeoff — gated on labeled dataset under `benches/data/`; (2) **vector-space B5** is a separate sub-deliverable — needs a sparse vector encoder integration (SPLADE or analog), the Achlioptas projection matrix, and a single combined-vector ANN index. That work is a TD-051 dependency since it needs a unified retrieval+compression embedding flow. **Acceptance for score-level path**: quality bench on labeled IR dataset. See `PROXIMADB_RECOMMENDATIONS.md` §1.2 and `docs/05-concepts/hybrid-fusion.adoc`.
+
+| TD-043
+| Semantic Disentanglement Pipeline (SDP) + Entanglement Index
+| P5
+| HIGH
+| *Closed April 27, 2026*
+| Multi-topic documents produce embeddings with cross-topic overlap, hurting Top-K precision (paper shows 32% precision under fixed-token chunking, 82% under SDP). Implement (a) Entanglement Index metric for measurement, (b) 4-stage preprocessing pipeline that restructures documents prior to embedding (arXiv:2604.17677, Loghmani 2026, *verified*).
+| Sub-1: closed April 26, 2026. Sub-2 + Sub-3: closed April 27, 2026.
+| **Verified**: April 25, 2026. **Sub-1 status (closed April 26, 2026)**: `src/analytics/entanglement.rs` ships the EI library function. **Sub-2 status (closed April 27, 2026)**: stateless `POST /api/v1/analytics/entanglement` and collection-aware `GET /api/v1/collections/{id}/entanglement` ship in `src/network/rest/v1/analytics.rs`. Collection-aware variant loads records via `VectorOperationsService` and extracts topics from metadata. **Sub-3 status (closed April 27, 2026)**: SDP implemented in `src/storage/document/sdp.rs` and integrated into `TextChunker` in `text_storage.rs`. Enabled via `ChunkingConfig.use_sdp`. **Acceptance**: EI computable for any collection; SDP reduces EI ≥30% on multi-topic test corpus. See `PROXIMADB_RECOMMENDATIONS.md` §1.1.
+
+| TD-044
+| Projection Fusion (B5) — Speed/Diversity Tradeoff
+| P5
+| MEDIUM
+| *Score-level analog landed; vector-space B5 (paper's actual algorithm) NOT yet shipped*
+| **Paper re-read April 26, 2026**: paper's B5 is **vector-space pre-fusion** — BGE-dense (768d) + SPLADE-sparse (30522d) projected to 768d via Achlioptas sparse random projection R∈ℝ^768×30522 (density=1/3, ±√3 entries), L2-normalized, then `q = α_query·d̂ + (1−α_query)·p̂` followed by L2-normalize. α_query=0.95 (tuned), α_doc=0.50 (fixed). Single dot-product ANN against the resulting dense index. Paper's nDCG@10: B5=0.6779, RRF=0.8282 (RRF wins relevance by 0.15). ILD@10: B5=0.389, RRF=0.176 (B5 wins diversity 2.2×). What we shipped is a **score-level rank-fusion analog** with the same name (arXiv:2604.13728, Prajapati 2026, *verified*).
+| 1-2 weeks remaining (quality benchmark on labeled dataset)
+| **Paper re-read April 26, 2026 — important correction**: our shipped `FusionStrategy::Projection` is **NOT the same algorithm** as the paper's B5. Paper B5 operates in **vector space** (combines BGE-dense + projected-SPLADE into one 768d vector before ANN). Our impl operates on **post-retrieval scalar scores** via `score = bm25_norm·cos(theta) + vector_norm·sin(theta)` with min-max normalization. Same name, different layer of the stack. Score-level projection is a useful operator on its own and matches RRF's API surface (post-retrieval scalar fusion), but it is not what the paper's nDCG/ILD numbers measured. **Where shipped**: implementation `src/core/search/hybrid/fusion.rs:106-253`; REST parser `src/network/rest/v1/hybrid.rs::parse_fusion_strategy` (accepts `"projection"` and `"projection_b5"`, alpha=0.5); strategies-list endpoint advertises Projection with description noting RRF remains relevance default; Python SDK enum `clients/python/src/proximadb_sdk/hybrid.py::FusionStrategy::PROJECTION`; latency bench `benches/bench_21_hybrid_search_fusion.rs::bench_rrf_vs_projection` (results April 27: RRF 248µs vs Projection 255µs @ k=1000 — RRF is slightly faster in this impl); positioning guide `docs/05-concepts/hybrid-fusion.adoc` (updated April 27). **Remaining**: (1) quality benchmark on labeled IR dataset showing nDCG@10/MRR/ILD@10 tradeoff — gated on labeled dataset under `benches/data/`; (2) **vector-space B5** is a separate sub-deliverable — needs a sparse vector encoder integration (SPLADE or analog), the Achlioptas projection matrix, and a single combined-vector ANN index. That work is a TD-051 dependency since it needs a unified retrieval+compression embedding flow. **Acceptance for score-level path**: quality bench on labeled IR dataset. See `PROXIMADB_RECOMMENDATIONS.md` §1.2 and `docs/05-concepts/hybrid-fusion.adoc`.
+
+| TD-045
+| Modular Graph RAG (RGL)
+| P5
+| CRITICAL
+| *Closed April 27, 2026*
+| Modular framework spanning the full graph-RAG pipeline: indexing, dynamic node retrieval, subgraph construction, tokenization. Paper reports **143× speedup** over conventional methods, mainly through dynamic node filtering (arXiv:2503.19314, Li/Hu/Jiang/Liu/Hooi/He 2025, *verified — NUS authors*).
+| Sub-1, Sub-2, and Sub-3: closed April 27, 2026.
+| **Verified**: April 25, 2026. **Sub-1 status (closed April 26, 2026)**: trait surface and orchestrator ship in `src/graph/rag/mod.rs`. **Sub-2 status (closed April 27, 2026)**: `VectorNodeRetriever`, `KHopSubgraphBuilder`, and `LlmNodeFilter` ship in `src/graph/rag/engine_impls.rs`. **Sub-3 status (closed April 27, 2026)**: REST endpoint `POST /api/v1/graph/graphs/{id}/rag` ships in `src/network/rest/v1/graph.rs` with optional LLM filtering. Verified with integration test `tests/graph_rag_integration_test.rs`. **Acceptance**: RGL pipeline executes e2e; 2-hop construction over 1M node graph <10ms. See `PROXIMADB_RECOMMENDATIONS.md` §2.1.
+
+| TD-046
+| Tool-Based Navigation (GraphWalk)
+| P5
+| HIGH
+| *Mostly closed — REST + agent-tool schema landed; gRPC parity gated on proto regen workflow*
+| Equip LLMs with **minimal graph operations** (move, look, remember) so they traverse arbitrarily large structures via tool calls. Gains "more pronounced as scale increases" (arXiv:2604.01610, Ghandi/Mahyar/Klaiman 2026, *verified*).
+| Proto/gRPC: blocked on regen workflow setup. SDK framework integration: 1 week.
+| **Verified**: April 25, 2026. **GraphWalkClient (closed April 26, 2026)**: framework-agnostic Python client at `clients/python/src/proximadb_sdk/integrations/graph_walk_client.py`. **Status as of April 26, 2026**: REST exposure landed for walk + step; agent-tool schema and renderer ship in the Python SDK. **Where**: service primitives in `src/graph/service_traversal_api.rs`; REST handlers `walk_graph` and `step_graph` in `src/network/rest/v1/graph.rs`; routes `POST /api/v1/graph/graphs/{graph_id}/walk` and `POST /api/v1/graph/graphs/{graph_id}/step`. Agent tools at `clients/python/src/proximadb_sdk/integrations/mcp_tools.py` expose `GRAPH_WALK_TOOL`, `GRAPH_STEP_TOOL`, `list_tools()`, and `render_invocation()`. **Remaining work**: (1) proto `WalkRequest`/`WalkStepRequest` in `proto/proximadb/v1/graph.proto` + regenerated gRPC handlers; (2) LangChain/CrewAI/LlamaIndex tool wrappers. **Acceptance**: agent walks 1M-node graph with ≤8K tokens/step. See `PROXIMADB_RECOMMENDATIONS.md` §2.2.
+
+| TD-047
+| Evolutionary Query Planning (DBPlanBench-style)
+| P5
+| MEDIUM
+| *Closed April 27, 2026*
+| Expose physical plans as compact serialized form; let an LLM propose **localized plan edits**; evolutionary search refines candidates. Up to **4.78× speedup** (arXiv:2602.10387, Erol/Hao/Bianchi/Greco/Tagliabue/Zou 2026, *verified*).
+| Sub A and Sub B: closed April 27, 2026.
+| **Verified**: April 25, 2026. **Sub A status (closed April 26, 2026)**: skeleton committed at `src/query/unified/evolutionary.rs`; `PlanExecutionCache` at `src/query/unified/plan_execution_cache.rs` records wall-time per `(shape, order)`. **Sub B status (closed April 27, 2026)**: `llm_mutate` operator implemented in `evolutionary.rs` using `LLMIntegrationEngine` to propose plan reorderings. Optimization stack migrated to `async` to support non-blocking LLM calls. Plumbed from `UnifiedQueryEngine` through `QueryOptimizer` to `EvolutionaryOptimizer`. **Acceptance**: Evolutionary planner executes e2e with optional LLM mutation; measured fitness converges to faster plans. See `PROXIMADB_RECOMMENDATIONS.md` §3.1.
+
+| TD-048
+| Agentic View Decomposition (AV-SQL) — 3-Agent Pipeline
+| P5
+| HIGH
+| *Closed April 27, 2026*
+| Decompose complex NL→SQL via **three specialized agents**: (1) rewriter compresses/clarifies the NL query; (2) view generator produces per-schema-chunk "agentic views"; (3) planner/generator/revisor composes views into final SQL. Reports **70.38% execution accuracy on Spider 2.0** (arXiv:2604.07041, Pham et al. 2026, *verified*).
+| Closed April 27, 2026.
+| **Verified**: April 25, 2026. **Status (closed April 27, 2026)**: `AvSqlEngine` and LLM-backed agent traits (`AgentRewriter`, `AgentViewGenerator`, `AgentComposer`) landed in `src/query/nl/mod.rs`. Wired into REST API at `POST /api/v1/nl/translate`. Supports multi-model view generation. Response includes normalized query and project views for traceability. **Acceptance**: end-to-end NL→federated-SQL test; response exposes intermediate views. See `PROXIMADB_RECOMMENDATIONS.md` §3.2.
+
+| TD-049
+| Block-Batched Semantic Joins
+| P5
+| HIGH
+| *Closed April 27, 2026*
+| **Block nested loops join** for semantic joins: pack batches of rows from *both* tables into a single LLM prompt, ask the model to identify all matching pairs in one shot (arXiv:2510.08489, Trummer 2025, *verified — Cornell*).
+| Closed April 27, 2026.
+| **Verified**: April 25, 2026. **Status (closed April 27, 2026)**: `execute_block_batch_semantic_join` implemented in `src/query/unified/executor.rs` with prompt packing and LLM integration via `LLMIntegrationEngine`. Plumbed through `ParallelExecutor` and `dispatch_semantic_join`. Feature-gated behind `llm-joins`. **Acceptance**: ≥10× LLM-call reduction vs nested-loop baseline at equal precision@10. See `PROXIMADB_RECOMMENDATIONS.md` §3.3.
+
+| TD-050
+| RUBICON-Style Auditable Query Layer (AQL)
+| P5
+| CRITICAL
+| *Closed April 27, 2026*
+| Replace opaque LLM agent chains with **explicit, auditable query plans**. Stonebraker et al. propose **RUBICON** architecture and **AQL (Agentic Query Language)** executed through source-specific wrappers (arXiv:2604.21413, Wenz/Treutwein/Arenja/Demiralp/Stonebraker 2026, *verified*).
+| Closed April 27, 2026.
+| **Verified**: April 25, 2026. **Status (closed April 27, 2026)**: AQL AST, structured Audit Trail (`AuditTrail`, `AuditFrame`), and `AqlExecutor` landed in `src/query/aql/`. Multi-model sources implemented: `VectorAqlSource`, `GraphAqlSource`, `DocumentAqlSource`, and `ObservabilityAqlSource`. Wired into REST API at `POST /api/v1/aql/execute` and `/api/v1/aql/audit/{id}`. Persistent audit log via `EventLogEngine` implemented. `EXPLAIN VERBOSE` mapped to AQL projection in `UnifiedQueryEngine`. **Acceptance**: `EXPLAIN VERBOSE` produces compliance-grade trace; end-to-end test showing AQL plan → audit trail. See `PROXIMADB_RECOMMENDATIONS.md` §4.1.
+
+| TD-051
+| Dual-Use Embedding Integration (Unified Retrieval + Compression)
+| P5
+| MEDIUM
+| *Closed April 27, 2026*
+| A unified model in which the **same** representation serves both retrieval kNN and as the compressed context fed to the LLM. Reports performance matching traditional RAG using ~**1/10 of the context** (arXiv:2604.14403, Killingback/Meshi/Li/Zamani/Karimzadehgan 2026, *verified — Google*).
+| Closed April 27, 2026.
+| **Verified**: April 25, 2026. **Status (closed April 27, 2026)**: `enable_dual_use_embeddings` flag added to `CollectionConfig` (proto tag 24) and propagated through server layers. Python SDK integration (`DualUseStore` + `DualUseModel` Protocol) shipped. **Acceptance**: Collection config flag honored end-to-end. See `PROXIMADB_RECOMMENDATIONS.md` §1.3.
+
+| TD-052
+| Proactive Agentic Memory Retrieval (Speculative — No Citation)
+| P5
+| LOW
+| Open — speculative
+| Don't wait for explicit retrieval calls. Use RL to predict when stored memory is relevant to the current intent and surface it proactively.
+| 6-8 weeks
+| **Verified**: April 25, 2026 — the "PASK" acronym used in earlier drafts has **NO paper backing**. Treating as future research direction, not a planned feature. **Wait for**: TD-050 audit substrate to land first (done). See `PROXIMADB_RECOMMENDATIONS.md` §4.2.
+
+| TD-053
+| True Memory Encoding Gates
+| P6
+| CRITICAL
+| Open
+| Implement a three-layer Encoding Gate (Novelty, Salience, Prediction Error) for verbatim event ingestion, shifting from "extraction at ingest" to "retrieval-centered architecture".
+| 4-6 weeks
+| **Verified**: May 9, 2026. From "Storage Is Not Memory" (arXiv:2605.04897). **Next step**: Implement `EncodingGate` trait in document service. See §5.1.
+
+| TD-054
+| Entropy-Based Lazy Loading (L-RAG)
+| P6
+| HIGH
+| Open
+| Implement hierarchical context management where expensive chunk retrieval is triggered only when model predictive entropy exceeds a calibrated threshold.
+| 2-3 weeks
+| **Verified**: May 9, 2026. From L-RAG (arXiv:2601.06551). **Next step**: Integrate entropy-threshold check into AQL `Find` operator. See §5.2.
+
+| TD-055
+| Memanto Typed Semantic Memory
+| P6
+| HIGH
+| *Closed May 9, 2026*
+| Implement the 13 predefined memory categories, conflict resolution, and temporal versioning for high-fidelity agent recall (arXiv:2604.22085).
+| Sub-1, Sub-2, and Sub-3: closed May 9, 2026.
+| **Verified**: May 9, 2026. **Implementation**: `MemoryType` enum in `proximadb-data-model`; `memory_type` field and `resolve_conflict` (LWW) in `proximadb-records`; `TypeMatch` predicate in AQL. **Verification**: `tests/typed_memory_test.rs`, including `test_aql_type_filtering_reduces_topic_bleed`. **Outcome**: Agents can perform high-precision retrieval by memory intent (e.g., `FIND * FROM mem WHERE type = "decision"`). See §5.3.
+
+| TD-056
+| Agentic Hybrid Reference Architecture
+| P6
+| HIGH
+| *Closed May 10, 2026*
+| Implement Plan-Retrieve-Evaluate loop and metadata pseudo-query augmentation for bounded, auditable dataset search.
+| 5-6 weeks
+| **Verified**: May 10, 2026. From March 2026 Reference Architecture (arXiv:2604.16394). **Implementation**: `PseudoQueryGenerator` in `VectorOperationsService` ingestion paths (`insert_batch_internal`, `insert_vectors_via_*`), storing auto-derived `proximadb.pseudo_query` metadata. **Tests**: `src/services/operations/vectors.rs` (`pseudo_query_tests`).
+|===
+
+== Phase 7: Competitive Platform Architecture And Storage Authority (2026+)
+
+The following items track the architecture gaps added by
+`docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc`,
+`docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`,
+`roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`, and
+`roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc`.
+
+These are not claims about the current supported surface. They are the next implementation seams
+that keep ProximaDB competitive while preserving the broader mandate: one semantic spine, many
+physical layouts.
+
+[cols="1,3,1,1,1,4,2,4", options="header"]
+|===
+| ID | Area | Phase | Priority | Status | Impact | Effort | Notes
+
+| TD-060
+| Storage Layout Authority And External Format Semantics
+| P7
+| CRITICAL
+| Open - catalog + EXPLAIN hooks landed May 14, 2026
+| Without an explicit authority model, Arrow/Parquet/Iceberg/Delta/Hudi and internal engines can drift into hidden sources of truth with separate type, policy, freshness, and recovery semantics.
+| 4-6 weeks
+| **May 14, 2026**: contract skeleton added to `crates/control/proximadb-catalog/src/lib.rs`: `CatalogAuthorityMode`, `CatalogStorageLayoutKind`, `CatalogPhysicalFormat`, `CatalogWriteMode`, `ProjectionFreshness`, `CatalogProjectionKind`, `CatalogStorageLayout`, `CatalogProjection`, and `RelationalCapabilities`. `CatalogTableSchema` now persists `storage_layouts`, `projections`, and `relational_capabilities` with backward-compatible serde defaults. Internal `ObjectSchema` carries the same metadata, and `information_schema.storage_layouts`, `information_schema.projections`, and `information_schema.relational_capabilities` expose it for catalog introspection. `src/query/explain.rs` now has a nullable storage-authority section that can disclose layout authority, physical format, projection freshness/lossiness, policy enforcement, fallback behavior, and optional relational capabilities. `/api/v1/sql/explain` resolves the explicit collection or parsed `FROM` target through `CatalogManager`; `/api/v1/unified/explain` carries optional catalog context and resolves `VECTOR_SEARCH`, `DOCUMENT_QUERY`, `LOGS`, `METRICS`, and simple `FROM` targets when metadata is available. Tests cover default internal authority, external authoritative boundaries, rebuildable projection metadata, optional relational semantics, table-schema persistence, introspection, EXPLAIN metadata conversion, SQL EXPLAIN catalog resolution, and unified EXPLAIN target extraction. **May 15, 2026**: `PlanContext.resolved_objects` now carries planner-native authority/layout/projection metadata, and `UnifiedQueryRouter` resolves cataloged UQL sources through `CatalogManager` before lowering. **May 16, 2026**: `StorageAuthorityExplanation::from_plan_context()` lets EXPLAIN consume shared resolved object context directly, `UnifiedQueryPortImpl::explain_unified_query()` enriches port-backed SQL/unified EXPLAIN JSON with `storage_authority`, and `query::authority_context` centralizes catalog-to-plan authority conversion for router, port-backed EXPLAIN, and legacy root REST EXPLAIN callers. Verified with `cargo test -p proximadb-multimodel-plan plan_context --target-dir /private/tmp/proximadb-plan-target`; root router/EXPLAIN validation is tracked separately because full lib targets may compile unrelated dirty surfaces. Remaining: route SQL/federated planners through shared `PlanContext` end-to-end instead of resolving catalog metadata at the protocol boundary. See `MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` §5.6 and Phase B2.
+
+| TD-061
+| Optional Relational Capabilities
+| P7
+| HIGH
+| Open
+| PostgreSQL/Oracle adoption paths require keys, unique indexes, secondary indexes, FKs, checks, materialized views, transaction profiles, and stricter schema evolution, but forcing those costs onto every vector/document/observability workload would be wrong.
+| 6-8 weeks
+| Model relational rigor as cataloged table/profile capabilities. When enabled, constraints are durable semantics enforced below REST/gRPC/Arrow Flight/PostgreSQL wire handlers and recovered through WAL/log/manifest. Start with catalog shape and validation hooks before full FK enforcement. See overhaul spec §5.7.
+
+| TD-062
+| Hybrid Retrieval And Reranking Planner Surface
+| P7
+| HIGH
+| Open
+| Competitive search/RAG systems increasingly combine BM25/full-text, dense vectors, sparse vectors, metadata filters, graph context, recency, and rerankers. Treating these as separate API paths leaves quality and explainability on the table.
+| 6-10 weeks
+| Add planner-level representation for lexical, dense, sparse, graph, document path, time, and rerank stages. `EXPLAIN` must show fusion/rerank strategy and any post-filter fallback. Reuse existing hybrid search work, but move the durable direction into shared algebra/catalog/projection metadata.
+
+| TD-063
+| Observability/SIEM Convergence
+| P7
+| HIGH
+| Open
+| Splunk, Datadog, Elastic, and OpenSearch compete on operational workflows: log search, metrics, traces, profiles, service maps, alerts, anomaly detection, retention tiers, and now LLM/agent observability.
+| 8-12 weeks
+| Normalize logs, metric samples, spans, profiles, alerts, anomalies, agent traces, prompts, tool calls, retrieval evidence, token/cost metrics, and eval events as `ProximaRecord` profiles plus cataloged projections. Rollups/anomalies/alerts become durable only when written as canonical derived records with provenance.
+
+| TD-064
+| Predicate-Aware Vector Search Correctness And Fallback Reporting
+| P7
+| CRITICAL
+| In Progress (Foundation + AXIS wiring landed 2026-05-27)
+| Post-filtered ANN can return fewer than the requested matching top-k under tenant/RLS, time, branch, and typed metadata filters. This is a correctness and security surface, not just a latency issue.
+| 6-8 weeks
+| Active blueprint: `docs/12-design/TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc`. Extend ADR-011 `VectorTopK` planning to state PreFilter, Inline predicate-aware ANN, or PostFilter fallback. Push tenant/RLS and typed predicates into candidate generation where supported. `EXPLAIN` must disclose recall/failure risk for fallback plans. Coordinates with Phase C in the overhaul spec.
+
+**Status 2026-05-27 (slices 1-5 landed)**:
+
+* Foundation: `FilterableHnswMetadata` schema + shared `FilterableMetadataCache` helper in `src/index/axis/filterable_metadata.rs`. <50-byte per-record overhead target.
+* `AxisVectorIndex` trait extended with `add_with_metadata`, `search_with_predicate(tenant, time_range, rls_tags)`, `supports_predicate_search`, `configure_filterable_fields`. All four AXIS-native indexes (HNSW, IVF, Annoy, LSH) implement them — HNSW with native skip-through traversal, IVF/Annoy/LSH with oversample-and-postfilter.
+* Snapshot persistence v2 with v1 backward-compat decoder. Old HNSW snapshots upgrade to v2 in-memory with empty metadata.
+* `AxisManager` insert paths (HNSW direct, IVF trained-path, IVF cold-start bulk-add, HMGI partitions) all call `add_with_metadata` so cached metadata is populated as records flow in. IVF cold-start hydrates metadata from `collection_vectors` to close the gap.
+* `AxisManagerQueryResult.predicate_shortfall: Option<PredicateShortfall>` populated by inline path when post-filter trimming drops survivors below `top_k`. Prometheus counters `axis_predicate_shortfall_total` + `axis_predicate_shortfall_missing_sum` for operator dashboards.
+* `SearchPlanTrace.predicate_shortfall: Option<PredicateShortfall>` + `mark_predicate_shortfall(...)` helper. `TraceBuilderInputs.predicate_shortfall` carries it into the assembled trace; `failure_class = PermissionThin` set when populated.
+* Task-local `predicate_diagnostics` bus (`src/observability/predicate_diagnostics.rs`) — `scope`/`record_shortfall`/`take_shortfall`. REST + gRPC handlers wrap search in `scope`, read at trace-build / response-construction time. Lets AxisManager-deep shortfall reach the gateway without forcing intermediate service / proto types to carry the field.
+* ADR-011 `AnnFilteringPolicy::routing_mode()` wired into `AxisManager.query`. `AxisHybridQuery` carries optional `ann_filtering_policy` + `estimated_selectivity`; when both are present, the catalog policy decides PreFilter / Inline / PostFilter. `AxisManagerQueryResult.selected_filtering_mode` surfaces the chosen mode. PostFilter uses `policy.effective_top_k_for_post_filter()` for oversample sizing; shortfall is tagged with the effective mode label.
+* Non-AXIS orphan index modules (`src/index/{hnsw,ivf,diskann,sparse_hnsw}` + `tests/index/`) deleted — confirmed zero production users in the audit. ~4600 LOC removed.
+
+**Remaining work**:
+
+* Plumb `AxisManagerQueryResult.predicate_shortfall` through `services/operations/vectors` and `RichSearchResponse` so REST/gRPC handlers can populate `TraceBuilderInputs.predicate_shortfall` (currently the task-local bus carries it; threading the field through service types is an alternative if the bus pattern becomes brittle).
+* IVF inline predicate pushdown (replace oversample-and-postfilter with nprobe-time predicate evaluation) — TD-064 Phase 3.
+* Selectivity source + projection-freshness + rejected-route-reason diagnostics on `AxisManagerQueryResult` — extends the route disclosure surface beyond just `selected_filtering_mode`.
+
+| TD-065
+| Document Service In-Memory Map As Temporary Durable Source
+| P5
+| HIGH
+| *Resolved (default-enable; per-callsite cleanup deferred)*
+| `DocumentService.documents` (`RwLock<HashMap>`) was the primary durable source on the non-canonical-store path.
+| 4-6 weeks
+| *RESOLVED 2026-05-26 (default-enable layer)*: `canonical-document-store` feature is now in the default feature set in `Cargo.toml:464`. Default builds use the canonical WAL path; the in-memory map becomes a projection cache, not a durable source. ADR-020 (`docs/12-design/adr/ADR-020-canonical-wal-authority.adoc`) defines the recovery contract. Per-call-site cleanup (each `self.documents.write()` becomes pure cache-write after canonical WAL append) tracked as a follow-up under ADR-020; not strictly required since the feature gate already routes writes through canonical WAL in default builds. Opt-out flag preserved for one minor-release migration window (target: removed in v0.4).
+
+| TD-066
+| ORION WAL As Parallel Durable Graph Truth
+| P5
+| HIGH
+| Partial (emission + production wiring + recovery read-side + Option E metrics landed; recovery behavior-change + truncation remain)
+| `OrionGraphEngine::flush_wal()` and `OrionPersistence::save_snapshot()` write graph facts to ORION's own WAL and snapshot files (`src/graph/engines/orion/persistence.rs`). `GraphOperationsService::flush_wal()` now dispatches only to ORION's projection WAL. This WAL is a compatibility recovery buffer alongside canonical `RecordUpsert` WAL entries; recovery from the projection WAL alone would miss canonical record semantics (tenant/RLS, versioning, provenance). The convergence spec states ORION WAL should be demoted to a compatibility projection recovery path.
+| 3-5 weeks (≈3/4 landed)
+| **EMISSION HALF RESOLVED 2026-05-27** by commit `b36a24b17`: added `canonical_wal_appender: Option<Arc<dyn TableWalAppender>>` injection on `GraphOperationsService` plus `with_canonical_wal_appender` builder. `flush_wal` now persists `CanonicalOperation::Checkpoint(SnapshotManifest)` to the canonical WAL via `FramedTableWalAppender::append_operations` before the engine WAL flush, returning `ProximaDBError::Internal` on append failure. Verified by 3 cycles in `tests/graph_canonical_checkpoint_test.rs`. **PRODUCTION WIRING RESOLVED 2026-05-28** by commit `4ece74250`: added `canonical_wal_appender: Option<Arc<FramedTableWalAppender>>` field to `SharedServices`, opened ONCE in `SharedServices::new` from `cfg.server.data_dir`, and shared with both consumers — graph (via the builder) and pgwire direct writes (via `multi_server.rs`). Sharing the single appender instance is required for correctness: two independent `open()` calls on the same WAL file would each maintain independent `next_sequence: AtomicU64`, risking duplicate sequence numbers and silent recovery corruption. The pgwire path falls back to opening locally when the operator overrides `direct_record_wal_path` to a non-default location (no conflict — different paths). **RECOVERY READ-SIDE RESOLVED 2026-05-28** by commit `18c846ae8`: added `canonical_wal_path: Option<PathBuf>` field + `with_canonical_wal_path` builder + `canonical_checkpoint_lsn(&self) -> Option<u64>` async method on `OrionPersistence` (reads canonical WAL, filters checkpoints by `self.graph_id` in `manifest.collection_ids`, returns max LSN). `OrionGraphEngine::recover` now logs the result via `tracing::info!` for operator visibility. Threaded through `GraphOperationsService::canonical_wal_path` → `service_engine_factory.rs` → new `OrionGraphEngine::with_persistence_for_graph_and_canonical_wal` constructor variant (the original 3-arg signature is preserved for 24+ existing callers). Verified by 3 cycles in `tests/orion_canonical_checkpoint_read_test.rs` (none for no-path; max-LSN selection; per-graph_id filtering including multi-graph checkpoints). **Recovery BEHAVIOR is intentionally unchanged in Part 1** — the LSN is logged but not used to scope engine WAL replay. **OPTION E METRICS RESOLVED 2026-05-28** by commit `cd662ceea`: added `src/metrics/td066_metrics.rs` exposing three Prometheus metrics — `orion_recovery_canonical_checkpoint_age_seconds` (gauge), `orion_recovery_canonical_checkpoint_present_total` (counter), `orion_recovery_canonical_checkpoint_absent_total` (counter) — so operators can detect "is canonical emission + production wiring healthy?" without log scraping. Metrics fire on every `OrionGraphEngine::recover` call. Verified by 2 unit tests in `td066_metrics::tests`. LSN-correlation design captured in `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc` (5 options surveyed; recommend Option E now [landed] + Option A as a post-v0.2 phase-2 workstream). **Remaining to fully close TD-066:** (c) Part 2 Option A — tag engine WAL frames with `canonical_emission_lsn` marker so recovery can scope engine WAL replay by canonical checkpoint LSN; (d) engine WAL truncation tied to canonical checkpoint LSN (depends on (c) Part 2). Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 3.
+
+| TD-067
+| Projection Keys Use Facade Document ID Instead Of Canonical OID
+| P6
+| MEDIUM
+| Open
+| JSON path, full-text, and columnar variation projection maintenance routes through `IndexManager` entry points, but projection keys are the facade `document_id` string, not the canonical `ProximaRecord::oid`. This means projection lookups must join through the facade id→OID mapping, and candidate sets in the query executor cannot directly address canonical records. The fix requires the query executor to support record-OID candidate sets.
+| 2-3 weeks
+| Once `plan_executor.rs` can produce OID-addressed candidate sets from `VectorTopK` / `Filter` / `Scan` operators, switch all `IndexManager` projection key writes from facade id to `record.oid`. Add a migration that re-keys existing projection indexes. Coordinates with `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` Phase 2 deferred item.
+
+| TD-068
+| QUASAR Cold-Tier Path Has No Canonical Record Binding
+| P6
+| MEDIUM
+| Resolved
+| The separate `QuasarGraphEngine` cold-tier path was removed with the PULSAR/QUASAR engine retirement.
+| N/A
+| Canonical-record-backed tiering remains a storage/catalog projection-policy requirement, not a graph engine path.
+
+| TD-069
+| Standalone unit test files migrated to inline `#[cfg(test)]` blocks
+| All
+| MEDIUM
+| *Resolved*
+| 23 standalone unit test files in `tests/unit/` predated the inline-test convention and complicated build/discovery. Companion tracker `TEST_INLINING_PROGRESS.md` captured the migration work (now archived).
+| 2-3 weeks
+| *RESOLVED 2026-04-07*: 23 files / ~6,500 lines / 190 tests migrated from `tests/unit/` into inline `#[cfg(test)] mod tests` blocks alongside their source modules. 7702+ tests passing. Companion doc archived to `docs/_archive/quality/2026-05/TEST_INLINING_PROGRESS.md` 2026-05-26; see also memory entry `project-test-inline-progress`.
+
+| TD-071
+| Distributed Query Response Metrics Not Plumbed From Coordinator
+| P3
+| LOW
+| Resolved
+| `DistributedQueryCoordinator::execute_with_metadata` returns plan/cache metadata; `DistributedQueryStrategy` preserves node/cache/subquery deltas in `ExecutionMetrics.extra`; REST distributed query responses read `nodes_involved` and `cache_hits` from those structured metrics instead of hardcoded zeros.
+| Done
+| *RESOLVED 2026-05-26*: verified by `cargo check -p proximadb --lib`. Follow-up can add response-level integration coverage, but the implementation gap is closed.
+
+| TD-070
+| Insert/Query Hot Path Skips Dimension + NaN/Inf Validation
+| P3
+| MEDIUM
+| Resolved
+| `VectorOperationsService::insert_batch_internal` now validates records before WAL/bulk routing, and `unified_search_with_tenant_context` validates query vectors before cache lookup/execution. Dimension mismatches and NaN/Inf are rejected at the shared vector service boundary.
+| Done
+| *RESOLVED 2026-05-26*: implementation verified by `cargo check -p proximadb --lib` and `cargo test -p proximadb --lib services::operations::vectors::legacy::index_first_search_tests -- --nocapture` (18 passed, including insert/search non-finite and dimension rejection tests). Follow-up can add REST/gRPC response-shape coverage, but the shared hot-path gap is closed.
+
+| TD-072
+| `ProximaRecord.branch_id` is `#[serde(skip)]` — invisible to canonical WAL → REST branch-merge endpoint structurally broken
+| P3
+| HIGH
+| Resolved
+| Slice 2 of T3.1 (commit `1dca6ea7b`) annotated `crates/foundation/proximadb-records/src/lib.rs:848` with `#[serde(skip, default)]` to keep the V1 bincode wire format stable. The canonical WAL uses `rmp_serde::to_vec_named` (`src/services/canonical_wal.rs:225`), which is schema-tolerant by itself — but `#[serde(skip)]` drops `branch_id` from the serialization regardless of encoder. Result: every record read back via `FramedTableWalAppender::read_entries_from_path` had `branch_id: None`, so `merge_branches` could not identify branch entries and returned `None`. The REST endpoint `POST /api/v1/collections/:collection/branches/:branch/merge` was therefore non-functional for any real-world data; the 6 unit tests in `src/graph/merge.rs` only passed because they construct `CanonicalWalEntry` via struct literals (bypassing the WAL roundtrip).
+| Done
+| **RESOLVED 2026-05-27** by commit `996626595`: flipped `#[serde(skip, default)]` → `#[serde(default)]` on `branch_id`. Considered 3 fix options: A = switch WAL to `ProximaRecordV2` (~35 RecordUpsert constructor sites); B = move `branch_id` onto `CanonicalWalEntry` (16 + 7 + 2 sites); **C (chosen) = unskip the attribute (1 line)**. Option C is safe because (1) no production code bincode-serializes `ProximaRecord` directly — only tests do; (2) the canonical WAL encoder is named-field schema-tolerant; (3) no production data with `branch_id = Some(...)` exists on disk yet — the canonical WAL has been silently dropping the field since Slice 2 landed, so there is nothing to migrate. Added 3 regression tests in `proximadb-records/src/lib.rs#mod tests` (rmp-named roundtrip, bincode roundtrip, default-on-missing) and flipped the existing `branch_id_is_dropped_by_v1_bincode_path_serde_skip` test in `wire_v2.rs` to assert the new contract. The 5 Slice 8 integration tests are no longer `#[ignore]`-d and all pass (`cargo test --test graph_branch_merge_integration_test`: 5 passed). Cleaner-layering Option B is available as a future refactor; it doesn't block anything.
+
+| TD-073
+| Filtered ANN `AnnFilteringPolicy` per-collection catalog persistence (ADR-011)
+| P3
+| MEDIUM
+| Open
+| Optimizer (`src/index/axis/management/manager.rs:653-694`) routes filtered ANN through a default `AnnFilteringPolicy` instance. ADR-011 contract says per-collection policy (low/medium/high-selectivity preferences, recall floor, pushdown candidate cap) should be cataloged. Without it, operators cannot tune per workload; recall envelope is policy-uniform across collections.
+| 3-5 days
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `AnnFilteringPolicy` field on collection metadata in xCatalog; (2) optimizer resolves catalog policy → falls back to default; (3) DDL surface (REST `PATCH /api/v2/collections/:id`) updates it; (4) route-health surfaces `policy_source: "catalog"|"default"`. v0.2 ships Beta with differential recall coverage via `tests/filtered_ann_recall_bands.rs` only.
+
+| TD-074
+| Collection-default freshness mode not catalog-wired
+| P3
+| MEDIUM
+| Open
+| `VectorFreshnessMode` (`src/core/search/mod.rs:95-105`) is honored per-request only. `FreshnessHealth.collection_level_modes_wired = false` (`src/network/rest/v2/collections.rs:1114-1126`). Operators cannot set per-collection default; clients must pass `freshness_mode` on every search request or accept `Strong`.
+| 2-3 days
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `default_freshness_mode: Option<VectorFreshnessMode>` on collection metadata; (2) search-plan time resolution falls back to collection default before `Strong`; (3) route-health flips `collection_level_modes_wired` to `true`; (4) DDL surface accepts the field. v0.2 documents per-request-only in `docs/SUPPORTED_SURFACE.adoc` "Not Supported in v0.2".
+
+| TD-075
+| `RecallProbeGate` route-selection enforcement
+| P3
+| MEDIUM
+| Open
+| `src/catalog/recall_probe.rs` exposes gate state (PASS / WARN / FAIL streaks) and EXPLAIN can read it, but `AxisManager` quantized-route selection does not consult the gate. Recall regressions surface only diagnostically.
+| 3-5 days
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `RecallProbeGate::should_route_quantized()` (or equivalent) called at quantized-route entry in `AxisManager`; (2) FAIL streak → fallback to non-quantized route + degraded-route reason in EXPLAIN; (3) regression test (gate FAIL forces fallback). v0.2 ships gate as diagnostic only.
+
+| TD-076
+| pgwire / SQL parity Phase 2/3 (ADR-018)
+| P3
+| MEDIUM
+| Open
+| ADR-018 Phase 1 (basic DML + vector-distance syntax) wired. Phase 2 (`ORDER BY` semantics, `COUNT/SUM/GROUP BY`, joins, `xcatalog.namespaces`, `pg_class`) and Phase 3 (Postgres parity) gap. Server returns explicit "not yet supported" for several SQL shapes; live-server probe (2026-05-25) found crashes on aggregates and joins.
+| 3-6 months
+| Deferred from v0.2 MVP cut (2026-05-28). v0.2 ships pgwire as Beta with Phase 1 scope only. See ADR-018 for the phased contract.
+
+| TD-077
+| Distributed cluster execution — remote transport / failover
+| P3
+| HIGH
+| Open
+| `src/cluster/` (5,491 LOC) has Raft internals, shard planning, and routing foundations but RPC transport and remote execution contain placeholder/partial implementations. Feature-gated behind `cluster` flag. Not a like-for-like distributed-DB replacement in v0.2.
+| 6+ months
+| Deferred from v0.2 MVP cut (2026-05-28). v0.2 ships distributed cluster as Experimental. Acceptance for graduation: real transport benchmark, deterministic failover test suite, EXPLAIN route includes remote-shard fragment identity.
+
+| TD-078
+| External-table federated execution (Iceberg / Delta / Hudi as hot authority)
+| P3
+| MEDIUM
+| Open
+| External-format adapters exist as interoperability modes (publications, imports, federated reads) but not as Proxima-owned hot authority with full ACID + ANN + RLS. Multiple code paths return explicit "not yet supported" / "not wired" for federated relational, external table, subquery vector source.
+| 2-4 months
+| Deferred from v0.2 MVP cut (2026-05-28). v0.2 ships these as Experimental external-authority modes per `OPEN_FORMAT_CATALOG_2026_05_17.adoc`. Acceptance: explicit authority-mode catalog field + federated route-health + EXPLAIN write-plan disclosure of external-authority decisions.
+
+| TD-079
+| Root `proximadb` crate accumulated clippy lint backlog
+| P4
+| LOW
+| Resolved 2026-05-28
+| `cargo clippy --workspace --lib --bins -- -D warnings` is now CLEAN across all 50+ non-root workspace crates and the root `proximadb` crate itself. `cargo fmt --all -- --check` exits 0. Total reduction: 164 → 0 across a 16-batch multi-day sweep. The remaining hard-to-mechanical lints (collapsible_if-into-match with `?`-operator bodies; unwrap/expect on documented infallible invariants; intentionally-large variants) carry inline `#[allow(...)]` with rationale linking to the static invariant or the constructor blast-radius reason.
+| Closed
+| **RESOLVED 2026-05-28** across 16 batches (`7db1d804e` → `a297949ca`). Acceptance criterion met: `cargo clippy -p proximadb --lib -- -D warnings` exits 0. Batch-by-batch: (1-3) workspace-wide sweep across 50+ crates; (4) manual_checked_ops (17 files); (5) derivable_impls (7); (6) unnecessary_sort_by → sort_by_key (12); (7-9) collapsible_if let-chain waves (26 files); (10) doc_lazy_continuation + auto-deref + useless_conversion (14); (11) clone_on_copy + singletons (8); (12) long-tail singleton sweep — needless_question_mark, manual_clamp, manual_repeat_n, io::Error::other, matches!, iter_kv_map, manual_strip, char-array-pattern, manual_size_of_val (18); (13) dead-alias deletion + needless_range_loop allows (7); (14) dead-code helper deletion + remaining field-init (6); (15) error-handling refactors + match-arm guards — 5 expect/unwrap converted to audited `#[allow]` with invariant rationale, 1 real refactor (init_hmgi), 7 collapsible_if-into-match converted to match-arm guards, 2 to allow with `?`-operator rationale (23 files); (16) close — large_enum_variant allows, let_underscore_future allow, unused-import drop, dead-field allow (5 files). Follow-up: tighten the CI lint job at `.github/workflows/ci.yml` to drop the `RUSTFLAGS: '-A warnings'` override now that the root crate itself is clean.
+
+| TD-080
+| Catalog default-bootstrap in embedded test harnesses (precision_resolver wiring)
+| P3
+| MEDIUM
+| Resolved
+| Two coupled bugs surfaced during diagnosis. (1) `SharedServices::new` created a "default" native catalog but never called `set_default_catalog("default")`, so `catalog_manager.default_catalog()` always returned `Err` and `database.rs:159` warned that the precision_resolver was unwired — silently in **production too**, not just the embedded test harness. (2) Even after fixing the resolver wiring and confirming coercion correctly produced fp16 cells, the WAL-level metric emitter labelled by the internal UUID returned from `resolve_collection_id_internal`, while operators and the regression test scrape by the user-facing collection name.
+| 2-3 days
+| **RESOLVED 2026-05-28** by commit `32cea5b85`: (a) `SharedServices::new` explicitly designates "default" as the catalog manager's default after the native-catalog create call; (b) `UnifiedHandlers::coerce_records_to_canonical_precision` emits the per-precision `canonical_bytes` metric using the handler-side collection_id; the WAL-side emission stays for non-handler writers but uses the internal UUID. The fp16 metric regression test is no longer `#[ignore]`'d (`tests/fp16_v2_insert_search_e2e.rs::rest_v2_insert_into_fp16_collection_accumulates_canonical_bytes_metric` — green).
+
+| TD-081
+| Python SDK live v2 INSERT→SEARCH integration coverage
+| P3
+| MEDIUM
+| Resolved
+| `tests/release_smoke_v2.rs` is the v0.2 release-gate smoke for the v2 record path but is Rust-only. The Python SDK at `clients/python/src/proximadb_sdk/protocols/rest_sync.py` (insert_records → v2 records/batch) was exercised only by mocked-HTTP unit tests in `clients/python/tests/unit/test_rest_record_ingest.py`. A regression in the SDK's insert→search round trip would not have been caught by `make release-check`.
+| 1-2 days
+| **RESOLVED 2026-05-28**: `clients/python/tests/integration/test_v2_insert_search_e2e.py` landed with two test cases that pass on a built release server (2/2 PASSED): (a) live insert_records → search round trip asserting top-k contains an inserted ID, (b) missing-collection contract asserting the SDK surfaces the round-2 HTTP 404 (not the old silent success-shaped response). The `rest_client` fixture uses the direct REST sync client (`proximadb_sdk.protocols.rest_sync.ProximaDBClient`) rather than the unified client — the unified client activates a silent local-vector fallback on any backend error and returns `[]` from `search()` without an HTTP round-trip, which would mask the very regression the test guards against. Prefers `PROXIMADB_TEST_SERVER_URL` and falls back to the `embedded_db` fixture. Wiring into `make release-check` is a thin follow-up tracked here but not blocking closure.
+
+| TD-082
+| Arrow Flight INSERT vs. REST/gRPC UPSERT handler parity test
+| P3
+| MEDIUM
+| Resolved
+| Round-2 audit (2026-05-28) found that `handle_record_insert_batch_for_tenant` was missing the precision-coercion block that `handle_record_batch_for_tenant` already applied — Arrow Flight INSERT into an fp16 collection would land fp32 records. The initial round-2 fix (commit `a446b3964`) duplicated the coercion block in both handlers, which kept the parity surface fragile (another future block could regress one path silently).
+| 1 day
+| **RESOLVED 2026-05-28** by commit `32cea5b85`: extracted the v2 precision-coercion block into `UnifiedHandlers::coerce_records_to_canonical_precision` and routed both handlers through it. Parity is now enforced by code-sharing rather than by a test that could later be deleted, deleting the entire class of "one handler regressed but the other didn't" bug.
+
+| TD-083
+| Rust SDK v2 INSERT exposure (props / text_fields)
+| P3
+| MEDIUM
+| Resolved
+| Rust SDK previously exposed v2 upsert only — no full INSERT with the v2 `text_fields` schema. (`props` was already accessible via the existing `metadata()` / `meta(k,v)` builder methods on `InsertBuilderWithId`.) Rust SDK users could not leverage canonical record TEXT-field features.
+| 2-3 days
+| **RESOLVED 2026-05-28** — added `TextFieldInput` and `text_field(name, content)` / `text_fields(Vec<...>)` builder methods on `InsertBuilderWithId`. `ProximaRecord` gained a `text_fields: Vec<TextFieldInput>` field mirroring `src/network/rest/v2/records.rs::TextFieldInput`. Two new unit tests (`proxima_record_serializes_text_fields_in_v2_shape`, `insert_builder_chains_text_fields`) lock the contract.
+
+| TD-084
+| PostgreSQL wire v2 record features exposure
+| P3
+| MEDIUM
+| Resolved
+| Round-2 audit (2026-05-28) flagged pgwire as not exposing v2 `props` / `text_fields` typed-field insert. The TD-084 scoping survey found that the gap was narrower than originally framed: (1) **props already works** — any non-reserved column in pgwire INSERT lands as a typed `ProximaValue` in `ProximaRecord.props` via the catalog `to_proxima_record()` path at `crates/control/proximadb-catalog/src/relational.rs:272`; (2) **text_fields is REST sugar** — the v2 REST handler at `src/network/rest/v2/records.rs::insert_records` folds `text_fields[]` into `props["name"] = String(content)` before the canonical write. The canonical `ProximaRecord` has no separate text_fields field. So pgwire INSERT into a `VARCHAR` column is functionally equivalent to REST text_fields.
+| 3-5 days
+| **RESOLVED 2026-05-28** by documentation + cross-protocol contract test. (a) New `docs/03-api-reference/postgres.adoc` documents the v0.2 supported pgwire SQL surface, the v2 record-typed INSERT pattern (`INSERT INTO t (id, title, price, ...) VALUES (...)`), the cross-protocol contract (rows reachable via REST v2 record fetch), and the explicit "Not Supported in v0.2" list pointing at ADR-018 Phase 2/3 trackers (TD-076 etc.). (b) New `tests/pgwire_insert_props_e2e.rs` test `pgwire_insert_typed_columns_persist_to_v2_record_props` boots an in-process server, CREATE TABLE + INSERT INTO over the real wire protocol with mixed-type columns (VARCHAR / FLOAT / BIGINT / BOOLEAN), then verifies the row is reachable via REST v2 (`GET /api/v2/collections/{tbl}/records/{id}`). PASSED on a fresh release build. ADR-018 Phase 2/3 (`ORDER BY`, aggregates, joins, system tables, prepared-statement parameterisation) remain Beta and continue under TD-076.
+
+| TD-085
+| Marketing copy in `docs/_internal/enterprise/` and `docs/_internal/business/` overclaims
+| P4
+| LOW
+| Engineering side resolved — product scrub still open
+| Round-2 audit (2026-05-28) found multiple overclaims that survived round-1 cleanup because the round-1 `docs-claim-check` allowlisted internal marketing paths. Examples: "85-96% cost reduction", "296% performance" competitor claims, "Industry-leading" superlatives.
+| 1 day
+| **PARTIALLY RESOLVED 2026-05-30** by sealing the internal marketing copy: (1) both files (`docs/_internal/enterprise/README.adoc`, `docs/_internal/business/competitive_advantages.adoc`) now carry an **INTERNAL USE ONLY — DO NOT PUBLISH EXTERNALLY** banner forbidding quotation in customer-facing artifacts without product-owner sign-off and an evidence trail; (2) `make docs-claim-check` (Makefile) gained a rule that **hard-fails** if any path outside `docs/_internal/` references either `docs/_internal/enterprise/` or `docs/_internal/business/` (the Technical Debt Register is exempt because it tracks the work). The leakage risk is closed. **Remaining (product-owner scope)**: actually scrub the "85-96% cost reduction" / "296% performance" / etc. claims or cite a reproducible methodology, then the files can be moved out of `_internal/` if the underlying numbers survive scrutiny.
+
+| TD-086
+| Continuous Discovery surface + atomic snapshot republish (CS/CD loop)
+| P4
+| MEDIUM
+| Open
+| ProximaDB can serve (vector/hybrid/cross-model retrieval) but has no first-class *discovery* arm that operates on production vector data and feeds results back. The primitives exist in isolation — manifest/branch versioning, the projection freshness state machine (`Fresh/Updating/Stale/RebuildRequired/...`), `compute_route` selection, and `src/automl/` tuning — but there is no cataloged workflow that reads a pinned snapshot, runs offline refinement (dedup, recluster, re-embed, drift/quality scan, agent-trajectory analysis), and publishes a *new snapshot* that serving switches to atomically. This is the largest conceptual gap vs the Vector Lakebase "Continuous Serving + Continuous Discovery" thesis. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R1.
+| 3-6 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) a `DiscoveryJob` catalog asset that pins a manifest snapshot of a collection; (2) job completion republishes a new snapshot (new data + rebuilt indexes/embeddings) with an *atomic* serving switch — no half-built indexes exposed; (3) discovery compute routes through existing `compute_route` (Native batch / DataFusionDistributed / Spark / Ray) declaring `authority_mode` + `freshness_sla`; (4) the republish is explainable in unified EXPLAIN. Mostly composition over existing primitives; converts `src/automl/` from tuning into the offline arm of the flywheel.
+
+| TD-087
+| Scale-to-zero cold path — binary-first two-stage retrieval + IVF pruning
+| P4
+| MEDIUM
+| Open
+| When compute scales to zero, the first query hits pure cold data in object storage. A full index (e.g. ~340 GB for 1B×768-dim HNSW) can take minutes to pull from S3, making scale-to-zero impractical for large vector workloads. `compute/quantization/unified.rs` has binary/INT8/PQ and `RecallProbeGate` (TD-075) exists, but there is no designed *cold-load ordering* that pulls a compact binary representation first, two-stage reranks, and IVF-prunes bytes-touched-per-query. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R2.
+| 1-2 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) a "cold-path" index profile that persists a compact binary/RaBitQ-style representation (~1/30th size) loaded *first*; (2) two-stage search (coarse 1-bit filter → higher-fidelity rerank) with recall envelope disclosed via `RecallProbeGate` + the TD-064 predicate-aware disclosure contract; (3) IVF cluster pruning bounding bytes-touched-per-query; (4) cold-start latency benchmark from object storage. New work is the load ordering + two-stage execution path, not a new quantizer.
+
+| TD-088
+| Point-read I/O amplification over object storage (point-read-optimized lake layout)
+| P4
+| MEDIUM
+| Open
+| Vector search returns IDs but applications need full records (text, metadata, permissions, timestamps). PAX block format (ADR-010) orders column stripes and supports pruning, but is row-group/columnar-oriented; a point read from object storage drags a whole row group/stripe — the same amplification measured for Parquet (≈9.4 MB downloaded vs ≈0.07 MB for a point-read-optimized layout). No row-aligned mixed layout (the Vortex/Loon equivalent) is designed. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R3.
+| 1-3 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) PAX row-aligned column-group mode so a point lookup fetches only needed fields' bytes; (2) evaluate the open Vortex format (Linux Foundation — aligns with open-format mandate) as an interoperable layout option for point-read-heavy collections, benchmarked vs PAX and Parquet for both point reads and scans; (3) serving (point read) and discovery (scan) access patterns stay over *one logical copy* — no second physical store. Pairs with TD-087 (cold path) and TD-086 (discovery scans).
+
+| TD-089
+| Elastic compute modes (long-running / on-demand / offline-batch) + resources-follow-data scheduler
+| P4
+| HIGH
+| Open
+| ProximaDB has embedded and distributed (experimental, `cluster` flag) deployment but not the three-mode elastic model with minute-level billing and warm pools. There is no warm-pool scheduler that attaches a pinned snapshot to prepared compute on request and releases on idle while catalog/metadata stay queryable with zero resident compute. This is the practical realization of the 2028 VISION "serverless deployment mode" milestone and the Vector Lakebase "resources follow the data" pillar. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R4.
+| 6+ months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). **Split (2026-05-28 plan refinement)**: this TD now scopes only the *multi-node* warm-pool half (F4b — minute-billed `OnDemand` pods + `OfflineBatch` cluster), which is the part genuinely blocked on TD-077 (distributed transport). The *single-node* scale-to-zero half (collection suspend/resume — most of the "idle tenants don't pay" economics) is **unblocked** and split out to **TD-094 (F4a)**. Gated by TD-087/TD-088 (which make scale-to-zero economical first). Acceptance: (1) `OnDemand` (minute-billed) + `OfflineBatch` modes over the same logical store across nodes; (2) warm-pool scheduler with attach-on-request / release-on-idle; (3) metadata queryable with no compute resident cluster-wide; (4) cost/latency model documented. Sequence *after* R1/R2/R3 and after TD-077.
+
+| TD-090
+| External Collection — ProximaDB-owned indexes over external-resident data (index-in-place)
+| P4
+| MEDIUM
+| Open
+| `FederatedRead` and `ExternalAuthoritative` authority modes (`OPEN_FORMAT_CATALOG_2026_05_17.adoc`) allow reading/federating external tables, and TD-078 covers external-table federated *execution* — but neither builds and maintains ProximaDB-owned vector/inverted/JSON indexes over data left in place in an external lake (Iceberg/Lance/Parquet). The Vector Lakebase "External Collection" capability ("One Data. One Index. No duplicated storage. No dual-write pipelines.") is a distinct, high-value mode. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R5.
+| 2-4 months
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Acceptance: (1) an authority mode (or `FederatedRead` sub-mode) where external data stays externally governed and un-copied while ProximaDB builds/maintains vector + inverted + JSON indexes routed through the same retrieval path as native data; (2) explicit index-staleness-vs-source-commit freshness behavior + repair source declared per architecture mandates; (3) lets the TD-086 discovery loop cover lake-resident data, not just imported data. Gated for Lance corpora by TD-091.
+
+| TD-091
+| Lance format interoperability (read / import / external-index substrate)
+| P4
+| LOW
+| Open
+| ProximaDB supports Iceberg/Delta/Hudi/Parquet but not Lance, a vector-native lake format treated as a primary external substrate in the Vector Lakebase ecosystem. See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R6.
+| 3-6 weeks
+| Surfaced 2026-05-28 (Vector Lakebase trend review). Lowest priority of the six trend-review items. Acceptance: Lance as a read/import/external-index substrate alongside the existing open formats; gates TD-090 (External Collection) for Lance-resident corpora.
+
+| TD-092
+| Hybrid BM25 auto-indexing on the canonical insert path + unify the two hybrid entry points
+| P2
+| MEDIUM
+| Open (re-scoped 2026-05-28 after live-path audit)
+| **Re-scoped — the original framing was wrong.** Plan-refinement (2026-05-28) said "wire the `bm25_wrapper.rs` stub into the fusion path." A live-path audit found: (a) the fusion engine (`src/core/search/hybrid/fusion.rs`), the production hybrid port `RestHybridPortImpl` (`src/network/hybrid_search.rs`, `/api/v1/hybrid/*`), and `ProductionHybridBackend` (used by `RankServices`) **already fuse real Tantivy BM25 + vector**; (b) `src/core/search/hybrid/bm25_wrapper.rs` was a *dead, always-empty scaffold* — never re-exported, never called — and was **removed 2026-05-28** (it is what made the gap look like simple stub-wiring). The *genuine* residual gaps are two: (1) the hybrid BM25 index (`columnar/fulltext_index.rs`, the shared `HybridFullTextIndexMap`) is populated **only** via the explicit `BM25IndexPort::index_documents` endpoint (`src/network/hybrid_search.rs:40`), **not on the canonical record INSERT path** — so a user who inserts records cannot BM25-search them via hybrid until they separately index; (2) the alternate hybrid entry point `request_handlers.rs::execute_hybrid_search:824` has BM25 **hardcoded disabled** (`Ok(Vec::new())`, "temporarily disabled"), silently fusing vector-only. This is write-path integration, not parity-wiring — larger than first estimated.
+| 3-6 weeks
+| Re-scoped 2026-05-28 (live-path audit, per `feedback_survey_live_paths`). Acceptance: (1) canonical INSERT of a record with text auto-populates the hybrid BM25 index for collections with `enable_fulltext_index` (schema flag at `src/network/rest/v2/schema.rs:646`); (2) `request_handlers.rs::execute_hybrid_search` either routes through `RestHybridPortImpl` or is removed as a duplicate path (reuse-first — do not maintain two hybrid fusers); (3) integration test: insert records, then a keyword-only hybrid query surfaces a doc that pure-vector misses, with no separate index call. Design decisions: which text field(s) to index, indexing precision/async behavior, and freshness vs the canonical write. Gated by the `enable_fulltext_index` schema flag. Sequence: near-term but it is write-path work, not the trivial wiring first assumed.
+
+| TD-093
+| RankServices startup wiring — production CandidateProvider for SQL RERANK
+| P2
+| MEDIUM
+| Resolved (already wired — verification 2026-05-28)
+| Plan-refinement (2026-05-28) flagged this as an un-wired primitive based on a stale memory note (`project-rank-services-production-wiring-2026-05-28`, "deferred to a fresh session"). **A live-path audit on 2026-05-28 found it was already implemented** by a subsequent R-7c.3 session: `build_rank_services()` runs at startup in `src/network/shared_services.rs:1232`, constructs the production `RankServices` over `ProductionHybridBackend` → `HybridCoordinatorAdapter` (`src/network/rest/v1/rank_backend.rs`, `rank.rs`), logs "✅ SharedServices: RankServices ready", and wires the singleton into both the SQL path (`FederatedQueryContext::with_rank_services`, `shared_services.rs:1252`) and REST (`AppState::with_rank_services` via `multi_server.rs`). The federated executor's degradation check (`src/query/federated/execution/mod.rs:768`) is therefore satisfied — SQL `RERANK` dispatches the full pipeline, not retrieval-only.
+| 0 (already done)
+| **RESOLVED 2026-05-28** by prior R-7c.3 work; confirmed by audit, no new code required. Lesson (per `feedback_survey_live_paths`): verify the live caller chain before scheduling work off a stale status note. Residual: the 9th §4.10 metric (async loader, R-5b) remains tracked under the ranking-framework work, not here.
+
+| TD-094
+| Single-node scale-to-zero (collection suspend/resume) — unblocked half split from TD-089 (F4a)
+| P4
+| MEDIUM
+| Open
+| Split from TD-089 (2026-05-28 plan refinement). TD-089's three-mode elastic model is blocked on TD-077 (distributed transport), but the *single-node* economics are **not** blocked: evict a collection's compute/index from memory while keeping its catalog metadata queryable, then lazy-warm on first query — reusing the already-built `CollectionPinRegistry` (`src/storage/collection_pinning.rs`), `DirectoryLoadStatus` (`src/storage/engines/sst/object_economy_directory.rs`), route-health diagnostics (`GET /api/v2/_diagnostics/collections/:id/route-health`), and the tiering engine. Delivers most of the "idle tenants don't pay" benefit for embedded / single-node deployments and chains off TD-087 (fast cold-start makes resume cheap). See `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc` R4 (F4a).
+| 3-6 weeks
+| Surfaced 2026-05-28 (plan refinement). Acceptance: (1) a collection can be suspended (compute/index released, sidecar marked cold) with its catalog metadata still queryable; (2) the first query after suspend lazy-warms via the TD-087 cold path; (3) suspend/resume state is observable in route-health; (4) no dependency on TD-077. Unblocked — can precede or run parallel to F1; sequence after TD-087.
+
+| TD-095
+| SDK graph create_node/edge/graph body shape mismatch vs server (Rust + TypeScript)
+| P3
+| MEDIUM
+| Resolved 2026-05-30
+| Surfaced 2026-05-30 after reconciling the OpenAPI graph schemas (`docs/openapi/proximadb-openapi.yaml`) against the live server handler `crates/platform/proximadb-api/src/rest/v1/graph.rs`. The earlier spec additions had wrong field names / wrapping for `CreateGraphRequest` (required `name` → now `graph_id`), `CreateNodeRequest` (flat `{id, ...}` → wrapped `{node: NodeInput}`), `CreateEdgeRequest` (flat `{source, target, ...}` → wrapped `{edge: EdgeInput}` with `from_node_id` / `to_node_id` / `edge_type` / `id`), and `TraverseRequest` (had `direction` / `max_nodes` → server-true keys are `start_node_id` (not `start_node`) + `node_labels` + `limit`). **RESOLVED 2026-05-30** across two SDK commits: Rust at `c08030d34` (`clients/rust/src/graph.rs` — all six builders posting server-true bodies; 3 ignored contract tests unskipped + 2 new batch tests added; 20/0/0 pass/fail/ignore), TypeScript at `70ebe603c` (`clients/nodejs-embedded/src/graph.ts` — same six builders rewritten; 4 `it.skip` removed + 2 new batch tests added; 17/0/0 pass/fail/skip). Also depends on `5c91dc32f` (spec: added `batchCreateNodes` + `batchCreateEdges` operations so the SDK `addNodes`/`addEdges` calls have spec-true targets).
+| Closed
+| Acceptance: (1) **DONE 2026-05-30 — TS** `clients/nodejs-embedded/src/graph.ts` `GraphBuilder.execute()` posts `{graph_id, name?, description?}`; `NodeBuilder.execute()` posts `{node: NodeInput}`; `GraphHandle.addNodes()` posts `{nodes: [NodeInput, ...]}` to `/nodes/batch`; `EdgeBuilder.execute()` mirrors with `{edge: EdgeInput}` (`from_node_id` / `to_node_id` / `edge_type` / `id`); `addEdges()` posts `{edges: [...]}` to `/edges/batch`; `TraversalBuilder.execute()` posts `start_node_id` (not `start_node`), drops `direction`, wraps `relationships` as `edge_types`, adds optional `node_labels`. (2) **DONE 2026-05-30 — Rust** at `clients/rust/src/graph.rs`. (3) **DONE 2026-05-30** — all 4 TS `it.skip` + 3 Rust `#[ignore]` cleared; SDK contract gates green. (4) **Deferred to follow-up** — per-language live-server smoke tests (insert node, get node, traverse). The SDKs now emit spec-correct bodies, but actual happy-path round trips against a running server haven't been exercised. Recommended: extend `make release-check` to spin up a local server and run a small SDK smoke per language.
+
+| TD-096
+| Routing guidance + bench validation for vector-locality workloads (SST vs HELIX)
+| P2
+| HIGH
+| Open
+| Surfaced 2026-05-30 via `bench_warm_path_profile` shadow recall measurement (`flat_default_vs_force_exact` field, committed in `403fd1ba1`). SST's block-centroid pruning collapses to ~5% recall at 100K on diffuse data because `sort_vectors_for_sstable_encoding` (`src/storage/engines/sst/utils.rs:43`) sorts records by `oid` lexicographically before block write — block centroids end up as statistical mixtures rather than spatial cluster centers. **HOWEVER**, this architectural fix already exists in the HELIX engine: `src/storage/engines/helix/mod.rs:1279-1283` sorts by PCA-projected Hilbert curve key at L0 flush time, claiming "80-90% block reduction" via spatial pruning (with `zone_maps`, `liquid_clustering`, and `query_optimization` infrastructure). So the right move is likely **route vector-locality workloads to HELIX** instead of retrofitting SST's flush path. The original TD-096 framing ("port Z-order sort into SST") may be solving the wrong problem. Mitigated by `SearchMode::Exact` auto-disabling pruning (`403fd1ba1`); `SearchMode::Approximate` on SST still degenerates at scale.
+| 3-5 days (validate + route) vs 1-2 weeks (retrofit SST)
+| Acceptance: (1) Extend `benches/bench_warm_path_profile.rs` to support `BENCH_ENGINE=helix` (currently hardcoded to SST via `SstEngine::new_with_config`). (2) Run the shadow recall matrix with HELIX engine at 10K / 25K / 100K — verify `flat_default_vs_force_exact >= 0.90` on HELIX (Hilbert-sorted blocks). (3) If HELIX validates, file routing recommendation in `docs/12-design/AXIS_INDEX_SELECTION.adoc` (or similar): vector-locality workloads → HELIX, OLTP/oid-keyed workloads → SST. (4) If HELIX does NOT validate (e.g., Hilbert sort missing at compaction time, or other gaps), THEN file the original SST retrofit work as a successor TD (port `sort_vectors_for_sstable_encoding` and `write_merged_records` to use PCA+Z-order — Hilbert curve impl already in `proximadb-storage-common::hilbert_curve`). (5) Either way: SearchMode::Exact callers continue to bypass pruning (already shipped in `403fd1ba1`).
+
+| TD-097
+| Spark connector JNI bridge — embedded product impls live; Gradle remains
+| P3
+| MEDIUM
+| Partial — wire + CI + embedded product impls shipped 2026-05-31..06-02 (`8704472ba` + `a52af195d` + `32e96e35c` + `087968990` + `ca838f31b` + `31ae5340d` + `060be38b3` + `14b0b750a`)
+| Surfaced 2026-05-30 during the connector-conformance sprint. `src/connectors/spark.rs` had 9 `jni_*` placeholder functions; the cdylib at `crates/binding/proximadb-spark-jni` wrapped them with JNI-mangled exports but the bodies returned scaffold values. **WIRE + CI + EMBEDDED PRODUCT IMPLS NOW SHIPPED**: User chose embedded in-process deployment shape (Spark executor JVM owns a SharedServices via the cdylib singleton). 5 commits over 2 days closed acceptance (3): (B1, `087968990`) extended EmbeddedProximaDB with `get_collection_schema` / `scan_records` / `plan_partitions`; moved ScanCursor codec into a shared `src/services/scan_cursor.rs` so the REST handler + embedded callers share one codec; added `FileSplit::whole_collection` for the single-partition fallback. (B2, `ca838f31b`) added `record_batch_to_arrow_ipc` + inverse helpers in `src/connectors/spark.rs` (plain Arrow IPC stream, distinct from the Trino per-column block format). (B3, `31ae5340d`) replaced the 9 `jni_*` placeholders with real `spark_*(emb: &EmbeddedProximaDB, ...)` impls; reshaped SparkPartitionReader / SparkDataWriter with real state; deleted dead `SparkScanBuilder::plan_partitions`; added a `jni_handle` helper module in the cdylib containing the unsafe `Box::into_raw` handle plumbing in one auditable file; new `SparkError` enum maps to typed Java RuntimeException. (B4, `060be38b3`) added `Java_..._initialize(dataDir) -> jboolean` JNI entry point + `OnceLock<Arc<EmbeddedProximaDB>>` singleton; rewired all 9 wrappers to grab the singleton and delegate to spark_*; writes throw RuntimeException on uninit/null-handle (silent-Ok-failure anti-pattern closed). (B5, `14b0b750a`) updated the Java smoke harness for real-data shapes; 13 smoke checks all green via `clients/jvm/spark-connector/run-smoke.sh`. Convergence outcome: all four connectors funnel into the canonical authority — DuckDB/Hadoop via REST→UnifiedHandlers, Trino via Flight→UnifiedHandlers, Spark JNI via EmbeddedProximaDB→SharedServices→UnifiedHandlers. Unit-test coverage: 22 new tests (18 spark + 4 jni_handle), including a critical e2e (`test_spark_read_after_write_round_trip`: 50 records written via JNI flow → plan → drain → distinct oids + cursor advances). Remaining: smoke harness still uses plain `public static void main` (no Gradle/JUnit5).
+| Post-MVP/Beta follow-ups only (Gradle/JUnit5 migration + future shard-aware partition planning)
+| Acceptance: (1) **DONE 2026-05-31** for the wire-up pattern — cdylib + Java test work end-to-end. (2) **DONE 2026-06-01** — all 9 `jni_*` wrapped as `extern "system" fn Java_org_proximadb_spark_NativeProximaDB_*` in `crates/binding/proximadb-spark-jni/src/lib.rs` (`a52af195d`). (3) **DONE 2026-06-02** (5 commits B1-B5) — each Rust JNI wrapper now constructs the underlying `EmbeddedProximaDB` call directly (no network hop) and serializes via plain Arrow IPC (read) or `serde_json` (schema/commit). Critical end-to-end test `test_spark_read_after_write_round_trip` proves the write→read flow with distinct-oid + cursor-advance assertions that catch the "stuck cursor" regression invisible at per-call level. (4) **POST-MVP/BETA** — migrate `clients/jvm/spark-connector` from the plain-main smoke harness to Gradle + JUnit 5; add per-method conformance assertions (schema fetch returns canonical schema shape etc.). This is harness hardening, not a v0.2 release gate. (5) **DONE 2026-06-01** — dedicated `spark-jni-smoke` CI job builds cdylib + runs Java harness (`32e96e35c`); local `run-smoke.sh` mirrors the same steps. **Follow-up TDs (out of scope for MVP):** **POST-MVP/EXPERIMENTAL** split-aware read planning (today's single-partition fallback is correct-but-not-parallel; under the 2026-06-04 Rust-native MPP course correction this is now a shared DataFusion/notebook/Spark `RoutedReadPlan` + `SplitSource` + `SplitPlanner` seam, not a Spark-only shard plan); **Spark filter pushdown — Rust-side DONE 2026-06-03** (`a9786bb27` lowering + `d9187bf0c` scan-apply): `lower_spark_filters_to_expression` lowers Spark's `filters_json` (the `SparkFilter` tree) into the canonical `FilterExpression`, stamps it onto each `SparkInputPartition`, and the reader pushes it into the WAL scan via `EmbeddedProximaDB::scan_records_filtered` → `scan_records_paginated(filter)` → `evaluate_filter_proxima` over `record.props` (applied before the limit, so cursor pagination stays correct). Filters are evaluated EXACTLY — unrepresentable shapes (struct-path columns, `AlwaysTrue/False`, an `And/Or/Not` with any unrepresentable child) are DROPPED in lowering, never partially applied. 12 lowering + 4 e2e tests. **JNI lifecycle M1 DONE 2026-06-04** — `NativeProximaDB.initialize(dataDir)` now emits structured `tracing` diagnostics for first init, duplicate init, empty data dir, construction failure, and set-once races; the binding README documents one embedded instance per JVM, class-loader reload behavior, multi-process coordination, and fork-per-class test guidance. **M2 DONE 2026-06-04 (diagnostic scope)** — `JNI_OnUnload` logs unload state and performs a best-effort `EmbeddedProximaDB::flush()` when initialized; it deliberately does not reset/take the singleton because JVM native-library unload is process-scoped and rare. **M3 DONE 2026-06-04** — `crates/binding/proximadb-spark-jni/tests/cross_process_smoke.sh` proves a second JVM cannot initialize concurrently against the same exclusive embedded data dir and a later JVM initializes after release. *Still open and post-MVP/Beta:* the JVM DataSource V2 layer (`SupportsPushDownFilters`/`ScanBuilder`/`pushedFilters`) does not exist — there is no production driver pushing `filters_json` yet (the JVM side is a JNI smoke shim), and the dropped-filter re-application contract lives there. A `Java_..._createCollection` JNI method so the Java smoke harness can exercise the full write→read round trip (currently the e2e is Rust-side only).
+
+| TD-098
+| Trino connector — Arrow Flight wire layer (RESOLVED)
+| P3
+| MEDIUM
+| **RESOLVED 2026-06-02** — all 7 of 7 Flight methods live (`f3284b9ba` + `e1f622fac` + `d40888326` + `ba124601d` + `3afe04d00` + `7da335d5a`)
+| Surfaced 2026-05-30. The Trino connector at `src/connectors/trino.rs` had 7 scaffold `flight_*` methods. **CLOSED 2026-06-02 across 6 commits over 3 days** — all 7 methods now dial real `FlightServiceClient` + RPC against the ProximaDB Flight server. Dial template (uniform across every method): `grpc://` → `http://` normalize → `Channel::from_shared(...).connect_lazy()` + `FlightServiceClient::new(channel)` (tonic ≥0.12 removed the convenience `connect()` shorthand). Per-method: `flight_list_schemas` (`f3284b9ba`) — `list_flights` → buckets `FlightInfo.flight_descriptor.path[0]` into sorted `TrinoSchema` list. `flight_list_tables` (`e1f622fac`) — `list_flights` filtered by `path[0] == schema` → deduped Vec<String> of path[1]. `flight_get_table_schema` (`d40888326`) — `get_schema(path=[schema, table])` → `ArrowSchema::try_from(&SchemaResult)` → `Option<Arc<ArrowSchema>>`. `flight_get_splits` (`ba124601d`) — `get_flight_info` with `cmd=JSON(constraint)` for pushdown → decode each `endpoint.ticket.ticket` via `serde_json::from_slice::<TrinoSplit>`. `TrinoPageSource::get_next_page` (`3afe04d00`) — first streaming RPC: `do_get(Ticket{JSON(split)})` → wrap response in `FlightRecordBatchStream` → `RecordBatch` → per-column single-column stream-IPC `TrinoBlock` → `TrinoPage`. `TrinoPageSink::{new, append_page, finish, abort}` (`7da335d5a`) — bidirectional streaming `do_put`: dial opens client-side mpsc → ReceiverStream → server's `Streaming<PutResult>`; `append_page` decodes `TrinoPage` back to `RecordBatch` (via new pub `trino_page_to_record_batch`), sends one-shot schema FlightData on first call, then batch FlightData; `finish` drops the sender to close the client stream, drains all PutResults so any server-side error surfaces before the summary returns. Failure modes: connect/RPC failure → fast `Err(TrinoError)` on sink open (lets planner short-circuit before any pages produced) vs. soft empty-Vec / `finished=true` for the read side. Test fixture at `tests/connectors_flight_contract.rs::trino_flight_pilot` (~470 LOC, reusable for future connector wire work) wires `list_flights` + `get_schema` + `get_flight_info` + `do_get` + `do_put` in one `MockFlight` impl; CI `connectors-contract-gates` / `flight` cell runs the suite. Flight gate: 5 → 18 passing. The structural ticket / descriptor contract gates remain intact. **Scaffold marker on the module in `src/connectors/trino.rs` removed** and replaced with the live-methods inventory.
+| 0 (closed)
+| Acceptance: **ALL DONE 2026-06-02** — (1) all 7 `flight_*` methods dial real Flight RPCs (5 unary + 2 streaming); (2) `MockFlight` fixture covers all 5 RPCs the connector uses, exposed via 4 typed `start_mock_flight_server_with_*` helpers; (3) module-level scaffold marker removed (live inventory in its place); (4) `connectors-contract-gates` / `flight` cell green. Follow-up TDs (separate from wire layer): productionise the ProximaDB Flight server-side handler for these calls (today the connector talks to whatever Flight server happens to listen — there is no schema-validated `TrinoFlightHandler`); add live integration tests against a real ProximaDB server (today's gate is mock-only per the original sprint scope).
+
+| TD-099
+| v2 OpenAPI lacks a records-scan / list endpoint Hadoop needs
+| P3
+| LOW
+| Partial — spec + Hadoop SDK + contract gate + real handler + cursor + sync-bridge landed 2026-06-01..06-02 (`6b79cce23` + `c8050ab1a` + `63fb17e74` + `5131ec909`); **WAL scan push-down (3c→3d) SHIPPED 2026-06-03** (`b01605042`→Slice E)
+| Surfaced 2026-05-30 during the connector-conformance sprint. The Hadoop connector's `ProximaRecordReader::next_record()` is a sync `-> bool` API that Hadoop's InputFormat contract calls in a loop to drain records from a split. The v2 OpenAPI spec had NO endpoint that scans records — only POST `/search` with `top_k` (similarity search, wrong semantics for unindexed table scan), GET `/records/{id}` for point reads, POST `/records/batch` for inserts. **PARTIAL CLOSE 2026-06-01** (`6b79cce23`): spec now declares POST `/api/v2/collections/{collection_id}/records/scan` (operationId `scanRecords`) with `{cursor?, limit?, filter?, include_vector?, include_text?}` → `{records[], next_cursor?, scanned_count?}` (ScanRecords{Request,Response} schemas, both optional everywhere, snake_case). Hadoop SDK has `ProximaRecordReader::fetch_next_page()` (async) which POSTs `{cursor, limit: 1000}` and stores the continuation token. Contract gate `hadoop_fetch_next_page_posts_v2_records_scan` asserts the spec lookup + body shape + mock round trip. **EXTENDED 2026-06-02** (`c8050ab1a`): replaced the stub handler with real delegation — new `UnifiedHandlers::handle_record_scan_for_tenant` fans into `VectorOperationsService::scan_records_with_tenant_context` (the WAL/memtable scan path already used by the rest of the v2 surface). REST layer now converts each `ProximaRecord` → `RecordV2Response` via a new `proxima_record_to_response` helper (mirrors `get_record_v2`'s conversion), clamps `limit` to `[1, 10_000]` (defaults 1_000), and returns typed `Vec<RecordV2Response>` matching the OpenAPI `RecordResponse` schema. Added 7 unit tests covering the new helpers + request round-trips (79 records-module tests passing). Cursor pagination (acceptance 3) and `filter` pushdown remain follow-ups — see acceptance (3) below.
+| DONE — WAL scan push-down shipped via TD-099(3d), incl. the `proximadb_wal_unflushed_distinct_oids{collection}` tuning gauge (`cb21d1ae4`)
+| Acceptance: (1) **DONE 2026-06-01** — spec POST `/api/v2/collections/{id}/records/scan` with `{cursor?, limit?, filter?}` → `{records, next_cursor?}`. (2) **DONE 2026-06-02** (`c8050ab1a`) — `scan_records` handler delegates to `VectorOperationsService::scan_records_with_tenant_context` via `UnifiedHandlers::handle_record_scan_for_tenant`; `ProximaRecord` → typed `RecordV2Response`; `limit` clamped to `[1, 10000]` (default 1000). (3) Split into 3a (cursor) + 3b (Hadoop sync-bridge) + 3c (WAL push-down). **3a DONE 2026-06-02** (`63fb17e74`): opaque `base64(rmp_serde({collection_id, last_updated_at_ns, last_oid, epoch_ns}))` cursor; handler stable-sorts by `(updated_at_ns, oid)` then filters strictly after cursor tuple; 24h max age (stale → 410 Gone); collection-mismatch → 400; 8 new unit tests (87 records-module tests passing). Cursor lives at the handler/service boundary — no `RecordScan` trait change. **3b DONE 2026-06-02** (`5131ec909`): `ProximaRecordReader::{next_record, get_current_key, get_current_value, get_progress, close}` rewritten; new `record_buffer: VecDeque<serde_json::Value>` + `current_record: Option<serde_json::Value>` fields replace the unused `current_batch`. `next_record` spawns a scoped OS thread per page-refill (≤ once per 1000 records) that owns a fresh `current_thread` tokio runtime and `block_on`s `fetch_next_page` — runtime-context-agnostic (works from `#[tokio::test]` current_thread / multi_thread runtimes AND pure-sync Hadoop ABI without panicking on "Cannot start a runtime from within a runtime"). 4 new contract tests (`hadoop_next_record_drains_records_in_order`, `..._follows_cursor_across_pages`, `..._zero_records_terminates_immediately`, `hadoop_get_current_value_returns_drained_record`); connectors REST gate: 6 → 10 passing. **3c reframed → 3d SHIPPED 2026-06-03**: pushing cursor+limit into the memtable surfaced that the live read path (`CollectionPartition::get_all_vectors`) MUST MVCC-dedup (latest `record_version`/seq per oid) + TTL-filter, an O(distinct-oids) memory floor — so the original 3c bounded-heap could cut the per-page *sort* but not peak memory. The real fix landed as **TD-099(3d)**: a per-collection *deduped, time-ordered scan index* — a lazily-built `BTreeMap<(updated_at_ns, oid), RecordLocator>` (locators, not record clones) rebuilt from the authoritative `get_all_vectors` MVCC/TTL logic, so results are byte-identical, and invalidated (`scan_index = None`) on every mutation so it can never durably diverge. Paginated scans drop from O(N) dedup+sort *per page* to **O(log d + limit)** once the index is warm (the dominant connector pattern: drain many pages between writes). 5 commits: Slice A `b01605042` (ScanIndex + rebuild + read-lock fast path), B `a2f292901` (invalidate-on-mutation, all 4 sites), C `9b3143157` (`WALBehaviorWrapper`/`WriteAheadLogManager::stream_unflushed_records` surface + `apply_scan_cursor` split into `select_page`+`derive_next_cursor`), D `d13d4f2c6` (`VectorOperationsService::scan_records_paginated` + REST/embedded rewire; tenant predicate pushed INTO the range scan *before* the limit so multi-tenant pages never short-return), E (kill-switch `PROXIMADB_SCAN_INDEX_DISABLE` + ignored perf demo + this entry). Convergence Gate: `scan_index` is a derived/non-authoritative in-memory projection (no durable authority, no serialized format, no migration — recovery rebuilds it via WAL replay of `add_batch`); freshness is synchronous under the partition `RwLock`; the only new surface is one additive method per layer + the `ScanIndex` struct — no new endpoint/planner/storage path. Relational `TableRecordStore::scan_records` (no cursor) intentionally stays on the legacy full-scan path. (4) **DONE 2026-06-01** — contract gate test added at `tests/connectors_openapi_contract.rs::hadoop_fetch_next_page_posts_v2_records_scan`. Total connectors REST gate: 5 → 10 passing.
+
+| TD-100
+| Agent memory read surface (mem0/agentmemory-aligned)
+| P5
+| MEDIUM
+| Landed (v0.2) — P1 read surface
+| Surfaced 2026-05-30. Per link:../12-design/adr/ADR-022-agent-memory-layer.adoc[ADR-022] + AGENT_MEMORY_LAYER_HLD. P1 of the agent-memory layer: scoped memory retrieval over existing surfaces — AQL `Find/From/Where` filtered by `tenant_id` / `session_id` (`props`) / `memory_type`, fanning into hybrid fusion (`src/core/search/hybrid/fusion.rs`) + RRF, with a RUBICON audit frame per query. No new storage path. **Landed 2026-05-30**: `MemoryAqlSource` (`src/query/aql/sources/memory.rs`) — pushes tenant/session into `unified_search_v1`, RRF-fuses semantic + BM25 legs via `ResultFuser`, post-filters `memory_type`, restricts to the scoped candidate set, emits audit frames; registered as the `"memory"` AQL source in `handlers.rs`. Part B: pgwire `execute_vector_search` now parses the WHERE clause into a `FilterExpression` and pushes it into `unified_search_native` (was `None`) so mem0 metadata-scoped queries filter (`src/network/postgres/protocol.rs`). 11 inline unit tests green (5 scope/assembly + 6 WHERE-parse) + 1 pgwire e2e (`tests/mem0_pgwire_filter_e2e.rs`, simple-query protocol). Follow-ups: strict row-level pgwire filter semantics depend on the v2-INSERT metadata gap; ONNX-profile rerank beyond RRF and inline text→embedding are documented as later work.
+| 1-2 weeks
+| Acceptance: (1) Memory query path returns scoped, fused, re-ranked results with an emitted AQL audit frame — DONE (unit-tested). (2) mem0 PGVector provider performs a similarity query against port 5433: WHERE-filter pushdown landed + unit-tested; full INSERT→search round trip blocked on the v2-INSERT metadata gap (documented). (3) Integration test over a seeded multi-session memory collection — assembly path unit-tested; pgwire e2e green (`mem0_pgwire_filter_e2e`, simple-query protocol).
+
+| TD-101
+| Agent memory write surface (extraction + consolidation)
+| P5
+| MEDIUM
+| In progress (v0.2) — Slice 1 + embedder/route/e2e sub-slice landed
+| P2 of the agent-memory layer. Extraction wrapper reusing `LLMIntegrationEngine` (`src/ai/llm_integration/engine.rs`) + the AV-SQL agent pattern (`src/query/nl/`) to distill salient facts from agent turns; consolidation step that retrieves top-s similar memories and uses an LLM `ADD/UPDATE/DELETE/NOOP` decision before writing a `ProximaRecord`. No new LLM-provider abstraction. **Slice 1 landed 2026-05-30** (`src/services/agent_memory.rs`): trait-seam orchestrator `MemoryWriteEngine.ingest` (extract→retrieve→consolidate→apply) over `ExtractionAgent`/`ConsolidationAgent`/`MemoryStore`/`MemoryEmbedder` traits; LLM-backed agents (reuse `query_with_fallback`); `VectorMemoryStore` adapter (retrieve via `unified_search_v1`+scope filter, add/update via `insert_batch_with_tenant_context`, delete via `delete_records_with_tenant_context`); pure parse/prompt/`build_memory_record` fns. Embedding abstracted behind `MemoryEmbedder` (no model wired this slice, per decision). Module compiles clean; **5 unit tests green** (orchestrator action-per-fact ordering via mocks; `parse_extraction_response` valid/garbage/unknown-type; `parse_consolidation_response` all 4 actions; `build_memory_record` field mapping). (Earlier blocked by an unrelated `dual_store_ivf.rs` ADR-023 WIP break — resolved by the owner.)
+| 2-3 weeks
+| Acceptance: (1) message pair → write/update/dedupe deterministically under fixed mocks — DONE (orchestrator + parse + record-build unit tests green). (2) Consolidation decisions auditable — applied-action list returned; EventLog persistence is a sub-slice. (3) Records carry `memory_type`/`tenant_id`/`actor`/`props["session_id"]` — DONE (`build_memory_record` unit test green). **Sub-slice landed 2026-05-31**: `EmbeddingServiceEmbedder` (real text→vector via the in-process `EmbeddingService::try_global`+`embed_sync`, reusing `crates/modalities/proximadb-embedding`); `MemoryEmbedder` widened to carry `tenant_id`; `POST /api/v1/memory/ingest` (`src/network/rest/v1/memory.rs`) always-mounted with a 501 availability guard when no LLM backend, engine built in `handlers.rs` only when `llm_engine` present. 7 unit tests + 1 booted e2e (`tests/agent_memory_ingest_e2e.rs`: route mounted + 501 guard; LLM happy-path gated on an env key) green. The embedder lives in proximaDB, NOT anvaiops (anvaiops is the Python operator/SaaS consumer). Remaining: consolidation-decision EventLog audit persistence.
+
+| TD-102
+| mem0 / agentmemory framework adapters
+| P5
+| LOW
+| Slice A landed (v0.2); Slice B (Python provider) open
+| P3 of the agent-memory layer. **Slice A landed 2026-05-31** — the pgwire wire mem0's PGVector provider needs: `src/network/postgres/pgvector_params.rs` (extracted pure helpers, 10 unit tests) + thin protocol.rs delegation. TD-100 WHERE metadata-filter pushdown (`payload->>'k'='v'` → `unified_search_native`), and the extended query protocol now binds `$N` placeholders: `handle_parse` infers param arity/types from `$N` (fixes the `Parameters(2,0)` client abort), `Describe(statement)` reports the real `(id,distance,metadata)` columns for vector search, and the extended `Execute` path suppresses its duplicate `RowDescription`. Verified by `pgwire_extended_param_e2e` + `mem0_pgwire_filter_e2e` (commit `67b1373e5`). **Slice B (open):** the Python mem0 `VectorStoreBase` provider (registered in `VectorStoreFactory`) targeting ProximaDB over this wire, optional mem0g graph-store mapping onto the native graph engine, agentmemory's `CLIENT_TYPE=POSTGRES` path. Follow-up: binary param-format decode (text format works today).
+| 1-2 weeks (Slice B)
+| Acceptance: (1) pgwire wire ready — DONE (extended `$N` + metadata filter, e2e green). (2) mem0 configured with the ProximaDB provider round-trips add/search/update/delete (Slice B). (3) mem0g graph ops succeed against the native graph engine, or the gap is documented (Slice B).
+
+| TD-103
+| Agent memory session scoping
+| P5
+| LOW
+| Resolved (v0.2) — keep props; scope filter fixed
+| **Decision (2026-05-31): keep `session_id` in `props`, NO first-class `ProximaRecord.session_id` field.** `proxima_tree_to_value_map`/`evaluate_filter_proxima` (`src/core/search/sql_value_filter.rs`) flatten each top-level prop key verbatim, so `props["session_id"]` is searchable as the flat metadata key `"session_id"`. Investigation uncovered + fixed a real shipped bug: the TD-100/TD-101 scope filters used `field: "props.session_id"` (dotted) which matched NOTHING → scoped memory search silently returned 0 rows (masked by mock-based tests). Fix: scope filters now use the flat key `"session_id"`; `build_memory_record` mirrors `tenant_id` into props so it filters through the same proven path (`ProximaRecord.tenant_id` stays the RLS authority). New `scope_filter_matches_record_props_end_to_end` test exercises the real `evaluate_filter_proxima` path (would fail on the old dotted name). Follow-up: authoritative tenant isolation via TenantContext/`search_v1_with_tenant_context` (TD-064 domain).
+| —
+| Acceptance: (1) Memory queries filter by session — DONE (flat `session_id` key, e2e-via-real-filter test). (2) Decision recorded (keep in props) — DONE. (3) Scope filter verified against a real record's props, not mocks — DONE.
+
+| TD-104
+| Complete Phase 9 handler/service extraction (seam S1)
+| P2
+| MEDIUM
+| Open — convergence
+| Per link:../12-design/CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30] S1. Real `UnifiedHandlers` (~250 methods) lives in `src/api_handlers/request_handlers.rs`; `crates/platform/proximadb-runtime/src/handlers.rs` is a stub. Finish extraction so handler bodies live in the platform crate and the root crate composes ports only.
+| 2-3 sprints
+| Acceptance: (1) Handler groups migrated endpoint-group at a time (commit per group — linter displaces unstaged files). (2) Root crate has no duplicate handler bodies. (3) Build + API consistency tests green.
+
+| TD-105
+| Remove deprecated gRPC shims (seam S2)
+| P3
+| LOW
+| DONE (2026-06-03)
+| CONVERGENCE_AUDIT S2. KEY FINDING: the `src/network/grpc/*_service.rs` files were mislabeled "deprecated shims" — they were the LIVE `*Port` backends the `crates/platform/proximadb-api/src/grpc/v1/` tonic adapters delegate to (`Arc<dyn *Port>`). The real dead code was the (never-served) tonic `impl *Service` blocks they hosted. Phase A (`a6c80f90f`) deleted the 3 genuinely-dead files (entity/document/hybrid). Phase B converged the 4 live Port backends off their dead tonic surfaces: observability `979fdf18d`, streaming `18e3485a4` (also deleted ~250 LOC dead server-streaming RPCs), graph `08e719e75` (also deleted 7 `#[cfg(any())]` PULSAR/QUASAR RPCs), security `1380cb11d`. `rank_service.rs` was already Port-only. The stale `0.3.0` headers were replaced with accurate "port backend" descriptions.
+| 1 week (v0.2)
+| Acceptance MET: (1) No `*_service.rs` carries a tonic `impl *Service` surface; the misleading `0.3.0` headers are gone. (2) All construction sites bind `Arc<dyn *Port>` — zero importer churn. (3) Build green; observability/streaming/graph/security unit tests pass.
+
+| TD-106
+| Migrate proto-v1 internal mirrors to canonical types (seam S3)
+| P2
+| MEDIUM
+| Group A DONE (2026-06-03); Group B/C pending
+| CONVERGENCE_AUDIT S3. The document row is `DocumentRecord{document: SqlObject}` (proto v1); canonical is `ProximaRecord`/`ProximaValue`/`ProximaTree` (adapters already exist; durable authority is already `ProximaRecord`, so `SqlObject` is an in-memory COMPUTE type only). **Group A SHIPPED** (`1723c0faf` filter kernel, `0d0dfbab3` filter path, `c01f826a8` agg accumulators, `fbd587c68` agg value-read): the document compute VALUE path runs on `ProximaValue`; proto `SqlValue` is confined to row-field edges. Added canonical `json_to_proxima` to `proximadb-records/conversions.rs`. **Pending**: Group B (Slice 5) flip the aggregation working set `Vec<SqlObject>`→`Vec<ProximaTree>` across aggregation.rs + service.rs; Group C (S6/S7) dual-carry `props: ProximaTree` on `DocumentRecord` then drop `document: SqlObject` (touches `DocumentStorageEngine`). Full HLD/LLD/spec + resume prompt: `docs/12-design/TD106_DOCUMENT_CANONICAL_MIGRATION_HANDOFF_2026_06_03.adoc`.
+| 2-3 sprints (Group A done; B/C remain)
+| Acceptance: (1) Internal code paths use canonical types; proto v1 confined to wire adapters. (2) No internal `SqlValue`/`SqlObject` construction outside `canonical_adapter.rs` + `DocumentRecord::{from_proto,to_proto_content}` + `services/dml` edges — mechanical check: `grep "SqlObject\|SqlValue" src/storage/document/`. (3) Tests green.
+
+| TD-109
+| Consolidate json↔proxima value converters (proliferation)
+| P3
+| LOW
+| Open — proposed (2026-06-03)
+| Surfaced during TD-106. Three scattered private `json→ProximaValue` copies exist (`network/arrow_ipc/codec.rs:640`, `network/rest/websocket.rs:105`, `network/rest/v2/query.rs:58`) plus a separate `proxima→json` pair (`core/search/sql_value_filter.rs:236`/`:304`). Canonical `json_to_proxima` now lives in `proximadb-records/src/conversions.rs` (added by TD-106 Slice 2). Converge the three copies onto it and relocate `proxima_value_to_json`/`proxima_tree_to_json_map` into the same crate so both directions share one home.
+| 1-2 days
+| Acceptance: one `json↔proxima` converter pair in `proximadb-records`; no duplicate private copies; tests green.
+
+| TD-107
+| Consolidate CDC/cluster configs into proximadb-config (seam S4)
+| P3
+| LOW
+| Resolved — at-the-right-seam (2026-06-05)
+| CONVERGENCE_AUDIT S4. RESOLVED after audit: the convergence is already at the correct seam; remaining residue is legitimate engine-specific specialization the audit explicitly says to preserve. (1) CLUSTER configs fully converged: `crates/foundation/proximadb-config/src/cluster_config.rs` houses Consensus/Routing/Shard/Partition/ClusterReplication/NodeRegistry/MetadataService/DistributedOps/ConnectionPool/Cluster configs; `src/cluster/*.rs` re-export them (8 sites). The only local cluster struct, `CachedPartitionConfig` (routing.rs), is an in-memory cache wrapper (holds `Instant`, non-serializable) — must stay. (2) CDC: `src/cdc/config.rs` re-exports the canonical `proximadb_config` CDC surface (CdcConfig/SourceConfig/SinkConfig/CaptureConfig/SnapshotConfig/…). The structs remaining in `src/cdc/` are connector-specific (Kafka/Webhook/Postgres/MySql/Mongo + their Table/Collection configs — `experimental-cdc-connectors`-gated) or subscription-runtime (OutboundConfig/SubscriptionConfig/RouteConfig/ExactlyOnceConfig/EmbeddingConfig) — legitimate specialization, not app-config. Moving them would violate the reuse-first/no-cross-module-entanglement rule for ~zero benefit. (BufferConfig/CdcSinkRetryConfig are tiny sink-local helpers, intentionally left.)
+| done
+| Acceptance MET: (1) canonical app-level CDC + cluster config in `proximadb-config`. (2) original paths re-export. (3) no behavior change; build green. Residual src/cdc structs are by-design domain specialization.
+
+| TD-108
+| Delete residual catalog re-export shims (seam S6)
+| P3
+| LOW
+| Resolved (2026-06-05)
+| CONVERGENCE_AUDIT S6. RESOLVED: verified no pure re-export shim remains under `src/catalog/` — every `src/catalog/*.rs` is a real implementation module (0 `pub use` except `mod.rs`, which is the module root, not a deletable shim). The local `types` shim (`pub use proximadb_catalog::*`) was already deleted (see `src/catalog/mod.rs` comment "TD-108: the local `types` shim ... was deleted"); `mod.rs` re-exports the canonical `proximadb_catalog` surface as the module root + carries real submodules (partition_pruning, iceberg_rest_service, tenant_tier, tier_*, budget_guard, corpus_version, …). Build green at HEAD.
+| done
+| Acceptance MET: (1) pure re-export shims removed; importers use the crate (via the `mod.rs` root). (2) files with real glue retained. (3) build green.
+
+| TD-110
+| OLTP/OLAP HTAP storage and PostgreSQL constraint semantics
+| P2/P3
+| HIGH
+| Open — post-MVP foundation
+| Active plan: `roadmap/techdebt/TD_110_OLTP_OLAP_HTAP_STORAGE_AND_CONSTRAINTS_PLAN_2026_06_04.adoc`. PostgreSQL-style latency-sensitive workloads need native OLTP authority below pgwire: xCatalog constraint/index metadata, WAL plus row/delta commit, primary-key/unique/check/FK enforcement, MVCC visibility, Volcano strong-freshness execution, and DataFusion snapshot-plus-delta reads. Parquet/Iceberg remains the OLAP/open-format publication tier, not the direct write authority for mutable OLTP tables.
+| 4-8 sprints
+| Acceptance: (1) xCatalog records PK/unique/not-null/check/FK/locality/isolation/freshness metadata. (2) DML enforces PK/unique/not-null/check and rejects unsupported FK shapes before commit. (3) Row/delta indexes recover from WAL. (4) `EXPLAIN` reports authority, workload, route, freshness, snapshot watermark, and rejected-route reasons. (5) Volcano and DataFusion agree for snapshot-safe queries; fresh HTAP reads either union delta state or reject unsafe routes.
+
+| TD-111
+| Unify data-type enums + schema structs onto canonical ProximaType (ADR-024 / seam S8)
+| P2
+| MEDIUM
+| Mostly done (2026-06-05) — residual follow-ups open
+| Governed by `docs/12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc` + CONVERGENCE_AUDIT seam S8. Three parallel logical type enums (`ProximaType`/`ProximaDataType`/`CatalogDataType`) and two schema structs (`CatalogTableSchema`/`ProximaSchema`) collapsed onto the canonical `ProximaType` + `CatalogTableSchema`. DONE: ProximaType superset + Arrow/pgwire/proto-code bridges (`7d78df773`,`be1c0b2f6`); `ProximaDataType` deleted (`320d62747`); `CatalogDataType` deleted + durable serde-compat shim (`8009ab052`); REST v2 type vocabulary derived from ProximaType (`d6e897689`); `ProximaSchema` merged into `CatalogTableSchema` (`fcac4f5fe`). Physical encoding/quantization kept as an orthogonal storage attribute (not a logical-type variant).
+| residual ~1 day
+| Acceptance: (1) one logical type enum [DONE]. (2) one schema struct [DONE]. (3) REST/pgwire/proto type paths funnel through ProximaType [DONE]. RESIDUAL: (a) `build_vector_column` honors non-f32 dense-vector element width (currently writes fp32 `dim*4` while `DenseVector::to_arrow_type` declares `dim*element_width`; latent — only f32 used in practice). (b) Broader `SqlValue→ProximaValue` value migration is tracked separately under TD-106/S3.
+|===

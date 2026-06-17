@@ -18,9 +18,12 @@ pub enum CompactionStrategy {
     None,
 }
 
+/// Backwards-compat alias for [`CoreCompactionConfig`].
+pub type CompactionConfig = CoreCompactionConfig;
+
 /// Compaction configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct CompactionConfig {
+pub struct CoreCompactionConfig {
     /// Compaction strategy to use
     /// Maximum number of files before compaction
     pub max_files: usize,
@@ -34,7 +37,7 @@ pub struct CompactionConfig {
     pub compaction_threads: usize,
 }
 
-impl Default for CompactionConfig {
+impl Default for CoreCompactionConfig {
     fn default() -> Self {
         Self {
             // strategy removed -  CompactionStrategy::default(),
@@ -50,7 +53,7 @@ impl Default for CompactionConfig {
     }
 }
 
-impl BaseConfig for CompactionConfig {
+impl BaseConfig for CoreCompactionConfig {
     fn validate(&self) -> Result<(), String> {
         if self.max_files == 0 {
             return Err("Max files must be greater than 0".to_string());

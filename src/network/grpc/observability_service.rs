@@ -1,67 +1,66 @@
-// Observability gRPC service implementation
+// Observability gRPC backend — `ObservabilityPort` implementation.
 //
-// Implements the ObservabilityService defined in proto/proximadb/v1/observability.proto
+// The tonic `ObservabilityService` wire adapter lives in
+// `crates/platform/proximadb-api/src/grpc/v1/observability.rs` and is the only
+// type served (built by `GrpcServiceFactory`). This file holds the canonical
+// port-side business logic that the adapter delegates to via
+// `Arc<dyn proximadb_runtime::ObservabilityPort>`. TD-105 Phase B lifted the
+// logic out of the former (dead) tonic `impl ObservabilityService` block so this
+// type is now purely a port backend — no tonic service surface.
 
 use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Request, Response, Status};
-use tracing::{debug, warn};
+use tracing::debug;
 
 use crate::observability::ObservabilityService as ObsStorageService;
 use crate::proto::proximadb_v1;
-use crate::proto::proximadb_v1::observability_service_server::{
-    ObservabilityService, ObservabilityServiceServer,
+use proximadb_v1::{
+    AggregateMetricsRequest, AggregateMetricsResponse, CreateObservabilityNamespaceRequest,
+    CreateObservabilityNamespaceResponse, DeleteAlertRuleRequest, DeleteAlertRuleResponse,
+    DeleteNamespaceRequest, DeleteNamespaceResponse, GetTraceRequest, GetTraceResponse,
+    IngestLogsRequest, IngestLogsResponse, IngestMetricsRequest, IngestMetricsResponse,
+    IngestTracesRequest, IngestTracesResponse, ListAlertsRequest, ListAlertsResponse,
+    ListNamespacesRequest, ListNamespacesResponse, LogEntry, QueryLogsRequest, QueryLogsResponse,
+    QueryMetricsRequest, QueryMetricsResponse, QueryTracesRequest, QueryTracesResponse,
+    UpsertAlertRuleRequest, UpsertAlertRuleResponse,
 };
 
-/// Observability gRPC service implementation
+/// Observability port backend — implements [`proximadb_runtime::ObservabilityPort`].
 pub struct ObservabilityServiceImpl {
     observability_service: Arc<ObsStorageService>,
 }
 
 impl ObservabilityServiceImpl {
-    /// Create a new observability service
+    /// Create a new observability port backend.
     pub fn new(observability_service: Arc<ObsStorageService>) -> Self {
         Self {
             observability_service,
         }
     }
-
-    /// Convert to tonic server
-    pub fn into_server(self) -> ObservabilityServiceServer<Self> {
-        ObservabilityServiceServer::new(self)
-    }
 }
 
-#[tonic::async_trait]
-impl ObservabilityService for ObservabilityServiceImpl {
+#[async_trait::async_trait]
+impl proximadb_runtime::ObservabilityPort for ObservabilityServiceImpl {
     async fn create_namespace(
         &self,
-        request: Request<proximadb_v1::CreateObservabilityNamespaceRequest>,
-    ) -> Result<Response<proximadb_v1::CreateObservabilityNamespaceResponse>, Status> {
-        let req = request.into_inner();
-        let config = req
+        request: CreateObservabilityNamespaceRequest,
+    ) -> anyhow::Result<CreateObservabilityNamespaceResponse> {
+        let config = request
             .config
-            .ok_or_else(|| Status::invalid_argument("Missing config"))?;
+            .ok_or_else(|| anyhow::anyhow!("Missing config"))?;
 
         match self.observability_service.create_namespace(config).await {
-            Ok(name) => Ok(Response::new(
-                proximadb_v1::CreateObservabilityNamespaceResponse {
-                    namespace_id: name,
-                    success: true,
-                },
-            )),
-            Err(e) => Err(Status::internal(format!(
-                "Failed to create namespace: {}",
-                e
-            ))),
+            Ok(name) => Ok(CreateObservabilityNamespaceResponse {
+                namespace_id: name,
+                success: true,
+            }),
+            Err(e) => Err(anyhow::anyhow!("Failed to create namespace: {}", e)),
         }
     }
 
     async fn list_namespaces(
         &self,
-        _request: Request<proximadb_v1::ListNamespacesRequest>,
-    ) -> Result<Response<proximadb_v1::ListNamespacesResponse>, Status> {
+        _request: ListNamespacesRequest,
+    ) -> anyhow::Result<ListNamespacesResponse> {
         let namespaces = self.observability_service.list_namespaces().await;
 
         let namespace_infos: Vec<proximadb_v1::NamespaceInfo> = namespaces
@@ -75,219 +74,153 @@ impl ObservabilityService for ObservabilityServiceImpl {
             })
             .collect();
 
-        Ok(Response::new(proximadb_v1::ListNamespacesResponse {
+        Ok(ListNamespacesResponse {
             namespaces: namespace_infos,
-        }))
+        })
     }
 
     async fn delete_namespace(
         &self,
-        request: Request<proximadb_v1::DeleteNamespaceRequest>,
-    ) -> Result<Response<proximadb_v1::DeleteNamespaceResponse>, Status> {
-        let req = request.into_inner();
-
-        if req.namespace.is_empty() {
-            return Err(Status::invalid_argument("Namespace name is required"));
+        request: DeleteNamespaceRequest,
+    ) -> anyhow::Result<DeleteNamespaceResponse> {
+        if request.namespace.is_empty() {
+            anyhow::bail!("Namespace name is required");
         }
 
-        debug!("Deleting observability namespace: {}", req.namespace);
+        debug!("Deleting observability namespace: {}", request.namespace);
 
         match self
             .observability_service
-            .delete_namespace(&req.namespace)
+            .delete_namespace(&request.namespace)
             .await
         {
-            Ok(()) => Ok(Response::new(proximadb_v1::DeleteNamespaceResponse {
-                success: true,
-            })),
+            Ok(()) => Ok(DeleteNamespaceResponse { success: true }),
             Err(e) => {
                 let err_str = e.to_string();
                 if err_str.contains("not found") {
-                    Err(Status::not_found(format!(
+                    Err(anyhow::anyhow!(
                         "Namespace '{}' not found",
-                        req.namespace
-                    )))
+                        request.namespace
+                    ))
                 } else {
-                    Err(Status::internal(format!(
-                        "Failed to delete namespace: {}",
-                        e
-                    )))
+                    Err(anyhow::anyhow!("Failed to delete namespace: {}", e))
                 }
             }
         }
     }
 
-    async fn ingest_logs(
-        &self,
-        request: Request<proximadb_v1::IngestLogsRequest>,
-    ) -> Result<Response<proximadb_v1::IngestLogsResponse>, Status> {
-        let req = request.into_inner();
-
+    async fn ingest_logs(&self, request: IngestLogsRequest) -> anyhow::Result<IngestLogsResponse> {
         match self
             .observability_service
-            .ingest_logs(&req.namespace, req.logs, None)
+            .ingest_logs(&request.namespace, request.logs, None)
             .await
         {
-            Ok(result) => Ok(Response::new(proximadb_v1::IngestLogsResponse {
+            Ok(result) => Ok(IngestLogsResponse {
                 ingested: result.ingested,
                 failed: result.failed,
                 errors: result.errors,
                 processing_time_ms: result.processing_time_ms,
-            })),
-            Err(e) => Err(Status::internal(format!("Failed to ingest logs: {}", e))),
+            }),
+            Err(e) => Err(anyhow::anyhow!("Failed to ingest logs: {}", e)),
         }
     }
 
-    async fn query_logs(
-        &self,
-        request: Request<proximadb_v1::QueryLogsRequest>,
-    ) -> Result<Response<proximadb_v1::QueryLogsResponse>, Status> {
-        let req = request.into_inner();
-
+    async fn query_logs(&self, request: QueryLogsRequest) -> anyhow::Result<QueryLogsResponse> {
         let params = crate::observability::LogQueryParams {
-            start_time_ns: req.start_time_ns,
-            end_time_ns: req.end_time_ns,
-            query: req.query,
+            start_time_ns: request.start_time_ns,
+            end_time_ns: request.end_time_ns,
+            query: request.query,
             severities: Vec::new(), // Deferred: Convert from proto severities
             services: Vec::new(),
             sources: Vec::new(),
-            limit: req.limit,
-            cursor: req.cursor,
+            limit: request.limit,
+            cursor: request.cursor,
         };
 
         match self
             .observability_service
-            .query_logs(&req.namespace, params)
+            .query_logs(&request.namespace, params)
             .await
         {
-            Ok(result) => Ok(Response::new(proximadb_v1::QueryLogsResponse {
+            Ok(result) => Ok(QueryLogsResponse {
                 logs: result.logs,
                 next_cursor: result.next_cursor,
                 total_matched: result.total_matched.unwrap_or(0),
                 query_time_ms: result.query_time_ms,
-            })),
-            Err(e) => Err(Status::internal(format!("Failed to query logs: {}", e))),
+            }),
+            Err(e) => Err(anyhow::anyhow!("Failed to query logs: {}", e)),
         }
     }
 
-    type StreamLogsStream = ReceiverStream<Result<proximadb_v1::LogEntry, Status>>;
-
-    async fn stream_logs(
-        &self,
-        request: Request<proximadb_v1::QueryLogsRequest>,
-    ) -> Result<Response<Self::StreamLogsStream>, Status> {
-        let req = request.into_inner();
-
-        if req.namespace.is_empty() {
-            return Err(Status::invalid_argument("Namespace is required"));
+    async fn stream_logs(&self, request: QueryLogsRequest) -> anyhow::Result<Vec<LogEntry>> {
+        // The gRPC adapter wraps the returned Vec in a ReceiverStream; the port
+        // surface is a plain batch query, so reuse `query_logs`.
+        if request.namespace.is_empty() {
+            anyhow::bail!("Namespace is required");
         }
-
-        debug!(
-            "Starting log stream for namespace: {}, limit: {}",
-            req.namespace, req.limit
-        );
-
-        // Build query params
-        let params = crate::observability::LogQueryParams {
-            start_time_ns: req.start_time_ns,
-            end_time_ns: req.end_time_ns,
-            query: req.query.clone(),
-            severities: Vec::new(),
-            services: Vec::new(),
-            sources: Vec::new(),
-            limit: req.limit,
-            cursor: req.cursor.clone(),
-        };
-
-        // Query logs from the observability service
-        let query_result = self
-            .observability_service
-            .query_logs(&req.namespace, params)
-            .await
-            .map_err(|e| Status::internal(format!("Failed to query logs: {}", e)))?;
-
-        // Create a channel for streaming
-        let (tx, rx) = mpsc::channel(128);
-
-        // Spawn a task to send logs through the channel
-        tokio::spawn(async move {
-            for log in query_result.logs {
-                if tx.send(Ok(log)).await.is_err() {
-                    // Receiver dropped, stop sending
-                    warn!("Log stream receiver dropped, stopping stream");
-                    break;
-                }
-            }
-            // Channel will be closed when tx is dropped
-        });
-
-        Ok(Response::new(ReceiverStream::new(rx)))
+        Ok(self.query_logs(request).await?.logs)
     }
 
     async fn ingest_metrics(
         &self,
-        request: Request<proximadb_v1::IngestMetricsRequest>,
-    ) -> Result<Response<proximadb_v1::IngestMetricsResponse>, Status> {
-        let req = request.into_inner();
-
+        request: IngestMetricsRequest,
+    ) -> anyhow::Result<IngestMetricsResponse> {
         match self
             .observability_service
-            .ingest_metrics(&req.namespace, req.samples)
+            .ingest_metrics(&request.namespace, request.samples)
             .await
         {
-            Ok(result) => Ok(Response::new(proximadb_v1::IngestMetricsResponse {
+            Ok(result) => Ok(IngestMetricsResponse {
                 ingested: result.ingested,
                 failed: result.failed,
                 processing_time_ms: result.processing_time_ms,
-            })),
-            Err(e) => Err(Status::internal(format!("Failed to ingest metrics: {}", e))),
+            }),
+            Err(e) => Err(anyhow::anyhow!("Failed to ingest metrics: {}", e)),
         }
     }
 
     async fn query_metrics(
         &self,
-        request: Request<proximadb_v1::QueryMetricsRequest>,
-    ) -> Result<Response<proximadb_v1::QueryMetricsResponse>, Status> {
-        let req = request.into_inner();
-
-        if req.namespace.is_empty() {
-            return Err(Status::invalid_argument("Namespace is required"));
+        request: QueryMetricsRequest,
+    ) -> anyhow::Result<QueryMetricsResponse> {
+        if request.namespace.is_empty() {
+            anyhow::bail!("Namespace is required");
         }
 
-        if req.metric_name.is_empty() {
-            return Err(Status::invalid_argument("Metric name is required"));
+        if request.metric_name.is_empty() {
+            anyhow::bail!("Metric name is required");
         }
 
         debug!(
             "Querying metrics: namespace={}, metric={}, time_range=[{}, {}]",
-            req.namespace, req.metric_name, req.start_time_ns, req.end_time_ns
+            request.namespace, request.metric_name, request.start_time_ns, request.end_time_ns
         );
 
         match self
             .observability_service
             .query_metrics(
-                &req.namespace,
-                &req.metric_name,
-                req.start_time_ns,
-                req.end_time_ns,
-                &req.labels,
-                req.limit,
+                &request.namespace,
+                &request.metric_name,
+                request.start_time_ns,
+                request.end_time_ns,
+                &request.labels,
+                request.limit,
             )
             .await
         {
-            Ok(result) => Ok(Response::new(proximadb_v1::QueryMetricsResponse {
+            Ok(result) => Ok(QueryMetricsResponse {
                 samples: result.samples,
                 query_time_ms: result.query_time_ms,
-            })),
+            }),
             Err(e) => {
                 let err_str = e.to_string();
                 if err_str.contains("not found") {
-                    Err(Status::not_found(format!(
+                    Err(anyhow::anyhow!(
                         "Namespace '{}' not found",
-                        req.namespace
-                    )))
+                        request.namespace
+                    ))
                 } else {
-                    Err(Status::internal(format!("Failed to query metrics: {}", e)))
+                    Err(anyhow::anyhow!("Failed to query metrics: {}", e))
                 }
             }
         }
@@ -295,23 +228,21 @@ impl ObservabilityService for ObservabilityServiceImpl {
 
     async fn aggregate_metrics(
         &self,
-        request: Request<proximadb_v1::AggregateMetricsRequest>,
-    ) -> Result<Response<proximadb_v1::AggregateMetricsResponse>, Status> {
-        let req = request.into_inner();
-
+        request: AggregateMetricsRequest,
+    ) -> anyhow::Result<AggregateMetricsResponse> {
         let params = crate::observability::MetricAggParams {
-            metric_name: req.metric_name,
-            start_time_ns: req.start_time_ns,
-            end_time_ns: req.end_time_ns,
+            metric_name: request.metric_name,
+            start_time_ns: request.start_time_ns,
+            end_time_ns: request.end_time_ns,
             aggregation: crate::observability::MetricAggregation::Avg, // Deferred: Convert from proto
             step_seconds: 60,                                          // Default 1 minute
             label_filters: std::collections::HashMap::new(),
-            group_by: req.group_by,
+            group_by: request.group_by,
         };
 
         match self
             .observability_service
-            .aggregate_metrics(&req.namespace, params)
+            .aggregate_metrics(&request.namespace, params)
             .await
         {
             Ok(result) => {
@@ -332,59 +263,52 @@ impl ObservabilityService for ObservabilityServiceImpl {
                     })
                     .collect();
 
-                Ok(Response::new(proximadb_v1::AggregateMetricsResponse {
+                Ok(AggregateMetricsResponse {
                     series,
                     query_time_ms: result.query_time_ms,
-                }))
+                })
             }
-            Err(e) => Err(Status::internal(format!(
-                "Failed to aggregate metrics: {}",
-                e
-            ))),
+            Err(e) => Err(anyhow::anyhow!("Failed to aggregate metrics: {}", e)),
         }
     }
 
     async fn ingest_traces(
         &self,
-        request: Request<proximadb_v1::IngestTracesRequest>,
-    ) -> Result<Response<proximadb_v1::IngestTracesResponse>, Status> {
-        let req = request.into_inner();
-
-        if req.namespace.is_empty() {
-            return Err(Status::invalid_argument("Namespace is required"));
+        request: IngestTracesRequest,
+    ) -> anyhow::Result<IngestTracesResponse> {
+        if request.namespace.is_empty() {
+            anyhow::bail!("Namespace is required");
         }
 
-        if req.traces.is_empty() {
-            return Err(Status::invalid_argument(
-                "At least one trace span is required",
-            ));
+        if request.traces.is_empty() {
+            anyhow::bail!("At least one trace span is required");
         }
 
         debug!(
             "Ingesting {} trace spans to namespace: {}",
-            req.traces.len(),
-            req.namespace
+            request.traces.len(),
+            request.namespace
         );
 
         match self
             .observability_service
-            .ingest_traces(&req.namespace, req.traces)
+            .ingest_traces(&request.namespace, request.traces)
             .await
         {
-            Ok(result) => Ok(Response::new(proximadb_v1::IngestTracesResponse {
+            Ok(result) => Ok(IngestTracesResponse {
                 ingested: result.ingested,
                 failed: result.failed,
                 processing_time_ms: result.processing_time_ms,
-            })),
+            }),
             Err(e) => {
                 let err_str = e.to_string();
                 if err_str.contains("not found") {
-                    Err(Status::not_found(format!(
+                    Err(anyhow::anyhow!(
                         "Namespace '{}' not found",
-                        req.namespace
-                    )))
+                        request.namespace
+                    ))
                 } else {
-                    Err(Status::internal(format!("Failed to ingest traces: {}", e)))
+                    Err(anyhow::anyhow!("Failed to ingest traces: {}", e))
                 }
             }
         }
@@ -392,92 +316,89 @@ impl ObservabilityService for ObservabilityServiceImpl {
 
     async fn query_traces(
         &self,
-        request: Request<proximadb_v1::QueryTracesRequest>,
-    ) -> Result<Response<proximadb_v1::QueryTracesResponse>, Status> {
-        let req = request.into_inner();
-
-        if req.namespace.is_empty() {
-            return Err(Status::invalid_argument("Namespace is required"));
+        request: QueryTracesRequest,
+    ) -> anyhow::Result<QueryTracesResponse> {
+        if request.namespace.is_empty() {
+            anyhow::bail!("Namespace is required");
         }
 
         debug!(
             "Querying traces: namespace={}, time_range=[{}, {}], trace_id={:?}, service={:?}",
-            req.namespace, req.start_time_ns, req.end_time_ns, req.trace_id, req.service
+            request.namespace,
+            request.start_time_ns,
+            request.end_time_ns,
+            request.trace_id,
+            request.service
         );
 
         let params = crate::observability::TraceQueryParams {
-            start_time_ns: req.start_time_ns,
-            end_time_ns: req.end_time_ns,
-            trace_id: req.trace_id,
-            service: req.service,
-            operation: req.operation,
-            min_duration_ns: req.min_duration_ns,
-            status: req.status,
-            limit: req.limit,
-            cursor: req.cursor,
+            start_time_ns: request.start_time_ns,
+            end_time_ns: request.end_time_ns,
+            trace_id: request.trace_id,
+            service: request.service,
+            operation: request.operation,
+            min_duration_ns: request.min_duration_ns,
+            status: request.status,
+            limit: request.limit,
+            cursor: request.cursor,
         };
 
         match self
             .observability_service
-            .query_traces(&req.namespace, params)
+            .query_traces(&request.namespace, params)
             .await
         {
-            Ok(result) => Ok(Response::new(proximadb_v1::QueryTracesResponse {
+            Ok(result) => Ok(QueryTracesResponse {
                 traces: result.traces,
                 next_cursor: result.next_cursor,
                 query_time_ms: result.query_time_ms,
-            })),
+            }),
             Err(e) => {
                 let err_str = e.to_string();
                 if err_str.contains("not found") {
-                    Err(Status::not_found(format!(
+                    Err(anyhow::anyhow!(
                         "Namespace '{}' not found",
-                        req.namespace
-                    )))
+                        request.namespace
+                    ))
                 } else {
-                    Err(Status::internal(format!("Failed to query traces: {}", e)))
+                    Err(anyhow::anyhow!("Failed to query traces: {}", e))
                 }
             }
         }
     }
 
-    async fn get_trace(
-        &self,
-        request: Request<proximadb_v1::GetTraceRequest>,
-    ) -> Result<Response<proximadb_v1::GetTraceResponse>, Status> {
-        let req = request.into_inner();
-
-        if req.namespace.is_empty() {
-            return Err(Status::invalid_argument("Namespace is required"));
+    async fn get_trace(&self, request: GetTraceRequest) -> anyhow::Result<GetTraceResponse> {
+        if request.namespace.is_empty() {
+            anyhow::bail!("Namespace is required");
         }
 
-        if req.trace_id.is_empty() {
-            return Err(Status::invalid_argument("Trace ID is required"));
+        if request.trace_id.is_empty() {
+            anyhow::bail!("Trace ID is required");
         }
 
         debug!(
             "Getting trace: namespace={}, trace_id={}",
-            req.namespace, req.trace_id
+            request.namespace, request.trace_id
         );
 
         match self
             .observability_service
-            .get_trace(&req.namespace, &req.trace_id)
+            .get_trace(&request.namespace, &request.trace_id)
             .await
         {
-            Ok(result) => Ok(Response::new(proximadb_v1::GetTraceResponse {
+            Ok(result) => Ok(GetTraceResponse {
                 spans: result.spans,
                 complete: result.complete,
-            })),
+            }),
             Err(e) => {
                 let err_str = e.to_string();
                 if err_str.contains("not found") {
-                    Err(Status::not_found(format!(
+                    Err(anyhow::anyhow!(
                         "Namespace '{}' not found",
-                        req.namespace
-                    )))
+                        request.namespace
+                    ))
                 } else {
-                    Err(Status::internal(format!("Failed to get trace: {}", e)))
+                    Err(anyhow::anyhow!("Failed to get trace: {}", e))
                 }
             }
         }
@@ -485,22 +406,19 @@ impl ObservabilityService for ObservabilityServiceImpl {
 
     async fn upsert_alert_rule(
         &self,
-        _request: Request<proximadb_v1::UpsertAlertRuleRequest>,
-    ) -> Result<Response<proximadb_v1::UpsertAlertRuleResponse>, Status> {
-        Err(Status::unimplemented("Alert rules not yet implemented"))
+        _request: UpsertAlertRuleRequest,
+    ) -> anyhow::Result<UpsertAlertRuleResponse> {
+        Err(anyhow::anyhow!("Alert rules not yet implemented"))
     }
 
     async fn delete_alert_rule(
         &self,
-        _request: Request<proximadb_v1::DeleteAlertRuleRequest>,
-    ) -> Result<Response<proximadb_v1::DeleteAlertRuleResponse>, Status> {
-        Err(Status::unimplemented("Alert rules not yet implemented"))
+        _request: DeleteAlertRuleRequest,
+    ) -> anyhow::Result<DeleteAlertRuleResponse> {
+        Err(anyhow::anyhow!("Alert rules not yet implemented"))
     }
 
-    async fn list_alerts(
-        &self,
-        _request: Request<proximadb_v1::ListAlertsRequest>,
-    ) -> Result<Response<proximadb_v1::ListAlertsResponse>, Status> {
-        Err(Status::unimplemented("Alerts not yet implemented"))
+    async fn list_alerts(&self, _request: ListAlertsRequest) -> anyhow::Result<ListAlertsResponse> {
+        Err(anyhow::anyhow!("Alerts not yet implemented"))
     }
 }

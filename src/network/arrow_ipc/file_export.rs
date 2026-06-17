@@ -80,7 +80,15 @@ use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
-use crate::utils::StoragePath;
+use proximadb_records::ProximaRecord;
+use proximadb_storage_common::storage_path::StoragePath;
+
+fn record_vector(record: &ProximaRecord) -> &[f32] {
+    record
+        .embeddings
+        .first()
+        .map_or(&[][..], |embedding| embedding.as_fp32_slice())
+}
 
 /// Configuration for the SST-to-Arrow conversion cache
 #[derive(Debug, Clone)]
@@ -768,7 +776,7 @@ impl ArrowFileExportHandler {
         }
 
         // Sort by modification time (newest first)
-        files.sort_by(|a, b| b.modified_at.cmp(&a.modified_at));
+        files.sort_by_key(|f| std::cmp::Reverse(f.modified_at));
 
         Ok(files)
     }
@@ -1047,7 +1055,7 @@ impl ArrowFileExportHandler {
                 if dimension == 0
                     && let Some(first_record) = block.records.first()
                 {
-                    dimension = first_record.vector.len() as u32;
+                    dimension = record_vector(first_record).len() as u32;
                 }
             }
 
@@ -1093,8 +1101,8 @@ impl ArrowFileExportHandler {
         if Path::new(&idx_path).exists()
             && let Ok(_reader) = ArrowBlockReader::open(path)
         {
-            // ArrowBlockReader returns VectorRecords, so we fall back to standard IPC reader
-            // for direct RecordBatch streaming (no conversion needed)
+            // ArrowBlockReader returns canonical records; direct Flight export
+            // can stream the underlying IPC batches without reconstructing them.
             debug!(
                 "Found ArrowBlockReader index, using standard IPC reader for {}",
                 file_path
@@ -1138,7 +1146,7 @@ impl ArrowFileExportHandler {
 
     /// Read RecordBatches from an SST file (ProximaBlocks format, SST engine)
     ///
-    /// Converts VectorRecords from ProximaBlocks format to Arrow RecordBatches on-the-fly.
+    /// Converts ProximaRecords from ProximaBlocks format to Arrow RecordBatches on-the-fly.
     /// Results are cached to improve performance for repeated access to the same file.
     /// The cache automatically invalidates entries when the underlying file is modified.
     ///
@@ -1217,7 +1225,7 @@ impl ArrowFileExportHandler {
                 if dimension == 0
                     && let Some(first_record) = block.records.first()
                 {
-                    dimension = first_record.vector.len() as i32;
+                    dimension = record_vector(first_record).len() as i32;
                 }
                 all_records.extend(block.records);
             }
@@ -1231,7 +1239,7 @@ impl ArrowFileExportHandler {
             return Ok(Vec::new());
         }
 
-        // Build Arrow RecordBatch from VectorRecords
+        // Build Arrow RecordBatch from ProximaRecords
         // Process in batches of 10000 records
         const BATCH_SIZE: usize = 10000;
         let mut batches = Vec::new();
@@ -1242,7 +1250,7 @@ impl ArrowFileExportHandler {
             // Build id column (Utf8)
             let mut id_builder = StringBuilder::with_capacity(num_records, num_records * 32);
             for record in chunk {
-                id_builder.append_value(&record.id);
+                id_builder.append_value(&record.oid);
             }
             let id_array = id_builder.finish();
 
@@ -1253,7 +1261,7 @@ impl ArrowFileExportHandler {
             );
             for record in chunk {
                 let values = vector_builder.values();
-                for &val in &record.vector {
+                for &val in record_vector(record) {
                     values.append_value(val);
                 }
                 vector_builder.append(true);
@@ -1264,7 +1272,7 @@ impl ArrowFileExportHandler {
             let mut metadata_builder = StringBuilder::with_capacity(num_records, num_records * 64);
             for record in chunk {
                 let metadata_json =
-                    serde_json::to_string(&record.metadata).unwrap_or_else(|_| "{}".to_string());
+                    serde_json::to_string(&record.props).unwrap_or_else(|_| "{}".to_string());
                 metadata_builder.append_value(&metadata_json);
             }
             let metadata_array = metadata_builder.finish();
@@ -1272,14 +1280,14 @@ impl ArrowFileExportHandler {
             // Build timestamp column (Int64)
             let mut timestamp_builder = Int64Builder::with_capacity(num_records);
             for record in chunk {
-                timestamp_builder.append_value(record.timestamp.unwrap_or(0));
+                timestamp_builder.append_value(record.created_at_ns);
             }
             let timestamp_array = timestamp_builder.finish();
 
             // Build version column (Int64)
             let mut version_builder = Int64Builder::with_capacity(num_records);
             for record in chunk {
-                version_builder.append_value(record.version.unwrap_or(0) as i64);
+                version_builder.append_value(record.record_version as i64);
             }
             let version_array = version_builder.finish();
 
@@ -1405,7 +1413,7 @@ impl ArrowFileExportHandler {
                 if dimension == 0
                     && let Some(first_record) = block.records.first()
                 {
-                    dimension = first_record.vector.len() as u32;
+                    dimension = record_vector(first_record).len() as u32;
                 }
             }
 

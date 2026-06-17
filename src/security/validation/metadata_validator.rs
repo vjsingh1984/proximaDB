@@ -14,17 +14,18 @@
  * limitations under the License.
  */
 
-//! Metadata validation for VectorRecord
+//! Metadata validation for ProximaRecord
 //!
-//! Provides validation of metadata fields in vector records to prevent
+//! Provides validation of metadata fields in canonical records to prevent
 //! SQL injection and ensure data integrity.
 
 use super::type_validators::{
-    BinaryValidator, JsonValidator, ValidationError, ValidationResult,
+    BinaryValidator, JsonValidator, TypeValidationResult, ValidationError,
     contains_sql_injection_pattern,
 };
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use once_cell::sync::Lazy;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
 use regex::Regex;
 use std::collections::HashMap;
 use tracing::{debug, warn};
@@ -97,7 +98,7 @@ impl MetadataValidationConfig {
     }
 }
 
-/// Metadata validator for VectorRecord metadata fields
+/// Metadata validator for ProximaRecord metadata fields
 #[derive(Debug, Clone)]
 pub struct MetadataValidator {
     /// Validation configuration (field limits, injection checks, nesting depth)
@@ -125,35 +126,35 @@ impl MetadataValidator {
         }
     }
 
-    /// Validate a single VectorRecord's metadata
+    /// Validate a single ProximaRecord's metadata
     ///
     /// Returns Ok(()) if valid, or a vector of validation errors
     pub fn validate_record_metadata(
         &self,
-        record: &VectorRecord,
+        record: &ProximaRecord,
     ) -> Result<(), Vec<(String, ValidationError)>> {
         let mut errors = Vec::new();
 
         // Check metadata field count
-        if record.metadata.len() > self.config.max_metadata_fields {
+        if record.props.len() > self.config.max_metadata_fields {
             errors.push((
                 "_metadata".to_string(),
                 ValidationError::LengthExceeded {
-                    actual: record.metadata.len(),
+                    actual: record.props.len(),
                     max: self.config.max_metadata_fields,
                 },
             ));
         }
 
         // Validate each metadata field
-        for (key, value) in &record.metadata {
+        for (key, value) in &record.props {
             // Validate key
             if let Err(e) = self.validate_field_key(key) {
                 errors.push((key.clone(), e));
             }
 
             // Validate value
-            if let Err(e) = self.validate_sql_value(key, value, 0) {
+            if let Err(e) = self.validate_tree_node(key, value, 0) {
                 errors.push((key.clone(), e));
             }
         }
@@ -166,7 +167,7 @@ impl MetadataValidator {
     }
 
     /// Validate a metadata field key
-    fn validate_field_key(&self, key: &str) -> ValidationResult {
+    fn validate_field_key(&self, key: &str) -> TypeValidationResult {
         // Key length check
         if key.len() > 256 {
             return Err(ValidationError::LengthExceeded {
@@ -193,13 +194,13 @@ impl MetadataValidator {
         Ok(())
     }
 
-    /// Validate a SqlValue recursively
-    fn validate_sql_value(
+    /// Validate a ProximaTreeNode recursively.
+    fn validate_tree_node(
         &self,
         field_name: &str,
-        value: &SqlValue,
+        value: &ProximaTreeNode,
         depth: usize,
-    ) -> ValidationResult {
+    ) -> TypeValidationResult {
         // Check nesting depth
         if depth > self.config.max_json_depth {
             return Err(ValidationError::JsonDepthExceeded {
@@ -208,52 +209,152 @@ impl MetadataValidator {
             });
         }
 
-        match &value.value {
-            Some(sql_value::Value::StringValue(s)) => self.validate_string_value(field_name, s),
-            Some(sql_value::Value::BytesValue(bytes)) => self.binary_validator.validate(bytes),
-            Some(sql_value::Value::ArrayValue(arr)) => {
-                for (idx, item) in arr.values.iter().enumerate() {
-                    let nested_field = format!("{}[{}]", field_name, idx);
-                    self.validate_sql_value(&nested_field, item, depth + 1)?;
-                }
-                Ok(())
-            }
-            Some(sql_value::Value::ObjectValue(obj)) => {
-                for (key, val) in &obj.fields {
-                    // Validate nested key
+        match value {
+            ProximaTreeNode::Value(value) => self.validate_proxima_value(field_name, value, depth),
+            ProximaTreeNode::Object(tree) => {
+                for (key, value) in tree {
                     self.validate_field_key(key)?;
-
-                    // Validate nested value
                     let nested_field = format!("{}.{}", field_name, key);
-                    self.validate_sql_value(&nested_field, val, depth + 1)?;
+                    self.validate_tree_node(&nested_field, value, depth + 1)?;
                 }
                 Ok(())
             }
-            Some(sql_value::Value::NumberValue(n)) => {
-                // Check for NaN or Infinity
-                if n.is_nan() {
-                    return Err(ValidationError::InvalidFormat {
-                        type_name: "number".to_string(),
-                        value: "NaN not allowed".to_string(),
-                    });
-                }
-                if n.is_infinite() {
-                    return Err(ValidationError::InvalidFormat {
-                        type_name: "number".to_string(),
-                        value: "Infinity not allowed".to_string(),
-                    });
-                }
-                Ok(())
-            }
-            Some(sql_value::Value::Int64Value(_)) => Ok(()),
-            Some(sql_value::Value::BoolValue(_)) => Ok(()),
-            Some(sql_value::Value::NullValue(_)) => Ok(()),
-            None => Ok(()), // Null/empty value is acceptable
         }
     }
 
+    /// Validate a ProximaValue recursively.
+    fn validate_proxima_value(
+        &self,
+        field_name: &str,
+        value: &ProximaValue,
+        depth: usize,
+    ) -> TypeValidationResult {
+        if depth > self.config.max_json_depth {
+            return Err(ValidationError::JsonDepthExceeded {
+                depth,
+                max: self.config.max_json_depth,
+            });
+        }
+
+        match value {
+            ProximaValue::String(s) | ProximaValue::Symbol(s) | ProximaValue::Decimal(s) => {
+                self.validate_string_value(field_name, s)
+            }
+            ProximaValue::Binary(bytes) | ProximaValue::BinaryVector(bytes) => {
+                self.binary_validator.validate(bytes)
+            }
+            ProximaValue::Array(values) => {
+                for (idx, item) in values.iter().enumerate() {
+                    let nested_field = format!("{}[{}]", field_name, idx);
+                    self.validate_proxima_value(&nested_field, item, depth + 1)?;
+                }
+                Ok(())
+            }
+            ProximaValue::Map(values) | ProximaValue::Struct(values) => {
+                for (key, value) in values {
+                    self.validate_field_key(key)?;
+                    let nested_field = format!("{}.{}", field_name, key);
+                    self.validate_proxima_value(&nested_field, value, depth + 1)?;
+                }
+                Ok(())
+            }
+            ProximaValue::Float16(n) | ProximaValue::Float32(n) => {
+                self.validate_finite_number(*n as f64)
+            }
+            ProximaValue::Float64(n) => self.validate_finite_number(*n),
+            ProximaValue::DenseVector(values) => {
+                for value in values {
+                    self.validate_finite_number(*value as f64)?;
+                }
+                Ok(())
+            }
+            ProximaValue::SparseVector { values, .. } => {
+                for value in values {
+                    self.validate_finite_number(*value as f64)?;
+                }
+                Ok(())
+            }
+            ProximaValue::Json(value) | ProximaValue::Jsonb(value) => {
+                self.validate_json_value(field_name, value, depth)
+            }
+            ProximaValue::Boolean(_)
+            | ProximaValue::Int8(_)
+            | ProximaValue::Int16(_)
+            | ProximaValue::Int32(_)
+            | ProximaValue::Int64(_)
+            | ProximaValue::UInt8(_)
+            | ProximaValue::UInt16(_)
+            | ProximaValue::UInt32(_)
+            | ProximaValue::UInt64(_)
+            | ProximaValue::Date(_)
+            | ProximaValue::Time(_, _)
+            | ProximaValue::Timestamp(_, _)
+            | ProximaValue::TimestampTz(_, _)
+            | ProximaValue::Uuid(_)
+            | ProximaValue::ULID(_)
+            | ProximaValue::Null => Ok(()),
+        }
+    }
+
+    fn validate_json_value(
+        &self,
+        field_name: &str,
+        value: &serde_json::Value,
+        depth: usize,
+    ) -> TypeValidationResult {
+        if depth > self.config.max_json_depth {
+            return Err(ValidationError::JsonDepthExceeded {
+                depth,
+                max: self.config.max_json_depth,
+            });
+        }
+
+        match value {
+            serde_json::Value::String(s) => self.validate_string_value(field_name, s),
+            serde_json::Value::Number(n) => {
+                if let Some(value) = n.as_f64() {
+                    self.validate_finite_number(value)
+                } else {
+                    Ok(())
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for (idx, item) in values.iter().enumerate() {
+                    let nested_field = format!("{}[{}]", field_name, idx);
+                    self.validate_json_value(&nested_field, item, depth + 1)?;
+                }
+                Ok(())
+            }
+            serde_json::Value::Object(values) => {
+                for (key, item) in values {
+                    self.validate_field_key(key)?;
+                    let nested_field = format!("{}.{}", field_name, key);
+                    self.validate_json_value(&nested_field, item, depth + 1)?;
+                }
+                Ok(())
+            }
+            serde_json::Value::Bool(_) | serde_json::Value::Null => Ok(()),
+        }
+    }
+
+    fn validate_finite_number(&self, value: f64) -> TypeValidationResult {
+        if value.is_nan() {
+            return Err(ValidationError::InvalidFormat {
+                type_name: "number".to_string(),
+                value: "NaN not allowed".to_string(),
+            });
+        }
+        if value.is_infinite() {
+            return Err(ValidationError::InvalidFormat {
+                type_name: "number".to_string(),
+                value: "Infinity not allowed".to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Validate a string value for SQL injection and length
-    fn validate_string_value(&self, field_name: &str, value: &str) -> ValidationResult {
+    fn validate_string_value(&self, field_name: &str, value: &str) -> TypeValidationResult {
         // Length check
         if value.len() > self.config.max_string_length {
             return Err(ValidationError::LengthExceeded {
@@ -277,18 +378,18 @@ impl MetadataValidator {
         Ok(())
     }
 
-    /// Validate a batch of VectorRecords
+    /// Validate a batch of ProximaRecords
     ///
     /// Returns a map of record IDs to their validation errors
     pub fn validate_batch(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> HashMap<String, Vec<(String, ValidationError)>> {
         let mut result = HashMap::new();
 
         for record in records {
             if let Err(errors) = self.validate_record_metadata(record) {
-                result.insert(record.id.clone(), errors);
+                result.insert(record.oid.clone(), errors);
             }
         }
 
@@ -296,7 +397,7 @@ impl MetadataValidator {
     }
 
     /// Quick check if a batch has any validation errors
-    pub fn is_batch_valid(&self, records: &[VectorRecord]) -> bool {
+    pub fn is_batch_valid(&self, records: &[ProximaRecord]) -> bool {
         for record in records {
             if self.validate_record_metadata(record).is_err() {
                 return false;
@@ -375,7 +476,7 @@ impl CollectionNameValidator {
     }
 
     /// Validate a collection name
-    pub fn validate(&self, name: &str) -> ValidationResult {
+    pub fn validate(&self, name: &str) -> TypeValidationResult {
         // Length checks
         if name.len() < self.min_length {
             return Err(ValidationError::InvalidFormat {
@@ -420,13 +521,13 @@ impl CollectionNameValidator {
 
 /// Convenience function to validate a single record's metadata
 pub fn validate_record_metadata(
-    record: &VectorRecord,
+    record: &ProximaRecord,
 ) -> Result<(), Vec<(String, ValidationError)>> {
     MetadataValidator::default().validate_record_metadata(record)
 }
 
 /// Convenience function to validate a collection name
-pub fn validate_collection_name(name: &str) -> ValidationResult {
+pub fn validate_collection_name(name: &str) -> TypeValidationResult {
     CollectionNameValidator::default().validate(name)
 }
 
@@ -434,23 +535,26 @@ pub fn validate_collection_name(name: &str) -> ValidationResult {
 mod tests {
     use super::*;
 
-    fn create_test_record(id: &str, metadata: HashMap<String, SqlValue>) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata,
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+    fn create_test_record(id: &str, metadata: HashMap<String, ProximaValue>) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 3,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
+                ..Default::default()
+            }],
+            props: metadata
+                .into_iter()
+                .map(|(key, value)| (key, ProximaTreeNode::Value(value)))
+                .collect(),
+            ..ProximaRecord::default()
         }
     }
 
-    fn string_value(s: &str) -> SqlValue {
-        SqlValue {
-            value: Some(sql_value::Value::StringValue(s.to_string())),
-        }
+    fn string_value(s: &str) -> ProximaValue {
+        ProximaValue::String(s.to_string())
     }
 
     #[test]

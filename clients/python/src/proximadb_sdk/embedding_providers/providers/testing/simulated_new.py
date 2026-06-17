@@ -6,7 +6,6 @@ Uses hash-based generation for consistency.
 """
 
 import hashlib
-from typing import List, Optional
 
 import numpy as np
 
@@ -87,7 +86,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
         """No model to load for simulated provider"""
         return None
 
-    def embed(self, texts: List[str]) -> np.ndarray:
+    def embed(self, texts: list[str]) -> np.ndarray:
         """
         Generate simulated embeddings
 
@@ -131,7 +130,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     def _hash_based_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding using hash function"""
         # Create deterministic hash from text + seed
-        hash_input = f"{text}_{seed}".encode("utf-8")
+        hash_input = f"{text}_{seed}".encode()
         hash_obj = hashlib.sha256(hash_input)
 
         # Generate dimension values from hash
@@ -141,7 +140,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
         for i in range(dimension):
             # Use different parts of hash + rehash as needed
             if i * 4 >= len(hash_bytes):
-                hash_input = f"{text}_{seed}_{i}".encode("utf-8")
+                hash_input = f"{text}_{seed}_{i}".encode()
                 hash_obj = hashlib.sha256(hash_input)
                 hash_bytes = hash_obj.digest()
 
@@ -158,7 +157,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     def _random_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding using random values (deterministic via seed)"""
         # Hash text to get deterministic seed
-        hash_obj = hashlib.sha256(f"{text}_{seed}".encode("utf-8"))
+        hash_obj = hashlib.sha256(f"{text}_{seed}".encode())
         text_seed = int.from_bytes(hash_obj.digest()[:4], "big")
 
         # Generate random embedding
@@ -168,7 +167,7 @@ class SimulatedEmbeddingProvider(BaseEmbeddingProvider):
     def _gaussian_embedding(self, text: str, dimension: int, seed: int) -> np.ndarray:
         """Generate embedding from Gaussian distribution"""
         # Similar to random but with specific distribution
-        hash_obj = hashlib.sha256(f"{text}_{seed}".encode("utf-8"))
+        hash_obj = hashlib.sha256(f"{text}_{seed}".encode())
         text_seed = int.from_bytes(hash_obj.digest()[:4], "big")
 
         rng = np.random.RandomState(text_seed)

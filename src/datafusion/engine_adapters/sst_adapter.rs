@@ -65,9 +65,7 @@ use crate::datafusion::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use crate::datafusion::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
 };
-use crate::storage::formats::{
-    CacheStatus, ColumnBounds, FileSplit, SplitStatistics, SplitType, StorageTier,
-};
+use crate::storage::formats::{CacheStatus, ColumnBounds, FileSplit, StorageTier};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 use super::common::vector_collection_schema;
@@ -98,6 +96,7 @@ pub struct SstTableProvider {
 
 /// Metadata for an SST file
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 struct SstFileMetadata {
     /// File path
     path: String,
@@ -366,6 +365,7 @@ impl ProximaTableProvider for SstTableProvider {
 ///
 /// Reads individual blocks from SST files and returns RecordBatch streams.
 #[derive(Debug)]
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct SstSplitReader {
     /// Arrow schema for records
     schema: SchemaRef,
@@ -439,6 +439,7 @@ impl SplitReader for SstSplitReader {
 /// RecordBatch stream for reading SST blocks.
 ///
 /// Reads blocks from SST files and yields RecordBatches.
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct SstBlockStream {
     /// Output schema (after projection)
     schema: SchemaRef,

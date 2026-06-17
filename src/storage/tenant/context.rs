@@ -7,15 +7,18 @@ use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+/// Backwards-compat alias for [`StorageTenantContext`].
+pub type TenantContext = StorageTenantContext;
+
 /// Simple tenant context
 #[derive(Debug, Clone)]
-pub struct TenantContext {
+pub struct StorageTenantContext {
     pub tenant_id: String,
     pub config: TenantConfig,
     pub created_at: DateTime<Utc>,
     pub status: TenantStatus,
     pub domains: Arc<DashMap<String, DomainContext>>,
-    pub resource_limits: ResourceLimits,
+    pub resource_limits: ContextResourceLimits,
 }
 
 /// Tenant configuration
@@ -24,7 +27,7 @@ pub struct TenantConfig {
     pub organization_name: String,
     pub industry: Industry,
     pub compliance_requirements: Vec<ComplianceFramework>,
-    pub resource_limits: ResourceLimits,
+    pub resource_limits: ContextResourceLimits,
     pub security_policies: SecurityPolicies,
 }
 
@@ -37,9 +40,12 @@ pub enum TenantStatus {
     Migrating,
 }
 
+/// Backwards-compat alias for [`ContextResourceLimits`].
+pub type ResourceLimits = ContextResourceLimits;
+
 /// Resource limits for tenant
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResourceLimits {
+pub struct ContextResourceLimits {
     /// Maximum memory usage in MB
     pub max_memory_mb: u64,
 
@@ -59,7 +65,7 @@ pub struct ResourceLimits {
     pub max_domains: u32,
 }
 
-impl Default for ResourceLimits {
+impl Default for ContextResourceLimits {
     fn default() -> Self {
         Self {
             max_memory_mb: 4096,    // 4GB default
@@ -131,7 +137,7 @@ pub enum DomainStatus {
     Migrating,
 }
 
-impl TenantContext {
+impl StorageTenantContext {
     /// Create or get domain within tenant
     pub async fn get_or_create_domain(
         &self,
@@ -180,7 +186,7 @@ impl Default for TenantConfig {
             organization_name: "Default Organization".to_string(),
             industry: Industry::Technology,
             compliance_requirements: vec![ComplianceFramework::SOC2],
-            resource_limits: ResourceLimits::default(),
+            resource_limits: ContextResourceLimits::default(),
             security_policies: SecurityPolicies::default(),
         }
     }
@@ -211,17 +217,17 @@ mod tests {
             organization_name: "Test Corp".to_string(),
             industry: Industry::Financial,
             compliance_requirements: vec![ComplianceFramework::SOC2, ComplianceFramework::SOX],
-            resource_limits: ResourceLimits::default(),
+            resource_limits: ContextResourceLimits::default(),
             security_policies: SecurityPolicies::default(),
         };
 
-        let context = TenantContext {
+        let context = StorageTenantContext {
             tenant_id: "test_tenant".to_string(),
             config,
             created_at: Utc::now(),
             status: TenantStatus::Active,
             domains: Arc::new(DashMap::new()),
-            resource_limits: ResourceLimits::default(),
+            resource_limits: ContextResourceLimits::default(),
         };
 
         assert_eq!(context.tenant_id, "test_tenant");
@@ -233,13 +239,13 @@ mod tests {
     #[tokio::test]
     async fn test_domain_creation() {
         let config = TenantConfig::default();
-        let context = TenantContext {
+        let context = StorageTenantContext {
             tenant_id: "test_tenant".to_string(),
             config,
             created_at: Utc::now(),
             status: TenantStatus::Active,
             domains: Arc::new(DashMap::new()),
-            resource_limits: ResourceLimits::default(),
+            resource_limits: ContextResourceLimits::default(),
         };
 
         let business_context = BusinessContext {

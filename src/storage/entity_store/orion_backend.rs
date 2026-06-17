@@ -324,6 +324,7 @@ impl EntityStore for OrionBackedEntityStore {
                 id_filters: Vec::<VectorId>::new(),
                 top_k,
                 include_expired: false,
+                ..Default::default()
             };
 
             if let Ok(axis_results) = axis_manager.query(hybrid_query).await {

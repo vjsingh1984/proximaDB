@@ -7,8 +7,6 @@
 //! | Engine | Status | Recommended |
 //! |--------|--------|-------------|
 //! | ORION | Production | Yes (default) |
-//! | PULSAR | Experimental | No |
-//! | QUASAR | Experimental | No |
 //!
 //! ## Default Engine
 //!
@@ -20,30 +18,21 @@
 //! - High performance (1M+ edges/sec traversal, <1us node lookup)
 //! - Full feature support (graph algorithms, label indexes, concurrent access)
 //!
-//! ## Experimental Engines
-//!
-//! PULSAR and QUASAR are experimental and should only be used for research/development:
-//!
-//! - **PULSAR**: Distributed sharding with incomplete cross-shard query support
-//! - **QUASAR**: Hot/cold tiering with minimal tiering logic and no WAL
-//!
-//! Requesting an experimental engine will log a warning.
-//!
 //! ## Responsibilities
 //!
-//! - Resolve engine type from collection metadata (ORION/PULSAR/QUASAR)
+//! - Resolve engine type from collection metadata (ORION only; retired names rejected)
 //! - Normalize storage root URL and pass through to persistence layer
 //! - Initialize schema-derived unique/multi-unique indexes on first load
-//! - Log warnings when experimental engines are requested
+//! - Keep distributed/tiered graph behavior behind relational/storage substrate policy
 
 use super::Result;
-use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
+use proximadb_kernel::error::ProximaDBError;
 use std::sync::Arc;
 
 impl super::GraphOperationsService {
     /// Get or create a graph engine for the specified graph ID
-    pub(crate) async fn get_or_create_graph_engine(
+    pub async fn get_or_create_graph_engine(
         &self,
         graph_id: &str,
     ) -> Result<Arc<crate::graph::engines::GraphEngineImpl>> {
@@ -61,7 +50,14 @@ impl super::GraphOperationsService {
         let engine_type_str = collection
             .engine_config
             .as_ref()
-            .map_or_else(|| "ORION".to_string(), |cfg| cfg.engine_type.clone());
+            .map(|cfg| cfg.engine_type.clone())
+            .or_else(|| {
+                collection
+                    .storage_config
+                    .as_ref()
+                    .map(|cfg| cfg.engine_type.clone())
+            })
+            .unwrap_or_else(|| "ORION".to_string());
 
         let storage_root_url = collection
             .storage_config
@@ -75,65 +71,39 @@ impl super::GraphOperationsService {
             storage_root_url
         );
 
-        // Create engine based on type (default ORION - production-ready)
-        // PULSAR and QUASAR are experimental and log warnings
+        // Create engine based on type (default ORION - production-ready).
         let engine_impl = match engine_type_str.to_ascii_uppercase().as_str() {
-            "PULSAR" => {
-                #[cfg(feature = "distributed-graph")]
-                {
-                    // WARNING: PULSAR is experimental
-                    tracing::warn!(
-                        "PULSAR engine requested for graph '{}' - PULSAR is EXPERIMENTAL. \
-                         Cross-shard queries may be incomplete. For production, use ORION.",
-                        graph_id
-                    );
-                    let cfg = crate::graph::engines::pulsar::PulsarConfig::default();
-                    let pulsar = crate::graph::engines::pulsar::PulsarGraphEngine::new(cfg)?;
-                    crate::graph::engines::GraphEngineImpl::Pulsar(pulsar)
-                }
-                #[cfg(not(feature = "distributed-graph"))]
-                {
-                    return Err(crate::core::error::ProximaDBError::NotImplemented(
-                        "PULSAR engine requires 'distributed-graph' feature".to_string(),
-                    ));
-                }
+            "PULSAR" | "QUASAR" => {
+                return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                    format!(
+                        "{engine_type_str} graph engine has been retired; use ORION. \
+                         Distributed placement and projection tiering are provided by the \
+                         relational/storage substrate."
+                    ),
+                ));
             }
-            "QUASAR" => {
-                #[cfg(feature = "tiered-graph")]
-                {
-                    // WARNING: QUASAR is experimental
-                    tracing::warn!(
-                        "QUASAR engine requested for graph '{}' - QUASAR is EXPERIMENTAL. \
-                         No WAL persistence, data loss possible. For production, use ORION.",
-                        graph_id
-                    );
-                    // Derive a graph-scoped cold tier path under the configured storage root
-                    let mut cfg = crate::graph::engines::quasar::QuasarConfig::default();
-                    if storage_root_url.starts_with("file://") {
-                        let base_path = storage_root_url.trim_start_matches("file://");
-                        cfg.cold_tier_path = std::path::PathBuf::from(base_path)
-                            .join("graphs")
-                            .join(graph_id)
-                            .join("quasar_cold");
-                    }
-                    let quasar = crate::graph::engines::quasar::QuasarGraphEngine::new(cfg).await?;
-                    crate::graph::engines::GraphEngineImpl::Quasar(quasar)
-                }
-                #[cfg(not(feature = "tiered-graph"))]
-                {
-                    return Err(crate::core::error::ProximaDBError::NotImplemented(
-                        "QUASAR engine requires 'tiered-graph' feature".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                let orion = crate::graph::OrionGraphEngine::with_persistence_for_graph(
-                    graph_id.to_string(),
-                    storage_root_url,
-                    true,
-                )
-                .await?;
+            "ORION" | "" => {
+                // TD-066 (c) Part 1: thread the shared canonical WAL
+                // path into ORION's persistence layer so recovery can
+                // scan and log the latest checkpoint LSN per graph.
+                // The path is None for callers that haven't wired
+                // SharedServices.canonical_wal_appender yet — preserves
+                // today's recovery behavior.
+                let canonical_wal_path = self.canonical_wal_path.clone();
+                let orion =
+                    crate::graph::OrionGraphEngine::with_persistence_for_graph_and_canonical_wal(
+                        graph_id.to_string(),
+                        storage_root_url,
+                        true,
+                        canonical_wal_path,
+                    )
+                    .await?;
                 crate::graph::engines::GraphEngineImpl::Orion(orion)
+            }
+            other => {
+                return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                    format!("Unknown graph engine type '{other}'. Valid option: ORION"),
+                ));
             }
         };
 

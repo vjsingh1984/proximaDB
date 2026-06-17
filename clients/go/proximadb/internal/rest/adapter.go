@@ -34,15 +34,15 @@ import (
 type ErrorCode string
 
 const (
-	ErrCodeConnection       ErrorCode = "CONNECTION_ERROR"
-	ErrCodeTimeout          ErrorCode = "TIMEOUT"
-	ErrCodeNotFound         ErrorCode = "NOT_FOUND"
-	ErrCodeAlreadyExists    ErrorCode = "ALREADY_EXISTS"
-	ErrCodeInvalidArgument  ErrorCode = "INVALID_ARGUMENT"
+	ErrCodeConnection        ErrorCode = "CONNECTION_ERROR"
+	ErrCodeTimeout           ErrorCode = "TIMEOUT"
+	ErrCodeNotFound          ErrorCode = "NOT_FOUND"
+	ErrCodeAlreadyExists     ErrorCode = "ALREADY_EXISTS"
+	ErrCodeInvalidArgument   ErrorCode = "INVALID_ARGUMENT"
 	ErrCodeDimensionMismatch ErrorCode = "DIMENSION_MISMATCH"
-	ErrCodeRateLimited      ErrorCode = "RATE_LIMITED"
-	ErrCodeInternal         ErrorCode = "INTERNAL_ERROR"
-	ErrCodeUnavailable      ErrorCode = "UNAVAILABLE"
+	ErrCodeRateLimited       ErrorCode = "RATE_LIMITED"
+	ErrCodeInternal          ErrorCode = "INTERNAL_ERROR"
+	ErrCodeUnavailable       ErrorCode = "UNAVAILABLE"
 )
 
 // AdapterError represents an error from the REST adapter.
@@ -73,10 +73,10 @@ type TLSConfig struct {
 
 // Config holds the REST adapter configuration.
 type Config struct {
-	BaseURL    string
-	APIKey     string
-	Timeout    time.Duration
-	TLS        *TLSConfig
+	BaseURL string
+	APIKey  string
+	Timeout time.Duration
+	TLS     *TLSConfig
 }
 
 // Adapter implements the REST protocol for ProximaDB.
@@ -203,7 +203,15 @@ type CollectionInfo struct {
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// VectorRecord represents a vector with its ID and metadata.
+// ProximaRecord represents the canonical record payload with optional vector data.
+type ProximaRecord struct {
+	ID     string                 `json:"id"`
+	Vector []float32              `json:"vector,omitempty"`
+	Props  map[string]interface{} `json:"props,omitempty"`
+	Source string                 `json:"source,omitempty"`
+}
+
+// VectorRecord represents a legacy vector-shaped compatibility payload.
 type VectorRecord struct {
 	ID       string                 `json:"id"`
 	Vector   []float32              `json:"vector"`
@@ -212,11 +220,11 @@ type VectorRecord struct {
 
 // SearchQuery represents a vector search query.
 type SearchQuery struct {
-	Vector          []float32    `json:"vector"`
-	TopK            int          `json:"top_k,omitempty"`
-	Filter          *Filter      `json:"filter,omitempty"`
-	IncludeVectors  bool         `json:"include_vectors,omitempty"`
-	IncludeMetadata bool         `json:"include_metadata,omitempty"`
+	Vector          []float32 `json:"vector"`
+	TopK            int       `json:"top_k,omitempty"`
+	Filter          *Filter   `json:"filter,omitempty"`
+	IncludeVectors  bool      `json:"include_vectors,omitempty"`
+	IncludeMetadata bool      `json:"include_metadata,omitempty"`
 }
 
 // Filter represents a metadata filter.
@@ -250,9 +258,82 @@ type HealthStatus struct {
 	Uptime  float64 `json:"uptime_seconds"`
 }
 
+// ProbeResponse represents a Kubernetes liveness/readiness probe response.
+type ProbeResponse struct {
+	Status string `json:"status"`
+}
+
+// ColumnDefinition represents a typed column in a SchemaDefinition.
+type ColumnDefinition struct {
+	Name            string `json:"name"`
+	DataType        string `json:"data_type"`
+	Nullable        *bool  `json:"nullable,omitempty"`
+	Indexed         *bool  `json:"indexed,omitempty"`
+	Filterable      *bool  `json:"filterable,omitempty"`
+	MaxLength       *int   `json:"max_length,omitempty"`
+	Precision       *int   `json:"precision,omitempty"`
+	Scale           *int   `json:"scale,omitempty"`
+	VectorDimension *int   `json:"vector_dimension,omitempty"`
+}
+
+// SchemaDefinition represents a typed collection schema.
+type SchemaDefinition struct {
+	Columns               []ColumnDefinition `json:"columns"`
+	Enforcement           string             `json:"enforcement,omitempty"`
+	AllowAdditionalFields *bool              `json:"allow_additional_fields,omitempty"`
+}
+
+// SchemaResponse represents the response from a get-schema call.
+type SchemaResponse struct {
+	SchemaID       string           `json:"schema_id"`
+	SchemaVersion  string           `json:"schema_version"`
+	CollectionID   string           `json:"collection_id"`
+	Schema         SchemaDefinition `json:"schema"`
+	CreatedAt      string           `json:"created_at"`
+	UpdatedAt      *string          `json:"updated_at,omitempty"`
+	ParentSchemaID *string          `json:"parent_schema_id,omitempty"`
+}
+
+// UpdateSchemaRequest represents the body for an update-schema call.
+type UpdateSchemaRequest struct {
+	Columns               []ColumnDefinition `json:"columns"`
+	Enforcement           string             `json:"enforcement,omitempty"`
+	AllowAdditionalFields *bool              `json:"allow_additional_fields,omitempty"`
+	Force                 bool               `json:"force,omitempty"`
+}
+
+// UpdateSchemaResponse represents the response from an update-schema call.
+type UpdateSchemaResponse struct {
+	SchemaID         string                   `json:"schema_id"`
+	SchemaVersion    string                   `json:"schema_version"`
+	PreviousSchemaID string                   `json:"previous_schema_id"`
+	Changes          []map[string]interface{} `json:"changes"`
+	Warnings         []string                 `json:"warnings"`
+	UpdatedAt        string                   `json:"updated_at"`
+}
+
+// QueryRequest is the request body for the executeQuery operation.
+type QueryRequest struct {
+	Language   string        `json:"language"`
+	Query      string        `json:"query"`
+	Parameters []interface{} `json:"parameters,omitempty"`
+	Collection *string       `json:"collection,omitempty"`
+	Limit      *int          `json:"limit,omitempty"`
+}
+
+// ExplainQueryRequest is the request body for the explainQuery operation.
+type ExplainQueryRequest struct {
+	Language   string  `json:"language"`
+	Query      string  `json:"query"`
+	Collection *string `json:"collection,omitempty"`
+}
+
+// QueryResponse is the (open-shape) response from executeQuery / explainQuery.
+type QueryResponse map[string]interface{}
+
 // CreateCollection creates a new vector collection.
 func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionRequest) (*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v1/collections", a.baseURL)
+	url := fmt.Sprintf("%s/api/v2/collections", a.baseURL)
 
 	body, err := json.Marshal(req)
 	if err != nil {
@@ -263,52 +344,104 @@ func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionReq
 		}
 	}
 
-	var result CollectionInfo
-	if err := a.doRequest(ctx, http.MethodPost, url, body, &result); err != nil {
+	var response struct {
+		CollectionID         string `json:"collection_id"`
+		Name                 string `json:"name"`
+		Dimension            int    `json:"dimension"`
+		Engine               string `json:"engine"`
+		ProximaRecordEnabled bool   `json:"proxima_record_enabled"`
+		CreatedAt            string `json:"created_at"`
+	}
+	if err := a.doRequest(ctx, http.MethodPost, url, body, &response); err != nil {
 		return nil, err
 	}
 
-	return &result, nil
+	return &CollectionInfo{
+		Name:      response.Name,
+		Dimension: response.Dimension,
+		Metric:    req.Metric,
+		Engine:    response.Engine,
+		CreatedAt: parseTimeOrZero(response.CreatedAt),
+	}, nil
 }
 
 // ListCollections returns all collections.
 func (a *Adapter) ListCollections(ctx context.Context) ([]*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v1/collections", a.baseURL)
+	url := fmt.Sprintf("%s/api/v2/collections", a.baseURL)
 
 	var response struct {
-		Collections []*CollectionInfo `json:"collections"`
+		Collections []struct {
+			CollectionID         string `json:"collection_id"`
+			Name                 string `json:"name"`
+			Dimension            int    `json:"dimension"`
+			Engine               string `json:"engine"`
+			ProximaRecordEnabled bool   `json:"proxima_record_enabled"`
+			RecordCount          *int64 `json:"record_count,omitempty"`
+		} `json:"collections"`
 	}
 	if err := a.doRequest(ctx, http.MethodGet, url, nil, &response); err != nil {
 		return nil, err
 	}
 
-	return response.Collections, nil
+	collections := make([]*CollectionInfo, 0, len(response.Collections))
+	for _, item := range response.Collections {
+		count := int64(0)
+		if item.RecordCount != nil {
+			count = *item.RecordCount
+		}
+		collections = append(collections, &CollectionInfo{
+			Name:        firstNonEmpty(item.Name, item.CollectionID),
+			Dimension:   item.Dimension,
+			Engine:      item.Engine,
+			VectorCount: count,
+		})
+	}
+	return collections, nil
 }
 
 // GetCollection returns information about a specific collection.
 func (a *Adapter) GetCollection(ctx context.Context, name string) (*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v1/collections/%s", a.baseURL, name)
+	url := fmt.Sprintf("%s/api/v2/collections/%s", a.baseURL, url.PathEscape(name))
 
-	var result CollectionInfo
-	if err := a.doRequest(ctx, http.MethodGet, url, nil, &result); err != nil {
+	var response struct {
+		CollectionID   string `json:"collection_id"`
+		Name           string `json:"name"`
+		Dimension      int    `json:"dimension"`
+		Engine         string `json:"engine"`
+		DistanceMetric string `json:"distance_metric"`
+		CreatedAt      string `json:"created_at"`
+		Stats          struct {
+			RecordCount      int64 `json:"record_count"`
+			StorageSizeBytes int64 `json:"storage_size_bytes"`
+		} `json:"stats"`
+	}
+	if err := a.doRequest(ctx, http.MethodGet, url, nil, &response); err != nil {
 		return nil, err
 	}
 
-	return &result, nil
+	return &CollectionInfo{
+		Name:        firstNonEmpty(response.Name, response.CollectionID),
+		Dimension:   response.Dimension,
+		Metric:      response.DistanceMetric,
+		Engine:      response.Engine,
+		VectorCount: response.Stats.RecordCount,
+		CreatedAt:   parseTimeOrZero(response.CreatedAt),
+	}, nil
 }
 
 // DeleteCollection deletes a collection.
 func (a *Adapter) DeleteCollection(ctx context.Context, name string) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s", a.baseURL, name)
+	url := fmt.Sprintf("%s/api/v2/collections/%s", a.baseURL, url.PathEscape(name))
 	return a.doRequest(ctx, http.MethodDelete, url, nil, nil)
 }
 
-// Insert inserts vectors into a collection.
-func (a *Adapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors", a.baseURL, collection)
+// InsertRecords inserts canonical records into a collection.
+func (a *Adapter) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, url.PathEscape(collection))
 
 	body, err := json.Marshal(map[string]interface{}{
-		"vectors": records,
+		"records":         records,
+		"validate_schema": true,
 	})
 	if err != nil {
 		return &AdapterError{
@@ -321,12 +454,14 @@ func (a *Adapter) Insert(ctx context.Context, collection string, records []*Vect
 	return a.doRequest(ctx, http.MethodPost, url, body, nil)
 }
 
-// Upsert inserts or updates vectors in a collection.
-func (a *Adapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors/upsert", a.baseURL, collection)
+// UpsertRecords inserts or updates canonical records in a collection.
+func (a *Adapter) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, url.PathEscape(collection))
 
 	body, err := json.Marshal(map[string]interface{}{
-		"vectors": records,
+		"records":         records,
+		"validate_schema": true,
+		"upsert":          true,
 	})
 	if err != nil {
 		return &AdapterError{
@@ -337,13 +472,63 @@ func (a *Adapter) Upsert(ctx context.Context, collection string, records []*Vect
 	}
 
 	return a.doRequest(ctx, http.MethodPost, url, body, nil)
+}
+
+// Insert inserts records into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
+func (a *Adapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
+	return a.InsertRecords(ctx, collection, recordsToProximaRecords(records))
+}
+
+// Upsert inserts or updates records in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
+func (a *Adapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
+	return a.UpsertRecords(ctx, collection, recordsToProximaRecords(records))
+}
+
+func recordsToProximaRecords(records []*VectorRecord) []*ProximaRecord {
+	result := make([]*ProximaRecord, len(records))
+	for i, record := range records {
+		result[i] = &ProximaRecord{
+			ID:     record.ID,
+			Vector: record.Vector,
+			Props:  record.Metadata,
+		}
+	}
+	return result
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func parseTimeOrZero(value string) time.Time {
+	if value == "" {
+		return time.Time{}
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return parsed
 }
 
 // Search performs a vector similarity search.
 func (a *Adapter) Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error) {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/search", a.baseURL, collection)
+	url := fmt.Sprintf("%s/api/v2/collections/%s/search", a.baseURL, url.PathEscape(collection))
 
-	body, err := json.Marshal(query)
+	body, err := json.Marshal(map[string]interface{}{
+		"vector":         query.Vector,
+		"top_k":          query.TopK,
+		"include_vector": query.IncludeVectors,
+	})
 	if err != nil {
 		return nil, &AdapterError{
 			Code:    ErrCodeInvalidArgument,
@@ -362,50 +547,41 @@ func (a *Adapter) Search(ctx context.Context, collection string, query *SearchQu
 
 // Get retrieves vectors by their IDs.
 func (a *Adapter) Get(ctx context.Context, collection string, ids []string) ([]*VectorRecord, error) {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors/fetch", a.baseURL, collection)
-
-	body, err := json.Marshal(map[string]interface{}{
-		"ids": ids,
-	})
-	if err != nil {
-		return nil, &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
+	vectors := make([]*VectorRecord, 0, len(ids))
+	for _, id := range ids {
+		requestURL := fmt.Sprintf("%s/api/v2/collections/%s/records/%s?include_vector=true&include_text=false", a.baseURL, url.PathEscape(collection), url.PathEscape(id))
+		var response struct {
+			ID     string                 `json:"id"`
+			Vector []float32              `json:"vector,omitempty"`
+			Props  map[string]interface{} `json:"props,omitempty"`
 		}
+		if err := a.doRequest(ctx, http.MethodGet, requestURL, nil, &response); err != nil {
+			return nil, err
+		}
+		vectors = append(vectors, &VectorRecord{
+			ID:       response.ID,
+			Vector:   response.Vector,
+			Metadata: response.Props,
+		})
 	}
 
-	var response struct {
-		Vectors []*VectorRecord `json:"vectors"`
-	}
-	if err := a.doRequest(ctx, http.MethodPost, url, body, &response); err != nil {
-		return nil, err
-	}
-
-	return response.Vectors, nil
+	return vectors, nil
 }
 
 // Delete removes vectors by their IDs.
 func (a *Adapter) Delete(ctx context.Context, collection string, ids []string) error {
-	url := fmt.Sprintf("%s/api/v1/collections/%s/vectors/delete", a.baseURL, collection)
-
-	body, err := json.Marshal(map[string]interface{}{
-		"ids": ids,
-	})
-	if err != nil {
-		return &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
+	for _, id := range ids {
+		requestURL := fmt.Sprintf("%s/api/v2/collections/%s/records/%s", a.baseURL, url.PathEscape(collection), url.PathEscape(id))
+		if err := a.doRequest(ctx, http.MethodDelete, requestURL, nil, nil); err != nil {
+			return err
 		}
 	}
-
-	return a.doRequest(ctx, http.MethodPost, url, body, nil)
+	return nil
 }
 
 // Health checks the server health.
 func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
-	url := fmt.Sprintf("%s/api/v1/health", a.baseURL)
+	url := fmt.Sprintf("%s/health", a.baseURL)
 
 	var result HealthStatus
 	if err := a.doRequest(ctx, http.MethodGet, url, nil, &result); err != nil {
@@ -413,6 +589,99 @@ func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
 	}
 
 	return &result, nil
+}
+
+// HealthLive issues a Kubernetes liveness probe (GET /health/live).
+func (a *Adapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
+	endpoint := fmt.Sprintf("%s/health/live", a.baseURL)
+
+	var result ProbeResponse
+	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// HealthReady issues a Kubernetes readiness probe (GET /health/ready).
+func (a *Adapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
+	endpoint := fmt.Sprintf("%s/health/ready", a.baseURL)
+
+	var result ProbeResponse
+	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetCollectionSchema fetches the schema for a collection.
+func (a *Adapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/collections/%s/schema", a.baseURL, url.PathEscape(collectionID))
+
+	var result SchemaResponse
+	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateCollectionSchema updates the schema for a collection.
+func (a *Adapter) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/collections/%s/schema", a.baseURL, url.PathEscape(collectionID))
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, &AdapterError{
+			Code:    ErrCodeInvalidArgument,
+			Message: "failed to marshal update-schema request",
+			Cause:   err,
+		}
+	}
+
+	var result UpdateSchemaResponse
+	if err := a.doRequest(ctx, http.MethodPut, endpoint, body, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ExecuteQuery executes an AQL/UQL/federated query via the shared query facade.
+func (a *Adapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/query", a.baseURL)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, &AdapterError{
+			Code:    ErrCodeInvalidArgument,
+			Message: "failed to marshal query request",
+			Cause:   err,
+		}
+	}
+
+	var result QueryResponse
+	if err := a.doRequest(ctx, http.MethodPost, endpoint, body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ExplainQuery returns the lowered plan / diagnostics for an AQL/UQL query.
+func (a *Adapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
+	endpoint := fmt.Sprintf("%s/api/v2/query/explain", a.baseURL)
+
+	body, err := json.Marshal(req)
+	if err != nil {
+		return nil, &AdapterError{
+			Code:    ErrCodeInvalidArgument,
+			Message: "failed to marshal explain-query request",
+			Cause:   err,
+		}
+	}
+
+	var result QueryResponse
+	if err := a.doRequest(ctx, http.MethodPost, endpoint, body, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // Close closes the adapter and releases resources.

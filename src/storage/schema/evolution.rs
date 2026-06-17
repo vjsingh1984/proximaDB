@@ -6,7 +6,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 
-use super::proxima_schema::{DefaultValue, ProximaColumn, ProximaDataType, ProximaSchema};
+use proximadb_data_model::ProximaType;
+
+use super::proxima_schema::{DefaultValue, ProximaColumn, ProximaSchema};
 
 /// Schema evolution operations.
 #[derive(Debug, Clone)]
@@ -27,7 +29,7 @@ pub enum SchemaEvolutionOp {
     /// Change column type (must be compatible)
     ChangeType {
         column_id: i32,
-        new_type: ProximaDataType,
+        new_type: ProximaType,
         /// Optional conversion expression
         conversion: Option<String>,
     },
@@ -119,9 +121,12 @@ pub enum TypeCompatibility {
     Incompatible,
 }
 
+/// Backwards-compat alias for [`SchemaEvolutionMigrationPlan`].
+pub type MigrationPlan = SchemaEvolutionMigrationPlan;
+
 /// Migration plan for schema evolution.
 #[derive(Debug)]
-pub struct MigrationPlan {
+pub struct SchemaEvolutionMigrationPlan {
     /// Source schema version
     pub from_version: u32,
     /// Target schema version
@@ -141,8 +146,9 @@ pub enum MigrationStep {
     AddColumnWithDefault {
         /// Column ID
         column_id: i32,
-        /// Default value
-        default: DefaultValue,
+        /// Default value, in the canonical rendered (string) form stored on
+        /// [`ProximaColumn::default_value`] (ADR-024 Step 4).
+        default: String,
     },
     /// Rewrite data files with new schema
     RewriteDataFiles {
@@ -209,8 +215,8 @@ pub trait SchemaEvolution: Send + Sync {
     /// Check type compatibility for type change operations.
     fn check_type_compatibility(
         &self,
-        old_type: &ProximaDataType,
-        new_type: &ProximaDataType,
+        old_type: &ProximaType,
+        new_type: &ProximaType,
     ) -> TypeCompatibility;
 
     /// Get migration strategy for schema change.
@@ -218,13 +224,13 @@ pub trait SchemaEvolution: Send + Sync {
         &self,
         from_schema: &ProximaSchema,
         to_schema: &ProximaSchema,
-    ) -> Result<MigrationPlan>;
+    ) -> Result<SchemaEvolutionMigrationPlan>;
 }
 
 /// Default implementation of schema evolution.
 pub struct DefaultSchemaEvolution {
     /// Compatible type widening rules
-    widening_rules: Vec<(ProximaDataType, ProximaDataType)>,
+    widening_rules: Vec<(ProximaType, ProximaType)>,
 }
 
 impl Default for DefaultSchemaEvolution {
@@ -238,26 +244,26 @@ impl DefaultSchemaEvolution {
         Self {
             widening_rules: vec![
                 // Integer widening
-                (ProximaDataType::Int8, ProximaDataType::Int16),
-                (ProximaDataType::Int8, ProximaDataType::Int32),
-                (ProximaDataType::Int8, ProximaDataType::Int64),
-                (ProximaDataType::Int16, ProximaDataType::Int32),
-                (ProximaDataType::Int16, ProximaDataType::Int64),
-                (ProximaDataType::Int32, ProximaDataType::Int64),
+                (ProximaType::Int8, ProximaType::Int16),
+                (ProximaType::Int8, ProximaType::Int32),
+                (ProximaType::Int8, ProximaType::Int64),
+                (ProximaType::Int16, ProximaType::Int32),
+                (ProximaType::Int16, ProximaType::Int64),
+                (ProximaType::Int32, ProximaType::Int64),
                 // Unsigned integer widening
-                (ProximaDataType::UInt8, ProximaDataType::UInt16),
-                (ProximaDataType::UInt8, ProximaDataType::UInt32),
-                (ProximaDataType::UInt8, ProximaDataType::UInt64),
-                (ProximaDataType::UInt16, ProximaDataType::UInt32),
-                (ProximaDataType::UInt16, ProximaDataType::UInt64),
-                (ProximaDataType::UInt32, ProximaDataType::UInt64),
+                (ProximaType::UInt8, ProximaType::UInt16),
+                (ProximaType::UInt8, ProximaType::UInt32),
+                (ProximaType::UInt8, ProximaType::UInt64),
+                (ProximaType::UInt16, ProximaType::UInt32),
+                (ProximaType::UInt16, ProximaType::UInt64),
+                (ProximaType::UInt32, ProximaType::UInt64),
                 // Float widening
-                (ProximaDataType::Float32, ProximaDataType::Float64),
+                (ProximaType::Float32, ProximaType::Float64),
             ],
         }
     }
 
-    fn is_safe_widening(&self, old: &ProximaDataType, new: &ProximaDataType) -> bool {
+    fn is_safe_widening(&self, old: &ProximaType, new: &ProximaType) -> bool {
         self.widening_rules
             .iter()
             .any(|(from, to)| from == old && to == new)
@@ -290,7 +296,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                 SchemaEvolutionOp::DropColumn { column_id } => {
                     // Dropping column breaks backward compatibility
                     validation.is_backward_compatible = false;
-                    if current_schema.primary_key.contains(column_id) {
+                    if current_schema.primary_key_ids().contains(column_id) {
                         validation
                             .errors
                             .push(format!("Cannot drop primary key column {}", column_id));
@@ -355,7 +361,10 @@ impl SchemaEvolution for DefaultSchemaEvolution {
         new_schema.version += 1;
         new_schema.parent_schema_id = Some(current_schema.schema_id.clone());
         new_schema.schema_id = uuid::Uuid::new_v4().to_string();
-        new_schema.created_at_ms = chrono::Utc::now().timestamp_millis();
+        // ADR-024 Step 4: the storage-plane schema creation time is now
+        // `created_at_ms_schema` (the unified struct's `created_at_ms` is the
+        // catalog table-creation timestamp, a distinct concept).
+        new_schema.created_at_ms_schema = chrono::Utc::now().timestamp_millis();
         new_schema.is_legacy_vector_record = false;
 
         for op in operations {
@@ -415,7 +424,9 @@ impl SchemaEvolution for DefaultSchemaEvolution {
                 }
                 SchemaEvolutionOp::SetDefault { column_id, default } => {
                     if let Some(col) = new_schema.columns.iter_mut().find(|c| c.id == *column_id) {
-                        col.default_value = Some(default.clone());
+                        // ADR-024 Step 4: the canonical column default is a
+                        // rendered string; render the evolution-op enum into it.
+                        col.default_value = Some(default.render());
                     }
                 }
                 SchemaEvolutionOp::DropDefault { column_id } => {
@@ -455,8 +466,8 @@ impl SchemaEvolution for DefaultSchemaEvolution {
 
     fn check_type_compatibility(
         &self,
-        old_type: &ProximaDataType,
-        new_type: &ProximaDataType,
+        old_type: &ProximaType,
+        new_type: &ProximaType,
     ) -> TypeCompatibility {
         if old_type == new_type {
             return TypeCompatibility::Identical;
@@ -472,8 +483,8 @@ impl SchemaEvolution for DefaultSchemaEvolution {
 
         // Check string coercion
         match (old_type, new_type) {
-            (_, ProximaDataType::String) => TypeCompatibility::StringCoercion,
-            (ProximaDataType::String, _) => TypeCompatibility::LossyNarrowing,
+            (_, ProximaType::String) => TypeCompatibility::StringCoercion,
+            (ProximaType::String, _) => TypeCompatibility::LossyNarrowing,
             _ => TypeCompatibility::Incompatible,
         }
     }
@@ -482,7 +493,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
         &self,
         from_schema: &ProximaSchema,
         to_schema: &ProximaSchema,
-    ) -> Result<MigrationPlan> {
+    ) -> Result<SchemaEvolutionMigrationPlan> {
         let mut steps = Vec::new();
         let mut is_online = true;
 
@@ -518,7 +529,7 @@ impl SchemaEvolution for DefaultSchemaEvolution {
             }
         }
 
-        Ok(MigrationPlan {
+        Ok(SchemaEvolutionMigrationPlan {
             from_version: from_schema.version,
             to_version: to_schema.version,
             steps,
@@ -542,11 +553,11 @@ mod tests {
             column: ProximaColumn {
                 id: 0, // Will be assigned
                 name: "category".to_string(),
-                data_type: ProximaDataType::String,
+                data_type: ProximaType::String,
                 nullable: true,
                 default_value: None,
                 comment: None,
-                metadata: HashMap::new(),
+                properties: HashMap::new(),
                 is_deleted: false,
                 original_id: None,
             },
@@ -572,11 +583,11 @@ mod tests {
             column: ProximaColumn {
                 id: 0,
                 name: "required_field".to_string(),
-                data_type: ProximaDataType::String,
+                data_type: ProximaType::String,
                 nullable: false,
                 default_value: None, // No default!
                 comment: None,
-                metadata: HashMap::new(),
+                properties: HashMap::new(),
                 is_deleted: false,
                 original_id: None,
             },
@@ -608,17 +619,17 @@ mod tests {
         let evolution = DefaultSchemaEvolution::new();
 
         assert_eq!(
-            evolution.check_type_compatibility(&ProximaDataType::Int32, &ProximaDataType::Int64),
+            evolution.check_type_compatibility(&ProximaType::Int32, &ProximaType::Int64),
             TypeCompatibility::SafeWidening
         );
 
         assert_eq!(
-            evolution.check_type_compatibility(&ProximaDataType::Int64, &ProximaDataType::Int32),
+            evolution.check_type_compatibility(&ProximaType::Int64, &ProximaType::Int32),
             TypeCompatibility::LossyNarrowing
         );
 
         assert_eq!(
-            evolution.check_type_compatibility(&ProximaDataType::Int32, &ProximaDataType::String),
+            evolution.check_type_compatibility(&ProximaType::Int32, &ProximaType::String),
             TypeCompatibility::StringCoercion
         );
     }

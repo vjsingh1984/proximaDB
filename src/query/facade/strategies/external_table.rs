@@ -141,7 +141,7 @@ impl ExternalTableScanner {
         _catalog: &str,
         _namespace: &[String],
         _table: &str,
-    ) -> Result<TableStatistics> {
+    ) -> Result<ExternalTableStatistics> {
         let _ = &self.catalog_manager;
         Err(anyhow!(
             "External table statistics are not wired into live execution yet"
@@ -149,8 +149,11 @@ impl ExternalTableScanner {
     }
 }
 
+/// Backwards-compat alias for [`ExternalTableStatistics`].
+pub type TableStatistics = ExternalTableStatistics;
+
 #[derive(Debug, Clone, Default)]
-pub struct TableStatistics {
+pub struct ExternalTableStatistics {
     pub row_count: u64,
     pub num_files: u64,
     pub size_bytes: u64,

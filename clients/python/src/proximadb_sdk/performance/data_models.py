@@ -38,7 +38,7 @@ class LatencyStats(BaseModel):
     std_dev_ms: float = Field(default=0.0, description="Standard deviation")
 
     @classmethod
-    def from_samples(cls, samples_ms: list[float]) -> "LatencyStats":
+    def from_samples(cls, samples_ms: list[float]) -> LatencyStats:
         """Create LatencyStats from a list of latency samples."""
         if not samples_ms:
             return cls(min_ms=0, max_ms=0, avg_ms=0)

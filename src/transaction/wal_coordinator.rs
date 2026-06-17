@@ -48,7 +48,7 @@
 //! 4. Write decision to WAL
 //! 5. Notify participants
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;

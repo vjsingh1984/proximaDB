@@ -1,7 +1,8 @@
 //! Storage configuration types
 
-use super::{CompressionConfig, StorageEngine};
+use super::StorageEngine;
 use crate::core::foundation::BaseConfig;
+use proximadb_compression_types::CompressionConfig;
 
 /// Unified storage configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -43,7 +44,59 @@ impl BaseConfig for UnifiedStorageConfig {
             return Err("Max file size must be greater than 0".to_string());
         }
 
-        self.compression.validate()?;
+        if let Some(level) = self.compression.level {
+            let Some((min, max)) = self.compression.algorithm.level_range() else {
+                return Err(format!(
+                    "Compression level is not supported for {}",
+                    self.compression.algorithm
+                ));
+            };
+            if !(min..=max).contains(&level) {
+                return Err(format!(
+                    "Compression level for {} must be between {} and {}",
+                    self.compression.algorithm, min, max
+                ));
+            }
+        }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proximadb_compression_types::CompressionAlgorithm;
+
+    #[test]
+    fn validates_foundation_compression_level_range() {
+        let config = UnifiedStorageConfig {
+            compression: CompressionConfig::zstd().with_level(22),
+            ..Default::default()
+        };
+
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn rejects_out_of_range_foundation_compression_level() {
+        let config = UnifiedStorageConfig {
+            compression: CompressionConfig::zstd().with_level(99),
+            ..Default::default()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("must be between 1 and 22"));
+    }
+
+    #[test]
+    fn rejects_level_for_algorithm_without_level_support() {
+        let config = UnifiedStorageConfig {
+            compression: CompressionConfig::with_algorithm(CompressionAlgorithm::Snappy)
+                .with_level(1),
+            ..Default::default()
+        };
+
+        let err = config.validate().unwrap_err();
+        assert!(err.contains("not supported"));
     }
 }

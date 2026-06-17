@@ -441,7 +441,7 @@ flowchart TB
 
 ## Next Steps
 
-- [Storage Engines](./storage-engines.md) - How WAL feeds engines
+- [Storage Engines](./storage-engines.adoc) - How WAL feeds engines
 - [Query Planner](./query-planner.md) - Read path
 - [Backup & Restore](../04-operations/) - WAL in backups
 

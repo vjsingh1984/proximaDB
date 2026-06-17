@@ -315,7 +315,7 @@ impl HilbertSpatialEncoder {
             .collect();
 
         // Use HELIX's Hilbert curve implementation
-        let hilbert = crate::storage::engines::impls::helix::hilbert_curve::HilbertCurve::new(
+        let hilbert = crate::storage::engines::helix::hilbert_curve::HilbertCurve::new(
             self.dimensions,
             self.bits_per_dim,
         );

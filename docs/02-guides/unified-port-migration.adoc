@@ -160,18 +160,22 @@ client = ArrowFlightClient("localhost:5678")
 
 ==== gRPC Clients (Any Language)
 
+New gRPC clients should use `proximadb.v2.ProximaRecordService`. The
+`proximadb.v1.*` services remain on the unified port only as deprecated
+compatibility services and return deprecation metadata.
+
 .Before
 [source,bash]
 ----
 # Connect to gRPC port
-grpcurl localhost:5679 proximadb.v1.VectorService/Search
+grpcurl localhost:5679 proximadb.v2.ProximaRecordService/Search
 ----
 
 .After
 [source,bash]
 ----
 # Same unified port
-grpcurl localhost:5678 proximadb.v1.VectorService/Search
+grpcurl localhost:5678 proximadb.v2.ProximaRecordService/Search
 ----
 
 === Step 4: Update Load Balancer Configuration
@@ -445,6 +449,6 @@ grpcurl -plaintext localhost:5678 list
 
 == See Also
 
-* link:../03-reference/api-reference.adoc[API Reference]
-* link:../04-architecture/network-architecture.adoc[Network Architecture]
-* link:security-guide.adoc[Security Guide] (TLS configuration)
+* link:../03-api-reference/index.md[API Reference]
+* link:../12-design/ARCHITECTURE_ATLAS_2026_05_22.adoc[Architecture Atlas]
+* link:../04-operations/security.adoc[Security Guide] (TLS configuration)

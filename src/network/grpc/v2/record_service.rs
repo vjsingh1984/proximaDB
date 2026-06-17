@@ -22,11 +22,12 @@ use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info, trace, warn};
 
-use crate::api_handlers::UnifiedHandlers;
-use crate::proto::proximadb_v1::{
-    CollectionOperation, CollectionRequest, SearchQuery, VectorBatchRequest, VectorRecord,
-    VectorSearchRequest,
+use crate::api_handlers::{
+    RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
+    RichSearchRequest, RichSearchResponse, UnifiedHandlers,
 };
+use crate::network::grpc::auth as grpc_auth;
+use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
 use crate::proto::proximadb_v2::{
     self, BackpressureLevel, BackpressureSignal, BatchError, BatchWriteMode,
     BatchWriteStreamRequest, BatchWriteStreamResponse, CreateSchemaRequest, CreateSchemaResponse,
@@ -36,6 +37,13 @@ use crate::proto::proximadb_v2::{
     proxima_record_service_server::ProximaRecordService,
     proxima_record_service_server::ProximaRecordServiceServer,
 };
+use crate::services::operations::BatchOperationResult;
+use crate::services::{
+    WriteDurabilityRequirement, WriteIntent, WriteLaneRouter, WriteOperationKind,
+};
+use proximadb_records::proto_v2::{
+    proto_record_to_envelope, proxima_value_to_typed_value, typed_value_to_proxima,
+};
 
 /// gRPC V2 ProximaRecord service implementation
 ///
@@ -44,7 +52,74 @@ use crate::proto::proximadb_v2::{
 /// - Schema enforcement modes (STRICT, FLEXIBLE, HYBRID)
 /// - Typed filtering with range, equality, and CONTAINS operators
 pub struct ProximaRecordServiceImpl {
-    unified_handlers: Arc<UnifiedHandlers>,
+    request_handlers: Arc<UnifiedHandlers>,
+    /// Shared segment registry — after each successful batch write, records are
+    /// flushed to a `.pax` file and the resulting `SegmentMeta` is registered here
+    /// so the Iceberg REST server can serve accurate snapshot stats.
+    segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
+    /// Slice 6.1: primary-pod write router. When `Some`, `insert_records`
+    /// consults [`crate::cluster::primary_pod_registry::consult_for_write`]
+    /// before any storage work and returns `tonic::Status::failed_precondition`
+    /// (the gRPC analog of HTTP 421) when the write belongs on a different pod.
+    /// `None` keeps the legacy "no gate" behavior for embedded / unit-test
+    /// constructions that don't carry a SharedServices instance.
+    primary_pod_gate: Option<PrimaryPodGate>,
+}
+
+/// Bundle of primary-pod gate inputs so the constructor takes one
+/// argument and the field tells a clear story. Mirrors AppState's
+/// `primary_pod_registry` + `self_pod_id` pair from the REST side.
+#[derive(Clone)]
+struct PrimaryPodGate {
+    registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+    self_pod_id: String,
+}
+
+/// Slice 6.1 testable helper. Returns `Ok(())` when the request is
+/// allowed (either gate is unconfigured or the registry decides
+/// `Allow`), or the misrouted `tonic::Status` to return verbatim
+/// from the handler. Free function rather than method so unit tests
+/// don't have to construct a full `ProximaRecordServiceImpl`.
+fn check_primary_pod_gate(
+    gate: &Option<PrimaryPodGate>,
+    tenant_id: &str,
+    collection_id: &str,
+) -> Result<(), Status> {
+    let Some(gate) = gate else {
+        return Ok(());
+    };
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &gate.registry,
+        &gate.self_pod_id,
+        tenant_id,
+        collection_id,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if gate.registry.is_assigned(tenant_id, collection_id) {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(tenant_id);
+            }
+            Ok(())
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %gate.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant_id,
+                collection_id = %collection_id,
+                "gRPC v2 insert_records misrouted — client SDK should retry against the primary pod"
+            );
+            let api_err = crate::errors::ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant_id.to_string(),
+                collection_id: collection_id.to_string(),
+            };
+            Err(api_err.into())
+        }
+    }
 }
 
 /// Streaming response type for SearchStream
@@ -78,6 +153,67 @@ const DELAY_CRITICAL_MS: u32 = 500;
 
 /// Maximum pending items before blocking (for flow control)
 const MAX_PENDING_ITEMS: u32 = 1000;
+
+fn grpc_filters_to_rich(
+    filters: &[proximadb_v2::TypedFilterCondition],
+) -> Result<Vec<RichFilterCondition>, Status> {
+    filters
+        .iter()
+        .map(|filter| {
+            let operator = match proximadb_v2::TypedFilterOperator::try_from(filter.operator)
+                .unwrap_or(proximadb_v2::TypedFilterOperator::TypedFilterOpUnspecified)
+            {
+                proximadb_v2::TypedFilterOperator::Eq => RichFilterOperator::Eq,
+                proximadb_v2::TypedFilterOperator::Ne => RichFilterOperator::Ne,
+                proximadb_v2::TypedFilterOperator::Gt => RichFilterOperator::Gt,
+                proximadb_v2::TypedFilterOperator::Gte => RichFilterOperator::Gte,
+                proximadb_v2::TypedFilterOperator::Lt => RichFilterOperator::Lt,
+                proximadb_v2::TypedFilterOperator::Lte => RichFilterOperator::Lte,
+                proximadb_v2::TypedFilterOperator::Between => RichFilterOperator::Between,
+                proximadb_v2::TypedFilterOperator::In => RichFilterOperator::In,
+                proximadb_v2::TypedFilterOperator::NotIn => RichFilterOperator::NotIn,
+                proximadb_v2::TypedFilterOperator::Contains => RichFilterOperator::Contains,
+                other => {
+                    return Err(Status::invalid_argument(format!(
+                        "unsupported v2 search filter operator: {}",
+                        other.as_str_name()
+                    )));
+                }
+            };
+
+            let value = filter
+                .value
+                .as_ref()
+                .ok_or_else(|| Status::invalid_argument("filter value is required"))
+                .and_then(|value| {
+                    typed_value_to_proxima(value)
+                        .map_err(|e| Status::invalid_argument(format!("invalid filter value: {e}")))
+                })?;
+            let value_upper = filter
+                .value_upper
+                .as_ref()
+                .map(typed_value_to_proxima)
+                .transpose()
+                .map_err(|e| {
+                    Status::invalid_argument(format!("invalid upper filter value: {e}"))
+                })?;
+            let value_list = filter
+                .value_list
+                .iter()
+                .map(typed_value_to_proxima)
+                .collect::<anyhow::Result<Vec<_>>>()
+                .map_err(|e| Status::invalid_argument(format!("invalid filter value list: {e}")))?;
+
+            Ok(RichFilterCondition {
+                field: filter.field_name.clone(),
+                operator,
+                value,
+                value_upper,
+                value_list,
+            })
+        })
+        .collect()
+}
 
 /// Streaming pipeline latency metrics for observability
 ///
@@ -295,8 +431,36 @@ impl FlowControlState {
 
 impl ProximaRecordServiceImpl {
     /// Create a new ProximaRecordServiceImpl
-    pub fn new(unified_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { unified_handlers }
+    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+        Self {
+            request_handlers,
+            segment_registry: None,
+            primary_pod_gate: None,
+        }
+    }
+
+    /// Attach a shared segment registry to enable PAX write-through on batch inserts.
+    pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
+        self.segment_registry = Some(registry);
+        self
+    }
+
+    /// Slice 6.1: attach the primary-pod write router. Once set,
+    /// `insert_records` consults the registry on every call and
+    /// rejects misrouted writes with `Status::failed_precondition`
+    /// before any storage work. SharedServices passes the same
+    /// `Arc<PrimaryPodRegistry>` it gives to AppState so the REST
+    /// and gRPC surfaces see identical routing decisions.
+    pub fn with_primary_pod_gate(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        self.primary_pod_gate = Some(PrimaryPodGate {
+            registry,
+            self_pod_id,
+        });
+        self
     }
 
     /// Convert to a tonic server
@@ -312,135 +476,139 @@ impl ProximaRecordServiceImpl {
             .map(|value| value.to_string())
     }
 
-    /// Convert ProximaRecordBatch to VectorBatchRequest for v1 storage
-    fn convert_to_v1_batch(
+    /// Spawn a background PAX write for the given records and register the resulting
+    /// `SegmentMeta` with the shared `SegmentRegistry`.
+    ///
+    /// This is fire-and-forget: the gRPC response is sent immediately after the
+    /// canonical engine write succeeds; the PAX file is written asynchronously.
+    fn spawn_pax_write(
+        registry: Arc<crate::catalog::SegmentRegistry>,
+        collection_id: String,
+        records: Vec<proximadb_records::ProximaRecord>,
+    ) {
+        use proximadb_block_format::{BlockCompression, BlockMode};
+        use proximadb_storage_common::collection_path::slug_for;
+        use proximadb_storage_common::pax_block::PaxSegmentWriter;
+
+        tokio::task::spawn_blocking(move || {
+            let slug = slug_for(&collection_id);
+            let now_ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64;
+            let path =
+                std::path::PathBuf::from(format!("/tmp/proximadb/pax/{}/{}.pax", slug, now_ms));
+
+            let mut writer = PaxSegmentWriter::new(
+                &path,
+                BlockMode::Pax,
+                BlockCompression::None,
+                &collection_id,
+                0, // schema_fingerprint: 0 until catalog integration
+                0, // embedding_count: 0 for now (metadata-only projection)
+                None,
+            );
+
+            for record in &records {
+                if let Err(e) = writer.add_record(record) {
+                    warn!(
+                        "PAX write: add_record failed for collection '{}': {}",
+                        collection_id, e
+                    );
+                    return;
+                }
+            }
+
+            match writer.finish() {
+                Ok(meta) => {
+                    debug!(
+                        "PAX write: {} rows, {} bytes → {:?}",
+                        meta.row_count, meta.size_bytes, meta.path
+                    );
+                    registry.register(collection_id, meta);
+                }
+                Err(e) => {
+                    warn!("PAX write: finish failed: {}", e);
+                }
+            }
+        });
+    }
+
+    /// Convert ProximaRecordBatch to the canonical internal rich-record request.
+    fn convert_to_rich_batch(
         &self,
         batch: &ProximaRecordBatch,
-    ) -> Result<VectorBatchRequest, Status> {
-        let mut vectors = Vec::with_capacity(batch.records.len());
+    ) -> Result<RichRecordBatchRequest, Status> {
+        let mut records = Vec::with_capacity(batch.records.len());
 
         for record in &batch.records {
-            // Convert typed_fields to metadata for backward compatibility
-            let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> =
-                HashMap::new();
-
-            // Convert typed_fields
-            for (key, typed_value) in &record.typed_fields {
-                if let Some(sql_value) = self.typed_value_to_sql_value(typed_value) {
-                    metadata.insert(key.clone(), sql_value);
-                }
-            }
-
-            // Convert text_fields
-            for text_field in &record.text_fields {
-                let sql_value = crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        text_field.content.clone(),
-                    )),
-                };
-                metadata.insert(text_field.name.clone(), sql_value);
-            }
-
-            // Merge flexible_fields
-            for (key, sql_value) in &record.flexible_fields {
-                if !metadata.contains_key(key) {
-                    metadata.insert(key.clone(), sql_value.clone());
-                }
-            }
-
-            let vector_record = VectorRecord {
-                id: record.id.clone(),
-                vector: record.vector.clone(),
-                metadata,
-                version: record.version,
-                timestamp: Some(record.timestamp_ms),
-                source: record.source.clone(),
-                updated_at: record.updated_at_ms,
-                expires_at: record.expires_at_ms,
-            };
-
-            vectors.push(vector_record);
+            let envelope = proto_record_to_envelope(record)
+                .map_err(|e| Status::invalid_argument(format!("invalid ProximaRecord: {e}")))?;
+            records.push(envelope);
         }
 
-        Ok(VectorBatchRequest {
+        Ok(RichRecordBatchRequest {
             collection_id: batch.collection_id.clone(),
-            vectors,
+            records,
         })
     }
 
-    /// Convert TypedValue to SqlValue for v1 storage
-    fn typed_value_to_sql_value(
-        &self,
-        typed_value: &proximadb_v2::TypedValue,
-    ) -> Option<crate::proto::proximadb_v1::SqlValue> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-        use proximadb_v2::typed_value::Value as TypedVal;
+    fn batch_result_to_response(
+        result: BatchOperationResult,
+        record_ids: &[String],
+        default_error_code: &str,
+    ) -> ProximaRecordBatchResponse {
+        let failed_count = result.metrics.failed_count.max(result.errors.len() as i64);
+        let total_processed = result
+            .metrics
+            .total_processed
+            .max(result.metrics.successful_count + failed_count);
+        let errors = result
+            .errors
+            .iter()
+            .enumerate()
+            .map(|(index, error)| BatchError {
+                record_index: index as i32,
+                record_id: record_ids.get(index).cloned().unwrap_or_default(),
+                error_code: result
+                    .error_code
+                    .clone()
+                    .unwrap_or_else(|| default_error_code.to_string()),
+                error_message: error.clone(),
+            })
+            .collect();
 
-        let inner = match typed_value.value.as_ref()? {
-            TypedVal::TextValue(s) => Value::StringValue(s.clone()),
-            TypedVal::IntegerValue(i) => Value::Int64Value(*i),
-            TypedVal::FloatValue(f) => Value::NumberValue(*f),
-            TypedVal::BooleanValue(b) => Value::BoolValue(*b),
-            TypedVal::TimestampValue(ts) => Value::Int64Value(*ts),
-            TypedVal::JsonValue(json) => Value::StringValue(json.clone()),
-            TypedVal::BinaryValue(bytes) => Value::BytesValue(bytes.clone()),
-            TypedVal::UuidValue(uuid) => {
-                // Convert UUID bytes to string for storage
-                if uuid.len() == 16 {
-                    let uuid_str = uuid::Uuid::from_slice(uuid)
-                        .map_or_else(|_| hex::encode(uuid), |u| u.to_string());
-                    Value::StringValue(uuid_str)
-                } else {
-                    Value::BytesValue(uuid.clone())
-                }
-            }
-            TypedVal::IsNull(true) => Value::NullValue(0),
-            TypedVal::IsNull(false) => return None,
-            // Array types - store as JSON strings
-            TypedVal::TextArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            TypedVal::IntegerArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            TypedVal::FloatArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            TypedVal::BooleanArray(arr) => {
-                let json = serde_json::to_string(&arr.values).unwrap_or_default();
-                Value::StringValue(json)
-            }
-            // Handle remaining variants with string conversion
-            _ => Value::StringValue(format!("{:?}", typed_value)),
-        };
-
-        Some(crate::proto::proximadb_v1::SqlValue { value: Some(inner) })
+        ProximaRecordBatchResponse {
+            success: result.success,
+            total_processed,
+            success_count: result.metrics.successful_count,
+            failed_count,
+            inserted_ids: result.vector_ids,
+            errors,
+            processing_time_us: result.metrics.processing_time_us,
+        }
     }
 
     /// Convert search results to TypedSearchResult
     fn convert_search_results(
         &self,
-        results: &crate::proto::proximadb_v1::SearchResult,
+        results: &RichSearchResponse,
         include_vector: bool,
     ) -> Vec<TypedSearchResult> {
         results
             .results
             .iter()
             .map(|r| {
-                // Convert metadata back to typed_fields
-                let typed_fields: HashMap<String, proximadb_v2::TypedValue> = r
-                    .metadata
+                let props: HashMap<String, proximadb_v2::TypedValue> = r
+                    .props
                     .iter()
-                    .filter_map(|(k, v)| self.sql_value_to_typed_value(v).map(|tv| (k.clone(), tv)))
+                    .map(|(k, v)| (k.clone(), proxima_value_to_typed_value(v)))
                     .collect();
 
                 TypedSearchResult {
                     id: r.id.clone(),
                     score: r.score,
-                    typed_fields,
+                    props,
                     vector: if include_vector {
                         r.vector.clone()
                     } else {
@@ -453,192 +621,6 @@ impl ProximaRecordServiceImpl {
                 }
             })
             .collect()
-    }
-
-    /// Convert SqlValue to TypedValue
-    fn sql_value_to_typed_value(
-        &self,
-        sql_value: &crate::proto::proximadb_v1::SqlValue,
-    ) -> Option<proximadb_v2::TypedValue> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-        use proximadb_v2::ColumnDataType;
-        use proximadb_v2::typed_value::Value as TypedVal;
-
-        let (declared_type, value) = match sql_value.value.as_ref()? {
-            Value::NullValue(_) => (
-                ColumnDataType::ColumnTypeUnspecified as i32,
-                TypedVal::IsNull(true),
-            ),
-            Value::BoolValue(b) => (ColumnDataType::Boolean as i32, TypedVal::BooleanValue(*b)),
-            Value::Int64Value(i) => (ColumnDataType::Integer as i32, TypedVal::IntegerValue(*i)),
-            Value::NumberValue(f) => (ColumnDataType::Float as i32, TypedVal::FloatValue(*f)),
-            Value::StringValue(s) => (ColumnDataType::Text as i32, TypedVal::TextValue(s.clone())),
-            Value::BytesValue(b) => (
-                ColumnDataType::Binary as i32,
-                TypedVal::BinaryValue(b.clone()),
-            ),
-            Value::ArrayValue(arr) => {
-                // Convert array to JSON string for storage
-                let values: Vec<serde_json::Value> = arr
-                    .values
-                    .iter()
-                    .filter_map(|v| self.sql_value_to_json(v))
-                    .collect();
-                let json = serde_json::to_string(&values).unwrap_or_default();
-                (ColumnDataType::Json as i32, TypedVal::JsonValue(json))
-            }
-            Value::ObjectValue(obj) => {
-                // Convert object to JSON string
-                let map: serde_json::Map<String, serde_json::Value> = obj
-                    .fields
-                    .iter()
-                    .filter_map(|(k, v)| self.sql_value_to_json(v).map(|jv| (k.clone(), jv)))
-                    .collect();
-                let json = serde_json::to_string(&map).unwrap_or_default();
-                (ColumnDataType::Json as i32, TypedVal::JsonValue(json))
-            }
-        };
-
-        Some(proximadb_v2::TypedValue {
-            declared_type,
-            value: Some(value),
-        })
-    }
-
-    /// Convert SqlValue to JSON value
-    fn sql_value_to_json(
-        &self,
-        sql_value: &crate::proto::proximadb_v1::SqlValue,
-    ) -> Option<serde_json::Value> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        match sql_value.value.as_ref()? {
-            Value::NullValue(_) => Some(serde_json::Value::Null),
-            Value::BoolValue(b) => Some(serde_json::Value::Bool(*b)),
-            Value::Int64Value(i) => Some(serde_json::Value::Number((*i).into())),
-            Value::NumberValue(f) => {
-                serde_json::Number::from_f64(*f).map(serde_json::Value::Number)
-            }
-            Value::StringValue(s) => Some(serde_json::Value::String(s.clone())),
-            Value::BytesValue(b) => Some(serde_json::Value::String(hex::encode(b))),
-            Value::ArrayValue(arr) => {
-                let values: Vec<serde_json::Value> = arr
-                    .values
-                    .iter()
-                    .filter_map(|v| self.sql_value_to_json(v))
-                    .collect();
-                Some(serde_json::Value::Array(values))
-            }
-            Value::ObjectValue(obj) => {
-                let map: serde_json::Map<String, serde_json::Value> = obj
-                    .fields
-                    .iter()
-                    .filter_map(|(k, v)| self.sql_value_to_json(v).map(|jv| (k.clone(), jv)))
-                    .collect();
-                Some(serde_json::Value::Object(map))
-            }
-        }
-    }
-
-    /// Convert a single ProximaRecord to VectorRecord for V1 storage layer
-    fn convert_proxima_record_to_vector_record(
-        record: &proximadb_v2::ProximaRecord,
-    ) -> VectorRecord {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        let mut metadata: HashMap<String, crate::proto::proximadb_v1::SqlValue> = HashMap::new();
-
-        // Convert typed_fields to metadata
-        for (key, typed_value) in &record.typed_fields {
-            if let Some(value) = &typed_value.value {
-                let sql_value = match value {
-                    proximadb_v2::typed_value::Value::TextValue(s) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(s.clone())),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::IntegerValue(i) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::Int64Value(*i)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::FloatValue(f) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::NumberValue(*f)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::BooleanValue(b) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::BoolValue(*b)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::TimestampValue(ts) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::Int64Value(*ts)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::JsonValue(json) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(json.clone())),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::BinaryValue(bytes) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::BytesValue(bytes.clone())),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::UuidValue(uuid) => {
-                        let uuid_str = if uuid.len() == 16 {
-                            uuid::Uuid::from_slice(uuid)
-                                .map_or_else(|_| hex::encode(uuid), |u| u.to_string())
-                        } else {
-                            hex::encode(uuid)
-                        };
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(uuid_str)),
-                        }
-                    }
-                    proximadb_v2::typed_value::Value::IsNull(true) => {
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::NullValue(0)),
-                        }
-                    }
-                    _ => {
-                        // For other types, serialize to string representation
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(Value::StringValue(format!("{:?}", value))),
-                        }
-                    }
-                };
-                metadata.insert(key.clone(), sql_value);
-            }
-        }
-
-        // Convert text_fields
-        for text_field in &record.text_fields {
-            let sql_value = crate::proto::proximadb_v1::SqlValue {
-                value: Some(Value::StringValue(text_field.content.clone())),
-            };
-            metadata.insert(text_field.name.clone(), sql_value);
-        }
-
-        // Merge flexible_fields
-        for (key, sql_value) in &record.flexible_fields {
-            if !metadata.contains_key(key) {
-                metadata.insert(key.clone(), sql_value.clone());
-            }
-        }
-
-        VectorRecord {
-            id: record.id.clone(),
-            vector: record.vector.clone(),
-            metadata,
-            version: record.version,
-            timestamp: Some(record.timestamp_ms),
-            source: record.source.clone(),
-            updated_at: record.updated_at_ms,
-            expires_at: record.expires_at_ms,
-        }
     }
 
     /// Calculate backpressure signal based on buffer utilization
@@ -764,7 +746,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: InsertRecords - collection='{}', records={}",
@@ -781,27 +771,62 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             ));
         }
 
-        // Convert to v1 batch
-        let v1_batch = self.convert_to_v1_batch(&batch)?;
-        let record_count = v1_batch.vectors.len() as i64;
+        // Slice 6.1: primary-pod write-router gate. Symmetric with the
+        // REST v2 wiring at `src/network/rest/v2/records.rs:1032`. The
+        // gate runs AFTER auth + write-mode validation (so a malformed
+        // request still gets the right error) and BEFORE the lane
+        // router / storage path (so a misroute never touches the WAL).
+        // ApiError → tonic::Status conversion at `src/errors/mod.rs:135`
+        // adds `x-primary-pod` / `x-tenant-id` / `x-collection-id`
+        // trailing metadata so SDKs can parse the redirect target.
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
 
-        // Insert via unified handlers
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let pax_records = if self.segment_registry.is_some() {
+            rich_batch.records.clone()
+        } else {
+            Vec::new()
+        };
+        let collection_id = rich_batch.collection_id.clone();
+
+        let intent = WriteIntent::new(&collection_id, WriteOperationKind::Insert)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC InsertRecords write-lane decision"
+        );
+        lane.require_wal_lane("gRPC InsertRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
         match self
-            .unified_handlers
-            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .request_handlers
+            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(resp) => {
-                let success_count = if resp.success { record_count } else { 0 };
-                Ok(Response::new(ProximaRecordBatchResponse {
-                    success: resp.success,
-                    total_processed: record_count,
-                    success_count,
-                    failed_count: record_count - success_count,
-                    inserted_ids: batch.records.iter().map(|r| r.id.clone()).collect(),
-                    errors: vec![],
-                    processing_time_us: 0, // Would need timing
-                }))
+            Ok(result) => {
+                if let Some(registry) = &self.segment_registry
+                    && !pax_records.is_empty()
+                {
+                    Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
+                }
+                Ok(Response::new(Self::batch_result_to_response(
+                    result,
+                    &record_ids,
+                    "WRITE_FAILED",
+                )))
             }
             Err(e) => {
                 error!("V2 gRPC: InsertRecords failed: {}", e);
@@ -815,7 +840,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: UpsertRecords - collection='{}', records={}",
@@ -823,26 +856,48 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
-        // Upsert is handled the same as insert in v1 (overwrite semantics)
-        let v1_batch = self.convert_to_v1_batch(&batch)?;
-        let record_count = v1_batch.vectors.len() as i64;
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let pax_records = if self.segment_registry.is_some() {
+            rich_batch.records.clone()
+        } else {
+            Vec::new()
+        };
+        let collection_id = rich_batch.collection_id.clone();
+
+        let intent = WriteIntent::new(&collection_id, WriteOperationKind::Upsert)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC UpsertRecords write-lane decision"
+        );
+        lane.require_wal_lane("gRPC UpsertRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
-            .unified_handlers
-            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .request_handlers
+            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(resp) => {
-                let success_count = if resp.success { record_count } else { 0 };
-                Ok(Response::new(ProximaRecordBatchResponse {
-                    success: resp.success,
-                    total_processed: record_count,
-                    success_count,
-                    failed_count: record_count - success_count,
-                    inserted_ids: batch.records.iter().map(|r| r.id.clone()).collect(),
-                    errors: vec![],
-                    processing_time_us: 0,
-                }))
+            Ok(result) => {
+                if let Some(registry) = &self.segment_registry
+                    && !pax_records.is_empty()
+                {
+                    Self::spawn_pax_write(registry.clone(), collection_id, pax_records);
+                }
+                Ok(Response::new(Self::batch_result_to_response(
+                    result,
+                    &record_ids,
+                    "WRITE_FAILED",
+                )))
             }
             Err(e) => {
                 error!("V2 gRPC: UpsertRecords failed: {}", e);
@@ -856,7 +911,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: UpdateRecords - collection='{}', records={}",
@@ -864,28 +927,37 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
-        // Update is handled the same as insert in v1 (overwrite semantics)
-        // In future, we could add version checking for optimistic locking
-        let v1_batch = self.convert_to_v1_batch(&batch)?;
-        let record_count = v1_batch.vectors.len() as i64;
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        let rich_batch = self.convert_to_rich_batch(&batch)?;
+        let collection_id = rich_batch.collection_id.clone();
+
+        let intent = WriteIntent::new(&collection_id, WriteOperationKind::Update)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC UpdateRecords write-lane decision"
+        );
+        lane.require_wal_lane("gRPC UpdateRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
 
         match self
-            .unified_handlers
-            .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+            .request_handlers
+            .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
             .await
         {
-            Ok(resp) => {
-                let success_count = if resp.success { record_count } else { 0 };
-                Ok(Response::new(ProximaRecordBatchResponse {
-                    success: resp.success,
-                    total_processed: record_count,
-                    success_count,
-                    failed_count: record_count - success_count,
-                    inserted_ids: batch.records.iter().map(|r| r.id.clone()).collect(),
-                    errors: vec![],
-                    processing_time_us: 0,
-                }))
-            }
+            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
+                result,
+                &record_ids,
+                "WRITE_FAILED",
+            ))),
             Err(e) => {
                 error!("V2 gRPC: UpdateRecords failed: {}", e);
                 Err(Status::internal(format!("Update failed: {}", e)))
@@ -898,6 +970,15 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<ProximaRecordBatch>,
     ) -> Result<Response<ProximaRecordBatchResponse>, Status> {
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "ingest",
+            &request.get_ref().collection_id,
+            request.get_ref().records.len(),
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let batch = request.into_inner();
         info!(
             "V2 gRPC: DeleteRecords - collection='{}', records={}",
@@ -905,12 +986,62 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
-        // Delete is not directly supported in v1 batch API
-        // For now, return unimplemented
-        warn!("V2 gRPC: DeleteRecords not yet implemented in batch mode");
-        Err(Status::unimplemented(
-            "Batch delete not yet implemented. Use individual delete operations.",
-        ))
+        let record_ids: Vec<String> = batch
+            .records
+            .iter()
+            .map(|record| record.id.clone())
+            .collect();
+        if let Some((index, _)) = record_ids
+            .iter()
+            .enumerate()
+            .find(|(_, record_id)| record_id.is_empty())
+        {
+            return Err(Status::invalid_argument(format!(
+                "DeleteRecords requires record id at index {index}"
+            )));
+        }
+
+        let intent = WriteIntent::new(&batch.collection_id, WriteOperationKind::Delete)
+            .with_durability(WriteDurabilityRequirement::WalRequired)
+            .with_row_count_hint(record_ids.len() as u64);
+        let lane = WriteLaneRouter::new().route(&intent);
+        debug!(
+            collection_id = %batch.collection_id,
+            write_lane = ?lane.lane,
+            guards = ?lane.required_guards,
+            "gRPC DeleteRecords write-lane decision"
+        );
+        lane.require_wal_lane("gRPC DeleteRecords")
+            .map_err(|e| Status::invalid_argument(e.to_string()))?;
+
+        match self
+            .request_handlers
+            .handle_record_delete_batch_for_tenant(
+                RichRecordDeleteBatchRequest {
+                    collection_id: batch.collection_id.clone(),
+                    record_ids: record_ids.clone(),
+                },
+                tenant_id.as_deref(),
+            )
+            .await
+        {
+            Ok(result) => Ok(Response::new(Self::batch_result_to_response(
+                result,
+                &record_ids,
+                "DELETE_FAILED",
+            ))),
+            Err(e) => {
+                error!("V2 gRPC: DeleteRecords failed: {}", e);
+                if e.to_string().contains("not found") {
+                    Err(Status::not_found(format!(
+                        "Collection not found: {}",
+                        batch.collection_id
+                    )))
+                } else {
+                    Err(Status::internal(format!("Delete failed: {}", e)))
+                }
+            }
+        }
     }
 
     // =========================================================================
@@ -922,64 +1053,84 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<TypedSearchResponse>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "search",
+            &request.get_ref().collection_id,
+            request.get_ref().top_k as usize,
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let req = request.into_inner();
         debug!(
             "V2 gRPC: Search - collection='{}', top_k={}",
             req.collection_id, req.top_k
         );
 
-        // Convert typed filters to v1 filter format
-        let filters: HashMap<String, crate::proto::proximadb_v1::SqlValue> = req
-            .filters
-            .iter()
-            .filter_map(|f| {
-                // For simple equality filters, convert directly
-                if f.operator == proximadb_v2::TypedFilterOperator::Eq as i32 {
-                    self.typed_value_to_sql_value(&f.value.clone().unwrap_or_default())
-                        .map(|v| (f.field_name.clone(), v))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        // Create search query
-        let search_query = SearchQuery {
-            vector: req.query_vector.clone(),
-            filters,
-            advanced_filter: None,
-        };
-
-        let search_request = VectorSearchRequest {
+        let search_request = RichSearchRequest {
             collection_id: req.collection_id.clone(),
-            queries: vec![search_query],
+            query_vector: req.query_vector.clone(),
             top_k: req.top_k,
-            include_fields: None,
-            search_params: None,
-            distance_metric_override: None,
-            search_optimization: None,
+            filters: grpc_filters_to_rich(&req.filters)?,
         };
 
-        // Execute search
-        match self
-            .unified_handlers
-            .handle_vector_search_v1_for_tenant(search_request, tenant_id.as_deref())
-            .await
-        {
+        // TD-064: scope the search in a predicate-diagnostics context so
+        // any AxisManager-deep shortfall is captured here. Phase K: also
+        // lift the TurboQuant EXPLAIN payload — task-local binding ends
+        // when the scoped future returns, so the take MUST happen inside.
+        let (search_outcome, _turboquant_hints) =
+            crate::observability::predicate_diagnostics::scope(async {
+                let outcome = self
+                    .request_handlers
+                    .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
+                    .await;
+                let tq = crate::observability::predicate_diagnostics::take_turboquant_hints();
+                (outcome, tq)
+            })
+            .await;
+        // TD-064 NOTE: this take returns None outside the scope (the
+        // task-local binding has already ended above). Pre-existing
+        // behaviour kept as-is; the structured-event path remains the
+        // operator-visible signal for shortfall in this handler.
+        let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
+
+        match search_outcome {
             Ok(resp) => {
-                let search_result = resp.results.unwrap_or_default();
                 let include_vector = req.include_vector;
 
-                let results = self.convert_search_results(&search_result, include_vector);
-                let total_found = search_result.total_found;
+                let results = self.convert_search_results(&resp, include_vector);
+                let total_found = resp.total_found;
+
+                // TD-064: surface shortfall as search_stats keys for clients
+                // that don't have a separate EXPLAIN channel. Keys are
+                // namespaced so they coexist with future stats fields.
+                let mut search_stats: HashMap<String, String> = HashMap::new();
+                if let Some(sf) = predicate_shortfall {
+                    search_stats.insert(
+                        "predicate_shortfall.requested_k".to_string(),
+                        sf.requested_k.to_string(),
+                    );
+                    search_stats.insert(
+                        "predicate_shortfall.returned_k".to_string(),
+                        sf.returned_k.to_string(),
+                    );
+                    search_stats.insert(
+                        "predicate_shortfall.oversample_pool".to_string(),
+                        sf.oversample_pool.to_string(),
+                    );
+                    search_stats.insert(
+                        "predicate_shortfall.ann_filtering_mode".to_string(),
+                        sf.ann_filtering_mode,
+                    );
+                }
 
                 Ok(Response::new(TypedSearchResponse {
                     results,
                     total_found,
                     search_time_us: 0, // Would need timing
                     collection_id: Some(req.collection_id),
-                    search_stats: HashMap::new(),
+                    search_stats,
                 }))
             }
             Err(e) => {
@@ -1003,49 +1154,34 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<TypedSearchRequest>,
     ) -> Result<Response<Self::SearchStreamStream>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        grpc_auth::enforce_data_plane_request(
+            &request,
+            "search",
+            &request.get_ref().collection_id,
+            request.get_ref().top_k as usize,
+            Some(prost::Message::encoded_len(request.get_ref()) as u64),
+        )?;
         let req = request.into_inner();
         debug!(
             "V2 gRPC: SearchStream - collection='{}', top_k={}",
             req.collection_id, req.top_k
         );
 
-        // Convert typed filters to v1 filter format
-        let filters: HashMap<String, crate::proto::proximadb_v1::SqlValue> = req
-            .filters
-            .iter()
-            .filter_map(|f| {
-                if f.operator == proximadb_v2::TypedFilterOperator::Eq as i32 {
-                    self.typed_value_to_sql_value(&f.value.clone().unwrap_or_default())
-                        .map(|v| (f.field_name.clone(), v))
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let search_query = SearchQuery {
-            vector: req.query_vector.clone(),
-            filters,
-            advanced_filter: None,
-        };
-
-        let search_request = VectorSearchRequest {
+        let search_request = RichSearchRequest {
             collection_id: req.collection_id.clone(),
-            queries: vec![search_query],
+            query_vector: req.query_vector.clone(),
             top_k: req.top_k,
-            include_fields: None,
-            search_params: None,
-            distance_metric_override: None,
-            search_optimization: None,
+            filters: grpc_filters_to_rich(&req.filters)?,
         };
 
         let include_vector = req.include_vector;
 
         // Execute search
         let response = self
-            .unified_handlers
-            .handle_vector_search_v1_for_tenant(search_request, tenant_id.as_deref())
+            .request_handlers
+            .handle_record_search_for_tenant(search_request, tenant_id.as_deref())
             .await
             .map_err(|e| Status::internal(format!("Search stream failed: {}", e)))?;
 
@@ -1053,8 +1189,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let (tx, rx) = tokio::sync::mpsc::channel(128);
 
         // Convert results
-        let search_result = response.results.unwrap_or_default();
-        let results = self.convert_search_results(&search_result, include_vector);
+        let results = self.convert_search_results(&response, include_vector);
 
         // Spawn a task to send results through the channel
         tokio::spawn(async move {
@@ -1101,7 +1236,9 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<Streaming<BatchWriteStreamRequest>>,
     ) -> Result<Response<Self::BatchWriteStreamStream>, Status> {
-        let tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id =
+            grpc_auth::tenant_id(&request).or_else(|| Self::extract_tenant_id(&request));
+        let data_plane_capability = grpc_auth::data_plane_capability(&request);
         let mut inbound = request.into_inner();
 
         // Create a bounded channel for response streaming with flow control
@@ -1121,8 +1258,9 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         let metrics = Arc::new(StreamingPipelineMetrics::new());
 
         // Clone handlers for the processing task
-        let unified_handlers = Arc::clone(&self.unified_handlers);
+        let request_handlers = Arc::clone(&self.request_handlers);
         let tenant_id = tenant_id.clone();
+        let data_plane_capability = data_plane_capability.clone();
 
         // Clone metrics for the spawned task
         let metrics_clone = Arc::clone(&metrics);
@@ -1149,6 +1287,18 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 };
 
                 let batch_size = batch.records.len();
+                if let Some(capability) = data_plane_capability.as_ref()
+                    && let Err(status) = grpc_auth::validate_data_plane_capability(
+                        capability,
+                        "ingest",
+                        &batch.collection_id,
+                        batch_size,
+                        Some(prost::Message::encoded_len(&batch) as u64),
+                    )
+                {
+                    let _ = tx.send(Err(status)).await;
+                    break;
+                }
                 debug!(
                     "V2 gRPC: BatchWriteStream - processing batch for collection='{}', records={}",
                     batch.collection_id, batch_size
@@ -1169,6 +1319,24 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                 // Calculate queue wait time (time from receive to start processing)
                 let queue_wait_time = batch_receive_time.elapsed();
                 metrics.record_queue_wait(queue_wait_time);
+
+                // Route batch intent — individual records may carry per-record modes.
+                let stream_intent =
+                    WriteIntent::new(&batch.collection_id, WriteOperationKind::Upsert)
+                        .with_durability(WriteDurabilityRequirement::WalRequired)
+                        .with_row_count_hint(batch_size as u64);
+                let stream_lane = WriteLaneRouter::new().route(&stream_intent);
+                debug!(
+                    collection_id = %batch.collection_id,
+                    write_lane = ?stream_lane.lane,
+                    guards = ?stream_lane.required_guards,
+                    batch_size,
+                    "gRPC BatchWriteStream write-lane decision"
+                );
+                if let Err(e) = stream_lane.require_wal_lane("gRPC BatchWriteStream") {
+                    error!("Rejecting non-WAL lane in streaming batch: {}", e);
+                    break;
+                }
 
                 // Start processing timer
                 let processing_start = Instant::now();
@@ -1195,10 +1363,23 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         }
                     };
 
-                    // Convert to V1 batch for storage
-                    let v1_batch = VectorBatchRequest {
+                    let rich_record = match proto_record_to_envelope(record) {
+                        Ok(record) => record,
+                        Err(e) => {
+                            batch_errors.push(BatchError {
+                                record_index: idx as i32,
+                                record_id: record.id.clone(),
+                                error_code: "INVALID_RECORD".to_string(),
+                                error_message: e.to_string(),
+                            });
+                            failed_count.fetch_add(1, Ordering::SeqCst);
+                            continue;
+                        }
+                    };
+
+                    let rich_batch = RichRecordBatchRequest {
                         collection_id: batch.collection_id.clone(),
-                        vectors: vec![Self::convert_proxima_record_to_vector_record(record)],
+                        records: vec![rich_record],
                     };
 
                     // Execute the write based on mode
@@ -1207,15 +1388,20 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                         | Ok(BatchWriteMode::Unspecified)
                         | Ok(BatchWriteMode::Upsert)
                         | Ok(BatchWriteMode::Update) => {
-                            unified_handlers
-                                .handle_vector_batch_v1_for_tenant(v1_batch, tenant_id.as_deref())
+                            request_handlers
+                                .handle_record_batch_for_tenant(rich_batch, tenant_id.as_deref())
                                 .await
                         }
                         Ok(BatchWriteMode::Delete) => {
-                            // Delete not yet supported in batch mode
-                            Err(anyhow::anyhow!(
-                                "DELETE mode not supported in BatchWriteStream"
-                            ))
+                            request_handlers
+                                .handle_record_delete_batch_for_tenant(
+                                    RichRecordDeleteBatchRequest {
+                                        collection_id: batch.collection_id.clone(),
+                                        record_ids: vec![record.id.clone()],
+                                    },
+                                    tenant_id.as_deref(),
+                                )
+                                .await
                         }
                         Err(_) => Err(anyhow::anyhow!(
                             "Invalid write_mode: {}",
@@ -1238,9 +1424,11 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
                                 record_index: idx as i32,
                                 record_id: record.id.clone(),
                                 error_code: "WRITE_FAILED".to_string(),
-                                error_message: resp
-                                    .error_message
-                                    .unwrap_or_else(|| "Unknown error".to_string()),
+                                error_message: if resp.errors.is_empty() {
+                                    "Unknown error".to_string()
+                                } else {
+                                    resp.errors.join("; ")
+                                },
                             });
                             failed_count.fetch_add(1, Ordering::SeqCst);
                         }
@@ -1361,7 +1549,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         let collection_response = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {
@@ -1420,7 +1608,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
 
         let collection_response = self
-            .unified_handlers
+            .request_handlers
             .handle_collection_operation_for_tenant(collection_request, tenant_id.as_deref())
             .await
             .map_err(|e| {
@@ -1544,6 +1732,51 @@ mod tests {
     fn test_typed_value_conversion() {
         // Test would require mocking UnifiedHandlers
         // For now, just verify the module compiles
+    }
+
+    #[test]
+    fn test_batch_result_response_maps_error_record_ids() {
+        let record_ids = vec!["record-1".to_string()];
+        let response = ProximaRecordServiceImpl::batch_result_to_response(
+            BatchOperationResult::failure("write failed".to_string(), "BAD_WRITE".to_string()),
+            &record_ids,
+            "WRITE_FAILED",
+        );
+
+        assert!(!response.success);
+        assert_eq!(response.total_processed, 1);
+        assert_eq!(response.failed_count, 1);
+        assert_eq!(response.errors.len(), 1);
+        assert_eq!(response.errors[0].record_id, "record-1");
+        assert_eq!(response.errors[0].error_code, "BAD_WRITE");
+    }
+
+    #[test]
+    fn test_batch_result_response_preserves_success_metrics() {
+        let response = ProximaRecordServiceImpl::batch_result_to_response(
+            BatchOperationResult::success(
+                vec!["record-1".to_string(), "record-2".to_string()],
+                crate::services::operations::OperationMetrics {
+                    total_processed: 2,
+                    successful_count: 2,
+                    failed_count: 0,
+                    updated_count: 0,
+                    processing_time_us: 42,
+                    wal_write_time_us: 7,
+                    index_update_time_us: 3,
+                },
+            ),
+            &["record-1".to_string(), "record-2".to_string()],
+            "WRITE_FAILED",
+        );
+
+        assert!(response.success);
+        assert_eq!(response.total_processed, 2);
+        assert_eq!(response.success_count, 2);
+        assert_eq!(response.failed_count, 0);
+        assert_eq!(response.inserted_ids, ["record-1", "record-2"]);
+        assert_eq!(response.processing_time_us, 42);
+        assert!(response.errors.is_empty());
     }
 
     #[test]
@@ -1839,5 +2072,92 @@ mod tests {
         assert!(DELAY_LOW_MS < DELAY_MEDIUM_MS);
         assert!(DELAY_MEDIUM_MS < DELAY_HIGH_MS);
         assert!(DELAY_HIGH_MS < DELAY_CRITICAL_MS);
+    }
+
+    // ── Slice 6.1: primary-pod gate ─────────────────────────────────
+
+    use crate::cluster::primary_pod_registry::{AssignmentReason, PrimaryPodRegistry};
+
+    fn gate(registry: Arc<PrimaryPodRegistry>, self_pod_id: &str) -> Option<PrimaryPodGate> {
+        Some(PrimaryPodGate {
+            registry,
+            self_pod_id: self_pod_id.to_string(),
+        })
+    }
+
+    #[test]
+    fn gate_unconfigured_allows_writes() {
+        // Legacy / embedded mode: ProximaRecordServiceImpl::new without
+        // with_primary_pod_gate must NOT reject any write. Locks
+        // backwards-compat for paths that bypass SharedServices.
+        assert!(check_primary_pod_gate(&None, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn gate_allows_when_no_binding_exists() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        let g = gate(registry, "pod-self");
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn gate_allows_when_binding_matches_self_pod() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign("tenant-a", "coll-1", "pod-self", AssignmentReason::Create);
+        let g = gate(registry, "pod-self");
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-1").is_ok());
+    }
+
+    #[test]
+    fn gate_rejects_misrouted_write_with_failed_precondition_and_metadata() {
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign(
+            "tenant-a",
+            "coll-1",
+            "pod-other",
+            AssignmentReason::Operator,
+        );
+        let g = gate(registry, "pod-self");
+        let status = check_primary_pod_gate(&g, "tenant-a", "coll-1")
+            .expect_err("must reject misrouted write");
+
+        // Code: gRPC FailedPrecondition is the chosen analog of HTTP 421.
+        assert_eq!(status.code(), tonic::Code::FailedPrecondition);
+
+        // Trailing metadata: client SDKs parse these to re-route
+        // without scraping the human message. Locking each header in
+        // catches any future refactor of the ApiError → Status adapter
+        // that would silently drop one.
+        let md = status.metadata();
+        assert_eq!(
+            md.get("x-primary-pod").unwrap().to_str().unwrap(),
+            "pod-other"
+        );
+        assert_eq!(md.get("x-tenant-id").unwrap().to_str().unwrap(), "tenant-a");
+        assert_eq!(
+            md.get("x-collection-id").unwrap().to_str().unwrap(),
+            "coll-1"
+        );
+    }
+
+    #[test]
+    fn gate_scopes_per_tenant_collection_pair() {
+        // Bind (tenant-a, coll-1) elsewhere. A write to
+        // (tenant-a, coll-2) or (tenant-b, coll-1) must still pass —
+        // bindings don't bleed across the composite key.
+        let registry = Arc::new(PrimaryPodRegistry::new());
+        registry.assign(
+            "tenant-a",
+            "coll-1",
+            "pod-other",
+            AssignmentReason::Operator,
+        );
+        let g = gate(registry, "pod-self");
+
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-2").is_ok());
+        assert!(check_primary_pod_gate(&g, "tenant-b", "coll-1").is_ok());
+        // And the original combination still rejects, to prove the
+        // first two passes aren't a global "gate always allows" bug.
+        assert!(check_primary_pod_gate(&g, "tenant-a", "coll-1").is_err());
     }
 }

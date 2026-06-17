@@ -8,7 +8,6 @@ import json
 import os
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pytest
@@ -17,7 +16,6 @@ from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.chunking import (
     ChunkingConfig,
     ChunkingStrategy,
-    TextChunker,
     chunk_and_embed_text,
 )
 from proximadb_sdk.embedding_providers import get_embedding_provider
@@ -25,7 +23,6 @@ from proximadb_sdk.models import (
     CollectionConfig,
     DistanceMetric,
     StorageEngine,
-    VectorRecord,
 )
 
 
@@ -39,8 +36,8 @@ class BenchmarkResult:
     protocol: str
     num_chunks: int
     processing_time: float
-    search_accuracies: List[float] = field(default_factory=list)
-    sql_accuracies: List[float] = field(default_factory=list)
+    search_accuracies: list[float] = field(default_factory=list)
+    sql_accuracies: list[float] = field(default_factory=list)
 
     @property
     def avg_search_accuracy(self) -> float:
@@ -88,7 +85,7 @@ def load_test_document() -> str:
     for doc_path in possible_docs:
         if os.path.exists(doc_path):
             print(f"Loading document from: {os.path.relpath(doc_path, os.getcwd())}")
-            with open(doc_path, "r", encoding="utf-8") as f:
+            with open(doc_path, encoding="utf-8") as f:
                 return f.read()
 
     # If no files found, create a synthetic document
@@ -121,11 +118,11 @@ def load_test_document() -> str:
         
         """ * 10  # Repeat to get reasonable size
 
-    with open(doc_path, "r") as f:
+    with open(doc_path) as f:
         return f.read()
 
 
-def calculate_search_accuracy(results: List[Dict], query_terms: List[str]) -> float:
+def calculate_search_accuracy(results: list[dict], query_terms: list[str]) -> float:
     """Calculate how many query terms appear in top results"""
     if not results:
         return 0.0
@@ -246,7 +243,7 @@ class TestChunkingEmbeddingBenchmark:
         embedding_name: str,
         storage_engine: StorageEngine,
         protocol: str,
-        test_queries: List[Dict],
+        test_queries: list[dict],
     ) -> BenchmarkResult:
         """Run benchmark for a single configuration"""
 
@@ -358,7 +355,7 @@ class TestChunkingEmbeddingBenchmark:
             sql_accuracies=sql_accuracies,
         )
 
-    def _print_summary(self, results: List[BenchmarkResult]):
+    def _print_summary(self, results: list[BenchmarkResult]):
         """Print summary of benchmark results"""
         print(f"\n{'='*60}")
         print("BENCHMARK SUMMARY")

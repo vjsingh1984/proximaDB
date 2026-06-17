@@ -110,7 +110,9 @@ use std::collections::HashMap;
 use tracing::{debug, info, trace, warn};
 
 use crate::core::bloom::SstableBloomFilter;
-use crate::core::{VectorRecord, compression::CompressionAlgorithm};
+use crate::core::compression::CompressionAlgorithm;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 // ProximaCodec system for encoding/decoding
 use super::engine_profile::EngineProfile;
@@ -143,7 +145,7 @@ enum VectorDataPattern {
 /// - **PatchedBase**: Base encoding with exceptions
 /// - **Dictionary**: Replace values with dictionary indices
 /// - **RunLength**: Compress runs of identical values
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProximaMetadata {
     /// Encoding scheme used for this block
     pub scheme: ProximaScheme,
@@ -172,7 +174,7 @@ pub struct ProximaMetadata {
 }
 
 /// Quantized section for hierarchical storage
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QuantizedSection {
     pub binary_vectors: Option<Vec<Vec<u8>>>,
     pub int8_vectors: Option<Vec<Vec<i8>>>,
@@ -181,7 +183,7 @@ pub struct QuantizedSection {
 }
 
 /// Block metadata statistics
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockMetadataStats {
     pub unique_keys: u32,
     pub null_values: u32,
@@ -224,7 +226,7 @@ pub struct BlockMetadataStats {
 /// ```
 ///
 /// **See module documentation for complete usage examples and best practices!**
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct ProximaDataBlock {
     /// PROXIMA ENCODING MARKER (1 byte) - First byte of serialized block
     ///
@@ -260,11 +262,12 @@ pub struct ProximaDataBlock {
     pub block_id: u32,
 
     /// Data organization
-    pub records: Vec<VectorRecord>,
+    pub records: Vec<ProximaRecord>,
     /// Quantized vectors using unified engine
     pub quantized_vectors: Option<Vec<Vec<u8>>>,
     /// Quantization level used
-    pub quantization_level: Option<crate::compute::quantization::unified::UnifiedQuantizationLevel>,
+    pub quantization_level:
+        Option<crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel>,
 
     /// SIMD-encoded vector data (when layout != FullVector)
     /// Stores transposed and encoded dimensions for SIMD operations
@@ -326,7 +329,7 @@ pub struct ProximaBlockMetadata {
     pub version_range: (i64, i64),
 
     /// Column statistics for metadata filtering
-    pub column_stats: HashMap<String, ColumnStatistics>,
+    pub column_stats: HashMap<String, BlockColumnStatistics>,
 
     /// Quantization information
     pub quantization_stats: QuantizationStatistics,
@@ -490,7 +493,7 @@ impl ProximaBlockMetadata {
 
             column_stats.insert(
                 key_name,
-                ColumnStatistics {
+                BlockColumnStatistics {
                     name: stat_name,
                     null_count,
                     distinct_count,
@@ -532,9 +535,12 @@ impl ProximaBlockMetadata {
     }
 }
 
+/// Backwards-compat alias for [`BlockColumnStatistics`].
+pub type ColumnStatistics = BlockColumnStatistics;
+
 /// Column statistics for optimization
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ColumnStatistics {
+pub struct BlockColumnStatistics {
     pub name: String,
     pub null_count: u32,
     pub distinct_count: u32,
@@ -546,7 +552,7 @@ pub struct ColumnStatistics {
 
 /// Typed column statistics for efficient predicate pushdown
 ///
-/// Unlike ColumnStatistics which uses serde_json::Value, TypedColumnStatistics
+/// Unlike BlockColumnStatistics which uses serde_json::Value, TypedBlockColumnStatistics
 /// provides native typed statistics for each column type, enabling:
 /// - Zero-overhead predicate evaluation (no JSON parsing)
 /// - Type-specific statistics (e.g., ngram bloom for TEXT)
@@ -554,7 +560,7 @@ pub struct ColumnStatistics {
 ///
 /// This is part of the ProximaRecord type system upgrade.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TypedColumnStatistics {
+pub enum TypedBlockColumnStatistics {
     /// String column statistics
     String(StringStats),
     /// Integer column statistics (i64)
@@ -736,51 +742,51 @@ pub struct ArrayStats {
     pub element_type: String, // Type name of array elements
 }
 
-impl TypedColumnStatistics {
+impl TypedBlockColumnStatistics {
     /// Check if column has null values
     pub fn has_nulls(&self) -> bool {
         match self {
-            TypedColumnStatistics::String(s) => s.null_count > 0,
-            TypedColumnStatistics::Integer(s) => s.null_count > 0,
-            TypedColumnStatistics::Float(s) => s.null_count > 0,
-            TypedColumnStatistics::Decimal(s) => s.null_count > 0,
-            TypedColumnStatistics::Boolean(s) => s.null_count > 0,
-            TypedColumnStatistics::Timestamp(s) => s.null_count > 0,
-            TypedColumnStatistics::Text(s) => s.null_count > 0,
-            TypedColumnStatistics::Uuid(s) => s.null_count > 0,
-            TypedColumnStatistics::Binary(s) => s.null_count > 0,
-            TypedColumnStatistics::Date(s) => s.null_count > 0,
-            TypedColumnStatistics::Time(s) => s.null_count > 0,
-            TypedColumnStatistics::GeoPoint(s) => s.null_count > 0,
-            TypedColumnStatistics::Json(s) => s.null_count > 0,
-            TypedColumnStatistics::Array(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::String(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Integer(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Float(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Decimal(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Boolean(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Timestamp(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Text(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Uuid(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Binary(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Date(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Time(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::GeoPoint(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Json(s) => s.null_count > 0,
+            TypedBlockColumnStatistics::Array(s) => s.null_count > 0,
         }
     }
 
     /// Get null count
     pub fn null_count(&self) -> u32 {
         match self {
-            TypedColumnStatistics::String(s) => s.null_count,
-            TypedColumnStatistics::Integer(s) => s.null_count,
-            TypedColumnStatistics::Float(s) => s.null_count,
-            TypedColumnStatistics::Decimal(s) => s.null_count,
-            TypedColumnStatistics::Boolean(s) => s.null_count,
-            TypedColumnStatistics::Timestamp(s) => s.null_count,
-            TypedColumnStatistics::Text(s) => s.null_count,
-            TypedColumnStatistics::Uuid(s) => s.null_count,
-            TypedColumnStatistics::Binary(s) => s.null_count,
-            TypedColumnStatistics::Date(s) => s.null_count,
-            TypedColumnStatistics::Time(s) => s.null_count,
-            TypedColumnStatistics::GeoPoint(s) => s.null_count,
-            TypedColumnStatistics::Json(s) => s.null_count,
-            TypedColumnStatistics::Array(s) => s.null_count,
+            TypedBlockColumnStatistics::String(s) => s.null_count,
+            TypedBlockColumnStatistics::Integer(s) => s.null_count,
+            TypedBlockColumnStatistics::Float(s) => s.null_count,
+            TypedBlockColumnStatistics::Decimal(s) => s.null_count,
+            TypedBlockColumnStatistics::Boolean(s) => s.null_count,
+            TypedBlockColumnStatistics::Timestamp(s) => s.null_count,
+            TypedBlockColumnStatistics::Text(s) => s.null_count,
+            TypedBlockColumnStatistics::Uuid(s) => s.null_count,
+            TypedBlockColumnStatistics::Binary(s) => s.null_count,
+            TypedBlockColumnStatistics::Date(s) => s.null_count,
+            TypedBlockColumnStatistics::Time(s) => s.null_count,
+            TypedBlockColumnStatistics::GeoPoint(s) => s.null_count,
+            TypedBlockColumnStatistics::Json(s) => s.null_count,
+            TypedBlockColumnStatistics::Array(s) => s.null_count,
         }
     }
 
-    /// Convert to legacy ColumnStatistics for backward compatibility
-    pub fn to_legacy(&self, name: &str) -> ColumnStatistics {
+    /// Convert to legacy BlockColumnStatistics for backward compatibility
+    pub fn to_legacy(&self, name: &str) -> BlockColumnStatistics {
         let (min_value, max_value) = match self {
-            TypedColumnStatistics::String(s) => (
+            TypedBlockColumnStatistics::String(s) => (
                 s.min_value
                     .as_ref()
                     .map(|v| serde_json::Value::String(v.clone())),
@@ -788,34 +794,34 @@ impl TypedColumnStatistics {
                     .as_ref()
                     .map(|v| serde_json::Value::String(v.clone())),
             ),
-            TypedColumnStatistics::Integer(s) => (
+            TypedBlockColumnStatistics::Integer(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Float(s) => (
+            TypedBlockColumnStatistics::Float(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Decimal(s) => (
+            TypedBlockColumnStatistics::Decimal(s) => (
                 s.min_value.map(|v| serde_json::json!(v.to_string())),
                 s.max_value.map(|v| serde_json::json!(v.to_string())),
             ),
-            TypedColumnStatistics::Timestamp(s) => (
+            TypedBlockColumnStatistics::Timestamp(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Date(s) => (
+            TypedBlockColumnStatistics::Date(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
-            TypedColumnStatistics::Time(s) => (
+            TypedBlockColumnStatistics::Time(s) => (
                 s.min_value.map(|v| serde_json::json!(v)),
                 s.max_value.map(|v| serde_json::json!(v)),
             ),
             _ => (None, None),
         };
 
-        ColumnStatistics {
+        BlockColumnStatistics {
             name: name.to_string(),
             null_count: self.null_count(),
             distinct_count: self.get_distinct_count(),
@@ -828,42 +834,42 @@ impl TypedColumnStatistics {
 
     fn get_distinct_count(&self) -> u32 {
         match self {
-            TypedColumnStatistics::String(s) => s.distinct_count,
-            TypedColumnStatistics::Integer(s) => s.distinct_count,
-            TypedColumnStatistics::Float(s) => s.distinct_count,
-            TypedColumnStatistics::Decimal(s) => s.distinct_count,
-            TypedColumnStatistics::Timestamp(s) => s.distinct_count,
-            TypedColumnStatistics::Date(s) => s.distinct_count,
-            TypedColumnStatistics::Time(s) => s.distinct_count,
-            TypedColumnStatistics::Uuid(s) => s.distinct_count,
+            TypedBlockColumnStatistics::String(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Integer(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Float(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Decimal(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Timestamp(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Date(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Time(s) => s.distinct_count,
+            TypedBlockColumnStatistics::Uuid(s) => s.distinct_count,
             _ => 0,
         }
     }
 
     fn get_avg_size_bytes(&self) -> u64 {
         match self {
-            TypedColumnStatistics::String(s) => s.avg_length as u64,
-            TypedColumnStatistics::Text(s) => s.avg_length as u64,
-            TypedColumnStatistics::Binary(s) => s.avg_size as u64,
-            TypedColumnStatistics::Json(s) => s.avg_size as u64,
-            TypedColumnStatistics::Integer(_) => 8,
-            TypedColumnStatistics::Float(_) => 8,
-            TypedColumnStatistics::Decimal(_) => 16,
-            TypedColumnStatistics::Boolean(_) => 1,
-            TypedColumnStatistics::Timestamp(_) => 8,
-            TypedColumnStatistics::Date(_) => 4,
-            TypedColumnStatistics::Time(_) => 8,
-            TypedColumnStatistics::Uuid(_) => 16,
-            TypedColumnStatistics::GeoPoint(_) => 24,
-            TypedColumnStatistics::Array(s) => s.avg_length as u64,
+            TypedBlockColumnStatistics::String(s) => s.avg_length as u64,
+            TypedBlockColumnStatistics::Text(s) => s.avg_length as u64,
+            TypedBlockColumnStatistics::Binary(s) => s.avg_size as u64,
+            TypedBlockColumnStatistics::Json(s) => s.avg_size as u64,
+            TypedBlockColumnStatistics::Integer(_) => 8,
+            TypedBlockColumnStatistics::Float(_) => 8,
+            TypedBlockColumnStatistics::Decimal(_) => 16,
+            TypedBlockColumnStatistics::Boolean(_) => 1,
+            TypedBlockColumnStatistics::Timestamp(_) => 8,
+            TypedBlockColumnStatistics::Date(_) => 4,
+            TypedBlockColumnStatistics::Time(_) => 8,
+            TypedBlockColumnStatistics::Uuid(_) => 16,
+            TypedBlockColumnStatistics::GeoPoint(_) => 24,
+            TypedBlockColumnStatistics::Array(s) => s.avg_length as u64,
         }
     }
 
     fn has_bloom_filter(&self) -> bool {
         match self {
-            TypedColumnStatistics::String(s) => s.bloom_filter_offset.is_some(),
-            TypedColumnStatistics::Uuid(s) => s.bloom_filter_offset.is_some(),
-            TypedColumnStatistics::Text(s) => s.ngram_bloom_offset.is_some(),
+            TypedBlockColumnStatistics::String(s) => s.bloom_filter_offset.is_some(),
+            TypedBlockColumnStatistics::Uuid(s) => s.bloom_filter_offset.is_some(),
+            TypedBlockColumnStatistics::Text(s) => s.ngram_bloom_offset.is_some(),
             _ => false,
         }
     }
@@ -901,7 +907,7 @@ pub struct QuantizationStatistics {
 }
 
 /// Vector encoding layout strategies for Proxima compression
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VectorEncodingLayout {
     /// TransposeFieldEncodedAndCompressedVector: transpose RxD → DxR, store each dimension as separate field
     /// Each dimension field gets Proxima encoding + field-level compression
@@ -937,7 +943,7 @@ pub enum VectorEncodingLayout {
 }
 
 /// Block compression configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockCompressionConfig {
     pub algorithm: CompressionAlgorithm,
     pub compression_level: u8,
@@ -952,7 +958,7 @@ pub struct BlockCompressionConfig {
 }
 
 /// Block statistics for performance monitoring
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlockStatistics {
     pub read_count: u64,
     pub write_count: u64,
@@ -1000,7 +1006,7 @@ pub struct SuperBlock {
 
     /// Performance optimization
     pub layout: BlockLayout,
-    pub access_pattern: AccessPattern,
+    pub access_pattern: BlockStructuresAccessPattern,
 }
 
 /// Block layout configuration
@@ -1044,10 +1050,13 @@ pub enum PaddingStrategy {
     MemoryAlign,
 }
 
+/// Backwards-compat alias for [`BlockStructuresAccessPattern`].
+pub type AccessPattern = BlockStructuresAccessPattern;
+
 /// Access pattern tracking for optimization
 #[derive(Debug, Clone)]
-pub struct AccessPattern {
-    pub pattern_type: AccessPatternType,
+pub struct BlockStructuresAccessPattern {
+    pub pattern_type: BlockStructuresAccessPatternType,
     pub frequency: HashMap<String, u64>,
     pub temporal_locality: f64,
     pub spatial_locality: f64,
@@ -1055,7 +1064,7 @@ pub struct AccessPattern {
 }
 
 #[derive(Debug, Clone)]
-pub enum AccessPatternType {
+pub enum BlockStructuresAccessPatternType {
     Sequential,
     Random,
     Hotspot,
@@ -1074,35 +1083,11 @@ pub struct BlockLocation {
 }
 
 impl ProximaDataBlock {
-    /// DEPRECATED: Use ProximaCodec::global() instead
-    ///
-    /// OBSOLETE: This function has been removed - use ProximaCodec::global() instead
-    /// Kept as stub to avoid breaking old code references
-    #[deprecated(since = "0.1.5", note = "Use ProximaCodec::global() for all encoding")]
-    #[allow(dead_code)]
-    #[allow(clippy::panic)] // Intentional panic for obsolete API - prevents compilation of deprecated code
-    fn get_simd_encoder(_engine_profile: super::engine_profile::EngineProfile) -> ! {
-        panic!("get_simd_encoder is obsolete - use ProximaCodec::global() instead")
-    }
-
-    /// DEPRECATED: Use serialize_with_config() which now uses ProximaCodec
-    ///
-    /// Apply SIMD-optimized encoding based on layout strategy
-    #[deprecated(
-        since = "0.1.5",
-        note = "Use serialize_with_config() which now uses ProximaCodec"
-    )]
-    #[allow(dead_code)]
-    #[allow(clippy::panic)] // Intentional panic for obsolete API - prevents compilation of deprecated code
-    fn apply_simd_encoding(
-        &mut self,
-        _vectors: &[Vec<f32>],
-        _layout: VectorEncodingLayout,
-        _engine_profile: EngineProfile,
-    ) -> anyhow::Result<()> {
-        panic!(
-            "apply_simd_encoding is obsolete - use serialize_with_config() which uses ProximaCodec instead"
-        )
+    fn record_vector(record: &ProximaRecord) -> &[f32] {
+        record
+            .embeddings
+            .first()
+            .map_or(&[][..], |embedding| embedding.as_fp32_slice())
     }
 
     /// **🚀 Create a new Proxima data block with AUTOMATIC optimization capabilities**
@@ -1185,41 +1170,52 @@ impl ProximaDataBlock {
     ///
     /// # Returns
     /// A fully-optimized Proxima data block with all automatic features enabled
-    pub fn new(records: Vec<VectorRecord>, compression_config: BlockCompressionConfig) -> Self {
+    pub fn new(records: Vec<ProximaRecord>, compression_config: BlockCompressionConfig) -> Self {
         let record_count = records.len() as u32;
         // Use a simple counter or provided ID - will be set properly by the writer
         let block_id = 0u32;
 
-        // Calculate ID range
-        let mut ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
-        ids.sort();
-        let id_range = if ids.is_empty() {
-            ("".to_string(), "".to_string())
+        // Single-pass scan: id range, timestamp range, has_deletes.
+        // Avoids the prior 3-pass approach (ids.sort() + timestamps Vec + has_deletes scan).
+        let (id_range, timestamp_range, has_deletes) = if records.is_empty() {
+            (("".to_string(), "".to_string()), (0, 0), false)
         } else {
-            (ids[0].clone(), ids[ids.len() - 1].clone())
-        };
-
-        // Calculate timestamp range
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0)).collect();
-        let timestamp_range = if timestamps.is_empty() {
-            (0, 0)
-        } else {
-            // Safe: we checked timestamps.is_empty() above
+            let first = &records[0];
+            let mut min_id: &str = first.oid.as_str();
+            let mut max_id: &str = first.oid.as_str();
+            let mut min_ts = first.created_at_ns / 1_000_000;
+            let mut max_ts = min_ts;
+            let mut deletes = false;
+            for r in records.iter() {
+                let oid = r.oid.as_str();
+                if oid < min_id {
+                    min_id = oid;
+                }
+                if oid > max_id {
+                    max_id = oid;
+                }
+                let ts = r.created_at_ns / 1_000_000;
+                if ts < min_ts {
+                    min_ts = ts;
+                }
+                if ts > max_ts {
+                    max_ts = ts;
+                }
+                if !deletes
+                    && matches!(
+                        r.props.get("_deleted"),
+                        Some(ProximaTreeNode::Value(ProximaValue::Boolean(true)))
+                    )
+                {
+                    deletes = true;
+                }
+            }
             (
-                timestamps.iter().min().copied().unwrap_or(0),
-                timestamps.iter().max().copied().unwrap_or(0),
+                (min_id.to_string(), max_id.to_string()),
+                (min_ts, max_ts),
+                deletes,
             )
         };
-
-        // Check for deletes (tombstone records)
-        let has_deletes = records.iter().any(|r| {
-            r.metadata.iter().any(|(key, sql_value)| {
-            key == "_deleted" && matches!(
-                sql_value.value.as_ref(),
-                Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
-            )
-        })
-        });
 
         // Analyze vectors to choose optimal encoding
         let encoding_marker = Self::choose_optimal_encoding_marker(&records);
@@ -1229,12 +1225,18 @@ impl ProximaDataBlock {
             None
         };
 
+        // Compute bloom filter and vector-layout decision before moving records into the block.
+        let bloom_filter = Self::generate_bloom_filter(&records);
+        let needs_simd_layout = compression_config.vector_layout
+            != VectorEncodingLayout::FullVector
+            && records.iter().any(|r| !Self::record_vector(r).is_empty());
+
         // Initialize with default values, SIMD encoding will be applied later if needed
         let mut block = Self {
             encoding_marker,
             encoding_metadata,
             block_id,
-            records: records.clone(),
+            records,
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
@@ -1257,7 +1259,7 @@ impl ProximaDataBlock {
             compression_config: compression_config.clone(),
             compression_algorithm: compression_config.algorithm,
             uncompressed_size: 0, // Will be calculated during compression
-            bloom_filter: Self::generate_bloom_filter(&records),
+            bloom_filter,
             block_bloom_filter: None,
             id_range,
             timestamp_range,
@@ -1266,29 +1268,17 @@ impl ProximaDataBlock {
             has_deletes,
         };
 
-        // Apply SIMD encoding if layout requires it
-        if compression_config.vector_layout != VectorEncodingLayout::FullVector
-            && !records.is_empty()
-        {
-            // Extract vectors for SIMD encoding
-            let vectors: Vec<Vec<f32>> = records
-                .iter()
-                .filter(|r| !r.vector.is_empty())
-                .map(|r| r.vector.clone())
-                .collect();
-
-            // Note: Encoding now happens in serialize_with_config() using ProximaCodec
-            // Just store the layout preference from config
-            if !vectors.is_empty() {
-                block.vector_layout = compression_config.vector_layout;
-            }
+        // Apply SIMD encoding if layout requires it.
+        // (Actual encoding happens in serialize_with_config() via ProximaCodec.)
+        if needs_simd_layout {
+            block.vector_layout = compression_config.vector_layout;
         }
 
         block
     }
 
     /// Generate bloom filter for record IDs with adaptive sizing
-    fn generate_bloom_filter(records: &[VectorRecord]) -> Option<SstableBloomFilter> {
+    fn generate_bloom_filter(records: &[ProximaRecord]) -> Option<SstableBloomFilter> {
         if records.is_empty() {
             return None;
         }
@@ -1299,11 +1289,10 @@ impl ProximaDataBlock {
         let adaptive_config = crate::core::bloom::adaptive::AdaptiveBloomConfig::for_block_level();
         let num_keys = records.len();
         let optimal_size = adaptive_config.optimal_size(num_keys);
-        let bits_per_key = if num_keys > 0 {
-            (optimal_size / num_keys).max(4) as u32
-        } else {
-            10
-        };
+        let bits_per_key = optimal_size
+            .checked_div(num_keys)
+            .map(|v| v.max(4) as u32)
+            .unwrap_or(10);
 
         // Create config with adaptive sizing
         let bloom_config = BloomFilterConfig {
@@ -1318,7 +1307,7 @@ impl ProximaDataBlock {
         let mut bloom = BloomFilterFactory::create(&bloom_config);
 
         for record in records {
-            bloom.insert(record.id.as_bytes());
+            bloom.insert(record.oid.as_bytes());
         }
 
         // Serialize the bloom filter and create SstableBloomFilter
@@ -1351,43 +1340,55 @@ impl ProximaDataBlock {
     /// Create a new Proxima data block with specific engine profile
     /// This allows engines to pass their profile for optimized SIMD encoding
     pub fn new_with_engine_profile(
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         compression_config: BlockCompressionConfig,
         _engine_profile: EngineProfile,
     ) -> Self {
         let record_count = records.len() as u32;
         let block_id = 0u32;
 
-        // Calculate ID range
-        let mut ids: Vec<String> = records.iter().map(|r| r.id.clone()).collect();
-        ids.sort();
-        let id_range = if ids.is_empty() {
-            ("".to_string(), "".to_string())
+        // Single-pass scan for id range, timestamp range, and has_deletes
+        // (mirrors the optimization in `new()`). Avoids extracting two derived
+        // Vecs and sorting all OIDs just to read first/last.
+        let (id_range, timestamp_range, has_deletes) = if records.is_empty() {
+            (("".to_string(), "".to_string()), (0, 0), false)
         } else {
-            (ids[0].clone(), ids[ids.len() - 1].clone())
-        };
-
-        // Calculate timestamp range
-        let timestamps: Vec<i64> = records.iter().map(|r| r.timestamp.unwrap_or(0)).collect();
-        let timestamp_range = if timestamps.is_empty() {
-            (0, 0)
-        } else {
-            // Safe: we checked timestamps.is_empty() above
+            let first = &records[0];
+            let mut min_id: &str = first.oid.as_str();
+            let mut max_id: &str = first.oid.as_str();
+            let mut min_ts = first.created_at_ns / 1_000_000;
+            let mut max_ts = min_ts;
+            let mut deletes = false;
+            for r in records.iter() {
+                let oid = r.oid.as_str();
+                if oid < min_id {
+                    min_id = oid;
+                }
+                if oid > max_id {
+                    max_id = oid;
+                }
+                let ts = r.created_at_ns / 1_000_000;
+                if ts < min_ts {
+                    min_ts = ts;
+                }
+                if ts > max_ts {
+                    max_ts = ts;
+                }
+                if !deletes
+                    && matches!(
+                        r.props.get("_deleted"),
+                        Some(ProximaTreeNode::Value(ProximaValue::Boolean(true)))
+                    )
+                {
+                    deletes = true;
+                }
+            }
             (
-                timestamps.iter().min().copied().unwrap_or(0),
-                timestamps.iter().max().copied().unwrap_or(0),
+                (min_id.to_string(), max_id.to_string()),
+                (min_ts, max_ts),
+                deletes,
             )
         };
-
-        // Check for deletes
-        let has_deletes = records.iter().any(|r| {
-            r.metadata.iter().any(|(key, sql_value)| {
-                key == "_deleted" && matches!(
-                    sql_value.value.as_ref(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) if s == "true"
-                )
-            })
-        });
 
         // Analyze vectors to choose optimal encoding
         let encoding_marker = Self::choose_optimal_encoding_marker(&records);
@@ -1397,11 +1398,18 @@ impl ProximaDataBlock {
             None
         };
 
+        // Compute bloom filter and SIMD-layout decision before moving records
+        // into the block (so we can move instead of cloning at line below).
+        let bloom_filter = Self::generate_bloom_filter(&records);
+        let needs_simd_layout = compression_config.vector_layout
+            != VectorEncodingLayout::FullVector
+            && !records.is_empty();
+
         let mut block = Self {
             encoding_marker,
             encoding_metadata,
             block_id,
-            records: records.clone(),
+            records,
             quantized_vectors: None,
             quantization_level: None,
             encoded_vectors: None,
@@ -1424,7 +1432,7 @@ impl ProximaDataBlock {
             compression_config: compression_config.clone(),
             compression_algorithm: compression_config.algorithm,
             uncompressed_size: 0,
-            bloom_filter: Self::generate_bloom_filter(&records),
+            bloom_filter,
             block_bloom_filter: None,
             id_range,
             timestamp_range,
@@ -1433,12 +1441,9 @@ impl ProximaDataBlock {
             has_deletes,
         };
 
-        // Apply SIMD encoding with specific engine profile
-        // Note: Encoding now happens in serialize_with_config() using ProximaCodec
-        // Just store the layout preference from config
-        if compression_config.vector_layout != VectorEncodingLayout::FullVector
-            && !records.is_empty()
-        {
+        // Apply SIMD encoding with specific engine profile.
+        // (Actual encoding happens in serialize_with_config() via ProximaCodec.)
+        if needs_simd_layout {
             block.vector_layout = compression_config.vector_layout;
         }
 
@@ -1446,13 +1451,13 @@ impl ProximaDataBlock {
     }
 
     /// Get record by index
-    pub fn get_record(&self, index: usize) -> Option<&VectorRecord> {
+    pub fn get_record(&self, index: usize) -> Option<&ProximaRecord> {
         self.records.get(index)
     }
 
     /// Find record by ID
-    pub fn find_record_by_id(&self, id: &str) -> Option<&VectorRecord> {
-        self.records.iter().find(|r| r.id == id)
+    pub fn find_record_by_id(&self, id: &str) -> Option<&ProximaRecord> {
+        self.records.iter().find(|r| r.oid == id)
     }
 
     /// **🔍 Check if block contains ID using automatic bloom filter optimization**
@@ -1495,7 +1500,7 @@ impl ProximaDataBlock {
 
     /// Get memory usage estimate
     pub fn memory_usage_bytes(&self) -> usize {
-        let records_size = self.records.len() * std::mem::size_of::<VectorRecord>();
+        let records_size = self.records.len() * std::mem::size_of::<ProximaRecord>();
         let quantized_size = self
             .quantized_vectors
             .as_ref()
@@ -1517,18 +1522,19 @@ impl ProximaDataBlock {
     }
 
     /// Detect the pattern of vector data for optimal encoding
-    fn detect_vector_pattern(records: &[VectorRecord]) -> VectorDataPattern {
-        if records.is_empty() || records[0].vector.is_empty() {
+    fn detect_vector_pattern(records: &[ProximaRecord]) -> VectorDataPattern {
+        let first_vector = records.first().map(Self::record_vector).unwrap_or(&[]);
+        if first_vector.is_empty() {
             return VectorDataPattern::Empty;
         }
 
-        let dimension = records[0].vector.len();
+        let dimension = first_vector.len();
         let total_values = records.len() * dimension;
 
         // Flatten all vectors for analysis
         let mut all_values = Vec::with_capacity(total_values);
         for record in records {
-            all_values.extend_from_slice(&record.vector);
+            all_values.extend_from_slice(Self::record_vector(record));
         }
 
         // Count zeros and check for sparsity
@@ -1600,7 +1606,7 @@ impl ProximaDataBlock {
     }
 
     /// Choose optimal encoding based on detected pattern
-    fn choose_optimal_encoding_marker(records: &[VectorRecord]) -> u8 {
+    fn choose_optimal_encoding_marker(records: &[ProximaRecord]) -> u8 {
         let pattern = Self::detect_vector_pattern(records);
 
         match pattern {
@@ -1662,9 +1668,13 @@ impl ProximaDataBlock {
     }
 
     /// Create encoding metadata for the chosen scheme
-    fn create_encoding_metadata(records: &[VectorRecord], marker: u8) -> ProximaMetadata {
+    fn create_encoding_metadata(records: &[ProximaRecord], marker: u8) -> ProximaMetadata {
         let dimension = if !records.is_empty() {
-            records[0].vector.len()
+            records[0]
+                .embeddings
+                .first()
+                .map(|e| e.values.len())
+                .unwrap_or(0)
         } else {
             0
         };
@@ -1673,7 +1683,12 @@ impl ProximaDataBlock {
         let mut min_val = f32::MAX;
         let mut max_val = f32::MIN;
         for record in records {
-            for &val in &record.vector {
+            for &val in record
+                .embeddings
+                .first()
+                .map(|e| e.as_fp32_slice())
+                .unwrap_or(&[])
+            {
                 min_val = min_val.min(val);
                 max_val = max_val.max(val);
             }
@@ -1751,7 +1766,7 @@ impl ProximaDataBlock {
         let dimension = if self.records.is_empty() {
             0
         } else {
-            self.records[0].vector.len()
+            Self::record_vector(&self.records[0]).len()
         };
         let vector_size = self.records.len() * dimension * 4; // f32 = 4 bytes
         let metadata_estimate = self.records.len() * 100; // Estimate 100 bytes per record metadata
@@ -1779,7 +1794,7 @@ impl ProximaDataBlock {
 
         // Write record count and dimension
         buffer.write_all(&(self.records.len() as u32).to_le_bytes())?;
-        let dimension = self.records[0].vector.len();
+        let dimension = Self::record_vector(&self.records[0]).len();
         buffer.write_all(&(dimension as u32).to_le_bytes())?;
 
         // Continue with rest of serialization logic using the buffer
@@ -1822,7 +1837,7 @@ impl ProximaDataBlock {
         let mut bloom = BloomFilterFactory::create(&bloom_config);
 
         for record in &self.records {
-            bloom.insert(record.id.as_bytes());
+            bloom.insert(record.oid.as_bytes());
         }
 
         bloom.serialize().map(Some)
@@ -1873,8 +1888,8 @@ impl ProximaDataBlock {
         &self,
         config: &BlockCompressionConfig,
     ) -> anyhow::Result<Vec<u8>> {
-        use crate::core::compression::CompressionAlgorithm;
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::CompressionAlgorithm;
+        use proximadb_compression::{CompressionContext, compress};
         use std::collections::{HashMap, HashSet};
         use std::io::Write;
 
@@ -1883,14 +1898,11 @@ impl ProximaDataBlock {
         trace!("[ENCODE] Starting serialization with config: {:?}", config);
         trace!("[ENCODE] Records count: {}", self.records.len());
 
-        // Write format version for backward compatibility
-        const COLUMNAR_FORMAT_VERSION: u8 = 1; // Version 1 = initial release
-        result.push(COLUMNAR_FORMAT_VERSION);
+        // Write encoding marker (for SIMD encoding)
         result.push(self.encoding_marker);
         trace!(
-            "[ENCODE] Position {}: Wrote format version {} + encoding marker {}",
+            "[ENCODE] Position {}: Wrote encoding marker {}",
             result.len(),
-            COLUMNAR_FORMAT_VERSION,
             self.encoding_marker
         );
 
@@ -1901,7 +1913,7 @@ impl ProximaDataBlock {
 
         // Write record count and dimension
         result.write_all(&(self.records.len() as u32).to_le_bytes())?;
-        let dimension = self.records[0].vector.len();
+        let dimension = Self::record_vector(&self.records[0]).len();
         result.write_all(&(dimension as u32).to_le_bytes())?;
         trace!(
             "[ENCODE] Position {}: Wrote record count {} + dimension {}",
@@ -1916,7 +1928,12 @@ impl ProximaDataBlock {
         let _scheme = ProximaScheme::Delta { base: 0 }; // Default scheme
 
         // Collect vectors from records
-        let vectors: Vec<Vec<f32>> = self.records.iter().map(|r| r.vector.clone()).collect();
+        let vectors: Vec<Vec<f32>> = self
+            .records
+            .iter()
+            .map(Self::record_vector)
+            .map(ToOwned::to_owned)
+            .collect();
 
         // Choose encoding strategy based on configuration
         let strategy = match config.vector_layout {
@@ -2030,7 +2047,7 @@ impl ProximaDataBlock {
         );
 
         // Collect IDs in original record order (CRITICAL for correct reconstruction)
-        let ordered_ids: Vec<String> = self.records.iter().map(|r| r.id.clone()).collect();
+        let ordered_ids: Vec<String> = self.records.iter().map(|r| r.oid.clone()).collect();
 
         // Build dictionary from unique IDs while preserving first-occurrence order
         let mut id_dictionary = Vec::new();
@@ -2094,7 +2111,7 @@ impl ProximaDataBlock {
         // ============ STEP 3: Build sparse metadata columns (chunk IDs, page IDs, etc.) ============
         let mut metadata_keys = HashSet::new();
         for record in &self.records {
-            for key in record.metadata.keys() {
+            for key in record.props.keys() {
                 metadata_keys.insert(key.clone());
             }
         }
@@ -2118,36 +2135,42 @@ impl ProximaDataBlock {
             let mut presence_bitmap = vec![0u8; self.records.len().div_ceil(8)];
 
             for (idx, record) in self.records.iter().enumerate() {
-                if let Some(sql_value) = record.metadata.get(key) {
+                if let Some(node) = record.props.get(key) {
                     // Set bit in presence bitmap
                     presence_bitmap[idx / 8] |= 1 << (idx % 8);
 
                     // Serialize value WITH TYPE TAG for unambiguous deserialization
-                    // Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
-                    if let Some(value) = &sql_value.value {
-                        let (type_tag, value_bytes): (u8, Vec<u8>) = match value {
-                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                                (0x01, s.as_bytes().to_vec())
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                                (0x02, n.to_le_bytes().to_vec())
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                                (0x03, i.to_le_bytes().to_vec())
-                            }
-                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                                (0x04, vec![if *b { 1 } else { 0 }])
-                            }
-                            _ => (0x00, vec![]), // Handle other variants
-                        };
-                        // Write: [u32 total_len][u8 type_tag][value_bytes]
-                        let total_len = 1 + value_bytes.len();
-                        sparse_values.write_all(&(total_len as u32).to_le_bytes())?;
-                        sparse_values.write_all(&[type_tag])?;
-                        sparse_values.write_all(&value_bytes)?;
-                    } else {
-                        sparse_values.write_all(&0u32.to_le_bytes())?;
-                    }
+                    // Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool,
+                    //            0x05=JSON (Object/Array), 0x00=None/Null
+                    let (type_tag, value_bytes): (u8, Vec<u8>) = match node {
+                        ProximaTreeNode::Value(ProximaValue::String(s)) => {
+                            (0x01, s.as_bytes().to_vec())
+                        }
+                        ProximaTreeNode::Value(ProximaValue::Float64(f)) => {
+                            (0x02, f.to_le_bytes().to_vec())
+                        }
+                        ProximaTreeNode::Value(ProximaValue::Int64(i)) => {
+                            (0x03, i.to_le_bytes().to_vec())
+                        }
+                        ProximaTreeNode::Value(ProximaValue::Boolean(b)) => {
+                            (0x04, vec![if *b { 1u8 } else { 0u8 }])
+                        }
+                        ProximaTreeNode::Value(ProximaValue::Json(j)) => {
+                            let json_str = serde_json::to_string(j).unwrap_or_default();
+                            (0x05, json_str.into_bytes())
+                        }
+                        ProximaTreeNode::Object(tree) => {
+                            let json_str = serde_json::to_string(tree).unwrap_or_default();
+                            (0x05, json_str.into_bytes())
+                        }
+                        ProximaTreeNode::Value(ProximaValue::Null) => (0x00, vec![]),
+                        _ => (0x00, vec![]),
+                    };
+                    // Write: [u32 total_len][u8 type_tag][value_bytes]
+                    let total_len = 1 + value_bytes.len();
+                    sparse_values.write_all(&(total_len as u32).to_le_bytes())?;
+                    sparse_values.write_all(&[type_tag])?;
+                    sparse_values.write_all(&value_bytes)?;
                 }
             }
 
@@ -2168,7 +2191,7 @@ impl ProximaDataBlock {
 
                 // Write: [u32 total_len][u8 marker][compressed_bytes]
                 // Uses ProximaDB standard compression markers for consistency
-                let marker = crate::core::compression::markers::compression_marker(&metadata_algo);
+                let marker = proximadb_compression::markers::compression_marker(&metadata_algo);
                 let total_len = 1 + compressed_values.len(); // 1 byte for marker
                 result.write_all(&(total_len as u32).to_le_bytes())?;
                 result.write_all(&[marker])?;
@@ -2188,7 +2211,7 @@ impl ProximaDataBlock {
         let timestamps: Vec<i64> = self
             .records
             .iter()
-            .map(|record| record.timestamp.unwrap_or(0)) // Use primary timestamp field
+            .map(|record| record.created_at_ns)
             .collect();
 
         debug!(
@@ -2215,7 +2238,7 @@ impl ProximaDataBlock {
 
         // Collect sources in record order (actual embedding generation content)
         let ordered_sources: Vec<Option<String>> =
-            self.records.iter().map(|r| r.source.clone()).collect();
+            self.records.iter().map(|r| r.origin.clone()).collect();
 
         // Build dictionary for sources (actual content text - medium to high cardinality)
         let mut source_dictionary = Vec::new();
@@ -2247,7 +2270,7 @@ impl ProximaDataBlock {
             trace!(
                 "[ENCODE] Source dict[{}]: '{}'",
                 i,
-                source.is_empty().then(|| "NULL").unwrap_or(source)
+                if source.is_empty() { "NULL" } else { source }
             );
         }
 
@@ -2289,7 +2312,8 @@ impl ProximaDataBlock {
         );
 
         // Collect updated_at values (may be None)
-        let updated_ats: Vec<Option<i64>> = self.records.iter().map(|r| r.updated_at).collect();
+        let updated_ats: Vec<Option<i64>> =
+            self.records.iter().map(|r| Some(r.updated_at_ns)).collect();
 
         // Count non-None values for efficient sparse storage
         let non_none_count = updated_ats.iter().filter(|&&x| x.is_some()).count();
@@ -2341,7 +2365,7 @@ impl ProximaDataBlock {
         debug!("[ENCODE] Encoding expires_at, version, and quantized_vector columns");
 
         // Expires_at (same 3-mode encoding as updated_at)
-        let expires_ats: Vec<Option<i64>> = self.records.iter().map(|r| r.expires_at).collect();
+        let expires_ats: Vec<Option<i64>> = self.records.iter().map(|r| r.valid_to_ns).collect();
         let expires_non_none = expires_ats.iter().filter(|&&x| x.is_some()).count();
         debug!(
             "[ENCODE] Expires_at: {} non-None values out of {}",
@@ -2382,7 +2406,11 @@ impl ProximaDataBlock {
         }
 
         // Version (similar pattern)
-        let versions: Vec<Option<u32>> = self.records.iter().map(|r| r.version).collect();
+        let versions: Vec<Option<u32>> = self
+            .records
+            .iter()
+            .map(|r| Some(r.record_version as u32))
+            .collect();
         let version_non_none = versions.iter().filter(|&&x| x.is_some()).count();
 
         if version_non_none == 0 {
@@ -2422,65 +2450,68 @@ impl ProximaDataBlock {
 
         // ============ STEP 9: Apply compression if configured ============
         if config.algorithm != CompressionAlgorithm::None {
-            let compressed = compress(
-                &result,
-                config.algorithm,
-                config.compression_level as i32,
-                CompressionContext::Block,
-            )?;
+            // Check compression threshold - only compress if data is large enough
+            if result.len() > config.compression_threshold_bytes {
+                let compressed = compress(
+                    &result,
+                    config.algorithm,
+                    config.compression_level as i32,
+                    CompressionContext::Block,
+                )?;
 
-            // If compression is actually beneficial
-            if compressed.len() < result.len() {
-                trace!(
-                    "[ENCODE] Compression beneficial: {} -> {} bytes",
-                    result.len(),
-                    compressed.len()
-                );
-                // Write compressed format: marker + original size + compressed data
-                let mut final_result = Vec::new();
+                // If compression is actually beneficial
+                if compressed.len() < result.len() {
+                    trace!(
+                        "[ENCODE] Compression beneficial: {} -> {} bytes",
+                        result.len(),
+                        compressed.len()
+                    );
+                    // Write compressed format: compression marker + original size + compressed data
+                    let mut final_result = Vec::new();
 
-                // Write compression marker (0x80 + algorithm ID)
-                let compression_marker = match config.algorithm {
-                    CompressionAlgorithm::Lz4 => 0x80,
-                    CompressionAlgorithm::Zstd => 0x81,
-                    CompressionAlgorithm::Snappy => 0x82,
-                    CompressionAlgorithm::Gzip => 0x83,
-                    _ => 0x80,
-                };
-                final_result.push(compression_marker);
-                trace!(
-                    "[ENCODE] Using compression marker: 0x{:02X}",
-                    compression_marker
-                );
+                    // Write compression marker (using standard markers from compression_marker())
+                    use proximadb_compression::compression_marker;
+                    let marker_val = compression_marker(&config.algorithm);
+                    final_result.push(marker_val);
+                    trace!("[ENCODE] Using compression marker: 0x{:02X}", marker_val);
 
-                // Write original size for decompression
-                final_result.extend(&(result.len() as u32).to_le_bytes());
+                    // Write original size for decompression
+                    final_result.extend(&(result.len() as u32).to_le_bytes());
 
-                // Write compressed data
-                final_result.extend(compressed);
+                    // Write compressed data
+                    final_result.extend(compressed);
 
-                trace!(
-                    "[ENCODE] Final compressed size: {} bytes",
-                    final_result.len()
-                );
-                return Ok(final_result);
+                    trace!(
+                        "[ENCODE] Final compressed size: {} bytes",
+                        final_result.len()
+                    );
+                    return Ok(final_result);
+                } else {
+                    trace!(
+                        "[ENCODE] Compression not beneficial: {} -> {} bytes",
+                        result.len(),
+                        compressed.len()
+                    );
+                }
             } else {
                 trace!(
-                    "[ENCODE] Compression not beneficial: {} -> {} bytes",
+                    "[ENCODE] Data size {} bytes below compression threshold {} - skipping compression",
                     result.len(),
-                    compressed.len()
+                    config.compression_threshold_bytes
                 );
             }
         }
 
         // For uncompressed data, we need to mark it as such
-        // Use 0x00 as the marker for uncompressed data
+        // Use MARKER_UNCOMPRESSED (0x02) as the marker for uncompressed data
+        use proximadb_compression::MARKER_UNCOMPRESSED;
         let mut final_result = Vec::with_capacity(result.len() + 1);
-        final_result.push(0x00); // Uncompressed marker
+        final_result.push(MARKER_UNCOMPRESSED);
         final_result.extend(result);
         trace!(
-            "[ENCODE] Final uncompressed size: {} bytes",
-            final_result.len()
+            "[ENCODE] Final uncompressed size: {} bytes with marker 0x{:02X}",
+            final_result.len(),
+            MARKER_UNCOMPRESSED
         );
         Ok(final_result)
     }
@@ -2496,8 +2527,8 @@ impl ProximaDataBlock {
         key_name: &str,
         val_bytes: &[u8],
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
-    ) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::{FilterableDataType, SqlValue, sql_value::Value};
+    ) -> ProximaValue {
+        use crate::proto::proximadb_v1::FilterableDataType;
 
         // Metadata values are stored with type tags: [type_tag:1][value_bytes:N]
         // Skip the type tag byte (index 0) to get the actual payload
@@ -2522,9 +2553,7 @@ impl ProximaDataBlock {
                         } else {
                             0
                         };
-                        SqlValue {
-                            value: Some(Value::Int64Value(i)),
-                        }
+                        ProximaValue::Int64(i)
                     }
                     FilterableDataType::FilterableFloat => {
                         let f = if payload.len() >= 8 {
@@ -2532,18 +2561,14 @@ impl ProximaDataBlock {
                         } else {
                             0.0
                         };
-                        SqlValue {
-                            value: Some(Value::NumberValue(f)),
-                        }
+                        ProximaValue::Float64(f)
                     }
-                    FilterableDataType::FilterableBoolean => SqlValue {
-                        value: Some(Value::BoolValue(payload.first().is_some_and(|&b| b != 0))),
-                    },
+                    FilterableDataType::FilterableBoolean => {
+                        ProximaValue::Boolean(payload.first().is_some_and(|&b| b != 0))
+                    }
                     FilterableDataType::FilterableString => {
                         let s = String::from_utf8_lossy(payload).to_string();
-                        SqlValue {
-                            value: Some(Value::StringValue(s)),
-                        }
+                        ProximaValue::String(s)
                     }
                     FilterableDataType::FilterableDatetime => {
                         let ts = if payload.len() >= 8 {
@@ -2551,9 +2576,7 @@ impl ProximaDataBlock {
                         } else {
                             0
                         };
-                        SqlValue {
-                            value: Some(Value::Int64Value(ts)),
-                        }
+                        ProximaValue::Int64(ts)
                     }
                     _ => {
                         // Unknown type, fall back to heuristic (which handles type tags)
@@ -2570,15 +2593,12 @@ impl ProximaDataBlock {
 
     /// Type-tagged deserialization for metadata values
     /// New format (v2): [type_tag:1][value_bytes:N]
-    /// Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool, 0x00=None
+    /// Type tags: 0x01=String, 0x02=Number(f64), 0x03=Int64, 0x04=Bool,
+    ///            0x05=JSON (ObjectValue/ArrayValue stored as JSON string), 0x00=None
     /// Falls back to heuristic for legacy data without type tags
-    fn deserialize_metadata_value_heuristic(
-        val_bytes: &[u8],
-    ) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
+    fn deserialize_metadata_value_heuristic(val_bytes: &[u8]) -> ProximaValue {
         if val_bytes.is_empty() {
-            return SqlValue { value: None };
+            return ProximaValue::Null;
         }
 
         // Check for type tag format (new v2 format)
@@ -2589,33 +2609,30 @@ impl ProximaDataBlock {
             0x01 => {
                 // String
                 let s = String::from_utf8_lossy(payload).to_string();
-                SqlValue {
-                    value: Some(Value::StringValue(s)),
-                }
+                ProximaValue::String(s)
+            }
+            0x05 => {
+                // JSON-encoded object/array — store as string (map type not yet in ProximaValue)
+                let json_str = String::from_utf8_lossy(payload).to_string();
+                ProximaValue::String(json_str)
             }
             0x02 if payload.len() == 8 => {
                 // Number (f64)
                 let num = f64::from_le_bytes(payload.try_into().unwrap_or([0u8; 8]));
-                SqlValue {
-                    value: Some(Value::NumberValue(num)),
-                }
+                ProximaValue::Float64(num)
             }
             0x03 if payload.len() == 8 => {
                 // Int64
                 let i = i64::from_le_bytes(payload.try_into().unwrap_or([0u8; 8]));
-                SqlValue {
-                    value: Some(Value::Int64Value(i)),
-                }
+                ProximaValue::Int64(i)
             }
             0x04 if payload.len() == 1 => {
                 // Bool
-                SqlValue {
-                    value: Some(Value::BoolValue(payload[0] != 0)),
-                }
+                ProximaValue::Boolean(payload[0] != 0)
             }
             0x00 => {
                 // None
-                SqlValue { value: None }
+                ProximaValue::Null
             }
             _ => {
                 // Legacy format fallback (no type tag) - use old heuristic
@@ -2626,11 +2643,7 @@ impl ProximaDataBlock {
     }
 
     /// Legacy heuristic for data without type tags (backward compatibility)
-    fn deserialize_metadata_value_legacy_heuristic(
-        val_bytes: &[u8],
-    ) -> crate::proto::proximadb_v1::SqlValue {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
+    fn deserialize_metadata_value_legacy_heuristic(val_bytes: &[u8]) -> ProximaValue {
         let val_len = val_bytes.len();
 
         if val_len == 8 {
@@ -2640,26 +2653,18 @@ impl ProximaDataBlock {
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
             {
                 // Looks like a string identifier (e.g., "inactive", "category")
-                return SqlValue {
-                    value: Some(Value::StringValue(s.to_string())),
-                };
+                return ProximaValue::String(s.to_string());
             }
             // Default to f64 for numeric data
             let num = f64::from_le_bytes(val_bytes.try_into().unwrap_or([0u8; 8]));
-            SqlValue {
-                value: Some(Value::NumberValue(num)),
-            }
+            ProximaValue::Float64(num)
         } else if val_len == 1 && (val_bytes[0] == 0 || val_bytes[0] == 1) {
             // Single byte with value 0 or 1: likely a bool
-            SqlValue {
-                value: Some(Value::BoolValue(val_bytes[0] != 0)),
-            }
+            ProximaValue::Boolean(val_bytes[0] != 0)
         } else {
             // Everything else: treat as string
             let s = String::from_utf8_lossy(val_bytes).to_string();
-            SqlValue {
-                value: Some(Value::StringValue(s)),
-            }
+            ProximaValue::String(s)
         }
     }
 
@@ -2674,7 +2679,7 @@ impl ProximaDataBlock {
         data: &[u8],
         collection_config: Option<&crate::proto::proximadb_v1::Collection>,
     ) -> anyhow::Result<Self> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::Read;
 
         trace!(
@@ -2692,18 +2697,111 @@ impl ProximaDataBlock {
         let first_byte = data[0];
         trace!("[DECODE] First byte: 0x{:02X}", first_byte);
 
+        // Track compression algorithm for final block reconstruction
+        let mut compression_algorithm = CompressionAlgorithm::None;
+
         // Check compression/encoding status
-        let (decompressed_data, encoding_marker) = if (0x80..0x90).contains(&first_byte) {
-            // This is compressed data (0x80-0x8F range)
-            trace!("[DECODE] Compressed data detected");
-            let algorithm = match first_byte {
+        let (decompressed_data, encoding_marker) = if (0x02..=0x0E).contains(&first_byte) {
+            // New compression marker format (0x02-0x0E)
+            trace!(
+                "[DECODE] New compression marker format detected: 0x{:02X}",
+                first_byte
+            );
+
+            // Map compression marker to algorithm
+            compression_algorithm = match first_byte {
+                0x02 => CompressionAlgorithm::None,    // MARKER_UNCOMPRESSED
+                0x03 => CompressionAlgorithm::Zstd,    // MARKER_ZSTD
+                0x04 => CompressionAlgorithm::Lz4,     // MARKER_LZ4
+                0x05 => CompressionAlgorithm::Snappy,  // MARKER_SNAPPY
+                0x06 => CompressionAlgorithm::Gzip,    // MARKER_GZIP
+                0x07 => CompressionAlgorithm::Brotli,  // MARKER_BROTLI
+                0x08 => CompressionAlgorithm::Bzip2,   // MARKER_BZIP2
+                0x09 => CompressionAlgorithm::Deflate, // MARKER_DEFLATE
+                0x0A => CompressionAlgorithm::Xz,      // MARKER_XZ
+                0x0B => CompressionAlgorithm::Zlib,    // MARKER_ZLIB
+                0x0C => CompressionAlgorithm::Lz4hc,   // MARKER_LZ4HC
+                0x0D => CompressionAlgorithm::Lzma,    // MARKER_LZMA
+                0x0E => CompressionAlgorithm::Lzo,     // MARKER_LZO
+                _ => CompressionAlgorithm::None,
+            };
+
+            // For uncompressed data (0x02), use data as-is (just skip the marker)
+            if compression_algorithm == CompressionAlgorithm::None {
+                trace!("[DECODE] Uncompressed data - skipping compression marker");
+                if data.len() < 2 {
+                    return Err(anyhow::anyhow!("Insufficient data for uncompressed block"));
+                }
+
+                // Extract encoding marker (byte 1) and actual data (starts at byte 2)
+                let actual_marker = data[1];
+                let actual_data = &data[2..]; // Skip compression marker and encoding marker
+
+                trace!(
+                    "[DECODE] Encoding marker: 0x{:02X}, data starts at byte 2",
+                    actual_marker
+                );
+                (actual_data.to_vec(), actual_marker)
+            } else {
+                // Compressed data: read original size and decompress
+                trace!(
+                    "[DECODE] Compressed data with algorithm: {:?}",
+                    compression_algorithm
+                );
+                if data.len() < 5 {
+                    return Err(anyhow::anyhow!("Insufficient data for compressed block"));
+                }
+
+                // Read original size
+                let original_size =
+                    u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
+                trace!("[DECODE] Original size: {} bytes", original_size);
+
+                // Decompress the rest of the data
+                let compressed_data = &data[5..];
+                trace!(
+                    "[DECODE] Compressed data size: {} bytes",
+                    compressed_data.len()
+                );
+                let decompressed = decompress(
+                    compressed_data,
+                    compression_algorithm,
+                    CompressionContext::Block,
+                )?;
+                trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
+
+                // The decompressed data starts with encoding marker
+                let actual_marker = if !decompressed.is_empty() {
+                    decompressed[0]
+                } else {
+                    0x00
+                };
+                trace!(
+                    "[DECODE] Encoding marker from decompressed: 0x{:02X}",
+                    actual_marker
+                );
+                // Skip encoding marker - actual data starts at byte 1
+                let actual_data = if decompressed.len() > 1 {
+                    &decompressed[1..]
+                } else {
+                    &decompressed
+                };
+                (actual_data.to_vec(), actual_marker)
+            }
+        } else if (0x80..0x90).contains(&first_byte) {
+            // Legacy compressed data format (0x80-0x8F range)
+            trace!("[DECODE] Legacy compressed data detected");
+            compression_algorithm = match first_byte {
                 0x80 => CompressionAlgorithm::Lz4,
                 0x81 => CompressionAlgorithm::Zstd,
                 0x82 => CompressionAlgorithm::Snappy,
                 0x83 => CompressionAlgorithm::Gzip,
                 _ => CompressionAlgorithm::None,
             };
-            trace!("[DECODE] Compression algorithm: {:?}", algorithm);
+            trace!(
+                "[DECODE] Compression algorithm: {:?}",
+                compression_algorithm
+            );
 
             // Read original size
             let original_size = u32::from_le_bytes([data[1], data[2], data[3], data[4]]) as usize;
@@ -2715,12 +2813,16 @@ impl ProximaDataBlock {
                 "[DECODE] Compressed data size: {} bytes",
                 compressed_data.len()
             );
-            let decompressed = decompress(compressed_data, algorithm, CompressionContext::Block)?;
+            let decompressed = decompress(
+                compressed_data,
+                compression_algorithm,
+                CompressionContext::Block,
+            )?;
             trace!("[DECODE] Decompressed size: {} bytes", decompressed.len());
 
-            // The decompressed data contains: format_version + encoding_marker + data
-            let actual_marker = if decompressed.len() > 1 {
-                decompressed[1] // Skip format version at [0], get encoding marker at [1]
+            // The decompressed data starts with encoding marker
+            let actual_marker = if !decompressed.is_empty() {
+                decompressed[0]
             } else {
                 0x00
             };
@@ -2728,41 +2830,29 @@ impl ProximaDataBlock {
                 "[DECODE] Encoding marker from decompressed: 0x{:02X}",
                 actual_marker
             );
-            (decompressed, actual_marker)
+            // Skip encoding marker - actual data starts at byte 1
+            let actual_data = if decompressed.len() > 1 {
+                &decompressed[1..]
+            } else {
+                &decompressed
+            };
+            (actual_data.to_vec(), actual_marker)
         } else if first_byte == 0x00 {
             // Uncompressed data marker - the actual data follows
-            trace!("[DECODE] Uncompressed data detected");
+            trace!("[DECODE] Legacy uncompressed data marker");
             let actual_data = &data[1..];
-            // The uncompressed data starts with format version and encoding marker
-            let actual_marker = if actual_data.len() > 1 {
-                actual_data[1] // Skip format version at [0], get encoding marker at [1]
+            // The uncompressed data starts with encoding marker
+            let actual_marker = if !actual_data.is_empty() {
+                actual_data[0]
             } else {
                 0x00
             };
-            trace!(
-                "[DECODE] Format version: 0x{:02X}, Encoding marker: 0x{:02X}",
-                if !actual_data.is_empty() {
-                    actual_data[0]
-                } else {
-                    0x00
-                },
-                actual_marker
-            );
+            trace!("[DECODE] Encoding marker: 0x{:02X}", actual_marker);
             (actual_data.to_vec(), actual_marker)
         } else {
-            // Legacy or direct format: check if it's format version
-            trace!("[DECODE] Legacy/direct format detected");
-            if first_byte == 0x01 && data.len() > 1 {
-                // Format version 1, next byte is encoding marker
-                trace!(
-                    "[DECODE] Format version 1, encoding marker: 0x{:02X}",
-                    data[1]
-                );
-                (data.to_vec(), data[1])
-            } else {
-                // Assume first byte is encoding marker directly (very old format)
-                (data.to_vec(), first_byte)
-            }
+            // Legacy format: first byte is encoding marker directly
+            trace!("[DECODE] Legacy format - encoding marker at position 0");
+            (data.to_vec(), first_byte)
         };
 
         // Now process the decompressed data sequentially from position 0
@@ -2776,24 +2866,11 @@ impl ProximaDataBlock {
         // Create cursor at position 0 - read all fields sequentially
         let mut cursor = std::io::Cursor::new(&decompressed_data);
 
-        // Read format version and encoding marker sequentially (matches serialization)
-        let mut format_version_byte = [0u8; 1];
-        cursor.read_exact(&mut format_version_byte)?;
-        let format_version = format_version_byte[0];
-        trace!(
-            "[DECODE] Format version: 0x{:02X} at position 0",
-            format_version
-        );
+        // NOTE: The serialized format does NOT include a format_version byte
+        // Position 0 is encoding_marker, position 1+ is data
+        // We've already extracted encoding_marker above, so we don't read it again
 
-        let mut encoding_marker_byte = [0u8; 1];
-        cursor.read_exact(&mut encoding_marker_byte)?;
-        let encoding_marker_read = encoding_marker_byte[0];
-        trace!(
-            "[DECODE] Encoding marker: 0x{:02X} at position 1",
-            encoding_marker_read
-        );
-
-        // ============ STEP 1: Read record count and dimension (matches serialization) ============
+        // ============ STEP 1: Read record count and dimension ============
         let mut record_count_bytes = [0u8; 4];
         cursor.read_exact(&mut record_count_bytes)?;
         let record_count = u32::from_le_bytes(record_count_bytes) as usize;
@@ -2965,7 +3042,7 @@ impl ProximaDataBlock {
             encoded_id_data.len()
         );
         let codec = ProximaCodec::global();
-        let decoded_id_indices = match codec.decode_i64(&encoded_id_data) {
+        let decoded_id_indices: Vec<i64> = match codec.decode_i64(&encoded_id_data) {
             Ok(indices) => {
                 if indices.len() != record_count {
                     warn!(
@@ -3004,10 +3081,8 @@ impl ProximaDataBlock {
         );
 
         // Store metadata for each key (key_name -> Vec of SqlValue, one per record)
-        let mut metadata_columns: std::collections::HashMap<
-            String,
-            Vec<Option<crate::proto::proximadb_v1::SqlValue>>,
-        > = std::collections::HashMap::new();
+        let mut metadata_columns: std::collections::HashMap<String, Vec<Option<ProximaValue>>> =
+            std::collections::HashMap::new();
 
         for i in 0..metadata_key_count {
             trace!("[DECODE] Processing metadata key {}", i);
@@ -3058,7 +3133,7 @@ impl ProximaDataBlock {
                 let mut marker_byte = [0u8; 1];
                 cursor.read_exact(&mut marker_byte)?;
                 let compression_algo =
-                    crate::core::compression::markers::compression_algorithm_from_marker(
+                    proximadb_compression::markers::compression_algorithm_from_marker(
                         marker_byte[0],
                     );
                 trace!(
@@ -3110,9 +3185,9 @@ impl ProximaDataBlock {
                     // Deserialize value using collection config for type info (if available)
                     // This uses filterable_columns from collection config as the source of truth
                     // for type information, eliminating guesswork for declared filterable columns!
-                    let sql_value =
+                    let proxima_value =
                         Self::deserialize_metadata_value(&key_name, &val_bytes, collection_config);
-                    sparse_values.push(Some(sql_value));
+                    sparse_values.push(Some(proxima_value));
                 }
             }
 
@@ -3218,7 +3293,7 @@ impl ProximaDataBlock {
         trace!("[DECODE] Read timestamps: {} bytes", timestamp_len);
 
         // Decode timestamps using ProximaCodec (migrated from old decoder)
-        let decoded_timestamps = match codec.decode_i64(&timestamp_bytes) {
+        let decoded_timestamps: Vec<i64> = match codec.decode_i64(&timestamp_bytes) {
             Ok(timestamps) => {
                 trace!(
                     "✅ [DECODE] Successfully decoded {} timestamps",
@@ -3263,7 +3338,7 @@ impl ProximaDataBlock {
         cursor.read_exact(&mut encoded_source_data)?;
 
         // Use record_count from header instead of storing redundant count
-        let decoded_source_indices = match codec.decode_i64(&encoded_source_data) {
+        let decoded_source_indices: Vec<i64> = match codec.decode_i64(&encoded_source_data) {
             Ok(indices) => {
                 trace!(
                     "✅ [DECODE] Successfully decoded {} source indices",
@@ -3298,7 +3373,10 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => values.into_iter().map(Some).collect(),
+                    Ok(values) => {
+                        let result: Vec<Option<i64>> = values.into_iter().map(Some).collect();
+                        result
+                    }
                     Err(_) => vec![None; record_count],
                 }
             }
@@ -3348,7 +3426,10 @@ impl ProximaDataBlock {
                 let mut data = vec![0u8; data_len];
                 cursor.read_exact(&mut data)?;
                 match codec.decode_i64(&data) {
-                    Ok(values) => values.into_iter().map(Some).collect(),
+                    Ok(values) => {
+                        let result: Vec<Option<i64>> = values.into_iter().map(Some).collect();
+                        result
+                    }
                     Err(_) => vec![None; record_count],
                 }
             }
@@ -3435,7 +3516,7 @@ impl ProximaDataBlock {
 
         // ============ RECONSTRUCT COMPLETE VECTORRECORDS FROM COLUMNAR DATA ============
         trace!(
-            "🔧 [DECODE] Reconstructing {} VectorRecords from columnar data",
+            "🔧 [DECODE] Reconstructing {} ProximaRecords from columnar data",
             record_count
         );
 
@@ -3462,10 +3543,10 @@ impl ProximaDataBlock {
             let id_dict_index = decoded_id_indices[i] as usize;
             trace!("Record[{}]: ID dict_index = {}", i, id_dict_index);
             if id_dict_index < id_dictionary.len() {
-                record.id = id_dictionary[id_dict_index].clone();
+                record.oid = id_dictionary[id_dict_index].clone();
                 trace!(
                     "Record[{}]: Set ID from dict[{}] = '{}'",
-                    i, id_dict_index, record.id
+                    i, id_dict_index, record.oid
                 );
             } else {
                 warn!(
@@ -3474,14 +3555,14 @@ impl ProximaDataBlock {
                     id_dict_index,
                     id_dictionary.len()
                 );
-                record.id = format!("corrupted_id_{i}");
+                record.oid = format!("corrupted_id_{i}");
             }
 
             // Set the correct source from dictionary
             let source_dict_index = decoded_source_indices[i] as usize;
             if source_dict_index < source_dictionary.len() {
                 let source_str = &source_dictionary[source_dict_index];
-                record.source = if source_str.is_empty() {
+                record.origin = if source_str.is_empty() {
                     None
                 } else {
                     Some(source_str.clone())
@@ -3493,28 +3574,39 @@ impl ProximaDataBlock {
                     source_dict_index,
                     source_dictionary.len()
                 );
-                record.source = None;
+                record.origin = None;
             }
 
             // Set timestamp and optional fields from decoded data
-            record.timestamp = Some(decoded_timestamps.get(i).copied().unwrap_or(0));
-            record.updated_at = decoded_updated_ats.get(i).copied().flatten();
-            record.expires_at = decoded_expires_ats.get(i).copied().flatten();
-            record.version = decoded_versions.get(i).copied().flatten();
+            record.created_at_ns = decoded_timestamps.get(i).copied().unwrap_or(0);
+            record.updated_at_ns = decoded_updated_ats
+                .get(i)
+                .copied()
+                .flatten()
+                .unwrap_or(record.created_at_ns);
+            record.valid_to_ns = decoded_expires_ats.get(i).copied().flatten();
+            record.record_version = decoded_versions
+                .get(i)
+                .copied()
+                .flatten()
+                .map(u64::from)
+                .unwrap_or(record.record_version);
             // quantized_vector removed - internalized in storage
 
             // Populate metadata from columnar storage
             tracing::trace!(
                 record_index = i,
-                keys_before = record.metadata.len(),
+                keys_before = record.props.len(),
                 "Record before metadata"
             );
             for (key, values) in &metadata_columns {
                 tracing::trace!(key = %key, values_len = values.len(), record_index = i, "Checking metadata key");
                 match values.get(i) {
-                    Some(Some(sql_value)) => {
-                        tracing::trace!(key = %key, record_index = i, value = ?sql_value, "Adding metadata to record");
-                        record.metadata.insert(key.clone(), sql_value.clone());
+                    Some(Some(proxima_value)) => {
+                        tracing::trace!(key = %key, record_index = i, value = ?proxima_value, "Adding metadata to record");
+                        record
+                            .props
+                            .insert(key.clone(), ProximaTreeNode::Value(proxima_value.clone()));
                     }
                     Some(None) => {
                         tracing::trace!(record_index = i, "Value is None");
@@ -3526,31 +3618,34 @@ impl ProximaDataBlock {
             }
             tracing::trace!(
                 record_index = i,
-                keys_after = record.metadata.len(),
+                keys_after = record.props.len(),
                 "Record after metadata"
             );
 
             trace!(
                 "🔧 [DECODE] Record[{}]: ID='{}', Timestamp={:?}, Source={:?}, Updated_at={:?}, Expires_at={:?}, Version={:?}, Metadata_keys={}",
                 i,
-                record.id,
-                record.timestamp,
-                record.source,
-                record.updated_at,
-                record.expires_at,
-                record.version,
-                record.metadata.len()
+                record.oid,
+                record.created_at_ns,
+                record.origin,
+                record.updated_at_ns,
+                record.valid_to_ns,
+                record.record_version,
+                record.props.len()
             );
         }
 
         trace!(
-            "✅ [DECODE] Successfully reconstructed {} VectorRecords",
+            "✅ [DECODE] Successfully reconstructed {} ProximaRecords",
             record_count
         );
 
         // Reconstruct the block
-        let block_id = metadata.record_count;
+        // Note: block_id is transient and not serialized, so we use default value 0
+        let block_id = 0u32;
         let has_deletes = metadata.has_deletes;
+        // Use the compression algorithm we detected from the compression marker
+        let compression_algorithm_final = compression_algorithm;
 
         // Generate bloom filter before moving records
         let bloom_filter = Self::generate_bloom_filter(&records);
@@ -3567,7 +3662,7 @@ impl ProximaDataBlock {
             quantized_section: None,
             metadata,
             compression_config: BlockCompressionConfig::default(),
-            compression_algorithm: CompressionAlgorithm::None,
+            compression_algorithm: compression_algorithm_final,
             uncompressed_size: 0,
             bloom_filter,
             block_bloom_filter: None,
@@ -3588,7 +3683,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
 
@@ -3688,7 +3783,7 @@ impl ProximaDataBlock {
 
         // Compress vector field if enabled AND Proxima didn't already compress well
         let final_vector_data = if config.enable_vector_compression
-            && config.algorithm != crate::core::compression::CompressionAlgorithm::None
+            && config.algorithm != proximadb_compression::CompressionAlgorithm::None
             && compression_ratio < 2.0
         // Only apply additional compression if Proxima achieved < 2x
         {
@@ -3715,10 +3810,10 @@ impl ProximaDataBlock {
 
                 // Write vector field header: [compression_marker][data] (no size overhead)
                 let compression_marker = match config.algorithm {
-                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                    proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                    proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                    proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                     _ => 0x00,
                 };
 
@@ -3767,7 +3862,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -3785,12 +3880,12 @@ impl ProximaDataBlock {
 
         // Write compression intent (what we'll try, but actual compression is per-group)
         let compression_intent =
-            if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+            if config.algorithm != proximadb_compression::CompressionAlgorithm::None {
                 match config.algorithm {
-                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                    proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                    proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                    proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                     _ => 0x10, // Default to LZ4
                 }
             } else {
@@ -3986,7 +4081,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -4111,7 +4206,7 @@ impl ProximaDataBlock {
         }
 
         // Now compress the entire block
-        if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+        if config.algorithm != proximadb_compression::CompressionAlgorithm::None {
             let compressed_block = compress(
                 &uncompressed_block,
                 config.algorithm,
@@ -4122,10 +4217,10 @@ impl ProximaDataBlock {
 
             // Write compression algorithm marker
             let compression_marker = match config.algorithm {
-                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                 _ => 0x10, // Default to LZ4
             };
             field_data.push(compression_marker);
@@ -4172,7 +4267,7 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding
 
-        use crate::core::compression::{CompressionContext, compress};
+        use proximadb_compression::{CompressionContext, compress};
 
         let mut field_data = Vec::new();
 
@@ -4275,7 +4370,7 @@ impl ProximaDataBlock {
         }
 
         // Now compress the entire block
-        if config.algorithm != crate::core::compression::CompressionAlgorithm::None {
+        if config.algorithm != proximadb_compression::CompressionAlgorithm::None {
             let compressed_block = compress(
                 &uncompressed_block,
                 config.algorithm,
@@ -4286,10 +4381,10 @@ impl ProximaDataBlock {
 
             // Write compression algorithm marker
             let compression_marker = match config.algorithm {
-                crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                 _ => 0x10, // Default to LZ4
             };
             field_data.push(compression_marker);
@@ -4333,11 +4428,11 @@ impl ProximaDataBlock {
     ) -> anyhow::Result<Vec<u8>> {
         // Phase 3: Use UnifiedProximaSIMD for SIMD-accelerated encoding with parallel analysis
 
-        use crate::core::compression::{CompressionContext, compress};
         use crate::storage::engines::core::ops::proximacodec::TypeId;
         use crate::storage::engines::core::ops::proximacodec::{
             ProximaCodec, ProximaScheme as CodecScheme, analysis,
         };
+        use proximadb_compression::{CompressionContext, compress};
         use rayon::prelude::*;
 
         let mut field_data = Vec::new();
@@ -4428,7 +4523,7 @@ impl ProximaDataBlock {
 
             // Compress dimension field if enabled
             let final_dimension_data = if config.enable_vector_compression
-                && config.algorithm != crate::core::compression::CompressionAlgorithm::None
+                && config.algorithm != proximadb_compression::CompressionAlgorithm::None
             {
                 let compressed = compress(
                     &encoded_dimension,
@@ -4439,10 +4534,10 @@ impl ProximaDataBlock {
 
                 // Write dimension field header: [compression_marker][data_size][data]
                 let compression_marker = match config.algorithm {
-                    crate::core::compression::CompressionAlgorithm::Lz4 => 0x10,
-                    crate::core::compression::CompressionAlgorithm::Zstd => 0x11,
-                    crate::core::compression::CompressionAlgorithm::Snappy => 0x12,
-                    crate::core::compression::CompressionAlgorithm::Gzip => 0x13,
+                    proximadb_compression::CompressionAlgorithm::Lz4 => 0x10,
+                    proximadb_compression::CompressionAlgorithm::Zstd => 0x11,
+                    proximadb_compression::CompressionAlgorithm::Snappy => 0x12,
+                    proximadb_compression::CompressionAlgorithm::Gzip => 0x13,
                     _ => 0x00,
                 };
 
@@ -4490,7 +4585,7 @@ impl ProximaDataBlock {
         data: &[u8],
         dimension: usize,
         vector_count: usize,
-    ) -> anyhow::Result<Vec<VectorRecord>> {
+    ) -> anyhow::Result<Vec<ProximaRecord>> {
         use std::io::{Cursor, Read};
 
         trace!(
@@ -4533,7 +4628,7 @@ impl ProximaDataBlock {
 
         if encoding_version == 0x01 {
             // Field-level compression with delta encoding
-            use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+            use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
 
             // ===== DECODE VECTOR FIELD =====
             // Read compression marker
@@ -4598,11 +4693,12 @@ impl ProximaDataBlock {
 
                     match codec.decode(&vector_data) {
                         Ok(floats) => {
+                            let typed_floats: Vec<f32> = floats;
                             trace!(
                                 "✅ [DECODE_FV] Proxima decoded {} floats successfully",
-                                floats.len()
+                                typed_floats.len()
                             );
-                            floats
+                            typed_floats
                         }
                         Err(e) => {
                             warn!("❌ [DECODE_FV] Proxima decoding failed: {}", e);
@@ -4641,16 +4737,21 @@ impl ProximaDataBlock {
                     i, temp_id
                 );
 
-                records.push(VectorRecord {
-                    id: temp_id,
-                    vector,
-                    metadata: std::collections::HashMap::new(),
-                    expires_at: None,
-                    source: None,
-                    timestamp: Some(0),
-                    updated_at: None,
-                    version: None,
-                });
+                let dim = vector.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: temp_id,
+                    ..Default::default()
+                };
+                if !vector.is_empty() {
+                    r.embeddings.push(EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
+                        dim,
+                        ..Default::default()
+                    });
+                }
+                records.push(r);
             }
         } else {
             // Fallback to raw decoding
@@ -4666,16 +4767,21 @@ impl ProximaDataBlock {
                     i, temp_id
                 );
 
-                records.push(VectorRecord {
-                    id: temp_id,
-                    vector,
-                    metadata: std::collections::HashMap::new(),
-                    expires_at: None,
-                    source: None,
-                    timestamp: Some(0),
-                    updated_at: None,
-                    version: None,
-                });
+                let dim = vector.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: temp_id,
+                    ..Default::default()
+                };
+                if !vector.is_empty() {
+                    r.embeddings.push(EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
+                        dim,
+                        ..Default::default()
+                    });
+                }
+                records.push(r);
             }
         }
 
@@ -4687,8 +4793,8 @@ impl ProximaDataBlock {
         data: &[u8],
         dimension: usize,
         vector_count: usize,
-    ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+    ) -> anyhow::Result<Vec<ProximaRecord>> {
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -4895,19 +5001,22 @@ impl ProximaDataBlock {
             }
         }
 
-        // Convert to VectorRecords
+        // Convert to ProximaRecords
         let mut records = Vec::with_capacity(vector_count);
         for (i, vector) in vectors.into_iter().enumerate() {
-            records.push(VectorRecord {
-                id: format!("gv_vec_{:06}", i), // Generated ID for GroupedFieldEncodedAndCompressed
-                vector,
-                metadata: std::collections::HashMap::new(),
-                expires_at: None,
-                source: None,
-                timestamp: Some(0),
-                updated_at: None,
-                version: None,
+            let dim = vector.len() as u32;
+            let mut record = ProximaRecord {
+                oid: format!("gv_vec_{:06}", i), // Generated ID for GroupedFieldEncodedAndCompressed
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                dim,
+                ..Default::default()
             });
+            records.push(record);
         }
 
         trace!(
@@ -4922,8 +5031,8 @@ impl ProximaDataBlock {
         data: &[u8],
         dimension: usize,
         vector_count: usize,
-    ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+    ) -> anyhow::Result<Vec<ProximaRecord>> {
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
 
         trace!(
@@ -4969,6 +5078,10 @@ impl ProximaDataBlock {
         // Decoder will be created per dimension/group as needed
 
         // ===== DECODE EACH DIMENSION FIELD =====
+        // `dim_idx` indexes the inner per-vector slot (`vectors[vec_idx][dim_idx]`)
+        // not the outer iterator, so the standard enumerate-on-collection idiom
+        // doesn't apply here.
+        #[allow(clippy::needless_range_loop)]
         for dim_idx in 0..dimension {
             // Read compression marker for this dimension
             let mut compression_marker = [0u8; 1];
@@ -5035,19 +5148,22 @@ impl ProximaDataBlock {
             }
         }
 
-        // Convert to VectorRecords
+        // Convert to ProximaRecords
         let mut records = Vec::with_capacity(vector_count);
         for (i, vector) in vectors.into_iter().enumerate() {
-            records.push(VectorRecord {
-                id: format!("tv_vec_{:06}", i), // Generated ID for TransposeFieldEncodedAndCompressed
-                vector,
-                metadata: std::collections::HashMap::new(),
-                expires_at: None,
-                source: None,
-                timestamp: Some(0),
-                updated_at: None,
-                version: None,
+            let dim = vector.len() as u32;
+            let mut record = ProximaRecord {
+                oid: format!("tv_vec_{:06}", i), // Generated ID for TransposeFieldEncodedAndCompressed
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                dim,
+                ..Default::default()
             });
+            records.push(record);
         }
 
         trace!(
@@ -5061,7 +5177,7 @@ impl ProximaDataBlock {
     fn decode_existing_columnar_format(
         data: &[u8],
         _encoding_marker: u8,
-    ) -> anyhow::Result<Vec<VectorRecord>> {
+    ) -> anyhow::Result<Vec<ProximaRecord>> {
         use std::io::{Cursor, Read};
 
         let mut cursor = Cursor::new(data);
@@ -5104,16 +5220,19 @@ impl ProximaDataBlock {
                 vector.push(dim_col[row_idx]);
             }
 
-            records.push(VectorRecord {
-                id: format!("tv_vec_{:06}", row_idx), // Generated ID for TransposeFieldEncodedAndCompressed
-                vector,
-                metadata: std::collections::HashMap::new(),
-                expires_at: None,
-                source: None,
-                timestamp: Some(0),
-                updated_at: None,
-                version: None,
+            let dim = vector.len() as u32;
+            let mut record = ProximaRecord {
+                oid: format!("tv_vec_{:06}", row_idx), // Generated ID for TransposeFieldEncodedAndCompressed
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                dim,
+                ..Default::default()
             });
+            records.push(record);
         }
 
         Ok(records)
@@ -5124,8 +5243,8 @@ impl ProximaDataBlock {
         data: &[u8],
         dimension: usize,
         vector_count: usize,
-    ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+    ) -> anyhow::Result<Vec<ProximaRecord>> {
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
         #[allow(dead_code)]
         const GROUP_SIZE: usize = 32;
@@ -5270,19 +5389,22 @@ impl ProximaDataBlock {
             }
         }
 
-        // Convert to VectorRecord format
+        // Convert to ProximaRecord format
         let mut records = Vec::new();
         for (row_idx, vector) in vectors.into_iter().enumerate() {
-            records.push(VectorRecord {
-                id: format!("gb_vec_{:06}", row_idx), // Generated ID for GroupedBlockCompressed
-                vector,
-                metadata: std::collections::HashMap::new(),
-                expires_at: None,
-                source: None,
-                timestamp: Some(0),
-                updated_at: None,
-                version: None,
+            let dim = vector.len() as u32;
+            let mut record = ProximaRecord {
+                oid: format!("gb_vec_{:06}", row_idx), // Generated ID for GroupedBlockCompressed
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                dim,
+                ..Default::default()
             });
+            records.push(record);
         }
 
         trace!(
@@ -5297,8 +5419,8 @@ impl ProximaDataBlock {
         data: &[u8],
         dimension: usize,
         vector_count: usize,
-    ) -> anyhow::Result<Vec<VectorRecord>> {
-        use crate::core::compression::{CompressionAlgorithm, CompressionContext, decompress};
+    ) -> anyhow::Result<Vec<ProximaRecord>> {
+        use proximadb_compression::{CompressionAlgorithm, CompressionContext, decompress};
         use std::io::{Cursor, Read};
 
         trace!(
@@ -5382,6 +5504,10 @@ impl ProximaDataBlock {
         // Parse uncompressed block data
         let mut block_cursor = Cursor::new(&uncompressed_block);
 
+        // `dim_idx` indexes the inner per-vector slot (`vectors[row_idx][dim_idx]`)
+        // not the outer iterator, so the standard enumerate-on-collection idiom
+        // doesn't apply here.
+        #[allow(clippy::needless_range_loop)]
         for dim_idx in 0..dimension {
             // Read dimension size
             let mut dim_size_bytes = [0u8; 4];
@@ -5411,19 +5537,22 @@ impl ProximaDataBlock {
             }
         }
 
-        // Convert to VectorRecord format
+        // Convert to ProximaRecord format
         let mut records = Vec::new();
         for (row_idx, vector) in vectors.into_iter().enumerate() {
-            records.push(VectorRecord {
-                id: format!("tb_vec_{:06}", row_idx), // Generated ID for TransposeBlockCompressed
-                vector,
-                metadata: std::collections::HashMap::new(),
-                expires_at: None,
-                source: None,
-                timestamp: Some(0),
-                updated_at: None,
-                version: None,
+            let dim = vector.len() as u32;
+            let mut record = ProximaRecord {
+                oid: format!("tb_vec_{:06}", row_idx), // Generated ID for TransposeBlockCompressed
+                ..Default::default()
+            };
+            record.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                dim,
+                ..Default::default()
             });
+            records.push(record);
         }
 
         trace!(
@@ -5454,7 +5583,7 @@ impl SuperBlock {
             quantized_signature: Vec::new(),
             bloom_filter: None,
             layout: BlockLayout::default(),
-            access_pattern: AccessPattern::default(),
+            access_pattern: BlockStructuresAccessPattern::default(),
         }
     }
 
@@ -5555,10 +5684,10 @@ impl Default for BlockStatistics {
     }
 }
 
-impl Default for AccessPattern {
+impl Default for BlockStructuresAccessPattern {
     fn default() -> Self {
         Self {
-            pattern_type: AccessPatternType::Mixed,
+            pattern_type: BlockStructuresAccessPatternType::Mixed,
             frequency: HashMap::new(),
             temporal_locality: 0.5,
             spatial_locality: 0.5,
@@ -5585,17 +5714,39 @@ mod tests {
     #[test]
     fn test_data_block_creation() {
         let records = vec![
-            VectorRecord {
-                id: "vec_1".to_string(),
-                vector: vec![1.0, 2.0, 3.0],
-                timestamp: Some(1000),
-                ..Default::default()
+            {
+                let values = vec![1.0f32, 2.0, 3.0];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: "vec_1".to_string(),
+                    created_at_ns: 1_000 * 1_000_000,
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             },
-            VectorRecord {
-                id: "vec_2".to_string(),
-                vector: vec![4.0, 5.0, 6.0],
-                timestamp: Some(2000),
-                ..Default::default()
+            {
+                let values = vec![4.0f32, 5.0, 6.0];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: "vec_2".to_string(),
+                    created_at_ns: 2_000 * 1_000_000,
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             },
         ];
 
@@ -5614,7 +5765,7 @@ mod tests {
         let mut superblock = SuperBlock::new(1, "/path/to/file".to_string());
 
         let block = ProximaDataBlock::new(
-            vec![VectorRecord::default()],
+            vec![ProximaRecord::default()],
             BlockCompressionConfig::default(),
         );
 
@@ -5631,21 +5782,24 @@ mod tests {
         let vector_count = 10;
 
         // Create test vectors
-        let records: Vec<VectorRecord> = (0..vector_count)
+        let records: Vec<ProximaRecord> = (0..vector_count)
             .map(|i| {
-                let vector = (0..dimension)
+                let values: Vec<f32> = (0..dimension)
                     .map(|d| ((i as f32 * 0.1) + (d as f32 * 0.01)).sin())
                     .collect();
-                VectorRecord {
-                    id: format!("vec_{i}"),
-                    vector,
-                    metadata: std::collections::HashMap::new(),
-                    expires_at: None,
-                    source: None,
-                    timestamp: Some(0),
-                    updated_at: None,
-                    version: None,
-                }
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: format!("vec_{i}"),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             })
             .collect();
 
@@ -5666,10 +5820,15 @@ mod tests {
         // Verify records match
         assert_eq!(deserialized.records.len(), vector_count);
         for (i, record) in deserialized.records.iter().enumerate() {
-            assert_eq!(record.vector.len(), dimension);
+            let vec = record
+                .embeddings
+                .first()
+                .map(|e| e.as_fp32_slice())
+                .unwrap_or(&[]);
+            assert_eq!(vec.len(), dimension);
             // Check first value to ensure correctness
             let expected = ((i as f32 * 0.1) + (0 as f32 * 0.01)).sin();
-            let diff = (record.vector[0] - expected).abs();
+            let diff = (vec[0] - expected).abs();
             assert!(diff < 0.0001, "Vector mismatch at index {}", i);
         }
 
@@ -5689,16 +5848,32 @@ mod tests {
         assert_eq!(deserialized_grouped.records.len(), vector_count);
         // Verify all dimensions are preserved
         for record in deserialized_grouped.records.iter() {
-            assert_eq!(record.vector.len(), dimension);
+            let vec_len = record
+                .embeddings
+                .first()
+                .map(|e| e.values.len())
+                .unwrap_or(0);
+            assert_eq!(vec_len, dimension);
         }
     }
 
     #[test]
     fn test_block_id_lookup() {
-        let records = vec![VectorRecord {
-            id: "test_id".to_string(),
-            vector: vec![1.0, 2.0],
-            ..Default::default()
+        let records = vec![{
+            let values = vec![1.0f32, 2.0];
+            let dim = values.len() as u32;
+            let mut r = ProximaRecord {
+                oid: "test_id".to_string(),
+                ..Default::default()
+            };
+            r.embeddings.push(EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                dim,
+                ..Default::default()
+            });
+            r
         }];
 
         let block = ProximaDataBlock::new(records, BlockCompressionConfig::default());
@@ -5714,16 +5889,22 @@ mod tests {
         let count = 100;
 
         // Create constant vectors (all 42.0)
-        let records: Vec<VectorRecord> = (0..count)
-            .map(|i| VectorRecord {
-                id: format!("const_{i}"),
-                vector: vec![42.0; dimension],
-                metadata: HashMap::new(),
-                expires_at: None,
-                source: None,
-                timestamp: Some(0),
-                updated_at: None,
-                version: None,
+        let records: Vec<ProximaRecord> = (0..count)
+            .map(|i| {
+                let values = vec![42.0f32; dimension];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: format!("const_{i}"),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             })
             .collect();
 
@@ -5759,8 +5940,13 @@ mod tests {
 
         // Verify data integrity
         for (i, record) in deserialized.records.iter().enumerate() {
-            assert_eq!(record.vector.len(), dimension);
-            for &val in &record.vector {
+            let vec = record
+                .embeddings
+                .first()
+                .map(|e| e.as_fp32_slice())
+                .unwrap_or(&[]);
+            assert_eq!(vec.len(), dimension);
+            for &val in vec {
                 assert!(
                     (val - 42.0).abs() < 0.0001,
                     "Record {} has incorrect value",
@@ -5779,16 +5965,22 @@ mod tests {
         let mut rng = rand::thread_rng();
 
         // Create random vectors
-        let records: Vec<VectorRecord> = (0..count)
-            .map(|i| VectorRecord {
-                id: format!("random_{i}"),
-                vector: (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect(),
-                metadata: HashMap::new(),
-                expires_at: None,
-                source: None,
-                timestamp: Some(0),
-                updated_at: None,
-                version: None,
+        let records: Vec<ProximaRecord> = (0..count)
+            .map(|i| {
+                let values: Vec<f32> = (0..dimension).map(|_| rng.gen_range(-1.0..1.0)).collect();
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: format!("random_{i}"),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             })
             .collect();
 
@@ -5838,18 +6030,23 @@ mod tests {
                 for (i, (original, deserialized)) in
                     records.iter().zip(deserialized.records.iter()).enumerate()
                 {
+                    let orig_vec = original
+                        .embeddings
+                        .first()
+                        .map(|e| e.as_fp32_slice())
+                        .unwrap_or(&[]);
+                    let deser_vec = deserialized
+                        .embeddings
+                        .first()
+                        .map(|e| e.as_fp32_slice())
+                        .unwrap_or(&[]);
                     assert_eq!(
-                        original.vector.len(),
-                        deserialized.vector.len(),
+                        orig_vec.len(),
+                        deser_vec.len(),
                         "Record {} dimension mismatch",
                         i
                     );
-                    for (j, (&orig, &deser)) in original
-                        .vector
-                        .iter()
-                        .zip(deserialized.vector.iter())
-                        .enumerate()
-                    {
+                    for (j, (&orig, &deser)) in orig_vec.iter().zip(deser_vec.iter()).enumerate() {
                         assert!(
                             (orig - deser).abs() < 0.0001,
                             "Record {} dim {} mismatch: {} vs {}",
@@ -5879,7 +6076,7 @@ mod tests {
         let count = 100;
 
         // Create mixed pattern vectors
-        let records: Vec<VectorRecord> = (0..count)
+        let records: Vec<ProximaRecord> = (0..count)
             .map(|i| {
                 let vector = if i < count / 2 {
                     // First half: constant values (compress well)
@@ -5889,15 +6086,20 @@ mod tests {
                     (0..dimension).map(|d| (i + d) as f32).collect()
                 };
 
-                VectorRecord {
-                    id: format!("mixed_{i}"),
-                    vector,
-                    metadata: HashMap::new(),
-                    expires_at: None,
-                    source: None,
-                    timestamp: Some(0),
-                    updated_at: None,
-                    version: None,
+                {
+                    let dim = vector.len() as u32;
+                    let mut r = ProximaRecord {
+                        oid: format!("mixed_{i}"),
+                        ..Default::default()
+                    };
+                    r.embeddings.push(EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
+                        dim,
+                        ..Default::default()
+                    });
+                    r
                 }
             })
             .collect();
@@ -5938,18 +6140,23 @@ mod tests {
                 for (i, (original, deserialized)) in
                     records.iter().zip(deserialized.records.iter()).enumerate()
                 {
+                    let orig_vec = original
+                        .embeddings
+                        .first()
+                        .map(|e| e.as_fp32_slice())
+                        .unwrap_or(&[]);
+                    let deser_vec = deserialized
+                        .embeddings
+                        .first()
+                        .map(|e| e.as_fp32_slice())
+                        .unwrap_or(&[]);
                     assert_eq!(
-                        original.vector.len(),
-                        deserialized.vector.len(),
+                        orig_vec.len(),
+                        deser_vec.len(),
                         "Record {} dimension mismatch",
                         i
                     );
-                    for (j, (&orig, &deser)) in original
-                        .vector
-                        .iter()
-                        .zip(deserialized.vector.iter())
-                        .enumerate()
-                    {
+                    for (j, (&orig, &deser)) in orig_vec.iter().zip(deser_vec.iter()).enumerate() {
                         assert!(
                             (orig - deser).abs() < 0.0001,
                             "Record {} dim {} mismatch: {} vs {}",
@@ -5973,24 +6180,57 @@ mod tests {
 
     #[test]
     fn test_generate_bloom() {
-        use crate::proto::proximadb_v1::VectorRecord;
+        use proximadb_records::{EmbeddingCell, ProximaRecord};
 
         // Create test records
         let records = vec![
-            VectorRecord {
-                id: "vec1".to_string(),
-                vector: vec![1.0, 2.0, 3.0],
-                ..Default::default()
+            {
+                let values = vec![1.0f32, 2.0, 3.0];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: "vec1".to_string(),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             },
-            VectorRecord {
-                id: "vec2".to_string(),
-                vector: vec![4.0, 5.0, 6.0],
-                ..Default::default()
+            {
+                let values = vec![4.0f32, 5.0, 6.0];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: "vec2".to_string(),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             },
-            VectorRecord {
-                id: "vec3".to_string(),
-                vector: vec![7.0, 8.0, 9.0],
-                ..Default::default()
+            {
+                let values = vec![7.0f32, 8.0, 9.0];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: "vec3".to_string(),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             },
         ];
 
@@ -6016,19 +6256,41 @@ mod tests {
     #[test]
     #[allow(clippy::panic)] // Test panic for failure assertion
     fn test_serialize_with_bloom_sync() {
-        use crate::proto::proximadb_v1::VectorRecord;
+        use proximadb_records::{EmbeddingCell, ProximaRecord};
 
         // Create test records
         let records = vec![
-            VectorRecord {
-                id: "test1".to_string(),
-                vector: vec![1.0, 2.0],
-                ..Default::default()
+            {
+                let values = vec![1.0f32, 2.0];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: "test1".to_string(),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             },
-            VectorRecord {
-                id: "test2".to_string(),
-                vector: vec![3.0, 4.0],
-                ..Default::default()
+            {
+                let values = vec![3.0f32, 4.0];
+                let dim = values.len() as u32;
+                let mut r = ProximaRecord {
+                    oid: "test2".to_string(),
+                    ..Default::default()
+                };
+                r.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                r
             },
         ];
 
@@ -6069,14 +6331,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_serialize_with_bloom_async() {
-        use crate::proto::proximadb_v1::VectorRecord;
+        use proximadb_records::{EmbeddingCell, ProximaRecord};
 
         // Create test records
-        let records = vec![VectorRecord {
-            id: "async1".to_string(),
-            vector: vec![10.0, 20.0, 30.0],
+        let values = vec![10.0f32, 20.0, 30.0];
+        let dim = values.len() as u32;
+        let mut async_rec = ProximaRecord {
+            oid: "async1".to_string(),
             ..Default::default()
-        }];
+        };
+        async_rec.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            dim,
+            ..Default::default()
+        });
+        let records = vec![async_rec];
 
         let block = ProximaDataBlock::new(records, BlockCompressionConfig::default());
 
@@ -6122,7 +6393,7 @@ mod tests {
         use super::*;
 
         /// Helper to create test vectors with specific patterns
-        fn create_test_vectors(count: usize, dims: usize, pattern: &str) -> Vec<VectorRecord> {
+        fn create_test_vectors(count: usize, dims: usize, pattern: &str) -> Vec<ProximaRecord> {
             (0..count)
                 .map(|i| {
                     let vector = match pattern {
@@ -6145,41 +6416,55 @@ mod tests {
                             .collect(),
                         _ => vec![0.0; dims],
                     };
-                    VectorRecord {
-                        id: format!("vec_{i}"),
-                        vector,
-                        metadata: std::collections::HashMap::new(),
-                        expires_at: None,
-                        source: None,
-                        timestamp: Some(i as i64),
-                        updated_at: None,
-                        version: None,
+                    {
+                        let dim = vector.len() as u32;
+                        let mut r = ProximaRecord {
+                            oid: format!("vec_{i}"),
+                            created_at_ns: i as i64 * 1_000_000,
+                            ..Default::default()
+                        };
+                        r.embeddings.push(EmbeddingCell {
+                            model_id: "default".to_string(),
+                            modality: "vector".to_string(),
+                            values: proximadb_records::EmbeddingValues::Fp32(vector),
+                            dim,
+                            ..Default::default()
+                        });
+                        r
                     }
                 })
                 .collect()
         }
 
         /// Verify roundtrip accuracy for encoding/decoding
-        fn verify_roundtrip(original: &[VectorRecord], decoded: &[VectorRecord], tolerance: f32) {
+        fn verify_roundtrip(original: &[ProximaRecord], decoded: &[ProximaRecord], tolerance: f32) {
             assert_eq!(original.len(), decoded.len(), "Record count mismatch");
 
             for (i, (orig, dec)) in original.iter().zip(decoded.iter()).enumerate() {
-                assert_eq!(orig.id, dec.id, "ID mismatch at record {}", i);
+                assert_eq!(orig.oid, dec.oid, "ID mismatch at record {}", i);
+                let orig_vec = orig
+                    .embeddings
+                    .first()
+                    .map(|e| e.as_fp32_slice())
+                    .unwrap_or(&[]);
+                let dec_vec = dec
+                    .embeddings
+                    .first()
+                    .map(|e| e.as_fp32_slice())
+                    .unwrap_or(&[]);
                 assert_eq!(
-                    orig.vector.len(),
-                    dec.vector.len(),
+                    orig_vec.len(),
+                    dec_vec.len(),
                     "Dimension mismatch at record {}",
                     i
                 );
                 assert_eq!(
-                    orig.timestamp, dec.timestamp,
+                    orig.created_at_ns, dec.created_at_ns,
                     "Timestamp mismatch at record {}",
                     i
                 );
 
-                for (d, (&orig_val, &dec_val)) in
-                    orig.vector.iter().zip(dec.vector.iter()).enumerate()
-                {
+                for (d, (&orig_val, &dec_val)) in orig_vec.iter().zip(dec_vec.iter()).enumerate() {
                     let diff = (orig_val - dec_val).abs();
                     assert!(
                         diff <= tolerance,
@@ -6519,7 +6804,17 @@ mod tests {
                 .iter()
                 .zip(grouped_deserialized.records.iter())
             {
-                for (tv, gv) in t.vector.iter().zip(g.vector.iter()) {
+                let t_vector = t
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.as_fp32_slice())
+                    .unwrap_or(&[]);
+                let g_vector = g
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.as_fp32_slice())
+                    .unwrap_or(&[]);
+                for (tv, gv) in t_vector.iter().zip(g_vector.iter()) {
                     assert!(
                         (tv - gv).abs() < 0.0001,
                         "Transpose and Grouped produce different results"
@@ -6534,7 +6829,13 @@ mod tests {
             let vectors = create_test_vectors(100, 256, "normalized");
 
             // Calculate raw size (100 vectors × 256 dims × 4 bytes)
-            let raw_size = vectors.len() * vectors[0].vector.len() * 4;
+            let raw_size = vectors.len()
+                * vectors[0]
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.len())
+                    .unwrap_or(0)
+                * 4;
 
             // Test GroupedField compression
             let grouped_config = BlockCompressionConfig {

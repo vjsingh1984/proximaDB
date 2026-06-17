@@ -110,16 +110,19 @@ pub enum OptimizationUrgency {
 #[derive(Debug, Clone)]
 pub struct OptimizationContext {
     /// Current query performance numbers at the time the request was created
-    pub current_performance: PerformanceMetrics,
+    pub current_performance: AutomlPerformanceMetrics,
     /// Characterisation of the workload mix seen by the collection
     pub workload_characteristics: WorkloadCharacteristics,
     /// System resource utilisation at the time the request was created
-    pub resource_usage: ResourceUsage,
+    pub resource_usage: AutomlResourceUsage,
 }
+
+/// Backwards-compat alias for [`AutomlPerformanceMetrics`].
+pub type PerformanceMetrics = AutomlPerformanceMetrics;
 
 /// Performance metrics
 #[derive(Debug, Clone)]
-pub struct PerformanceMetrics {
+pub struct AutomlPerformanceMetrics {
     /// Median (P50) query end-to-end latency in milliseconds
     pub query_latency_p50: f64,
     /// 99th-percentile query end-to-end latency in milliseconds
@@ -169,7 +172,7 @@ pub enum AccessPattern {
 
 /// Resource usage metrics
 #[derive(Debug, Clone)]
-pub struct ResourceUsage {
+pub struct AutomlResourceUsage {
     /// CPU utilisation as a percentage (0.0–100.0)
     pub cpu_usage_percent: f64,
     /// Current resident memory consumption in MB
@@ -400,7 +403,7 @@ impl AutoMLService {
             0.99
         };
 
-        let performance = PerformanceMetrics {
+        let performance = AutomlPerformanceMetrics {
             query_latency_p50: latency_p50,
             query_latency_p99: latency_p99,
             throughput_qps: throughput,
@@ -414,7 +417,7 @@ impl AutoMLService {
             data_growth_rate: 100.0,
         };
 
-        let resources = ResourceUsage {
+        let resources = AutomlResourceUsage {
             cpu_usage_percent: system_metrics.cpu_usage as f64,
             memory_usage_mb: system_metrics.memory_used_bytes / (1024 * 1024),
             disk_io_mb_per_sec: 0.0,

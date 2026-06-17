@@ -15,11 +15,8 @@ Test Coverage:
 """
 
 import time
-import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List
 
-import numpy as np
 import pytest
 
 from proximadb_sdk import (

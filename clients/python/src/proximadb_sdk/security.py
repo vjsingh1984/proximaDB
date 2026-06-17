@@ -17,16 +17,16 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import ssl
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Set, TypeVar, Union
+from typing import Any, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -66,14 +66,14 @@ class OAuth2TokenResponse:
 
     access_token: str
     token_type: str = "Bearer"
-    expires_in: Optional[int] = None
-    refresh_token: Optional[str] = None
-    scope: Optional[str] = None
-    id_token: Optional[str] = None
+    expires_in: int | None = None
+    refresh_token: str | None = None
+    scope: str | None = None
+    id_token: str | None = None
     issued_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
     @property
-    def expires_at(self) -> Optional[datetime]:
+    def expires_at(self) -> datetime | None:
         """Calculate expiration time."""
         if self.expires_in:
             return self.issued_at + timedelta(seconds=self.expires_in)
@@ -87,7 +87,7 @@ class OAuth2TokenResponse:
         # Consider expired 30 seconds before actual expiry for safety
         return datetime.now(timezone.utc) >= (self.expires_at - timedelta(seconds=30))
 
-    def time_until_expiry(self) -> Optional[timedelta]:
+    def time_until_expiry(self) -> timedelta | None:
         """Get time until token expires."""
         if self.expires_at is None:
             return None
@@ -100,13 +100,13 @@ class OAuth2Config:
 
     provider: OAuth2Provider = OAuth2Provider.GENERIC
     client_id: str = ""
-    client_secret: Optional[str] = None
-    token_url: Optional[str] = None
-    authorize_url: Optional[str] = None
-    userinfo_url: Optional[str] = None
-    scopes: List[str] = field(default_factory=lambda: ["openid", "profile"])
-    redirect_uri: Optional[str] = None
-    audience: Optional[str] = None
+    client_secret: str | None = None
+    token_url: str | None = None
+    authorize_url: str | None = None
+    userinfo_url: str | None = None
+    scopes: list[str] = field(default_factory=lambda: ["openid", "profile"])
+    redirect_uri: str | None = None
+    audience: str | None = None
     # Token refresh settings
     auto_refresh: bool = True
     refresh_threshold_seconds: int = 300  # Refresh 5 minutes before expiry
@@ -140,13 +140,13 @@ class OAuth2TokenManager:
 
     def __init__(self, config: OAuth2Config):
         self.config = config
-        self._token: Optional[OAuth2TokenResponse] = None
+        self._token: OAuth2TokenResponse | None = None
         self._lock = threading.RLock()
-        self._refresh_callbacks: List[Callable[[OAuth2TokenResponse], None]] = []
-        self._pkce_verifier: Optional[str] = None
+        self._refresh_callbacks: list[Callable[[OAuth2TokenResponse], None]] = []
+        self._pkce_verifier: str | None = None
 
     @property
-    def token(self) -> Optional[OAuth2TokenResponse]:
+    def token(self) -> OAuth2TokenResponse | None:
         """Get current token, refreshing if needed."""
         with self._lock:
             if self._token and self._token.is_expired and self.config.auto_refresh:
@@ -164,7 +164,7 @@ class OAuth2TokenManager:
         self._refresh_callbacks.append(callback)
 
     def exchange_code(
-        self, code: str, code_verifier: Optional[str] = None
+        self, code: str, code_verifier: str | None = None
     ) -> OAuth2TokenResponse:
         """
         Exchange authorization code for tokens.
@@ -386,9 +386,9 @@ class RoleDefinition:
     """Role with associated permissions."""
 
     name: str
-    permissions: Set[str]
+    permissions: set[str]
     description: str = ""
-    inherits: Optional[List[str]] = None
+    inherits: list[str] | None = None
 
     def __post_init__(self):
         if self.inherits is None:
@@ -471,19 +471,19 @@ class RBACManager:
         ),
     }
 
-    def __init__(self, custom_roles: Optional[Dict[str, RoleDefinition]] = None):
-        self._roles: Dict[str, RoleDefinition] = {**self.DEFAULT_ROLES}
+    def __init__(self, custom_roles: dict[str, RoleDefinition] | None = None):
+        self._roles: dict[str, RoleDefinition] = {**self.DEFAULT_ROLES}
         if custom_roles:
             self._roles.update(custom_roles)
-        self._permission_cache: Dict[str, Set[str]] = {}
-        self._audit_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+        self._permission_cache: dict[str, set[str]] = {}
+        self._audit_callback: Callable[[dict[str, Any]], None] | None = None
 
     def register_role(self, role: RoleDefinition):
         """Register a custom role."""
         self._roles[role.name] = role
         self._permission_cache.clear()  # Invalidate cache
 
-    def get_effective_permissions(self, roles: List[str]) -> Set[str]:
+    def get_effective_permissions(self, roles: list[str]) -> set[str]:
         """
         Get all effective permissions for a set of roles.
 
@@ -517,9 +517,9 @@ class RBACManager:
 
     def check_permission(
         self,
-        roles: List[str],
+        roles: list[str],
         required_permission: str,
-        resource: Optional[str] = None,
+        resource: str | None = None,
     ) -> bool:
         """
         Check if roles have the required permission.
@@ -577,7 +577,7 @@ class RBACManager:
 
         return decorator
 
-    def require_any_permission(self, permissions: List[str]):
+    def require_any_permission(self, permissions: list[str]):
         """Decorator requiring any of the listed permissions."""
 
         def decorator(func: F) -> F:
@@ -602,15 +602,15 @@ class RBACManager:
 
         return decorator
 
-    def set_audit_callback(self, callback: Callable[[Dict[str, Any]], None]):
+    def set_audit_callback(self, callback: Callable[[dict[str, Any]], None]):
         """Set callback for audit logging."""
         self._audit_callback = callback
 
     def _log_access_decision(
         self,
-        roles: List[str],
+        roles: list[str],
         permission: str,
-        resource: Optional[str],
+        resource: str | None,
         allowed: bool,
     ):
         """Log access decision for audit."""
@@ -641,17 +641,17 @@ class SecurityContext:
     """
 
     user_id: str
-    tenant_id: Optional[str] = None
-    roles: List[str] = field(default_factory=list)
-    permissions: Set[str] = field(default_factory=set)
-    session_id: Optional[str] = None
-    request_id: Optional[str] = None
-    client_ip: Optional[str] = None
-    user_agent: Optional[str] = None
+    tenant_id: str | None = None
+    roles: list[str] = field(default_factory=list)
+    permissions: set[str] = field(default_factory=set)
+    session_id: str | None = None
+    request_id: str | None = None
+    client_ip: str | None = None
+    user_agent: str | None = None
     authenticated_at: datetime = field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def has_permission(self, permission: str) -> bool:
         """Check if context has a specific permission."""
@@ -669,7 +669,7 @@ class SecurityContext:
 _security_context_local = threading.local()
 
 
-def get_current_security_context() -> Optional[SecurityContext]:
+def get_current_security_context() -> SecurityContext | None:
     """Get the current security context."""
     return getattr(_security_context_local, "context", None)
 
@@ -737,19 +737,19 @@ class AuditEvent:
     event_type: AuditEventType
     timestamp: datetime
     user_id: str
-    tenant_id: Optional[str]
+    tenant_id: str | None
     action: str
     resource_type: str
-    resource_id: Optional[str]
+    resource_id: str | None
     outcome: str  # "success", "failure", "denied"
-    client_ip: Optional[str] = None
-    user_agent: Optional[str] = None
-    request_id: Optional[str] = None
-    session_id: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    client_ip: str | None = None
+    user_agent: str | None = None
+    request_id: str | None = None
+    session_id: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
             "event_id": self.event_id,
@@ -787,29 +787,29 @@ class AuditLogger:
 
     def __init__(
         self,
-        log_file: Optional[str] = None,
-        remote_endpoint: Optional[str] = None,
+        log_file: str | None = None,
+        remote_endpoint: str | None = None,
         enable_signing: bool = False,
-        signing_key: Optional[bytes] = None,
+        signing_key: bytes | None = None,
     ):
         self._log_file = log_file
         self._remote_endpoint = remote_endpoint
         self._enable_signing = enable_signing
         self._signing_key = signing_key
-        self._callbacks: List[Callable[[AuditEvent], None]] = []
+        self._callbacks: list[Callable[[AuditEvent], None]] = []
         self._lock = threading.Lock()
-        self._batch: List[AuditEvent] = []
+        self._batch: list[AuditEvent] = []
         self._batch_size = 100
-        self._last_hash: Optional[str] = None
+        self._last_hash: str | None = None
 
     def log(
         self,
         event_type: AuditEventType,
         action: str,
         resource_type: str,
-        resource_id: Optional[str] = None,
+        resource_id: str | None = None,
         outcome: str = "success",
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> AuditEvent:
         """
         Log an audit event.
@@ -856,7 +856,7 @@ class AuditLogger:
         user_id: str,
         auth_method: str,
         outcome: str,
-        details: Optional[Dict[str, Any]] = None,
+        details: dict[str, Any] | None = None,
     ) -> AuditEvent:
         """Log authentication event."""
         return self.log(
@@ -871,7 +871,7 @@ class AuditLogger:
     def log_authorization(
         self,
         permission: str,
-        resource_id: Optional[str],
+        resource_id: str | None,
         allowed: bool,
     ) -> AuditEvent:
         """Log authorization event."""
@@ -887,8 +887,8 @@ class AuditLogger:
         self,
         action: str,
         resource_type: str,
-        resource_id: Optional[str],
-        details: Optional[Dict[str, Any]] = None,
+        resource_id: str | None,
+        details: dict[str, Any] | None = None,
     ) -> AuditEvent:
         """Log data access event."""
         return self.log(
@@ -971,13 +971,13 @@ class MTLSConfig:
     """mTLS configuration."""
 
     enabled: bool = False
-    client_cert_path: Optional[str] = None
-    client_key_path: Optional[str] = None
-    ca_cert_path: Optional[str] = None
+    client_cert_path: str | None = None
+    client_key_path: str | None = None
+    ca_cert_path: str | None = None
     verify_hostname: bool = True
     check_revocation: bool = True
     min_tls_version: str = "TLSv1.2"
-    allowed_ciphers: Optional[List[str]] = None
+    allowed_ciphers: list[str] | None = None
 
     def create_ssl_context(self) -> ssl.SSLContext:
         """Create configured SSL context."""
@@ -1013,7 +1013,7 @@ class MTLSConfig:
 
         return context
 
-    def validate(self) -> List[str]:
+    def validate(self) -> list[str]:
         """Validate configuration, returning list of issues."""
         issues = []
 
@@ -1060,10 +1060,10 @@ class SecurityManager:
 
     def __init__(
         self,
-        oauth2_config: Optional[OAuth2Config] = None,
-        rbac_manager: Optional[RBACManager] = None,
-        audit_logger: Optional[AuditLogger] = None,
-        mtls_config: Optional[MTLSConfig] = None,
+        oauth2_config: OAuth2Config | None = None,
+        rbac_manager: RBACManager | None = None,
+        audit_logger: AuditLogger | None = None,
+        mtls_config: MTLSConfig | None = None,
     ):
         self.oauth2 = OAuth2TokenManager(oauth2_config) if oauth2_config else None
         self.rbac = rbac_manager or RBACManager()
@@ -1082,10 +1082,10 @@ class SecurityManager:
     def create_context(
         self,
         user_id: str,
-        tenant_id: Optional[str] = None,
-        roles: Optional[List[str]] = None,
-        client_ip: Optional[str] = None,
-        user_agent: Optional[str] = None,
+        tenant_id: str | None = None,
+        roles: list[str] | None = None,
+        client_ip: str | None = None,
+        user_agent: str | None = None,
     ) -> SecurityContext:
         """Create a security context."""
         roles = roles or []
@@ -1101,7 +1101,7 @@ class SecurityManager:
             user_agent=user_agent,
         )
 
-    def check_permission(self, permission: str, resource: Optional[str] = None) -> bool:
+    def check_permission(self, permission: str, resource: str | None = None) -> bool:
         """Check permission using current context."""
         context = get_current_security_context()
         if context is None:
@@ -1112,7 +1112,7 @@ class SecurityManager:
         """Decorator requiring a permission."""
         return self.rbac.require_permission(permission)
 
-    def get_ssl_context(self) -> Optional[ssl.SSLContext]:
+    def get_ssl_context(self) -> ssl.SSLContext | None:
         """Get SSL context if mTLS is configured."""
         if self.mtls and self.mtls.enabled:
             return self.mtls.create_ssl_context()

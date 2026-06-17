@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Cache strategy for queries
 #[derive(Debug, Clone, Copy)]
@@ -24,9 +24,9 @@ pub enum CacheStrategy {
 /// Query cache for storing results
 pub struct QueryCache {
     strategy: CacheStrategy,
-    cache: Arc<RwLock<HashMap<String, Vec<VectorRecord>>>>,
+    cache: Arc<RwLock<HashMap<String, Vec<ProximaRecord>>>>,
     capacity: usize,
-    stats: CacheStats,
+    stats: ColumnarResultCacheStats,
 }
 
 impl QueryCache {
@@ -36,12 +36,12 @@ impl QueryCache {
             strategy,
             cache: Arc::new(RwLock::new(HashMap::new())),
             capacity,
-            stats: CacheStats::default(),
+            stats: ColumnarResultCacheStats::default(),
         }
     }
 
     /// Get cached results
-    pub fn get(&mut self, key: &str) -> Option<Vec<VectorRecord>> {
+    pub fn get(&mut self, key: &str) -> Option<Vec<ProximaRecord>> {
         match self.strategy {
             CacheStrategy::None => None,
             CacheStrategy::LRU => {
@@ -62,7 +62,7 @@ impl QueryCache {
     }
 
     /// Put results in cache
-    pub fn put(&mut self, key: String, records: Vec<VectorRecord>) {
+    pub fn put(&mut self, key: String, records: Vec<ProximaRecord>) {
         match self.strategy {
             CacheStrategy::None => {}
             CacheStrategy::LRU => {
@@ -100,21 +100,21 @@ impl QueryCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> &CacheStats {
+    pub fn stats(&self) -> &ColumnarResultCacheStats {
         &self.stats
     }
 }
 
 /// Cache statistics
 #[derive(Debug, Clone, Default)]
-pub struct CacheStats {
+pub struct ColumnarResultCacheStats {
     pub hits: usize,
     pub misses: usize,
     pub insertions: usize,
     pub evictions: usize,
 }
 
-impl CacheStats {
+impl ColumnarResultCacheStats {
     /// Get hit rate
     pub fn hit_rate(&self) -> f64 {
         let total = self.hits + self.misses;

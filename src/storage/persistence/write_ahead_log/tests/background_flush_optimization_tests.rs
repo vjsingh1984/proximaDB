@@ -10,7 +10,6 @@ mod tests {
     use tokio::sync::{Mutex, RwLock};
 
     use crate::compute::distance_computation::DistanceMetric;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::background_flush_context::{
         BackgroundFlushContext, CompressionConfig, OperationPriority, StorageEngineType,
     };
@@ -20,8 +19,9 @@ mod tests {
         FlushDataSource, WALFlushCoordinator,
     };
     use crate::storage::traits::{
-        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageEngine,
+        CompactionParameters, CompactionResult, FlushParameters, FlushResult, UnifiedStorageFormat,
     };
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     /// Mock storage engine for testing
     #[allow(dead_code)]
@@ -51,7 +51,7 @@ mod tests {
     }
 
     #[async_trait::async_trait]
-    impl UnifiedStorageEngine for MockStorageEngine {
+    impl UnifiedStorageFormat for MockStorageEngine {
         fn engine_name(&self) -> &'static str {
             "mock_storage_engine"
         }
@@ -110,8 +110,8 @@ mod tests {
             "test-1.0"
         }
 
-        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-            crate::storage::traits::StorageEngineStrategy::Viper
+        fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+            crate::storage::traits::StorageFormatStrategy::Viper
         }
 
         async fn collect_engine_metrics(
@@ -125,7 +125,7 @@ mod tests {
             _collection_id: &str,
             _base_path: &str,
             _vector_id: &str,
-        ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        ) -> anyhow::Result<Option<proximadb_records::ProximaRecord>> {
             Ok(None)
         }
 
@@ -163,16 +163,19 @@ mod tests {
         }
     }
 
-    fn create_test_vectors(count: usize) -> Vec<VectorRecord> {
+    fn create_test_vectors(count: usize) -> Vec<ProximaRecord> {
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("test_vector_{}", i),
-                vector: vec![0.1; 384],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
+            .map(|i| ProximaRecord {
+                oid: format!("test_vector_{}", i),
+                embeddings: vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    values: vec![0.1; 384],
+                    dim: 384,
+                    ..Default::default()
+                }],
+                record_version: 1,
+                method: Some("test".to_string()),
                 ..Default::default()
             })
             .collect()
@@ -180,7 +183,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_background_flush_context_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let context = create_test_context("test_collection", StorageEngineType::Viper);
 
@@ -198,7 +201,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_context_optimized_compaction() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Create mock storage engines
         let viper_engine = Arc::new(MockStorageEngine::new("viper"));
@@ -210,11 +213,11 @@ mod tests {
             let mut engines = storage_engines.write().await;
             engines.insert(
                 "viper".to_string(),
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines.insert(
                 "sst".to_string(),
-                sst_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                sst_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
         }
 
@@ -253,7 +256,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_flush_coordinator_with_context_optimization() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Create flush coordinator
         let coordinator = WALFlushCoordinator::new();
@@ -266,11 +269,11 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
         coordinator
-            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageEngine>)
+            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageFormat>)
             .await;
 
         // Create test vectors
@@ -309,7 +312,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_engine_selection_optimization() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let coordinator = WALFlushCoordinator::new();
 
@@ -320,11 +323,11 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
         coordinator
-            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageEngine>)
+            .register_storage_engine("sst", sst_engine.clone() as Arc<dyn UnifiedStorageFormat>)
             .await;
 
         let test_vectors = create_test_vectors(5);
@@ -368,7 +371,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_configuration_from_context() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let context = create_test_context("perf_test", StorageEngineType::Viper);
 
@@ -400,7 +403,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_service_call_elimination() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // This test verifies that when context is provided, no collection service calls are made
         let coordinator = WALFlushCoordinator::new();
@@ -412,7 +415,7 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                mock_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                mock_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
 
@@ -443,7 +446,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_end_to_end_optimization_flow() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         // Simulate the complete optimized flow:
         // VectorOperationsService → BackgroundFlushContext → FlushCoordinator → BackgroundManager
@@ -457,7 +460,7 @@ mod tests {
         coordinator
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await;
 
@@ -467,7 +470,7 @@ mod tests {
         bg_manager
             .register_storage_engine(
                 "viper",
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             )
             .await
             .unwrap();
@@ -492,7 +495,7 @@ mod tests {
             let mut engines = HashMap::new();
             engines.insert(
                 "viper".to_string(),
-                viper_engine.clone() as Arc<dyn UnifiedStorageEngine>,
+                viper_engine.clone() as Arc<dyn UnifiedStorageFormat>,
             );
             engines
         }));

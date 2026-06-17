@@ -2,7 +2,7 @@
 //!
 //! This module provides adapter types that connect the new storage format traits
 //! to existing storage engines. Following the Adapter Pattern, it wraps existing
-//! `UnifiedStorageEngine` implementations to provide the `InternalFormat` interface.
+//! `UnifiedStorageFormat` implementations to provide the `InternalFormat` interface.
 //!
 //! ## Architecture
 //!
@@ -11,7 +11,7 @@
 //! │                         ADAPTER PATTERN                                  │
 //! │                                                                          │
 //! │    ┌───────────────────────┐         ┌───────────────────────┐          │
-//! │    │   InternalFormat      │         │ UnifiedStorageEngine  │          │
+//! │    │   InternalFormat      │         │ UnifiedStorageFormat  │          │
 //! │    │   (New Trait)         │         │ (Existing Trait)      │          │
 //! │    └───────────┬───────────┘         └───────────┬───────────┘          │
 //! │                │                                 │                       │
@@ -19,7 +19,7 @@
 //! │                ▼                                 ▼                       │
 //! │    ┌─────────────────────────────────────────────────────────┐          │
 //! │    │           InternalFormatAdapter<E>                       │          │
-//! │    │   - Wraps UnifiedStorageEngine                          │          │
+//! │    │   - Wraps UnifiedStorageFormat                          │          │
 //! │    │   - Implements InternalFormat                           │          │
 //! │    │   - Translates between APIs                             │          │
 //! │    └─────────────────────────────────────────────────────────┘          │
@@ -49,6 +49,7 @@ use arrow_schema::{DataType as ArrowDataType, Field, Schema as ArrowSchema};
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::stream;
+use proximadb_records::ProximaTreeNode;
 use tracing::{debug, warn};
 
 use super::traits::{
@@ -56,17 +57,17 @@ use super::traits::{
     ReadContext, RecordBatchStream, StorageFormat, VectorBatch, VectorBatchStream,
     VectorReadContext, VectorWriteContext, WriteContext, WriteResult,
 };
-use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageFormat};
 
 // ============================================================================
 // Internal Format Adapter
 // ============================================================================
 
-/// Adapter that wraps a `UnifiedStorageEngine` to provide `InternalFormat` interface.
+/// Adapter that wraps a `UnifiedStorageFormat` to provide `InternalFormat` interface.
 ///
 /// This adapter bridges the gap between:
 /// - **New API**: `InternalFormat` trait with Arrow RecordBatch-based I/O
-/// - **Existing API**: `UnifiedStorageEngine` trait with VectorRecord-based operations
+/// - **Existing API**: `UnifiedStorageFormat` trait with VectorRecord-based operations
 ///
 /// ## Design Notes
 ///
@@ -78,14 +79,14 @@ use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
 /// ## Thread Safety
 ///
 /// The adapter is `Send + Sync` as it only holds an `Arc` to the underlying engine.
-pub struct InternalFormatAdapter<E: UnifiedStorageEngine> {
+pub struct InternalFormatAdapter<E: UnifiedStorageFormat> {
     /// The wrapped storage engine
     engine: Arc<E>,
     /// Format version string
     format_version: String,
 }
 
-impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat> InternalFormatAdapter<E> {
     /// Create a new adapter wrapping the given storage engine
     pub fn new(engine: Arc<E>) -> Self {
         Self {
@@ -102,25 +103,25 @@ impl<E: UnifiedStorageEngine> InternalFormatAdapter<E> {
     /// Get the format type based on engine strategy
     fn get_format_type(&self) -> FormatType {
         match self.engine.strategy() {
-            StorageEngineStrategy::Sst => FormatType::Sst,
-            StorageEngineStrategy::Helix => FormatType::Helix,
-            StorageEngineStrategy::Viper => FormatType::Viper,
-            StorageEngineStrategy::Nova => FormatType::Nova,
-            StorageEngineStrategy::Swift => FormatType::Swift,
-            StorageEngineStrategy::Raptor => FormatType::Raptor,
-            StorageEngineStrategy::TimeSeries => FormatType::Sst, // TimeSeries uses Arrow format
-            StorageEngineStrategy::Hybrid => FormatType::Sst,     // Default to SST for hybrid
-            StorageEngineStrategy::Cedar => FormatType::Sst, // CEDAR uses SST-like block format
-            StorageEngineStrategy::Chrono => FormatType::Sst, // CHRONO uses time-partitioned blocks
+            StorageFormatStrategy::Sst => FormatType::Sst,
+            StorageFormatStrategy::Helix => FormatType::Helix,
+            StorageFormatStrategy::Viper => FormatType::Viper,
+            StorageFormatStrategy::Nova => FormatType::Nova,
+            StorageFormatStrategy::Swift => FormatType::Swift,
+            StorageFormatStrategy::Raptor => FormatType::Raptor,
+            StorageFormatStrategy::Hybrid => FormatType::Sst,
+            StorageFormatStrategy::TimeSeries => FormatType::Sst,
+            StorageFormatStrategy::Cedar => FormatType::Sst, // CEDAR uses SST-like block format
+            StorageFormatStrategy::Chrono => FormatType::Sst, // CHRONO uses time-partitioned blocks
         }
     }
 }
 
-impl<E: UnifiedStorageEngine> Debug for InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat> Debug for InternalFormatAdapter<E> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InternalFormatAdapter")
-            .field("engine_name", &self.engine.engine_name())
-            .field("engine_version", &self.engine.engine_version())
+            .field("engine_name", &self.engine.format_name())
+            .field("engine_version", &self.engine.format_version())
             .field("format_version", &self.format_version)
             .finish()
     }
@@ -131,9 +132,9 @@ impl<E: UnifiedStorageEngine> Debug for InternalFormatAdapter<E> {
 // ============================================================================
 
 #[async_trait]
-impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat + 'static> StorageFormat for InternalFormatAdapter<E> {
     fn format_name(&self) -> &str {
-        self.engine.engine_name()
+        self.engine.format_name()
     }
 
     fn format_version(&self) -> &str {
@@ -202,18 +203,17 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
             "quantization" => self.engine.supports_feature("quantization"),
             "bloom_filters" => matches!(
                 self.engine.strategy(),
-                StorageEngineStrategy::Sst | StorageEngineStrategy::Swift
+                StorageFormatStrategy::Sst | StorageFormatStrategy::Swift
             ),
             "columnar_storage" => matches!(
                 self.engine.strategy(),
-                StorageEngineStrategy::Viper | StorageEngineStrategy::Nova
+                StorageFormatStrategy::Viper | StorageFormatStrategy::Nova
             ),
             "progressive_search" => matches!(
                 self.engine.strategy(),
-                StorageEngineStrategy::Sst
-                    | StorageEngineStrategy::Nova
-                    | StorageEngineStrategy::Helix
-                    | StorageEngineStrategy::TimeSeries
+                StorageFormatStrategy::Sst
+                    | StorageFormatStrategy::Nova
+                    | StorageFormatStrategy::Helix
             ),
             _ => self.engine.supports_feature(feature),
         }
@@ -225,7 +225,7 @@ impl<E: UnifiedStorageEngine + 'static> StorageFormat for InternalFormatAdapter<
 // ============================================================================
 
 #[async_trait]
-impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter<E> {
+impl<E: UnifiedStorageFormat + 'static> InternalFormat for InternalFormatAdapter<E> {
     // ========================================================================
     // Read Path
     // ========================================================================
@@ -268,24 +268,27 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
             .await?
         {
             Some(record) => {
-                // Convert VectorRecord to VectorBatch
-                let dimension = record.vector.len();
-                let metadata = if record.metadata.is_empty() {
+                // Convert canonical ProximaRecord to the legacy VectorBatch adapter shape.
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.to_fp32_owned())
+                    .unwrap_or_default();
+                let dimension = vector.len();
+                let metadata = if record.props.is_empty() {
                     None
                 } else {
                     let meta_map: HashMap<String, serde_json::Value> = record
-                        .metadata
+                        .props
                         .iter()
-                        .filter_map(|(k, v)| {
-                            sql_value_to_json(v).map(|json_val| (k.clone(), json_val))
-                        })
+                        .map(|(k, v)| (k.clone(), proxima_tree_node_to_json(v)))
                         .collect();
                     Some(vec![meta_map])
                 };
 
                 Ok(Some(VectorBatch {
-                    ids: vec![record.id],
-                    vectors: record.vector,
+                    ids: vec![record.oid],
+                    vectors: vector,
                     dimension,
                     metadata,
                 }))
@@ -405,17 +408,17 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
     fn should_compact(&self, stats: &FormatStatistics) -> bool {
         // Use engine-specific heuristics
         match self.engine.strategy() {
-            StorageEngineStrategy::Sst => {
+            StorageFormatStrategy::Sst => {
                 // SST: Compact when file count is high
                 stats.file_count > 10
             }
-            StorageEngineStrategy::Viper | StorageEngineStrategy::Nova => {
+            StorageFormatStrategy::Viper | StorageFormatStrategy::Nova => {
                 // Columnar: Compact when many small files
                 let small_file_threshold: u64 = 64 * 1024 * 1024;
                 stats.file_count > 5
                     && (stats.size_bytes / stats.file_count as u64) < small_file_threshold
             }
-            StorageEngineStrategy::Helix => {
+            StorageFormatStrategy::Helix => {
                 // Helix: Compact based on locality
                 stats.file_count > 8
             }
@@ -483,7 +486,7 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
         // Bloom filters are engine-specific
         // SST and SWIFT engines have bloom filter support
         match self.engine.strategy() {
-            StorageEngineStrategy::Sst | StorageEngineStrategy::Swift => {
+            StorageFormatStrategy::Sst | StorageFormatStrategy::Swift => {
                 // These engines support bloom filters, but we need engine-specific access
                 // For now, return None - real implementation would access engine internals
                 Ok(None)
@@ -499,6 +502,15 @@ impl<E: UnifiedStorageEngine + 'static> InternalFormat for InternalFormatAdapter
         // This would typically use the engine's filesystem factory
         // For now, return empty list - real implementation would enumerate files
         Ok(Vec::new())
+    }
+}
+
+fn proxima_tree_node_to_json(node: &ProximaTreeNode) -> serde_json::Value {
+    match node {
+        ProximaTreeNode::Value(value) => {
+            serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+        }
+        other => serde_json::to_value(other).unwrap_or(serde_json::Value::Null),
     }
 }
 
@@ -528,65 +540,29 @@ fn extract_collection_id_from_path(path: &str) -> Result<String> {
     }
 }
 
-/// Convert SqlValue to serde_json::Value
-fn sql_value_to_json(value: &crate::proto::proximadb_v1::SqlValue) -> Option<serde_json::Value> {
-    use crate::proto::proximadb_v1::sql_value::Value;
-
-    value.value.as_ref().map(|v| match v {
-        Value::StringValue(s) => serde_json::Value::String(s.clone()),
-        Value::NumberValue(n) => serde_json::Number::from_f64(*n)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        Value::BoolValue(b) => serde_json::Value::Bool(*b),
-        Value::Int64Value(i) => serde_json::Value::Number(serde_json::Number::from(*i)),
-        Value::NullValue(_) => serde_json::Value::Null,
-        Value::BytesValue(b) => serde_json::Value::String(base64::Engine::encode(
-            &base64::engine::general_purpose::STANDARD,
-            b,
-        )),
-        Value::ArrayValue(arr) => {
-            let items: Vec<serde_json::Value> =
-                arr.values.iter().filter_map(sql_value_to_json).collect();
-            serde_json::Value::Array(items)
-        }
-        Value::ObjectValue(obj) => {
-            let map: serde_json::Map<String, serde_json::Value> = obj
-                .fields
-                .iter()
-                .filter_map(|(k, v)| sql_value_to_json(v).map(|val| (k.clone(), val)))
-                .collect();
-            serde_json::Value::Object(map)
-        }
-    })
-}
-
 // ============================================================================
 // Concrete Adapter Types for Each Engine
 // ============================================================================
 
 /// Type alias for SST format adapter
-pub type SstFormatAdapter = InternalFormatAdapter<crate::storage::engines::impls::sst::SstEngine>;
+pub type SstFormatAdapter = InternalFormatAdapter<crate::storage::engines::sst::SstEngine>;
 
 /// Type alias for HELIX format adapter
-pub type HelixFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::helix::HelixEngine>;
+pub type HelixFormatAdapter = InternalFormatAdapter<crate::storage::engines::helix::HelixEngine>;
 
 /// Type alias for VIPER format adapter
-pub type ViperFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::viper::ViperEngine>;
+pub type ViperFormatAdapter = InternalFormatAdapter<crate::storage::engines::viper::ViperEngine>;
 
 /// Type alias for NOVA format adapter
-pub type NovaFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::nova::NovaEngine>;
+pub type NovaFormatAdapter = InternalFormatAdapter<crate::storage::engines::nova::NovaEngine>;
 
 /// Type alias for SWIFT format adapter
 #[allow(deprecated)]
-pub type SwiftFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::swift::SwiftEngine>;
+pub type SwiftFormatAdapter = InternalFormatAdapter<crate::storage::engines::swift::SwiftEngine>;
 
 /// Type alias for RAPTOR format adapter
 #[allow(deprecated)]
-pub type RaptorFormatAdapter =
-    InternalFormatAdapter<crate::storage::engines::impls::raptor::RaptorEngine>;
+pub type RaptorFormatAdapter = InternalFormatAdapter<crate::storage::engines::raptor::RaptorEngine>;
 
 // ============================================================================
 // Factory Functions
@@ -594,28 +570,28 @@ pub type RaptorFormatAdapter =
 
 /// Create an SST format adapter from an existing engine
 pub fn create_sst_adapter(
-    engine: Arc<crate::storage::engines::impls::sst::SstEngine>,
+    engine: Arc<crate::storage::engines::sst::SstEngine>,
 ) -> SstFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a HELIX format adapter from an existing engine
 pub fn create_helix_adapter(
-    engine: Arc<crate::storage::engines::impls::helix::HelixEngine>,
+    engine: Arc<crate::storage::engines::helix::HelixEngine>,
 ) -> HelixFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a VIPER format adapter from an existing engine
 pub fn create_viper_adapter(
-    engine: Arc<crate::storage::engines::impls::viper::ViperEngine>,
+    engine: Arc<crate::storage::engines::viper::ViperEngine>,
 ) -> ViperFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
 
 /// Create a NOVA format adapter from an existing engine
 pub fn create_nova_adapter(
-    engine: Arc<crate::storage::engines::impls::nova::NovaEngine>,
+    engine: Arc<crate::storage::engines::nova::NovaEngine>,
 ) -> NovaFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
@@ -623,7 +599,7 @@ pub fn create_nova_adapter(
 /// Create a SWIFT format adapter from an existing engine
 #[allow(deprecated)]
 pub fn create_swift_adapter(
-    engine: Arc<crate::storage::engines::impls::swift::SwiftEngine>,
+    engine: Arc<crate::storage::engines::swift::SwiftEngine>,
 ) -> SwiftFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
@@ -631,7 +607,7 @@ pub fn create_swift_adapter(
 /// Create a RAPTOR format adapter from an existing engine
 #[allow(deprecated)]
 pub fn create_raptor_adapter(
-    engine: Arc<crate::storage::engines::impls::raptor::RaptorEngine>,
+    engine: Arc<crate::storage::engines::raptor::RaptorEngine>,
 ) -> RaptorFormatAdapter {
     InternalFormatAdapter::new(engine)
 }
@@ -666,54 +642,5 @@ mod tests {
 
         // Test short path error
         assert!(extract_collection_id_from_path("collection").is_err());
-    }
-
-    #[test]
-    fn test_sql_value_to_json_string() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::StringValue("test".to_string())),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert_eq!(json, Some(serde_json::Value::String("test".to_string())));
-    }
-
-    #[test]
-    fn test_sql_value_to_json_number() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::NumberValue(42.5)),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert!(json.is_some());
-        assert_eq!(json.unwrap().as_f64(), Some(42.5));
-    }
-
-    #[test]
-    fn test_sql_value_to_json_bool() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::BoolValue(true)),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert_eq!(json, Some(serde_json::Value::Bool(true)));
-    }
-
-    #[test]
-    fn test_sql_value_to_json_null() {
-        use crate::proto::proximadb_v1::{SqlValue, sql_value::Value};
-
-        let value = SqlValue {
-            value: Some(Value::NullValue(0)),
-        };
-
-        let json = sql_value_to_json(&value);
-        assert_eq!(json, Some(serde_json::Value::Null));
     }
 }

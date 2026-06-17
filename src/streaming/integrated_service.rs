@@ -58,8 +58,8 @@ use super::subscriptions::{
     ScoredResult, SubscriptionConfig, SubscriptionHandle, SubscriptionManager,
 };
 use super::{SessionConfig, StreamConfig, StreamError, StreamId, StreamResult};
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
+use proximadb_records::ProximaRecord;
 
 /// Configuration for the integrated streaming service
 #[derive(Debug, Clone)]
@@ -162,7 +162,7 @@ impl IntegratedStreamingService {
     pub async fn push_records(
         &self,
         session_id: &StreamId,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> StreamResult<PushResult> {
         self.coordinator.push_records(session_id, records).await
     }
@@ -175,7 +175,7 @@ impl IntegratedStreamingService {
     pub async fn push_and_notify(
         &self,
         session_id: &StreamId,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> StreamResult<PushAndNotifyResult> {
         // Get collection name before push
         let collection = self
@@ -194,8 +194,20 @@ impl IntegratedStreamingService {
         // Notify subscriptions if enabled
         let subscriptions_notified = if self.config.auto_notify_subscriptions {
             // Convert records to format expected by subscription manager
-            let vectors: Vec<(String, Vec<f32>, f32)> =
-                records.into_iter().map(|r| (r.id, r.vector, 0.0)).collect();
+            let vectors: Vec<(String, Vec<f32>, f32)> = records
+                .into_iter()
+                .map(|r| {
+                    // INT-2.5b: streaming subscriptions advertise fp32 vectors.
+                    // Promote non-Fp32 variants on the way out.
+                    let v = r
+                        .embeddings
+                        .into_iter()
+                        .next()
+                        .map(|e| e.values.to_fp32_owned())
+                        .unwrap_or_default();
+                    (r.oid, v, 0.0)
+                })
+                .collect();
 
             self.subscriptions.notify_insert(&collection, vectors).await
         } else {
@@ -212,7 +224,7 @@ impl IntegratedStreamingService {
     pub async fn flush_to_storage(
         &self,
         session_id: &StreamId,
-        storage: &dyn UnifiedStorageEngine,
+        storage: &dyn UnifiedStorageFormat,
     ) -> StreamResult<FlushAndNotifyResult> {
         let start = Instant::now();
 
@@ -278,7 +290,7 @@ impl IntegratedStreamingService {
     }
 
     /// Start background tasks (flush and cleanup)
-    pub async fn start_background_tasks(&self, storage: Arc<dyn UnifiedStorageEngine>) {
+    pub async fn start_background_tasks(&self, storage: Arc<dyn UnifiedStorageFormat>) {
         let mut tasks = self.background_tasks.write().await;
 
         // Cleanup task for coordinator
@@ -339,7 +351,7 @@ impl IntegratedStreamingService {
     }
 
     /// Shutdown the service gracefully
-    pub async fn shutdown(&self, storage: Option<&dyn UnifiedStorageEngine>) {
+    pub async fn shutdown(&self, storage: Option<&dyn UnifiedStorageFormat>) {
         self.shutdown
             .store(true, std::sync::atomic::Ordering::Relaxed);
 
@@ -452,10 +464,17 @@ mod tests {
             .await
             .expect("failed to create test session");
 
-        let records: Vec<VectorRecord> = (0..10)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![0.1; 64],
+        let records: Vec<ProximaRecord> = (0..10)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 64,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
+                    ..Default::default()
+                }],
+                record_version: 1,
                 ..Default::default()
             })
             .collect();
@@ -500,10 +519,17 @@ mod tests {
             .expect("failed to activate subscription");
 
         // Push with notification
-        let records: Vec<VectorRecord> = (0..5)
-            .map(|i| VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![0.1 * (i as f32); 64],
+        let records: Vec<ProximaRecord> = (0..5)
+            .map(|i| ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 64,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1 * (i as f32); 64]),
+                    ..Default::default()
+                }],
+                record_version: 1,
                 ..Default::default()
             })
             .collect();
@@ -535,9 +561,16 @@ mod tests {
             .await
             .expect("failed to create no_notify test session");
 
-        let records = vec![VectorRecord {
-            id: "vec_1".to_string(),
-            vector: vec![0.1; 64],
+        let records = vec![ProximaRecord {
+            oid: "vec_1".to_string(),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: 64,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 64]),
+                ..Default::default()
+            }],
+            record_version: 1,
             ..Default::default()
         }];
 

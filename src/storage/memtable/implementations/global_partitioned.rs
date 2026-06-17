@@ -69,8 +69,9 @@
 //! - **AXIS Indexing**: Supplies vectors for index building
 
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Debug;
+use std::ops::Bound;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::sync::RwLock;
@@ -81,7 +82,53 @@ use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, SimilarityResult, UnifiedDistanceCompute,
 };
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
+
+/// Locator into a partition's `wal_batches` identifying one physical record.
+///
+/// Stored in [`ScanIndex`] instead of a cloned `ProximaRecord` so the index is
+/// O(distinct-oids) *small* entries rather than O(distinct-oids) full records.
+#[derive(Debug, Clone)]
+struct RecordLocator {
+    /// base62 batch-id key into `wal_batches`.
+    batch_key: String,
+    /// Index into the batch's `vector_records`.
+    idx: usize,
+}
+
+/// Cached, deduped, time-ordered projection of a partition's UNFLUSHED records,
+/// used to serve paginated scans in O(log d + limit) instead of re-running the
+/// O(N) MVCC-dedup + sort on every page.
+///
+/// This is a pure projection of `wal_batches`: it is invalidated (`scan_index`
+/// set to `None`) on every partition mutation and rebuilt lazily on the next
+/// read, so it can never durably diverge from the authoritative
+/// [`CollectionPartition::get_all_vectors`] semantics it is built from.
+#[derive(Debug)]
+struct ScanIndex {
+    /// Deduped winner per oid, keyed by the canonical scan tuple
+    /// `(updated_at_ns, oid)` so a page is `ordered.range(after..).take(limit)`.
+    ordered: BTreeMap<(i64, String), RecordLocator>,
+    /// Set when the partition holds at least one empty-oid record. Such records
+    /// cannot be stably keyed/deduped, so the paginated read falls back to the
+    /// legacy full scan to preserve exact parity with `get_all_vectors`.
+    has_empty_oid: bool,
+}
+
+/// Operational kill-switch for the TD-099(3d) scan index. Set
+/// `PROXIMADB_SCAN_INDEX_DISABLE=1` (or `true`) to bypass the cached index and
+/// serve paginated scans via the legacy full scan. The index is always
+/// correctness-equivalent, so this exists purely as a memory-pressure escape
+/// hatch. Read once per process.
+fn scan_index_disabled() -> bool {
+    use std::sync::OnceLock;
+    static DISABLED: OnceLock<bool> = OnceLock::new();
+    *DISABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_SCAN_INDEX_DISABLE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
 
 /// Collection partition within the global memtable
 ///
@@ -117,6 +164,11 @@ struct CollectionPartition {
     timestamp: std::time::SystemTime, // Last modification time
     #[allow(dead_code)]
     created_at: std::time::SystemTime, // Partition creation time
+
+    /// Lazily-built, deduped, time-ordered scan projection. `None` means
+    /// dirty/not-built; rebuilt on the next paginated read. Invalidated on every
+    /// mutation (see the `scan_index = None` resets in the mutation paths).
+    scan_index: Option<ScanIndex>,
 }
 
 impl CollectionPartition {
@@ -130,6 +182,7 @@ impl CollectionPartition {
             last_flush_sequence: 0,
             timestamp: std::time::SystemTime::now(),
             created_at: std::time::SystemTime::now(),
+            scan_index: None,
         }
     }
 
@@ -151,11 +204,47 @@ impl CollectionPartition {
     #[inline(always)]
     fn add_batch(
         &mut self,
+        batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<()> {
+        self.add_batch_internal(batch, false)
+    }
+
+    fn add_batch_insert_only(
+        &mut self,
+        batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<()> {
+        self.add_batch_internal(batch, true)
+    }
+
+    fn add_batch_internal(
+        &mut self,
         mut batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+        insert_only: bool,
     ) -> Result<()> {
         let batch_id = batch.batch_id.to_base62();
         let batch_size = batch.total_size_bytes;
         let vector_count = batch.vector_records.len();
+
+        if insert_only {
+            let mut request_ids = HashSet::new();
+            for vector_record in batch.vector_records.iter() {
+                if vector_record.oid.is_empty() {
+                    continue;
+                }
+                if !request_ids.insert(vector_record.oid.as_str()) {
+                    anyhow::bail!(
+                        "INSERT_CONFLICT: record '{}' appears more than once in insert batch",
+                        vector_record.oid
+                    );
+                }
+                if self.vector_id_index.contains_key(&vector_record.oid) {
+                    anyhow::bail!(
+                        "INSERT_CONFLICT: record '{}' already exists",
+                        vector_record.oid
+                    );
+                }
+            }
+        }
 
         // Create bloom filter for this batch if not already present
         // Bloom filters enable fast metadata filtering without scanning all vectors.
@@ -187,10 +276,10 @@ impl CollectionPartition {
         // This secondary index enables O(1) retrieval by vector ID.
         // Trade-off: Extra memory for index vs fast lookups.
         for vector_record in batch.vector_records.iter() {
-            if !vector_record.id.is_empty() {
+            if !vector_record.oid.is_empty() {
                 // Clone is necessary as we need owned strings in the index
                 self.vector_id_index
-                    .insert(vector_record.id.clone(), batch_id.clone());
+                    .insert(vector_record.oid.clone(), batch_id.clone());
             }
         }
 
@@ -201,6 +290,9 @@ impl CollectionPartition {
         self.total_size += batch_size;
         self.vector_count += vector_count;
         self.batch_count += 1;
+
+        // Invalidate the cached scan projection — rebuilt lazily on next read.
+        self.scan_index = None;
 
         Ok(())
     }
@@ -219,40 +311,33 @@ impl CollectionPartition {
     /// - Tertiary: Check TTL expiration
     ///
     /// # Returns
-    /// - `Some(VectorRecord)` - Latest valid version of the vector
+    /// - `Some(ProximaRecord)` - Latest valid version of the vector
     /// - `None` - Vector not found, expired, or deleted
-    fn vector_by_id(&self, vector_id: &str) -> Option<VectorRecord> {
+    fn vector_by_id(&self, vector_id: &str) -> Option<ProximaRecord> {
         // Skip if no ID provided (immutable vectors don't have IDs)
         if vector_id.is_empty() {
             return None;
         }
 
-        let current_time = chrono::Utc::now().timestamp_micros();
-        let mut latest_record: Option<(VectorRecord, u64, Option<u32>)> = None; // (record, sequence, version)
+        let current_time_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let mut latest_record: Option<(ProximaRecord, u64, u64)> = None; // (record, sequence, record_version)
 
         // Search through all batches to find the latest version
         for batch in self.wal_batches.values() {
             for vector_record in batch.vector_records.iter() {
-                if !vector_record.id.is_empty() && vector_record.id == vector_id {
+                if !vector_record.oid.is_empty() && vector_record.oid == vector_id {
                     let sequence = batch
                         .timestamp
                         .duration_since(std::time::UNIX_EPOCH)
                         .map(|duration| duration.as_millis() as u64)
                         .unwrap_or(0);
-                    let version = vector_record.version;
+                    let version = vector_record.record_version;
 
                     // Check if this is a newer version (prioritize version number over timestamp)
                     let is_newer = match &latest_record {
                         Some((_, existing_seq, existing_version)) => {
-                            // Primary: Compare by version number (higher version wins)
-                            match (version, existing_version) {
-                                (Some(v), Some(ev)) => {
-                                    v > *ev || (v == *ev && sequence > *existing_seq)
-                                }
-                                (Some(_), None) => true, // Some version beats None
-                                (None, Some(_)) => false, // None loses to Some version
-                                (None, None) => sequence > *existing_seq, // Both None, use sequence
-                            }
+                            version > *existing_version
+                                || (version == *existing_version && sequence > *existing_seq)
                         }
                         None => true, // First occurrence
                     };
@@ -266,9 +351,8 @@ impl CollectionPartition {
 
         // Check the latest record we found
         if let Some((record, _, _)) = latest_record {
-            // Check if it's expired (logical delete) - convert current_time to seconds
-            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
-            let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
+            // Check if it's expired via valid_to_ns
+            let is_expired = record.valid_to_ns.map(|expires| expires < current_time_ns);
 
             if is_expired.unwrap_or(false) {
                 tracing::debug!("🗑️ Vector {} found but expired (tombstone)", vector_id);
@@ -298,8 +382,8 @@ impl CollectionPartition {
             if let Some(batch) = self.wal_batches.remove(&batch_id) {
                 // Remove vector IDs from index
                 for vector_record in batch.vector_records.iter() {
-                    if !vector_record.id.is_empty() {
-                        self.vector_id_index.remove(&vector_record.id);
+                    if !vector_record.oid.is_empty() {
+                        self.vector_id_index.remove(&vector_record.oid);
                     }
                 }
 
@@ -313,6 +397,11 @@ impl CollectionPartition {
         self.total_size = self.total_size.saturating_sub(removed_size);
         // No longer tracking sequences
 
+        // Removed batches invalidate any locators in the cached scan projection.
+        if cleared_count > 0 {
+            self.scan_index = None;
+        }
+
         cleared_count
     }
 
@@ -322,12 +411,12 @@ impl CollectionPartition {
     }
 
     /// Get all vectors for iteration or flush operations with MVCC + logical delete support
-    fn get_all_vectors(&self) -> Vec<VectorRecord> {
+    fn get_all_vectors(&self) -> Vec<ProximaRecord> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (VectorRecord, u64, Option<u32>)> = HashMap::new(); // (record, sequence, version)
+        let mut id_to_latest: HashMap<String, (ProximaRecord, u64, u64)> = HashMap::new(); // (record, sequence, record_version)
         let mut vectors_without_id = Vec::new();
-        let current_time = chrono::Utc::now().timestamp_micros();
+        let current_time_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         // Collect latest versions for each ID
         for batch in self.wal_batches.values() {
@@ -337,38 +426,30 @@ impl CollectionPartition {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|duration| duration.as_millis() as u64)
                     .unwrap_or(0);
-                let version = vector_record.version;
+                let version = vector_record.record_version;
 
-                if !vector_record.id.is_empty() {
-                    let vector_id = &vector_record.id;
+                if !vector_record.oid.is_empty() {
+                    let vector_id = &vector_record.oid;
                     // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, existing_seq, existing_version)) => {
-                            // Primary: Compare by version number (higher version wins)
-                            match (version, existing_version) {
-                                (Some(v), Some(ev)) => {
-                                    v > *ev || (v == *ev && sequence > *existing_seq)
-                                }
-                                (Some(_), None) => true, // Some version beats None
-                                (None, Some(_)) => false, // None loses to Some version
-                                (None, None) => sequence > *existing_seq, // Both None, use sequence
-                            }
+                            version > *existing_version
+                                || (version == *existing_version && sequence > *existing_seq)
                         }
                         None => true,
                     };
 
                     if is_newer {
                         id_to_latest.insert(
-                            vector_record.id.clone(),
+                            vector_record.oid.clone(),
                             (vector_record.clone(), sequence, version),
                         );
                     }
                 } else {
                     // No ID - include directly if not expired
-                    let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
                     let is_expired = vector_record
-                        .expires_at
-                        .map(|expires| expires < current_time_secs);
+                        .valid_to_ns
+                        .map(|expires| expires < current_time_ns);
 
                     if !is_expired.unwrap_or(false) {
                         vectors_without_id.push(vector_record.clone());
@@ -381,8 +462,7 @@ impl CollectionPartition {
         let mut vectors = Vec::new();
 
         for (_, (record, _, _)) in id_to_latest {
-            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
-            let is_expired = record.expires_at.map(|expires| expires < current_time_secs);
+            let is_expired = record.valid_to_ns.map(|expires| expires < current_time_ns);
 
             if !is_expired.unwrap_or(false) {
                 vectors.push(record);
@@ -393,13 +473,171 @@ impl CollectionPartition {
         vectors
     }
 
+    /// Rebuild the deduped, time-ordered [`ScanIndex`] from `wal_batches`.
+    ///
+    /// Winner selection per oid uses the SAME MVCC rule as
+    /// [`Self::get_all_vectors`] — highest `record_version`, then highest
+    /// batch-timestamp sequence — so the indexed scan returns byte-identical
+    /// results. Only locators are recorded (no record clones). TTL is applied at
+    /// READ time (a record can expire after the index is built), matching
+    /// `get_all_vectors`.
+    fn rebuild_scan_index(&mut self, collection_id: &str) {
+        // oid -> (winner_updated_at_ns, locator, winner_seq, winner_version)
+        let mut winners: HashMap<String, (i64, RecordLocator, u64, u64)> = HashMap::new();
+        let mut has_empty_oid = false;
+
+        for (batch_key, batch) in self.wal_batches.iter() {
+            let seq = batch
+                .timestamp
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            for (idx, rec) in batch.vector_records.iter().enumerate() {
+                if rec.oid.is_empty() {
+                    has_empty_oid = true;
+                    continue;
+                }
+                let version = rec.record_version;
+                let is_newer = match winners.get(&rec.oid) {
+                    Some((_, _, existing_seq, existing_version)) => {
+                        version > *existing_version
+                            || (version == *existing_version && seq > *existing_seq)
+                    }
+                    None => true,
+                };
+                if is_newer {
+                    winners.insert(
+                        rec.oid.clone(),
+                        (
+                            rec.updated_at_ns,
+                            RecordLocator {
+                                batch_key: batch_key.clone(),
+                                idx,
+                            },
+                            seq,
+                            version,
+                        ),
+                    );
+                }
+            }
+        }
+
+        let mut ordered = BTreeMap::new();
+        for (oid, (updated_at_ns, locator, _, _)) in winners {
+            ordered.insert((updated_at_ns, oid), locator);
+        }
+        // Operator gauge: distinct indexed oids ≈ the index's resident size.
+        crate::metrics::wal_scan_metrics::set_unflushed_distinct_oids(
+            collection_id,
+            ordered.len() as i64,
+        );
+        self.scan_index = Some(ScanIndex {
+            ordered,
+            has_empty_oid,
+        });
+    }
+
+    /// Paginated, deduped, time-ordered scan: up to `limit` records whose
+    /// canonical key `(updated_at_ns, oid)` is strictly greater than `after`, in
+    /// ascending order, passing `predicate`, excluding TTL-expired-at-`now_ns`.
+    ///
+    /// Rebuilds the index if dirty, then serves it. `&mut self` because the
+    /// lazy rebuild mutates the cached index.
+    fn scan_paginated(
+        &mut self,
+        collection_id: &str,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Vec<ProximaRecord> {
+        if self.scan_index.is_none() {
+            self.rebuild_scan_index(collection_id);
+        }
+        self.serve_from_index(after, limit, predicate, now_ns)
+    }
+
+    /// Serve a page from an already-built index (read-only). Falls back to the
+    /// legacy full scan when the partition holds empty-oid records.
+    fn serve_from_index(
+        &self,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Vec<ProximaRecord> {
+        let index = match self.scan_index.as_ref() {
+            Some(i) => i,
+            // Should not happen (callers ensure built), but stay correct.
+            None => return self.scan_paginated_legacy(after, limit, predicate, now_ns),
+        };
+        if index.has_empty_oid {
+            return self.scan_paginated_legacy(after, limit, predicate, now_ns);
+        }
+
+        let lower = match after {
+            Some((ts, oid)) => Bound::Excluded((ts, oid.to_string())),
+            None => Bound::Unbounded,
+        };
+        let batches = &self.wal_batches;
+        let mut out = Vec::with_capacity(limit.min(1024));
+        for (_key, locator) in index.ordered.range((lower, Bound::Unbounded)) {
+            if out.len() >= limit {
+                break;
+            }
+            let Some(rec) = batches
+                .get(&locator.batch_key)
+                .and_then(|b| b.vector_records.get(locator.idx))
+            else {
+                continue;
+            };
+            // Read-time TTL filter — matches `get_all_vectors`.
+            if rec.valid_to_ns.map(|exp| exp < now_ns).unwrap_or(false) {
+                continue;
+            }
+            if let Some(p) = predicate
+                && !p(rec)
+            {
+                continue;
+            }
+            out.push(rec.clone());
+        }
+        out
+    }
+
+    /// Fallback paginated scan over the authoritative `get_all_vectors`
+    /// projection (already deduped + TTL-filtered). Used when the index can't be
+    /// served (empty-oid records present). Same result as the indexed path, just
+    /// O(N) per call.
+    fn scan_paginated_legacy(
+        &self,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        _now_ns: i64,
+    ) -> Vec<ProximaRecord> {
+        let mut records = self.get_all_vectors();
+        records.sort_by(|a, b| {
+            (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+        });
+        records
+            .into_iter()
+            .filter(|r| match after {
+                Some((ts, oid)) => (r.updated_at_ns, r.oid.as_str()) > (ts, oid),
+                None => true,
+            })
+            .filter(|r| predicate.map(|p| p(r)).unwrap_or(true))
+            .take(limit)
+            .collect()
+    }
+
     /// Search for similar vectors using native batch processing with MVCC + logical deletes
     fn search_vectors(
         &self,
         query_vector: &[f32],
         distance_metric: &CoreDistanceMetric,
         distance_compute: &UnifiedDistanceCompute,
-    ) -> Vec<(SimilarityResult, VectorRecord)> {
+    ) -> Vec<(SimilarityResult, ProximaRecord)> {
         self.search_vectors_with_filter(query_vector, distance_metric, distance_compute, None)
     }
 
@@ -410,13 +648,13 @@ impl CollectionPartition {
         distance_metric: &CoreDistanceMetric,
         distance_compute: &UnifiedDistanceCompute,
         metadata_filter: Option<&HashMap<String, String>>,
-    ) -> Vec<(SimilarityResult, VectorRecord)> {
+    ) -> Vec<(SimilarityResult, ProximaRecord)> {
         use std::collections::HashMap;
 
-        let mut id_to_latest: HashMap<String, (SimilarityResult, VectorRecord, u64, Option<u32>)> =
-            HashMap::new(); // (score, record, sequence, version)
-        let mut results_without_id: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
-        let current_time = chrono::Utc::now().timestamp_micros();
+        let mut id_to_latest: HashMap<String, (SimilarityResult, ProximaRecord, u64, u64)> =
+            HashMap::new(); // (score, record, sequence, record_version)
+        let mut results_without_id: Vec<(SimilarityResult, ProximaRecord)> = Vec::new();
+        let current_time_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
         let mut batches_checked = 0;
         let mut batches_skipped = 0;
@@ -458,34 +696,30 @@ impl CollectionPartition {
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|duration| duration.as_millis() as u64)
                     .unwrap_or(0);
-                let version = vector_record.version;
+                let version = vector_record.record_version;
 
-                if !vector_record.id.is_empty() {
-                    let vector_id = &vector_record.id;
+                if !vector_record.oid.is_empty() {
+                    let vector_id = &vector_record.oid;
                     // Check if this is the latest version (prioritize version number over timestamp)
                     let is_newer = match id_to_latest.get(vector_id) {
                         Some((_, _, existing_seq, existing_version)) => {
-                            // Primary: Compare by version number (higher version wins)
-                            match (version, existing_version) {
-                                (Some(v), Some(ev)) => {
-                                    v > *ev || (v == *ev && sequence > *existing_seq)
-                                }
-                                (Some(_), None) => true, // Some version beats None
-                                (None, Some(_)) => false, // None loses to Some version
-                                (None, None) => sequence > *existing_seq, // Both None, use sequence
-                            }
+                            version > *existing_version
+                                || (version == *existing_version && sequence > *existing_seq)
                         }
                         None => true,
                     };
 
                     if is_newer {
-                        // Skip tombstones (empty vector + expires_at in past or 0) - they mark deletions
-                        // and should not be included in search results
-                        let current_time_secs = current_time / 1_000_000;
-                        let is_tombstone = vector_record.vector.is_empty()
+                        // Skip tombstones (empty embeddings + valid_to_ns in past) - they mark deletions
+                        let vec_values = vector_record
+                            .embeddings
+                            .first()
+                            .map(|e| e.as_fp32_slice())
+                            .unwrap_or(&[]);
+                        let is_tombstone = vec_values.is_empty()
                             && vector_record
-                                .expires_at
-                                .is_some_and(|e| e <= current_time_secs);
+                                .valid_to_ns
+                                .is_some_and(|e| e <= current_time_ns);
                         if is_tombstone {
                             // Remove any previous version from results (tombstone shadows it)
                             id_to_latest.remove(vector_id);
@@ -496,17 +730,17 @@ impl CollectionPartition {
                         } else {
                             let score = distance_compute.calculate_distance(
                                 query_vector,
-                                &vector_record.vector,
+                                vec_values,
                                 distance_metric,
                             );
                             id_to_latest.insert(
-                                vector_record.id.clone(),
+                                vector_record.oid.clone(),
                                 (score, vector_record.clone(), sequence, version),
                             );
 
                             tracing::debug!(
-                                "📝 Updated latest version for ID {}: seq={}, version={:?}",
-                                &vector_record.id,
+                                "📝 Updated latest version for ID {}: seq={}, version={}",
+                                &vector_record.oid,
                                 sequence,
                                 version
                             );
@@ -514,20 +748,23 @@ impl CollectionPartition {
                     }
                 } else {
                     // No ID - include directly (no MVCC possible), but check expiry
-                    // Also skip empty vectors (should not happen for valid data, but safety check)
-                    if vector_record.vector.is_empty() {
+                    let vec_values = vector_record
+                        .embeddings
+                        .first()
+                        .map(|e| e.as_fp32_slice())
+                        .unwrap_or(&[]);
+                    if vec_values.is_empty() {
                         continue;
                     }
 
-                    let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
                     let is_expired = vector_record
-                        .expires_at
-                        .map(|expires| expires < current_time_secs);
+                        .valid_to_ns
+                        .map(|expires| expires < current_time_ns);
 
                     if !is_expired.unwrap_or(false) {
                         let score = distance_compute.calculate_distance(
                             query_vector,
-                            &vector_record.vector,
+                            vec_values,
                             distance_metric,
                         );
                         results_without_id.push((score, vector_record.clone()));
@@ -537,15 +774,14 @@ impl CollectionPartition {
         }
 
         // Second pass: Filter out expired records (tombstones) from latest versions
-        let mut final_results: Vec<(SimilarityResult, VectorRecord)> = Vec::new();
+        let mut final_results: Vec<(SimilarityResult, ProximaRecord)> = Vec::new();
         let mut filtered_count = 0;
         let latest_versions_count = id_to_latest.len();
 
         for (id, (score, vector_record, _, _)) in id_to_latest {
-            let current_time_secs = current_time / 1_000_000; // Convert microseconds to seconds
             let is_expired = vector_record
-                .expires_at
-                .map(|expires| expires < current_time_secs);
+                .valid_to_ns
+                .map(|expires| expires < current_time_ns);
 
             if is_expired.unwrap_or(false) {
                 tracing::debug!("🗑️ Filtering out expired latest version for ID {}", id);
@@ -621,6 +857,25 @@ impl GlobalPartitionedMemtable {
         collection_id: &str,
         wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
     ) -> Result<Vec<u64>> {
+        self.add_wal_batch_internal(collection_id, wal_batch, false)
+            .await
+    }
+
+    pub async fn add_wal_batch_insert_only(
+        &self,
+        collection_id: &str,
+        wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+    ) -> Result<Vec<u64>> {
+        self.add_wal_batch_internal(collection_id, wal_batch, true)
+            .await
+    }
+
+    async fn add_wal_batch_internal(
+        &self,
+        collection_id: &str,
+        wal_batch: crate::storage::memtable::specialized::wal_behavior::WALVectorBatch,
+        insert_only: bool,
+    ) -> Result<Vec<u64>> {
         let batch_id = wal_batch.batch_id.to_base62();
         let vector_count = wal_batch.vector_records.len();
         let batch_size = wal_batch.total_size_bytes;
@@ -653,7 +908,11 @@ impl GlobalPartitionedMemtable {
         );
 
         // Store the batch natively in the partition
-        partition.add_batch(wal_batch)?;
+        if insert_only {
+            partition.add_batch_insert_only(wal_batch)?;
+        } else {
+            partition.add_batch(wal_batch)?;
+        }
 
         tracing::debug!(
             "🚀 GLOBAL_PARTITIONED_DEBUG: Updated partition stats - vector_count: {}, total_size: {}",
@@ -678,7 +937,7 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Get any vector from the memtable (useful for testing/debugging)
-    pub async fn get_any_vector(&self) -> Result<Option<VectorRecord>> {
+    pub async fn get_any_vector(&self) -> Result<Option<ProximaRecord>> {
         let collections = self.collections.read().await;
 
         // Linear search through all collections (could be optimized with sequence->collection mapping)
@@ -704,7 +963,7 @@ impl GlobalPartitionedMemtable {
         k: usize,
         collection_id: &str,
         distance_metric: CoreDistanceMetric,
-    ) -> Result<Vec<(SimilarityResult, VectorRecord)>> {
+    ) -> Result<Vec<(SimilarityResult, ProximaRecord)>> {
         let collections = self.collections.read().await;
 
         debug!(
@@ -753,7 +1012,7 @@ impl GlobalPartitionedMemtable {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         let collections = self.collections.read().await;
 
         if let Some(partition) = collections.get(collection_id) {
@@ -763,8 +1022,8 @@ impl GlobalPartitionedMemtable {
         }
     }
 
-    /// Get all vectors for a specific collection (MODERN - returns VectorRecord directly)
-    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    /// Get all vectors for a specific collection (MODERN - returns ProximaRecord directly)
+    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<ProximaRecord>> {
         let collections = self.collections.read().await;
 
         if let Some(partition) = collections.get(collection_id) {
@@ -777,6 +1036,54 @@ impl GlobalPartitionedMemtable {
             );
 
             Ok(vectors)
+        } else {
+            Ok(Vec::new())
+        }
+    }
+
+    /// Paginated, deduped, time-ordered scan of a collection's unflushed records.
+    ///
+    /// Returns up to `limit` records with key `(updated_at_ns, oid)` strictly
+    /// greater than `after`, in ascending order, passing `predicate`, excluding
+    /// TTL-expired-at-`now_ns`. Results are byte-identical to
+    /// `get_collection_vectors` + sort + cursor-filter + take, but O(log d +
+    /// limit) per page once the per-collection scan index is warm.
+    ///
+    /// Concurrency: the warm path (index already built) serves under a shared
+    /// read lock, so concurrent scans don't serialize. Only the rebuild (after a
+    /// mutation invalidated the index) takes the exclusive lock.
+    pub async fn scan_collection_paginated(
+        &self,
+        collection_id: &str,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Result<Vec<ProximaRecord>> {
+        // Operational kill-switch: serve via the legacy full scan, never building
+        // the index. Correctness-equivalent; a memory-pressure escape hatch.
+        if scan_index_disabled() {
+            let collections = self.collections.read().await;
+            return Ok(match collections.get(collection_id) {
+                Some(partition) => partition.scan_paginated_legacy(after, limit, predicate, now_ns),
+                None => Vec::new(),
+            });
+        }
+        // Fast path: index warm → shared read lock → concurrent scans.
+        {
+            let collections = self.collections.read().await;
+            match collections.get(collection_id) {
+                None => return Ok(Vec::new()),
+                Some(partition) if partition.scan_index.is_some() => {
+                    return Ok(partition.serve_from_index(after, limit, predicate, now_ns));
+                }
+                Some(_) => { /* dirty → fall through to rebuild under write lock */ }
+            }
+        }
+        // Slow path: rebuild under the exclusive lock, then serve.
+        let mut collections = self.collections.write().await;
+        if let Some(partition) = collections.get_mut(collection_id) {
+            Ok(partition.scan_paginated(collection_id, after, limit, predicate, now_ns))
         } else {
             Ok(Vec::new())
         }
@@ -1034,7 +1341,7 @@ impl GlobalPartitionedMemtable {
     }
 
     /// Get vectors from sequence number onwards (for recovery) - MODERN
-    pub async fn get_all_vectors(&self, limit: Option<usize>) -> Result<Vec<(u64, VectorRecord)>> {
+    pub async fn get_all_vectors(&self, limit: Option<usize>) -> Result<Vec<(u64, ProximaRecord)>> {
         let collections = self.collections.read().await;
         let mut all_vectors = Vec::new();
 
@@ -1083,6 +1390,8 @@ impl GlobalPartitionedMemtable {
             for batch in partition.wal_batches.values_mut() {
                 batch.is_flushed = true;
             }
+            // Flushed batches leave the unflushed scan view — invalidate.
+            partition.scan_index = None;
         }
         Ok(())
     }
@@ -1104,10 +1413,13 @@ impl GlobalPartitionedMemtable {
 
             // Remove from vector index
             for vector_record in removed_batch.vector_records.iter() {
-                if !vector_record.id.is_empty() {
-                    partition.vector_id_index.remove(&vector_record.id);
+                if !vector_record.oid.is_empty() {
+                    partition.vector_id_index.remove(&vector_record.oid);
                 }
             }
+
+            // Removed batch invalidates cached scan locators.
+            partition.scan_index = None;
 
             // Update global metrics
             let mut metrics = self.metrics.write().await;
@@ -1191,7 +1503,7 @@ impl GlobalPartitionedMemtable {
 
 impl GlobalPartitionedMemtable {
     /// Get all vectors without sequences (for flush operations) - MODERN
-    pub async fn get_all_vectors_flat(&self) -> Result<Vec<VectorRecord>> {
+    pub async fn get_all_vectors_flat(&self) -> Result<Vec<ProximaRecord>> {
         let vectors_with_sequences = self.get_all_vectors(None).await?;
         Ok(vectors_with_sequences
             .into_iter()
@@ -1273,9 +1585,1202 @@ impl GlobalPartitionedMemtable {
             for batch in partition.wal_batches.values_mut() {
                 batch.is_flushed = true;
             }
+            partition.scan_index = None;
             Ok(())
         } else {
             Err(anyhow::anyhow!("Collection not found"))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+    use crate::storage::persistence::write_ahead_log::BatchId;
+
+    #[tokio::test]
+    async fn test_global_partitioned_batch_operations() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+        use crate::storage::persistence::write_ahead_log::BatchId;
+        use std::sync::Arc;
+
+        let memtable = GlobalPartitionedMemtable::new();
+
+        let vector_record1 = make_proxima_record("test_vector_1", vec![0.1, 0.2, 0.3], 1, None);
+        let vector_record2 = make_proxima_record("test_vector_2", vec![0.4, 0.5, 0.6], 1, None);
+
+        let batch = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![vector_record1.clone(), vector_record2.clone()]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let collection_id = "1uctd3b";
+        let sequences = memtable.add_wal_batch(collection_id, batch).await.unwrap();
+        assert_eq!(sequences.len(), 2);
+        assert_eq!(sequences[0], 1);
+        assert_eq!(sequences[1], 2);
+
+        let (vector_count, size) = memtable.get_collection_stats(collection_id).await;
+        assert_eq!(vector_count, 2);
+        assert!(size > 0);
+
+        let query_vector = vec![0.1, 0.2, 0.3];
+        let results = memtable
+            .search_vectors(&query_vector, 5, collection_id, CoreDistanceMetric::Cosine)
+            .await
+            .unwrap();
+
+        assert!(!results.is_empty());
+        assert_eq!(results[0].1.oid, "test_vector_1".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_global_partitioned_multi_collection() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+        use crate::storage::persistence::write_ahead_log::BatchId;
+        use std::sync::Arc;
+
+        let memtable = GlobalPartitionedMemtable::new();
+
+        let batch_a = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![make_proxima_record(
+                "vec_a1",
+                vec![1.0, 0.0, 0.0],
+                1,
+                None,
+            )]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 512,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let batch_b = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![make_proxima_record(
+                "vec_b1",
+                vec![0.0, 1.0, 0.0],
+                1,
+                None,
+            )]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 512,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let collection_a = "1uctd3a";
+        let collection_b = "1uctd3b";
+        let _seq_a = memtable.add_wal_batch(collection_a, batch_a).await.unwrap();
+        let _seq_b = memtable.add_wal_batch(collection_b, batch_b).await.unwrap();
+
+        let (count_a, _) = memtable.get_collection_stats(collection_a).await;
+        let (count_b, _) = memtable.get_collection_stats(collection_b).await;
+        assert_eq!(count_a, 1);
+        assert_eq!(count_b, 1);
+
+        let query = vec![1.0, 1.0, 1.0];
+        let results_a = memtable
+            .search_vectors(&query, 10, collection_a, CoreDistanceMetric::Euclidean)
+            .await
+            .unwrap();
+        let results_b = memtable
+            .search_vectors(&query, 10, collection_b, CoreDistanceMetric::Euclidean)
+            .await
+            .unwrap();
+
+        assert_eq!(results_a.len(), 1);
+        assert_eq!(results_b.len(), 1);
+        assert_eq!(results_a[0].1.oid, "vec_a1".to_string());
+        assert_eq!(results_b[0].1.oid, "vec_b1".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_mvcc_and_logical_deletes() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+        use crate::storage::persistence::write_ahead_log::BatchId;
+        use std::sync::Arc;
+
+        let memtable = GlobalPartitionedMemtable::new();
+        let now_secs = chrono::Utc::now().timestamp() as u32;
+
+        let vector_v1 = make_proxima_record("test_vector", vec![1.0, 0.0, 0.0], 1, None);
+        let vector_v2 = make_proxima_record("test_vector", vec![0.0, 1.0, 0.0], 2, None);
+        // v3: expired in the past (tombstone)
+        let vector_v3_delete = make_proxima_record(
+            "test_vector",
+            vec![0.0, 0.0, 1.0],
+            3,
+            Some((now_secs - 1) as i64 * 1_000_000_000),
+        );
+
+        let batch1 = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![vector_v1]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 512,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let batch2 = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![vector_v2]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 512,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let batch3 = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![vector_v3_delete]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 512,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let collection_id = "1uctd3d";
+        let _seq1 = memtable.add_wal_batch(collection_id, batch1).await.unwrap();
+        let _seq2 = memtable.add_wal_batch(collection_id, batch2).await.unwrap();
+        let _seq3 = memtable.add_wal_batch(collection_id, batch3).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, "test_vector")
+            .await
+            .unwrap();
+        assert!(result.is_none(), "Vector should be logically deleted");
+
+        let search_results = memtable
+            .search_vectors(
+                &[1.0, 1.0, 1.0],
+                10,
+                collection_id,
+                CoreDistanceMetric::Euclidean,
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            !search_results
+                .iter()
+                .any(|(_, record)| record.oid == "test_vector".to_string())
+        );
+
+        let all_vectors = memtable
+            .get_collection_vectors(collection_id)
+            .await
+            .unwrap();
+        assert!(
+            !all_vectors
+                .iter()
+                .any(|record| record.oid == "test_vector".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_global_partitioned_deletion_via_expiry() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+        use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+        use crate::storage::persistence::write_ahead_log::BatchId;
+        use std::sync::Arc;
+
+        let memtable = GlobalPartitionedMemtable::new();
+        let now_secs = chrono::Utc::now().timestamp() as u32;
+
+        let expired_vector = make_proxima_record(
+            "expired_vec",
+            vec![1.0, 2.0, 3.0],
+            1,
+            Some((now_secs - 1) as i64 * 1_000_000_000),
+        );
+        let valid_vector = make_proxima_record(
+            "valid_vec",
+            vec![4.0, 5.0, 6.0],
+            1,
+            Some((now_secs + 3600) as i64 * 1_000_000_000),
+        );
+
+        let batch = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![expired_vector, valid_vector]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let collection_id = "1uctd3e";
+        let _sequences = memtable.add_wal_batch(collection_id, batch).await.unwrap();
+
+        let all_vectors = memtable
+            .get_collection_vectors(collection_id)
+            .await
+            .unwrap();
+        assert_eq!(all_vectors.len(), 1);
+        assert_eq!(all_vectors[0].oid, "valid_vec".to_string());
+
+        let search_results = memtable
+            .search_vectors(
+                &[1.0, 1.0, 1.0],
+                10,
+                collection_id,
+                CoreDistanceMetric::Euclidean,
+            )
+            .await
+            .unwrap();
+        assert_eq!(search_results.len(), 1);
+        assert_eq!(search_results[0].1.oid, "valid_vec".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_global_partitioned_clear_operations() {
+        use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+        use crate::storage::persistence::write_ahead_log::BatchId;
+        use std::sync::Arc;
+
+        let memtable = GlobalPartitionedMemtable::new();
+
+        let batch = WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vec![
+                create_test_vector("vec1", "test_collection", vec![1.0, 0.0]),
+                create_test_vector("vec2", "test_collection", vec![0.0, 1.0]),
+                create_test_vector("vec3", "test_collection", vec![1.0, 1.0]),
+            ]),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1536,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        };
+
+        let sequences = memtable
+            .add_wal_batch("test_collection", batch)
+            .await
+            .unwrap();
+        assert_eq!(sequences.len(), 3);
+
+        memtable
+            .mark_all_batches_flushed("test_collection")
+            .await
+            .unwrap();
+
+        let cleared = memtable
+            .clear_flushed_batches("test_collection")
+            .await
+            .unwrap();
+        assert_eq!(cleared, 3);
+
+        let (count, _) = memtable.get_collection_stats("test_collection").await;
+        assert_eq!(count, 0);
+    }
+
+    // ---- TD-099(3d): deduped, time-ordered scan-index tests ----
+
+    fn test_now_ns() -> i64 {
+        chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    }
+
+    /// A record with an explicit `(updated_at_ns, record_version, valid_to_ns)`.
+    fn rec_at(
+        oid: &str,
+        updated_at_ns: i64,
+        version: u64,
+        valid_to_ns: Option<i64>,
+    ) -> ProximaRecord {
+        let mut r = make_proxima_record(oid, vec![0.1, 0.2, 0.3], version, valid_to_ns);
+        r.updated_at_ns = updated_at_ns;
+        r
+    }
+
+    fn batch_of(records: Vec<ProximaRecord>) -> WALVectorBatch {
+        WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(records),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        }
+    }
+
+    fn oids(records: &[ProximaRecord]) -> Vec<String> {
+        records.iter().map(|r| r.oid.clone()).collect()
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_dedups_to_latest_version() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        m.add_wal_batch(c, batch_of(vec![rec_at("x", 100, 1, None)]))
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("x", 200, 2, None)]))
+            .await
+            .unwrap();
+        let page = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["x".to_string()]);
+        assert_eq!(page[0].record_version, 2);
+        assert_eq!(page[0].updated_at_ns, 200);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_respects_after_and_limit() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        for (oid, ts) in [("a", 10), ("b", 20), ("c", 30), ("d", 40), ("e", 50)] {
+            m.add_wal_batch(c, batch_of(vec![rec_at(oid, ts, 1, None)]))
+                .await
+                .unwrap();
+        }
+        // after (30,"c"), limit 1 → "d" only.
+        let page = m
+            .scan_collection_paginated(c, Some((30, "c")), 1, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["d".to_string()]);
+        // no cursor, limit 2 → smallest two.
+        let page = m
+            .scan_collection_paginated(c, None, 2, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_skips_ttl_expired() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let now_ns = test_now_ns();
+        m.add_wal_batch(c, batch_of(vec![rec_at("live", 10, 1, None)]))
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("dead", 20, 1, Some(now_ns - 1))]))
+            .await
+            .unwrap();
+        let page = m
+            .scan_collection_paginated(c, None, 10, None, now_ns)
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["live".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_predicate_filters_before_limit() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        for (oid, ts) in [("a1", 10), ("a2", 20), ("a3", 30), ("a4", 40)] {
+            m.add_wal_batch(c, batch_of(vec![rec_at(oid, ts, 1, None)]))
+                .await
+                .unwrap();
+        }
+        // Smallest two are a1,a2 — but a1 fails the predicate. Predicate-before-limit
+        // must yield a2,a4 (the two smallest PASSING records), not just a2.
+        let pred = |r: &ProximaRecord| r.oid.ends_with('2') || r.oid.ends_with('4');
+        let page = m
+            .scan_collection_paginated(
+                c,
+                None,
+                2,
+                Some(&pred as &(dyn Fn(&ProximaRecord) -> bool + Send + Sync)),
+                test_now_ns(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(oids(&page), vec!["a2".to_string(), "a4".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn scan_paginated_empty_oid_falls_back() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        // An empty-oid record forces the legacy fallback path; result must still
+        // match the authoritative full scan.
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("", 10, 1, None), rec_at("k", 20, 1, None)]),
+        )
+        .await
+        .unwrap();
+        let page = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        let mut got = oids(&page);
+        got.sort();
+        assert_eq!(got, vec!["".to_string(), "k".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn index_rebuild_matches_get_all_vectors() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let now_ns = test_now_ns();
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("x", 10, 1, None), rec_at("y", 15, 1, None)]),
+        )
+        .await
+        .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("x", 30, 2, None)])) // x v2 supersedes v1
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("z", 40, 1, Some(now_ns - 1))])) // expired
+            .await
+            .unwrap();
+        m.add_wal_batch(c, batch_of(vec![rec_at("w", 25, 1, None)]))
+            .await
+            .unwrap();
+
+        let indexed = m
+            .scan_collection_paginated(c, None, 1000, None, now_ns)
+            .await
+            .unwrap();
+
+        // Authoritative oracle: get_all_vectors already dedups + TTL-filters.
+        let mut legacy = m.get_collection_vectors(c).await.unwrap();
+        legacy.sort_by(|a, b| {
+            (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+        });
+
+        assert_eq!(oids(&indexed), oids(&legacy));
+        let x = indexed.iter().find(|r| r.oid == "x").unwrap();
+        assert_eq!(x.record_version, 2, "dedup must keep latest version");
+        assert!(
+            indexed.iter().all(|r| r.oid != "z"),
+            "TTL-expired record must be excluded"
+        );
+    }
+
+    // ---- Slice B: lazy-cache invalidation ----
+
+    /// Authoritative oracle: `get_collection_vectors` (dedup+TTL) re-sorted by
+    /// the canonical key. The indexed scan must equal this after every mutation.
+    async fn oracle(m: &GlobalPartitionedMemtable, c: &str) -> Vec<String> {
+        let mut legacy = m.get_collection_vectors(c).await.unwrap();
+        legacy.sort_by(|a, b| {
+            (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+        });
+        oids(&legacy)
+    }
+
+    #[tokio::test]
+    async fn index_invalidated_on_insert() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        m.add_wal_batch(c, batch_of(vec![rec_at("a", 10, 1, None)]))
+            .await
+            .unwrap();
+        let p1 = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&p1), vec!["a".to_string()]); // builds the index
+        // A later insert must invalidate the cached projection.
+        m.add_wal_batch(c, batch_of(vec![rec_at("b", 20, 1, None)]))
+            .await
+            .unwrap();
+        let p2 = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert_eq!(oids(&p2), vec!["a".to_string(), "b".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn index_invalidated_on_flush() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        m.add_wal_batch(c, batch_of(vec![rec_at("a", 10, 1, None)]))
+            .await
+            .unwrap();
+        let _ = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap(); // build
+        m.mark_all_batches_flushed(c).await.unwrap(); // invalidate (content unchanged)
+        let cleared = m.clear_flushed_batches(c).await.unwrap(); // remove + invalidate
+        assert!(cleared >= 1);
+        let p = m
+            .scan_collection_paginated(c, None, 10, None, test_now_ns())
+            .await
+            .unwrap();
+        assert!(p.is_empty(), "cleared records must not appear in scan");
+    }
+
+    #[tokio::test]
+    async fn scan_consistent_after_interleaved_insert_flush_remove() {
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let now = test_now_ns();
+
+        // insert a,b
+        m.add_wal_batch(
+            c,
+            batch_of(vec![rec_at("a", 10, 1, None), rec_at("b", 20, 1, None)]),
+        )
+        .await
+        .unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+
+        // supersede a with v2
+        m.add_wal_batch(c, batch_of(vec![rec_at("a", 30, 2, None)]))
+            .await
+            .unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+
+        // flush + clear → empty
+        m.mark_all_batches_flushed(c).await.unwrap();
+        m.clear_flushed_batches(c).await.unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+        assert!(got.is_empty());
+
+        // insert d (capture its batch key), then c
+        let dkey = {
+            let b = batch_of(vec![rec_at("d", 50, 1, None)]);
+            let k = b.batch_id.to_base62();
+            m.add_wal_batch(c, b).await.unwrap();
+            k
+        };
+        m.add_wal_batch(c, batch_of(vec![rec_at("c", 40, 1, None)]))
+            .await
+            .unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+
+        // remove d's batch → only c remains
+        m.remove_batch(c, &dkey).await.unwrap();
+        let got = m
+            .scan_collection_paginated(c, None, 1000, None, now)
+            .await
+            .unwrap();
+        assert_eq!(oids(&got), oracle(&m, c).await);
+        assert_eq!(oids(&got), vec!["c".to_string()]);
+    }
+
+    /// Demonstrates the TD-099(3d) win: warming the scan index once and
+    /// range-seeking each page is far cheaper than the baseline (full MVCC dedup
+    /// + sort per page). `#[ignore]`d (timing, not a CI gate); run with:
+    /// `cargo test --lib perf_indexed_pages_beat_baseline -- --ignored --nocapture`.
+    #[tokio::test]
+    #[ignore = "perf demonstration; run with --ignored --nocapture"]
+    async fn perf_indexed_pages_beat_baseline_fullscan() {
+        use std::time::Instant;
+        let m = GlobalPartitionedMemtable::new();
+        let c = "1uctd3b";
+        let n = 20_000usize;
+        let mut recs = Vec::with_capacity(n);
+        for i in 0..n {
+            recs.push(rec_at(&format!("oid{i:06}"), i as i64, 1, None));
+        }
+        m.add_wal_batch(c, batch_of(recs)).await.unwrap();
+        let now = test_now_ns();
+        let pages = 50usize;
+        let limit = 100usize;
+
+        // Indexed: build once on the first page, then O(log d + limit) per page.
+        let t0 = Instant::now();
+        let mut after: Option<(i64, String)> = None;
+        let mut indexed_total = 0usize;
+        for _ in 0..pages {
+            let after_ref = after.as_ref().map(|(t, o)| (*t, o.as_str()));
+            let page = m
+                .scan_collection_paginated(c, after_ref, limit, None, now)
+                .await
+                .unwrap();
+            indexed_total += page.len();
+            match page.last() {
+                Some(last) => after = Some((last.updated_at_ns, last.oid.clone())),
+                None => break,
+            }
+        }
+        let indexed_elapsed = t0.elapsed();
+
+        // Baseline: today's per-page cost — full dedup + sort + filter + take.
+        let t1 = Instant::now();
+        let mut bafter: Option<(i64, String)> = None;
+        let mut baseline_total = 0usize;
+        for _ in 0..pages {
+            let mut all = m.get_collection_vectors(c).await.unwrap();
+            all.sort_by(|a, b| {
+                (a.updated_at_ns, a.oid.as_str()).cmp(&(b.updated_at_ns, b.oid.as_str()))
+            });
+            let page: Vec<_> = all
+                .into_iter()
+                .filter(|r| match &bafter {
+                    Some((t, o)) => (r.updated_at_ns, r.oid.as_str()) > (*t, o.as_str()),
+                    None => true,
+                })
+                .take(limit)
+                .collect();
+            baseline_total += page.len();
+            match page.last() {
+                Some(last) => bafter = Some((last.updated_at_ns, last.oid.clone())),
+                None => break,
+            }
+        }
+        let baseline_elapsed = t1.elapsed();
+
+        println!(
+            "TD-099(3d) perf: N={n} pages={pages} limit={limit}\n  \
+             indexed : {indexed_elapsed:?} ({indexed_total} records)\n  \
+             baseline: {baseline_elapsed:?} ({baseline_total} records)\n  \
+             speedup : {:.1}x",
+            baseline_elapsed.as_secs_f64() / indexed_elapsed.as_secs_f64().max(1e-9)
+        );
+        assert_eq!(
+            indexed_total, baseline_total,
+            "both paths return identical pages"
+        );
+        assert!(
+            indexed_elapsed < baseline_elapsed,
+            "indexed pagination must beat full-scan-per-page"
+        );
+    }
+
+    fn make_proxima_record(
+        id: &str,
+        vector: Vec<f32>,
+        record_version: u64,
+        valid_to_ns: Option<i64>,
+    ) -> ProximaRecord {
+        use proximadb_records::{EmbeddingCell, LabelSet};
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as i64;
+        let dim = vector.len() as u32;
+        ProximaRecord {
+            oid: id.to_string(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_from_ns: None,
+            valid_to_ns,
+            origin: None,
+            actor: None,
+            method: Some("test".to_string()),
+            memory_type: None,
+            props: std::collections::HashMap::new(),
+            refs: Vec::new(),
+            edge: None,
+            embeddings: if !vector.is_empty() {
+                vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
+                    ..Default::default()
+                }]
+            } else {
+                vec![]
+            },
+            sequence: None,
+            labels: LabelSet::new(),
+            ..Default::default()
+        }
+    }
+
+    fn create_test_vector(id: &str, _collection_id: &str, vector: Vec<f32>) -> ProximaRecord {
+        make_proxima_record(id, vector, 1, None)
+    }
+
+    fn create_vector_record(
+        id: &str,
+        vector: Vec<f32>,
+        version: Option<u32>,
+        expires_at_secs: Option<u32>,
+    ) -> ProximaRecord {
+        let valid_to_ns = expires_at_secs.map(|s| (s as i64) * 1_000_000_000);
+        let rv = version.unwrap_or(1) as u64;
+        make_proxima_record(id, vector, rv, valid_to_ns)
+    }
+
+    fn create_wal_batch(
+        _collection_id: &str,
+        _sequence: u64,
+        vectors: Vec<ProximaRecord>,
+    ) -> WALVectorBatch {
+        WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vectors),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_three_layer_search_consistency_basic() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "1uctd3f";
+        let vector_id = "vector_1";
+
+        let vector_v1 = create_vector_record(vector_id, vec![1.0, 0.0, 0.0], Some(1), None);
+        let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
+        let _seq1 = memtable.add_wal_batch(collection_id, batch1).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().record_version, 1);
+
+        let vector_v2 = create_vector_record(vector_id, vec![0.0, 1.0, 0.0], Some(2), None);
+        let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
+        let _seq2 = memtable.add_wal_batch(collection_id, batch2).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let found_vector = result.unwrap();
+        assert_eq!(found_vector.record_version, 2);
+        assert_eq!(
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
+            Some(vec![0.0, 1.0, 0.0].as_slice())
+        );
+
+        let current_time = chrono::Utc::now().timestamp() as u32;
+        let vector_v3_delete = create_vector_record(
+            vector_id,
+            vec![0.0, 0.0, 1.0],
+            Some(3),
+            Some(current_time - 1),
+        );
+        let batch3 = create_wal_batch(collection_id, 3, vec![vector_v3_delete]);
+        let _seq3 = memtable.add_wal_batch(collection_id, batch3).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(result.is_none(), "Vector should be logically deleted");
+
+        let search_results = memtable
+            .search_vectors(
+                &[1.0, 1.0, 1.0],
+                10,
+                collection_id,
+                CoreDistanceMetric::Euclidean,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !search_results
+                .iter()
+                .any(|(_, record)| record.oid == vector_id.to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_only_batch_rejects_duplicate_ids_in_request() {
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "insert_only_duplicate_request";
+        let first = create_vector_record("record_1", vec![1.0, 0.0], Some(1), None);
+        let second = create_vector_record("record_1", vec![0.0, 1.0], Some(1), None);
+        let batch = create_wal_batch(collection_id, 1, vec![first, second]);
+
+        let error = memtable
+            .add_wal_batch_insert_only(collection_id, batch)
+            .await
+            .expect_err("duplicate ids in an insert-only batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            memtable
+                .vector_by_id(collection_id, "record_1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_only_batch_rejects_existing_wal_id_atomically() {
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "insert_only_existing_wal";
+        let original = create_vector_record("record_1", vec![1.0, 0.0], Some(1), None);
+        let original_batch = create_wal_batch(collection_id, 1, vec![original]);
+        memtable
+            .add_wal_batch_insert_only(collection_id, original_batch)
+            .await
+            .unwrap();
+
+        let conflicting = create_vector_record("record_1", vec![0.0, 1.0], Some(1), None);
+        let new_record = create_vector_record("record_2", vec![0.5, 0.5], Some(1), None);
+        let conflicting_batch = create_wal_batch(collection_id, 2, vec![conflicting, new_record]);
+
+        let error = memtable
+            .add_wal_batch_insert_only(collection_id, conflicting_batch)
+            .await
+            .expect_err("existing ids in an insert-only batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            memtable
+                .vector_by_id(collection_id, "record_2")
+                .await
+                .unwrap()
+                .is_none(),
+            "failed insert-only batch must not partially add new records"
+        );
+        let record_1 = memtable
+            .vector_by_id(collection_id, "record_1")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            record_1.embeddings.first().map(|e| e.as_fp32_slice()),
+            Some(vec![1.0, 0.0].as_slice())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_before_delete_update_consistency() {
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "1uctd3g";
+        let vector_id = "vector_1";
+
+        let original_vector = create_vector_record(vector_id, vec![1.0, 2.0, 3.0], Some(1), None);
+        let batch1 = create_wal_batch(collection_id, 1, vec![original_vector.clone()]);
+        memtable.add_wal_batch(collection_id, batch1).await.unwrap();
+
+        let current_vector = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(current_vector.is_some());
+        let current_vector = current_vector.unwrap();
+
+        assert_eq!(current_vector.oid, vector_id.to_string());
+        assert_eq!(
+            current_vector.embeddings.first().map(|e| e.as_fp32_slice()),
+            Some(vec![1.0, 2.0, 3.0].as_slice())
+        );
+        assert_eq!(current_vector.record_version, 1);
+
+        let updated_vector = create_vector_record(
+            &current_vector.oid,
+            vec![4.0, 5.0, 6.0],
+            Some((current_vector.record_version + 1) as u32),
+            None,
+        );
+        let batch2 = create_wal_batch(collection_id, 2, vec![updated_vector.clone()]);
+        memtable.add_wal_batch(collection_id, batch2).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let found_vector = result.unwrap();
+        assert_eq!(found_vector.oid, vector_id.to_string());
+        assert_eq!(
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
+            Some(vec![4.0, 5.0, 6.0].as_slice())
+        );
+        assert_eq!(found_vector.record_version, 2);
+
+        let current_time = chrono::Utc::now().timestamp() as u32;
+        let delete_vector = create_vector_record(
+            &current_vector.oid,
+            vec![0.0, 0.0, 0.0],
+            Some((found_vector.record_version + 1) as u32),
+            Some(current_time - 1),
+        );
+        let batch3 = create_wal_batch(collection_id, 3, vec![delete_vector]);
+        memtable.add_wal_batch(collection_id, batch3).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(result.is_none(), "Vector should be deleted after tombstone");
+    }
+
+    #[tokio::test]
+    async fn test_version_ordering_across_layers() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "1uctd3h";
+        let vector_id = "vector_1";
+
+        let vector_v3 = create_vector_record(vector_id, vec![3.0, 3.0, 3.0], Some(3), None);
+        let batch3 = create_wal_batch(collection_id, 3, vec![vector_v3.clone()]);
+        memtable.add_wal_batch(collection_id, batch3).await.unwrap();
+
+        let vector_v1 = create_vector_record(vector_id, vec![1.0, 1.0, 1.0], Some(1), None);
+        let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
+        memtable.add_wal_batch(collection_id, batch1).await.unwrap();
+
+        let vector_v2 = create_vector_record(vector_id, vec![2.0, 2.0, 2.0], Some(2), None);
+        let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
+        memtable.add_wal_batch(collection_id, batch2).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let found_vector = result.unwrap();
+        assert_eq!(found_vector.record_version, 3);
+        assert_eq!(
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
+            Some(vec![3.0, 3.0, 3.0].as_slice())
+        );
+
+        let search_results = memtable
+            .search_vectors(
+                &[3.0, 3.0, 3.0],
+                1,
+                collection_id,
+                CoreDistanceMetric::Euclidean,
+            )
+            .await
+            .unwrap();
+        assert_eq!(search_results.len(), 1);
+        assert_eq!(search_results[0].1.record_version, 3);
+    }
+
+    #[tokio::test]
+    async fn test_expired_records_vs_active_records() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "1uctd3i";
+        let current_time = chrono::Utc::now().timestamp() as u32;
+
+        let active_vector = create_vector_record(
+            "active_vector",
+            vec![1.0, 0.0, 0.0],
+            Some(1),
+            Some(current_time + 3600),
+        );
+
+        let expired_vector = create_vector_record(
+            "expired_vector",
+            vec![0.0, 1.0, 0.0],
+            Some(1),
+            Some(current_time - 1),
+        );
+
+        let batch = create_wal_batch(
+            collection_id,
+            1,
+            vec![active_vector.clone(), expired_vector.clone()],
+        );
+        memtable.add_wal_batch(collection_id, batch).await.unwrap();
+
+        let active_result = memtable
+            .vector_by_id(collection_id, "active_vector")
+            .await
+            .unwrap();
+        assert!(active_result.is_some());
+
+        let expired_result = memtable
+            .vector_by_id(collection_id, "expired_vector")
+            .await
+            .unwrap();
+        assert!(expired_result.is_none());
+
+        let search_results = memtable
+            .search_vectors(
+                &[1.0, 1.0, 1.0],
+                10,
+                collection_id,
+                CoreDistanceMetric::Euclidean,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(search_results.len(), 1);
+        assert_eq!(search_results[0].1.oid, "active_vector".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_same_id_different_vector_values() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "1uctd3j";
+        let vector_id = "vector_1";
+
+        let vector_v1 = create_vector_record(vector_id, vec![1.0, 0.0, 0.0], Some(1), None);
+        let batch1 = create_wal_batch(collection_id, 1, vec![vector_v1.clone()]);
+        memtable.add_wal_batch(collection_id, batch1).await.unwrap();
+
+        let vector_v2 = create_vector_record(vector_id, vec![0.0, 0.0, 1.0], Some(2), None);
+        let batch2 = create_wal_batch(collection_id, 2, vec![vector_v2.clone()]);
+        memtable.add_wal_batch(collection_id, batch2).await.unwrap();
+
+        let result = memtable
+            .vector_by_id(collection_id, vector_id)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+        let found_vector = result.unwrap();
+        assert_eq!(found_vector.oid, vector_id.to_string());
+        assert_eq!(found_vector.record_version, 2);
+        assert_eq!(
+            found_vector.embeddings.first().map(|e| e.as_fp32_slice()),
+            Some(vec![0.0, 0.0, 1.0].as_slice())
+        );
+
+        let search_results = memtable
+            .search_vectors(
+                &[0.0, 0.0, 1.0],
+                1,
+                collection_id,
+                CoreDistanceMetric::Cosine,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(search_results.len(), 1);
+        assert_eq!(search_results[0].1.oid, vector_id.to_string());
+        assert_eq!(search_results[0].1.record_version, 2);
+        assert_eq!(
+            search_results[0]
+                .1
+                .embeddings
+                .first()
+                .map(|e| e.as_fp32_slice()),
+            Some(vec![0.0, 0.0, 1.0].as_slice())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_multi_collection_mvcc_isolation() {
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_a = "1uctd3x";
+        let collection_b = "1uctd3y";
+        let vector_id = "vector_1";
+
+        let vector_a = create_vector_record(vector_id, vec![1.0, 0.0, 0.0], Some(1), None);
+        let batch_a = create_wal_batch(collection_a, 1, vec![vector_a.clone()]);
+        memtable.add_wal_batch(collection_a, batch_a).await.unwrap();
+
+        let vector_b = create_vector_record(vector_id, vec![0.0, 1.0, 0.0], Some(1), None);
+        let batch_b = create_wal_batch(collection_b, 2, vec![vector_b.clone()]);
+        memtable.add_wal_batch(collection_b, batch_b).await.unwrap();
+
+        let current_time = chrono::Utc::now().timestamp() as u32;
+        let delete_a = create_vector_record(
+            vector_id,
+            vec![0.0, 0.0, 0.0],
+            Some(2),
+            Some(current_time - 1),
+        );
+        let batch_delete = create_wal_batch(collection_a, 3, vec![delete_a]);
+        memtable
+            .add_wal_batch(collection_a, batch_delete)
+            .await
+            .unwrap();
+
+        let result_a = memtable
+            .vector_by_id(collection_a, vector_id)
+            .await
+            .unwrap();
+        assert!(result_a.is_none());
+
+        let result_b = memtable
+            .vector_by_id(collection_b, vector_id)
+            .await
+            .unwrap();
+        assert!(result_b.is_some());
+        assert_eq!(
+            result_b
+                .unwrap()
+                .embeddings
+                .first()
+                .map(|e| e.as_fp32_slice()),
+            Some(vec![0.0, 1.0, 0.0].as_slice())
+        );
+    }
+
+    #[tokio::test]
+    async fn test_flush_compaction_atomic_consistency() {
+        use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
+
+        let memtable = GlobalPartitionedMemtable::new();
+        let collection_id = "1uctd3k";
+
+        let vectors = vec![
+            create_vector_record("vec1", vec![1.0, 0.0, 0.0], Some(1), None),
+            create_vector_record("vec2", vec![0.0, 1.0, 0.0], Some(1), None),
+            create_vector_record("vec3", vec![0.0, 0.0, 1.0], Some(1), None),
+        ];
+        let batch = create_wal_batch(collection_id, 1, vectors);
+        memtable.add_wal_batch(collection_id, batch).await.unwrap();
+
+        let search_results = memtable
+            .search_vectors(
+                &[1.0, 1.0, 1.0],
+                10,
+                collection_id,
+                CoreDistanceMetric::Euclidean,
+            )
+            .await
+            .unwrap();
+        assert_eq!(search_results.len(), 3);
+
+        let vec1_result = memtable.vector_by_id(collection_id, "vec1").await.unwrap();
+        assert!(vec1_result.is_some());
+
+        let cleared = memtable.clear_flushed_batches(collection_id).await.unwrap();
+        assert_eq!(cleared, 0);
+
+        let search_results_after = memtable
+            .search_vectors(
+                &[1.0, 1.0, 1.0],
+                10,
+                collection_id,
+                CoreDistanceMetric::Euclidean,
+            )
+            .await
+            .unwrap();
+        assert_eq!(search_results_after.len(), 3);
     }
 }

@@ -11,10 +11,12 @@
 
 use std::sync::Arc;
 
-use crate::compute::quantization::unified::UnifiedQuantizationEngine;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine;
 use crate::index::axis::AxisManager;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
+// Re-export foundation quantization types
+pub use proximadb_quantization_types::{QuantizationLevel, QuantizationType};
 
 use super::super::traits::{ModelType, StoreCapabilities};
 
@@ -27,21 +29,62 @@ pub struct VectorStoreConfig {
     pub max_vectors_in_memory: usize,
     /// Enable quantization for storage efficiency
     pub enable_quantization: bool,
-    /// Default quantization type
-    pub default_quantization: QuantizationType,
+    /// Default quantization configuration
+    pub default_quantization_config: MultimodelLegacyVectorQuantizationConfig,
 }
 
-/// Quantization type for vector compression
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QuantizationType {
+/// Backwards-compat alias for [`MultimodelLegacyVectorQuantizationConfig`].
+pub type VectorQuantizationConfig = MultimodelLegacyVectorQuantizationConfig;
+
+/// Vector quantization configuration
+///
+/// Uses foundation QuantizationType and QuantizationLevel for consistency.
+#[derive(Debug, Clone, Copy)]
+pub struct MultimodelLegacyVectorQuantizationConfig {
+    /// Quantization type
+    pub quantization_type: QuantizationType,
+    /// Quantization level (precision)
+    pub quantization_level: QuantizationLevel,
+}
+
+impl MultimodelLegacyVectorQuantizationConfig {
     /// No quantization (full precision)
-    None,
+    pub fn none() -> Self {
+        Self {
+            quantization_type: QuantizationType::None,
+            quantization_level: QuantizationLevel::None,
+        }
+    }
+
     /// INT8 scalar quantization
-    Int8,
+    pub fn int8() -> Self {
+        Self {
+            quantization_type: QuantizationType::Scalar,
+            quantization_level: QuantizationLevel::Int8,
+        }
+    }
+
     /// Binary quantization
-    Binary,
+    pub fn binary() -> Self {
+        Self {
+            quantization_type: QuantizationType::Binary,
+            quantization_level: QuantizationLevel::Int4,
+        }
+    }
+
     /// Product quantization
-    ProductQuantization,
+    pub fn product_quantization() -> Self {
+        Self {
+            quantization_type: QuantizationType::Product,
+            quantization_level: QuantizationLevel::Int8,
+        }
+    }
+}
+
+impl Default for MultimodelLegacyVectorQuantizationConfig {
+    fn default() -> Self {
+        Self::int8()
+    }
 }
 
 impl Default for VectorStoreConfig {
@@ -50,7 +93,7 @@ impl Default for VectorStoreConfig {
             dimension_threshold: 512,
             max_vectors_in_memory: 100_000,
             enable_quantization: true,
-            default_quantization: QuantizationType::Int8,
+            default_quantization_config: MultimodelLegacyVectorQuantizationConfig::int8(),
         }
     }
 }
@@ -78,9 +121,9 @@ impl Default for VectorStoreConfig {
 /// ```
 pub struct VectorStore {
     /// Primary engine for high-dimensional vectors (HELIX)
-    helix_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    helix_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     /// Hot tier engine for real-time vectors (SST)
-    sst_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    sst_engine: Option<Arc<dyn UnifiedStorageFormat>>,
     /// Dimension threshold for engine routing
     dimension_threshold: usize,
     /// Shared quantization engine
@@ -108,13 +151,13 @@ impl VectorStore {
     }
 
     /// Set the HELIX engine for high-dimensional vectors
-    pub fn with_helix_engine(mut self, engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_helix_engine(mut self, engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.helix_engine = Some(engine);
         self
     }
 
     /// Set the SST engine for real-time operations
-    pub fn with_sst_engine(mut self, engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_sst_engine(mut self, engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.sst_engine = Some(engine);
         self
     }
@@ -123,7 +166,7 @@ impl VectorStore {
     ///
     /// This is a convenience constructor that sets the given engine as the SST engine,
     /// making it available as the primary engine for vector operations in federated queries.
-    pub fn with_engine(engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_engine(engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         Self::new(VectorStoreConfig::default()).with_sst_engine(engine)
     }
 
@@ -160,7 +203,7 @@ impl VectorStore {
     }
 
     /// Route to appropriate engine based on vector dimension
-    pub fn route_engine(&self, dimension: usize) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn route_engine(&self, dimension: usize) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         if dimension > self.dimension_threshold {
             // High-dimensional: prefer HELIX
             self.helix_engine.as_ref().or(self.sst_engine.as_ref())
@@ -171,17 +214,17 @@ impl VectorStore {
     }
 
     /// Get the primary engine (SST for writes, HELIX for high-dim)
-    pub fn primary_engine(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn primary_engine(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.sst_engine.as_ref().or(self.helix_engine.as_ref())
     }
 
     /// Get the SST engine directly
-    pub fn sst_engine(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn sst_engine(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.sst_engine.as_ref()
     }
 
     /// Get the HELIX engine directly
-    pub fn helix_engine(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn helix_engine(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.helix_engine.as_ref()
     }
 

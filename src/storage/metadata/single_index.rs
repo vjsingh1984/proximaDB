@@ -480,6 +480,8 @@ mod tests {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 100,

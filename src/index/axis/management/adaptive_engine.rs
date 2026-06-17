@@ -63,7 +63,7 @@ pub struct CollectionCharacteristics {
     /// Analysis of recent query patterns.
     pub query_patterns: QueryPatternAnalysis,
     /// Current performance metrics for this collection.
-    pub performance_metrics: PerformanceMetrics,
+    pub performance_metrics: AdaptivePerformanceMetrics,
     /// Rate of new vector insertions per second.
     pub growth_rate: f32,
     /// Read/write access frequency metrics.
@@ -130,9 +130,12 @@ pub enum TemporalPattern {
     Bursty,
 }
 
+/// Backwards-compat alias for [`AdaptivePerformanceMetrics`].
+pub type PerformanceMetrics = AdaptivePerformanceMetrics;
+
 /// Current performance metrics
 #[derive(Debug, Clone)]
-pub struct PerformanceMetrics {
+pub struct AdaptivePerformanceMetrics {
     /// Average query latency in milliseconds.
     pub average_query_latency_ms: f64,
     /// 99th percentile query latency in milliseconds.

@@ -15,7 +15,7 @@
 //!
 //! ## Data Types
 //!
-//! - **`FilterableColumn`**: Column configuration for metadata filtering
+//! - **`CoreOpsFilterableColumn`**: Column configuration for metadata filtering
 //! - **`ColumnData`**: Type-safe column data types
 //!
 //! ## Migration Notes
@@ -37,9 +37,12 @@ pub mod performance_optimization;
 // Import common types used across the module
 use crate::core::search::FilterExpression;
 
+/// Backwards-compat alias for [`CoreOpsFilterableColumn`].
+pub type FilterableColumn = CoreOpsFilterableColumn;
+
 /// Filterable metadata column configuration
 #[derive(Debug, Clone)]
-pub struct FilterableColumn {
+pub struct CoreOpsFilterableColumn {
     /// Column name
     pub name: String,
     /// Column data type
@@ -72,23 +75,16 @@ pub mod zero_copy_reader_integration;
 /// - Hardware-aware routing: GPU → SIMD → Baseline
 /// - Versioned wire format
 /// - Unified metrics integration
-pub mod proximacodec;
+///
+/// NOTE: Module has been moved to src/compute/proximacodec to reduce module nesting depth.
+/// Re-exported here for backward compatibility with storage layer imports.
+pub use crate::compute::proximacodec;
 
-/// OBSOLETE: Old encoder/decoder modules - replaced by proximacodec
+/// OBSOLETE: old encoder/decoder modules were removed in PCX-010.
 ///
-/// The old proximaencoder and unified_proxima_simd modules have been moved to .obsolete
-/// to force all remaining call sites to migrate to the new ProximaCodec API.
-///
-/// Migration: Replace `ProximaEncoder`/`ProximaDecoder` with `ProximaCodec::global()`
-/// See: src/storage/engines/core/ops/proximacodec/
-///
-/// Modules are kept as .obsolete for reference but not compiled:
-///
-/// - proximaencoder.obsolete/
-/// - unified_proxima_simd.obsolete/
-// pub mod proximaencoder;  // OBSOLETE - use proximacodec instead
-// pub mod unified_proxima_simd;  // OBSOLETE - use proximacodec instead
-/// SIMD configuration system for fine-tuning optimization behavior
+/// Migration: replace `ProximaEncoder`/`ProximaDecoder` with
+/// `ProximaCodec::global()` or the canonical `proximadb-codec` strategy API.
+// SIMD configuration system for fine-tuning optimization behavior
 pub mod simd_config;
 
 /// SIMD-accelerated decode pipeline for the Native Compute Engine
@@ -160,7 +156,7 @@ pub mod proxima_tensor_encoding;
 // (compression_adapter already declared above)
 
 // DEPRECATED: These types now live in unified_query_optimizer
-// Removed deprecated metadata_filters module - import from crate::query::unified_query_optimizer instead
+// Removed deprecated metadata_filters module - import from crate::query::query_optimizer instead
 // NOTE: Quantization exports removed - use compute::quantization module directly
 pub use compression_common::{
     AdaptiveCompressionSettings, CompressionCapabilities, CompressionStats, CompressionStrategy,
@@ -190,7 +186,7 @@ pub use performance_optimization::{
 //     ConcurrencyStrategy, BatchProcessingMode,
 // };
 // pub use utilities_common::{
-//     UniversalUtilities, MemoryEstimator, PerformanceProfiler,
+//     UniversalUtilities, MemoryEstimator, CoreOpsPerformanceProfiler,
 //     FilenameGenerator, PathResolver,
 // };
 
@@ -210,7 +206,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::{VectorRecord, hardware_capabilities::HardwareCapabilities};
+use crate::core::hardware_capabilities::HardwareCapabilities;
+use crate::proto::proximadb_v1::VectorRecord;
 
 // Temporary placeholder types until modules are created
 #[derive(Debug, Clone)]
@@ -378,7 +375,7 @@ pub struct UniversalIndexConfig {
     pub secondary_indexes: Vec<SecondaryIndexConfig>,
 
     /// Bloom filter configuration
-    pub bloom_filters: BloomFilterConfig,
+    pub bloom_filters: CoreOpsBloomFilterConfig,
 
     /// Index maintenance
     pub maintenance_config: IndexMaintenanceConfig,
@@ -430,9 +427,12 @@ pub struct SecondaryIndexConfig {
     pub configuration: HashMap<String, serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`CoreOpsBloomFilterConfig`].
+pub type BloomFilterConfig = CoreOpsBloomFilterConfig;
+
 /// Bloom filter configuration
 #[derive(Debug, Clone)]
-pub struct BloomFilterConfig {
+pub struct CoreOpsBloomFilterConfig {
     pub enabled: bool,
     pub false_positive_rate: f64,
     pub per_block: bool,
@@ -508,7 +508,7 @@ pub struct VectorValidationConfig {
 /// Metadata schema configuration
 #[derive(Debug, Clone)]
 pub struct MetadataSchemaConfig {
-    pub filterable_columns: Vec<FilterableColumn>,
+    pub filterable_columns: Vec<CoreOpsFilterableColumn>,
     pub searchable_columns: Vec<String>,
     pub required_columns: Vec<String>,
     pub schema_validation: bool,
@@ -543,7 +543,7 @@ pub trait UniversalEngineCapabilities {
     fn supports_feature(&self, feature: &str) -> bool;
 
     /// Get performance characteristics
-    fn get_performance_profile(&self) -> PerformanceProfile;
+    fn get_performance_profile(&self) -> CoreOpsPerformanceProfile;
 
     // Deferred: Restore when ResourceRequirements is available
     // fn get_resource_requirements(&self) -> ResourceRequirements;
@@ -583,9 +583,12 @@ pub struct EngineCapabilities {
     pub supports_metrics_export: bool,
 }
 
+/// Backwards-compat alias for [`CoreOpsPerformanceProfile`].
+pub type PerformanceProfile = CoreOpsPerformanceProfile;
+
 /// Performance profile for an engine
 #[derive(Debug, Clone)]
-pub struct PerformanceProfile {
+pub struct CoreOpsPerformanceProfile {
     /// Throughput characteristics
     pub read_throughput_ops_per_sec: f64,
     pub write_throughput_ops_per_sec: f64,
@@ -754,7 +757,7 @@ impl Default for UniversalIndexConfig {
             index_types: vec![Index::PrimaryId, Index::Hash],
             id_index: IdIndexConfig::default(),
             secondary_indexes: Vec::new(),
-            bloom_filters: BloomFilterConfig::default(),
+            bloom_filters: CoreOpsBloomFilterConfig::default(),
             maintenance_config: IndexMaintenanceConfig::default(),
         }
     }
@@ -771,7 +774,7 @@ impl Default for IdIndexConfig {
     }
 }
 
-impl Default for BloomFilterConfig {
+impl Default for CoreOpsBloomFilterConfig {
     fn default() -> Self {
         Self {
             enabled: true,

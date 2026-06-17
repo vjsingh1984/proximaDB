@@ -112,44 +112,62 @@
 //! 5. **Memory Budget**: Stay within memory limits
 //!
 
+pub mod aql; // TD-050: Agentic Query Language (RUBICON)
+pub mod arrow_graph_bridge; // TD-035: Arrow bridge for graph query results
 pub mod ast;
+pub mod authority_context; // Shared xCatalog authority conversion for planner/EXPLAIN context
 pub mod cache; // C2: Query result caching for agentic AI workloads with repetitive queries
 pub mod capability; // Capability registry for query validation and API parity
 pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction
-pub mod compute_bridge; // Bridge to Hadoop-style storage-compute separation
+pub mod compute_scheduler; // Course-correction §5 P0: read-side multi-engine route selection
 pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
 pub mod distributed; // Distributed query coordination across cluster nodes
 pub mod execution; // New unified execution engine
 pub mod explain;
+pub mod explain_schema; // Explain schema for API parity (Issue #47, SB-17)
 pub mod facade; // Unified query facade - single entry point for all queries (consolidates 5 parallel paths)
 pub mod federated; // Federated multi-model query engine (cross-model joins, SQL extensions)
+pub mod graph_lowering; // Shared lowering from supported graph queries into multimodal IR
+pub mod graph_runtime; // Shared runtime for lowered graph-query execution and canonical row shaping
 pub mod graph_subset; // Shared graph query subset for facade and federated SQL extensions
 pub mod materialized_view; // A1: Materialized views for complex dashboard queries
-pub mod multimodal; // MultiModelPlan v1 - Unified cross-model query execution
-pub mod multimodel_executor; // Multi-model SQL executor - SqlPlan lowering + dispatch
-pub mod multimodel_router; // Multi-model SQL router - StoreType detection + result envelope
+pub mod multimodal; // MultiModalPlan v1 - Unified cross-model query execution
+pub mod multimodal_executor; // Multi-model SQL executor - SqlPlan lowering + dispatch
+pub mod multimodal_router; // Multi-model SQL router - DataModel detection + result envelope
+pub mod multimodel_executor; // Canonical multi-model SQL executor implementation
+pub mod multimodel_router; // Canonical multi-model SQL router implementation
+pub mod nl; // AV-SQL (TD-048) — 3-Agent Decomposition
 pub mod parsers; // Query language parsers (MongoDB, etc.)
 pub mod prepared; // Prepared statements for parse-once-execute-many pattern
+pub mod query_optimizer;
+pub mod query_router; // Query routing (Issue #46, SB-16)
+pub mod read_route; // Read-side route/explain contract for DataFusion/Ballista execution
+pub mod unified_query_port_impl; // Root-crate implementation of UnifiedQueryPort
+pub use unified_query_port_impl::UnifiedQueryPortImpl;
+pub mod repair; // LLD §9 — repair controller primitives (SURE-RAG aggregator + decision)
 pub mod rl_planner; // RL-based adaptive query planner
 pub mod semantic_analysis;
 pub mod sql_frontend;
+pub mod table_write_executor;
+pub mod table_write_plan;
 pub mod unified; // Multi-model query engine (vector, document, graph, observability)
-pub mod unified_explain; // Unified explain schema for API parity (Issue #47, SB-17)
-pub mod unified_query_optimizer;
-pub mod unified_routing; // Unified query routing (Issue #46, SB-16)
 pub mod utils;
 pub mod validator; // Plan validation for capability checking
 pub mod vector_search;
 
-#[cfg(test)]
-pub mod tests;
-
 // Re-export main types
-pub use unified_query_optimizer::{
+pub use query_optimizer::{
     UnifiedCostWeights, UnifiedExecutionPlan as QueryPlan, UnifiedMetadataFilter as MetadataFilter,
     UnifiedOptimizerConfig, UnifiedQueryOptimizer as QueryOptimizer,
 };
 pub use vector_search::{SearchParameters, VectorSearchQuery, VectorSearchResult};
+
+// Re-export AQL types - TD-050 RUBICON
+pub use aql::{
+    AqlFind, AqlFrom, AqlPredicate, AqlProjection, AqlQuery, AqlResult, AqlSource, AqlValue,
+    AqlWhere, AuditContext, AuditFrame, AuditOp, AuditOutcome, AuditTrail,
+    DataModel as AqlDataModel, JoinType as AqlJoinType,
+};
 
 // Re-export capability registry types
 pub use capability::{Capability, CapabilityCheckError, CapabilityRegistry, CapabilitySet};
@@ -158,14 +176,8 @@ pub use validator::{PlanValidator, ValidationResult};
 // Re-export federated query types
 pub use federated::{
     CrossModelOptimizer, ExecutionResult as FederatedExecutionResult, FederatedExecutor,
-    FederatedParser, FederatedQuery, FederatedQueryContext, PlanNode,
-    QueryPlan as FederatedQueryPlan, QueryType as FederatedQueryType,
-};
-
-// Re-export compute bridge types for storage-compute separation
-pub use compute_bridge::{
-    BridgeConfig, BridgeStatistics, ComputeBridge, ExecutionResult as ComputeExecutionResult,
-    QueryContext as ComputeQueryContext,
+    FederatedParser, FederatedQuery, FederatedQueryContext, FederatedQueryPlan, PlanNode,
+    QueryType as FederatedQueryType,
 };
 
 // Re-export unified facade types - PREFERRED ENTRY POINT
@@ -184,9 +196,9 @@ pub use facade::{
     QueryResultData,
     QueryStrategy,
     QueryType,
+    ScoredRecord,
     SqlStrategy,
     UnifiedQueryFacade,
-    VectorMatch,
     // Real strategy implementations
     VectorSearchStrategy,
 };

@@ -6,13 +6,14 @@
 //! - Handling memory vs disk WAL modes
 //! - Cleanup instructions after successful flushes
 
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::storage::persistence::write_ahead_log::{
     FlushDataSource, WALFlushCoordinator, config::SyncMode,
 };
-use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageEngine};
+use crate::storage::traits::{FlushParameters, FlushResult, UnifiedStorageFormat};
 use anyhow::Result;
 use async_trait::async_trait;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
 use std::sync::Arc;
 
 /// Mock storage engine for testing
@@ -22,7 +23,7 @@ struct MockStorageEngine {
 }
 
 #[async_trait]
-impl UnifiedStorageEngine for MockStorageEngine {
+impl UnifiedStorageFormat for MockStorageEngine {
     fn engine_name(&self) -> &'static str {
         "MockEngine"
     }
@@ -31,8 +32,8 @@ impl UnifiedStorageEngine for MockStorageEngine {
         "1.0.0"
     }
 
-    fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-        crate::storage::traits::StorageEngineStrategy::Sst
+    fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+        crate::storage::traits::StorageFormatStrategy::Sst
     }
 
     async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
@@ -93,7 +94,7 @@ impl UnifiedStorageEngine for MockStorageEngine {
         _collection_id: &str,
         _base_path: &str,
         _vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         Ok(None)
     }
 
@@ -112,24 +113,28 @@ impl UnifiedStorageEngine for MockStorageEngine {
 }
 
 /// Create test vector
-fn create_test_vector(id: &str) -> VectorRecord {
-    let mut metadata = std::collections::HashMap::new();
-    metadata.insert(
+fn create_test_vector(id: &str) -> ProximaRecord {
+    let mut props = ProximaTree::new();
+    props.insert(
         "test".to_string(),
-        SqlValue {
-            value: Some(sql_value::Value::StringValue("true".to_string())),
-        },
+        ProximaTreeNode::Value(ProximaValue::String("true".to_string())),
     );
 
-    VectorRecord {
-        id: id.to_string(),
-        vector: vec![0.1; 128],
-        metadata,
-        timestamp: Some(1234567890i64),
-        updated_at: Some(1234567890i64),
-        expires_at: None,
-        version: Some(1),
-        source: None,
+    ProximaRecord {
+        oid: id.to_string(),
+        embeddings: vec![EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "dense_vector".to_string(),
+            values: vec![0.1; 128],
+            dim: 128,
+            ..Default::default()
+        }],
+        props,
+        created_at_ns: 1_234_567_890_000_000,
+        updated_at_ns: 1_234_567_890_000_000,
+        record_version: 1,
+        method: Some("test".to_string()),
+        ..ProximaRecord::default()
     }
 }
 

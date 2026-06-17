@@ -16,14 +16,14 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio::time::{Duration, sleep};
 
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::proto::proximadb_v1::{
     CollectionConfig, DistanceMetric, IndexingAlgorithm, MetadataItem, StorageEngine,
 };
 use proximadb::services::VectorOperationsService;
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::engines::impls::sst::SstEngine as LsmEngine;
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::sst::SstEngine as LsmEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::batch_strategy::WriteBufferStrategyType;

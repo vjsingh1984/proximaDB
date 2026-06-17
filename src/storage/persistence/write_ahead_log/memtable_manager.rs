@@ -7,9 +7,9 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::specialized::wal_behavior::{WALBehaviorWrapper, WALVectorBatch};
+use proximadb_records::ProximaRecord;
 
 /// Centralized manager for all memtable operations
 pub struct MemtableManager {
@@ -85,7 +85,7 @@ impl MemtableManager {
     }
 
     /// Add a single vector to the memtable
-    pub async fn add_vector(&self, collection_id: &str, vector: VectorRecord) -> Result<u64> {
+    pub async fn add_vector(&self, collection_id: &str, vector: ProximaRecord) -> Result<u64> {
         // Create a batch of one
         let batch = WALVectorBatch {
             batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
@@ -101,7 +101,7 @@ impl MemtableManager {
     }
 
     /// Get all vectors for a collection
-    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<ProximaRecord>> {
         let collection_id_string = crate::core::String::from(collection_id.to_string());
         self.wal_behavior
             .get_collection_vectors(&collection_id_string)
@@ -113,7 +113,7 @@ impl MemtableManager {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         self.wal_behavior
             .vector_by_id(collection_id, vector_id)
             .await
@@ -213,6 +213,8 @@ impl MemtableManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
+
     fn create_test_config() -> MemtableConfig {
         MemtableConfig {
             max_size_bytes: 10 * 1024 * 1024,       // 10MB
@@ -223,16 +225,21 @@ mod tests {
         }
     }
 
-    fn create_test_vector(id: &str) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: None,
-            version: Some(1),
-            source: Some("test".to_string()),
+    fn create_test_vector(id: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: 4,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
+                ..Default::default()
+            }],
+            created_at_ns: 1_234_567_890_000_000_000,
+            updated_at_ns: 1_234_567_890_000_000_000,
+            record_version: 1,
+            origin: Some("test".to_string()),
+            ..Default::default()
         }
     }
 
@@ -255,7 +262,7 @@ mod tests {
             .await
             .expect("Failed to search vector");
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().id, vector.id);
+        assert_eq!(retrieved.unwrap().oid, vector.oid);
 
         // Get all vectors
         let all_vectors = manager
@@ -284,7 +291,7 @@ mod tests {
 
         let batch = WALVectorBatch {
             batch_id: crate::storage::persistence::write_ahead_log::BatchId::new(),
-            vector_records: Arc::new(vectors),
+            vector_records: Arc::new(vectors.into_iter().map(Into::into).collect()),
             timestamp: std::time::SystemTime::now(),
             total_size_bytes: 1024,
             is_flushed: false,

@@ -185,12 +185,12 @@ pub struct QueryResultCache {
     /// Configuration
     config: QueryResultCacheConfig,
     /// Cache statistics
-    stats: CacheStatistics,
+    stats: QueryResultCacheStatistics,
 }
 
 /// Statistics for cache monitoring
 #[derive(Debug, Default)]
-pub struct CacheStatistics {
+pub struct QueryResultCacheStatistics {
     /// Total cache hits
     pub hits: AtomicU64,
     /// Total cache misses
@@ -205,7 +205,7 @@ pub struct CacheStatistics {
     pub expirations: AtomicU64,
 }
 
-impl CacheStatistics {
+impl QueryResultCacheStatistics {
     /// Get the cache hit rate (0.0 to 1.0)
     pub fn hit_rate(&self) -> f64 {
         let hits = self.hits.load(Ordering::Relaxed);
@@ -226,7 +226,7 @@ impl QueryResultCache {
             cache: DashMap::new(),
             invalidation_registry: DashMap::new(),
             config,
-            stats: CacheStatistics::default(),
+            stats: QueryResultCacheStatistics::default(),
         }
     }
 
@@ -466,7 +466,7 @@ impl QueryResultCache {
             .collect();
 
         // Sort by age (oldest first)
-        entries.sort_by(|a, b| a.1.cmp(&b.1));
+        entries.sort_by_key(|e| e.1);
 
         let to_evict = entries
             .into_iter()
@@ -572,7 +572,12 @@ impl Default for QueryResultCache {
     }
 }
 
-/// Public cache statistics
+/// Public cache statistics.
+///
+/// Part of the external API surface — appears in query-observability
+/// REST/gRPC responses. Do NOT consolidate with
+/// `proximadb_runtime_common::cache::CacheStats` without bumping the
+/// public API version.
 #[derive(Debug, Clone)]
 pub struct QueryCacheStats {
     /// Number of cached entries

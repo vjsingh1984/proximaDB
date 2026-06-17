@@ -22,6 +22,7 @@ use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{debug, warn};
@@ -33,62 +34,12 @@ use super::rpc::{
 };
 use super::shard::{Shard, ShardId};
 
-/// Configuration for replication
-#[derive(Debug, Clone)]
-pub struct ReplicationConfig {
-    /// Maximum replication lag allowed in milliseconds
-    pub max_lag_ms: u64,
-    /// Replication timeout in milliseconds
-    pub replication_timeout_ms: u64,
-    /// Batch size for replication
-    pub batch_size: usize,
-    /// Enable async replication (vs sync)
-    pub async_replication: bool,
-    /// Buffer size for replication queue
-    pub queue_buffer_size: usize,
-    /// Enable compression for replication
-    pub enable_compression: bool,
-    /// Retry configuration
-    pub retry_config: ReplicationRetryConfig,
-}
+/// Backwards-compat alias for [`ClusterReplicationConfig`].
+pub type ReplicationConfig = ClusterReplicationConfig;
 
-impl Default for ReplicationConfig {
-    fn default() -> Self {
-        Self {
-            max_lag_ms: 1000,
-            replication_timeout_ms: 5000,
-            batch_size: 100,
-            async_replication: false,
-            queue_buffer_size: 10000,
-            enable_compression: true,
-            retry_config: ReplicationRetryConfig::default(),
-        }
-    }
-}
-
-/// Retry configuration for failed replications
-#[derive(Debug, Clone)]
-pub struct ReplicationRetryConfig {
-    /// Maximum retry attempts
-    pub max_retries: u32,
-    /// Initial backoff in milliseconds
-    pub initial_backoff_ms: u64,
-    /// Maximum backoff in milliseconds
-    pub max_backoff_ms: u64,
-    /// Backoff multiplier
-    pub backoff_multiplier: f64,
-}
-
-impl Default for ReplicationRetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_backoff_ms: 50,
-            max_backoff_ms: 2000,
-            backoff_multiplier: 2.0,
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{ClusterReplicationConfig, ReplicationRetryConfig};
 
 /// A replication entry representing a write operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,11 +120,11 @@ pub struct ReplicaState {
 
 /// Engine replication service
 pub struct EngineReplication {
-    config: ReplicationConfig,
+    config: ClusterReplicationConfig,
     /// Current LSN counter
-    current_lsn: Arc<RwLock<u64>>,
+    current_lsn: Arc<AtomicU64>,
     /// Entry ID counter
-    entry_id_counter: Arc<RwLock<u64>>,
+    entry_id_counter: Arc<AtomicU64>,
     /// Pending replication entries by shard
     pending_entries: Arc<RwLock<HashMap<ShardId, Vec<ReplicationEntry>>>>,
     /// Replica states by shard
@@ -205,13 +156,13 @@ struct ReplicationStats {
 
 impl EngineReplication {
     /// Create a new engine replication service (local-only mode, no RPC)
-    pub fn new(config: ReplicationConfig, local_node_id: String) -> Self {
+    pub fn new(config: ClusterReplicationConfig, local_node_id: String) -> Self {
         let max_concurrent = config.batch_size * 2;
 
         Self {
             config,
-            current_lsn: Arc::new(RwLock::new(0)),
-            entry_id_counter: Arc::new(RwLock::new(0)),
+            current_lsn: Arc::new(AtomicU64::new(0)),
+            entry_id_counter: Arc::new(AtomicU64::new(0)),
             pending_entries: Arc::new(RwLock::new(HashMap::new())),
             replica_states: Arc::new(RwLock::new(HashMap::new())),
             replication_semaphore: Arc::new(Semaphore::new(max_concurrent)),
@@ -236,7 +187,7 @@ impl EngineReplication {
     /// * `connection_manager` - Connection manager for resilient connections
     /// * `node_registry` - Registry for looking up node addresses
     pub fn with_rpc(
-        config: ReplicationConfig,
+        config: ClusterReplicationConfig,
         local_node_id: String,
         sink: Arc<dyn ReplicationSink>,
         connection_manager: Arc<ConnectionManager>,
@@ -246,8 +197,8 @@ impl EngineReplication {
 
         Self {
             config,
-            current_lsn: Arc::new(RwLock::new(0)),
-            entry_id_counter: Arc::new(RwLock::new(0)),
+            current_lsn: Arc::new(AtomicU64::new(0)),
+            entry_id_counter: Arc::new(AtomicU64::new(0)),
             pending_entries: Arc::new(RwLock::new(HashMap::new())),
             replica_states: Arc::new(RwLock::new(HashMap::new())),
             replication_semaphore: Arc::new(Semaphore::new(max_concurrent)),
@@ -462,17 +413,8 @@ impl EngineReplication {
         operation: ReplicationOperation,
         data: Vec<u8>,
     ) -> Result<ReplicationEntry> {
-        let entry_id = {
-            let mut counter = self.entry_id_counter.write().await;
-            *counter += 1;
-            *counter
-        };
-
-        let lsn = {
-            let mut lsn = self.current_lsn.write().await;
-            *lsn += 1;
-            *lsn
-        };
+        let entry_id = self.entry_id_counter.fetch_add(1, Ordering::AcqRel) + 1;
+        let lsn = self.current_lsn.fetch_add(1, Ordering::AcqRel) + 1;
 
         let checksum = crc32fast::hash(&data);
 
@@ -842,13 +784,13 @@ impl EngineReplication {
 
     /// Get current LSN
     pub async fn current_lsn(&self) -> u64 {
-        *self.current_lsn.read().await
+        self.current_lsn.load(Ordering::Acquire)
     }
 
     /// Check replication health
     pub async fn check_health(&self) -> ReplicationHealth {
         let states = self.replica_states.read().await;
-        let current_lsn = *self.current_lsn.read().await;
+        let current_lsn = self.current_lsn.load(Ordering::Acquire);
 
         let healthy_replicas = states.values().filter(|s| s.healthy).count();
         let total_replicas = states.len();
@@ -880,11 +822,10 @@ impl EngineReplication {
             total_bytes_replicated: stats.total_bytes_replicated,
             successful_replications: stats.successful_replications,
             failed_replications: stats.failed_replications,
-            avg_latency_ms: if stats.successful_replications > 0 {
-                stats.total_latency_ms / stats.successful_replications
-            } else {
-                0
-            },
+            avg_latency_ms: stats
+                .total_latency_ms
+                .checked_div(stats.successful_replications)
+                .unwrap_or(0),
             retry_count: stats.retry_count,
         }
     }
@@ -1113,7 +1054,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_replication_creation() {
-        let config = ReplicationConfig::default();
+        let config = ClusterReplicationConfig::default();
         let replication = EngineReplication::new(config, "local-node".to_string());
 
         let lsn = replication.current_lsn().await;
@@ -1122,8 +1063,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_entry() {
-        let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+        let replication = EngineReplication::new(
+            ClusterReplicationConfig::default(),
+            "local-node".to_string(),
+        );
 
         let shard_id = ShardId::generate("test", 0);
         let entry = replication
@@ -1143,8 +1086,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_replicate_to_shard() {
-        let replication =
-            EngineReplication::new(ReplicationConfig::default(), "primary-node".to_string());
+        let replication = EngineReplication::new(
+            ClusterReplicationConfig::default(),
+            "primary-node".to_string(),
+        );
 
         let shard = create_test_shard();
         let shard_id = shard.id.clone();
@@ -1172,8 +1117,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_calculate_required_acks() {
-        let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+        let replication = EngineReplication::new(
+            ClusterReplicationConfig::default(),
+            "local-node".to_string(),
+        );
 
         // 3 total replicas (including primary)
         assert_eq!(
@@ -1192,8 +1139,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+        let replication = EngineReplication::new(
+            ClusterReplicationConfig::default(),
+            "local-node".to_string(),
+        );
 
         let health = replication.check_health().await;
 
@@ -1204,8 +1153,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_replica_state_tracking() {
-        let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+        let replication = EngineReplication::new(
+            ClusterReplicationConfig::default(),
+            "local-node".to_string(),
+        );
 
         let ack = ReplicationAck {
             node_id: "replica-1".to_string(),
@@ -1228,8 +1179,10 @@ mod tests {
     #[tokio::test]
     async fn test_replication_without_rpc() {
         // Test that replication works in local-only mode (no RPC configured)
-        let replication =
-            EngineReplication::new(ReplicationConfig::default(), "local-node".to_string());
+        let replication = EngineReplication::new(
+            ClusterReplicationConfig::default(),
+            "local-node".to_string(),
+        );
 
         assert!(!replication.has_rpc());
         assert!(replication.sink().is_none());

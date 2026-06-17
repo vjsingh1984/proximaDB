@@ -19,9 +19,16 @@ pub enum IndexUpdateMode {
     Hybrid,
 }
 
-/// HNSW algorithm configuration
+/// HNSW algorithm runtime configuration (defaults applied, concrete types).
+///
+/// Naming note: this type used to be called `HnswConfig` and collided with
+/// the proto `proximadb_proto::v1::HnswConfig` wire form. Renamed to
+/// `RuntimeHnswConfig` because the in-crate version is a runtime extension
+/// of the proto: it adds `prune_connections` + `level_multiplier` and uses
+/// non-Option concrete types (defaults are resolved at conversion time, not
+/// optional on the wire). The proto type remains the canonical wire form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HnswConfig {
+pub struct RuntimeHnswConfig {
     /// Number of bi-directional links for each node
     pub m: usize,
     /// Size of candidate set during construction
@@ -44,7 +51,7 @@ pub struct HnswConfig {
     pub level_multiplier: f32,
 }
 
-impl Default for HnswConfig {
+impl Default for RuntimeHnswConfig {
     fn default() -> Self {
         Self {
             m: 16,
@@ -61,9 +68,16 @@ impl Default for HnswConfig {
     }
 }
 
-/// IVF algorithm configuration
+/// IVF algorithm runtime configuration (defaults applied, concrete types).
+///
+/// Naming note: this type used to be called `IvfConfig` and collided with
+/// the proto `proximadb_proto::v1::IvfConfig` wire form. Renamed to
+/// `RuntimeIvfConfig` for the same reason as `RuntimeHnswConfig`: in-crate
+/// version is a runtime extension with concrete `usize`/`bool` fields and
+/// opinionated defaults, distinct from proto's `Option<u32>` wire form.
+/// The proto type remains the canonical wire form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IvfConfig {
+pub struct RuntimeIvfConfig {
     /// Number of clusters
     pub n_lists: usize,
     /// Number of clusters to search
@@ -80,7 +94,7 @@ pub struct IvfConfig {
     pub min_train_size: usize,
 }
 
-impl Default for IvfConfig {
+impl Default for RuntimeIvfConfig {
     fn default() -> Self {
         Self {
             n_lists: 1000, // Will be adjusted based on collection size
@@ -106,9 +120,15 @@ pub enum RandomProjection {
     Sparse,
 }
 
-/// LSH algorithm configuration
+/// LSH algorithm runtime configuration (defaults applied, concrete types).
+///
+/// Naming note: this type used to be called `LshConfig` and collided with
+/// the proto `proximadb_proto::v1::LshConfig` wire form. Renamed to
+/// `RuntimeLshConfig` for the same reason as `RuntimeHnswConfig` /
+/// `RuntimeIvfConfig`: concrete fields + opinionated defaults, distinct
+/// from the proto Option-typed wire form.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LshConfig {
+pub struct RuntimeLshConfig {
     /// Number of hash tables
     pub n_hash_tables: u32,
     /// Number of hash functions per table
@@ -123,7 +143,7 @@ pub struct LshConfig {
     pub projection: RandomProjection,
 }
 
-impl Default for LshConfig {
+impl Default for RuntimeLshConfig {
     fn default() -> Self {
         Self {
             n_hash_tables: 10,
@@ -136,9 +156,20 @@ impl Default for LshConfig {
     }
 }
 
-/// Comprehensive index configuration for collections
+/// Runtime index configuration for collections (defaults applied,
+/// concrete types, opinionated values from TOML/factory paths).
+///
+/// Naming note: this type used to be called `IndexConfig` and collided
+/// with `proximadb_proto::v1::IndexConfig` (proto wire form) and with
+/// `proximadb_vector::index::IndexConfig` (the modality's algorithm+
+/// metric+params builder triple). Renamed because this in-crate version
+/// is the runtime-resolved form: 10 concrete fields (vs proto's 15
+/// Option-typed fields), plus opinionated defaults, plus
+/// `Option<RuntimeHnswConfig>` / `Option<RuntimeIvfConfig>` /
+/// `Option<RuntimeLshConfig>` (the IvfConfig/LshConfig twins follow the
+/// same pattern).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct IndexConfig {
+pub struct RuntimeIndexConfig {
     /// Index update behavior
     pub update_mode: IndexUpdateMode,
     /// Timeout for async updates (ms)
@@ -148,11 +179,11 @@ pub struct IndexConfig {
     /// Background index optimization
     pub enable_background_optimization: bool,
     /// HNSW-specific configuration
-    pub hnsw_config: Option<HnswConfig>,
+    pub hnsw_config: Option<RuntimeHnswConfig>,
     /// IVF-specific configuration
-    pub ivf_config: Option<IvfConfig>,
+    pub ivf_config: Option<RuntimeIvfConfig>,
     /// LSH-specific configuration
-    pub lsh_config: Option<LshConfig>,
+    pub lsh_config: Option<RuntimeLshConfig>,
     /// Parallel index building
     pub build_concurrency: Option<usize>,
     /// Memory limit per index (MB)
@@ -161,7 +192,7 @@ pub struct IndexConfig {
     pub checkpoint_interval_ms: Option<u64>,
 }
 
-impl Default for IndexConfig {
+impl Default for RuntimeIndexConfig {
     fn default() -> Self {
         Self {
             update_mode: IndexUpdateMode::default(),
@@ -178,8 +209,8 @@ impl Default for IndexConfig {
     }
 }
 
-impl IndexConfig {
-    /// Create IndexConfig from protobuf with smart defaults
+impl RuntimeIndexConfig {
+    /// Create RuntimeIndexConfig from protobuf with smart defaults
     pub fn from_proto(proto: &crate::proto::proximadb_v1::IndexConfig) -> Result<Self> {
         let update_mode = match proto.update_mode.unwrap_or(0) {
             1 => IndexUpdateMode::Synchronous,
@@ -188,7 +219,7 @@ impl IndexConfig {
             _ => IndexUpdateMode::Synchronous,
         };
 
-        let hnsw_config = proto.hnsw_config.as_ref().map(|h| HnswConfig {
+        let hnsw_config = proto.hnsw_config.as_ref().map(|h| RuntimeHnswConfig {
             m: h.m.unwrap_or(16) as usize,
             ef_construction: h.ef_construction.unwrap_or(200) as usize,
             ef_search: h.ef_search.unwrap_or(100) as usize,
@@ -201,7 +232,7 @@ impl IndexConfig {
             level_multiplier: 1.0, // Default value - field not in proto
         });
 
-        let ivf_config = proto.ivf_config.as_ref().map(|i| IvfConfig {
+        let ivf_config = proto.ivf_config.as_ref().map(|i| RuntimeIvfConfig {
             n_lists: i.n_lists.unwrap_or(1000) as usize,
             n_probe: i.n_probe.unwrap_or(10) as usize,
             quantization_bits: i.quantization_bits.unwrap_or(8) as usize,
@@ -211,7 +242,7 @@ impl IndexConfig {
             min_train_size: i.min_train_size.unwrap_or(1000) as usize,
         });
 
-        let lsh_config = proto.lsh_config.as_ref().map(|l| LshConfig {
+        let lsh_config = proto.lsh_config.as_ref().map(|l| RuntimeLshConfig {
             n_hash_tables: l.n_hash_tables.unwrap_or(10),
             n_hash_functions: l.n_hash_functions.unwrap_or(8),
             bucket_width: l.bucket_width.unwrap_or(4.0),
@@ -594,7 +625,7 @@ impl IndexConfig {
 
         match algorithm {
             "HNSW" => {
-                let mut hnsw = HnswConfig::default();
+                let mut hnsw = RuntimeHnswConfig::default();
 
                 // Adjust parameters based on collection size
                 if let Some(size) = collection_size_hint {
@@ -630,7 +661,7 @@ impl IndexConfig {
                 config.hnsw_config = Some(hnsw);
             }
             "IVF" => {
-                let mut ivf = IvfConfig::default();
+                let mut ivf = RuntimeIvfConfig::default();
 
                 // Adjust parameters based on collection size
                 if let Some(size) = collection_size_hint {
@@ -689,7 +720,7 @@ impl IndexConfig {
                 }
 
                 // PQ typically uses IVF as the coarse quantizer
-                let mut ivf = IvfConfig::default();
+                let mut ivf = RuntimeIvfConfig::default();
                 if let Some(size) = collection_size_hint {
                     ivf.n_lists = ((size as f64).sqrt() / 4.0).ceil() as usize;
                     ivf.n_lists = ivf.n_lists.clamp(50, 1000);
@@ -733,7 +764,7 @@ impl IndexConfig {
             }
             "LSH" => {
                 // Locality-Sensitive Hashing: probabilistic indexing
-                let mut lsh = LshConfig::default();
+                let mut lsh = RuntimeLshConfig::default();
 
                 // Adjust parameters based on collection size
                 if let Some(size) = collection_size_hint {
@@ -950,7 +981,7 @@ mod tests {
 
     #[test]
     fn test_default_index_config() {
-        let config = IndexConfig::default();
+        let config = RuntimeIndexConfig::default();
         assert_eq!(config.update_mode, IndexUpdateMode::Synchronous);
         assert_eq!(config.async_update_timeout_ms, Some(30000));
         assert_eq!(config.async_update_batch_size, Some(1000));
@@ -960,60 +991,60 @@ mod tests {
 
     #[test]
     fn test_hnsw_config_validation() {
-        let mut config = IndexConfig::default();
-        config.hnsw_config = Some(HnswConfig {
+        let mut config = RuntimeIndexConfig::default();
+        config.hnsw_config = Some(RuntimeHnswConfig {
             m: 0, // Invalid
             ..Default::default()
         });
         assert!(config.validate().is_err());
 
-        config.hnsw_config = Some(HnswConfig {
+        config.hnsw_config = Some(RuntimeHnswConfig {
             m: 16,
             ef_construction: 10, // Invalid: < m
             ..Default::default()
         });
         assert!(config.validate().is_err());
 
-        config.hnsw_config = Some(HnswConfig::default());
+        config.hnsw_config = Some(RuntimeHnswConfig::default());
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_ivf_config_validation() {
-        let mut config = IndexConfig::default();
-        config.ivf_config = Some(IvfConfig {
+        let mut config = RuntimeIndexConfig::default();
+        config.ivf_config = Some(RuntimeIvfConfig {
             n_lists: 0, // Invalid
             ..Default::default()
         });
         assert!(config.validate().is_err());
 
-        config.ivf_config = Some(IvfConfig {
+        config.ivf_config = Some(RuntimeIvfConfig {
             n_lists: 100,
             n_probe: 150, // Invalid: > n_lists
             ..Default::default()
         });
         assert!(config.validate().is_err());
 
-        config.ivf_config = Some(IvfConfig::default());
+        config.ivf_config = Some(RuntimeIvfConfig::default());
         assert!(config.validate().is_ok());
     }
 
     #[test]
     fn test_create_for_algorithm() {
-        let small_config = IndexConfig::create_for_algorithm("HNSW", Some(5_000));
+        let small_config = RuntimeIndexConfig::create_for_algorithm("HNSW", Some(5_000));
         assert!(small_config.hnsw_config.is_some());
         let hnsw = small_config.hnsw_config.unwrap();
         assert_eq!(hnsw.ef_construction, 300);
         assert_eq!(hnsw.m, 32);
 
-        let large_config = IndexConfig::create_for_algorithm("HNSW", Some(500_000));
+        let large_config = RuntimeIndexConfig::create_for_algorithm("HNSW", Some(500_000));
         assert!(large_config.hnsw_config.is_some());
         let hnsw = large_config.hnsw_config.unwrap();
         assert_eq!(hnsw.ef_construction, 150);
         assert_eq!(hnsw.m, 12);
         assert_eq!(hnsw.max_partition_size, 50_000);
 
-        let ivf_config = IndexConfig::create_for_algorithm("IVF", Some(100_000));
+        let ivf_config = RuntimeIndexConfig::create_for_algorithm("IVF", Some(100_000));
         assert!(ivf_config.ivf_config.is_some());
         let ivf = ivf_config.ivf_config.unwrap();
         assert_eq!(ivf.n_lists, 317); // sqrt(100000) = 316.22, ceil(316.22) = 317
@@ -1021,8 +1052,8 @@ mod tests {
 
     #[test]
     fn test_get_algorithm_config() {
-        let mut config = IndexConfig::default();
-        config.hnsw_config = Some(HnswConfig::default());
+        let mut config = RuntimeIndexConfig::default();
+        config.hnsw_config = Some(RuntimeHnswConfig::default());
 
         let hnsw_config = config.algorithm_config("HNSW");
         assert!(hnsw_config.contains_key("m"));

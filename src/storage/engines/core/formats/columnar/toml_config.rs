@@ -9,24 +9,27 @@ use std::path::PathBuf;
 use std::time::Duration;
 use anyhow::{Result, Context};
 
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 use crate::storage::engines::core::formats::columnar::{
     ParquetWriterConfig, FooterCacheConfig, HybridWriterConfig,
     WriterMode, ParquetConfigBuilder, FooterCacheBuilder, HybridWriterBuilder,
     ParquetPresets,
 };
 
+/// Backwards-compat alias for [`ColumnarTomlStorageConfig`].
+pub type StorageConfig = ColumnarTomlStorageConfig;
+
 /// Root configuration structure matching TOML file
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct StorageConfig {
+pub struct ColumnarTomlStorageConfig {
     /// Global storage settings
-    pub storage: GlobalStorageConfig,
+    pub storage: GlobalColumnarTomlStorageConfig,
     
     /// Monitoring settings
-    pub monitoring: MonitoringConfig,
+    pub monitoring: ColumnarTomlMonitoringConfig,
     
     /// Migration settings
-    pub migration: MigrationConfig,
+    pub migration: ColumnarTomlMigrationConfig,
     
     /// Advanced settings
     pub advanced: AdvancedConfig,
@@ -34,7 +37,7 @@ pub struct StorageConfig {
 
 /// Global storage configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct GlobalStorageConfig {
+pub struct GlobalColumnarTomlStorageConfig {
     /// Default storage engine
     pub default_engine: String,
     
@@ -206,7 +209,7 @@ pub struct SstEngineConfig {
 
 /// Monitoring configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
-pub struct MonitoringConfig {
+pub struct ColumnarTomlMonitoringConfig {
     pub parquet_optimizations: MonitoringSettings,
 }
 
@@ -236,15 +239,18 @@ impl Default for MonitoringSettings {
     }
 }
 
+/// Backwards-compat alias for [`ColumnarTomlMigrationConfig`].
+pub type MigrationConfig = ColumnarTomlMigrationConfig;
+
 /// Migration configuration
 #[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct MigrationConfig {
+pub struct ColumnarTomlMigrationConfig {
     pub auto_migrate: bool,
     
     pub apply_optimizations_to_existing: bool,
 }
 
-impl Default for MigrationConfig {
+impl Default for ColumnarTomlMigrationConfig {
     fn default() -> Self {
         Self {
             auto_migrate: true,
@@ -308,7 +314,7 @@ fn default_cache_memory() -> usize { 1_024 }
 fn default_io_threads() -> usize { 8 }
 fn default_prefetch_depth() -> usize { 10 }
 
-impl Default for GlobalStorageConfig {
+impl Default for GlobalColumnarTomlStorageConfig {
     fn default() -> Self {
         Self {
             default_engine: default_engine(),
@@ -394,19 +400,19 @@ pub struct ConfigLoader;
 
 impl ConfigLoader {
     /// Load configuration from TOML file
-    pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<StorageConfig> {
+    pub fn load_from_file(path: impl AsRef<std::path::Path>) -> Result<ColumnarTomlStorageConfig> {
         let content = std::fs::read_to_string(path)
             .context("Failed to read configuration file")?;
         
-        let config: StorageConfig = toml::from_str(&content)
+        let config: ColumnarTomlStorageConfig = toml::from_str(&content)
             .context("Failed to parse TOML configuration")?;
         
         Ok(config)
     }
     
     /// Load configuration with preset
-    pub fn load_with_preset(preset: &str) -> Result<StorageConfig> {
-        let mut config = StorageConfig::default();
+    pub fn load_with_preset(preset: &str) -> Result<ColumnarTomlStorageConfig> {
+        let mut config = ColumnarTomlStorageConfig::default();
         
         match preset {
             "maximum_performance" => {
@@ -570,7 +576,7 @@ impl ConfigLoader {
     
     /// Get configuration for a specific engine
     pub fn get_engine_config(
-        config: &StorageConfig,
+        config: &ColumnarTomlStorageConfig,
         engine: &str
     ) -> (ParquetWriterConfig, FooterCacheConfig, HybridWriterConfig) {
         let global_enabled = config.storage.enable_parquet_optimizations;
@@ -617,12 +623,12 @@ impl ConfigLoader {
     }
 }
 
-impl Default for StorageConfig {
+impl Default for ColumnarTomlStorageConfig {
     fn default() -> Self {
         Self {
-            storage: GlobalStorageConfig::default(),
-            monitoring: MonitoringConfig::default(),
-            migration: MigrationConfig::default(),
+            storage: GlobalColumnarTomlStorageConfig::default(),
+            monitoring: ColumnarTomlMonitoringConfig::default(),
+            migration: ColumnarTomlMigrationConfig::default(),
             advanced: AdvancedConfig::default(),
         }
     }
@@ -634,7 +640,7 @@ mod tests {
     
     #[test]
     fn test_default_config_has_optimizations() {
-        let config = StorageConfig::default();
+        let config = ColumnarTomlStorageConfig::default();
         assert!(config.storage.enable_parquet_optimizations);
         assert!(config.storage.parquet_writer.enable_bloom_filters);
         assert!(config.storage.parquet_writer.enable_pq_sorting);
@@ -657,7 +663,7 @@ mod tests {
     
     #[test]
     fn test_engine_specific_config() {
-        let mut config = StorageConfig::default();
+        let mut config = ColumnarTomlStorageConfig::default();
         
         // Set VIPER-specific override
         config.storage.engines.viper.parquet_writer = Some(TomlParquetWriterConfig {
@@ -674,7 +680,7 @@ mod tests {
     
     #[test]
     fn test_disable_optimizations() {
-        let mut config = StorageConfig::default();
+        let mut config = ColumnarTomlStorageConfig::default();
         config.storage.enable_parquet_optimizations = false;
         
         let (parquet_config, _, _) = ConfigLoader::get_engine_config(&config, "viper");

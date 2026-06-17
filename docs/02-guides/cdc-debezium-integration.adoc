@@ -216,6 +216,13 @@ metadata_fields = ["name", "category", "price"]
 
 Use Debezium's HTTP connector or Kafka Connect HTTP sink:
 
+[NOTE]
+====
+The `/api/v1/cdc/*` and `/api/v1/metrics` examples below are compatibility
+endpoints. They remain available for existing CDC automation while CDC events
+are normalized into canonical record/WAL paths.
+====
+
 [source,rust]
 ----
 use proximadb::cdc::{WebhookConfig, ChangeEvent};
@@ -473,4 +480,4 @@ RUST_LOG=proximadb::cdc=debug ./proximadb-server
 
 * https://debezium.io/documentation/[Debezium Documentation]
 * https://kafka.apache.org/documentation/[Apache Kafka Documentation]
-* link:../api/cdc.adoc[ProximaDB CDC API Reference]
+* link:../03-api-reference/index.md[ProximaDB API Reference]

@@ -331,6 +331,7 @@ impl CentroidTree {
         let mut max_variance = 0.0;
         let mut max_dim = 0;
 
+        #[allow(clippy::needless_range_loop)]
         for d in 0..dim {
             // Compute mean
             let mean: f32 = indices.iter().map(|&i| centroids[i][d]).sum::<f32>() / n;

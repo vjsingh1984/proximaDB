@@ -27,19 +27,39 @@ use async_trait::async_trait;
 
 use crate::compute::distance_computation::DistanceMetric;
 // VectorRecord eliminated from AXIS - zero-overhead storage only
+use crate::index::axis::filterable_metadata::{FilterableFieldsConfig, FilterableHnswMetadata};
 use crate::index::axis::indexes::annoy_index::{AxisAnnoyConfig, AxisAnnoyIndex};
+use crate::index::axis::indexes::dual_store_ivf::{UnifiedIvfConfig, UnifiedIvfIndex};
 use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
-use crate::index::axis::indexes::ivf_unified::{UnifiedIvfConfig, UnifiedIvfIndex};
 use crate::index::axis::indexes::lsh_index::{AxisLshConfig, AxisLshIndex};
 use crate::index::axis::types::IndexAlgorithm;
 use crate::index::edr::{EdrIndex, EdrIndexConfig};
 
 /// Trait for vector indexes that can be used by AXIS
-/// Clean design: No VectorRecord, just raw vector data
+///
+/// TD-064: This trait now supports filterable metadata for predicate-aware search.
+/// All AXIS indexes (HNSW, IVF, Annoy, LSH) can cache filterable metadata for
+/// early pruning during index traversal.
+///
+/// Clean design: No VectorRecord, just raw vector data + optional filterable metadata
 #[async_trait]
 pub trait AxisVectorIndex: Send + Sync {
     /// Add a vector to the index - just ID and raw data
     async fn add(&self, id: String, vector_data: Vec<f32>) -> Result<()>;
+
+    /// TD-064: Add a vector with filterable metadata
+    ///
+    /// This allows indexes to cache metadata for predicate-aware search.
+    /// Default implementation falls back to add() without metadata.
+    async fn add_with_metadata(
+        &self,
+        id: String,
+        vector_data: Vec<f32>,
+        _metadata: &FilterableHnswMetadata,
+    ) -> Result<()> {
+        // Default: ignore metadata and call standard add
+        self.add(id, vector_data).await
+    }
 
     /// Search for nearest neighbors with optional metadata filter
     async fn search(
@@ -49,6 +69,57 @@ pub trait AxisVectorIndex: Send + Sync {
         filter: Option<&std::collections::HashMap<String, String>>,
     ) -> Result<Vec<(String, f32)>>;
 
+    /// TD-064: Search with predicate-aware metadata filter
+    ///
+    /// This method allows indexes to use cached metadata for early pruning.
+    /// Default implementation falls back to search() with HashMap filter.
+    async fn search_with_predicate(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        _tenant_id: Option<&str>,
+        _time_range_ns: Option<(i64, i64)>,
+        _rls_tags: Option<&[String]>,
+    ) -> Result<Vec<(String, f32)>> {
+        // Default: fall back to standard search
+        self.search(query, top_k, None).await
+    }
+
+    /// Phase D — Quantization Trait Convergence Plan: search with a
+    /// generic [`CandidateSet`] allowlist.
+    ///
+    /// The default implementation calls `search(query, top_k, None)` then
+    /// post-filters via `cs.contains(id)`. This is the correct shape for
+    /// every AXIS adapter today (Annoy/HNSW/IVF/LSH) — none of them have
+    /// a scoring kernel that consumes a packed bitmap directly.
+    ///
+    /// The new `TurboQuantAxisIndex` adapter (next to this trait in
+    /// `src/index/axis/indexes/turboquant_index.rs`) overrides this
+    /// method to push the bitmap straight into the modality crate's
+    /// SIMD kernel via `src/index/turboquant_bridge.rs`. The override
+    /// avoids the post-filter pass entirely, which is the load-bearing
+    /// win for high-selectivity (≤10%) queries — the headline result
+    /// from ADR-021 §"In-kernel allowlist".
+    ///
+    /// Trait contract: `QuantizationMethod::supports_candidate_mask()`
+    /// (in the foundation crate, Phase A) declares whether an adapter
+    /// has a real override here. Default `false` ⇒ default impl runs.
+    /// `true` ⇒ adapter overrides.
+    async fn search_with_candidate_set(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        candidate_set: Option<&dyn crate::core::search::filter_contract::CandidateSet>,
+    ) -> Result<Vec<(String, f32)>> {
+        // Default: ignore the mask shape, run the normal search, then
+        // post-filter. Correct but slower than a kernel-pushed mask.
+        let hits = self.search(query, top_k, None).await?;
+        Ok(match candidate_set {
+            None => hits,
+            Some(cs) => hits.into_iter().filter(|(id, _)| cs.contains(id)).collect(),
+        })
+    }
+
     /// Remove a vector from the index
     async fn remove(&self, id: &str) -> Result<()>;
 
@@ -56,12 +127,31 @@ pub trait AxisVectorIndex: Send + Sync {
     fn algorithm(&self) -> &IndexAlgorithm;
 
     /// Get index statistics
-    fn stats(&self) -> IndexStats;
+    fn stats(&self) -> AxisIndexStats;
+
+    /// TD-064: Check if this index supports predicate-aware search
+    ///
+    /// Returns true if the index has cached metadata for filtering.
+    /// Default implementation returns false (metadata not supported).
+    fn supports_predicate_search(&self) -> bool {
+        false
+    }
+
+    /// TD-064: Configure filterable fields for metadata extraction
+    ///
+    /// This tells the index which fields to extract and cache from records.
+    /// Default implementation does nothing (metadata not configurable).
+    fn configure_filterable_fields(&self, _config: &FilterableFieldsConfig) -> Result<()> {
+        Ok(())
+    }
 }
+
+/// Backwards-compat alias for [`AxisIndexStats`].
+pub type IndexStats = AxisIndexStats;
 
 /// Index statistics
 #[derive(Debug, Clone)]
-pub struct IndexStats {
+pub struct AxisIndexStats {
     /// Number of vectors currently stored in the index.
     pub vector_count: usize,
     /// Approximate memory consumption of the index in bytes.
@@ -106,8 +196,9 @@ impl IndexFactory {
                     m: *m as usize,
                     ef_construction: *ef_construction as usize,
                     ef: *ef_search as usize,
-                    max_layers: 16, // Reasonable default
+                    max_layers: 16,
                     distance_metric,
+                    ..AxisHnswConfig::default()
                 };
 
                 let index = AxisHnswIndex::new(config, dimension)?;
@@ -234,7 +325,7 @@ impl IndexFactory {
 // No adapters needed - all index types implement AxisVectorIndex directly!
 
 // Implementation of AxisVectorIndex for AXIS-native indexes is in their respective modules:
-// - UnifiedIvfIndex in ivf_unified.rs
+// - UnifiedIvfIndex in dual_store_ivf.rs
 // - AxisLshIndex in lsh_index.rs
 // - AxisAnnoyIndex in annoy_index.rs
 // - AxisHnswIndex in hnsw_index.rs
@@ -308,7 +399,7 @@ mod tests {
     #[test]
     fn test_create_hnsw_index() {
         // Initialize hardware capabilities for HNSW
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let algorithm = IndexAlgorithm::HNSW {
             m: 16,
@@ -333,7 +424,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_trained_hnsw_index() {
         // Initialize hardware capabilities for HNSW
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let algorithm = IndexAlgorithm::HNSW {
             m: 16,

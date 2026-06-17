@@ -10,19 +10,20 @@ use std::sync::Arc;
 use tempfile::TempDir;
 use tokio;
 
-use proximadb::core::{VectorRecord, SstConfig};
+use proximadb::core::SstConfig;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default;
-use proximadb::compute::quantization::unified::{UnifiedQuantizationEngine, InMemoryCodebookStore};
+use proximadb::compute::quantization::{UnifiedQuantizationEngine, InMemoryCodebookStore};
 use proximadb::compute::quantization::storage_engine::{StorageQuantizationEngine, StorageQuantizationConfig};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::quantization::{SstQuantizationAdapter, sst_adapter::SstQuantizationConfig};
-use proximadb::storage::engines::impls::sst::{
+use proximadb::storage::engines::sst::{
     SstEntry, SstableWriter, 
     sst_compactor::{SstCompactor, CompactionSortStrategy},
     readers::unified_sstable_reader::UnifiedSstableReader
 };
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
-use proximadb::storage::engines::impls::sst::compaction::CompactionManager;
+use proximadb::storage::engines::sst::compaction::CompactionManager;
 
 /// Test data generator
 struct TestDataGenerator {

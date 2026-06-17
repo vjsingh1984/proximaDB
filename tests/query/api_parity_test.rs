@@ -34,8 +34,8 @@ use serde_json::Value as JsonValue;
 
 // Test imports for different protocols
 // Note: These would be the actual client implementations
-use proximadb::proto::explain::v1::{ExplainPlan, ExplainPlanRequest, QueryType, ExplainFormat};
-use proximadb::query::unified_explain::{explain_query_unified, format_explain_plan};
+use proximadb::proto::explain::v1::{ExplainFormat, ExplainPlan, ExplainPlanRequest, QueryType};
+use proximadb::query::explain_schema::{explain_query_unified, format_explain_plan};
 
 /// API protocol identifier
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

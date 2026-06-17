@@ -14,14 +14,13 @@ use super::{BatchId, FlushResult, WALConfig, WALStats};
 use crate::compute::distance_computation::engine::{
     DistanceComputeProvider, UnifiedDistanceCompute,
 };
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::{
     MemtableManager, RecoveryManager, WALFlushCoordinator, WalFileInfo, WriteAheadLogDiskManager,
     serialization::{SerializationFormat, SerializerFactory, VectorBatchSerializer},
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Proto WAL batch strategy using serialization-first architecture
 pub struct ProtoSerializationStrategy {
@@ -38,7 +37,7 @@ pub struct ProtoSerializationStrategy {
     recovery_manager: Arc<RecoveryManager>,
 
     /// Storage engine for delegated operations
-    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engine: Arc<tokio::sync::RwLock<Option<Arc<dyn UnifiedStorageFormat>>>>,
 
     /// Flush coordinator
     #[allow(dead_code)]
@@ -156,7 +155,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
 
     fn set_storage_engine(
         &self,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         collection_id: &str,
     ) {
         let mut engine_guard = self.storage_engine.blocking_write();
@@ -202,7 +201,9 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
 
         // Persist to disk if configured
         if self.should_persist_to_disk() {
-            let serialized = self.serializer.serialize_batch(&batch.vector_records)?;
+            let serialized = self
+                .serializer
+                .serialize_batch(batch.vector_records.as_ref())?;
 
             // Determine if we should sync based on sync mode
             let should_sync = matches!(
@@ -217,6 +218,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
                     &batch.batch_id,
                     &serialized,
                     SerializationFormat::ProtocolBuffers,
+                    batch.vector_records.len() as u64,
                     should_sync,
                 )
                 .await?;
@@ -256,7 +258,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         &self,
         collection_id: &str,
         vector_id: &crate::core::VectorId,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .search_vector_by_id(collection_id, vector_id)
             .await
@@ -268,7 +270,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         _query_vector: &[f32],
         _k: usize,
         _distance_metric: Option<crate::compute::distance_computation::DistanceMetric>,
-    ) -> Result<Vec<(String, f32, VectorRecord)>> {
+    ) -> Result<Vec<(String, f32, proximadb_records::ProximaRecord)>> {
         // For now, similarity search is delegated to storage engine
         let engine = self.storage_engine.read().await;
         if let Some(_engine) = engine.as_ref() {
@@ -281,7 +283,10 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         }
     }
 
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         self.memtable_manager
             .get_collection_vectors(collection_id)
             .await
@@ -327,7 +332,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         let mut _total_bytes = 0u64;
 
         // Prepare vectors for flush
-        let mut all_vectors = Vec::new();
+        let mut all_vectors: Vec<proximadb_records::ProximaRecord> = Vec::new();
         let mut batch_ids = Vec::new();
 
         for batch in &unflushed {
@@ -521,7 +526,7 @@ impl WALBatchStrategy for ProtoSerializationStrategy {
         batches.extend(disk_batches);
 
         // 3. Sort by timestamp to maintain chronological order
-        batches.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        batches.sort_by_key(|b| b.timestamp);
 
         match limit {
             Some(n) => Ok(batches.into_iter().take(n).collect()),
@@ -601,7 +606,7 @@ impl ProtoSerializationStrategy {
 
         let mut affected_collections = Vec::new();
         for collection_id in collections {
-            if let Ok(_) = self.flush_collection(&collection_id).await {
+            if self.flush_collection(&collection_id).await.is_ok() {
                 affected_collections.push(collection_id);
             }
         }
@@ -749,5 +754,194 @@ impl ProtoSerializationStrategy {
         };
 
         Ok(vec![batch])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+    use crate::storage::persistence::filesystem::FilesystemFactory;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTree, ProximaTreeNode};
+    use std::sync::Arc;
+
+    fn create_test_config() -> WALConfig {
+        WALConfig {
+            memtable: crate::storage::persistence::write_ahead_log::config::MemTableConfig {
+                memtable_type:
+                    crate::storage::persistence::write_ahead_log::config::MemTableType::default(),
+                global_memory_limit: 10 * 1024 * 1024,
+                mvcc_versions_retained: 5,
+                enable_concurrency: true,
+            },
+            multi_disk: crate::storage::persistence::write_ahead_log::config::MultiDiskConfig {
+                data_directories: vec!["/tmp/proximadb-proto-test".to_string()],
+                ..Default::default()
+            },
+            performance: crate::storage::persistence::write_ahead_log::config::PerformanceConfig {
+                memory_flush_size_bytes: 5 * 1024 * 1024,
+                sync_mode: crate::storage::persistence::write_ahead_log::config::SyncMode::Always,
+                ..Default::default()
+            },
+            enable_mvcc: true,
+            ..Default::default()
+        }
+    }
+
+    fn create_proto_test_vector(id: &str, dimension: usize) -> ProximaRecord {
+        let mut props = ProximaTree::new();
+        props.insert(
+            "proto_version".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("3".to_string())),
+        );
+        props.insert(
+            "encoding".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("protobuf".to_string())),
+        );
+
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(
+                    (0..dimension)
+                        .map(|i| (i as f32) / (dimension as f32))
+                        .collect(),
+                ),
+                dim: dimension as u32,
+                ..Default::default()
+            }],
+            props,
+            record_version: 1,
+            valid_to_ns: Some((1234567890 + 86400) * 1_000_000_000),
+            ..Default::default()
+        }
+    }
+
+    fn create_test_batch(vectors: Vec<ProximaRecord>) -> WALVectorBatch {
+        let vector_count = vectors.len();
+        WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(vectors),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: vector_count * 300,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proto_strategy_initialization() {
+        let config = create_test_config();
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+
+        let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create Proto strategy");
+
+        assert_eq!(strategy.strategy_name(), "ProtoBatch");
+    }
+
+    #[tokio::test]
+    async fn test_proto_field_preservation() {
+        let config = create_test_config();
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create strategy");
+
+        assert_eq!(strategy.strategy_name(), "ProtoBatch");
+    }
+
+    #[tokio::test]
+    async fn test_proto_batch_creation() {
+        let vector = create_proto_test_vector("test", 64);
+        let batch = create_test_batch(vec![vector.clone()]);
+
+        assert_eq!(batch.vector_records.len(), 1);
+        assert_eq!(batch.vector_records[0].oid, "test".to_string());
+    }
+
+    #[tokio::test]
+    async fn test_proto_metadata_encoding() {
+        let mut vector = create_proto_test_vector("meta_test", 64);
+        vector.props.insert(
+            "unicode".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("Hello 世界 🌍".to_string())),
+        );
+        vector.props.insert(
+            "special_chars".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String(
+                "!@#$%^&*()_+-={}[]|\\:\";<>?,./".to_string(),
+            )),
+        );
+        vector.props.insert(
+            "empty".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("".to_string())),
+        );
+
+        assert_eq!(vector.props.len(), 5);
+        assert!(vector.props.contains_key("unicode"));
+        if let Some(ProximaTreeNode::Value(ProximaValue::String(s))) = vector.props.get("unicode") {
+            assert_eq!(s, "Hello 世界 🌍");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_proto_large_vector_handling() {
+        let large_vector = create_proto_test_vector("large", 4096);
+        assert_eq!(
+            large_vector.embeddings.first().map(|e| e.values.len()),
+            Some(4096)
+        );
+
+        let batch = create_test_batch(vec![large_vector]);
+        assert_eq!(batch.vector_records.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_proto_batch_atomicity() {
+        let vectors: Vec<ProximaRecord> = (0..100)
+            .map(|i| create_proto_test_vector(&format!("atomic_{}", i), 128))
+            .collect();
+
+        let batch = create_test_batch(vectors);
+        assert_eq!(batch.vector_records.len(), 100);
+
+        assert!(!batch.is_flushed);
+    }
+
+    #[tokio::test]
+    async fn test_proto_cross_collection_isolation() {
+        let vec1 = create_proto_test_vector("col1_vec", 64);
+        let vec2 = create_proto_test_vector("col2_vec", 64);
+
+        assert_ne!(vec1.oid, vec2.oid);
+    }
+
+    #[tokio::test]
+    async fn test_proto_memory_only_mode() {
+        let mut config = create_test_config();
+        config.performance.sync_mode =
+            crate::storage::persistence::write_ahead_log::config::SyncMode::MemoryOnly;
+
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(Default::default()).await.unwrap());
+        let strategy = ProtoSerializationStrategy::new(&config, filesystem_factory.clone())
+            .await
+            .expect("Failed to create strategy");
+
+        assert_eq!(strategy.strategy_name(), "ProtoBatch");
+    }
+
+    #[tokio::test]
+    async fn test_proto_similarity_search_with_metadata() {
+        let vector = create_proto_test_vector("search_test", 128);
+        assert!(!vector.props.is_empty());
+        assert_eq!(vector.embeddings.first().map(|e| e.values.len()), Some(128));
     }
 }

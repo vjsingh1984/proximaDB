@@ -9,20 +9,20 @@
 //! - **SchemaEvolution**: ADD/DROP/RENAME column operations
 //! - **SchemaRegistry**: Schema versioning and management
 //! - **TypeMapping**: ProximaDB ↔ Arrow ↔ Spark ↔ Trino conversions
-//! - **VectorRecordBridge**: Zero-copy conversion between VectorRecord and Arrow RecordBatch
+//! - **ProximaRecordBridge**: Conversion between ProximaRecord and Arrow RecordBatch
 //! - **ProximaHeaderCache**: Smart I/O layer for rowgroup/block pruning
 //!
 //! ## Design Philosophy
 //!
 //! Arrow-native approach (like LanceDB) for zero-copy data exchange with compute engines.
-//! Full migration from VectorRecord to ProximaSchema with backward compatibility during transition.
+//! Full migration from VectorRecord-era DTOs to ProximaRecord and ProximaSchema.
 //!
-//! ## VectorRecord Compatibility
+//! ## ProximaRecord Arrow Bridge
 //!
-//! The VectorRecordBridge provides seamless conversion between the proto-first VectorRecord
-//! type and Arrow RecordBatches, enabling:
+//! The ProximaRecordBridge provides conversion between canonical ProximaRecord
+//! envelopes and Arrow RecordBatches, enabling:
 //! - Zero-copy conversion where possible
-//! - Schema inference from VectorRecord metadata
+//! - Schema inference from ProximaRecord properties
 //! - Avro-style schema serialization for schema registries
 //! - Support for both JSON and structured metadata modes
 //!
@@ -36,11 +36,11 @@ pub mod centroid_tree;
 pub mod evolution;
 pub mod header_cache;
 pub mod header_loaders;
+pub mod proxima_record_bridge;
 pub mod proxima_schema;
 pub mod pruning_strategies;
 pub mod registry;
 pub mod type_mapping;
-pub mod vector_record_bridge;
 
 // Re-exports
 pub use evolution::{
@@ -48,37 +48,33 @@ pub use evolution::{
     SchemaEvolution, SchemaEvolutionOp, TypeCompatibility,
 };
 pub use proxima_schema::{
-    AutoGenerateType, DefaultValue, ProximaColumn, ProximaDataType, ProximaSchema, TimeUnit,
-    VectorElementType,
+    AutoGenerateType, AvroStyleField, AvroStyleSchema, AvroStyleType, DefaultValue, ProximaColumn,
+    ProximaSchema, TimeUnit,
 };
 pub use registry::{
     InMemorySchemaRegistry, PersistentSchemaRegistry, SchemaRegistry, SchemaVersionInfo,
 };
 pub use type_mapping::TypeMapper;
 
-// VectorRecord bridge exports
-pub use vector_record_bridge::{
-    AvroStyleField,
-    // Avro-style schema serialization
-    AvroStyleSchema,
-    AvroStyleType,
-    DefaultVectorRecordBridge,
+// ProximaRecord bridge exports
+pub use proxima_record_bridge::{
+    DefaultProximaRecordBridge,
     MetadataMode,
     // Core trait and implementation
-    VectorRecordBridge,
+    ProximaRecordBridge,
     // Schema inference
-    infer_schema_from_vector_records,
+    infer_schema_from_proxima_records,
 };
 
 // Header cache exports
 pub use header_cache::{
-    CacheStats,
     CachedHeader,
     CachingHeaderLoader,
     ColumnBounds,
     ColumnValue,
     // Encoding and stats
     EncodingInfo,
+    HeaderCacheStats,
     // Header loading
     HeaderLoader,
     IoSavingsEstimate,

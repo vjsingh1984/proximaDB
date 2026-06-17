@@ -11,11 +11,11 @@ mod tests {
         ProductQuantization, BinaryQuantization, UniformQuantization, ScalarQuantization,
         UnifiedDistanceCompute, InMemoryCodebookStore, DistanceMetric
     };
-    use proximadb::storage::engines::impls::viper::{
+    use proximadb::storage::engines::viper::{
         VectorQuantizationEngine, QuantizationConfig as ViperQuantizationConfig, 
         QuantizationLevel
     };
-    use proximadb::core::VectorRecord;
+    use proximadb::proto::proximadb_v1::VectorRecord;
 
     /// Generate test vectors for quantization testing
     fn generate_test_vectors(count: usize, dimensions: usize) -> Vec<Vec<f32>> {
@@ -304,7 +304,7 @@ mod tests {
         assert!(!serialized.is_empty());
         
         // Deserialize model
-        let deserialized_model: proximadb::storage::engines::impls::viper::quantization::QuantizationModel = 
+        let deserialized_model: proximadb::storage::engines::viper::quantization::QuantizationModel = 
             serde_json::from_str(&serialized).unwrap();
         
         // Verify model integrity

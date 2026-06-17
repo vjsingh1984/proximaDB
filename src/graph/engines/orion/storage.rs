@@ -46,7 +46,7 @@
 //! - **SIMD Ready**: Can vectorize operations on target arrays
 //! - **Parallel Safe**: Multiple threads can read simultaorionusly
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::EdgeId;
 use std::collections::{HashMap, HashSet};
@@ -252,7 +252,7 @@ impl CsrStorage {
     pub fn get_edge_id(&self, node_index: usize, neighbor_index: usize) -> Result<&EdgeId> {
         if node_index >= self.node_count {
             return Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::KeyNotFound(node_index.to_string()),
+                proximadb_kernel::error::StorageError::KeyNotFound(node_index.to_string()),
             ));
         }
 
@@ -261,7 +261,7 @@ impl CsrStorage {
 
         if edge_idx >= self.edge_ids.len() {
             return Err(ProximaDBError::Storage(
-                crate::core::error::StorageError::KeyNotFound(format!(
+                proximadb_kernel::error::StorageError::KeyNotFound(format!(
                     "{}:{}",
                     node_index, neighbor_index
                 )),

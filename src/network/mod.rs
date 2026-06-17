@@ -191,12 +191,13 @@ pub mod multiplex;
 pub mod postgres;
 pub mod rest;
 pub mod server_builder;
+// Server configuration types (MultiServerConfig, TLSConfig, etc.) have moved
+// to `proximadb_runtime::bootstrap_config` (Phase 9.9 / Task #70 pre-work).
+// They remain accessible as `crate::network::multi_server::MultiServerConfig`
+// etc via re-exports in `multi_server.rs`.
+/// Shared business-logic service composition layer (SharedServices)
+pub mod shared_services;
 pub mod tls;
-pub mod unified_handler;
-
-// Unit tests
-#[cfg(test)]
-mod tests;
 
 pub use metrics_service::*;
 pub use middleware::*;
@@ -208,14 +209,13 @@ use serde::{Deserialize, Serialize};
 pub use server_builder::{
     ArrowIpcServerBuilder, GrpcHttpServerBuilder, MultiServerBuilder, RestHttpServerBuilder,
 };
-pub use unified_handler::{
-    RequestProtocol, ResponseData, ResponseMetadata, UnifiedQueryHandler, UnifiedQueryRequest,
-    UnifiedQueryResponse,
-};
+
+/// Backwards-compat alias for [`NetworkServerConfig`].
+pub type NetworkConfig = NetworkServerConfig;
 
 /// Network server configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NetworkConfig {
+pub struct NetworkServerConfig {
     /// Server bind address
     pub bind_address: String,
 
@@ -232,7 +232,7 @@ pub struct NetworkConfig {
     pub enable_dashboard: bool,
 
     /// Authentication configuration
-    pub auth: AuthConfig,
+    pub auth: NetworkAuthConfig,
 
     /// Rate limiting configuration
     pub rate_limit: RateLimitConfig,
@@ -258,7 +258,7 @@ impl Default for NetworkConfig {
             enable_grpc: true,
             enable_rest: true,
             enable_dashboard: true,
-            auth: AuthConfig::default(),
+            auth: NetworkAuthConfig::default(),
             rate_limit: RateLimitConfig::default(),
             request_timeout_secs: 30,
             max_request_size: 64 * 1024 * 1024, // 64MB for bulk operations
@@ -268,9 +268,16 @@ impl Default for NetworkConfig {
     }
 }
 
-/// Authentication configuration
+/// Authentication configuration embedded in [`NetworkConfig`].
+///
+/// Lightweight surface used by the legacy top-level network config — JWT
+/// secret + a flat API-key allowlist. Distinct from
+/// [`crate::network::auth::config::AuthConfig`] (the comprehensive
+/// enterprise-grade auth config with RBAC/OAuth2/mTLS/audit) and
+/// [`crate::network::middleware::MiddlewareAuthConfig`] (the Axum
+/// middleware-specific minimal config).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AuthConfig {
+pub struct NetworkAuthConfig {
     /// Enable authentication
     pub enabled: bool,
 
@@ -284,7 +291,7 @@ pub struct AuthConfig {
     pub api_keys: Vec<String>,
 }
 
-impl Default for AuthConfig {
+impl Default for NetworkAuthConfig {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -296,3 +303,338 @@ impl Default for AuthConfig {
 }
 
 // RateLimitConfig moved to middleware/rate_limit.rs for consolidation
+
+#[cfg(test)]
+mod compression_tests {
+    use flate2::Compression;
+    use flate2::read::{DeflateDecoder, GzDecoder};
+    use flate2::write::{DeflateEncoder, GzEncoder};
+    use std::io::{Read, Write};
+
+    #[test]
+    fn test_gzip_compression() {
+        let original_data = b"This is test data for compression. ".repeat(100);
+
+        // Compress
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original_data).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        // Verify compression worked
+        assert!(compressed.len() < original_data.len());
+        assert!(compressed.len() < original_data.len() / 2); // Should compress well
+
+        // Decompress
+        let mut decoder = GzDecoder::new(&compressed[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).unwrap();
+
+        assert_eq!(decompressed, original_data);
+    }
+
+    #[test]
+    fn test_deflate_compression() {
+        let original_data = b"Vector data simulation: ".repeat(100);
+
+        // Compress with deflate
+        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&original_data).unwrap();
+        let compressed = encoder.finish().unwrap();
+
+        assert!(compressed.len() < original_data.len());
+
+        // Decompress
+        let mut decoder = DeflateDecoder::new(&compressed[..]);
+        let mut decompressed = Vec::new();
+        decoder.read_to_end(&mut decompressed).unwrap();
+
+        assert_eq!(decompressed, original_data);
+    }
+
+    #[test]
+    fn test_zstd_compression() {
+        let original_data = b"Large vector payload ".repeat(200);
+
+        // Compress with zstd
+        let compressed = zstd::encode_all(&original_data[..], 3).unwrap();
+
+        assert!(compressed.len() < original_data.len());
+
+        // Decompress
+        let decompressed = zstd::decode_all(&compressed[..]).unwrap();
+
+        assert_eq!(decompressed, original_data);
+    }
+
+    #[test]
+    fn test_compression_thresholds() {
+        // Small data should not benefit from compression
+        let small_data = b"small";
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(small_data).unwrap();
+        let compressed_small = encoder.finish().unwrap();
+
+        // Compressed might be larger due to headers
+        assert!(compressed_small.len() >= small_data.len());
+
+        // Large repetitive data should compress well
+        let large_data = b"repetitive data ".repeat(1000);
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&large_data).unwrap();
+        let compressed_large = encoder.finish().unwrap();
+
+        // Should achieve good compression ratio
+        let compression_ratio = compressed_large.len() as f64 / large_data.len() as f64;
+        assert!(compression_ratio < 0.1); // Better than 90% compression
+    }
+
+    #[test]
+    fn test_vector_data_compression() {
+        // Simulate vector data (floats as bytes)
+        let mut vector_data = Vec::new();
+        for i in 0..1000 {
+            let value = (i as f32) * 0.1;
+            vector_data.extend_from_slice(&value.to_le_bytes());
+        }
+
+        // Test different compression algorithms
+        let algorithms = vec![
+            ("gzip", {
+                let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
+                encoder.write_all(&vector_data).unwrap();
+                encoder.finish().unwrap()
+            }),
+            ("deflate", {
+                let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
+                encoder.write_all(&vector_data).unwrap();
+                encoder.finish().unwrap()
+            }),
+            ("zstd", zstd::encode_all(&vector_data[..], 3).unwrap()),
+        ];
+
+        for (_name, compressed) in algorithms {
+            let ratio = (1.0 - compressed.len() as f64 / vector_data.len() as f64) * 100.0;
+
+            // Vector data should compress moderately (30-60%)
+            assert!(ratio > 30.0 && ratio < 70.0);
+        }
+    }
+
+    #[test]
+    fn test_json_metadata_compression() {
+        // Simulate JSON metadata
+        let metadata = serde_json::json!({
+            "vectors": (0..100).map(|i| {
+                serde_json::json!({
+                    "id": format!("vec_{}", i),
+                    "metadata_info": {
+                        "category": format!("category_{}", i % 10),
+                        "description": format!("This is a test vector number {}", i),
+                        "tags": vec!["test", "compression", "benchmark"],
+                        "timestamp": 1234567890 + i
+                    }
+                })
+            }).collect::<Vec<_>>()
+        });
+
+        let json_str = serde_json::to_string(&metadata).unwrap();
+        let json_bytes = json_str.as_bytes();
+
+        // JSON should compress very well
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::new(6));
+        encoder.write_all(json_bytes).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let ratio = (1.0 - compressed.len() as f64 / json_bytes.len() as f64) * 100.0;
+
+        assert!(ratio > 70.0); // JSON should compress > 70%
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    use serde_json;
+
+    #[tokio::test]
+    async fn test_network_config_default() {
+        let config = NetworkConfig::default();
+
+        assert_eq!(config.bind_address, "0.0.0.0");
+        assert_eq!(config.port, 5678);
+        assert!(config.enable_grpc);
+        assert!(config.enable_rest);
+        assert!(config.enable_dashboard);
+        assert!(!config.auth.enabled);
+        assert!(config.rate_limit.enabled); // ENABLED by default (secure by default)
+        assert_eq!(config.request_timeout_secs, 30);
+        assert_eq!(config.max_request_size, 64 * 1024 * 1024);
+        assert_eq!(config.keep_alive_timeout_secs, 60);
+        assert!(config.tcp_nodelay);
+    }
+
+    #[tokio::test]
+    async fn test_network_config_custom() {
+        let custom_auth = NetworkAuthConfig {
+            enabled: true,
+            jwt_secret: Some("secret_key".to_string()),
+            jwt_expiration_secs: 7200,
+            api_keys: vec!["key1".to_string(), "key2".to_string()],
+        };
+
+        let custom_rate_limit = RateLimitConfig {
+            enabled: true,
+            requests_per_minute: 2000,
+            burst_size: 200,
+            by_ip: false,
+            limit_health_endpoints: false,
+            global_requests_per_minute: None,
+        };
+
+        let config = NetworkConfig {
+            bind_address: "127.0.0.1".to_string(),
+            port: 8080,
+            enable_grpc: false,
+            enable_rest: true,
+            enable_dashboard: false,
+            auth: custom_auth.clone(),
+            rate_limit: custom_rate_limit.clone(),
+            request_timeout_secs: 60,
+            max_request_size: 64 * 1024 * 1024,
+            keep_alive_timeout_secs: 120,
+            tcp_nodelay: false,
+        };
+
+        assert_eq!(config.bind_address, "127.0.0.1");
+        assert_eq!(config.port, 8080);
+        assert!(!config.enable_grpc);
+        assert!(config.auth.enabled);
+        assert_eq!(config.auth.jwt_secret, Some("secret_key".to_string()));
+        assert_eq!(config.rate_limit.requests_per_minute, 2000);
+        assert!(!config.tcp_nodelay);
+    }
+
+    #[tokio::test]
+    async fn test_auth_config_default() {
+        let config = NetworkAuthConfig::default();
+
+        assert!(!config.enabled);
+        assert_eq!(config.jwt_secret, None);
+        assert_eq!(config.jwt_expiration_secs, 3600);
+        assert!(config.api_keys.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_config_default() {
+        let config = RateLimitConfig::default();
+
+        assert!(config.enabled); // ENABLED by default (secure by default)
+        assert_eq!(config.requests_per_minute, 1000);
+        assert_eq!(config.burst_size, 100);
+        assert!(config.by_ip);
+        assert!(!config.limit_health_endpoints);
+        assert!(config.global_requests_per_minute.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_network_config_serialization() {
+        let config = NetworkConfig::default();
+
+        let serialized = serde_json::to_string(&config);
+        assert!(serialized.is_ok());
+
+        let json_str = serialized.unwrap();
+        assert!(json_str.contains("0.0.0.0"));
+        assert!(json_str.contains("5678"));
+        assert!(json_str.contains("enable_grpc"));
+
+        let deserialized: Result<NetworkConfig, _> = serde_json::from_str(&json_str);
+        assert!(deserialized.is_ok());
+
+        let restored_config = deserialized.unwrap();
+        assert_eq!(config.bind_address, restored_config.bind_address);
+        assert_eq!(config.port, restored_config.port);
+    }
+
+    #[tokio::test]
+    async fn test_auth_config_with_api_keys() {
+        let config = NetworkAuthConfig {
+            enabled: true,
+            jwt_secret: Some("my_jwt_secret".to_string()),
+            jwt_expiration_secs: 1800,
+            api_keys: vec![
+                "api_key_1".to_string(),
+                "api_key_2".to_string(),
+                "api_key_3".to_string(),
+            ],
+        };
+
+        assert!(config.enabled);
+        assert_eq!(config.jwt_secret, Some("my_jwt_secret".to_string()));
+        assert_eq!(config.jwt_expiration_secs, 1800);
+        assert_eq!(config.api_keys.len(), 3);
+        assert_eq!(config.api_keys[0], "api_key_1");
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_config_custom() {
+        let config = RateLimitConfig {
+            enabled: false,
+            requests_per_minute: 500,
+            burst_size: 50,
+            by_ip: false,
+            limit_health_endpoints: true,
+            global_requests_per_minute: Some(10000),
+        };
+
+        assert!(!config.enabled);
+        assert_eq!(config.requests_per_minute, 500);
+        assert_eq!(config.burst_size, 50);
+        assert!(!config.by_ip);
+        assert!(config.limit_health_endpoints);
+        assert_eq!(config.global_requests_per_minute, Some(10000));
+    }
+
+    #[tokio::test]
+    async fn test_network_config_clone() {
+        let config = NetworkConfig::default();
+        let cloned_config = config.clone();
+
+        assert_eq!(config.bind_address, cloned_config.bind_address);
+        assert_eq!(config.port, cloned_config.port);
+        assert_eq!(config.enable_grpc, cloned_config.enable_grpc);
+        assert_eq!(config.auth.enabled, cloned_config.auth.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_network_config_debug_format() {
+        let config = NetworkConfig::default();
+        let debug_str = format!("{:?}", config);
+
+        // `NetworkConfig` is a type alias for `NetworkServerConfig`, so the
+        // derived Debug prints the underlying struct name.
+        assert!(debug_str.contains("NetworkServerConfig"));
+        assert!(debug_str.contains("bind_address"));
+        assert!(debug_str.contains("port"));
+        assert!(debug_str.contains("enable_grpc"));
+    }
+
+    #[tokio::test]
+    async fn test_rate_limit_config_conversion() {
+        let config = RateLimitConfig {
+            enabled: true,
+            requests_per_minute: 1200,
+            burst_size: 150,
+            by_ip: true,
+            limit_health_endpoints: true,
+            global_requests_per_minute: Some(5000),
+        };
+
+        let middleware_config = config.to_middleware_config();
+
+        assert_eq!(middleware_config.enabled, true);
+        assert_eq!(middleware_config.max_requests, 150); // Uses burst_size
+        assert_eq!(middleware_config.window_duration.as_secs(), 60); // 1 minute
+        assert_eq!(middleware_config.limit_health_endpoints, true);
+        assert_eq!(middleware_config.global_max_requests, Some(5000));
+    }
+}

@@ -6,7 +6,7 @@ mod tests {
     use crate::core::search::query_preprocessing::QueryPreprocessor;
     use crate::core::search::results::OptimizedSearchRecord;
     use crate::core::search::{ComparisonOperator, FilterExpression};
-    // use crate::core::search::unified_progressive_pipeline::{
+    // use crate::core::search::progressive_search_pipeline::{
     //     PipelineConfig, UnifiedProgressiveSearchPipeline,
     // };
     // use crate::storage::persistence::write_ahead_log::parallel_search::ParallelWALSearch;
@@ -16,7 +16,7 @@ mod tests {
     fn init_test_environment() {
         use tracing::debug;
         debug!("Initializing hardware capabilities");
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         debug!("Hardware capabilities initialized");
     }
 
@@ -91,14 +91,8 @@ mod tests {
         init_test_environment();
         debug!("Test environment initialized");
 
-        debug!("Getting hardware capabilities");
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
-        debug!(
-            "Hardware caps - AVX2: {}, SSE42: {}, NEON: {}",
-            hardware.cpu.features.avx2_support,
-            hardware.cpu.features.sse42_support,
-            hardware.cpu.features.neon_support
-        );
+        let simd = proximadb_hardware::best_simd_level();
+        debug!("Hardware SIMD level: {:?}", simd);
 
         debug!("Creating QueryPreprocessor");
         let preprocessor = QueryPreprocessor::new(100);

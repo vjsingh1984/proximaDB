@@ -151,61 +151,66 @@ func TestMockServer(t *testing.T) {
 	// Create mock server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/v1/health":
+		case "/health":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"status":         "healthy",
 				"version":        "1.0.0",
 				"uptime_seconds": 123.45,
 			})
-		case "/api/v1/collections":
+		case "/api/v2/collections":
 			if r.Method == http.MethodGet {
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
 					"collections": []map[string]interface{}{
 						{
-							"name":         "test_collection",
-							"dimension":    128,
-							"metric":       "cosine",
-							"engine":       "sst",
-							"vector_count": 100,
-							"created_at":   time.Now().Format(time.RFC3339),
+							"collection_id":          "test_collection",
+							"name":                   "test_collection",
+							"dimension":              128,
+							"engine":                 "sst",
+							"proxima_record_enabled": true,
+							"record_count":           100,
 						},
 					},
 				})
 			} else if r.Method == http.MethodPost {
 				w.WriteHeader(http.StatusCreated)
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"name":         "new_collection",
-					"dimension":    256,
-					"metric":       "cosine",
-					"engine":       "sst",
-					"vector_count": 0,
-					"created_at":   time.Now().Format(time.RFC3339),
+					"collection_id":          "new_collection",
+					"name":                   "new_collection",
+					"dimension":              256,
+					"engine":                 "sst",
+					"proxima_record_enabled": true,
+					"created_at":             time.Now().Format(time.RFC3339),
 				})
 			}
-		case "/api/v1/collections/test_collection":
+		case "/api/v2/collections/test_collection":
 			if r.Method == http.MethodGet {
 				_ = json.NewEncoder(w).Encode(map[string]interface{}{
-					"name":         "test_collection",
-					"dimension":    128,
-					"metric":       "cosine",
-					"engine":       "sst",
-					"vector_count": 100,
-					"created_at":   time.Now().Format(time.RFC3339),
+					"collection_id":          "test_collection",
+					"name":                   "test_collection",
+					"dimension":              128,
+					"distance_metric":        "cosine",
+					"engine":                 "sst",
+					"proxima_record_enabled": true,
+					"stats": map[string]interface{}{
+						"record_count":       100,
+						"storage_size_bytes": 4096,
+					},
+					"created_at": time.Now().Format(time.RFC3339),
 				})
 			} else if r.Method == http.MethodDelete {
-				w.WriteHeader(http.StatusNoContent)
+				w.WriteHeader(http.StatusOK)
 			}
-		case "/api/v1/collections/nonexistent":
+		case "/api/v2/collections/nonexistent":
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"error": "collection not found",
 			})
-		case "/api/v1/collections/test_collection/vectors":
+		case "/api/v2/collections/test_collection/records/batch":
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"inserted_count": 1,
+				"success_count": 1,
 			})
-		case "/api/v1/collections/test_collection/search":
+		case "/api/v2/collections/test_collection/search":
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"results": []map[string]interface{}{
 					{
@@ -220,17 +225,16 @@ func TestMockServer(t *testing.T) {
 				"took_ms":     1.5,
 				"total_count": 2,
 			})
-		case "/api/v1/collections/test_collection/vectors/fetch":
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"vectors": []map[string]interface{}{
-					{
-						"id":     "vec1",
-						"vector": []float32{0.1, 0.2, 0.3},
-					},
-				},
-			})
-		case "/api/v1/collections/test_collection/vectors/delete":
-			w.WriteHeader(http.StatusOK)
+		case "/api/v2/collections/test_collection/records/vec1":
+			if r.Method == http.MethodGet {
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"id":     "vec1",
+					"vector": []float32{0.1, 0.2, 0.3},
+					"props":  map[string]interface{}{},
+				})
+			} else if r.Method == http.MethodDelete {
+				w.WriteHeader(http.StatusOK)
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -326,6 +330,21 @@ func TestMockServer(t *testing.T) {
 		err := client.Insert(ctx, "test_collection", records)
 		if err != nil {
 			t.Fatalf("Insert failed: %v", err)
+		}
+	})
+
+	// Test InsertRecords
+	t.Run("InsertRecords", func(t *testing.T) {
+		records := []*proximadb.ProximaRecord{
+			{
+				ID:     "record1",
+				Vector: make([]float32, 128),
+				Props:  map[string]interface{}{"category": "canonical"},
+			},
+		}
+		err := client.InsertRecords(ctx, "test_collection", records)
+		if err != nil {
+			t.Fatalf("InsertRecords failed: %v", err)
 		}
 	})
 
@@ -630,11 +649,11 @@ func TestBatchInsert(t *testing.T) {
 	// Create mock server that tracks insert counts
 	insertCount := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/collections/test_collection/vectors" {
+		if r.URL.Path == "/api/v2/collections/test_collection/records/batch" {
 			insertCount++
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"inserted_count": 100,
+				"success_count": 100,
 			})
 		}
 	}))
@@ -678,7 +697,7 @@ func TestBatchInsert(t *testing.T) {
 // TestBatchSearch tests batch search operations.
 func TestBatchSearch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/collections/test_collection/search" {
+		if r.URL.Path == "/api/v2/collections/test_collection/search" {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"results": []map[string]interface{}{
 					{"id": "vec1", "score": 0.95},
@@ -734,11 +753,11 @@ func TestBatchSearch(t *testing.T) {
 func TestStreamInsert(t *testing.T) {
 	insertCalls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/collections/test_collection/vectors" {
+		if r.URL.Path == "/api/v2/collections/test_collection/records/batch" {
 			insertCalls++
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
-				"inserted_count": 1,
+				"success_count": 1,
 			})
 		}
 	}))
@@ -792,7 +811,7 @@ func TestStreamInsert(t *testing.T) {
 // TestClientMetrics tests client metrics tracking.
 func TestClientMetrics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v1/health" {
+		if r.URL.Path == "/health" {
 			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"status":         "healthy",
 				"version":        "1.0.0",
@@ -928,7 +947,7 @@ func TestClientMetricsAverageLatency(t *testing.T) {
 		{
 			name:           "multiple requests",
 			requestCount:   10,
-			totalLatencyNs: 10000000, // 10ms total
+			totalLatencyNs: 10000000,         // 10ms total
 			expected:       time.Millisecond, // 1ms average
 		},
 	}

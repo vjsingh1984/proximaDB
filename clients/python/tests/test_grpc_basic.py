@@ -63,7 +63,7 @@ def test_grpc_basic():
     try:
         response = client.insert_vectors(collection_id=collection_name, records=records)
 
-        print(f"✅ Vectors inserted successfully")
+        print("✅ Vectors inserted successfully")
         print(f"   Successful: {response.metrics.successful_count}")
         print(f"   Failed: {response.metrics.failed_count}")
         if hasattr(response.metrics, "processing_time_us"):
@@ -115,7 +115,7 @@ def test_grpc_basic():
         if success:
             print(f"✅ Collection deleted: {collection_name}")
         else:
-            print(f"❌ Failed to delete collection")
+            print("❌ Failed to delete collection")
     except Exception as e:
         print(f"❌ Delete collection failed: {e}")
 

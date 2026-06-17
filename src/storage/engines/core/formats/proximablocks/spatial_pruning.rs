@@ -197,9 +197,12 @@ impl BlockPruningInfo {
     }
 }
 
+/// Backwards-compat alias for [`SpatialPruningResult`].
+pub type PruningResult = SpatialPruningResult;
+
 /// Result of block selection
 #[derive(Debug)]
-pub struct PruningResult {
+pub struct SpatialPruningResult {
     /// Selected block indices (in priority order)
     pub selected_indices: Vec<usize>,
     /// Number of blocks pruned
@@ -239,11 +242,11 @@ impl SpatialPruner {
         query_code: &SpatialCode,
         query_vector: &[f32],
         blocks: &[BlockPruningInfo],
-    ) -> PruningResult {
+    ) -> SpatialPruningResult {
         let total_blocks = blocks.len();
 
         if total_blocks == 0 {
-            return PruningResult {
+            return SpatialPruningResult {
                 selected_indices: Vec::new(),
                 pruned_count: 0,
                 total_blocks: 0,
@@ -255,7 +258,7 @@ impl SpatialPruner {
 
         if num_to_select >= total_blocks {
             // Select all blocks
-            return PruningResult {
+            return SpatialPruningResult {
                 selected_indices: (0..total_blocks).collect(),
                 pruned_count: 0,
                 total_blocks,
@@ -284,7 +287,7 @@ impl SpatialPruner {
 
         let pruned_count = total_blocks - selected_indices.len();
 
-        PruningResult {
+        SpatialPruningResult {
             selected_indices,
             pruned_count,
             total_blocks,

@@ -16,8 +16,8 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
-use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALWriter;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
+use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALWriter;
 
 /// Backup manager for creating incremental snapshots
 #[allow(dead_code)]
@@ -528,7 +528,7 @@ impl BackupManager {
         }
 
         // Sort by modified time, most recent first
-        backups.sort_by(|a, b| b.1.cmp(&a.1));
+        backups.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         if let Some((backup_path, _)) = backups.first() {
             let manifest_path = PathBuf::from(backup_path).join("manifest.json");
@@ -567,7 +567,7 @@ impl BackupManager {
         }
 
         // Sort by modified time, oldest first
-        backups.sort_by(|a, b| a.1.cmp(&b.1));
+        backups.sort_by_key(|b| b.1);
 
         // Remove excess backups beyond retention count
         let to_remove = backups.len().saturating_sub(self.config.retention_count);
@@ -639,7 +639,7 @@ impl BackupManager {
         }
 
         // Sort by timestamp, most recent first
-        backups.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+        backups.sort_by_key(|b| std::cmp::Reverse(b.timestamp));
 
         Ok(backups)
     }

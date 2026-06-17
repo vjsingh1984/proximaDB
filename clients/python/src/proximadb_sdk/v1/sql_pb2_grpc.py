@@ -6,7 +6,7 @@ import grpc
 
 from proximadb_sdk.v1 import types_pb2 as proximadb_dot_v1_dot_types__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -26,7 +26,7 @@ if _version_not_supported:
     )
 
 
-class SqlServiceStub(object):
+class QueryServiceStub(object):
     """SQL execution service (v1, versioned namespace)
     """
 
@@ -36,45 +36,45 @@ class SqlServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.ExecuteSql = channel.unary_unary(
-                '/proximadb.v1.SqlService/ExecuteSql',
-                request_serializer=proximadb_dot_v1_dot_types__pb2.ExecuteSqlRequest.SerializeToString,
-                response_deserializer=proximadb_dot_v1_dot_types__pb2.ExecuteSqlResponse.FromString,
+        self.ExecuteQuery = channel.unary_unary(
+                '/proximadb.v1.QueryService/ExecuteQuery',
+                request_serializer=proximadb_dot_v1_dot_types__pb2.ExecuteQueryRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_types__pb2.ExecuteQueryResponse.FromString,
                 _registered_method=True)
 
 
-class SqlServiceServicer(object):
+class QueryServiceServicer(object):
     """SQL execution service (v1, versioned namespace)
     """
 
-    def ExecuteSql(self, request, context):
+    def ExecuteQuery(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
 
-def add_SqlServiceServicer_to_server(servicer, server):
+def add_QueryServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'ExecuteSql': grpc.unary_unary_rpc_method_handler(
-                    servicer.ExecuteSql,
-                    request_deserializer=proximadb_dot_v1_dot_types__pb2.ExecuteSqlRequest.FromString,
-                    response_serializer=proximadb_dot_v1_dot_types__pb2.ExecuteSqlResponse.SerializeToString,
+            'ExecuteQuery': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExecuteQuery,
+                    request_deserializer=proximadb_dot_v1_dot_types__pb2.ExecuteQueryRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_types__pb2.ExecuteQueryResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'proximadb.v1.SqlService', rpc_method_handlers)
+            'proximadb.v1.QueryService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('proximadb.v1.SqlService', rpc_method_handlers)
+    server.add_registered_method_handlers('proximadb.v1.QueryService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class SqlService(object):
+class QueryService(object):
     """SQL execution service (v1, versioned namespace)
     """
 
     @staticmethod
-    def ExecuteSql(request,
+    def ExecuteQuery(request,
             target,
             options=(),
             channel_credentials=None,
@@ -87,9 +87,9 @@ class SqlService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/proximadb.v1.SqlService/ExecuteSql',
-            proximadb_dot_v1_dot_types__pb2.ExecuteSqlRequest.SerializeToString,
-            proximadb_dot_v1_dot_types__pb2.ExecuteSqlResponse.FromString,
+            '/proximadb.v1.QueryService/ExecuteQuery',
+            proximadb_dot_v1_dot_types__pb2.ExecuteQueryRequest.SerializeToString,
+            proximadb_dot_v1_dot_types__pb2.ExecuteQueryResponse.FromString,
             options,
             channel_credentials,
             insecure,

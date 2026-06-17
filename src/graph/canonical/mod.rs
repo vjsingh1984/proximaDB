@@ -63,7 +63,7 @@ pub struct GraphResponse<T> {
     pub error: Option<GraphError>,
     /// Optional execution metadata
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub metadata: Option<ResponseMetadata>,
+    pub metadata: Option<CanonicalResponseMetadata>,
 }
 
 impl<T> GraphResponse<T> {
@@ -78,7 +78,7 @@ impl<T> GraphResponse<T> {
     }
 
     /// Create a success response with data and metadata
-    pub fn success_with_metadata(data: T, metadata: ResponseMetadata) -> Self {
+    pub fn success_with_metadata(data: T, metadata: CanonicalResponseMetadata) -> Self {
         Self {
             success: true,
             data: Some(data),
@@ -201,9 +201,12 @@ impl ErrorCode {
     }
 }
 
+/// Backwards-compat alias for [`CanonicalResponseMetadata`].
+pub type ResponseMetadata = CanonicalResponseMetadata;
+
 /// Response metadata for debugging and monitoring
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ResponseMetadata {
+pub struct CanonicalResponseMetadata {
     /// Unique request ID for tracing
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
@@ -467,7 +470,7 @@ pub struct TraversalResults {
     pub paths: Option<Vec<CanonicalPath>>,
     /// Execution statistics
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub stats: Option<TraversalStats>,
+    pub stats: Option<CanonicalTraversalStats>,
 }
 
 /// Path representation
@@ -490,9 +493,12 @@ impl CanonicalPath {
     }
 }
 
+/// Backwards-compat alias for [`CanonicalTraversalStats`].
+pub type TraversalStats = CanonicalTraversalStats;
+
 /// Traversal statistics
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TraversalStats {
+pub struct CanonicalTraversalStats {
     /// Number of nodes visited
     pub nodes_visited: u64,
     /// Number of edges traversed
@@ -504,8 +510,8 @@ pub struct TraversalStats {
     pub execution_time_ms: Option<u64>,
 }
 
-impl TraversalStats {
-    /// Convert from proto TraversalStats
+impl CanonicalTraversalStats {
+    /// Convert from proto CanonicalTraversalStats
     pub fn from_proto(stats: &proximadb_v1::TraversalStats) -> Self {
         Self {
             nodes_visited: stats.nodes_visited as u64,
@@ -637,10 +643,9 @@ fn json_to_property_value(v: &serde_json::Value) -> Option<proximadb_v1::Propert
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
                 Value::IntValue(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::DoubleValue(f)
             } else {
-                return None;
+                let f = n.as_f64()?;
+                Value::DoubleValue(f)
             }
         }
         serde_json::Value::String(s) => Value::StringValue(s.clone()),

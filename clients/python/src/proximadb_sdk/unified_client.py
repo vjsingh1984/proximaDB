@@ -9,46 +9,35 @@ This client uses the Protocol Adapter pattern to delegate operations to
 protocol-specific adapters, providing a consistent Pydantic-based API.
 """
 
+import ast
 import logging
 import math
 import re
 import sys
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Union
 
 import numpy as np
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 
 from .adapters import BaseProtocolAdapter, create_adapter
 from .auth import AuthConfig, AuthMethod, ProximaDBAuth
 from .config import ClientConfig, PortMode, Protocol, load_config
 from .exceptions import (
     CollectionNotFoundError,
-    NetworkError,
     ProximaDBError,
-    RateLimitError,
-    TimeoutError,
-    map_http_error,
 )
 from .models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     DistanceMetric,
-    FilterDict,
     HealthStatus,
     IndexingAlgorithm,
-    MetadataDict,
     OperationMetrics,
     QuantizationConfig,
     QuantizationType,
     SearchResult,
     StorageEngine,
-    VectorArray,
     VectorOperationResponse,
     VectorRecord,
 )
@@ -56,7 +45,6 @@ from .operation_router import (
     OperationRouter,
     RoutingConfig,
     RoutingStrategy,
-    create_operation_router,
 )
 from .proto_conversion import ProtoConverter
 from .protocol_selector import (
@@ -80,6 +68,44 @@ logger = logging.getLogger(__name__)
 # Protocol enum imported from config module
 
 
+# Substrings that mark an error as a transport/connection failure rather
+# than a server-side rejection. The gRPC sync layer prefixes connection
+# errors with "connection failed"; tonic/grpcio surface "unavailable" and
+# "connect" in their messages. REST raises requests.exceptions.* whose
+# class names match. Keep this list narrow — anything not on it should
+# propagate to the caller.
+_CONNECTION_ERROR_MARKERS = (
+    "connection failed",
+    "unavailable",
+    "connect failed",
+    "connection refused",
+    "failed to connect",
+    "name or service not known",
+    "errors resolving",
+)
+_CONNECTION_ERROR_CLASSES = (
+    "ConnectionError",
+    "ConnectTimeout",
+    "ConnectionRefusedError",
+    "MaxRetryError",
+)
+
+
+def _is_connection_error(error: Exception) -> bool:
+    """True when `error` denotes server-unreachable, not server-rejected.
+
+    Used to gate `_activate_local_fallback`: legitimate transport
+    failures fall back to in-memory mode; server-returned errors
+    (INVALID_ARGUMENT, ALREADY_EXISTS, INTERNAL, etc.) must propagate so
+    the user sees real failures instead of fake-success Collections.
+    """
+    cls_name = type(error).__name__
+    if cls_name in _CONNECTION_ERROR_CLASSES:
+        return True
+    msg = str(error).lower()
+    return any(marker in msg for marker in _CONNECTION_ERROR_MARKERS)
+
+
 class ProximaDBClient:
     """
     Unified ProximaDB Python Client
@@ -89,30 +115,30 @@ class ProximaDBClient:
     interface using Pydantic models regardless of the underlying protocol.
     """
 
-    _shared_local_collections: Dict[str, Collection] = {}
-    _shared_local_vectors: Dict[str, List[VectorRecord]] = {}
+    _shared_local_collections: dict[str, Collection] = {}
+    _shared_local_vectors: dict[str, list[VectorRecord]] = {}
 
     def __init__(
         self,
-        url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        protocol: Union[Protocol, str] = Protocol.AUTO,
-        port_mode: Union[PortMode, str] = PortMode.UNIFIED,
-        config: Optional[ClientConfig] = None,
-        auth_config: Optional[AuthConfig] = None,
-        auth_method: Optional[AuthMethod] = None,
+        url: str | None = None,
+        api_key: str | None = None,
+        protocol: Protocol | str = Protocol.AUTO,
+        port_mode: PortMode | str = PortMode.UNIFIED,
+        config: ClientConfig | None = None,
+        auth_config: AuthConfig | None = None,
+        auth_method: AuthMethod | None = None,
         enable_http2: bool = True,
         pool_size: int = 10,
         pool_maxsize: int = 50,
         verify_ssl: bool = True,
-        cert_file: Optional[str] = None,
-        key_file: Optional[str] = None,
+        cert_file: str | None = None,
+        key_file: str | None = None,
         enable_intelligent_selection: bool = False,
         selection_strategy: SelectionStrategy = SelectionStrategy.BALANCED,
         enable_operation_routing: bool = False,
         routing_strategy: RoutingStrategy = RoutingStrategy.HYBRID,
-        routing_config: Optional[RoutingConfig] = None,
-        sks_warmup_collection: Optional[str] = None,
+        routing_config: RoutingConfig | None = None,
+        sks_warmup_collection: str | None = None,
         **kwargs,
     ):
         """
@@ -162,8 +188,20 @@ class ProximaDBClient:
         if isinstance(port_mode, str):
             port_mode = PortMode(port_mode.lower())
 
+        requested_protocol = (
+            Protocol(protocol.lower()) if isinstance(protocol, str) else protocol
+        )
+
         if config is None:
-            config = load_config(url=url, api_key=api_key, **kwargs)
+            load_kwargs = dict(kwargs)
+            if (
+                requested_protocol == Protocol.EMBEDDED
+                and not url
+                and "url" not in load_kwargs
+            ):
+                load_kwargs["url"] = "embedded://local"
+            resolved_url = load_kwargs.pop("url", url)
+            config = load_config(url=resolved_url, api_key=api_key, **load_kwargs)
             # Apply port_mode to config
             config.port_mode = port_mode
         elif port_mode != PortMode.UNIFIED:
@@ -193,25 +231,40 @@ class ProximaDBClient:
 
         self.config = config
         self._url = getattr(config, "url", None) or getattr(config, "base_url", None)
-        self.protocol = Protocol(protocol) if isinstance(protocol, str) else protocol
+        self.protocol = requested_protocol
         self.enable_intelligent_selection = enable_intelligent_selection
         self.selection_strategy = selection_strategy
         self.enable_operation_routing = enable_operation_routing
         self.routing_strategy = routing_strategy
         self._sks_warmup_collection = sks_warmup_collection
+        self._embedded_options = {
+            key: kwargs.get(key)
+            for key in (
+                "data_dir",
+                "data_dirs",
+                "metadata_dir",
+                "cache_size_mb",
+                "default_engine",
+                "enable_wal",
+                "prune_mode",
+                "mode",
+                "node_id",
+            )
+            if kwargs.get(key) is not None
+        }
 
         # Client state
         self._client = None
-        self._adapter: Optional[BaseProtocolAdapter] = (
+        self._adapter: BaseProtocolAdapter | None = (
             None  # Primary adapter for operations
         )
-        self._protocol_selector: Optional[ProtocolSelector] = None
-        self._operation_router: Optional[OperationRouter] = None
+        self._protocol_selector: ProtocolSelector | None = None
+        self._operation_router: OperationRouter | None = None
         self._rest_client = None
         self._grpc_client = None
-        self._rest_adapter: Optional[BaseProtocolAdapter] = None
-        self._grpc_adapter: Optional[BaseProtocolAdapter] = None
-        self._auth: Optional[ProximaDBAuth] = None
+        self._rest_adapter: BaseProtocolAdapter | None = None
+        self._grpc_adapter: BaseProtocolAdapter | None = None
+        self._auth: ProximaDBAuth | None = None
         self._document_repository = None
         self._timeseries_repository = None
         self._closed = False
@@ -342,10 +395,16 @@ class ProximaDBClient:
                 except Exception as e:
                     logger.debug(f"SKS warmup skipped due to error: {e}")
 
+        elif self.protocol == Protocol.EMBEDDED:
+            self._adapter = self._create_adapter("embedded")
+            self._client = getattr(self._adapter, "_db", None)
+            self._active_protocol = Protocol.EMBEDDED
+            logger.info("Using embedded client (forced)")
+
         else:
             raise ValueError(f"Unknown protocol: {self.protocol}")
 
-    def _create_adapter(self, protocol: str) -> BaseProtocolAdapter:
+    def _create_adapter(self, protocol: str, **extra_kwargs) -> BaseProtocolAdapter:
         """Create protocol adapter with current configuration.
 
         Args:
@@ -361,14 +420,26 @@ class ProximaDBClient:
 
         adapter_kwargs = {"config": self.config}
         if protocol == "grpc":
-            grpc_target = base_url.replace("http://", "").replace("https://", "")
+            # grpcio's insecure_channel expects bare host:port, not a URL.
+            # Strip http(s):// and the grpc(s):// pseudo-schemes the SDK
+            # accepts as input convenience.
+            grpc_target = (
+                base_url.replace("http://", "")
+                .replace("https://", "")
+                .replace("grpc://", "")
+                .replace("grpcs://", "")
+            )
             adapter_kwargs["server_address"] = grpc_target
+        elif protocol == "embedded":
+            adapter_kwargs.update(self._embedded_options)
         else:
             adapter_kwargs["url"] = base_url
 
         # Add auth if available
         if self._auth:
             adapter_kwargs["auth"] = self._auth
+
+        adapter_kwargs.update(extra_kwargs)
 
         try:
             return create_adapter(protocol, **adapter_kwargs)
@@ -412,7 +483,7 @@ class ProximaDBClient:
             logger.debug("Activating local fallback after adapter failure: %s", error)
             self._prefer_local_fallback = True
 
-    def _get_local_collection(self, collection_id: str) -> Optional[Collection]:
+    def _get_local_collection(self, collection_id: str) -> Collection | None:
         collection = self.__class__._shared_local_collections.get(collection_id)
         if collection is not None:
             return collection
@@ -427,7 +498,7 @@ class ProximaDBClient:
             raise ProximaDBError(f"Collection '{collection_id}' not found")
         return collection
 
-    def _get_local_vector_records(self, collection_id: str) -> List[VectorRecord]:
+    def _get_local_vector_records(self, collection_id: str) -> list[VectorRecord]:
         collection = self._get_local_collection(collection_id)
         if collection is None:
             return self.__class__._shared_local_vectors.get(collection_id, [])
@@ -443,7 +514,7 @@ class ProximaDBClient:
         collection.updated_at_ms = int(time.time() * 1000)
 
     def _store_local_vector_records(
-        self, collection_id: str, records: List[VectorRecord]
+        self, collection_id: str, records: list[VectorRecord]
     ) -> None:
         collection = self._require_local_collection(collection_id)
         stored = self.__class__._shared_local_vectors.setdefault(collection.id, [])
@@ -459,8 +530,82 @@ class ProximaDBClient:
                 stored.append(record)
         self._sync_local_collection_stats(collection_id)
 
+    def _store_local_vector_batch(
+        self,
+        collection_id: str,
+        ids: list[str],
+        vectors: list[list[float]] | np.ndarray,
+        metadata: list[dict[str, Any]] | None = None,
+    ) -> None:
+        if isinstance(vectors, np.ndarray):
+            vector_rows = vectors.tolist()
+        else:
+            vector_rows = [list(vector) for vector in vectors]
+
+        records = [
+            VectorRecord(
+                vector=vector_rows[index],
+                id=ids[index] if index < len(ids) else None,
+                metadata=metadata[index] if metadata and index < len(metadata) else {},
+            )
+            for index in range(len(vector_rows))
+        ]
+        self._store_local_vector_records(collection_id, records)
+
+    def _try_embedded_numpy_vector_batch(
+        self,
+        collection_id: str,
+        vectors: list[list[float]] | np.ndarray,
+        ids: list[str] | None,
+        metadata: list[dict[str, Any]] | None,
+        *,
+        upsert: bool,
+    ) -> VectorOperationResponse | None:
+        if self._active_protocol != Protocol.EMBEDDED or self._prefer_local_fallback:
+            return None
+        if not isinstance(vectors, np.ndarray) or self._adapter is None:
+            return None
+
+        method_name = "upsert_numpy" if upsert else "insert_numpy"
+        if not hasattr(self._adapter, method_name):
+            return None
+
+        ids_list = (
+            list(ids) if ids is not None else [f"vec_{i}" for i in range(len(vectors))]
+        )
+        metadata_list = (
+            metadata if metadata and any(item for item in metadata) else None
+        )
+
+        try:
+            result = getattr(self._adapter, method_name)(
+                collection_id,
+                ids_list,
+                vectors,
+                metadata_list,
+            )
+        except Exception as e:
+            self._activate_local_fallback(e)
+            logger.debug(
+                "Embedded NumPy %s failed for %s, falling back: %s",
+                method_name,
+                collection_id,
+                e,
+            )
+            return None
+
+        if getattr(result, "success", True):
+            self._store_local_vector_batch(
+                collection_id,
+                ids_list,
+                vectors,
+                metadata_list,
+            )
+
+        return result
+
     def _delete_local_vector_records(
-        self, collection_id: str, vector_ids: List[str]
+        self, collection_id: str, vector_ids: list[str]
     ) -> int:
         stored = self._get_local_vector_records(collection_id)
         ids = set(vector_ids)
@@ -472,8 +617,8 @@ class ProximaDBClient:
 
     @staticmethod
     def _metadata_matches_filter(
-        metadata: Dict[str, Any],
-        metadata_filter: Optional[Union[Dict[str, Any], Any]],
+        metadata: dict[str, Any],
+        metadata_filter: dict[str, Any] | Any | None,
     ) -> bool:
         if metadata_filter is None:
             return True
@@ -488,7 +633,7 @@ class ProximaDBClient:
         return all(metadata.get(key) == value for key, value in metadata_filter.items())
 
     @staticmethod
-    def _cosine_similarity(left: List[float], right: List[float]) -> float:
+    def _cosine_similarity(left: list[float], right: list[float]) -> float:
         dot = sum(a * b for a, b in zip(left, right))
         left_norm = math.sqrt(sum(a * a for a in left))
         right_norm = math.sqrt(sum(b * b for b in right))
@@ -500,17 +645,17 @@ class ProximaDBClient:
     def _search_local_vectors(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int,
-        metadata_filter: Optional[Union[Dict[str, Any], Any]],
+        metadata_filter: dict[str, Any] | Any | None,
         include_metadata: bool,
         include_vectors: bool,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         self._require_local_collection(collection_id)
         query_vector = (
             vector.tolist() if isinstance(vector, np.ndarray) else list(vector)
         )
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
         for record in self._get_local_vector_records(collection_id):
             if len(record.vector) != len(query_vector):
                 continue
@@ -532,9 +677,9 @@ class ProximaDBClient:
     def _execute_sql_local(
         self,
         query: str,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+    ) -> dict[str, Any]:
         normalized = " ".join(query.strip().split())
         lowered = normalized.lower()
 
@@ -543,6 +688,62 @@ class ProximaDBClient:
 
         if "metadata." in lowered:
             raise ProximaDBError("SQL lowering failed: Unsupported expression type")
+
+        vector_search_match = re.search(
+            r"""from\s+vector_search\(\s*'([^']+)'\s*,\s*'(\[[^']*\])'\s*,\s*(\d+)\s*\)""",
+            normalized,
+            re.IGNORECASE,
+        )
+        if vector_search_match:
+            collection_name = collection or vector_search_match.group(1)
+            try:
+                query_vector = ast.literal_eval(vector_search_match.group(2))
+            except (SyntaxError, ValueError) as exc:
+                raise ProximaDBError(
+                    "SQL parse error: invalid VECTOR_SEARCH vector literal"
+                ) from exc
+            top_k = int(vector_search_match.group(3))
+            results = self._search_local_vectors(
+                collection_id=collection_name,
+                vector=query_vector,
+                top_k=top_k,
+                metadata_filter=None,
+                include_metadata=True,
+                include_vectors=True,
+            )
+
+            select_match = re.match(
+                r"select\s+(.+?)\s+from\s+", normalized, re.IGNORECASE
+            )
+            select_expr = select_match.group(1).strip() if select_match else "*"
+            columns = (
+                ["id", "score", "vector", "metadata", "rank"]
+                if select_expr == "*"
+                else [column.strip() for column in select_expr.split(",")]
+            )
+
+            rows: list[dict[str, Any]] = []
+            for result in results:
+                row: dict[str, Any] = {}
+                for column in columns:
+                    lowered_column = column.lower()
+                    if lowered_column == "id":
+                        row["id"] = result.id
+                    elif lowered_column == "score":
+                        row["score"] = result.score
+                    elif lowered_column == "vector":
+                        row["vector"] = result.vector
+                    elif lowered_column == "metadata":
+                        row["metadata"] = result.metadata
+                    elif lowered_column == "rank":
+                        row["rank"] = result.rank
+                    else:
+                        raise ProximaDBError(
+                            "SQL lowering failed: Unsupported expression type"
+                        )
+                rows.append(row)
+
+            return {"rows": rows, "columns": columns, "row_count": len(rows)}
 
         match = re.search(r"\bfrom\s+([a-zA-Z_][\w]*)", normalized, re.IGNORECASE)
         collection_name = collection or (match.group(1) if match else None)
@@ -581,9 +782,9 @@ class ProximaDBClient:
             }
 
         columns = [column.strip() for column in select_expr.split(",")]
-        rows: List[Dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for record in selected:
-            row: Dict[str, Any] = {}
+            row: dict[str, Any] = {}
             for column in columns:
                 lowered_column = column.lower()
                 if lowered_column == "id":
@@ -599,16 +800,52 @@ class ProximaDBClient:
             rows.append(row)
         return {"rows": rows, "columns": columns, "row_count": len(rows)}
 
-    def _get_rest_adapter(self) -> Optional[BaseProtocolAdapter]:
+    @staticmethod
+    def _is_vector_search_sql(query: str) -> bool:
+        normalized = " ".join(query.strip().split()).lower()
+        return "from vector_search(" in normalized
+
+    def _local_sql_fallback_result(
+        self,
+        query: str,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+    ) -> dict[str, Any] | None:
+        try:
+            result = self._execute_sql_local(query, parameters, collection)
+        except Exception as e:
+            logger.debug("Local SQL fallback unavailable: %s", e)
+            return None
+
+        if result.get("row_count", 0) > 0:
+            return result
+        return None
+
+    @staticmethod
+    def _sql_rows_to_unified_records(
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        return [
+            {
+                "id": row.get("id", f"row_{index}"),
+                "source_model": "vector",
+                "score": row.get("score"),
+                "data": row,
+                "metadata": {
+                    "models": "vector",
+                    "fusion_strategy": "local_fallback",
+                },
+            }
+            for index, row in enumerate(rows)
+        ]
+
+    def _get_rest_adapter(self) -> BaseProtocolAdapter | None:
         if self._rest_adapter is None:
             self._rest_adapter = self._create_adapter("rest")
         return self._rest_adapter
 
     def _call_document_adapter(self, method_name: str, *args, **kwargs):
-        if self._active_protocol != Protocol.REST:
-            return None
-
-        candidates: List[BaseProtocolAdapter] = []
+        candidates: list[BaseProtocolAdapter] = []
         if self._adapter:
             candidates.append(self._adapter)
 
@@ -634,10 +871,7 @@ class ProximaDBClient:
         return None
 
     def _call_timeseries_adapter(self, method_name: str, *args, **kwargs):
-        if self._active_protocol != Protocol.REST:
-            return None
-
-        candidates: List[BaseProtocolAdapter] = []
+        candidates: list[BaseProtocolAdapter] = []
         if self._adapter:
             candidates.append(self._adapter)
 
@@ -669,13 +903,13 @@ class ProximaDBClient:
         self,
         start_node_id: str,
         target_node_id: str,
-        max_depth: Optional[int] = None,
-        edge_types: Optional[List[str]] = None,
+        max_depth: int | None = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "DIJKSTRA",
-        k: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-        timeout: Optional[float] = None,
+        k: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+        timeout: float | None = None,
     ):
         """Unified shortest path across gRPC/REST with prefetch overrides."""
         if self._active_protocol == Protocol.GRPC and hasattr(
@@ -710,14 +944,14 @@ class ProximaDBClient:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-        timeout_ms: Optional[int] = None,
-        max_frontier: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-        timeout: Optional[float] = None,
+        limit: int | None = None,
+        timeout_ms: int | None = None,
+        max_frontier: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+        timeout: float | None = None,
     ):
         """Unified traversal via REST (gRPC streaming traversal not yet exposed here)."""
         if hasattr(self._client, "graph_traverse"):
@@ -774,7 +1008,7 @@ class ProximaDBClient:
             self.enable_intelligent_selection = False
             self._setup_client()
 
-    def _setup_operation_routing(self, routing_config: Optional[RoutingConfig]):
+    def _setup_operation_routing(self, routing_config: RoutingConfig | None):
         """Setup operation-specific routing system"""
         try:
             # Create routing configuration if not provided
@@ -862,7 +1096,7 @@ class ProximaDBClient:
         return RestClient(config=self.config, auth=self._auth)
 
     # Authentication Methods
-    def get_auth_status(self) -> Dict[str, Any]:
+    def get_auth_status(self) -> dict[str, Any]:
         """Get current authentication status"""
         if not self._auth:
             return {"authenticated": False, "method": None}
@@ -925,7 +1159,7 @@ class ProximaDBClient:
         """Get the currently active protocol"""
         return self._active_protocol
 
-    def get_performance_info(self) -> Dict[str, Any]:
+    def get_performance_info(self) -> dict[str, Any]:
         """Get performance information about the active protocol"""
         if self._active_protocol == Protocol.GRPC:
             return {
@@ -953,7 +1187,7 @@ class ProximaDBClient:
 
     # Intelligent protocol selection methods (Phase 2 optimization)
 
-    def get_protocol_metrics(self) -> Dict[str, Any]:
+    def get_protocol_metrics(self) -> dict[str, Any]:
         """Get detailed metrics for all available protocols"""
         if self._protocol_selector:
             return self._protocol_selector.get_protocol_metrics()
@@ -965,9 +1199,9 @@ class ProximaDBClient:
     def _get_client_for_operation(
         self,
         operation_name: str,
-        data_size_hint: Optional[int] = None,
-        context: Optional[Dict[str, Any]] = None,
-        preferred_protocol: Optional[Protocol] = None,
+        data_size_hint: int | None = None,
+        context: dict[str, Any] | None = None,
+        preferred_protocol: Protocol | None = None,
     ) -> Any:
         """Get appropriate client for specific operation"""
         if not self.enable_operation_routing or not self._operation_router:
@@ -1000,7 +1234,7 @@ class ProximaDBClient:
         protocol: Protocol,
         success: bool,
         response_time_ms: float,
-        error: Optional[str] = None,
+        error: str | None = None,
         throughput_ops_per_sec: float = 0.0,
     ):
         """Record operation result for adaptive routing"""
@@ -1014,7 +1248,7 @@ class ProximaDBClient:
                 throughput_ops_per_sec=throughput_ops_per_sec,
             )
 
-    def get_routing_stats(self) -> Dict[str, Any]:
+    def get_routing_stats(self) -> dict[str, Any]:
         """Get operation routing statistics"""
         if self._operation_router:
             return self._operation_router.get_routing_stats()
@@ -1035,7 +1269,7 @@ class ProximaDBClient:
         else:
             logger.warning("Operation routing not enabled, cannot reset metrics")
 
-    def get_selection_stats(self) -> Dict[str, Any]:
+    def get_selection_stats(self) -> dict[str, Any]:
         """Get protocol selection statistics"""
         if self._protocol_selector:
             return self._protocol_selector.get_selection_stats()
@@ -1052,7 +1286,7 @@ class ProximaDBClient:
         else:
             raise ProximaDBError("Intelligent protocol selection not enabled")
 
-    def _get_optimal_client(self, operation_hint: Optional[str] = None):
+    def _get_optimal_client(self, operation_hint: str | None = None):
         """Get optimal client for operation (with intelligent selection)"""
         if self._protocol_selector:
             # Get optimal protocol for this operation
@@ -1261,7 +1495,7 @@ class ProximaDBClient:
             return self._client.health()
 
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self, name: str, config: CollectionConfig | None = None, **kwargs
     ) -> Collection:
         """Create a new vector collection with optional storage engine configuration
 
@@ -1320,15 +1554,22 @@ class ProximaDBClient:
                     self._adapter.create_collection(name=name, config=config, **kwargs)
                 )
             except Exception as e:
-                self._activate_local_fallback(e)
-                logger.debug(
-                    "Create collection failed, using local fallback for %s: %s",
-                    name,
-                    e,
-                )
-                return self._store_local_collection(
-                    self._build_local_collection(name, config)
-                )
+                # Only fall back to in-memory mode on connection failures —
+                # the legitimate "server unreachable, work offline" case.
+                # Server-returned errors (INVALID_ARGUMENT, ALREADY_EXISTS,
+                # INTERNAL, etc.) MUST propagate; silently faking success
+                # masks real failures and hides bugs from the user.
+                if _is_connection_error(e):
+                    self._activate_local_fallback(e)
+                    logger.debug(
+                        "Create collection unreachable, using local fallback for %s: %s",
+                        name,
+                        e,
+                    )
+                    return self._store_local_collection(
+                        self._build_local_collection(name, config)
+                    )
+                raise
 
         if self._prefer_local_fallback:
             return self._store_local_collection(
@@ -1397,9 +1638,13 @@ class ProximaDBClient:
                         updated_at=int(time.time() * 1e6),
                     )
             except Exception as e:
+                # Same gating as the adapter path above — only fall back on
+                # transport errors, never on server-rejected requests.
+                if not _is_connection_error(e):
+                    raise
                 self._activate_local_fallback(e)
                 logger.debug(
-                    "gRPC create_collection failed, using local fallback for %s: %s",
+                    "gRPC create_collection unreachable, using local fallback for %s: %s",
                     name,
                     e,
                 )
@@ -1420,7 +1665,7 @@ class ProximaDBClient:
                     self._build_local_collection(name, config)
                 )
 
-    def get_collection(self, collection_id: str) -> Optional[Collection]:
+    def get_collection(self, collection_id: str) -> Collection | None:
         """Get collection metadata"""
         if self._prefer_local_fallback:
             result = self._get_local_collection(collection_id)
@@ -1458,7 +1703,7 @@ class ProximaDBClient:
                 raise CollectionNotFoundError(f"Collection '{collection_id}' not found")
             return result
 
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> list[Collection]:
         """List all collections"""
         if self._prefer_local_fallback:
             return list(self.__class__._shared_local_collections.values())
@@ -1565,8 +1810,8 @@ class ProximaDBClient:
         return self._client.delete_collection(collection_id)
 
     def create_document_collection(
-        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None, **kwargs
+    ) -> dict[str, Any]:
         """Create a document collection."""
         adapter_result = self._call_document_adapter(
             "create_document_collection", name, config, **kwargs
@@ -1612,10 +1857,10 @@ class ProximaDBClient:
     def insert_document(
         self,
         collection_name: str,
-        document: Dict[str, Any],
-        id: Optional[str] = None,
+        document: dict[str, Any],
+        id: str | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Insert a document."""
         adapter_result = self._call_document_adapter(
             "insert_document", collection_name, document, id, **kwargs
@@ -1634,9 +1879,9 @@ class ProximaDBClient:
         self,
         collection_name: str,
         doc_id: str,
-        projection: Optional[List[str]] = None,
+        projection: list[str] | None = None,
         **kwargs,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a document by ID."""
         adapter_result = self._call_document_adapter(
             "get_document", collection_name, doc_id, projection, **kwargs
@@ -1659,11 +1904,11 @@ class ProximaDBClient:
     def query_documents(
         self,
         collection_name: str,
-        filter: Optional[Dict[str, Any]] = None,
-        projection: Optional[List[str]] = None,
+        filter: dict[str, Any] | None = None,
+        projection: list[str] | None = None,
         limit: int = 100,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query documents."""
         adapter_result = self._call_document_adapter(
             "query_documents",
@@ -1693,9 +1938,9 @@ class ProximaDBClient:
         self,
         collection_name: str,
         doc_id: str,
-        updates: List[Dict[str, Any]],
+        updates: list[dict[str, Any]],
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Update a document."""
         adapter_result = self._call_document_adapter(
             "update_document", collection_name, doc_id, updates, **kwargs
@@ -1725,7 +1970,7 @@ class ProximaDBClient:
 
         return self._get_document_repository().delete(collection_name, doc_id)
 
-    def list_document_collections(self, **kwargs) -> List[Dict[str, Any]]:
+    def list_document_collections(self, **kwargs) -> list[dict[str, Any]]:
         """List document collections."""
         adapter_result = self._call_document_adapter(
             "list_document_collections", **kwargs
@@ -1746,8 +1991,8 @@ class ProximaDBClient:
         return self._get_document_repository().delete_collection(collection_name)
 
     def create_timeseries_collection(
-        self, name: str, config: Optional[Dict[str, Any]] = None, **kwargs
-    ) -> Dict[str, Any]:
+        self, name: str, config: dict[str, Any] | None = None, **kwargs
+    ) -> dict[str, Any]:
         """Create a time-series collection."""
         adapter_result = self._call_timeseries_adapter(
             "create_timeseries_collection", name, config, **kwargs
@@ -1765,9 +2010,9 @@ class ProximaDBClient:
     def ingest_timeseries(
         self,
         collection_name: str,
-        points: List[Dict[str, Any]],
+        points: list[dict[str, Any]],
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Ingest time-series points."""
         adapter_result = self._call_timeseries_adapter(
             "ingest_timeseries", collection_name, points, **kwargs
@@ -1782,11 +2027,11 @@ class ProximaDBClient:
         collection_name: str,
         start_time: str,
         end_time: str,
-        aggregation: Optional[str] = None,
-        bucket_ms: Optional[int] = None,
-        tag_filters: Optional[Dict[str, str]] = None,
+        aggregation: str | None = None,
+        bucket_ms: int | None = None,
+        tag_filters: dict[str, str] | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query time-series data with local compatibility fallback."""
         adapter_result = self._call_timeseries_adapter(
             "query_timeseries",
@@ -1812,7 +2057,7 @@ class ProximaDBClient:
         )
         return response.to_dict()
 
-    def list_timeseries_collections(self, **kwargs) -> List[Dict[str, Any]]:
+    def list_timeseries_collections(self, **kwargs) -> list[dict[str, Any]]:
         """List time-series collections."""
         adapter_result = self._call_timeseries_adapter(
             "list_timeseries_collections", **kwargs
@@ -1836,12 +2081,12 @@ class ProximaDBClient:
         self,
         collection: str,
         text_query: str,
-        query_vector: List[float],
+        query_vector: list[float],
         fusion_strategy: str = "rrf",
         top_k: int = 10,
-        fusion_params: Optional[Dict[str, Any]] = None,
+        fusion_params: dict[str, Any] | None = None,
         **kwargs,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Execute hybrid search with local compatibility fallback."""
         if self._active_protocol == Protocol.REST and self._adapter:
             try:
@@ -1863,7 +2108,7 @@ class ProximaDBClient:
             WeightedFusion,
         )
 
-        strategy: Union[str, FusionStrategy, Any] = fusion_strategy
+        strategy: str | FusionStrategy | Any = fusion_strategy
         if isinstance(fusion_strategy, str):
             normalized = fusion_strategy.lower()
             if normalized == "weighted_linear":
@@ -1895,17 +2140,110 @@ class ProximaDBClient:
             },
         }
 
+    def _record_payload_from_legacy_input(
+        self, record: VectorRecord | dict[str, Any], index: int = 0
+    ) -> dict[str, Any]:
+        """Normalize legacy vector-shaped inputs into the record write shape."""
+        if isinstance(record, dict):
+            payload = dict(record)
+            if "props" not in payload and "metadata" in payload:
+                payload["props"] = payload.pop("metadata")
+            payload.setdefault("id", payload.get("oid") or f"record_{index}")
+            return payload
+
+        payload: dict[str, Any] = {
+            "id": record.id or f"record_{index}",
+            "vector": (
+                record.vector.tolist()
+                if hasattr(record.vector, "tolist")
+                else list(record.vector or [])
+            ),
+            "props": dict(record.metadata or {}),
+        }
+        source = getattr(record, "source", None)
+        if source:
+            payload["source"] = source
+            payload["text_fields"] = [{"name": "text", "content": source}]
+        return payload
+
+    def _batch_result_to_vector_response(
+        self, result: BatchResult, operation: str, records: list[dict[str, Any]]
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=OperationMetrics(
+                total_processed=result.total,
+                successful_count=result.success,
+                failed_count=result.failed,
+            ),
+            vector_ids=[record["id"] for record in records if record.get("id")],
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: list[VectorRecord | dict[str, Any]],
+        **kwargs: Any,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads through the active transport."""
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        if not record_payloads:
+            raise ValueError("'records' must not be empty")
+
+        if self._prefer_local_fallback:
+            vector_records = [
+                VectorRecord(
+                    id=record.get("id"),
+                    vector=record.get("vector") or [],
+                    metadata=record.get("props") or {},
+                    source=record.get("source"),
+                )
+                for record in record_payloads
+            ]
+            self._store_local_vector_records(collection_id, vector_records)
+            return BatchResult(total=len(record_payloads), success=len(record_payloads))
+
+        target = self._adapter or self._rest_client or self._grpc_client
+        if target and hasattr(target, "insert_records"):
+            return target.insert_records(collection_id, record_payloads, **kwargs)
+
+        raise NotImplementedError(
+            "insert_records requires a record-native adapter or protocol client"
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: list[VectorRecord | dict[str, Any]],
+        **kwargs: Any,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads through the active transport."""
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        if not record_payloads:
+            raise ValueError("'records' must not be empty")
+
+        target = self._adapter or self._rest_client or self._grpc_client
+        if target and hasattr(target, "upsert_records"):
+            return target.upsert_records(collection_id, record_payloads, **kwargs)
+        return self.insert_records(collection_id, record_payloads, **kwargs)
+
     def insert_vectors(
         self,
         collection_id: str,
         # Backward compatibility: support old calling style
-        vectors: Optional[
-            Union[List[List[float]], List[VectorRecord], np.ndarray]
-        ] = None,
-        ids: Optional[List[str]] = None,
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        vectors: list[list[float]] | list[VectorRecord] | np.ndarray | None = None,
+        ids: list[str] | None = None,
+        metadata: list[dict[str, Any]] | None = None,
         # New API parameter
-        records: Optional[List[VectorRecord]] = None,
+        records: list[VectorRecord] | None = None,
         **kwargs,
     ) -> VectorOperationResponse:
         """Insert vectors into a collection
@@ -1951,9 +2289,21 @@ class ProximaDBClient:
         if records is None or (hasattr(records, "__len__") and len(records) == 0):
             raise ValueError("Either 'records' or 'vectors' must be provided")
 
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        try:
+            batch_result = self.insert_records(collection_id, record_payloads, **kwargs)
+            return self._batch_result_to_vector_response(
+                batch_result, "INSERT", record_payloads
+            )
+        except NotImplementedError:
+            pass
+
         if self._prefer_local_fallback:
             self._store_local_vector_records(collection_id, list(records))
-            success_value: Union[bool, int] = (
+            success_value: bool | int = (
                 len(records) if self._active_protocol == Protocol.REST else True
             )
             return VectorOperationResponse(
@@ -1971,9 +2321,12 @@ class ProximaDBClient:
         if self._adapter:
             if not self._prefer_local_fallback:
                 try:
-                    return self._adapter.insert_vectors(
+                    result = self._adapter.insert_vectors(
                         collection_id, records, **kwargs
                     )
+                    if self._active_protocol == Protocol.EMBEDDED:
+                        self._store_local_vector_records(collection_id, list(records))
+                    return result
                 except Exception as e:
                     self._activate_local_fallback(e)
                     logger.debug(
@@ -1982,7 +2335,7 @@ class ProximaDBClient:
                         e,
                     )
             self._store_local_vector_records(collection_id, list(records))
-            success_value: Union[bool, int] = (
+            success_value: bool | int = (
                 len(records) if self._active_protocol == Protocol.REST else True
             )
             return VectorOperationResponse(
@@ -2167,8 +2520,8 @@ class ProximaDBClient:
 
             elif client == self._rest_client:
                 protocol_used = Protocol.REST
-                # REST API accepts VectorRecord objects via /api/v1/vectors/batch
-                # Convert VectorRecord to dict format with ALL fields
+                # Legacy fallback for clients without record-native insert support.
+                # Convert VectorRecord to dict format with ALL fields.
                 vector_dicts = []
                 for record in records:
                     vector_dict = {
@@ -2314,12 +2667,24 @@ class ProximaDBClient:
             raise
 
     def upsert_vectors(
-        self, collection_id: str, records: List[VectorRecord]
+        self, collection_id: str, records: list[VectorRecord | dict[str, Any]]
     ) -> VectorOperationResponse:
-        """Upsert vectors into a collection"""
+        """Compatibility alias for record-native upserts."""
+        record_payloads = [
+            self._record_payload_from_legacy_input(record, index)
+            for index, record in enumerate(records)
+        ]
+        try:
+            batch_result = self.upsert_records(collection_id, record_payloads)
+            return self._batch_result_to_vector_response(
+                batch_result, "UPSERT", record_payloads
+            )
+        except NotImplementedError:
+            pass
+
         if self._prefer_local_fallback:
             self._store_local_vector_records(collection_id, list(records))
-            success_value: Union[bool, int] = (
+            success_value: bool | int = (
                 len(records) if self._active_protocol == Protocol.REST else True
             )
             return VectorOperationResponse(
@@ -2338,7 +2703,10 @@ class ProximaDBClient:
         if self._adapter:
             if not self._prefer_local_fallback:
                 try:
-                    return self._adapter.upsert_vectors(collection_id, records)
+                    result = self._adapter.upsert_vectors(collection_id, records)
+                    if self._active_protocol == Protocol.EMBEDDED:
+                        self._store_local_vector_records(collection_id, list(records))
+                    return result
                 except Exception as e:
                     self._activate_local_fallback(e)
                     logger.debug(
@@ -2347,7 +2715,7 @@ class ProximaDBClient:
                         e,
                     )
             self._store_local_vector_records(collection_id, list(records))
-            success_value: Union[bool, int] = (
+            success_value: bool | int = (
                 len(records) if self._active_protocol == Protocol.REST else True
             )
             return VectorOperationResponse(
@@ -2431,13 +2799,13 @@ class ProximaDBClient:
     def search(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[Union[Dict[str, Any], "FilterBuilder"]] = None,
+        metadata_filter: Union[dict[str, Any], "FilterBuilder"] | None = None,
         include_metadata: bool = True,
         include_vectors: bool = False,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors
 
         Args:
@@ -2469,15 +2837,15 @@ class ProximaDBClient:
     def search_single(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[Union[Dict[str, Any], "FilterBuilder"]] = None,
+        metadata_filter: Union[dict[str, Any], "FilterBuilder"] | None = None,
         optimization_level: str = "high",
         use_storage_aware: bool = True,
         quantization_level: str = "FP32",
         enable_simd: bool = True,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors with storage-aware optimizations
 
         Args:
@@ -2602,14 +2970,43 @@ class ProximaDBClient:
                 **filtered_kwargs,
             )
 
+    def search_envelope(
+        self,
+        collection_id: str,
+        vector: list[float] | np.ndarray,
+        top_k: int = 10,
+        include_vectors: bool = False,
+        include_metadata: bool = True,
+        **kwargs,
+    ):
+        """Run REST OpenAPI v2 search and return the paged search envelope."""
+        if hasattr(vector, "tolist"):
+            vector = vector.tolist()
+
+        if self._active_protocol == Protocol.REST and hasattr(
+            self._client, "search_envelope"
+        ):
+            return self._client.search_envelope(
+                collection_id=collection_id,
+                vector=vector,
+                top_k=top_k,
+                include_vectors=include_vectors,
+                include_metadata=include_metadata,
+                **kwargs,
+            )
+
+        raise ProximaDBError(
+            "search_envelope requires the REST OpenAPI v2 search surface"
+        )
+
     def search_iter(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
         include_metadata: bool = True,
         include_vectors: bool = False,
-        page_limit: Optional[int] = None,
+        page_limit: int | None = None,
     ):
         """Iterate across pages of search results. Uses SKS cursors on REST when available.
 
@@ -2661,11 +3058,11 @@ class ProximaDBClient:
     def search_batch(
         self,
         collection_id: str,
-        vectors: Union[List[List[float]], np.ndarray],
+        vectors: list[list[float]] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[Union[Dict[str, Any], "FilterBuilder"]] = None,
+        metadata_filter: Union[dict[str, Any], "FilterBuilder"] | None = None,
         **kwargs,
-    ) -> List[List[SearchResult]]:
+    ) -> list[list[SearchResult]]:
         """Search multiple queries in batch with optimizations
 
         Args:
@@ -2697,7 +3094,7 @@ class ProximaDBClient:
         return all_results
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str]
+        self, collection_id: str, vector_ids: list[str]
     ) -> VectorOperationResponse:
         """Delete vectors from a collection"""
         if self._prefer_local_fallback:
@@ -2717,7 +3114,10 @@ class ProximaDBClient:
         if self._adapter:
             if not self._prefer_local_fallback:
                 try:
-                    return self._adapter.delete_vectors(collection_id, vector_ids)
+                    result = self._adapter.delete_vectors(collection_id, vector_ids)
+                    if self._active_protocol == Protocol.EMBEDDED:
+                        self._delete_local_vector_records(collection_id, vector_ids)
+                    return result
                 except Exception as e:
                     self._activate_local_fallback(e)
                     logger.debug(
@@ -2860,13 +3260,13 @@ class ProximaDBClient:
         self,
         collection_id: str,
         vector_id: str,
-        vector: Union[List[float], np.ndarray],
-        metadata: Optional[Dict[str, Any]] = None,
-        timestamp_ms: Optional[int] = None,
-        updated_at_ms: Optional[int] = None,
-        expires_at_ms: Optional[int] = None,
-        version: Optional[int] = None,
-        source: Optional[str] = None,
+        vector: list[float] | np.ndarray,
+        metadata: dict[str, Any] | None = None,
+        timestamp_ms: int | None = None,
+        updated_at_ms: int | None = None,
+        expires_at_ms: int | None = None,
+        version: int | None = None,
+        source: str | None = None,
         upsert: bool = False,
     ) -> VectorOperationResponse:
         """Insert a single vector with full VectorRecord support
@@ -2927,9 +3327,9 @@ class ProximaDBClient:
     def execute_sql(
         self,
         query: str,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+    ) -> dict[str, Any]:
         """Execute SQL query with vector similarity support
 
         Args:
@@ -2947,6 +3347,29 @@ class ProximaDBClient:
             >>> for row in result['rows']:
             ...     print(row['id'], row['metadata'])
         """
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                native_result = self._client.execute_sql(query, parameters, collection)
+                if self._is_vector_search_sql(query) and not native_result.get("rows"):
+                    local_result = self._local_sql_fallback_result(
+                        query, parameters, collection
+                    )
+                    if local_result is not None:
+                        return local_result
+                return native_result
+            except Exception as e:
+                logger.debug("Embedded SQL failed, using adapter/local fallback: %s", e)
+                if self._adapter and hasattr(self._adapter, "execute_sql"):
+                    try:
+                        return self._adapter.execute_sql(
+                            query, parameters=parameters, collection=collection
+                        )
+                    except Exception as adapter_error:
+                        logger.debug(
+                            "Embedded SQL adapter fallback failed, using local fallback: %s",
+                            adapter_error,
+                        )
+                return self._execute_sql_local(query, parameters, collection)
         if self._active_protocol == Protocol.GRPC:
             # Use gRPC SQL service
             try:
@@ -2961,15 +3384,396 @@ class ProximaDBClient:
                 logger.debug("REST SQL failed, using local fallback: %s", e)
                 return self._execute_sql_local(query, parameters, collection)
 
+    def execute_unified_query(
+        self,
+        query: str,
+        query_vector: list[float] | None = None,
+        fusion_strategy: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Execute a federated multi-model query.
+
+        Embedded mode uses the native binding. REST mode uses the OpenAPI v2
+        UQL query surface so existing clients do not need a separate migration.
+        """
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                native_result = list(
+                    self._client.execute_unified_query(
+                        query, query_vector, fusion_strategy
+                    )
+                    or []
+                )
+                if self._is_vector_search_sql(query) and not native_result:
+                    local_result = self._local_sql_fallback_result(query)
+                    if local_result is not None:
+                        return self._sql_rows_to_unified_records(
+                            local_result.get("rows", [])
+                        )
+                return native_result
+            except Exception as e:
+                logger.debug(
+                    "Embedded unified query failed, using adapter fallback: %s", e
+                )
+                if self._adapter and hasattr(self._adapter, "execute_unified_query"):
+                    try:
+                        return self._adapter.execute_unified_query(
+                            query,
+                            query_vector=query_vector,
+                            fusion_strategy=fusion_strategy,
+                        )
+                    except Exception as adapter_error:
+                        logger.debug(
+                            "Embedded unified adapter fallback failed, using local fallback: %s",
+                            adapter_error,
+                        )
+                return list(
+                    self._sql_rows_to_unified_records(
+                        self._execute_sql_local(query, collection=None).get("rows", [])
+                    )
+                )
+
+        if self._adapter and hasattr(self._adapter, "execute_unified_query"):
+            return self._adapter.execute_unified_query(
+                query,
+                query_vector=query_vector,
+                fusion_strategy=fusion_strategy,
+            )
+
+        if self._adapter and hasattr(self._adapter, "execute_query"):
+            result = self._adapter.execute_query(query, language="uql")
+            if isinstance(result, dict):
+                rows = (
+                    result.get("records")
+                    or result.get("rows")
+                    or result.get("data")
+                    or []
+                )
+                return rows if isinstance(rows, list) else [rows]
+            return result
+
+        raise NotImplementedError(
+            "execute_unified_query requires embedded mode or a REST adapter with /api/v2/query"
+        )
+
+    def execute_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute AQL/UQL through the OpenAPI v2 REST query surface."""
+        if self._adapter and hasattr(self._adapter, "execute_query"):
+            return self._adapter.execute_query(
+                query,
+                language=language,
+                parameters=parameters,
+                collection=collection,
+                limit=limit,
+            )
+        if self._client is not None and hasattr(self._client, "execute_query"):
+            return self._client.execute_query(
+                query,
+                language=language,
+                parameters=parameters,
+                collection=collection,
+                limit=limit,
+            )
+        raise NotImplementedError(
+            "execute_query requires the REST OpenAPI v2 query surface"
+        )
+
+    def execute_uql(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute UQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="uql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_aql(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute AQL through the OpenAPI v2 REST query surface."""
+        return self.execute_query(
+            query,
+            language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_federated(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute federated SQL extensions through the OpenAPI v2 REST surface."""
+        return self.execute_query(
+            query,
+            language="federated",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def create_observability_namespace(
+        self,
+        name: str,
+        retention_days: int | None = None,
+    ) -> dict[str, Any]:
+        """Create a namespace for logs, metrics, and traces."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                result = self._client.create_observability_namespace(
+                    name, retention_days
+                )
+                return (
+                    result
+                    if isinstance(result, dict)
+                    else {"success": True, "namespace": name}
+                )
+            except Exception as e:
+                logger.debug("Embedded create_observability_namespace failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "create_observability_namespace"):
+            return self._adapter.create_observability_namespace(
+                name, retention_days=retention_days
+            )
+
+        raise NotImplementedError(
+            "Observability namespaces are currently supported in embedded mode only"
+        )
+
+    def ingest_logs(self, namespace: str, logs: list[dict[str, Any]]) -> int:
+        """Ingest structured log events into an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return int(self._client.ingest_logs(namespace, logs))
+            except Exception as e:
+                logger.debug("Embedded log ingest failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "ingest_logs"):
+            return int(self._adapter.ingest_logs(namespace, logs))
+
+        raise NotImplementedError(
+            "Log ingest is currently supported in embedded mode only"
+        )
+
+    def query_logs(
+        self,
+        namespace: str,
+        start_time_ns: int,
+        end_time_ns: int,
+        query: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Query log events from an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return list(
+                    self._client.query_logs(
+                        namespace, start_time_ns, end_time_ns, query, limit
+                    )
+                    or []
+                )
+            except Exception as e:
+                logger.debug("Embedded log query failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "query_logs"):
+            return list(
+                self._adapter.query_logs(
+                    namespace,
+                    start_time_ns=start_time_ns,
+                    end_time_ns=end_time_ns,
+                    query=query,
+                    limit=limit,
+                )
+                or []
+            )
+
+        raise NotImplementedError(
+            "Log query is currently supported in embedded mode only"
+        )
+
+    def ingest_metrics(self, namespace: str, samples: list[dict[str, Any]]) -> int:
+        """Ingest metric samples into an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return int(self._client.ingest_metrics(namespace, samples))
+            except Exception as e:
+                logger.debug("Embedded metric ingest failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "ingest_metrics"):
+            return int(self._adapter.ingest_metrics(namespace, samples))
+
+        raise NotImplementedError(
+            "Metric ingest is currently supported in embedded mode only"
+        )
+
+    def aggregate_metrics(
+        self,
+        namespace: str,
+        metric_name: str,
+        aggregation: str = "avg",
+        start_time: str | None = None,
+        end_time: str | None = None,
+        step_seconds: int = 60,
+    ) -> list[dict[str, Any]]:
+        """Aggregate metrics from an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return list(
+                    self._client.aggregate_metrics(
+                        namespace,
+                        metric_name,
+                        aggregation,
+                        start_time,
+                        end_time,
+                        step_seconds,
+                    )
+                    or []
+                )
+            except Exception as e:
+                logger.debug("Embedded metric aggregation failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "aggregate_metrics"):
+            return list(
+                self._adapter.aggregate_metrics(
+                    namespace,
+                    metric_name=metric_name,
+                    aggregation=aggregation,
+                    start_time=start_time,
+                    end_time=end_time,
+                    step_seconds=step_seconds,
+                )
+                or []
+            )
+
+        raise NotImplementedError(
+            "Metric aggregation is currently supported in embedded mode only"
+        )
+
+    def ingest_traces(self, namespace: str, traces: list[dict[str, Any]]) -> int:
+        """Ingest trace spans into an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return int(self._client.ingest_traces(namespace, traces))
+            except Exception as e:
+                logger.debug("Embedded trace ingest failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "ingest_traces"):
+            return int(self._adapter.ingest_traces(namespace, traces))
+
+        raise NotImplementedError(
+            "Trace ingest is currently supported in embedded mode only"
+        )
+
+    def query_traces(
+        self,
+        namespace: str,
+        start_time_ns: int,
+        end_time_ns: int,
+        trace_id: str | None = None,
+        service: str | None = None,
+        operation: str | None = None,
+        min_duration_ns: int | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """Query trace spans in an observability namespace."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                return list(
+                    self._client.query_traces(
+                        namespace,
+                        start_time_ns,
+                        end_time_ns,
+                        trace_id,
+                        service,
+                        operation,
+                        min_duration_ns,
+                        status,
+                        limit,
+                    )
+                    or []
+                )
+            except Exception as e:
+                logger.debug("Embedded trace query failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "query_traces"):
+            return list(
+                self._adapter.query_traces(
+                    namespace,
+                    start_time_ns=start_time_ns,
+                    end_time_ns=end_time_ns,
+                    trace_id=trace_id,
+                    service=service,
+                    operation=operation,
+                    min_duration_ns=min_duration_ns,
+                    status=status,
+                    limit=limit,
+                )
+                or []
+            )
+
+        raise NotImplementedError(
+            "Trace query is currently supported in embedded mode only"
+        )
+
+    def get_trace(self, namespace: str, trace_id: str) -> dict[str, Any]:
+        """Get all spans for a specific trace ID."""
+        if self._active_protocol == Protocol.EMBEDDED and self._client is not None:
+            try:
+                result = self._client.get_trace(namespace, trace_id)
+                return (
+                    result
+                    if isinstance(result, dict)
+                    else {"spans": list(result or []), "complete": True}
+                )
+            except Exception as e:
+                logger.debug("Embedded get_trace failed: %s", e)
+
+        if self._adapter and hasattr(self._adapter, "get_trace"):
+            return self._adapter.get_trace(namespace, trace_id=trace_id)
+
+        raise NotImplementedError(
+            "get_trace is currently supported in embedded mode only"
+        )
+
     def _execute_sql_rest(
         self,
         query: str,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-    ) -> Dict[str, Any]:
-        """Execute SQL query via REST API"""
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+    ) -> dict[str, Any]:
+        """Execute SQL query via the canonical v2 query facade.
+
+        The legacy /api/v1/sql/execute route was removed in the API
+        standardization hard-rename; raw SQL is submitted via the unified
+        query language ("uql") on /api/v2/query.
+        """
         # Build request payload
-        payload = {"query": query}
+        payload = {"language": "uql", "query": query}
         if parameters is not None:
             payload["parameters"] = parameters
         if collection is not None:
@@ -2979,7 +3783,7 @@ class ProximaDBClient:
         if hasattr(self._client, "_session"):
             # Using REST client directly
             response = self._client._session.post(
-                f"{self._client._base_url}/api/v1/sql/execute", json=payload
+                f"{self._client._base_url}/api/v2/query", json=payload
             )
             response.raise_for_status()
             return response.json()
@@ -2995,7 +3799,7 @@ class ProximaDBClient:
                 self._client, "_base_url", "http://localhost:5678"
             )
             response = requests.post(
-                f"{base_url}/api/v1/sql/execute", json=payload, headers=headers
+                f"{base_url}/api/v2/query", json=payload, headers=headers
             )
             if not response.ok:
                 # Try to get error details from response
@@ -3059,11 +3863,21 @@ class ProximaDBClient:
     def insert(
         self,
         collection_id: str,
-        vectors: Union[List[List[float]], np.ndarray],
-        ids: Optional[List[str]] = None,
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        vectors: list[list[float]] | np.ndarray,
+        ids: list[str] | None = None,
+        metadata: list[dict[str, Any]] | None = None,
     ) -> VectorOperationResponse:
         """Legacy insert method for backward compatibility"""
+        fast_result = self._try_embedded_numpy_vector_batch(
+            collection_id,
+            vectors,
+            ids,
+            metadata,
+            upsert=False,
+        )
+        if fast_result is not None:
+            return fast_result
+
         records = []
 
         # Convert vectors to list format
@@ -3084,11 +3898,21 @@ class ProximaDBClient:
     def upsert(
         self,
         collection_id: str,
-        vectors: Union[List[List[float]], np.ndarray],
-        ids: List[str],
-        metadata: Optional[List[Dict[str, Any]]] = None,
+        vectors: list[list[float]] | np.ndarray,
+        ids: list[str],
+        metadata: list[dict[str, Any]] | None = None,
     ) -> VectorOperationResponse:
         """Legacy upsert method for backward compatibility"""
+        fast_result = self._try_embedded_numpy_vector_batch(
+            collection_id,
+            vectors,
+            ids,
+            metadata,
+            upsert=True,
+        )
+        if fast_result is not None:
+            return fast_result
+
         records = []
 
         # Convert vectors to list format
@@ -3106,9 +3930,24 @@ class ProximaDBClient:
 
         return self.upsert_vectors(collection_id, records)
 
-    def delete(self, collection_id: str, ids: List[str]) -> VectorOperationResponse:
+    def delete(self, collection_id: str, ids: list[str]) -> VectorOperationResponse:
         """Legacy delete method for backward compatibility"""
         return self.delete_vectors(collection_id, ids)
+
+    def _invoke_graph_method(
+        self,
+        method_name: str,
+        graph_id: str | None = None,
+        **kwargs,
+    ) -> Any:
+        method = getattr(self._client, method_name)
+        if graph_id is None:
+            return method(**kwargs)
+
+        try:
+            return method(graph_id=graph_id, **kwargs)
+        except TypeError:
+            return method(graph=graph_id, **kwargs)
 
     # ===========================
     # Graph API Methods
@@ -3117,10 +3956,11 @@ class ProximaDBClient:
     def create_node(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
+        graph_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Create a graph node.
 
@@ -3154,9 +3994,16 @@ class ProximaDBClient:
                 f"embedding must be list or None, got {type(embedding).__name__}"
             )
 
-        return self._client.create_node(
-            node_id=node_id, labels=labels, properties=properties, embedding=embedding
-        )
+        kwargs = {
+            "node_id": node_id,
+            "labels": labels,
+            "properties": properties,
+            "embedding": embedding,
+        }
+        result = self._invoke_graph_method("create_node", graph_id=graph_id, **kwargs)
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {"success": True, "node_id": node_id, "result": result}
+        return result
 
     def create_edge(
         self,
@@ -3164,9 +4011,10 @@ class ProximaDBClient:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        properties: dict[str, Any] | None = None,
+        weight: float | None = None,
+        graph_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Create a graph edge between two nodes.
 
@@ -3211,24 +4059,29 @@ class ProximaDBClient:
                 f"weight must be number or None, got {type(weight).__name__}"
             )
 
-        return self._client.create_edge(
-            edge_id=edge_id,
-            from_node_id=from_node_id,
-            to_node_id=to_node_id,
-            edge_type=edge_type,
-            properties=properties,
-            weight=weight,
-        )
+        kwargs = {
+            "edge_id": edge_id,
+            "from_node_id": from_node_id,
+            "to_node_id": to_node_id,
+            "edge_type": edge_type,
+            "properties": properties,
+            "weight": weight,
+        }
+        result = self._invoke_graph_method("create_edge", graph_id=graph_id, **kwargs)
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {"success": True, "edge_id": edge_id, "result": result}
+        return result
 
     def traverse_graph(
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+        graph_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Traverse the graph starting from a node.
 
@@ -3283,22 +4136,29 @@ class ProximaDBClient:
         if limit is not None and not isinstance(limit, int):
             raise TypeError(f"limit must be int or None, got {type(limit).__name__}")
 
-        return self._client.traverse_graph(
-            start_node_id=start_node_id,
-            max_depth=max_depth,
-            edge_types=edge_types,
-            node_labels=node_labels,
-            algorithm=algorithm,
-            limit=limit,
+        kwargs = {
+            "start_node_id": start_node_id,
+            "max_depth": max_depth,
+            "edge_types": edge_types,
+            "node_labels": node_labels,
+            "algorithm": algorithm,
+            "limit": limit,
+        }
+        result = self._invoke_graph_method(
+            "traverse_graph", graph_id=graph_id, **kwargs
         )
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {"nodes": list(result or []), "edges": [], "paths": [], "stats": {}}
+        return result
 
     def query_nodes(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        graph_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Query graph nodes by labels and properties.
 
@@ -3338,8 +4198,75 @@ class ProximaDBClient:
         if offset is not None and not isinstance(offset, int):
             raise TypeError(f"offset must be int or None, got {type(offset).__name__}")
 
-        return self._client.query_nodes(
-            labels=labels, properties=properties, limit=limit, offset=offset
+        kwargs = {
+            "labels": labels,
+            "properties": properties,
+            "limit": limit,
+            "offset": offset,
+        }
+        result = self._invoke_graph_method("query_nodes", graph_id=graph_id, **kwargs)
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            nodes = list(result or [])
+            return {"nodes": nodes, "total_count": len(nodes), "has_more": False}
+        return result
+
+    def get_node(
+        self,
+        node_id: str,
+        graph_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Get a graph node by ID."""
+        result = self._invoke_graph_method(
+            "get_node", graph_id=graph_id, node_id=node_id
+        )
+        if result is None:
+            return None
+        if self._active_protocol == Protocol.EMBEDDED and not isinstance(result, dict):
+            return {
+                "id": getattr(result, "id", node_id),
+                "labels": list(getattr(result, "labels", []) or []),
+                "properties": dict(getattr(result, "properties", {}) or {}),
+            }
+        return result
+
+    def get_outgoing_edges(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+        graph_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get outgoing edges for a graph node."""
+        result = self._invoke_graph_method(
+            "get_outgoing_edges",
+            graph_id=graph_id,
+            node_id=node_id,
+            edge_types=edge_types,
+        )
+        return list(result or [])
+
+    def get_incoming_edges(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+        graph_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get incoming edges for a graph node."""
+        result = self._invoke_graph_method(
+            "get_incoming_edges",
+            graph_id=graph_id,
+            node_id=node_id,
+            edge_types=edge_types,
+        )
+        return list(result or [])
+
+    def delete_node(
+        self,
+        node_id: str,
+        graph_id: str | None = None,
+    ) -> bool:
+        """Delete a graph node by ID."""
+        return bool(
+            self._invoke_graph_method("delete_node", graph_id=graph_id, node_id=node_id)
         )
 
     # ==================== Graph Collection Management ====================
@@ -3347,10 +4274,10 @@ class ProximaDBClient:
     def create_graph(
         self,
         graph_id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        schema: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        name: str | None = None,
+        description: str | None = None,
+        schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """
         Create a new graph collection.
 
@@ -3370,11 +4297,19 @@ class ProximaDBClient:
             ...     description="User relationships and interactions"
             ... )
         """
-        return self._client.create_graph(
-            graph_id=graph_id, name=name, description=description, schema=schema
-        )
+        try:
+            return self._client.create_graph(
+                graph_id=graph_id, name=name, description=description, schema=schema
+            )
+        except TypeError:
+            result = self._client.create_graph(graph_id, None)
+            return (
+                result
+                if isinstance(result, dict)
+                else {"success": True, "graph_id": graph_id}
+            )
 
-    def delete_graph(self, graph_id: str) -> Dict[str, Any]:
+    def delete_graph(self, graph_id: str) -> dict[str, Any]:
         """
         Delete a graph collection.
 
@@ -3389,7 +4324,7 @@ class ProximaDBClient:
         """
         return self._client.delete_graph(graph_id)
 
-    def get_graph(self, graph_id: str) -> Dict[str, Any]:
+    def get_graph(self, graph_id: str) -> dict[str, Any]:
         """
         Get graph collection metadata.
 
@@ -3405,7 +4340,7 @@ class ProximaDBClient:
         """
         return self._client.get_graph(graph_id)
 
-    def list_graphs(self) -> Dict[str, Any]:
+    def list_graphs(self) -> dict[str, Any]:
         """
         List all graph collections.
 
@@ -3419,7 +4354,7 @@ class ProximaDBClient:
         """
         return self._client.list_graphs()
 
-    def get_graph_stats(self, graph_id: str) -> Dict[str, Any]:
+    def get_graph_stats(self, graph_id: str) -> dict[str, Any]:
         """
         Get statistics for a graph collection.
 
@@ -3433,11 +4368,11 @@ class ProximaDBClient:
             >>> stats = client.get_graph_stats("social_network")
             >>> print(f"Nodes: {stats['node_count']}, Edges: {stats['edge_count']}")
         """
-        return self._client.get_graph_stats(graph_id)
+        return self._invoke_graph_method("get_graph_stats", graph_id=graph_id)
 
     # ==================== End Graph Collection Management ====================
 
-    def get_collection_stats(self, collection_id: str) -> Dict[str, Any]:
+    def get_collection_stats(self, collection_id: str) -> dict[str, Any]:
         """Get collection statistics (legacy compatibility)"""
         collection = self.get_collection(collection_id)
         if collection:
@@ -3456,9 +4391,9 @@ class ProximaDBClient:
 
 # Convenience functions for backward compatibility
 def connect(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    protocol: Union[Protocol, str] = Protocol.AUTO,
+    url: str | None = None,
+    api_key: str | None = None,
+    protocol: Protocol | str = Protocol.AUTO,
     **kwargs,
 ) -> ProximaDBClient:
     """Create a ProximaDB client with simplified parameters"""
@@ -3466,7 +4401,7 @@ def connect(
 
 
 def connect_grpc(
-    url: Optional[str] = None, api_key: Optional[str] = None, **kwargs
+    url: str | None = None, api_key: str | None = None, **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using gRPC protocol (good performance, ecosystem compatibility)"""
     try:
@@ -3487,16 +4422,16 @@ def connect_grpc(
 
 
 def connect_rest(
-    url: Optional[str] = None, api_key: Optional[str] = None, **kwargs
+    url: str | None = None, api_key: str | None = None, **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client using REST protocol (web compatibility)"""
     return ProximaDBClient(url=url, api_key=api_key, protocol=Protocol.REST, **kwargs)
 
 
 def connect_unified(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    protocol: Union[Protocol, str] = Protocol.AUTO,
+    url: str | None = None,
+    api_key: str | None = None,
+    protocol: Protocol | str = Protocol.AUTO,
     **kwargs,
 ) -> ProximaDBClient:
     """Create a ProximaDB client for unified port mode (single port for all protocols).
@@ -3536,9 +4471,9 @@ def connect_unified(
 
 
 def connect_legacy(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    protocol: Union[Protocol, str] = Protocol.AUTO,
+    url: str | None = None,
+    api_key: str | None = None,
+    protocol: Protocol | str = Protocol.AUTO,
     **kwargs,
 ) -> ProximaDBClient:
     """Create a ProximaDB client for legacy multi-port mode.
@@ -3561,9 +4496,9 @@ def connect_legacy(
 
 
 def connect_arrow_flight(
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-    port_mode: Union[PortMode, str] = PortMode.UNIFIED,
+    url: str | None = None,
+    api_key: str | None = None,
+    port_mode: PortMode | str = PortMode.UNIFIED,
     **kwargs,
 ) -> ProximaDBClient:
     """Create a ProximaDB client using Arrow Flight protocol for bulk data transfer.

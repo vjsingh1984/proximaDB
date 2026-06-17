@@ -23,6 +23,15 @@ use proximadb::transaction::{
 };
 use std::path::PathBuf;
 
+/// A no-op durable writer so each 2PC participant reports
+/// `supports_durable_commit()` = true. The coordinator rejects buffer-only
+/// participants at commit time (TD-038 `ensure_durable_participants`), so an
+/// engine-backed (or, in tests, stub) writer must be attached for commits to
+/// proceed.
+fn noop_durable_writer() -> DurableWriteFn {
+    std::sync::Arc::new(|_op| Ok(()))
+}
+
 /// Test basic transaction begin and commit
 #[tokio::test]
 async fn test_cross_model_transaction_begin_commit() {
@@ -37,8 +46,12 @@ async fn test_cross_model_transaction_begin_commit() {
     coordinator.initialize().await.unwrap();
 
     // Register participants
-    let vector_participant = std::sync::Arc::new(VectorEngineParticipant::new("products"));
-    let document_participant = std::sync::Arc::new(DocumentEngineParticipant::new("users"));
+    let vector_participant = std::sync::Arc::new(
+        VectorEngineParticipant::new("products").with_durable_writer(noop_durable_writer()),
+    );
+    let document_participant = std::sync::Arc::new(
+        DocumentEngineParticipant::new("users").with_durable_writer(noop_durable_writer()),
+    );
 
     coordinator
         .register_participant(vector_participant)
@@ -99,7 +112,9 @@ async fn test_cross_model_transaction_rollback() {
     coordinator.initialize().await.unwrap();
 
     // Register participants
-    let graph_participant = std::sync::Arc::new(GraphEngineParticipant::new("social"));
+    let graph_participant = std::sync::Arc::new(
+        GraphEngineParticipant::new("social").with_durable_writer(noop_durable_writer()),
+    );
 
     coordinator
         .register_participant(graph_participant)
@@ -144,8 +159,12 @@ async fn test_cross_model_transaction_unhealthy_abort() {
     coordinator.initialize().await.unwrap();
 
     // Register participants (one will be unhealthy)
-    let vector_participant = std::sync::Arc::new(VectorEngineParticipant::new("products"));
-    let tst_participant = std::sync::Arc::new(TimeSeriesEngineParticipant::new("metrics"));
+    let vector_participant = std::sync::Arc::new(
+        VectorEngineParticipant::new("products").with_durable_writer(noop_durable_writer()),
+    );
+    let tst_participant = std::sync::Arc::new(
+        TimeSeriesEngineParticipant::new("metrics").with_durable_writer(noop_durable_writer()),
+    );
 
     // Make TST participant unhealthy
     tst_participant.set_healthy(false).await;
@@ -201,10 +220,18 @@ async fn test_cross_model_transaction_all_engines() {
     coordinator.initialize().await.unwrap();
 
     // Register all four participants
-    let vector_participant = std::sync::Arc::new(VectorEngineParticipant::new("vectors"));
-    let document_participant = std::sync::Arc::new(DocumentEngineParticipant::new("docs"));
-    let graph_participant = std::sync::Arc::new(GraphEngineParticipant::new("graph"));
-    let tst_participant = std::sync::Arc::new(TimeSeriesEngineParticipant::new("timeseries"));
+    let vector_participant = std::sync::Arc::new(
+        VectorEngineParticipant::new("vectors").with_durable_writer(noop_durable_writer()),
+    );
+    let document_participant = std::sync::Arc::new(
+        DocumentEngineParticipant::new("docs").with_durable_writer(noop_durable_writer()),
+    );
+    let graph_participant = std::sync::Arc::new(
+        GraphEngineParticipant::new("graph").with_durable_writer(noop_durable_writer()),
+    );
+    let tst_participant = std::sync::Arc::new(
+        TimeSeriesEngineParticipant::new("timeseries").with_durable_writer(noop_durable_writer()),
+    );
 
     coordinator
         .register_participant(vector_participant)
@@ -265,7 +292,9 @@ async fn test_transaction_statistics() {
     coordinator.initialize().await.unwrap();
 
     // Register participant
-    let participant = std::sync::Arc::new(VectorEngineParticipant::new("test"));
+    let participant = std::sync::Arc::new(
+        VectorEngineParticipant::new("test").with_durable_writer(noop_durable_writer()),
+    );
     coordinator.register_participant(participant).await.unwrap();
 
     // Begin multiple transactions
@@ -320,7 +349,9 @@ async fn test_concurrent_transactions() {
     coordinator.initialize().await.unwrap();
 
     // Register participants
-    let vector_participant = std::sync::Arc::new(VectorEngineParticipant::new("concurrent"));
+    let vector_participant = std::sync::Arc::new(
+        VectorEngineParticipant::new("concurrent").with_durable_writer(noop_durable_writer()),
+    );
     coordinator
         .register_participant(vector_participant)
         .await

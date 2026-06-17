@@ -123,7 +123,7 @@ impl SyslogAdapter {
     #[allow(dead_code)]
     fn pri_to_severity(&self, pri: u8) -> Severity {
         match pri & 0x07 {
-            0 | 1 | 2 => Severity::Fatal,
+            0..=2 => Severity::Fatal,
             3 => Severity::Error,
             4 => Severity::Warn,
             5 | 6 => Severity::Info,
@@ -220,7 +220,7 @@ impl SyslogAdapter {
         let pri_end = msg.find('>')?;
         let pri: u8 = msg[1..pri_end].parse().ok()?;
         let severity = match pri & 0x07 {
-            0 | 1 | 2 => Severity::Fatal,
+            0..=2 => Severity::Fatal,
             3 => Severity::Error,
             4 => Severity::Warn,
             5 | 6 => Severity::Info,

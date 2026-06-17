@@ -5,6 +5,23 @@
 :icons: font
 :source-highlighter: highlight.js
 
+[CAUTION]
+====
+**INTERNAL USE ONLY — DO NOT PUBLISH EXTERNALLY.** This file is positioning
+copy intended for internal review (product + sales) and contains performance,
+cost, and competitor claims that are **not** backed by a published methodology
+or independently reproducible benchmark. Quoting any number, percentage, or
+competitor comparison from this file in a customer-facing artifact (README,
+release notes, blog post, sales deck, conference talk) requires product-owner
+sign-off and an evidence trail. See TD-085 in
+link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] for the
+ongoing scrub-or-cite work.
+
+`make docs-claim-check` (Makefile) enforces this by failing if any path
+**outside** `docs/_internal/` references either `docs/_internal/enterprise/`
+or `docs/_internal/business/`.
+====
+
 [.lead]
 Enterprise-grade unified vector and graph database designed to reduce infrastructure complexity, accelerate time-to-market, and lower total cost of ownership for AI-powered applications.
 

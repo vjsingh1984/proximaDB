@@ -60,9 +60,14 @@ pub struct CreateDocumentRequest {
     pub document: serde_json::Value,
 }
 
-/// Create collection request
+/// REST request body for document-collection creation (legacy root-crate copy).
+///
+/// Mirrors `proximadb_api::rest::v1::document::CreateDocumentCollectionRequestBody`
+/// — Phase 9 will delete this file. The `…Body` suffix distinguishes the
+/// REST shape from the proto-generated `crate::proto::v1::CreateDocumentCollectionRequest`
+/// (the gRPC/wire type) already used in `crate::network::rest::v1::handlers`.
 #[derive(Debug, Deserialize)]
-pub struct CreateCollectionRequest {
+pub struct CreateDocumentCollectionRequestBody {
     /// Collection name
     pub name: String,
     /// Initial indexes to create
@@ -194,7 +199,7 @@ pub fn create_document_router() -> Router<DocumentApiState> {
 /// Create a document collection
 async fn create_collection(
     State(state): State<DocumentApiState>,
-    Json(request): Json<CreateCollectionRequest>,
+    Json(request): Json<CreateDocumentCollectionRequestBody>,
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     info!("Creating document collection: {}", request.name);
 
@@ -468,7 +473,7 @@ async fn update_document(
                 .unwrap_or("")
                 .to_string();
 
-            let value = v.get("value").map(|val| json_to_sql_value(val));
+            let value = v.get("value").map(json_to_sql_value);
 
             DocumentUpdate {
                 operation,
@@ -762,7 +767,9 @@ fn json_to_aggregation_stage(value: &serde_json::Value) -> ApiResult<Aggregation
 fn document_record_to_response(record: &DocumentRecord) -> ApiResult<DocumentResponse> {
     Ok(DocumentResponse {
         id: record.id.clone(),
-        document: sql_object_to_json(&record.document),
+        document: sql_object_to_json(&crate::storage::document::proxima_tree_to_sql_object(
+            &record.props,
+        )),
         version: record.version,
         updated_at_ns: record.updated_at_ns,
     })

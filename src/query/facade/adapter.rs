@@ -83,6 +83,14 @@ pub struct QueryFacadeAdapter {
     validator: PlanValidator,
     /// Enable/disable plan validation (default: enabled)
     validation_enabled: bool,
+    /// Optional DmlService for EXPLAIN `<DML>` routing on the SQL port path.
+    ///
+    /// When wired (production, via `SharedServices`), `execute_sql` reproduces
+    /// the ROOT handler's `EXPLAIN [ANALYZE] <INSERT|UPDATE|DELETE>` behavior by
+    /// dispatching to the DmlService write-plan explainer. `None` => EXPLAIN
+    /// degrades gracefully through the facade (parity with ROOT when its
+    /// DmlService is unset). Part of TD-104 / seam S1 (single SQL authority).
+    dml_service: Option<Arc<crate::services::dml::DmlService>>,
 }
 
 impl QueryFacadeAdapter {
@@ -94,6 +102,7 @@ impl QueryFacadeAdapter {
             facade,
             validator,
             validation_enabled: true,
+            dml_service: None,
         }
     }
 
@@ -107,7 +116,19 @@ impl QueryFacadeAdapter {
             facade,
             validator,
             validation_enabled: false,
+            dml_service: None,
         }
+    }
+
+    /// Attach a `DmlService` so the SQL port path can route `EXPLAIN <DML>`
+    /// through the write-plan explainer (parity with the ROOT handler).
+    ///
+    /// Consumes and returns `self` for builder-style construction in
+    /// `SharedServices`. Without this, EXPLAIN `<DML>` degrades through the
+    /// facade exactly as ROOT does when its DmlService is unwired.
+    pub fn with_dml_service(mut self, dml_service: Arc<crate::services::dml::DmlService>) -> Self {
+        self.dml_service = Some(dml_service);
+        self
     }
 
     /// Enable plan validation
@@ -333,7 +354,7 @@ impl QueryFacadeAdapter {
         let mut query_request =
             QueryRequest::vector_search(query_vector, top_k).with_target(&collection_id);
         if !simple_filters.is_empty() {
-            query_request = query_request.with_vector_filters(simple_filters);
+            query_request = query_request.with_vector_filters_v1(simple_filters);
         }
         if let Some(filter) = advanced_filter {
             query_request = query_request.with_vector_advanced_filter(filter);
@@ -547,6 +568,9 @@ impl QueryFacadeAdapter {
         sql_upper.contains("VECTOR_SEARCH")
             || sql_upper.contains("GRAPH_QUERY")
             || sql_upper.contains("DOCUMENT_QUERY")
+            // R-7c.4c: RERANK() routes through the same federated path
+            // so pgwire clients can `SELECT * FROM RERANK(...)`.
+            || sql_upper.contains("RERANK(")
             || sql_upper.contains("LOGS(")
             || sql_upper.contains("METRICS(")
             || sql.contains("<->")
@@ -561,16 +585,28 @@ impl QueryFacadeAdapter {
         let mut search_records = Vec::new();
 
         match result.data {
-            QueryResultData::VectorResults(matches) => {
-                for m in matches {
+            QueryResultData::VectorResults(scored) => {
+                for m in scored {
+                    // Wire boundary: convert ScoredRecord → proto SearchVectorRecord
+                    let ts = if m.record.created_at_ns != 0 {
+                        Some(m.record.created_at_ns / 1_000_000)
+                    } else {
+                        None
+                    };
+                    let vector = m
+                        .record
+                        .embeddings
+                        .first()
+                        .map(|e| e.values.to_fp32_owned())
+                        .unwrap_or_default();
                     search_records.push(SearchVectorRecord {
-                        id: m.id,
+                        id: m.record.oid,
                         score: m.score as f64,
-                        vector: vec![], // Don't return vectors by default to save bandwidth
+                        vector,
                         metadata: std::collections::HashMap::new(),
                         version: None,
                         similarity: Some(m.score),
-                        timestamp: None,
+                        timestamp: ts,
                         source: None,
                         expanded_context: vec![],
                         semantic_similarity: None,
@@ -633,9 +669,196 @@ impl QueryFacadeAdapter {
     }
 }
 
+// ── QueryAdapterPort impl ─────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::QueryAdapterPort for QueryFacadeAdapter {
+    async fn vector_search(
+        &self,
+        request: crate::proto::proximadb_v1::VectorSearchRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::VectorOperationResponse> {
+        QueryFacadeAdapter::vector_search(self, request).await
+    }
+
+    async fn execute_hybrid(
+        &self,
+        _request: crate::proto::proximadb_v1::HybridSearchRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::HybridSearchResponse> {
+        Err(anyhow::anyhow!(
+            "Hybrid search via QueryFacadeAdapter is not yet implemented"
+        ))
+    }
+
+    async fn execute_sql(
+        &self,
+        query: String,
+        _collection: Option<String>,
+    ) -> anyhow::Result<serde_json::Value> {
+        use crate::query::QueryResultData;
+
+        // EXPLAIN [ANALYZE] <DML> routing — parity with the ROOT handler's
+        // execute_sql_v1. Detected via the shared sql_frontend parser; routed
+        // through the DmlService write-plan explainer when one is wired.
+        // (TD-104 / seam S1: make this adapter the single SQL authority.)
+        if let Some((is_analyze, inner_query)) =
+            crate::query::sql_frontend::parse_explain_kind(query.trim())
+            && let Some(dml_svc) = self.dml_service.as_ref()
+        {
+            let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+            match parser.parse_dml(inner_query) {
+                Ok(Some(statement)) => {
+                    let explanation = if is_analyze {
+                        dml_svc.explain_analyze_table_write(statement).await
+                    } else {
+                        dml_svc.explain_table_write(statement).await
+                    }
+                    .map_err(|e| anyhow!("EXPLAIN failed: {}", e))?;
+                    let plan_json = serde_json::to_string_pretty(&explanation)
+                        .unwrap_or_else(|e| format!("{{\"error\": \"{}\"}}", e));
+                    return Ok(serde_json::json!({
+                        "columns": ["QUERY PLAN"],
+                        "column_types": ["jsonb"],
+                        "records": [{ "QUERY PLAN": plan_json }],
+                    }));
+                }
+                Ok(None) => return Err(anyhow!("Invalid EXPLAIN statement")),
+                Err(e) => return Err(anyhow!("EXPLAIN parse error: {}", e)),
+            }
+            // DmlService not wired: fall through to the facade so EXPLAIN
+            // degrades gracefully (matches ROOT when its DmlService is unset).
+        }
+
+        let query_result = self.sql_query(&query).await?;
+
+        let records: Vec<serde_json::Value> = match query_result.data {
+            QueryResultData::Rows(rows) => rows,
+            QueryResultData::VectorResults(matches) => matches
+                .into_iter()
+                .map(|m| {
+                    serde_json::json!({
+                        "id": m.record.oid,
+                        "score": m.score,
+                        "metadata": m.record.props,
+                    })
+                })
+                .collect(),
+            QueryResultData::Empty => vec![],
+            QueryResultData::Graph(g) => g
+                .nodes
+                .into_iter()
+                .map(|n| serde_json::to_value(n).unwrap_or_default())
+                .collect(),
+        };
+
+        Ok(shape_sql_records(records))
+    }
+}
+
+/// Assemble the SQL port-path response envelope that the runtime handler's
+/// `execute_sql_v1` parses: `{ "columns", "column_types", "records" }`.
+///
+/// Columns and their coarse types are derived from the first record's object
+/// keys, mirroring the ROOT handler's `convert_query_result_to_sql_response`
+/// so the port path shapes an identical `ExecuteQueryResponse`. This is the
+/// contract that was previously broken — the adapter emitted `{ "rows": … }`,
+/// which the runtime handler does not read (TD-104 / seam S1).
+fn shape_sql_records(records: Vec<serde_json::Value>) -> serde_json::Value {
+    let mut columns: Vec<String> = Vec::new();
+    let mut column_types: Vec<String> = Vec::new();
+    if let Some(serde_json::Value::Object(map)) = records.first() {
+        for (k, v) in map {
+            columns.push(k.clone());
+            column_types.push(infer_json_type(v));
+        }
+    }
+
+    serde_json::json!({
+        "columns": columns,
+        "column_types": column_types,
+        "records": records,
+    })
+}
+
+/// Infer a coarse SQL type label for a JSON value (column-type metadata).
+///
+/// Mirrors the ROOT handler's `infer_json_type` so the SQL port path reports
+/// the same `column_types` as the legacy direct-conversion path.
+fn infer_json_type(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::Null => "NULL".to_string(),
+        serde_json::Value::Bool(_) => "BOOLEAN".to_string(),
+        serde_json::Value::Number(n) => {
+            if n.is_i64() || n.is_u64() {
+                "INTEGER".to_string()
+            } else {
+                "FLOAT".to_string()
+            }
+        }
+        serde_json::Value::String(_) => "TEXT".to_string(),
+        serde_json::Value::Array(arr) => match arr.first() {
+            Some(first) => format!("ARRAY<{}>", infer_json_type(first)),
+            None => "ARRAY".to_string(),
+        },
+        serde_json::Value::Object(_) => "JSON".to_string(),
+    }
+}
+
 // ================================================================================
 // TESTS
 // ================================================================================
+
+#[cfg(test)]
+mod sql_envelope_tests {
+    use super::{infer_json_type, shape_sql_records};
+
+    #[test]
+    fn shape_emits_columns_types_and_records_keys() {
+        // The runtime handler reads `columns`/`column_types`/`records` — NOT the
+        // old `rows` key. This guards the contract that was previously broken.
+        let records = vec![serde_json::json!({"id": 7, "name": "alice", "score": 0.5})];
+        let env = shape_sql_records(records.clone());
+
+        let cols: Vec<String> = env["columns"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        // serde_json::Map preserves insertion order? It is BTreeMap by default →
+        // keys are sorted. Assert as a set to stay order-agnostic.
+        assert_eq!(cols.len(), 3);
+        assert!(cols.contains(&"id".to_string()));
+        assert!(cols.contains(&"name".to_string()));
+        assert!(cols.contains(&"score".to_string()));
+
+        assert_eq!(env["column_types"].as_array().unwrap().len(), 3);
+        assert_eq!(env["records"].as_array().unwrap().len(), 1);
+        assert!(env.get("rows").is_none(), "must not emit legacy `rows` key");
+    }
+
+    #[test]
+    fn shape_empty_records_yields_empty_columns() {
+        let env = shape_sql_records(vec![]);
+        assert_eq!(env["columns"].as_array().unwrap().len(), 0);
+        assert_eq!(env["column_types"].as_array().unwrap().len(), 0);
+        assert_eq!(env["records"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn infer_json_type_matches_root_vocabulary() {
+        assert_eq!(infer_json_type(&serde_json::Value::Null), "NULL");
+        assert_eq!(infer_json_type(&serde_json::json!(true)), "BOOLEAN");
+        assert_eq!(infer_json_type(&serde_json::json!(42)), "INTEGER");
+        assert_eq!(infer_json_type(&serde_json::json!(1.5)), "FLOAT");
+        assert_eq!(infer_json_type(&serde_json::json!("x")), "TEXT");
+        assert_eq!(
+            infer_json_type(&serde_json::json!([1, 2])),
+            "ARRAY<INTEGER>"
+        );
+        assert_eq!(infer_json_type(&serde_json::json!([])), "ARRAY");
+        assert_eq!(infer_json_type(&serde_json::json!({"a": 1})), "JSON");
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -643,7 +866,11 @@ mod tests {
     use std::sync::Mutex;
 
     use crate::proto::proximadb_v1::SearchQuery;
-    use crate::query::facade::{FacadeConfig, QueryContext, QueryStrategy, QueryType, VectorMatch};
+    use proximadb_records::{ProximaRecord, ScoredRecord};
+
+    use crate::query::facade::{
+        FacadeConfig, QueryContent, QueryContext, QueryStrategy, QueryType,
+    };
     use async_trait::async_trait;
 
     /// Mock strategy for testing
@@ -677,15 +904,21 @@ mod tests {
         ) -> Result<QueryResult> {
             Ok(QueryResult {
                 data: QueryResultData::VectorResults(vec![
-                    VectorMatch {
-                        id: "vec1".to_string(),
+                    ScoredRecord {
+                        record: ProximaRecord {
+                            oid: "vec1".to_string(),
+                            ..Default::default()
+                        },
                         score: 0.95,
-                        metadata: None,
+                        rank: 1,
                     },
-                    VectorMatch {
-                        id: "vec2".to_string(),
+                    ScoredRecord {
+                        record: ProximaRecord {
+                            oid: "vec2".to_string(),
+                            ..Default::default()
+                        },
                         score: 0.87,
-                        metadata: None,
+                        rank: 2,
                     },
                 ]),
                 metrics: None,
@@ -708,9 +941,14 @@ mod tests {
         }
 
         async fn execute(&self, request: QueryRequest, _ctx: &QueryContext) -> Result<QueryResult> {
+            let sql = match &request.content {
+                QueryContent::Sql(sql) => sql.clone(),
+                _ => String::new(),
+            };
             Ok(QueryResult {
                 data: QueryResultData::Rows(vec![serde_json::json!({
-                    "query_type": format!("{:?}", request.query_type)
+                    "query_type": format!("{:?}", request.query_type),
+                    "sql": sql
                 })]),
                 metrics: None,
             })
@@ -848,7 +1086,10 @@ mod tests {
             .expect("captured mutex should not be poisoned")
             .clone()
             .expect("strategy should capture query request");
-        assert_eq!(request.params.vector_filters, filters);
+        assert_eq!(
+            crate::core::search::results::proxima_map_to_sql(request.params.vector_filters),
+            filters
+        );
     }
 
     #[test]
@@ -890,6 +1131,28 @@ mod tests {
         match result.data {
             QueryResultData::Rows(rows) => {
                 assert_eq!(rows[0]["query_type"], serde_json::json!("Federated"));
+            }
+            other => panic!("expected rows, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sql_query_routes_cross_modal_extensions_through_unified_facade() {
+        let adapter = create_sql_routing_adapter();
+        let sql = "\
+            SELECT *
+            FROM DOCUMENT_QUERY('profiles', 'tier = gold') p
+            JOIN LATERAL VECTOR_SEARCH('memories', '[0.1, 0.2]'::vector(2), 3) v ON true
+            JOIN LATERAL GRAPH_QUERY('MATCH (n:Agent) FROM agent_graph RETURN n') g ON true";
+
+        let result = adapter.sql_query(sql).await.unwrap();
+
+        match result.data {
+            QueryResultData::Rows(rows) => {
+                assert_eq!(rows[0]["query_type"], serde_json::json!("Federated"));
+                assert!(rows[0]["sql"].as_str().unwrap().contains("DOCUMENT_QUERY"));
+                assert!(rows[0]["sql"].as_str().unwrap().contains("VECTOR_SEARCH"));
+                assert!(rows[0]["sql"].as_str().unwrap().contains("GRAPH_QUERY"));
             }
             other => panic!("expected rows, got {:?}", other),
         }

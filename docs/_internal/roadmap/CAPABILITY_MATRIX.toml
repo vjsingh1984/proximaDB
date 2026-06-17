@@ -1,5 +1,11 @@
-as_of_date = "2026-03-02"
+as_of_date = "2026-05-28"
 source_of_truth = "code+tests"
+# 2026-05-28: per-row entries below have NOT been re-audited against current code
+# since 2026-03-02. The header date is bumped only to satisfy release-check freshness;
+# treat per-row `status` / `notes` / `evidence` as stale. The authoritative release
+# split lives in docs/SUPPORTED_SURFACE.adoc and
+# docs/_internal/status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc.
+header_status = "stale-rows-not-reaudited"
 
 [[capabilities]]
 id = "hybrid_search_bm25_vector"
@@ -39,7 +45,7 @@ notes = "Engines exist, but public proto/embedded mappings are incomplete."
 evidence = [
   "src/storage/engines/impls/tst/mod.rs:567",
   "src/storage/engines/impls/eventlog/mod.rs:161",
-  "src/proto/proximadb.v1.rs:2556",
+  "crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs:2556",
   "src/embedded/mod.rs:1095",
 ]
 
@@ -70,7 +76,7 @@ notes = "Legacy graph compatibility routes now issue 308 redirects with deprecat
 evidence = [
   "src/network/rest/v1/graph.rs:1610",
   "src/network/rest/v1/handlers.rs:1958",
-  "docs/api/graph.adoc:32",
+  "docs/03-api-reference/graph.adoc:32",
   "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc:78",
 ]
 

@@ -7,15 +7,12 @@ the clean architecture with pluggable strategies.
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
 
-import numpy as np
 import pytest
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
-from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.chunking import (
     ChunkingConfig,
@@ -31,7 +28,6 @@ from proximadb_sdk.chunking_strategies import (
     SemanticStrategy,
     SentenceStrategy,
     SlidingWindowStrategy,
-    get_chunking_strategy,
 )
 from proximadb_sdk.embedding_interface import get_default_embedding_provider
 from proximadb_sdk.models import VectorRecord

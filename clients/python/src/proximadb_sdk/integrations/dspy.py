@@ -25,11 +25,10 @@ Example::
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 import dspy
-
-from proximadb_sdk.models import VectorRecord
 
 
 class ProximaDBRM(dspy.Retrieve):
@@ -56,8 +55,8 @@ class ProximaDBRM(dspy.Retrieve):
 
     def forward(
         self,
-        query_or_queries: Union[str, list[str]],
-        k: Optional[int] = None,
+        query_or_queries: str | list[str],
+        k: int | None = None,
         **kwargs: Any,
     ) -> dspy.Prediction:
         """Retrieve passages for the given query or queries.

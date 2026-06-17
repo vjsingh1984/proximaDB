@@ -27,36 +27,40 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{debug, info};
 
+use crate::core::types::StorageEngineType;
 use crate::infrastructure::tier_policy_engine::InfrastructureTier;
-use crate::storage::engines::impls::sst::readers::sst_query_engine::UnifiedSstableReader;
-use crate::storage::engines::impls::sst::writer::SstableWriter;
-use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+use crate::storage::engines::sst::readers::sst_query_engine::UnifiedSstableReader;
+use crate::storage::engines::sst::writer::SstableWriter;
+use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
 
-/// Type alias for [`PostingListEntry`] for compatibility
-pub type PostingEntry = PostingListEntry;
+/// Type alias for [`IvfClusterPostingListEntry`] for compatibility
+pub type PostingEntry = IvfClusterPostingListEntry;
 
 /// Posting list entry
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PostingListEntry {
+pub struct IvfClusterPostingListEntry {
     /// External identifier of the vector belonging to this cluster
     pub vector_id: String,
     /// Pre-computed distance from this vector to its cluster centroid
     pub distance_to_centroid: f32,
 }
 
+/// Backwards-compat alias for [`IvfClusterPostingList`].
+pub type PostingList = IvfClusterPostingList;
+
 /// Complete posting list for a cluster
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PostingList {
+pub struct IvfClusterPostingList {
     /// Index of the IVF cluster this posting list belongs to
     pub cluster_id: usize,
     /// Ordered list of vector entries assigned to this cluster
-    pub entries: Vec<PostingListEntry>,
+    pub entries: Vec<IvfClusterPostingListEntry>,
     /// Timestamp of the most recent access, used for LRU eviction
     pub last_accessed: std::time::SystemTime,
 }
 
 /// Storage backend for IVF posting lists
-pub enum PostingListStorage {
+pub enum IvfClusterPostingListStorage {
     /// In-memory storage with bincode serialization
     Memory {
         /// Map from cluster ID to bincode-encoded posting list bytes
@@ -92,7 +96,7 @@ pub enum PostingListStorage {
     },
 }
 
-impl PostingListStorage {
+impl IvfClusterPostingListStorage {
     /// Create storage backend based on tier and engine type
     pub fn new(
         tier: &InfrastructureTier,
@@ -100,16 +104,21 @@ impl PostingListStorage {
         engine_type: StorageEngineType,
     ) -> Result<Self> {
         match tier {
-            InfrastructureTier::Memory => Ok(PostingListStorage::Memory {
+            InfrastructureTier::Memory => Ok(IvfClusterPostingListStorage::Memory {
                 cache: Arc::new(dashmap::DashMap::new()),
             }),
             InfrastructureTier::NvmeSsd { mount_path }
             | InfrastructureTier::HardDisk { mount_path } => match engine_type {
-                StorageEngineType::SST => Ok(PostingListStorage::SstDisk {
+                StorageEngineType::SST => Ok(IvfClusterPostingListStorage::SstDisk {
                     base_path: mount_path.clone(),
                     collection_id,
                 }),
-                StorageEngineType::VIPER => Ok(PostingListStorage::ViperDisk {
+                StorageEngineType::VIPER => Ok(IvfClusterPostingListStorage::ViperDisk {
+                    base_path: mount_path.clone(),
+                    collection_id,
+                }),
+                // For newer engine types, default to SST disk storage
+                _ => Ok(IvfClusterPostingListStorage::SstDisk {
                     base_path: mount_path.clone(),
                     collection_id,
                 }),
@@ -128,11 +137,16 @@ impl PostingListStorage {
                 };
 
                 match engine_type {
-                    StorageEngineType::SST => Ok(PostingListStorage::CloudSst {
+                    StorageEngineType::SST => Ok(IvfClusterPostingListStorage::CloudSst {
                         bucket,
                         collection_id,
                     }),
-                    StorageEngineType::VIPER => Ok(PostingListStorage::CloudViper {
+                    StorageEngineType::VIPER => Ok(IvfClusterPostingListStorage::CloudViper {
+                        bucket,
+                        collection_id,
+                    }),
+                    // For newer engine types, default to SST cloud storage
+                    _ => Ok(IvfClusterPostingListStorage::CloudSst {
                         bucket,
                         collection_id,
                     }),
@@ -142,9 +156,9 @@ impl PostingListStorage {
     }
 
     /// Store a posting list
-    pub async fn put(&self, cluster_id: usize, list: PostingList) -> Result<()> {
+    pub async fn put(&self, cluster_id: usize, list: IvfClusterPostingList) -> Result<()> {
         match self {
-            PostingListStorage::Memory { cache } => {
+            IvfClusterPostingListStorage::Memory { cache } => {
                 // Serialize with bincode for memory storage
                 let bytes = bincode::serialize(&list)?;
                 cache.insert(cluster_id, bytes);
@@ -155,7 +169,7 @@ impl PostingListStorage {
                 );
                 Ok(())
             }
-            PostingListStorage::SstDisk {
+            IvfClusterPostingListStorage::SstDisk {
                 base_path,
                 collection_id,
             } => {
@@ -182,39 +196,36 @@ impl PostingListStorage {
                     let id = format!("{}:{}", cluster_id, entry.vector_id);
                     // For posting list entries, we store the distance as a simple vector
                     let vector = vec![entry.distance_to_centroid];
-                    let mut metadata = std::collections::HashMap::new();
-                    metadata.insert(
-                        "cluster_id".to_string(),
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                cluster_id.to_string(),
-                            )),
-                        },
-                    );
-                    metadata.insert(
-                        "vector_id".to_string(),
-                        crate::proto::proximadb_v1::SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                entry.vector_id.clone(),
-                            )),
-                        },
-                    );
+                    let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+                    let props = std::collections::HashMap::from([
+                        (
+                            "cluster_id".to_string(),
+                            proximadb_records::ProximaTreeNode::Value(
+                                proximadb_data_model::ProximaValue::String(cluster_id.to_string()),
+                            ),
+                        ),
+                        (
+                            "vector_id".to_string(),
+                            proximadb_records::ProximaTreeNode::Value(
+                                proximadb_data_model::ProximaValue::String(entry.vector_id.clone()),
+                            ),
+                        ),
+                    ]);
                     records.insert(
                         id.clone(),
-                        crate::proto::proximadb_v1::VectorRecord {
-                            id,
-                            vector,
-                            metadata,
-                            timestamp: Some(
-                                std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap_or_default()
-                                    .as_secs() as i64,
-                            ),
-                            updated_at: None,
-                            expires_at: None,
-                            version: None,
-                            source: None,
+                        proximadb_records::ProximaRecord {
+                            oid: id,
+                            created_at_ns: now_ns,
+                            updated_at_ns: now_ns,
+                            props,
+                            embeddings: vec![proximadb_records::EmbeddingCell {
+                                model_id: "ivf_posting_distance".to_string(),
+                                modality: "dense_vector".to_string(),
+                                dim: vector.len() as u32,
+                                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                                ..Default::default()
+                            }],
+                            ..proximadb_records::ProximaRecord::default()
                         },
                     );
                 }
@@ -223,12 +234,12 @@ impl PostingListStorage {
                 let record_count = records.len();
                 let sorted_records_iter = records.into_values(); // Extract values from BTreeMap
                 writer
-                    .write_sorted_records(sorted_records_iter, record_count)
+                    .write_sorted_proxima_records(sorted_records_iter, record_count)
                     .await?;
                 debug!("Stored posting list {} to SST at {}", cluster_id, path);
                 Ok(())
             }
-            PostingListStorage::ViperDisk {
+            IvfClusterPostingListStorage::ViperDisk {
                 base_path,
                 collection_id,
             } => {
@@ -243,7 +254,7 @@ impl PostingListStorage {
                 debug!("Stored posting list {} to VIPER at {}", cluster_id, path);
                 Ok(())
             }
-            PostingListStorage::CloudSst {
+            IvfClusterPostingListStorage::CloudSst {
                 bucket,
                 collection_id,
             } => {
@@ -259,7 +270,7 @@ impl PostingListStorage {
                 );
                 Ok(())
             }
-            PostingListStorage::CloudViper {
+            IvfClusterPostingListStorage::CloudViper {
                 bucket,
                 collection_id,
             } => {
@@ -279,18 +290,18 @@ impl PostingListStorage {
     }
 
     /// Retrieve a posting list
-    pub async fn get(&self, cluster_id: usize) -> Result<Option<PostingList>> {
+    pub async fn get(&self, cluster_id: usize) -> Result<Option<IvfClusterPostingList>> {
         match self {
-            PostingListStorage::Memory { cache } => {
+            IvfClusterPostingListStorage::Memory { cache } => {
                 // Deserialize from bincode in memory
                 if let Some(bytes) = cache.get(&cluster_id) {
-                    let list: PostingList = bincode::deserialize(&bytes)?;
+                    let list: IvfClusterPostingList = bincode::deserialize(&bytes)?;
                     Ok(Some(list))
                 } else {
                     Ok(None)
                 }
             }
-            PostingListStorage::SstDisk {
+            IvfClusterPostingListStorage::SstDisk {
                 base_path,
                 collection_id,
             } => {
@@ -332,16 +343,16 @@ impl PostingListStorage {
                 if entries.is_empty() {
                     Ok(None)
                 } else {
-                    Ok(Some(PostingList {
+                    Ok(Some(IvfClusterPostingList {
                         cluster_id,
                         entries,
                         last_accessed: std::time::SystemTime::now(),
                     }))
                 }
             }
-            PostingListStorage::ViperDisk { .. }
-            | PostingListStorage::CloudSst { .. }
-            | PostingListStorage::CloudViper { .. } => {
+            IvfClusterPostingListStorage::ViperDisk { .. }
+            | IvfClusterPostingListStorage::CloudSst { .. }
+            | IvfClusterPostingListStorage::CloudViper { .. } => {
                 // Similar implementations for other storage types
                 Ok(None) // Placeholder
             }
@@ -351,7 +362,7 @@ impl PostingListStorage {
     /// Remove a posting list
     pub async fn remove(&self, cluster_id: usize) -> Result<()> {
         match self {
-            PostingListStorage::Memory { cache } => {
+            IvfClusterPostingListStorage::Memory { cache } => {
                 cache.remove(&cluster_id);
                 Ok(())
             }
@@ -363,36 +374,27 @@ impl PostingListStorage {
     }
 }
 
-/// Storage engine type for posting lists
-#[derive(Debug, Clone, Copy)]
-pub enum StorageEngineType {
-    /// Sorted String Table engine — optimised for bloom-filter lookups
-    SST,
-    /// VIPER columnar engine — optimised for analytical scans (Parquet)
-    VIPER,
-}
-
 /// Manager for tiered posting list storage
-pub struct TieredPostingListManager {
+pub struct TieredIvfClusterPostingListManager {
     #[allow(dead_code)]
     collection_id: String,
     #[allow(dead_code)]
     engine_type: StorageEngineType,
 
     /// Memory tier (hot posting lists)
-    memory_storage: PostingListStorage,
+    memory_storage: IvfClusterPostingListStorage,
 
     /// Disk tier (warm/cold posting lists)
-    disk_storage: Option<PostingListStorage>,
+    disk_storage: Option<IvfClusterPostingListStorage>,
 
     /// Cloud tier (archived posting lists)
-    cloud_storage: Option<PostingListStorage>,
+    cloud_storage: Option<IvfClusterPostingListStorage>,
 
     /// LRU tracking for memory eviction
     access_tracker: Arc<dashmap::DashMap<usize, std::time::SystemTime>>,
 }
 
-impl TieredPostingListManager {
+impl TieredIvfClusterPostingListManager {
     /// Create a new tiered posting list manager.
     ///
     /// Providing `disk_path` enables the NVMe/SSD tier and `cloud_bucket`
@@ -403,7 +405,7 @@ impl TieredPostingListManager {
         disk_path: Option<String>,
         cloud_bucket: Option<String>,
     ) -> Result<Self> {
-        let memory_storage = PostingListStorage::new(
+        let memory_storage = IvfClusterPostingListStorage::new(
             &InfrastructureTier::Memory,
             collection_id.clone(),
             engine_type,
@@ -411,7 +413,7 @@ impl TieredPostingListManager {
 
         let disk_storage = disk_path
             .map(|path| {
-                PostingListStorage::new(
+                IvfClusterPostingListStorage::new(
                     &InfrastructureTier::NvmeSsd { mount_path: path },
                     collection_id.clone(),
                     engine_type,
@@ -420,7 +422,7 @@ impl TieredPostingListManager {
             .transpose()?;
 
         let cloud_storage = cloud_bucket.map(|bucket| {
-            PostingListStorage::new(
+            IvfClusterPostingListStorage::new(
                 &InfrastructureTier::CloudStandard {
                     provider: crate::infrastructure::tier_policy_engine::CloudProvider::AwsS3 {
                         bucket,
@@ -445,7 +447,7 @@ impl TieredPostingListManager {
     }
 
     /// Get posting list with tier-aware loading
-    pub async fn get(&self, cluster_id: usize) -> Result<Option<PostingList>> {
+    pub async fn get(&self, cluster_id: usize) -> Result<Option<IvfClusterPostingList>> {
         // Try memory first
         if let Some(list) = self.memory_storage.get(cluster_id).await? {
             self.access_tracker
@@ -484,7 +486,7 @@ impl TieredPostingListManager {
     }
 
     /// Store posting list with tier placement
-    pub async fn put(&self, cluster_id: usize, list: PostingList) -> Result<()> {
+    pub async fn put(&self, cluster_id: usize, list: IvfClusterPostingList) -> Result<()> {
         // Always store in memory first
         self.memory_storage.put(cluster_id, list.clone()).await?;
         self.access_tracker

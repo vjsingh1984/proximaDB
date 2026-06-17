@@ -6,13 +6,10 @@ using the embedded database for actual graph operations.
 """
 
 import time
-from typing import Any, Dict
-from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
-from proximadb_sdk import CollectionConfig, ProximaDBClient
-from proximadb_sdk.exceptions import ProximaDBError
+from proximadb_sdk import ProximaDBClient
 
 
 class TestGraphClientBasicOperations:
@@ -134,7 +131,7 @@ class TestGraphClientParameterValidation:
                 node_id="valid_node_id", labels=["Test"], properties={}
             )
             # If no error, validation passed
-        except TypeError as e:
+        except TypeError:
             # Type errors are expected for invalid types
             pass
 

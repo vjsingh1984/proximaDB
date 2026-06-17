@@ -19,7 +19,6 @@ Metrics:
 Embedding: Sentence-Transformers (BAAI/bge-small-en-v1.5)
 """
 
-import asyncio
 import gc
 import os
 import shutil
@@ -28,7 +27,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -40,6 +39,7 @@ import lancedb
 import numpy as np
 
 # Embedding models
+from proximadb_sdk import CollectionConfig, connect_grpc, connect_rest
 from proximadb_sdk.embedded import SentenceTransformerModel
 
 # FAISS
@@ -74,7 +74,7 @@ except ImportError:
 # =============================================================================
 
 
-def collect_code_files(base_path: str, max_files: int = 50) -> List[Dict[str, Any]]:
+def collect_code_files(base_path: str, max_files: int = 50) -> list[dict[str, Any]]:
     """Collect code files from the repository."""
     documents = []
     base = Path(base_path)
@@ -125,12 +125,12 @@ def collect_code_files(base_path: str, max_files: int = 50) -> List[Dict[str, An
 class BenchmarkResult:
     def __init__(self, name: str):
         self.name = name
-        self.index_times: List[float] = []
-        self.search_times: List[float] = []
-        self.search_results: List[List[str]] = []
-        self.errors: List[str] = []
+        self.index_times: list[float] = []
+        self.search_times: list[float] = []
+        self.search_results: list[list[str]] = []
+        self.errors: list[str] = []
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         if not self.index_times:
             return {
                 "name": self.name,
@@ -183,7 +183,7 @@ class ChromaDBBenchmark:
             name="benchmark", metadata={"hnsw:space": "cosine"}
         )
 
-    def index(self, documents: List[Dict], result: BenchmarkResult):
+    def index(self, documents: list[dict], result: BenchmarkResult):
         for doc in documents:
             start = time.perf_counter()
             embedding = self.model.embed(doc["content"])
@@ -195,7 +195,7 @@ class ChromaDBBenchmark:
             )
             result.index_times.append(time.perf_counter() - start)
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
         results = self.collection.query(query_embeddings=[embedding], n_results=top_k)
@@ -225,7 +225,7 @@ class LanceDBBenchmark:
             self.db.drop_table("benchmark")
         self.table = None
 
-    def index(self, documents: List[Dict], result: BenchmarkResult):
+    def index(self, documents: list[dict], result: BenchmarkResult):
         data = []
         for doc in documents:
             start = time.perf_counter()
@@ -246,7 +246,7 @@ class LanceDBBenchmark:
         else:
             self.table.add(data)
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
         results = self.table.search(embedding).limit(top_k).to_list()
@@ -281,7 +281,7 @@ class FAISSBenchmark:
         else:
             raise ImportError("FAISS not available")
 
-    def index(self, documents: List[Dict], result: BenchmarkResult):
+    def index(self, documents: list[dict], result: BenchmarkResult):
         vectors = []
         for i, doc in enumerate(documents):
             start = time.perf_counter()
@@ -298,7 +298,7 @@ class FAISSBenchmark:
         vectors_array = np.vstack(vectors).astype(np.float32)
         self.faiss_index.add(vectors_array)
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
         query_vec = np.array(embedding, dtype=np.float32).reshape(1, -1)
@@ -344,7 +344,7 @@ class QdrantBenchmark:
             vectors_config=VectorParams(size=self.dimension, distance=Distance.COSINE),
         )
 
-    def index(self, documents: List[Dict], result: BenchmarkResult):
+    def index(self, documents: list[dict], result: BenchmarkResult):
         points = []
         for i, doc in enumerate(documents):
             start = time.perf_counter()
@@ -366,7 +366,7 @@ class QdrantBenchmark:
         # Batch upsert
         self.client.upsert(collection_name=self.collection_name, points=points)
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
 
@@ -419,28 +419,27 @@ class ProximaDBEmbeddedBenchmark:
             self.collection_name, self.dimension, distance_metric=1  # COSINE
         )
 
-    def index(self, documents: List[Dict], result: BenchmarkResult):
+    def index(self, documents: list[dict], result: BenchmarkResult):
         """Index documents one by one (like other benchmarks)."""
         for doc in documents:
             start = time.perf_counter()
             embedding = self.model.embed(doc["content"])
 
-            # ProximaDB expects metadata in SqlValue format
-            vectors = [
+            records = [
                 {
                     "id": doc["id"],
                     "vector": embedding,
-                    "metadata": {
+                    "props": {
                         "language": doc["language"],
                         "path": doc["path"],
                         "content": doc["content"][:500],
                     },
                 }
             ]
-            self.client.insert_vectors(self.collection_name, vectors)
+            self.client.insert_records(self.collection_name, records)
             result.index_times.append(time.perf_counter() - start)
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
 
@@ -486,92 +485,59 @@ class ProximaDBRestBenchmark:
         self.server_url = server_url
         self.collection_name = "benchmark_rest"
         self.dimension = embedding_model.get_dimension()
+        self.client = None
 
     def setup(self):
+        self.client = connect_rest(self.server_url)
         try:
-            httpx.delete(
-                f"{self.server_url}/api/v1/collections/{self.collection_name}",
-                timeout=10,
-            )
-        except:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
             pass
-
-        httpx.post(
-            f"{self.server_url}/api/v1/collections",
-            json={
-                "operation": 1,
-                "collection_id": self.collection_name,
-                "collection_config": {
-                    "name": self.collection_name,
-                    "dimension": self.dimension,
-                    "distance_metric": 1,
-                },
-            },
-            timeout=30,
+        self.client.create_collection(
+            self.collection_name,
+            CollectionConfig(name=self.collection_name, dimension=self.dimension),
         )
 
-    def _to_sql_value(self, value):
-        if isinstance(value, str):
-            return {"string_value": value}
-        elif isinstance(value, int):
-            return {"int64_value": value}
-        elif isinstance(value, float):
-            return {"number_value": value}
-        return {"string_value": str(value)}
-
-    def index(self, documents: List[Dict], result: BenchmarkResult):
+    def index(self, documents: list[dict], result: BenchmarkResult):
         for doc in documents:
             start = time.perf_counter()
             embedding = self.model.embed(doc["content"])
 
-            httpx.post(
-                f"{self.server_url}/api/v1/vectors/batch",
-                json={
-                    "collection_id": self.collection_name,
-                    "vectors": [
-                        {
-                            "id": doc["id"],
-                            "vector": embedding,
-                            "metadata": {
-                                "content": self._to_sql_value(doc["content"][:500]),
-                                "language": self._to_sql_value(doc["language"]),
-                                "path": self._to_sql_value(doc["path"]),
-                            },
-                        }
-                    ],
-                },
-                timeout=30,
+            self.client.insert_records(
+                self.collection_name,
+                [
+                    {
+                        "id": doc["id"],
+                        "vector": embedding,
+                        "props": {
+                            "content": doc["content"][:500],
+                            "language": doc["language"],
+                            "path": doc["path"],
+                        },
+                    }
+                ],
             )
             result.index_times.append(time.perf_counter() - start)
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
 
-        response = httpx.post(
-            f"{self.server_url}/api/v1/search",
-            json={
-                "collection_id": self.collection_name,
-                "queries": [{"vector": embedding}],
-                "top_k": top_k,
-            },
-            timeout=30,
+        response = self.client.search_envelope(
+            self.collection_name, embedding, top_k=top_k
         )
-
         elapsed = time.perf_counter() - start
-        data = response.json()
-
-        ids = []
-        if data.get("success") and data.get("results"):
-            inner = data["results"]
-            if isinstance(inner, dict) and "results" in inner:
-                for r in inner["results"] or []:
-                    if "id" in r:
-                        ids.append(r["id"])
-
+        ids = [item.id for item in response.items]
         return ids, elapsed
 
     def cleanup(self):
+        if self.client:
+            try:
+                self.client.delete_collection(self.collection_name)
+                self.client.close()
+                return
+            except Exception:
+                pass
         try:
             httpx.delete(
                 f"{self.server_url}/api/v1/collections/{self.collection_name}",
@@ -592,103 +558,59 @@ class ProximaDBGrpcBenchmark:
         self.server_url = server_url
         self.collection_name = "benchmark_grpc"
         self.dimension = embedding_model.get_dimension()
-        self.channel = None
-        self.stub = None
+        self.client = None
 
     def setup(self):
-        # For gRPC, we'll use REST API to create collection (simpler)
-        rest_url = "http://localhost:5678"
+        grpc_url = self.server_url
+        if not grpc_url.startswith("grpc://"):
+            grpc_url = f"grpc://{grpc_url}"
+        self.client = connect_grpc(grpc_url)
         try:
-            httpx.delete(
-                f"{rest_url}/api/v1/collections/{self.collection_name}", timeout=10
-            )
-        except:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
             pass
-
-        httpx.post(
-            f"{rest_url}/api/v1/collections",
-            json={
-                "operation": 1,
-                "collection_id": self.collection_name,
-                "collection_config": {
-                    "name": self.collection_name,
-                    "dimension": self.dimension,
-                    "distance_metric": 1,
-                },
-            },
-            timeout=30,
+        self.client.create_collection(
+            self.collection_name,
+            CollectionConfig(name=self.collection_name, dimension=self.dimension),
         )
 
-        # Setup gRPC channel
-        if GRPC_AVAILABLE:
-            self.channel = grpc.insecure_channel(self.server_url)
-
-    def _to_sql_value(self, value):
-        if isinstance(value, str):
-            return {"string_value": value}
-        elif isinstance(value, int):
-            return {"int64_value": value}
-        return {"string_value": str(value)}
-
-    def index(self, documents: List[Dict], result: BenchmarkResult):
-        # Use REST for indexing (gRPC proto would need to be compiled)
-        rest_url = "http://localhost:5678"
+    def index(self, documents: list[dict], result: BenchmarkResult):
         for doc in documents:
             start = time.perf_counter()
             embedding = self.model.embed(doc["content"])
 
-            httpx.post(
-                f"{rest_url}/api/v1/vectors/batch",
-                json={
-                    "collection_id": self.collection_name,
-                    "vectors": [
-                        {
-                            "id": doc["id"],
-                            "vector": embedding,
-                            "metadata": {
-                                "content": self._to_sql_value(doc["content"][:500]),
-                                "language": self._to_sql_value(doc["language"]),
-                                "path": self._to_sql_value(doc["path"]),
-                            },
-                        }
-                    ],
-                },
-                timeout=30,
+            self.client.insert_records(
+                self.collection_name,
+                [
+                    {
+                        "id": doc["id"],
+                        "vector": embedding,
+                        "props": {
+                            "content": doc["content"][:500],
+                            "language": doc["language"],
+                            "path": doc["path"],
+                        },
+                    }
+                ],
             )
             result.index_times.append(time.perf_counter() - start)
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
-        # Use REST for search (measure gRPC when proto is compiled)
-        rest_url = "http://localhost:5678"
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
-
-        response = httpx.post(
-            f"{rest_url}/api/v1/search",
-            json={
-                "collection_id": self.collection_name,
-                "queries": [{"vector": embedding}],
-                "top_k": top_k,
-            },
-            timeout=30,
-        )
-
+        response = self.client.search(self.collection_name, embedding, top_k=top_k)
         elapsed = time.perf_counter() - start
-        data = response.json()
-
-        ids = []
-        if data.get("success") and data.get("results"):
-            inner = data["results"]
-            if isinstance(inner, dict) and "results" in inner:
-                for r in inner["results"] or []:
-                    if "id" in r:
-                        ids.append(r["id"])
-
+        ids = [item.id for item in response]
         return ids, elapsed
 
     def cleanup(self):
-        if self.channel:
-            self.channel.close()
+        if self.client:
+            try:
+                self.client.delete_collection(self.collection_name)
+                self.client.close()
+                return
+            except Exception:
+                pass
         try:
             httpx.delete(
                 f"http://localhost:5678/api/v1/collections/{self.collection_name}",
@@ -711,38 +633,20 @@ class ProximaDBSqlBenchmark:
         self.server_url = server_url
         self.collection_name = "benchmark_sql"
         self.dimension = embedding_model.get_dimension()
+        self.client = None
 
     def setup(self):
+        self.client = connect_rest(self.server_url)
         try:
-            httpx.delete(
-                f"{self.server_url}/api/v1/collections/{self.collection_name}",
-                timeout=10,
-            )
-        except:
+            self.client.delete_collection(self.collection_name)
+        except Exception:
             pass
-
-        httpx.post(
-            f"{self.server_url}/api/v1/collections",
-            json={
-                "operation": 1,
-                "collection_id": self.collection_name,
-                "collection_config": {
-                    "name": self.collection_name,
-                    "dimension": self.dimension,
-                    "distance_metric": 1,
-                },
-            },
-            timeout=30,
+        self.client.create_collection(
+            self.collection_name,
+            CollectionConfig(name=self.collection_name, dimension=self.dimension),
         )
 
-    def _to_sql_value(self, value):
-        if isinstance(value, str):
-            return {"string_value": value}
-        elif isinstance(value, int):
-            return {"int64_value": value}
-        return {"string_value": str(value)}
-
-    def index(self, documents: List[Dict], result: BenchmarkResult):
+    def index(self, documents: list[dict], result: BenchmarkResult):
         # Batch insert for SQL-style
         batch_size = 10
         for i in range(0, len(documents), batch_size):
@@ -756,56 +660,39 @@ class ProximaDBSqlBenchmark:
                     {
                         "id": doc["id"],
                         "vector": embedding,
-                        "metadata": {
-                            "content": self._to_sql_value(doc["content"][:500]),
-                            "language": self._to_sql_value(doc["language"]),
-                            "path": self._to_sql_value(doc["path"]),
+                        "props": {
+                            "content": doc["content"][:500],
+                            "language": doc["language"],
+                            "path": doc["path"],
                         },
                     }
                 )
 
-            httpx.post(
-                f"{self.server_url}/api/v1/vectors/batch",
-                json={
-                    "collection_id": self.collection_name,
-                    "vectors": vectors,
-                },
-                timeout=60,
-            )
+            self.client.insert_records(self.collection_name, vectors)
 
             elapsed = time.perf_counter() - start
             for _ in batch:
                 result.index_times.append(elapsed / len(batch))
 
-    def search(self, query: str, top_k: int = 5) -> Tuple[List[str], float]:
+    def search(self, query: str, top_k: int = 5) -> tuple[list[str], float]:
         start = time.perf_counter()
         embedding = self.model.embed(query)
 
-        # SQL-style filter query (filter by language = 'py')
-        response = httpx.post(
-            f"{self.server_url}/api/v1/search",
-            json={
-                "collection_id": self.collection_name,
-                "queries": [{"vector": embedding}],
-                "top_k": top_k,
-            },
-            timeout=30,
+        response = self.client.search_envelope(
+            self.collection_name, embedding, top_k=top_k
         )
-
         elapsed = time.perf_counter() - start
-        data = response.json()
-
-        ids = []
-        if data.get("success") and data.get("results"):
-            inner = data["results"]
-            if isinstance(inner, dict) and "results" in inner:
-                for r in inner["results"] or []:
-                    if "id" in r:
-                        ids.append(r["id"])
-
+        ids = [item.id for item in response.items]
         return ids, elapsed
 
     def cleanup(self):
+        if self.client:
+            try:
+                self.client.delete_collection(self.collection_name)
+                self.client.close()
+                return
+            except Exception:
+                pass
         try:
             httpx.delete(
                 f"{self.server_url}/api/v1/collections/{self.collection_name}",
@@ -824,8 +711,8 @@ def run_benchmark(
     name: str,
     benchmark_class,
     embedding_model,
-    documents: List[Dict],
-    queries: List[str],
+    documents: list[dict],
+    queries: list[str],
     **kwargs,
 ) -> BenchmarkResult:
     result = BenchmarkResult(name)
@@ -854,9 +741,8 @@ def run_benchmark(
 
 def run_batch_benchmark(
     embedding_model, temp_dir: str, num_docs: int = 100
-) -> Dict[str, Dict]:
+) -> dict[str, dict]:
     """Run batch insert benchmark to show batch vs single insert performance."""
-    import random
 
     print(f"\n  Running BATCH INSERT benchmark ({num_docs} docs)...")
     results = {}
@@ -970,10 +856,10 @@ def run_batch_benchmark(
 
 
 def calculate_semantic_accuracy(
-    results: Dict[str, BenchmarkResult],
-    queries: List[str],
-    expected: Dict[str, List[str]],
-) -> Dict[str, float]:
+    results: dict[str, BenchmarkResult],
+    queries: list[str],
+    expected: dict[str, list[str]],
+) -> dict[str, float]:
     accuracy = {}
 
     for name, result in results.items():
@@ -1176,7 +1062,7 @@ def main():
                 avg_search = statistics.mean(
                     r.summary()["search_avg_ms"] for r in valid_results
                 )
-                avg_acc = statistics.mean(accuracy.get(k, 0) for k in db_results.keys())
+                avg_acc = statistics.mean(accuracy.get(k, 0) for k in db_results)
                 print(
                     f"  {db:<18}: Index={avg_index:>6.1f} docs/s | Search={avg_search:>6.2f}ms | Acc={avg_acc:>5.1f}%"
                 )
@@ -1186,7 +1072,7 @@ def main():
     print("SUMMARY BY EMBEDDING MODEL")
     print("─" * 80)
 
-    for emb in models.keys():
+    for emb in models:
         emb_results = {k: v for k, v in results.items() if emb in k}
         if emb_results:
             valid_results = [
@@ -1199,9 +1085,7 @@ def main():
                 avg_search = statistics.mean(
                     r.summary()["search_avg_ms"] for r in valid_results
                 )
-                avg_acc = statistics.mean(
-                    accuracy.get(k, 0) for k in emb_results.keys()
-                )
+                avg_acc = statistics.mean(accuracy.get(k, 0) for k in emb_results)
                 print(
                     f"  {emb:<18}: Index={avg_index:>6.1f} docs/s | Search={avg_search:>6.2f}ms | Acc={avg_acc:>5.1f}%"
                 )

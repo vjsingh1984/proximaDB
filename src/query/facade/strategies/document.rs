@@ -273,7 +273,7 @@ impl DocumentStrategy {
             .map(|doc| {
                 serde_json::json!({
                     "id": doc.id,
-                    "document": doc.document,
+                    "document": crate::storage::document::proxima_tree_to_sql_object(&doc.props),
                     "version": doc.version,
                     "collection_id": doc.collection_id,
                 })

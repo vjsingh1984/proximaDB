@@ -35,6 +35,8 @@ use std::collections::HashMap;
 use crate::core::search::{ComparisonOperator, FilterExpression};
 use crate::proto::proximadb_v1::SqlValue;
 use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaTree, ProximaTreeNode};
 
 /// Evaluate a filter expression against SqlValue metadata (type-safe, no conversion)
 ///
@@ -230,6 +232,261 @@ fn compare_int64_gte(n: i64, json_val: &serde_json::Value) -> bool {
     false
 }
 
+/// Convert a `ProximaValue` leaf to a `serde_json::Value` for filter evaluation.
+pub fn proxima_value_to_json(pv: &ProximaValue) -> serde_json::Value {
+    match pv {
+        ProximaValue::Null => serde_json::Value::Null,
+        ProximaValue::Boolean(b) => serde_json::Value::Bool(*b),
+        ProximaValue::Int8(n) => serde_json::Value::Number((*n as i64).into()),
+        ProximaValue::Int16(n) => serde_json::Value::Number((*n as i64).into()),
+        ProximaValue::Int32(n) => serde_json::Value::Number((*n as i64).into()),
+        ProximaValue::Int64(n) => serde_json::Value::Number((*n).into()),
+        ProximaValue::UInt8(n) => serde_json::Value::Number((*n as u64).into()),
+        ProximaValue::UInt16(n) => serde_json::Value::Number((*n as u64).into()),
+        ProximaValue::UInt32(n) => serde_json::Value::Number((*n as u64).into()),
+        ProximaValue::UInt64(n) => serde_json::Value::Number((*n).into()),
+        ProximaValue::Float16(f) | ProximaValue::Float32(f) => {
+            serde_json::Number::from_f64(*f as f64)
+                .map(serde_json::Value::Number)
+                .unwrap_or(serde_json::Value::Null)
+        }
+        ProximaValue::Float64(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
+        ProximaValue::String(s) | ProximaValue::Symbol(s) | ProximaValue::Decimal(s) => {
+            serde_json::Value::String(s.clone())
+        }
+        ProximaValue::Json(v) => v.clone(),
+        ProximaValue::Jsonb(v) => v.clone(),
+        ProximaValue::Array(items) => {
+            serde_json::Value::Array(items.iter().map(proxima_value_to_json).collect())
+        }
+        ProximaValue::Map(map) | ProximaValue::Struct(map) => {
+            let obj: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), proxima_value_to_json(v)))
+                .collect();
+            serde_json::Value::Object(obj)
+        }
+        // Temporal types — represent as milliseconds integer
+        ProximaValue::Timestamp(ns, _) | ProximaValue::TimestampTz(ns, _) => {
+            serde_json::Value::Number((*ns).into())
+        }
+        ProximaValue::Date(d) => serde_json::Value::Number((*d as i64).into()),
+        ProximaValue::Time(t, _) => serde_json::Value::Number((*t).into()),
+        // UUID/ULID — string representation
+        ProximaValue::Uuid(b) | ProximaValue::ULID(b) => {
+            serde_json::Value::String(format!("{b:?}"))
+        }
+        // Binary — base64-ish string
+        ProximaValue::Binary(b) | ProximaValue::BinaryVector(b) => {
+            serde_json::Value::String(format!("[binary:{}]", b.len()))
+        }
+        ProximaValue::DenseVector(v) => serde_json::Value::Array(
+            v.iter()
+                .map(|f| {
+                    serde_json::Number::from_f64(*f as f64)
+                        .map(serde_json::Value::Number)
+                        .unwrap_or(serde_json::Value::Null)
+                })
+                .collect(),
+        ),
+        ProximaValue::SparseVector { .. } => {
+            serde_json::Value::String("[sparse_vector]".to_string())
+        }
+    }
+}
+
+/// Flatten a `ProximaTree` to a `HashMap<String, serde_json::Value>` for filter evaluation.
+///
+/// Nested `Object` nodes are serialised as JSON objects. This matches the shape
+/// expected by `json_comparison::evaluate_filter` and `MetadataQueryEngine::evaluate`.
+pub fn proxima_tree_to_json_map(props: &ProximaTree) -> HashMap<String, serde_json::Value> {
+    fn node_to_json(node: &ProximaTreeNode) -> serde_json::Value {
+        match node {
+            ProximaTreeNode::Value(pv) => proxima_value_to_json(pv),
+            ProximaTreeNode::Object(subtree) => serde_json::Value::Object(
+                subtree
+                    .iter()
+                    .map(|(k, n)| (k.clone(), node_to_json(n)))
+                    .collect(),
+            ),
+        }
+    }
+
+    props
+        .iter()
+        .map(|(key, node)| (key.clone(), node_to_json(node)))
+        .collect()
+}
+
+/// Flatten a `ProximaTree` into the canonical `OptimizedSearchRecord` metadata map.
+///
+/// Nested objects are preserved as `ProximaValue::Struct` so storage engines can return
+/// canonical metadata without detouring through the deprecated v1 `SqlValue` envelope.
+pub fn proxima_tree_to_value_map(props: &ProximaTree) -> HashMap<String, ProximaValue> {
+    fn node_to_value(node: &ProximaTreeNode) -> ProximaValue {
+        match node {
+            ProximaTreeNode::Value(value) => value.clone(),
+            ProximaTreeNode::Object(subtree) => ProximaValue::Struct(
+                subtree
+                    .iter()
+                    .map(|(key, child)| (key.clone(), node_to_value(child)))
+                    .collect(),
+            ),
+        }
+    }
+
+    props
+        .iter()
+        .map(|(key, node)| (key.clone(), node_to_value(node)))
+        .collect()
+}
+
+/// Evaluate a filter expression against a `ProximaTree` (canonical v2 path).
+pub fn evaluate_filter_proxima(expr: &FilterExpression, props: &ProximaTree) -> bool {
+    match expr {
+        FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter_proxima(e, props)),
+        FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter_proxima(e, props)),
+        FilterExpression::Not(e) => !evaluate_filter_proxima(e, props),
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => {
+            let node = props.get(field);
+            match (node, operator) {
+                (Some(ProximaTreeNode::Value(pv)), op) => {
+                    let json_val = proxima_value_to_json(pv);
+                    match op {
+                        ComparisonOperator::Equals => json_eq(&json_val, value),
+                        ComparisonOperator::NotEquals => !json_eq(&json_val, value),
+                        ComparisonOperator::LessThan => compare_json_lt(&json_val, value),
+                        ComparisonOperator::LessThanOrEqual => compare_json_lte(&json_val, value),
+                        ComparisonOperator::GreaterThan => compare_json_gt(&json_val, value),
+                        ComparisonOperator::GreaterThanOrEqual => {
+                            compare_json_gte(&json_val, value)
+                        }
+                        ComparisonOperator::In => match &json_val {
+                            // Array-valued prop (e.g. `member_oids`): match when
+                            // the prop set intersects the query list.
+                            serde_json::Value::Array(items) => {
+                                value.as_array().is_some_and(|values| {
+                                    items
+                                        .iter()
+                                        .any(|item| values.iter().any(|v| json_eq(item, v)))
+                                })
+                            }
+                            // Scalar prop: membership in the query list.
+                            _ => value
+                                .as_array()
+                                .is_some_and(|values| values.iter().any(|v| json_eq(&json_val, v))),
+                        },
+                        ComparisonOperator::NotIn => match &json_val {
+                            // Array-valued prop: pass when the prop set is
+                            // disjoint from the query list.
+                            serde_json::Value::Array(items) => {
+                                value.as_array().is_none_or(|values| {
+                                    !items
+                                        .iter()
+                                        .any(|item| values.iter().any(|v| json_eq(item, v)))
+                                })
+                            }
+                            _ => value
+                                .as_array()
+                                .is_none_or(|values| values.iter().all(|v| !json_eq(&json_val, v))),
+                        },
+                        ComparisonOperator::Contains => match &json_val {
+                            // Array-valued prop: element membership
+                            // (e.g. `member_oids` contains `"u1"`).
+                            serde_json::Value::Array(items) => {
+                                items.iter().any(|item| json_eq(item, value))
+                            }
+                            // Scalar string prop: substring match.
+                            _ => json_val
+                                .as_str()
+                                .zip(value.as_str())
+                                .is_some_and(|(haystack, needle)| haystack.contains(needle)),
+                        },
+                        ComparisonOperator::StartsWith => json_val
+                            .as_str()
+                            .zip(value.as_str())
+                            .is_some_and(|(haystack, prefix)| haystack.starts_with(prefix)),
+                        ComparisonOperator::EndsWith => json_val
+                            .as_str()
+                            .zip(value.as_str())
+                            .is_some_and(|(haystack, suffix)| haystack.ends_with(suffix)),
+                        ComparisonOperator::Between => value.as_array().is_some_and(|bounds| {
+                            bounds.len() == 2
+                                && compare_json_gte(&json_val, &bounds[0])
+                                && compare_json_lte(&json_val, &bounds[1])
+                        }),
+                        ComparisonOperator::IsNull => json_val.is_null(),
+                        ComparisonOperator::IsNotNull => !json_val.is_null(),
+                        ComparisonOperator::Like => json_val
+                            .as_str()
+                            .zip(value.as_str())
+                            .is_some_and(|(haystack, pattern)| {
+                                let needle = pattern.trim_matches('%');
+                                if pattern.starts_with('%') && pattern.ends_with('%') {
+                                    haystack.contains(needle)
+                                } else if pattern.starts_with('%') {
+                                    haystack.ends_with(needle)
+                                } else if pattern.ends_with('%') {
+                                    haystack.starts_with(needle)
+                                } else {
+                                    haystack == pattern
+                                }
+                            }),
+                    }
+                }
+                (None, _) => false,
+                _ => false,
+            }
+        }
+    }
+}
+
+/// Numeric-aware equality for JSON values.
+///
+/// `serde_json::Value`'s derived `PartialEq` compares numbers by their internal
+/// representation, so an integer `2` and a float `2.0` are NOT equal. Metadata
+/// stored as `ProximaValue::Float64` serialises to a float-typed JSON number,
+/// while a filter literal like `batch == 2` arrives as an integer-typed number.
+/// Compare numbers by value (via `as_f64`) and fall back to structural equality
+/// for non-numeric values.
+fn json_eq(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av == bv,
+        _ => a == b,
+    }
+}
+
+fn compare_json_lt(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av < bv,
+        _ => false,
+    }
+}
+fn compare_json_lte(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av <= bv,
+        _ => false,
+    }
+}
+fn compare_json_gt(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av > bv,
+        _ => false,
+    }
+}
+fn compare_json_gte(a: &serde_json::Value, b: &serde_json::Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(av), Some(bv)) => av >= bv,
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -237,6 +494,130 @@ mod tests {
 
     fn make_sql_value(value: SqlVal) -> SqlValue {
         SqlValue { value: Some(value) }
+    }
+
+    fn proxima_array_props(field: &str, values: &[&str]) -> ProximaTree {
+        let mut props = ProximaTree::new();
+        props.insert(
+            field.to_string(),
+            ProximaTreeNode::Value(ProximaValue::Array(
+                values
+                    .iter()
+                    .map(|v| ProximaValue::String(v.to_string()))
+                    .collect(),
+            )),
+        );
+        props
+    }
+
+    #[test]
+    fn proxima_scalar_typed_props_compare_by_value() {
+        // Covers the string/int/float/bool prop envelope through the canonical
+        // ProximaTree evaluator: each typed ProximaValue must round-trip to a
+        // JSON value the comparators handle by value (not by representation).
+        let mut props = ProximaTree::new();
+        props.insert(
+            "account_id".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("acctA".to_string())),
+        );
+        props.insert(
+            "tier".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Int64(2)),
+        );
+        props.insert(
+            "score".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Float64(0.5)),
+        );
+        props.insert(
+            "active".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+        );
+
+        let cases: Vec<(&str, ComparisonOperator, serde_json::Value, bool)> = vec![
+            (
+                "account_id",
+                ComparisonOperator::Equals,
+                json!("acctA"),
+                true,
+            ),
+            (
+                "account_id",
+                ComparisonOperator::Equals,
+                json!("acctB"),
+                false,
+            ),
+            // int prop vs int literal AND float-typed literal (numeric-aware).
+            ("tier", ComparisonOperator::Equals, json!(2), true),
+            ("tier", ComparisonOperator::Equals, json!(2.0), true),
+            ("tier", ComparisonOperator::GreaterThan, json!(1), true),
+            ("tier", ComparisonOperator::LessThan, json!(2), false),
+            (
+                "score",
+                ComparisonOperator::LessThanOrEqual,
+                json!(0.5),
+                true,
+            ),
+            ("score", ComparisonOperator::GreaterThan, json!(0.9), false),
+            ("active", ComparisonOperator::Equals, json!(true), true),
+            ("active", ComparisonOperator::NotEquals, json!(false), true),
+        ];
+        for (field, operator, value, expected) in cases {
+            let label = format!("{field} {operator:?} {value} should be {expected}");
+            let filter = FilterExpression::Comparison {
+                field: field.to_string(),
+                operator,
+                value,
+            };
+            assert_eq!(
+                evaluate_filter_proxima(&filter, &props),
+                expected,
+                "{label}"
+            );
+        }
+    }
+
+    #[test]
+    fn proxima_array_prop_contains_membership() {
+        let props = proxima_array_props("member_oids", &["u1", "u2"]);
+
+        let hit = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::Contains,
+            value: json!("u1"),
+        };
+        let miss = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::Contains,
+            value: json!("u9"),
+        };
+        assert!(evaluate_filter_proxima(&hit, &props));
+        assert!(!evaluate_filter_proxima(&miss, &props));
+    }
+
+    #[test]
+    fn proxima_array_prop_in_intersection() {
+        let props = proxima_array_props("member_oids", &["u1", "u2"]);
+
+        let intersects = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::In,
+            value: json!(["u2", "u3"]),
+        };
+        let disjoint = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::In,
+            value: json!(["u7", "u8"]),
+        };
+        assert!(evaluate_filter_proxima(&intersects, &props));
+        assert!(!evaluate_filter_proxima(&disjoint, &props));
+
+        // NotIn is the negation: disjoint passes, intersecting fails.
+        let not_in_disjoint = FilterExpression::Comparison {
+            field: "member_oids".to_string(),
+            operator: ComparisonOperator::NotIn,
+            value: json!(["u7", "u8"]),
+        };
+        assert!(evaluate_filter_proxima(&not_in_disjoint, &props));
     }
 
     #[test]

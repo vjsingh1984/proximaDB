@@ -18,11 +18,12 @@
 //!
 //! This module implements smart batch detection to decide whether to use:
 //! - **WAL path**: Standard WAL + memtable path for small batches (durability)
-//! - **Direct write path**: Bypass WAL + memtable for large batches (performance)
+//! - **Bulk lane**: Large-batch WAL-backed append today; future direct segment
+//!   commit only after durability proof is accepted
 //!
 //! ## Decision Logic
 //!
-//! A batch is routed to direct write if either:
+//! A batch is routed to the bulk lane if either:
 //! - Vector count >= `vector_threshold` (default: 500)
 //! - Estimated size >= `size_threshold_bytes` (default: 2MB)
 //!
@@ -36,18 +37,22 @@
 //! ## Example
 //!
 //! ```text
-//! 1K vectors @ 768D = ~3MB → Direct write
+//! 1K vectors @ 768D = ~3MB → Bulk lane
 //! 100 vectors @ 768D = ~300KB → WAL path
-//! 500 vectors @ 512D = ~2MB → Direct write (at threshold)
+//! 500 vectors @ 512D = ~2MB → Bulk lane (at threshold)
 //! ```
 
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Result of bulk write route decision
 #[derive(Debug, Clone)]
 pub struct BulkWriteDecision {
-    /// Whether to use direct write (bypass WAL+memtable)
-    pub use_direct_write: bool,
+    /// Whether to use the large-batch lane (WAL-backed bulk path).
+    ///
+    /// True means the batch meets the size/count threshold for bulk-lane routing.
+    /// The implementation writes through WAL for durability; a future direct
+    /// segment commit path is separate and requires an accepted durability proof.
+    pub use_bulk_lane: bool,
     /// Reason for the decision
     pub reason: String,
     /// Estimated batch size in bytes
@@ -59,9 +64,9 @@ pub struct BulkWriteDecision {
 /// Configuration for bulk write thresholds
 #[derive(Debug, Clone)]
 pub struct BulkWriteConfig {
-    /// Minimum vector count to trigger direct write (default: 500)
+    /// Minimum vector count to trigger the bulk lane (default: 500)
     pub vector_threshold: usize,
-    /// Minimum estimated size in bytes to trigger direct write (default: 2MB)
+    /// Minimum estimated size in bytes to trigger the bulk lane (default: 2MB)
     pub size_threshold_bytes: usize,
     /// Enable bulk write optimization (default: true)
     pub enabled: bool,
@@ -81,10 +86,10 @@ impl Default for BulkWriteConfig {
 ///
 /// Routes batch writes to either:
 /// - Standard WAL + memtable path (for small streaming batches)
-/// - Direct storage engine write (for large bulk batches)
+/// - Large-batch lane (currently WAL-backed; future direct segment commit)
 ///
-/// This optimization reduces I/O and memory usage for bulk inserts by
-/// bypassing the WAL + memtable double-write pattern.
+/// This optimization centralizes the threshold decision for bulk inserts. It
+/// does not by itself authorize skipping WAL.
 pub struct BulkWriteRouter {
     /// Configuration controlling batch size thresholds and routing behavior
     config: BulkWriteConfig,
@@ -118,103 +123,110 @@ impl BulkWriteRouter {
         self.config.enabled = enabled;
     }
 
-    /// Decide whether to use direct write for a batch of vectors
+    /// Decide whether to use the bulk lane for a batch of canonical records.
     ///
-    /// Returns a `BulkWriteDecision` indicating the routing decision and reason.
-    pub fn should_use_direct_write(&self, vectors: &[VectorRecord]) -> BulkWriteDecision {
-        let vector_count = vectors.len();
+    /// Arrow Flight and catalog-aware writes should use this path so routing is
+    /// based on the `ProximaRecord` envelope instead of downgrading through
+    /// legacy vector-only records.
+    pub fn route_records(&self, records: &[ProximaRecord]) -> BulkWriteDecision {
+        let record_count = records.len();
+        let estimated_size = if self.config.enabled {
+            Some(self.estimate_record_batch_size(records))
+        } else {
+            None
+        };
+        self.route_decision(record_count, estimated_size, "Record", "records")
+    }
 
+    fn route_decision(
+        &self,
+        record_count: usize,
+        estimated_size: Option<usize>,
+        count_label: &str,
+        unit_label: &str,
+    ) -> BulkWriteDecision {
         // If disabled, always use WAL path
         if !self.config.enabled {
             return BulkWriteDecision {
-                use_direct_write: false,
+                use_bulk_lane: false,
                 reason: "Bulk write optimization disabled".to_string(),
                 estimated_size_bytes: 0,
-                vector_count,
+                vector_count: record_count,
             };
         }
 
         // Check vector count threshold first (fast check)
-        if vector_count >= self.config.vector_threshold {
-            let estimated_size = self.estimate_batch_size(vectors);
+        if record_count >= self.config.vector_threshold {
+            let estimated_size = estimated_size.unwrap_or(0);
             return BulkWriteDecision {
-                use_direct_write: true,
+                use_bulk_lane: true,
                 reason: format!(
-                    "Vector count {} >= threshold {}",
-                    vector_count, self.config.vector_threshold
+                    "{} count {} >= threshold {}",
+                    count_label, record_count, self.config.vector_threshold
                 ),
                 estimated_size_bytes: estimated_size,
-                vector_count,
+                vector_count: record_count,
             };
         }
 
         // Check size threshold
-        let estimated_size = self.estimate_batch_size(vectors);
+        let estimated_size = estimated_size.unwrap_or(0);
         if estimated_size >= self.config.size_threshold_bytes {
             return BulkWriteDecision {
-                use_direct_write: true,
+                use_bulk_lane: true,
                 reason: format!(
                     "Estimated size {} bytes >= threshold {} bytes",
                     estimated_size, self.config.size_threshold_bytes
                 ),
                 estimated_size_bytes: estimated_size,
-                vector_count,
+                vector_count: record_count,
             };
         }
 
         // Use standard WAL path for small batches
         BulkWriteDecision {
-            use_direct_write: false,
+            use_bulk_lane: false,
             reason: format!(
-                "Small batch: {} vectors, {} bytes (thresholds: {} vectors, {} bytes)",
-                vector_count,
+                "Small batch: {} {}, {} bytes (thresholds: {} records, {} bytes)",
+                record_count,
+                unit_label,
                 estimated_size,
                 self.config.vector_threshold,
                 self.config.size_threshold_bytes
             ),
             estimated_size_bytes: estimated_size,
-            vector_count,
+            vector_count: record_count,
         }
     }
 
-    /// Estimate the size of a batch of vectors in bytes
+    /// Estimate the size of a batch of canonical records in bytes.
     ///
-    /// Estimation formula:
-    /// - Vector data: dimension * 4 bytes (f32 per component)
-    /// - Metadata overhead: ~256 bytes average per record
-    /// - ID overhead: ~64 bytes average per record
-    pub fn estimate_batch_size(&self, vectors: &[VectorRecord]) -> usize {
-        if vectors.is_empty() {
+    /// Counts all embeddings and approximates rich property payloads so
+    /// relational, document, graph, and observability rows can use the same
+    /// large-batch routing surface as vector-only records.
+    pub fn estimate_record_batch_size(&self, records: &[ProximaRecord]) -> usize {
+        if records.is_empty() {
             return 0;
         }
 
-        // Constants for size estimation
-        const METADATA_OVERHEAD_PER_RECORD: usize = 256;
+        const PROPERTY_OVERHEAD_PER_RECORD: usize = 256;
         const ID_OVERHEAD_PER_RECORD: usize = 64;
         const F32_SIZE: usize = 4;
 
-        let mut total_size = 0;
+        records
+            .iter()
+            .map(|record| {
+                let embedding_size: usize = record
+                    .embeddings
+                    .iter()
+                    .map(|embedding| embedding.values.len() * F32_SIZE)
+                    .sum();
+                let props_size = record.props.len() * 96 + PROPERTY_OVERHEAD_PER_RECORD;
+                let id_size = record.oid.len() + ID_OVERHEAD_PER_RECORD;
 
-        for record in vectors {
-            // Vector data size
-            let vector_size = record.vector.len() * F32_SIZE;
-
-            // Metadata size (estimate based on HashMap<String, SqlValue>)
-            // Each entry has: key (String ~32 bytes avg) + SqlValue (~64 bytes avg) + overhead
-            const METADATA_ENTRY_SIZE: usize = 96;
-            let metadata_size = if record.metadata.is_empty() {
-                METADATA_OVERHEAD_PER_RECORD
-            } else {
-                record.metadata.len() * METADATA_ENTRY_SIZE + METADATA_OVERHEAD_PER_RECORD
-            };
-
-            // ID size
-            let id_size = record.id.len() + ID_OVERHEAD_PER_RECORD;
-
-            total_size += vector_size + metadata_size + id_size;
-        }
-
-        total_size
+                embedding_size + props_size + id_size
+            })
+            .sum()
     }
 
     /// Quick estimate based on vector count and dimension
@@ -230,8 +242,8 @@ impl BulkWriteRouter {
         vector_count * per_record_size
     }
 
-    /// Check if a batch of given size would trigger direct write
-    pub fn would_trigger_direct_write(&self, vector_count: usize, dimension: usize) -> bool {
+    /// Check if a batch of given size would trigger the bulk lane.
+    pub fn would_use_bulk_lane(&self, vector_count: usize, dimension: usize) -> bool {
         if !self.config.enabled {
             return false;
         }
@@ -254,18 +266,26 @@ impl Default for BulkWriteRouter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaTreeNode};
 
-    fn create_test_vector(id: &str, dimension: usize) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![0.0; dimension],
-            metadata: std::collections::HashMap::new(),
-            timestamp: None,
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
-        }
+    fn create_test_record(id: &str, dimension: usize) -> ProximaRecord {
+        let mut record = ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: dimension as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.0; dimension]),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
+        };
+        record.props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("bulk".to_string())),
+        );
+        record
     }
 
     #[test]
@@ -279,55 +299,40 @@ mod tests {
     #[test]
     fn test_small_batch_uses_wal() {
         let router = BulkWriteRouter::new();
-        let vectors: Vec<VectorRecord> = (0..10)
-            .map(|i| create_test_vector(&format!("vec_{}", i), 128))
+        let records: Vec<ProximaRecord> = (0..10)
+            .map(|i| create_test_record(&format!("rec_{}", i), 128))
             .collect();
 
-        let decision = router.should_use_direct_write(&vectors);
-        assert!(!decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(!decision.use_bulk_lane);
         assert_eq!(decision.vector_count, 10);
     }
 
     #[test]
-    fn test_large_count_uses_direct_write() {
+    fn test_large_count_uses_bulk_lane() {
         let router = BulkWriteRouter::new();
-        let vectors: Vec<VectorRecord> = (0..500)
-            .map(|i| create_test_vector(&format!("vec_{}", i), 128))
+        let records: Vec<ProximaRecord> = (0..500)
+            .map(|i| create_test_record(&format!("rec_{}", i), 128))
             .collect();
 
-        let decision = router.should_use_direct_write(&vectors);
-        assert!(decision.use_direct_write);
-        assert!(decision.reason.contains("Vector count"));
+        let decision = router.route_records(&records);
+        assert!(decision.use_bulk_lane);
     }
 
     #[test]
-    fn test_large_size_uses_direct_write() {
-        let router = BulkWriteRouter::new();
-        // 100 vectors @ 768D = ~300KB each = ~3MB total > 2MB threshold
-        let vectors: Vec<VectorRecord> = (0..100)
-            .map(|i| create_test_vector(&format!("vec_{}", i), 768))
-            .collect();
+    fn test_canonical_record_size_uses_all_embeddings_and_props() {
+        let router = BulkWriteRouter::with_config(BulkWriteConfig {
+            vector_threshold: 10_000,
+            size_threshold_bytes: 1_000,
+            enabled: true,
+        });
+        let records = vec![create_test_record("rec_1", 512)];
 
-        let decision = router.should_use_direct_write(&vectors);
-        // Should trigger if size exceeds 2MB
-        // 100 * (768 * 4 + 256 + 64) = 100 * 3392 = ~339KB
-        // Need more vectors or larger dimension
-        assert!(!decision.use_direct_write); // Still below threshold
-    }
+        let decision = router.route_records(&records);
 
-    #[test]
-    fn test_high_dimension_large_batch_uses_direct_write() {
-        let router = BulkWriteRouter::new();
-        // 200 vectors @ 2048D should exceed 2MB
-        // 200 * (2048 * 4 + 256 + 64) = 200 * 8512 = ~1.7MB - still below
-        // 300 vectors @ 2048D = 300 * 8512 = ~2.5MB > 2MB
-        let vectors: Vec<VectorRecord> = (0..300)
-            .map(|i| create_test_vector(&format!("vec_{}", i), 2048))
-            .collect();
-
-        let decision = router.should_use_direct_write(&vectors);
-        assert!(decision.use_direct_write);
-        assert!(decision.reason.contains("Estimated size"));
+        assert!(decision.use_bulk_lane);
+        assert_eq!(decision.vector_count, 1);
+        assert!(decision.estimated_size_bytes >= 512 * 4);
     }
 
     #[test]
@@ -335,65 +340,54 @@ mod tests {
         let mut router = BulkWriteRouter::new();
         router.set_enabled(false);
 
-        let vectors: Vec<VectorRecord> = (0..1000)
-            .map(|i| create_test_vector(&format!("vec_{}", i), 768))
+        let records: Vec<ProximaRecord> = (0..1000)
+            .map(|i| create_test_record(&format!("rec_{}", i), 768))
             .collect();
 
-        let decision = router.should_use_direct_write(&vectors);
-        assert!(!decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(!decision.use_bulk_lane);
         assert!(decision.reason.contains("disabled"));
     }
 
     #[test]
     fn test_quick_estimate() {
         let router = BulkWriteRouter::new();
-
-        // 1000 vectors @ 768D
         let estimated = router.estimate_batch_size_quick(1000, 768);
-        // 1000 * (768 * 4 + 256 + 64) = 1000 * 3392 = 3,392,000 bytes (~3.2MB)
         assert!(estimated > 3_000_000);
         assert!(estimated < 4_000_000);
     }
 
     #[test]
-    fn test_would_trigger_direct_write() {
+    fn test_would_use_bulk_lane() {
         let router = BulkWriteRouter::new();
-
-        // Small batch
-        assert!(!router.would_trigger_direct_write(10, 128));
-
-        // Large count
-        assert!(router.would_trigger_direct_write(500, 128));
-
-        // Large size (1000 vectors @ 768D = ~3.2MB > 2MB)
-        assert!(router.would_trigger_direct_write(1000, 768));
+        assert!(!router.would_use_bulk_lane(10, 128));
+        assert!(router.would_use_bulk_lane(500, 128));
+        assert!(router.would_use_bulk_lane(1000, 768));
     }
 
     #[test]
     fn test_custom_thresholds() {
         let config = BulkWriteConfig {
             vector_threshold: 100,
-            size_threshold_bytes: 1024 * 1024, // 1MB
+            size_threshold_bytes: 1024 * 1024,
             enabled: true,
         };
         let router = BulkWriteRouter::with_config(config);
-
-        // 100 vectors should now trigger
-        let vectors: Vec<VectorRecord> = (0..100)
-            .map(|i| create_test_vector(&format!("vec_{}", i), 128))
+        let records: Vec<ProximaRecord> = (0..100)
+            .map(|i| create_test_record(&format!("rec_{}", i), 128))
             .collect();
 
-        let decision = router.should_use_direct_write(&vectors);
-        assert!(decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(decision.use_bulk_lane);
     }
 
     #[test]
     fn test_empty_batch() {
         let router = BulkWriteRouter::new();
-        let vectors: Vec<VectorRecord> = vec![];
+        let records: Vec<ProximaRecord> = vec![];
 
-        let decision = router.should_use_direct_write(&vectors);
-        assert!(!decision.use_direct_write);
+        let decision = router.route_records(&records);
+        assert!(!decision.use_bulk_lane);
         assert_eq!(decision.estimated_size_bytes, 0);
         assert_eq!(decision.vector_count, 0);
     }

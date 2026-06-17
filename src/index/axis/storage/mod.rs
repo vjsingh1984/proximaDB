@@ -18,6 +18,6 @@ pub use format_strategy::{
 
 pub use recovery::{IndexRecoveryManager, RecoveryResult, RecoveryStrategy};
 
-pub use ivf_posting_list_storage::{PostingEntry, PostingList, PostingListStorage};
+pub use ivf_posting_list_storage::{IvfClusterPostingListStorage, PostingEntry, PostingList};
 
 pub use universal_index_storage::{IndexStorageConfig, UniversalIndexStorage};

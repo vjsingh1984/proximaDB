@@ -37,10 +37,13 @@ pub mod registry;
 
 use anyhow::Result;
 use arrow_schema::{Field as ArrowField, Schema as ArrowSchema};
+use proximadb_catalog::{
+    CatalogColumn, CatalogIndex, CatalogProjection, CatalogStorageLayout,
+    CatalogStorageSpecialization, CatalogTableSchema, CatalogWorkloadProfile,
+    RelationalCapabilities,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-
-use super::types::{CatalogColumn, CatalogIndex, CatalogTableSchema};
 
 // Re-exports
 pub use enforcement::{ConstraintEnforcer, ConstraintViolation, EnforcementResult};
@@ -187,6 +190,24 @@ pub struct ObjectSchema {
     pub constraints: Vec<TableConstraint>,
     /// Indexes
     pub indexes: Vec<CatalogIndex>,
+    /// Cataloged storage layouts and authority modes.
+    #[serde(default)]
+    pub storage_layouts: Vec<CatalogStorageLayout>,
+    /// Cataloged rebuildable projections/access methods.
+    #[serde(default)]
+    pub projections: Vec<CatalogProjection>,
+    /// Optional relational integrity and transaction capabilities.
+    #[serde(default)]
+    pub relational_capabilities: RelationalCapabilities,
+    /// Intended workload profile for routing/planning.
+    #[serde(default)]
+    pub workload_profile: CatalogWorkloadProfile,
+    /// Primary physical/access-method specialization for routing/planning.
+    #[serde(default)]
+    pub storage_specialization: CatalogStorageSpecialization,
+    /// Table-level catalog properties, including route knobs.
+    #[serde(default)]
+    pub properties: HashMap<String, String>,
     /// Model-specific properties
     pub model_properties: ModelProperties,
 }
@@ -198,6 +219,12 @@ impl Default for ObjectSchema {
             primary_key: Vec::new(),
             constraints: Vec::new(),
             indexes: Vec::new(),
+            storage_layouts: Vec::new(),
+            projections: Vec::new(),
+            relational_capabilities: RelationalCapabilities::default(),
+            workload_profile: CatalogWorkloadProfile::default(),
+            storage_specialization: CatalogStorageSpecialization::default(),
+            properties: HashMap::new(),
             model_properties: ModelProperties::None,
         }
     }
@@ -211,6 +238,12 @@ impl ObjectSchema {
             primary_key: schema.primary_key.clone(),
             constraints: Vec::new(),
             indexes: schema.indexes.clone(),
+            storage_layouts: schema.storage_layouts.clone(),
+            projections: schema.projections.clone(),
+            relational_capabilities: schema.relational_capabilities.clone(),
+            workload_profile: schema.workload_profile,
+            storage_specialization: schema.storage_specialization,
+            properties: schema.properties.clone(),
             model_properties: ModelProperties::Rdbms(RdbmsProperties::default()),
         }
     }
@@ -230,7 +263,13 @@ impl ObjectSchema {
         let fields: Vec<ArrowField> = self
             .columns
             .iter()
-            .map(|col| ArrowField::new(&col.name, col.data_type.to_arrow_datatype(), col.nullable))
+            .map(|col| {
+                ArrowField::new(
+                    &col.name,
+                    proximadb_catalog::catalog_arrow_type(&col.data_type),
+                    col.nullable,
+                )
+            })
             .collect();
         Ok(ArrowSchema::new(fields))
     }
@@ -747,7 +786,7 @@ impl CatalogObject {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::types::CatalogDataType;
+    use proximadb_data_model::ProximaType;
 
     #[test]
     fn test_object_type_display() {
@@ -784,7 +823,7 @@ mod tests {
     #[test]
     fn test_catalog_object_with_schema() {
         let schema = ObjectSchema {
-            columns: vec![CatalogColumn::new(1, "id", CatalogDataType::Int64)],
+            columns: vec![CatalogColumn::new(1, "id", ProximaType::Int64)],
             primary_key: vec!["id".to_string()],
             ..Default::default()
         };
@@ -804,7 +843,7 @@ mod tests {
     #[test]
     fn test_schema_update_with_history() {
         let schema1 = ObjectSchema {
-            columns: vec![CatalogColumn::new(1, "id", CatalogDataType::Int64)],
+            columns: vec![CatalogColumn::new(1, "id", ProximaType::Int64)],
             ..Default::default()
         };
 
@@ -818,8 +857,8 @@ mod tests {
 
         let schema2 = ObjectSchema {
             columns: vec![
-                CatalogColumn::new(1, "id", CatalogDataType::Int64),
-                CatalogColumn::new(2, "name", CatalogDataType::String),
+                CatalogColumn::new(1, "id", ProximaType::Int64),
+                CatalogColumn::new(2, "name", ProximaType::String),
             ],
             ..Default::default()
         };

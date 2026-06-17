@@ -13,7 +13,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import pytest
@@ -90,7 +90,7 @@ class EmbeddedProximaDBTest:
                 pass
 
     def create_collection(
-        self, name: Optional[str] = None, dimension: int = 384, engine: str = "sst"
+        self, name: str | None = None, dimension: int = 384, engine: str = "sst"
     ) -> str:
         """
         Create a test collection
@@ -113,8 +113,8 @@ class EmbeddedProximaDBTest:
         collection_name: str,
         count: int = 10,
         dimension: int = 384,
-        metadata_template: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        metadata_template: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Insert test vectors into collection
 
@@ -162,8 +162,8 @@ class EmbeddedProximaDBTest:
         collection_name: str,
         query_vector: np.ndarray,
         top_k: int = 10,
-        filter_expr: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        filter_expr: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Search for similar vectors
 
@@ -192,7 +192,7 @@ class EmbeddedProximaDBTest:
 
     def verify_search_results(
         self,
-        results: List[Dict[str, Any]],
+        results: list[dict[str, Any]],
         expected_count: int,
         check_scores: bool = True,
     ):

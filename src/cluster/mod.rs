@@ -48,10 +48,15 @@
 //! └─────────────────────────────────────────────────────────┘
 //! ```
 
+pub mod cache_affinity;
 pub mod consensus;
 pub mod distributed_ops;
 pub mod metadata_service;
 pub mod node_registry;
+/// Write-side affinity for (tenant_id, collection_id) → primary_pod
+/// bindings. Complementary to [`cache_affinity`]: durable, authoritative,
+/// drives write routing. See module doc for the read/write split.
+pub mod primary_pod_registry;
 pub mod replication;
 pub mod routing;
 pub mod shard;
@@ -62,17 +67,25 @@ pub mod rpc;
 
 use anyhow::Result;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 
+pub use cache_affinity::{AffinityEntry, CacheAffinityRegistry};
 pub use consensus::{ConsensusConfig, ConsensusState, RaftConsensus};
+/// Backwards-compat alias for the per-shard SearchResult re-exported from distributed_ops.
+pub use distributed_ops::ShardSearchResult as SearchResult;
 pub use distributed_ops::{
     ConsistencyLevel, DistributedCollectionOps, DistributedOpsConfig, DistributedSearchRequest,
     DistributedSearchResult, DistributedWriteRequest, DistributedWriteResult, QueryContext,
-    RetryConfig, SearchResult, WriteRecord,
+    RetryConfig, ShardSearchResult, WriteRecord,
 };
 pub use metadata_service::{ClusterMetadata, MetadataService, MetadataServiceConfig};
 pub use node_registry::{
     NodeHealth, NodeInfo, NodeRegistry, NodeRegistryConfig, NodeRole, NodeStatus,
+};
+pub use primary_pod_registry::{
+    AssignmentReason, PrimaryPod, PrimaryPodRegistry, WriteRoutingDecision, consult_for_write,
+    resolve_self_pod_id,
 };
 pub use replication::{
     EngineReplication, ReplicaState, ReplicationAck, ReplicationConfig, ReplicationEntry,
@@ -82,6 +95,14 @@ pub use routing::{RouteContext, RouteDecision, RoutingConfig, RoutingService};
 pub use shard::{
     MetadataBounds, PartitionConfig, PartitionStrategy, Shard, ShardConfig, ShardId, ShardManager,
     ShardPlacement, ShardState,
+};
+
+// HMGI distributed partitioning surfaces used by cluster-aware AXIS routing.
+pub use crate::index::axis::hmgi::{
+    ClusterMembership as HmgiClusterMembership, ClusterNode as HmgiClusterNode,
+    ClusterNodeId as HmgiClusterNodeId, DistributedPartitionLocator as HmgiPartitionLocator,
+    HmgiQueryCoordinator, HmgiRouteStats, HmgiSearchRequest, NetworkService as HmgiNetworkService,
+    NodeState as HmgiNodeState,
 };
 
 // Re-export RPC abstractions for inter-node communication
@@ -98,44 +119,9 @@ pub use rpc::{
     SearchFanout,
 };
 
-/// Cluster configuration
-#[derive(Debug, Clone)]
-pub struct ClusterConfig {
-    /// Unique cluster identifier
-    pub cluster_id: String,
-    /// This node's identifier
-    pub node_id: String,
-    /// This node's advertised address
-    pub advertise_addr: String,
-    /// List of seed nodes for discovery
-    pub seed_nodes: Vec<String>,
-    /// Metadata service configuration
-    pub metadata: MetadataServiceConfig,
-    /// Node registry configuration
-    pub node_registry: NodeRegistryConfig,
-    /// Consensus configuration
-    pub consensus: ConsensusConfig,
-    /// Routing configuration
-    pub routing: RoutingConfig,
-    /// Shard configuration
-    pub shard: ShardConfig,
-}
-
-impl Default for ClusterConfig {
-    fn default() -> Self {
-        Self {
-            cluster_id: "proximadb-cluster".to_string(),
-            node_id: uuid::Uuid::new_v4().to_string(),
-            advertise_addr: "127.0.0.1:5679".to_string(),
-            seed_nodes: vec![],
-            metadata: MetadataServiceConfig::default(),
-            node_registry: NodeRegistryConfig::default(),
-            consensus: ConsensusConfig::default(),
-            routing: RoutingConfig::default(),
-            shard: ShardConfig::default(),
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::ClusterConfig;
 
 /// Main cluster manager that coordinates all distributed components
 pub struct ClusterManager {
@@ -145,7 +131,7 @@ pub struct ClusterManager {
     consensus: Arc<RwLock<RaftConsensus>>,
     routing_service: Arc<RoutingService>,
     shard_manager: Arc<ShardManager>,
-    is_leader: Arc<RwLock<bool>>,
+    is_leader: Arc<AtomicBool>,
 }
 
 impl ClusterManager {
@@ -164,7 +150,7 @@ impl ClusterManager {
             consensus,
             routing_service,
             shard_manager,
-            is_leader: Arc::new(RwLock::new(false)),
+            is_leader: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -228,7 +214,7 @@ impl ClusterManager {
 
     /// Check if this node is the current leader
     pub async fn is_leader(&self) -> bool {
-        *self.is_leader.read().await
+        self.is_leader.load(Ordering::Acquire)
     }
 
     /// Get the metadata service
@@ -286,6 +272,35 @@ pub struct ClusterHealth {
     pub unhealthy_nodes: usize,
     /// Total number of shards distributed across the cluster
     pub shard_count: usize,
+}
+
+// ── ClusterPort ───────────────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::ClusterPort for ClusterManager {
+    async fn is_leader(&self) -> bool {
+        ClusterManager::is_leader(self).await
+    }
+
+    async fn health(&self) -> proximadb_runtime::ClusterHealthStatus {
+        let h = ClusterManager::health(self).await;
+        proximadb_runtime::ClusterHealthStatus {
+            cluster_id: h.cluster_id,
+            is_leader: h.is_leader,
+            total_nodes: h.total_nodes,
+            healthy_nodes: h.healthy_nodes,
+            unhealthy_nodes: h.unhealthy_nodes,
+            shard_count: h.shard_count,
+        }
+    }
+
+    async fn start(&self) -> anyhow::Result<()> {
+        ClusterManager::start(self).await
+    }
+
+    async fn stop(&self) -> anyhow::Result<()> {
+        ClusterManager::stop(self).await
+    }
 }
 
 #[cfg(test)]

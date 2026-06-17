@@ -61,7 +61,7 @@
 //!
 //! ### LOGS(namespace) / METRICS(namespace)
 //!
-//! Queries observability data (logs and metrics).
+//! Queries observability data (logs, metrics, and traces).
 //!
 //! ```sql
 //! -- Query recent logs
@@ -69,6 +69,9 @@
 //!
 //! -- Query metrics
 //! SELECT * FROM METRICS('system') WHERE metric_name = 'cpu_usage';
+//!
+//! -- Query traces
+//! SELECT * FROM TRACES('production');
 //! ```
 //!
 //! ### Vector Distance Operator (<->)
@@ -105,7 +108,7 @@
 //! Federated queries are available via:
 //!
 //! - **REST**: `POST /api/v1/unified/federated` with `{ "query": "SELECT ..." }`
-//! - **gRPC**: `SqlService.ExecuteSql` with federated SQL
+//! - **gRPC**: `QueryService.ExecuteQuery` with federated SQL
 //! - **PostgreSQL Wire Protocol**: Connect with psql and run queries directly
 //!
 //! ## Example Usage (REST)
@@ -122,7 +125,7 @@ pub mod parser;
 
 // Re-exports
 pub use execution::{ExecutionResult, FederatedExecutor};
-pub use optimizer::{CrossModelOptimizer, PlanNode, QueryPlan};
+pub use optimizer::{CrossModelOptimizer, FederatedQueryPlan, PlanNode};
 pub use parser::{FederatedParser, FederatedQuery, QueryType};
 
 use anyhow::Result;
@@ -131,7 +134,7 @@ use tracing::debug;
 
 use super::cache::{CacheInvalidator, QueryKey, QueryResultCache};
 use crate::catalog::CatalogManager;
-use crate::storage::multimodel::MultiModelStorageFacade;
+use crate::storage::MultiModelStorageFacade;
 
 /// Federated query context containing all necessary components
 pub struct FederatedQueryContext {
@@ -162,6 +165,42 @@ impl FederatedQueryContext {
         provider: std::sync::Arc<dyn crate::query::federated::optimizer::StatisticsProvider>,
     ) -> Self {
         self.optimizer.set_statistics_provider(provider);
+        self
+    }
+
+    /// Reuse the live collection metadata service so federated vector queries
+    /// inherit storage assignments, engines, and canonical collection IDs.
+    pub fn with_collection_port(
+        mut self,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
+    ) -> Self {
+        self.executor = self.executor.with_collection_port(collection_port);
+        self
+    }
+
+    /// Reuse the existing vector operations service so federated vector SQL
+    /// follows the same search path as REST/gRPC/embedded direct search.
+    pub fn with_vector_operations(
+        mut self,
+        vector_operations_service: Arc<
+            crate::services::operations::vectors::VectorOperationsService,
+        >,
+    ) -> Self {
+        self.executor = self
+            .executor
+            .with_vector_operations(vector_operations_service);
+        self
+    }
+
+    /// Wire the rank-pipeline singleton so SQL RERANK(...) shares the
+    /// REST profile registry + candidate provider + scorer wiring
+    /// (R-7c.4d). Without this, the federated executor falls back to
+    /// the first-phase-only stub for any rank profile.
+    pub fn with_rank_services(
+        mut self,
+        rank_services: Arc<crate::network::rest::v1::rank::RankServices>,
+    ) -> Self {
+        self.executor = self.executor.with_rank_services(rank_services);
         self
     }
 
@@ -260,7 +299,7 @@ impl FederatedQueryContext {
 
             if federated_query.query_type == QueryType::Sql {
                 return Err(anyhow::anyhow!(
-                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, or METRICS"
+                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, METRICS, or TRACES"
                 ));
             }
 
@@ -315,7 +354,7 @@ impl FederatedQueryContext {
             let federated_query = self.parser.parse(sql)?;
             if federated_query.query_type == QueryType::Sql {
                 return Err(anyhow::anyhow!(
-                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, or METRICS"
+                    "Standard relational SQL execution is not configured in FederatedQueryContext; use columnar providers or SQL extensions such as VECTOR_SEARCH, GRAPH_QUERY, DOCUMENT_QUERY, LOGS, METRICS, or TRACES"
                 ));
             }
             let plan = self.optimizer.optimize(&federated_query)?;
@@ -352,23 +391,31 @@ impl FederatedQueryContext {
 #[cfg(test)]
 mod tests {
     use crate::core::search::results::OptimizedSearchRecord;
+    use crate::graph::engines::GraphEngine;
+    use crate::graph::{Edge, EdgeId, Node, NodeId};
     use crate::proto::proximadb_v1::{
-        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlArray, SqlObject, SqlValue,
-        sql_value,
+        DocumentCollectionConfig, DocumentFilter, DocumentUpdate, LogEntry, LogFilter,
+        MetricAggregation, MetricSample, ObservabilityNamespaceConfig, PropertyValue,
+        RetentionConfig, Severity, SqlArray, SqlObject, SqlValue, TraceData, VectorData,
+        property_value, sql_value,
     };
     use crate::query::federated::{FederatedQueryContext, QueryResultCache};
     use crate::storage::MultiModelStorageFacade;
     use crate::storage::multimodel::stores::{
-        DocumentStore, DocumentStoreConfig, VectorStore, VectorStoreConfig,
+        DocumentStore, DocumentStoreConfig, GraphStore, GraphStoreConfig, ObservabilityStore,
+        ObservabilityStoreConfig, VectorStore, VectorStoreConfig,
     };
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::traits::{
-        CompactionParameters, DocumentCollectionInfo, DocumentRecord, DocumentStorageOperations,
-        FlushParameters, UnifiedStorageEngine,
+        CompactionParameters, DataPointValue, DocumentCollectionInfo, DocumentRecord,
+        DocumentStorageOperations, FlushParameters, IngestResult, LogQueryResult,
+        MetricAggregationParams, MetricAggregationResult, NamespaceInfo,
+        ObservabilityStorageOperations, TimeSeriesData, UnifiedStorageFormat,
     };
     use anyhow::Result;
     use arrow::array::{Float32Array, Float64Array, Int64Array, StringArray};
     use async_trait::async_trait;
+    use proximadb_kernel::error::ProximaDBError;
     use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
 
@@ -376,6 +423,7 @@ mod tests {
         filesystem_factory: FilesystemFactory,
         results: Vec<OptimizedSearchRecord>,
         query_vectors: Mutex<Vec<Vec<f32>>>,
+        storage_urls: Mutex<Vec<String>>,
     }
 
     impl MockVectorEngine {
@@ -387,6 +435,7 @@ mod tests {
                 filesystem_factory,
                 results,
                 query_vectors: Mutex::new(Vec::new()),
+                storage_urls: Mutex::new(Vec::new()),
             }
         }
 
@@ -396,10 +445,17 @@ mod tests {
                 .expect("mock vector engine query tracking lock should not be poisoned")
                 .clone()
         }
+
+        fn recorded_storage_urls(&self) -> Vec<String> {
+            self.storage_urls
+                .lock()
+                .expect("mock vector engine storage tracking lock should not be poisoned")
+                .clone()
+        }
     }
 
     #[async_trait]
-    impl UnifiedStorageEngine for MockVectorEngine {
+    impl UnifiedStorageFormat for MockVectorEngine {
         fn engine_name(&self) -> &'static str {
             "mock-vector"
         }
@@ -408,8 +464,8 @@ mod tests {
             "0"
         }
 
-        fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-            crate::storage::traits::StorageEngineStrategy::Sst
+        fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+            crate::storage::traits::StorageFormatStrategy::Sst
         }
 
         async fn do_flush(
@@ -435,7 +491,7 @@ mod tests {
             _collection_id: &str,
             _base_path: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        ) -> Result<Option<proximadb_records::ProximaRecord>> {
             Ok(None)
         }
 
@@ -449,11 +505,122 @@ mod tests {
                     .expect("mock vector engine query tracking lock should not be poisoned")
                     .push(vector.to_vec());
             }
+            if let Some(storage_url) = ctx.storage_url() {
+                self.storage_urls
+                    .lock()
+                    .expect("mock vector engine storage tracking lock should not be poisoned")
+                    .push(storage_url.to_string());
+            }
             Ok(self.results.clone())
         }
 
         fn get_filesystem_factory(&self) -> &FilesystemFactory {
             &self.filesystem_factory
+        }
+    }
+
+    struct MockGraphEngine {
+        nodes: Vec<Arc<Node>>,
+    }
+
+    impl MockGraphEngine {
+        fn new(nodes: Vec<Node>) -> Self {
+            Self {
+                nodes: nodes.into_iter().map(Arc::new).collect(),
+            }
+        }
+
+        fn unsupported_graph_operation() -> ProximaDBError {
+            ProximaDBError::NotImplemented("mock graph mutation not implemented".to_string())
+        }
+    }
+
+    #[async_trait]
+    impl GraphEngine for MockGraphEngine {
+        async fn insert_node(&self, _node: Node) -> std::result::Result<Arc<Node>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        fn get_node(&self, id: &NodeId) -> std::result::Result<Option<Arc<Node>>, ProximaDBError> {
+            Ok(self.nodes.iter().find(|node| node.id == *id).cloned())
+        }
+
+        async fn update_node(&self, _node: Node) -> std::result::Result<Arc<Node>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        async fn delete_node(
+            &self,
+            _id: &NodeId,
+        ) -> std::result::Result<Option<Arc<Node>>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        async fn insert_edge(&self, _edge: Edge) -> std::result::Result<Arc<Edge>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        fn get_edge(&self, _id: &EdgeId) -> std::result::Result<Option<Arc<Edge>>, ProximaDBError> {
+            Ok(None)
+        }
+
+        async fn update_edge(&self, _edge: Edge) -> std::result::Result<Arc<Edge>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        async fn delete_edge(
+            &self,
+            _id: &EdgeId,
+        ) -> std::result::Result<Option<Arc<Edge>>, ProximaDBError> {
+            Err(Self::unsupported_graph_operation())
+        }
+
+        fn get_outgoing_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> std::result::Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Ok(Vec::new())
+        }
+
+        fn get_incoming_edges(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> std::result::Result<Vec<Arc<Edge>>, ProximaDBError> {
+            Ok(Vec::new())
+        }
+
+        fn get_neighbors(
+            &self,
+            _node_id: &NodeId,
+            _edge_type: Option<&str>,
+        ) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+            Ok(Vec::new())
+        }
+
+        fn get_nodes_by_label(
+            &self,
+            label: &str,
+        ) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+            Ok(self
+                .nodes
+                .iter()
+                .filter(|node| node.labels.iter().any(|node_label| node_label == label))
+                .cloned()
+                .collect())
+        }
+
+        fn node_count(&self) -> std::result::Result<usize, ProximaDBError> {
+            Ok(self.nodes.len())
+        }
+
+        fn edge_count(&self) -> std::result::Result<usize, ProximaDBError> {
+            Ok(0)
+        }
+
+        fn get_all_nodes(&self) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+            Ok(self.nodes.clone())
         }
     }
 
@@ -468,29 +635,96 @@ mod tests {
 
         fn matches_filter(document: &DocumentRecord, filter: &DocumentFilter) -> bool {
             filter.conditions.iter().all(|condition| {
-                if condition.operator != crate::proto::proximadb_v1::DocFilterOperator::Eq as i32 {
-                    return false;
+                let operator =
+                    crate::proto::proximadb_v1::DocFilterOperator::try_from(condition.operator)
+                        .unwrap_or(crate::proto::proximadb_v1::DocFilterOperator::Unspecified);
+                let path = condition.path.strip_prefix("$.").unwrap_or(&condition.path);
+                let actual = document.document.fields.get(path);
+                match operator {
+                    crate::proto::proximadb_v1::DocFilterOperator::Eq => {
+                        Self::sql_values_equal(actual, condition.value.as_ref())
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Ne => {
+                        !Self::sql_values_equal(actual, condition.value.as_ref())
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Gt => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left > right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Gte => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left >= right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Lt => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left < right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Lte => {
+                        Self::compare_sql_values(actual, condition.value.as_ref(), |left, right| {
+                            left <= right
+                        })
+                    }
+                    crate::proto::proximadb_v1::DocFilterOperator::Contains => {
+                        let actual = actual.and_then(Self::sql_value_string);
+                        let expected = condition.value.as_ref().and_then(Self::sql_value_string);
+                        actual
+                            .zip(expected)
+                            .is_some_and(|(left, right)| left.contains(&right))
+                    }
+                    _ => false,
                 }
-
-                let expected = condition
-                    .value
-                    .as_ref()
-                    .and_then(|value| match &value.value {
-                        Some(sql_value::Value::StringValue(s)) => Some(s.as_str()),
-                        _ => None,
-                    });
-
-                let actual = document
-                    .document
-                    .fields
-                    .get(&condition.path)
-                    .and_then(|value| match &value.value {
-                        Some(sql_value::Value::StringValue(s)) => Some(s.as_str()),
-                        _ => None,
-                    });
-
-                expected.zip(actual).map(|(l, r)| l == r).unwrap_or(false)
             })
+        }
+
+        fn sql_values_equal(left: Option<&SqlValue>, right: Option<&SqlValue>) -> bool {
+            match (
+                left.and_then(Self::sql_value_string),
+                right.and_then(Self::sql_value_string),
+            ) {
+                (Some(left), Some(right)) => left == right,
+                _ => match (
+                    left.and_then(Self::sql_value_number),
+                    right.and_then(Self::sql_value_number),
+                ) {
+                    (Some(left), Some(right)) => (left - right).abs() < f64::EPSILON,
+                    _ => false,
+                },
+            }
+        }
+
+        fn compare_sql_values<F>(
+            left: Option<&SqlValue>,
+            right: Option<&SqlValue>,
+            predicate: F,
+        ) -> bool
+        where
+            F: FnOnce(f64, f64) -> bool,
+        {
+            left.and_then(Self::sql_value_number)
+                .zip(right.and_then(Self::sql_value_number))
+                .is_some_and(|(left, right)| predicate(left, right))
+        }
+
+        fn sql_value_string(value: &SqlValue) -> Option<String> {
+            match value.value.as_ref()? {
+                sql_value::Value::StringValue(value) => Some(value.clone()),
+                sql_value::Value::BoolValue(value) => Some(value.to_string()),
+                sql_value::Value::Int64Value(value) => Some(value.to_string()),
+                sql_value::Value::NumberValue(value) => Some(value.to_string()),
+                _ => None,
+            }
+        }
+
+        fn sql_value_number(value: &SqlValue) -> Option<f64> {
+            match value.value.as_ref()? {
+                sql_value::Value::Int64Value(value) => Some(*value as f64),
+                sql_value::Value::NumberValue(value) => Some(*value),
+                sql_value::Value::StringValue(value) => value.parse().ok(),
+                _ => None,
+            }
         }
     }
 
@@ -568,9 +802,171 @@ mod tests {
         }
     }
 
+    struct MockObservabilityService {
+        logs: HashMap<String, Vec<LogEntry>>,
+        metrics: HashMap<String, MetricAggregationResult>,
+        traces: HashMap<String, Vec<TraceData>>,
+        metric_params: Mutex<Vec<(String, MetricAggregationParams)>>,
+    }
+
+    impl MockObservabilityService {
+        fn new(
+            logs: HashMap<String, Vec<LogEntry>>,
+            metrics: HashMap<String, MetricAggregationResult>,
+        ) -> Self {
+            Self {
+                logs,
+                metrics,
+                traces: HashMap::new(),
+                metric_params: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn with_traces(mut self, traces: HashMap<String, Vec<TraceData>>) -> Self {
+            self.traces = traces;
+            self
+        }
+
+        fn recorded_metric_params(&self) -> Vec<(String, MetricAggregationParams)> {
+            self.metric_params
+                .lock()
+                .expect("metric params lock should not be poisoned")
+                .clone()
+        }
+    }
+
+    #[async_trait]
+    impl ObservabilityStorageOperations for MockObservabilityService {
+        async fn ingest_logs(&self, _namespace: &str, logs: Vec<LogEntry>) -> Result<IngestResult> {
+            Ok(IngestResult {
+                ingested: logs.len() as u64,
+                failed: 0,
+                errors: vec![],
+                processing_time_ms: 0,
+            })
+        }
+
+        async fn ingest_metrics(
+            &self,
+            _namespace: &str,
+            metrics: Vec<MetricSample>,
+        ) -> Result<IngestResult> {
+            Ok(IngestResult {
+                ingested: metrics.len() as u64,
+                failed: 0,
+                errors: vec![],
+                processing_time_ms: 0,
+            })
+        }
+
+        async fn ingest_traces(
+            &self,
+            _namespace: &str,
+            traces: Vec<TraceData>,
+        ) -> Result<IngestResult> {
+            Ok(IngestResult {
+                ingested: traces.len() as u64,
+                failed: 0,
+                errors: vec![],
+                processing_time_ms: 0,
+            })
+        }
+
+        async fn query_logs(
+            &self,
+            namespace: &str,
+            _start_time_ns: i64,
+            _end_time_ns: i64,
+            _filter: Option<LogFilter>,
+            limit: u32,
+        ) -> Result<LogQueryResult> {
+            let logs = self
+                .logs
+                .get(namespace)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .take(limit as usize)
+                .collect::<Vec<_>>();
+            Ok(LogQueryResult {
+                total_matched: logs.len() as u64,
+                logs,
+                next_cursor: None,
+                query_time_ms: 0,
+            })
+        }
+
+        async fn aggregate_metrics(
+            &self,
+            namespace: &str,
+            params: MetricAggregationParams,
+        ) -> Result<MetricAggregationResult> {
+            self.metric_params
+                .lock()
+                .expect("metric params lock should not be poisoned")
+                .push((namespace.to_string(), params));
+            Ok(self
+                .metrics
+                .get(namespace)
+                .cloned()
+                .unwrap_or(MetricAggregationResult {
+                    series: vec![],
+                    query_time_ms: 0,
+                }))
+        }
+
+        async fn query_traces(
+            &self,
+            namespace: &str,
+            _start_time_ns: i64,
+            _end_time_ns: i64,
+            _trace_id: Option<String>,
+            _service: Option<String>,
+            limit: u32,
+        ) -> Result<Vec<TraceData>> {
+            Ok(self
+                .traces
+                .get(namespace)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .take(limit as usize)
+                .collect())
+        }
+
+        async fn create_namespace(&self, config: ObservabilityNamespaceConfig) -> Result<String> {
+            Ok(config.name)
+        }
+
+        async fn list_namespaces(&self) -> Result<Vec<NamespaceInfo>> {
+            Ok(self
+                .logs
+                .iter()
+                .map(|(name, logs)| NamespaceInfo {
+                    name: name.clone(),
+                    log_count: logs.len() as u64,
+                    metric_count: 0,
+                    trace_count: 0,
+                    retention_config: Some(RetentionConfig {
+                        hot_retention_hours: 24,
+                        warm_retention_days: 7,
+                        cold_retention_days: 30,
+                        archive_retention_days: 0,
+                    }),
+                })
+                .collect())
+        }
+    }
+
     fn string_value(value: &str) -> SqlValue {
         SqlValue {
             value: Some(sql_value::Value::StringValue(value.to_string())),
+        }
+    }
+
+    fn int_value(value: i64) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::Int64Value(value)),
         }
     }
 
@@ -582,6 +978,17 @@ mod tests {
                     .map(|value| SqlValue {
                         value: Some(sql_value::Value::NumberValue(*value)),
                     })
+                    .collect(),
+            })),
+        }
+    }
+
+    fn object_value(fields: Vec<(&str, SqlValue)>) -> SqlValue {
+        SqlValue {
+            value: Some(sql_value::Value::ObjectValue(SqlObject {
+                fields: fields
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value))
                     .collect(),
             })),
         }
@@ -613,6 +1020,169 @@ mod tests {
         assert!(ctx.invalidator.is_some());
         assert!(ctx.get_cache().is_some());
         assert!(ctx.get_invalidator().is_some());
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_uses_collection_service_storage_assignment() {
+        use crate::core::config::{StorageConfig, StorageLocation};
+        use crate::proto::proximadb_v1::{CollectionConfig, StorageEngine};
+        use crate::services::collection::manager::CollectionService;
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().expect("temp dir should be created");
+        let base_url = format!("file://{}", temp_dir.path().display());
+
+        let metadata_backend = Arc::new(
+            UniversalMetadataBackend::new(
+                UniversalMetadataConfig {
+                    storage_url: format!("{}/metadata", base_url),
+                    compression: false,
+                    enable_snapshots: false,
+                    snapshot_threshold: 1000,
+                    keep_snapshots: 2,
+                    backup_url: None,
+                    temp_dir: None,
+                },
+                Arc::new(
+                    FilesystemFactory::create(FilesystemConfig::default())
+                        .await
+                        .expect("filesystem factory should be created"),
+                ),
+            )
+            .await
+            .expect("metadata backend should be created"),
+        );
+
+        let mut storage_config = StorageConfig::default();
+        storage_config.storage_locations = vec![StorageLocation {
+            url: base_url.clone(),
+            weight: 1,
+            tags: vec!["local".to_string()],
+        }];
+        storage_config.metadata_url = format!("{}/metadata", base_url);
+
+        let collection_service = Arc::new(
+            CollectionService::new(metadata_backend, storage_config)
+                .await
+                .expect("collection service should be created"),
+        );
+
+        let create_result = collection_service
+            .create_collection(&CollectionConfig {
+                name: "productsaa".to_string(),
+                dimension: 2,
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            })
+            .await
+            .expect("collection creation should succeed");
+
+        assert!(create_result.success, "collection creation should succeed");
+
+        let collection = create_result
+            .collection
+            .expect("created collection should be returned");
+        let expected_storage = collection
+            .storage_assignment
+            .as_ref()
+            .map(|assignment| assignment.base_location.clone())
+            .expect("created collection should have storage assignment");
+
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.99)])
+                .await,
+        );
+        let vector_store = Arc::new(VectorStore::with_engine(vector_engine.clone()));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage).with_collection_port(
+            collection_service.clone() as Arc<dyn proximadb_runtime::CollectionPort>,
+        );
+
+        let result = ctx
+            .execute_uncached("SELECT id, score FROM VECTOR_SEARCH('productsaa', '[0.1, 0.2]', 1)")
+            .await
+            .expect("vector search should execute");
+
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(
+            vector_engine.recorded_storage_urls(),
+            vec![expected_storage],
+            "federated vector search should reuse the collection storage assignment",
+        );
+    }
+
+    #[tokio::test]
+    async fn test_vector_search_uses_normalized_similarity_for_score_column() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![
+                OptimizedSearchRecord {
+                    id: "doc-1".to_string(),
+                    vector_id: Some("doc-1".to_string()),
+                    score: 2.0,
+                    similarity: Some(1.0),
+                    vector: None,
+                    metadata: HashMap::new(),
+                    debug_info: None,
+                    version: None,
+                    timestamp: None,
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: Vec::new(),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                    ..Default::default()
+                },
+                OptimizedSearchRecord {
+                    id: "doc-2".to_string(),
+                    vector_id: Some("doc-2".to_string()),
+                    score: 1.0,
+                    similarity: Some(0.8535534),
+                    vector: None,
+                    metadata: HashMap::new(),
+                    debug_info: None,
+                    version: None,
+                    timestamp: None,
+                    updated_at: None,
+                    expires_at: None,
+                    source: None,
+                    expanded_context: Vec::new(),
+                    semantic_similarity: None,
+                    quantization_info: None,
+                    engine_stats: None,
+                    index_path: None,
+                    ..Default::default()
+                },
+            ])
+            .await,
+        ) as Arc<dyn UnifiedStorageFormat>;
+        let vector_store =
+            Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
+        let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT id, score FROM VECTOR_SEARCH('products', '[0.1]', 2)")
+            .await
+            .expect("vector search should execute");
+
+        let batch = result
+            .batches
+            .first()
+            .expect("result should contain a batch");
+        let scores = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("score column should be Float32");
+
+        assert!((scores.value(0) - 1.0).abs() < f32::EPSILON);
+        assert!((scores.value(1) - 0.8535534).abs() < 1e-6);
     }
 
     #[test]
@@ -711,7 +1281,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-2".to_string(), 0.87),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
 
@@ -777,7 +1347,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-2".to_string(), 0.87),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -818,7 +1388,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -859,7 +1429,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-3".to_string(), 0.47),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -915,7 +1485,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-2".to_string(), 0.12),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -964,7 +1534,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-1".to_string(), 0.87),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -993,7 +1563,7 @@ mod tests {
         let vector_engine = Arc::new(
             MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
                 .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1024,7 +1594,7 @@ mod tests {
                 OptimizedSearchRecord::new("doc-1".to_string(), 0.91),
             ])
             .await,
-        ) as Arc<dyn UnifiedStorageEngine>;
+        ) as Arc<dyn UnifiedStorageFormat>;
         let vector_store =
             Arc::new(VectorStore::new(VectorStoreConfig::default()).with_sst_engine(vector_engine));
         let storage = Arc::new(MultiModelStorageFacade::new().with_vector_store(vector_store));
@@ -1066,7 +1636,7 @@ mod tests {
         );
         let vector_store = Arc::new(
             VectorStore::new(VectorStoreConfig::default())
-                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageEngine>),
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
         );
 
         let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
@@ -1133,6 +1703,1634 @@ mod tests {
             vector_engine.recorded_queries(),
             vec![vec![0.1, 0.2], vec![0.3, 0.4]]
         );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_executes_for_nested_document_vector_path() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "profile-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "profile".to_string(),
+                            object_value(vec![("embedding", array_value(&[0.1, 0.2]))]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "profile-2".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "profile".to_string(),
+                            object_value(vec![("embedding", array_value(&[0.3, 0.4]))]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.profile.embedding, 1) v ON true",
+            )
+            .await
+            .expect("nested function-backed lateral join should execute");
+
+        assert_eq!(result.row_count(), 2);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(
+            field_names,
+            vec![
+                "id",
+                "document",
+                "document.profile.embedding",
+                "right_id",
+                "score"
+            ]
+        );
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_executes_for_graph_vector_property_path() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "node-1".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.9, 0.1],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "node-2".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.2, 0.8],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Entity) RETURN n') g JOIN LATERAL VECTOR_SEARCH('products', g.properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("graph-backed correlated vector search should execute");
+
+        assert_eq!(result.row_count(), 2);
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(
+            field_names,
+            vec!["node_id", "label", "properties", "embedding", "id", "score"]
+        );
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.9, 0.1], vec![0.2, 0.8]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_skips_document_rows_without_correlated_vector() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "profile-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[0.1, 0.2]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "profile-2".to_string(),
+                    document: sql_object(&[("title", "No embedding")]),
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
+            )
+            .await
+            .expect("lateral join should skip rows without a correlated vector");
+
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(vector_engine.recorded_queries(), vec![vec![0.1, 0.2]]);
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_skips_graph_rows_without_correlated_vector_property() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "node-1".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.9, 0.1],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "node-2".to_string(),
+                    labels: vec!["Entity".to_string()],
+                    properties: HashMap::from([(
+                        "title".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::StringValue(
+                                "No embedding".to_string(),
+                            )),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Entity) RETURN n') g JOIN LATERAL VECTOR_SEARCH('products', g.properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("lateral join should skip graph rows without a correlated vector property");
+
+        assert_eq!(result.row_count(), 1);
+        assert_eq!(vector_engine.recorded_queries(), vec![vec![0.9, 0.1]]);
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_rejects_malformed_document_correlated_vector() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![DocumentRecord {
+                id: "profile-1".to_string(),
+                document: sql_object(&[("embedding", "not-a-vector")]),
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
+            )
+            .await
+            .expect_err("malformed correlated vectors should still fail");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("Failed to resolve lateral join correlations"));
+        assert!(error_text.contains("did not contain a vector literal"));
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_uses_right_document_alias_in_multi_document_outer_join() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([
+            (
+                "left_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "left-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[9.0, 8.0]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                }],
+            ),
+            (
+                "right_profiles".to_string(),
+                vec![
+                    DocumentRecord {
+                        id: "right-1".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.1, 0.2]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 2,
+                        updated_at_ns: 2,
+                    },
+                    DocumentRecord {
+                        id: "right-2".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.3, 0.4]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 3,
+                        updated_at_ns: 3,
+                    },
+                ],
+            ),
+        ]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') p, DOCUMENT_QUERY('right_profiles') q JOIN LATERAL VECTOR_SEARCH('products', q.document.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-document lateral join should execute");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_treats_document_aliases_case_insensitively() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([
+            (
+                "left_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "left-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[9.0, 8.0]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                }],
+            ),
+            (
+                "right_profiles".to_string(),
+                vec![
+                    DocumentRecord {
+                        id: "right-1".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.1, 0.2]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 2,
+                        updated_at_ns: 2,
+                    },
+                    DocumentRecord {
+                        id: "right-2".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.3, 0.4]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 3,
+                        updated_at_ns: 3,
+                    },
+                ],
+            ),
+        ]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') p, DOCUMENT_QUERY('right_profiles') q JOIN LATERAL VECTOR_SEARCH('products', Q.document.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-document lateral join should treat aliases case-insensitively");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_supports_quoted_document_aliases() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([
+            (
+                "left_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "left-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[9.0, 8.0]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                }],
+            ),
+            (
+                "right_profiles".to_string(),
+                vec![
+                    DocumentRecord {
+                        id: "right-1".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.1, 0.2]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 2,
+                        updated_at_ns: 2,
+                    },
+                    DocumentRecord {
+                        id: "right-2".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.3, 0.4]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 3,
+                        updated_at_ns: 3,
+                    },
+                ],
+            ),
+        ]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') \"LeftAlias\", DOCUMENT_QUERY('right_profiles') \"RightAlias\" JOIN LATERAL VECTOR_SEARCH('products', \"RightAlias\".document.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-document lateral join should support quoted aliases");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_supports_quoted_document_aliases_with_dots() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([
+            (
+                "left_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "left-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[9.0, 8.0]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                }],
+            ),
+            (
+                "right_profiles".to_string(),
+                vec![
+                    DocumentRecord {
+                        id: "right-1".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.1, 0.2]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 2,
+                        updated_at_ns: 2,
+                    },
+                    DocumentRecord {
+                        id: "right-2".to_string(),
+                        document: SqlObject {
+                            fields: HashMap::from([(
+                                "embedding".to_string(),
+                                array_value(&[0.3, 0.4]),
+                            )]),
+                        },
+                        version: 1,
+                        created_at_ns: 3,
+                        updated_at_ns: 3,
+                    },
+                ],
+            ),
+        ]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') \"Left.Alias\", DOCUMENT_QUERY('right_profiles') \"Right.Alias\" JOIN LATERAL VECTOR_SEARCH('products', \"Right.Alias\".document.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-document lateral join should support quoted dotted aliases");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_rejects_mismatched_quoted_document_alias_case() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([
+            (
+                "left_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "left-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[9.0, 8.0]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                }],
+            ),
+            (
+                "right_profiles".to_string(),
+                vec![DocumentRecord {
+                    id: "right-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([(
+                            "embedding".to_string(),
+                            array_value(&[0.1, 0.2]),
+                        )]),
+                    },
+                    version: 1,
+                    created_at_ns: 2,
+                    updated_at_ns: 2,
+                }],
+            ),
+        ]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_document_store(document_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('left_profiles') \"LeftAlias\", DOCUMENT_QUERY('right_profiles') \"RightAlias\" JOIN LATERAL VECTOR_SEARCH('products', \"RIGHTALIAS\".document.embedding, 1) v ON true",
+            )
+            .await
+            .expect_err("quoted document alias case mismatch should not silently bind another source");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("did not match any outer source alias"));
+        assert!(error_text.contains("\"RIGHTALIAS\".document.embedding"));
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_uses_right_graph_alias_in_multi_graph_outer_join() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "left-1".to_string(),
+                    labels: vec!["Left".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![9.0, 8.0],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "right-1".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.1, 0.2],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+                Node {
+                    id: "right-2".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.3, 0.4],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 3,
+                    updated_at_ms: 3,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Left) RETURN n') p, GRAPH_QUERY('MATCH (n:Right) RETURN n') q JOIN LATERAL VECTOR_SEARCH('products', q.properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-graph lateral join should execute");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_supports_quoted_graph_aliases() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "left-1".to_string(),
+                    labels: vec!["Left".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![9.0, 8.0],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "right-1".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.1, 0.2],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+                Node {
+                    id: "right-2".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.3, 0.4],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 3,
+                    updated_at_ms: 3,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Left) RETURN n') \"LeftAlias\", GRAPH_QUERY('MATCH (n:Right) RETURN n') \"RightAlias\" JOIN LATERAL VECTOR_SEARCH('products', \"RightAlias\".properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-graph lateral join should support quoted aliases");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_supports_quoted_graph_aliases_with_dots() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "left-1".to_string(),
+                    labels: vec!["Left".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![9.0, 8.0],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "right-1".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.1, 0.2],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+                Node {
+                    id: "right-2".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.3, 0.4],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 3,
+                    updated_at_ms: 3,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Left) RETURN n') \"Left.Alias\", GRAPH_QUERY('MATCH (n:Right) RETURN n') \"Right.Alias\" JOIN LATERAL VECTOR_SEARCH('products', \"Right.Alias\".properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-graph lateral join should support quoted dotted aliases");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_rejects_mismatched_quoted_graph_alias_case() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "left-1".to_string(),
+                    labels: vec!["Left".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![9.0, 8.0],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "right-1".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.1, 0.2],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Left) RETURN n') \"LeftAlias\", GRAPH_QUERY('MATCH (n:Right) RETURN n') \"RightAlias\" JOIN LATERAL VECTOR_SEARCH('products', \"RIGHTALIAS\".properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect_err("quoted graph alias case mismatch should not silently bind another source");
+
+        let error_text = error.to_string();
+        assert!(error_text.contains("did not match any outer source alias"));
+        assert!(error_text.contains("\"RIGHTALIAS\".properties.embedding"));
+    }
+
+    #[tokio::test]
+    async fn test_lateral_join_treats_graph_aliases_case_insensitively() {
+        let vector_engine = Arc::new(
+            MockVectorEngine::new(vec![OptimizedSearchRecord::new("doc-1".to_string(), 0.91)])
+                .await,
+        );
+        let vector_store = Arc::new(
+            VectorStore::new(VectorStoreConfig::default())
+                .with_sst_engine(vector_engine.clone() as Arc<dyn UnifiedStorageFormat>),
+        );
+        let graph_store = Arc::new(GraphStore::new(GraphStoreConfig::default()).with_engine(
+            Arc::new(MockGraphEngine::new(vec![
+                Node {
+                    id: "left-1".to_string(),
+                    labels: vec!["Left".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![9.0, 8.0],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 1,
+                    updated_at_ms: 1,
+                },
+                Node {
+                    id: "right-1".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.1, 0.2],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 2,
+                    updated_at_ms: 2,
+                },
+                Node {
+                    id: "right-2".to_string(),
+                    labels: vec!["Right".to_string()],
+                    properties: HashMap::from([(
+                        "embedding".to_string(),
+                        PropertyValue {
+                            value: Some(property_value::Value::VectorValue(VectorData {
+                                values: vec![0.3, 0.4],
+                            })),
+                        },
+                    )]),
+                    embedding: None,
+                    created_at_ms: 3,
+                    updated_at_ms: 3,
+                },
+            ])) as Arc<dyn GraphEngine>,
+        ));
+
+        let storage = Arc::new(
+            MultiModelStorageFacade::new()
+                .with_vector_store(vector_store)
+                .with_graph_store(graph_store),
+        );
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT * FROM GRAPH_QUERY('MATCH (n:Left) RETURN n') p, GRAPH_QUERY('MATCH (n:Right) RETURN n') q JOIN LATERAL VECTOR_SEARCH('products', Q.properties.embedding, 1) v ON true",
+            )
+            .await
+            .expect("multi-graph lateral join should treat aliases case-insensitively");
+
+        assert_eq!(result.row_count(), 2);
+        assert_eq!(
+            vector_engine.recorded_queries(),
+            vec![vec![0.1, 0.2], vec![0.3, 0.4]]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_document_query_root_hides_internal_native_vector_columns() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "profiles".to_string(),
+            vec![DocumentRecord {
+                id: "profile-1".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([("embedding".to_string(), array_value(&[0.1, 0.2]))]),
+                },
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM DOCUMENT_QUERY('profiles')")
+            .await
+            .expect("plain document query should execute");
+
+        let field_names: Vec<String> = result
+            .schema
+            .fields()
+            .iter()
+            .map(|field| field.name().clone())
+            .collect();
+        assert_eq!(field_names, vec!["id", "document"]);
+    }
+
+    #[tokio::test]
+    async fn test_document_query_filter_supports_comparison_and_and_clauses() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "order-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("pending")),
+                            ("price".to_string(), int_value(125)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "order-2".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("pending")),
+                            ("price".to_string(), int_value(25)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "order-3".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("shipped")),
+                            ("price".to_string(), int_value(225)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id FROM DOCUMENT_QUERY('orders', 'status = \"pending\" AND price >= 100')",
+            )
+            .await
+            .expect("document comparison filters should execute");
+
+        assert_eq!(result.row_count(), 1);
+        let ids = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("id column should be utf8");
+        assert_eq!(ids.value(0), "order-1");
+    }
+
+    #[tokio::test]
+    async fn test_document_query_filter_keywords_are_case_insensitive() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![
+                DocumentRecord {
+                    id: "order-1".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("pending")),
+                            ("price".to_string(), int_value(125)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+                DocumentRecord {
+                    id: "order-2".to_string(),
+                    document: SqlObject {
+                        fields: HashMap::from([
+                            ("status".to_string(), string_value("closed")),
+                            ("price".to_string(), int_value(125)),
+                        ]),
+                    },
+                    version: 1,
+                    created_at_ns: 1,
+                    updated_at_ns: 1,
+                },
+            ],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached(
+                "SELECT id FROM DOCUMENT_QUERY('orders', 'status contains \"pend\" and price >= 100')",
+            )
+            .await
+            .expect("document filter keywords should be case-insensitive");
+
+        assert_eq!(result.row_count(), 1);
+        let ids = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("id column should be utf8");
+        assert_eq!(ids.value(0), "order-1");
+    }
+
+    #[tokio::test]
+    async fn test_document_query_filter_rejects_unsupported_or_clause() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![DocumentRecord {
+                id: "order-1".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([("status".to_string(), string_value("pending"))]),
+                },
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('orders', 'status = \"pending\" OR status = \"shipped\"')",
+            )
+            .await
+            .expect_err("unsupported OR filters should fail explicitly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported DOCUMENT_QUERY filter clause")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_document_query_filter_rejects_lowercase_or_clause() {
+        let document_service = Arc::new(MockDocumentService::new(HashMap::from([(
+            "orders".to_string(),
+            vec![DocumentRecord {
+                id: "order-1".to_string(),
+                document: SqlObject {
+                    fields: HashMap::from([("status".to_string(), string_value("pending"))]),
+                },
+                version: 1,
+                created_at_ns: 1,
+                updated_at_ns: 1,
+            }],
+        )]))) as Arc<dyn DocumentStorageOperations>;
+        let document_store = Arc::new(
+            DocumentStore::new(DocumentStoreConfig::default()).with_service(document_service),
+        );
+
+        let storage = Arc::new(MultiModelStorageFacade::new().with_document_store(document_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let error = ctx
+            .execute_uncached(
+                "SELECT * FROM DOCUMENT_QUERY('orders', 'status = \"pending\" or status = \"shipped\"')",
+            )
+            .await
+            .expect_err("lowercase OR filters should fail explicitly");
+
+        assert!(
+            error
+                .to_string()
+                .contains("OR filters are not yet supported")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_observability_logs_query_executes_against_store() {
+        let observability_service = Arc::new(MockObservabilityService::new(
+            HashMap::from([(
+                "production".to_string(),
+                vec![LogEntry {
+                    timestamp_ns: 42,
+                    severity: Severity::Error as i32,
+                    message: "disk full".to_string(),
+                    fields: HashMap::new(),
+                    source: Some("node-1".to_string()),
+                    service: Some("storage".to_string()),
+                }],
+            )]),
+            HashMap::new(),
+        )) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM LOGS('production')")
+            .await
+            .expect("logs query should execute against the observability store");
+
+        assert_eq!(result.row_count(), 1);
+        let timestamp = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("timestamp column should be int64");
+        let level = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("level column should be utf8");
+        let message = result.batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("message column should be utf8");
+
+        assert_eq!(timestamp.value(0), 42);
+        assert_eq!(level.value(0), "ERROR");
+        assert_eq!(message.value(0), "disk full");
+    }
+
+    #[tokio::test]
+    async fn test_observability_metrics_query_executes_against_store() {
+        let observability_service = Arc::new(MockObservabilityService::new(
+            HashMap::new(),
+            HashMap::from([(
+                "production".to_string(),
+                MetricAggregationResult {
+                    series: vec![TimeSeriesData {
+                        labels: HashMap::from([("__name__".to_string(), "cpu_usage".to_string())]),
+                        points: vec![DataPointValue {
+                            timestamp_ns: 99,
+                            value: 0.75,
+                        }],
+                    }],
+                    query_time_ms: 0,
+                },
+            )]),
+        ));
+        let recorded_service = observability_service.clone();
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service as Arc<dyn ObservabilityStorageOperations>),
+        );
+
+        let storage =
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM METRICS('production')")
+            .await
+            .expect("metrics query should execute against the observability store");
+
+        assert_eq!(result.row_count(), 1);
+        let timestamp = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("timestamp column should be int64");
+        let metric_name = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("metric_name column should be utf8");
+        let value = result.batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .expect("value column should be float32");
+
+        assert_eq!(timestamp.value(0), 99);
+        assert_eq!(metric_name.value(0), "cpu_usage");
+        assert!((value.value(0) - 0.75).abs() < f32::EPSILON);
+
+        let recorded_params = recorded_service.recorded_metric_params();
+        assert_eq!(recorded_params.len(), 1);
+        assert_eq!(recorded_params[0].0, "production");
+        assert_eq!(recorded_params[0].1.metric_name, "*");
+        assert_eq!(recorded_params[0].1.aggregation, MetricAggregation::Avg);
+        assert_eq!(recorded_params[0].1.step_seconds, 60);
+    }
+
+    #[tokio::test]
+    async fn test_observability_metrics_query_applies_sql_filter() {
+        let observability_service = Arc::new(MockObservabilityService::new(
+            HashMap::new(),
+            HashMap::from([(
+                "production".to_string(),
+                MetricAggregationResult {
+                    series: vec![
+                        TimeSeriesData {
+                            labels: HashMap::from([(
+                                "__name__".to_string(),
+                                "cpu_usage".to_string(),
+                            )]),
+                            points: vec![DataPointValue {
+                                timestamp_ns: 100,
+                                value: 0.75,
+                            }],
+                        },
+                        TimeSeriesData {
+                            labels: HashMap::from([(
+                                "__name__".to_string(),
+                                "memory_usage".to_string(),
+                            )]),
+                            points: vec![DataPointValue {
+                                timestamp_ns: 101,
+                                value: 0.55,
+                            }],
+                        },
+                    ],
+                    query_time_ms: 0,
+                },
+            )]),
+        )) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM METRICS('production') WHERE metric_name = 'cpu_usage'")
+            .await
+            .expect("metrics query should apply SQL filters after store execution");
+
+        assert_eq!(result.row_count(), 1);
+        let metric_name = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("metric_name column should be utf8");
+        assert_eq!(metric_name.value(0), "cpu_usage");
+    }
+
+    #[tokio::test]
+    async fn test_observability_traces_query_executes_against_store() {
+        let observability_service = Arc::new(
+            MockObservabilityService::new(HashMap::new(), HashMap::new()).with_traces(
+                HashMap::from([(
+                    "production".to_string(),
+                    vec![TraceData {
+                        trace_id: "trace-1".to_string(),
+                        span_id: "span-1".to_string(),
+                        parent_span_id: None,
+                        name: "flush_segment".to_string(),
+                        kind: 0,
+                        start_time_ns: 1_000,
+                        end_time_ns: 1_750,
+                        status: None,
+                        attributes: HashMap::new(),
+                        events: vec![],
+                        links: vec![],
+                    }],
+                )]),
+            ),
+        ) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM TRACES('production')")
+            .await
+            .expect("traces query should execute against the observability store");
+
+        assert_eq!(result.row_count(), 1);
+        let trace_id = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("trace_id column should be utf8");
+        let span_id = result.batches[0]
+            .column(1)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("span_id column should be utf8");
+        let operation = result.batches[0]
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("operation column should be utf8");
+        let duration = result.batches[0]
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("duration_ns column should be int64");
+
+        assert_eq!(trace_id.value(0), "trace-1");
+        assert_eq!(span_id.value(0), "span-1");
+        assert_eq!(operation.value(0), "flush_segment");
+        assert_eq!(duration.value(0), 750);
+    }
+
+    #[tokio::test]
+    async fn test_observability_traces_query_applies_duration_filter() {
+        let observability_service = Arc::new(
+            MockObservabilityService::new(HashMap::new(), HashMap::new()).with_traces(
+                HashMap::from([(
+                    "production".to_string(),
+                    vec![
+                        TraceData {
+                            trace_id: "trace-fast".to_string(),
+                            span_id: "span-fast".to_string(),
+                            parent_span_id: None,
+                            name: "fast_path".to_string(),
+                            kind: 0,
+                            start_time_ns: 1_000,
+                            end_time_ns: 1_100,
+                            status: None,
+                            attributes: HashMap::new(),
+                            events: vec![],
+                            links: vec![],
+                        },
+                        TraceData {
+                            trace_id: "trace-slow".to_string(),
+                            span_id: "span-slow".to_string(),
+                            parent_span_id: None,
+                            name: "slow_path".to_string(),
+                            kind: 0,
+                            start_time_ns: 2_000,
+                            end_time_ns: 3_500,
+                            status: None,
+                            attributes: HashMap::new(),
+                            events: vec![],
+                            links: vec![],
+                        },
+                    ],
+                )]),
+            ),
+        ) as Arc<dyn ObservabilityStorageOperations>;
+        let observability_store = Arc::new(
+            ObservabilityStore::new(ObservabilityStoreConfig::default())
+                .with_service(observability_service),
+        );
+
+        let storage =
+            Arc::new(MultiModelStorageFacade::new().with_observability_store(observability_store));
+        let ctx = FederatedQueryContext::new(storage);
+
+        let result = ctx
+            .execute_uncached("SELECT * FROM TRACES('production') WHERE duration_ns >= 1000")
+            .await
+            .expect("trace query should apply SQL duration filters after store execution");
+
+        assert_eq!(result.row_count(), 1);
+        let trace_id = result.batches[0]
+            .column(0)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .expect("trace_id column should be utf8");
+        let duration = result.batches[0]
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .expect("duration_ns column should be int64");
+        assert_eq!(trace_id.value(0), "trace-slow");
+        assert_eq!(duration.value(0), 1_500);
     }
 
     #[tokio::test]

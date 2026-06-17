@@ -17,7 +17,6 @@ from proximadb_sdk import (
     RetryConfig,
     TLSConfig,
     load_config,
-    load_config_file,
 )
 
 

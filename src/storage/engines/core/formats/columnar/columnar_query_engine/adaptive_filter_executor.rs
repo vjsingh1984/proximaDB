@@ -5,11 +5,11 @@
 
 use anyhow::Result;
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
-    FilterCondition, MetadataFilter, metadata_filter_strategy::MetadataFilterAnalyzer,
-    unified_columnar_io::UnifiedColumnarReader,
+    FilterCondition, MetadataFilter, columnar_io::UnifiedColumnarReader,
+    metadata_filter_strategy::MetadataFilterAnalyzer,
 };
+use proximadb_records::ProximaRecord;
 
 /// Branched filter executor for optimized queries
 pub struct BranchedFilterExecutor {
@@ -41,7 +41,7 @@ impl BranchedFilterExecutor {
         &self,
         _filters: &[MetadataFilter],
         _allow_slow_queries: bool,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         // Disabled pending API compatibility resolution
         Err(anyhow::anyhow!(
             "BranchedFilterExecutor temporarily disabled due to API changes"
@@ -55,7 +55,7 @@ impl BranchedFilterExecutor {
         &self,
         _projection_columns: &[String],
         _pushdown_filters: &[FilterCondition],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         Err(anyhow::anyhow!(
             "Method temporarily disabled due to API changes"
         ))
@@ -68,7 +68,7 @@ impl BranchedFilterExecutor {
         &self,
         _filterable_filters: &[MetadataFilter],
         _non_filterable_filters: &[MetadataFilter],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         Err(anyhow::anyhow!(
             "Method temporarily disabled due to API changes"
         ))
@@ -82,7 +82,7 @@ impl BranchedFilterExecutor {
         _pushdown_filters: &[MetadataFilter],
         _post_filters: &[MetadataFilter],
         _projection_columns: &[String],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         Err(anyhow::anyhow!(
             "Method temporarily disabled due to API changes"
         ))
@@ -93,9 +93,9 @@ impl BranchedFilterExecutor {
     #[allow(dead_code)]
     fn apply_post_filters(
         &self,
-        _records: Vec<VectorRecord>,
+        _records: Vec<ProximaRecord>,
         _filters: &[MetadataFilter],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         Err(anyhow::anyhow!(
             "Method temporarily disabled due to API changes"
         ))
@@ -104,7 +104,7 @@ impl BranchedFilterExecutor {
     /// Check if a record matches a filter
     /// Deferred: pending filter matching logic
     #[allow(dead_code)]
-    fn record_matches_filter(&self, _record: &VectorRecord, _filter: &MetadataFilter) -> bool {
+    fn record_matches_filter(&self, _record: &ProximaRecord, _filter: &MetadataFilter) -> bool {
         false // Temporary implementation
     }
 

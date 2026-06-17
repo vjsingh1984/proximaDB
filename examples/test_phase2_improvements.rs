@@ -85,7 +85,12 @@ fn test_pattern(pattern: &str, vectors: &[VectorRecord]) {
         metadata_algorithm: None,
     };
 
-    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
+    let proxima_records: Vec<_> = vectors
+        .iter()
+        .cloned()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config.clone());
     let dimension = vectors[0].vector.len();
     let original_size = vectors.len() * dimension * 4; // 4 bytes per f32
 

@@ -4,11 +4,9 @@ Simple End-to-End Test for ProximaDB
 Tests basic connectivity and operations without heavy dependencies
 """
 
-import json
 import sys
 import time
 
-import numpy as np
 import requests
 
 SERVER_URL = "http://localhost:5678"

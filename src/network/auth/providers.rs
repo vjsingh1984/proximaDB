@@ -16,7 +16,7 @@
 
 //! Authentication Providers for ProximaDB
 
-use crate::network::auth::{AuthError, AuthMethod, AuthProvider, AuthResult, Permission};
+use crate::network::auth::{AuthError, AuthProvider, AuthResult, NetworkAuthMethod, Permission};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde::Deserialize;
@@ -92,7 +92,7 @@ impl AuthProvider for LdapAuthProvider {
                     tenant_id: user_info.tenant_id,
                     roles: roles.clone(),
                     permissions: self.map_roles_to_permissions(&roles),
-                    auth_method: AuthMethod::ApiKey, // LDAP treated as API key equivalent
+                    auth_method: NetworkAuthMethod::ApiKey, // LDAP treated as API key equivalent
                     token_expires_at: None,
                 })
             }
@@ -345,7 +345,7 @@ impl AuthProvider for OAuth2AuthProvider {
             tenant_id: user_info.tenant_id,
             roles: user_info.roles.clone(),
             permissions: self.map_roles_to_permissions(&user_info.roles),
-            auth_method: AuthMethod::OAuth2,
+            auth_method: NetworkAuthMethod::OAuth2,
             token_expires_at: user_info.expires_at,
         })
     }
@@ -536,7 +536,7 @@ impl AuthProvider for SamlAuthProvider {
             tenant_id: Some(assertion.tenant_id),
             roles: assertion.roles.clone(),
             permissions: self.map_roles_to_permissions(&assertion.roles),
-            auth_method: AuthMethod::OAuth2, // SAML treated as OAuth2 equivalent
+            auth_method: NetworkAuthMethod::OAuth2, // SAML treated as OAuth2 equivalent
             token_expires_at: assertion.expires_at.map(|timestamp| {
                 chrono::DateTime::from_timestamp(timestamp, 0).unwrap_or_else(chrono::Utc::now)
             }),
@@ -611,7 +611,7 @@ impl AuthProvider for DatabaseAuthProvider {
             tenant_id: user.tenant_id,
             roles: user.roles.clone(),
             permissions: self.map_roles_to_permissions(&user.roles),
-            auth_method: AuthMethod::ApiKey, // Database auth is similar to API key
+            auth_method: NetworkAuthMethod::ApiKey, // Database auth is similar to API key
             token_expires_at: None,
         })
     }

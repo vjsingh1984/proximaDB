@@ -113,6 +113,8 @@ async fn test_create_collection() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let response = service.create_collection(&config).await?;
@@ -147,6 +149,8 @@ async fn test_get_collection() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -189,6 +193,8 @@ async fn test_list_collections() -> Result<()> {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
         };
 
         let response = service.create_collection(&config).await?;
@@ -226,6 +232,8 @@ async fn test_delete_collection() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -268,6 +276,8 @@ async fn test_tenant_scoped_collection_access_and_delete() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let create_response = service
@@ -310,6 +320,82 @@ async fn test_tenant_scoped_collection_access_and_delete() -> Result<()> {
     Ok(())
 }
 
+/// TD-064 S2: the pgwire vector-search routing gate resolves its target through
+/// `CollectionPort::get_collection(name, tenant_scope)` and denies the search on
+/// `Ok(None)` or `Err`. This pins that exact trait-method contract so the
+/// structural tenant isolation the pgwire search path now relies on cannot
+/// silently regress:
+///   * owner tenant                        → Ok(Some)  (search allowed)
+///   * cross tenant                        → Ok(None)  (gate → "relation does not exist")
+///   * missing tenant in multi-tenant mode → Err       (gate fails closed)
+#[tokio::test]
+async fn test_collection_port_get_collection_is_tenant_scoped() -> Result<()> {
+    use proximadb_runtime::CollectionPort;
+
+    let (service, _temp_dir, tenant_a, tenant_b) =
+        create_test_service_with_tenant_manager(10).await?;
+
+    let config = CollectionConfig {
+        name: "scoped_vectors".to_string(),
+        dimension: 8,
+        distance_metric: Some(DistanceMetric::Cosine as i32),
+        storage_engine: Some(StorageEngine::Sst as i32),
+        filterable_columns: vec![],
+        index_configs: vec![],
+        quantization: None,
+        primary_index: Some("HNSW".to_string()),
+        auto_index_selection: Some(false),
+        description: Some("Tenant scoped vectors".to_string()),
+        tags: vec!["purpose:test".to_string()],
+        owner: None,
+        embedding_models: vec![],
+        storage_config: None,
+        record_schema: None,
+        enable_proxima_record: None,
+        text_columns: vec![],
+        text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
+    };
+
+    service
+        .create_collection_with_tenant_context(&config, Some(&tenant_a))
+        .await?;
+
+    // Owner tenant resolves the collection → pgwire gate allows the search.
+    let owned = CollectionPort::get_collection(
+        service.as_ref(),
+        "scoped_vectors",
+        Some(&tenant_a.tenant_id),
+    )
+    .await?;
+    assert!(
+        owned.is_some(),
+        "owner tenant must resolve its own collection"
+    );
+
+    // Cross-tenant resolves to None → pgwire gate denies (relation does not exist).
+    let cross = CollectionPort::get_collection(
+        service.as_ref(),
+        "scoped_vectors",
+        Some(&tenant_b.tenant_id),
+    )
+    .await?;
+    assert!(
+        cross.is_none(),
+        "cross-tenant vector-search access must be denied (structural isolation)"
+    );
+
+    // Missing tenant under multi-tenant mode fails closed → pgwire gate denies.
+    let missing = CollectionPort::get_collection(service.as_ref(), "scoped_vectors", None).await;
+    assert!(
+        missing.is_err(),
+        "missing tenant in multi-tenant mode must fail closed, not resolve unscoped"
+    );
+
+    Ok(())
+}
+
 #[tokio::test]
 async fn test_tenant_collection_limit_enforced() -> Result<()> {
     let (service, _temp_dir, tenant_a, _tenant_b) =
@@ -334,6 +420,8 @@ async fn test_tenant_collection_limit_enforced() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let config_two = CollectionConfig {
@@ -385,6 +473,8 @@ async fn test_tenant_scoped_collection_listing() -> Result<()> {
         enable_proxima_record: None,
         text_columns: vec![],
         text_storage_configs: vec![],
+        enable_dual_use_embeddings: None,
+        canonical_embedding_precision: None,
     };
 
     let config_b = CollectionConfig {

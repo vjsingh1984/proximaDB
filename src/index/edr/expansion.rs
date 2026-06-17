@@ -127,11 +127,10 @@ impl QueryExpansion {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities::initialize_hardware_capabilities_default;
 
     #[tokio::test]
     async fn test_query_expansion_none() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let expansion = QueryExpansion::new(DistanceMetric::Cosine, 3);
 
         let query = vec![1.0, 0.0, 0.0];
@@ -142,7 +141,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_query_expansion_diversity() {
-        let _ = initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let expansion = QueryExpansion::new(DistanceMetric::Cosine, 3);
 
         let query = vec![1.0, 0.0, 0.0];

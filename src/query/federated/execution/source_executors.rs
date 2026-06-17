@@ -12,6 +12,8 @@ use std::collections::HashMap;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 
+use crate::query::graph_lowering::lower_supported_graph_query_expr;
+
 /// Result value from a federated source.
 #[derive(Debug, Clone)]
 pub enum FederatedValue {
@@ -179,15 +181,12 @@ impl Default for GraphQuerySourceExecutor {
 #[async_trait]
 impl FederatedSourceExecutor for GraphQuerySourceExecutor {
     async fn execute(&self, params: &SourceParams) -> Result<FederatedSourceResult> {
-        let _cypher = params
+        let cypher = params
             .get("cypher")
             .ok_or_else(|| anyhow!("GRAPH_QUERY requires 'cypher' parameter"))?;
+        let graph_query = lower_supported_graph_query_expr(cypher, None, Some("default"))?;
 
-        Ok(FederatedSourceResult::empty(vec![
-            "node_id".to_string(),
-            "label".to_string(),
-            "properties".to_string(),
-        ]))
+        Ok(FederatedSourceResult::empty(graph_query.output_columns))
     }
 
     fn source_type(&self) -> &str {
@@ -348,6 +347,15 @@ mod tests {
             .execute(&SourceParams::new().with("cypher", "MATCH (n) RETURN n"))
             .await;
         assert!(result.is_ok());
+
+        let projected = executor
+            .execute(
+                &SourceParams::new()
+                    .with("cypher", "MATCH (n:Person) RETURN n.name AS person_name"),
+            )
+            .await
+            .expect("projected graph query should validate");
+        assert_eq!(projected.columns, vec!["person_name"]);
     }
 
     #[tokio::test]

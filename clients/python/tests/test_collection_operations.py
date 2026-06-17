@@ -5,21 +5,15 @@ Consolidated tests for collection CRUD operations, configuration, and lifecycle 
 """
 
 import time
-from typing import Any, Dict
 
 import pytest
 
 from proximadb_sdk import (
-    ClientConfig,
     CollectionConfig,
     CollectionNotFoundError,
     CompressionType,
-    DistanceMetric,
-    FlushConfig,
     IndexConfiguration,
     IndexType,
-    Protocol,
-    ProximaDBClient,
     ProximaDBError,
     StorageConfig,
     StorageEngine,

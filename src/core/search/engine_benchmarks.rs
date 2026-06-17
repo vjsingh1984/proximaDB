@@ -2,6 +2,7 @@
 //!
 //! Provides real performance measurements for cost estimation across all storage engines.
 //! This module runs actual benchmarks to populate the SearchCostEstimator with real data.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use anyhow::Result;
 use std::collections::HashMap;
@@ -12,7 +13,7 @@ use tracing::{debug, info};
 use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::SearchParams;
 use crate::proto::proximadb_v1::Collection;
-use crate::storage::traits::{StorageQueryContext, UnifiedStorageEngine};
+use crate::storage::traits::{StorageQueryContext, UnifiedStorageFormat};
 
 use crate::compute::UnifiedQuantizationLevel as QuantizationLevel;
 use crate::core::search::integrated_search_optimization::{
@@ -189,11 +190,11 @@ impl StorageEngineBenchmark {
 
     /// Detect hardware capabilities
     fn detect_hardware_profile() -> HardwareProfile {
-        let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let simd_level = proximadb_hardware::best_simd_level();
 
         HardwareProfile {
-            has_avx512: caps.has_avx512(),
-            has_avx2: caps.has_simd(),
+            has_avx512: simd_level >= proximadb_hardware::SimdLevel::AVX512,
+            has_avx2: simd_level >= proximadb_hardware::SimdLevel::AVX2,
             available_memory_gb: 16.0, // Default estimate
             cpu_cores: num_cpus::get(),
         }
@@ -214,7 +215,7 @@ impl StorageEngineBenchmark {
     /// Run benchmarks for a specific engine
     pub async fn benchmark_engine(
         &self,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
         engine_name: &str,
     ) -> Result<EngineBenchmarkResults> {
         info!("🏁 Starting benchmarks for {} engine", engine_name);
@@ -272,7 +273,7 @@ impl StorageEngineBenchmark {
     /// Benchmark direct FP32 search
     async fn benchmark_direct_search(
         &self,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
         dataset_size: usize,
         engine_name: &str,
     ) -> Result<PerformanceStats> {
@@ -305,7 +306,7 @@ impl StorageEngineBenchmark {
     /// Benchmark progressive search with quantization
     async fn benchmark_progressive_search(
         &self,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
         level: QuantizationLevel,
         engine_name: &str,
     ) -> Result<PerformanceStats> {
@@ -338,7 +339,7 @@ impl StorageEngineBenchmark {
     /// Benchmark filter overhead
     async fn benchmark_filter_overhead(
         &self,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
         engine_name: &str,
     ) -> Result<f32> {
         debug!("Benchmarking filter overhead for {}", engine_name);
@@ -572,7 +573,7 @@ pub mod engine_specific {
 
     /// SST-specific optimizations and benchmarks
     pub async fn benchmark_sst_specific(
-        _engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -588,7 +589,7 @@ pub mod engine_specific {
 
     /// VIPER-specific optimizations and benchmarks
     pub async fn benchmark_viper_specific(
-        _engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -603,7 +604,7 @@ pub mod engine_specific {
 
     /// NOVA-specific optimizations and benchmarks
     pub async fn benchmark_nova_specific(
-        _engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -618,7 +619,7 @@ pub mod engine_specific {
 
     /// SWIFT-specific optimizations and benchmarks
     pub async fn benchmark_swift_specific(
-        _engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -633,7 +634,7 @@ pub mod engine_specific {
 
     /// RAPTOR-specific optimizations and benchmarks
     pub async fn benchmark_raptor_specific(
-        _engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 
@@ -648,7 +649,7 @@ pub mod engine_specific {
 
     /// PRISM-specific optimizations and benchmarks
     pub async fn benchmark_prism_specific(
-        _engine: Arc<dyn UnifiedStorageEngine>,
+        _engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<HashMap<String, f32>> {
         let mut metrics = HashMap::new();
 

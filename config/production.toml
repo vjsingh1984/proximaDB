@@ -26,9 +26,10 @@ affinity = true
 mmap_enabled = true
 cache_size_mb = 8192  # 8GB cache for production
 
-[storage.write_buffer_config]
+[storage.wal_config]
 write_buffer_size_mb = 16384  # 16GB for high-throughput production
 memory_flush_size_bytes = 67108864  # 64MB per batch
+vector_count_threshold = 100000
 memtable_type = "BTree"
 sync_mode = "PerBatch"
 write_buffer_directory = "/var/lib/proximadb/write_buffer"
@@ -118,11 +119,11 @@ require_authentication = true  # Always require authentication
 default_session_timeout_minutes = 480
 enabled = true  # When true and security is configured, REST auth middleware is enabled
 
-[security.api_keys]
+[security.authentication.api_keys]
 # Production API keys (configure via environment variables)
 # Example: "prod-api-key" = { user_id = "service-account", tenant_id = "production", permissions = ["read", "write"] }
 
-[security.jwt]
+[security.authentication.jwt]
 enabled = true
 # JWT secret should be loaded from environment variable PROXIMADB_JWT_SECRET
 secret = "${PROXIMADB_JWT_SECRET}"
@@ -130,8 +131,9 @@ access_token_expiration_minutes = 15  # Short-lived access tokens
 refresh_token_expiration_days = 7
 issuer = "proximadb-production"
 audience = "proximadb-clients"
+algorithm = "HS256"
 
-[security.sso]
+[security.authentication.sso]
 enabled = true
 providers = ["aws_iam", "azure_ad"]  # Enable enterprise SSO
 token_cache_ttl_minutes = 5
@@ -141,14 +143,19 @@ enabled = true
 enable_field_level_permissions = true
 enable_audit_logging = true
 default_deny = true  # Zero-trust: deny by default
+cache_permissions = true
+permission_cache_ttl_minutes = 15
 
 [security.audit]
-enabled = true
-storage_backend = "combined"  # Primary: database, Secondary: S3
+enable_audit_logging = true
 encryption_enabled = true
 retention_days = 2555  # 7 years for compliance
 enable_real_time_alerts = true
-alert_webhook_url = "${PROXIMADB_SECURITY_WEBHOOK}"
+# alert_webhook_url = "${PROXIMADB_SECURITY_WEBHOOK}"
+compliance_frameworks = ["SOC2", "GDPR", "HIPAA"]
+
+[security.audit.storage_backend]
+File = { directory = "/var/log/proximadb/audit" }
 
 [security.tls]
 enabled = true

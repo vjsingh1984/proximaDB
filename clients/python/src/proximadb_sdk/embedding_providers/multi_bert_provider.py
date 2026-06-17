@@ -13,7 +13,7 @@ import logging
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 import torch
@@ -21,7 +21,7 @@ import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 from transformers import AutoModel, AutoTokenizer
 
-from .base import EmbeddingConfig, EmbeddingProvider
+from .base import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -159,13 +159,13 @@ class MultiBERTProvider(EmbeddingProvider):
     def __init__(
         self,
         model_name: str = "mpnet-base",
-        size: Optional[ModelSize] = None,
-        device: Optional[str] = None,
-        cache_dir: Optional[str] = None,
+        size: ModelSize | None = None,
+        device: str | None = None,
+        cache_dir: str | None = None,
         batch_size: int = 32,
         normalize: bool = True,
         pooling_strategy: str = "mean",
-        max_memory_gb: Optional[float] = None,
+        max_memory_gb: float | None = None,
     ):
         """
         Initialize Multi-BERT provider
@@ -231,7 +231,7 @@ class MultiBERTProvider(EmbeddingProvider):
             f"on {self.device}"
         )
 
-    def _auto_select_model(self, max_memory_gb: Optional[float] = None) -> str:
+    def _auto_select_model(self, max_memory_gb: float | None = None) -> str:
         """Auto-select best model based on available resources"""
         if torch.cuda.is_available():
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
@@ -259,7 +259,7 @@ class MultiBERTProvider(EmbeddingProvider):
                 return "minilm-l6"
 
     def _select_model_by_size(
-        self, size: ModelSize, max_memory_gb: Optional[float] = None
+        self, size: ModelSize, max_memory_gb: float | None = None
     ) -> str:
         """Select model by size preference"""
         candidates = [
@@ -307,7 +307,7 @@ class MultiBERTProvider(EmbeddingProvider):
         """Generate embedding for single text"""
         return self.embed_texts([text])[0]
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for multiple texts"""
         # Check cache
         uncached_texts = []
@@ -352,7 +352,7 @@ class MultiBERTProvider(EmbeddingProvider):
 
         return result
 
-    def _encode_with_transformers(self, texts: List[str]) -> np.ndarray:
+    def _encode_with_transformers(self, texts: list[str]) -> np.ndarray:
         """Encode using transformers library"""
         embeddings = []
 
@@ -393,7 +393,7 @@ class MultiBERTProvider(EmbeddingProvider):
         return np.vstack(embeddings)
 
     def embed_documents(
-        self, documents: List[Dict[str, Any]], text_field: str = "text"
+        self, documents: list[dict[str, Any]], text_field: str = "text"
     ) -> np.ndarray:
         """Generate embeddings for documents"""
         texts = [doc.get(text_field, "") for doc in documents]
@@ -403,7 +403,7 @@ class MultiBERTProvider(EmbeddingProvider):
         """Get embedding dimension"""
         return self.model_config["dimension"]
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get detailed model information"""
         return {
             "provider": "MultiBERT",
@@ -417,7 +417,7 @@ class MultiBERTProvider(EmbeddingProvider):
             "description": self.model_config["description"],
         }
 
-    def benchmark(self, test_texts: List[str] = None) -> Dict[str, float]:
+    def benchmark(self, test_texts: list[str] = None) -> dict[str, float]:
         """Benchmark model performance"""
         import time
 
@@ -446,7 +446,7 @@ class MultiBERTProvider(EmbeddingProvider):
         }
 
     @classmethod
-    def compare_models(cls, texts: List[str], models: List[str] = None) -> pd.DataFrame:
+    def compare_models(cls, texts: list[str], models: list[str] = None) -> pd.DataFrame:
         """Compare different models on the same texts"""
         import time
 
@@ -508,7 +508,7 @@ class AdaptiveBERTProvider(MultiBERTProvider):
         self,
         prefer_speed: bool = False,
         prefer_accuracy: bool = False,
-        max_memory_gb: Optional[float] = None,
+        max_memory_gb: float | None = None,
         **kwargs,
     ):
         """
@@ -540,7 +540,7 @@ class AdaptiveBERTProvider(MultiBERTProvider):
             "model_switches": 0,
         }
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """Adaptively embed texts with automatic model selection"""
 
         # Analyze input
@@ -593,7 +593,6 @@ class AdaptiveBERTProvider(MultiBERTProvider):
 
 def benchmark_all_models():
     """Benchmark all available models"""
-    import pandas as pd
 
     test_texts = [
         "The company reported strong financial results for the quarter.",

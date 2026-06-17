@@ -1,0 +1,60 @@
+# Nextest configuration.
+# Why nextest: process-per-test isolation, smarter scheduling, no shared static
+# state across tests in the same binary, and a real --no-run cache that the
+# libtest harness lacks. Wins are biggest on the unit suite.
+#
+# Install:  cargo install cargo-nextest --locked
+# Invoke:   cargo nx        (default profile — all tests, sane parallelism)
+#           cargo nxlib     (unit profile — --lib only, max parallelism)
+#           cargo nxint     (integration profile — sequential, port-safe)
+
+[store]
+# Reuse the regular cargo target dir so artifacts shared with `cargo build`
+# / `cargo test` (dev = test profile match) carry over to nextest runs too.
+dir = "target/nextest"
+
+# Default profile: balanced. Used by `cargo nx`.
+[profile.default]
+# 3 = matches the [build] jobs = 3 in .cargo/config.toml (10-core box, OOM-safe).
+# Bump to 6 once peak-rustc-memory work in PROJECT_BUILD_SPEED memo is done.
+test-threads = 3
+# A small retry budget absorbs load-induced flakes on constrained CI runners.
+# nextest reports any survivor distinctly as FLAKY (see final-status-level), so
+# this stabilizes the gate without silently hiding a genuinely-broken test
+# (a real failure exhausts all retries and still fails the run).
+retries = 2
+failure-output = "immediate-final"
+success-output = "never"
+status-level = "pass"
+final-status-level = "flaky"
+fail-fast = false
+slow-timeout = { period = "60s", terminate-after = 3 }   # warn at 60s, kill at 180s
+
+# Unit profile: aggressive parallelism. Unit tests are in-proc / no ports.
+# Use via `cargo nxlib`.
+[profile.unit]
+test-threads = 6
+retries = 2                # see profile.default note on load-induced flakes
+failure-output = "immediate-final"
+success-output = "never"
+fail-fast = false
+slow-timeout = { period = "30s", terminate-after = 2 }   # unit tests should be fast
+
+# Integration profile: sequential, port-binding safe.
+# Use via `cargo nxint`. Mirrors the existing RUST_TEST_THREADS=1 contract.
+[profile.integration]
+test-threads = 1
+retries = 1                # tolerate one transient port-bind flake
+failure-output = "immediate-final"
+success-output = "final"
+fail-fast = false
+slow-timeout = { period = "120s", terminate-after = 3 }
+
+# Group: anything that binds a port or boots the server runs sequentially even
+# in the default profile, while pure unit tests can still parallelize.
+[[profile.default.overrides]]
+filter = 'test(/_e2e$/) | test(/_integration_test$/) | binary(integration)'
+test-group = 'serial-network'
+
+[test-groups]
+serial-network = { max-threads = 1 }

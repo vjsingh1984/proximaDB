@@ -18,9 +18,13 @@ use super::two_phase_commit::{
     TwoPhaseParticipant,
 };
 
+/// Backwards-compat aliases.
+pub type TransactionConfig = LegacyMultimodelTransactionConfig;
+pub type TransactionStats = LegacyMultimodelTransactionStats;
+
 /// Transaction configuration
 #[derive(Debug, Clone)]
-pub struct TransactionConfig {
+pub struct LegacyMultimodelTransactionConfig {
     /// Default isolation level
     pub default_isolation: IsolationLevel,
     /// 2PC configuration
@@ -33,7 +37,7 @@ pub struct TransactionConfig {
     pub max_concurrent: usize,
 }
 
-impl Default for TransactionConfig {
+impl Default for LegacyMultimodelTransactionConfig {
     fn default() -> Self {
         Self {
             default_isolation: IsolationLevel::ReadCommitted,
@@ -47,7 +51,7 @@ impl Default for TransactionConfig {
 
 /// Transaction statistics
 #[derive(Debug, Clone, Default)]
-pub struct TransactionStats {
+pub struct LegacyMultimodelTransactionStats {
     /// Total transactions started
     pub total_started: u64,
     /// Total transactions committed
@@ -125,10 +129,13 @@ impl Transaction {
     }
 }
 
+/// Backwards-compat alias for [`LegacyMultimodelTransactionCoordinator`].
+pub type TransactionCoordinator = LegacyMultimodelTransactionCoordinator;
+
 /// Transaction coordinator manages transactions across all stores
-pub struct TransactionCoordinator {
+pub struct LegacyMultimodelTransactionCoordinator {
     /// Configuration
-    config: TransactionConfig,
+    config: LegacyMultimodelTransactionConfig,
     /// Isolation manager for MVCC
     isolation_manager: Arc<IsolationManager>,
     /// 2PC protocol for distributed transactions
@@ -136,12 +143,12 @@ pub struct TransactionCoordinator {
     /// Active transactions
     transactions: RwLock<HashMap<String, Transaction>>,
     /// Statistics
-    stats: RwLock<TransactionStats>,
+    stats: RwLock<LegacyMultimodelTransactionStats>,
 }
 
-impl TransactionCoordinator {
+impl LegacyMultimodelTransactionCoordinator {
     /// Create a new transaction coordinator
-    pub fn new(config: TransactionConfig) -> Self {
+    pub fn new(config: LegacyMultimodelTransactionConfig) -> Self {
         Self {
             isolation_manager: Arc::new(IsolationManager::new(config.default_isolation)),
             two_phase_commit: Arc::new(TwoPhaseCommitProtocol::new(
@@ -149,7 +156,7 @@ impl TransactionCoordinator {
             )),
             config,
             transactions: RwLock::new(HashMap::new()),
-            stats: RwLock::new(TransactionStats::default()),
+            stats: RwLock::new(LegacyMultimodelTransactionStats::default()),
         }
     }
 
@@ -416,7 +423,7 @@ impl TransactionCoordinator {
     }
 
     /// Get statistics
-    pub async fn stats(&self) -> TransactionStats {
+    pub async fn stats(&self) -> LegacyMultimodelTransactionStats {
         let stats = self.stats.read().await;
         stats.clone()
     }
@@ -437,7 +444,7 @@ impl TransactionCoordinator {
     }
 
     /// Get configuration
-    pub fn config(&self) -> &TransactionConfig {
+    pub fn config(&self) -> &LegacyMultimodelTransactionConfig {
         &self.config
     }
 
@@ -452,9 +459,9 @@ impl TransactionCoordinator {
     }
 }
 
-impl Default for TransactionCoordinator {
+impl Default for LegacyMultimodelTransactionCoordinator {
     fn default() -> Self {
-        Self::new(TransactionConfig::default())
+        Self::new(LegacyMultimodelTransactionConfig::default())
     }
 }
 
@@ -464,7 +471,7 @@ mod tests {
 
     #[test]
     fn test_transaction_config_default() {
-        let config = TransactionConfig::default();
+        let config = LegacyMultimodelTransactionConfig::default();
         assert_eq!(config.default_isolation, IsolationLevel::ReadCommitted);
         assert!(config.auto_2pc);
         assert_eq!(config.timeout, Duration::from_secs(300));
@@ -498,7 +505,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_begin() {
-        let coordinator = TransactionCoordinator::new(TransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)
@@ -516,7 +525,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_commit() {
-        let coordinator = TransactionCoordinator::new(TransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)
@@ -547,7 +558,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_rollback() {
-        let coordinator = TransactionCoordinator::new(TransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)
@@ -572,11 +585,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_distributed_detection() {
-        let config = TransactionConfig {
+        let config = LegacyMultimodelTransactionConfig {
             auto_2pc: false, // Disable auto 2PC for this test
             ..Default::default()
         };
-        let coordinator = TransactionCoordinator::new(config);
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(config);
 
         let txn_id = coordinator
             .begin(None)
@@ -598,11 +611,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_max_concurrent() {
-        let config = TransactionConfig {
+        let config = LegacyMultimodelTransactionConfig {
             max_concurrent: 2,
             ..Default::default()
         };
-        let coordinator = TransactionCoordinator::new(config);
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(config);
 
         // First two should succeed
         coordinator
@@ -621,7 +634,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_isolation_levels() {
-        let coordinator = TransactionCoordinator::new(TransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let _txn1 = coordinator
             .begin(Some(IsolationLevel::ReadCommitted))
@@ -645,7 +660,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_cleanup() {
-        let coordinator = TransactionCoordinator::new(TransactionConfig::default());
+        let coordinator = LegacyMultimodelTransactionCoordinator::new(
+            LegacyMultimodelTransactionConfig::default(),
+        );
 
         let txn_id = coordinator
             .begin(None)

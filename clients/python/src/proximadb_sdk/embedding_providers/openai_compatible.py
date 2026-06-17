@@ -7,7 +7,6 @@ served by vLLM, Ollama, LocalAI, etc.
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
 import numpy as np
@@ -123,7 +122,7 @@ class OpenAICompatibleProvider(EmbeddingProvider):
             embedding = result["data"][0]["embedding"]
             self.config.dimension = len(embedding)
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 

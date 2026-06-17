@@ -14,7 +14,7 @@ use crate::storage::encryption::wal_encryption::WalSegmentMetadata;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::persistence::write_ahead_log::BatchId;
 use crate::storage::persistence::write_ahead_log::serialization::SerializationFormat;
-use crate::utils::checksum::Crc32;
+use proximadb_kernel::checksum::Crc32;
 
 /// Centralized manager for all WAL disk operations
 pub struct WriteAheadLogDiskManager {
@@ -25,12 +25,15 @@ pub struct WriteAheadLogDiskManager {
     /// Optional WAL encryption layer (TD-016)
     encryption_layer: Option<Arc<WALEncryptionLayer>>,
     /// Statistics
-    stats: Arc<tokio::sync::RwLock<DiskStats>>,
+    stats: Arc<tokio::sync::RwLock<WalDiskManagerStats>>,
 }
+
+/// Backwards-compat alias for [`WalDiskManagerStats`].
+pub type DiskStats = WalDiskManagerStats;
 
 /// Statistics for disk operations
 #[derive(Debug, Clone, Default)]
-pub struct DiskStats {
+pub struct WalDiskManagerStats {
     pub total_bytes_written: u64,
     pub total_bytes_read: u64,
     pub total_files_written: u64,
@@ -81,7 +84,7 @@ impl WriteAheadLogDiskManager {
             filesystem_factory,
             wal_base_url,
             encryption_layer,
-            stats: Arc::new(tokio::sync::RwLock::new(DiskStats::default())),
+            stats: Arc::new(tokio::sync::RwLock::new(WalDiskManagerStats::default())),
         }
     }
 
@@ -151,25 +154,31 @@ impl WriteAheadLogDiskManager {
         )
     }
 
-    /// Write a serialized batch to disk
+    /// Write a serialized batch to disk. `vector_count` is the number of records
+    /// in the batch, recorded on the global manifest entry (used by stats,
+    /// checkpoints, and the per-collection drift signal).
     pub async fn write_batch(
         &self,
         collection_id: &str,
         batch_id: &BatchId,
         data: &[u8],
         format: SerializationFormat,
+        vector_count: u64,
     ) -> Result<WalFileInfo> {
-        self.write_batch_with_sync(collection_id, batch_id, data, format, false)
+        self.write_batch_with_sync(collection_id, batch_id, data, format, vector_count, false)
             .await
     }
 
-    /// Write a serialized batch to disk with optional sync
+    /// Write a serialized batch to disk with optional sync. `vector_count` is the
+    /// number of records in the batch (recorded on the manifest entry); pass the
+    /// batch's `vector_records.len()`.
     pub async fn write_batch_with_sync(
         &self,
         collection_id: &str,
         batch_id: &BatchId,
         data: &[u8],
         format: SerializationFormat,
+        vector_count: u64,
         sync_to_disk: bool,
     ) -> Result<WalFileInfo> {
         let file_url = self.batch_url(collection_id, batch_id, format);
@@ -256,11 +265,14 @@ impl WriteAheadLogDiskManager {
                 checksum,                   // checksum_crc32
                 SerializationFormat::parse_format(format_str)
                     .unwrap_or(SerializationFormat::Bincode), // format enum
-                0,                          // vector_count (unknown at this point)
+                vector_count,               // records in this batch (drift / stats / checkpoints)
                 self.wal_base_url.clone(),  // storage_url
             );
-            // Async append (non-blocking, high performance)
-            manifest_service.append_async(entry).await?;
+            // Async append (non-blocking, high performance); non-fatal if manifest
+            // channel is closed (e.g. singleton background worker from a prior run).
+            if let Err(e) = manifest_service.append_async(entry).await {
+                warn!("⚠️  Manifest append failed (non-fatal): {}", e);
+            }
         }
 
         // Update stats
@@ -465,7 +477,7 @@ impl WriteAheadLogDiskManager {
     }
 
     /// Get statistics
-    pub async fn get_stats(&self) -> Result<DiskStats> {
+    pub async fn get_stats(&self) -> Result<WalDiskManagerStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }
@@ -547,7 +559,7 @@ mod tests {
 
         // Write batch
         let file_info = manager
-            .write_batch(collection_id, &batch_id, data, format)
+            .write_batch(collection_id, &batch_id, data, format, 1)
             .await
             .expect("Failed to write batch");
         assert_eq!(file_info.collection_id, collection_id);
@@ -587,6 +599,7 @@ mod tests {
                     &batch_id,
                     &data,
                     SerializationFormat::Bincode,
+                    1,
                 )
                 .await
                 .expect("Failed to write batch");

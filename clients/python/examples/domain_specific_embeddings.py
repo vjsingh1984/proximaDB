@@ -27,7 +27,7 @@ from proximadb.embedding_providers import (
     E5EmbeddingProvider,
     SFREmbeddingProvider,
     SentenceTransformerProvider,
-    EmbeddingConfig
+    EmbeddingConfig,
 )
 
 
@@ -41,16 +41,16 @@ def demo_finance_sec_filings():
     - Financial research reports
     - Risk factor disclosures
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("FINANCE & SEC FILINGS - BGE LARGE MODEL")
-    print("="*80)
+    print("=" * 80)
 
     # Recommended: BGE Large for finance
     config = EmbeddingConfig(
         model_name="BAAI/bge-large-en-v1.5",
         dimension=1024,
         batch_size=32,
-        normalize=True
+        normalize=True,
     )
 
     print(f"Model: {config.model_name}")
@@ -61,25 +61,25 @@ def demo_finance_sec_filings():
     sec_examples = [
         {
             "text": "Risk Factors: The Company's business is subject to substantial regulatory "
-                   "oversight from the SEC, FINRA, and other regulatory bodies. Changes in "
-                   "regulations could materially adversely affect our financial condition.",
+            "oversight from the SEC, FINRA, and other regulatory bodies. Changes in "
+            "regulations could materially adversely affect our financial condition.",
             "section": "Risk Factors",
-            "filing": "10-K"
+            "filing": "10-K",
         },
         {
             "text": "Management's Discussion and Analysis: Net revenue increased 23% year-over-year "
-                   "to $4.8 billion, driven primarily by growth in our cloud infrastructure "
-                   "business and improved operating leverage across the organization.",
+            "to $4.8 billion, driven primarily by growth in our cloud infrastructure "
+            "business and improved operating leverage across the organization.",
             "section": "MD&A",
-            "filing": "10-Q"
+            "filing": "10-Q",
         },
         {
             "text": "For the fiscal year ended December 31, 2024, diluted earnings per share (EPS) "
-                   "was $12.45, representing a 34% increase compared to $9.28 in the prior year. "
-                   "Adjusted EBITDA margin expanded to 38.2% from 35.1%.",
+            "was $12.45, representing a 34% increase compared to $9.28 in the prior year. "
+            "Adjusted EBITDA margin expanded to 38.2% from 35.1%.",
             "section": "Financial Results",
-            "filing": "10-K"
-        }
+            "filing": "10-K",
+        },
     ]
 
     print("\nExample documents:")
@@ -112,16 +112,16 @@ def demo_legal_documents():
     - Statutes and regulations
     - Legal briefs
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("LEGAL DOCUMENTS & CASE LAW - SFR MODEL")
-    print("="*80)
+    print("=" * 80)
 
     # Recommended: SFR for legal (complex reasoning)
     config = EmbeddingConfig(
         model_name="Salesforce/SFR-Embedding-2_R",
         dimension=4096,
         batch_size=16,  # Smaller batch for 4096 dims
-        normalize=True
+        normalize=True,
     )
 
     print(f"Model: {config.model_name}")
@@ -132,25 +132,25 @@ def demo_legal_documents():
     legal_examples = [
         {
             "text": "The Court finds that the defendant's motion for summary judgment must be "
-                   "DENIED. Viewing the evidence in the light most favorable to the plaintiff, "
-                   "a reasonable jury could find that the defendant breached its fiduciary duty.",
+            "DENIED. Viewing the evidence in the light most favorable to the plaintiff, "
+            "a reasonable jury could find that the defendant breached its fiduciary duty.",
             "type": "Court Opinion",
-            "citation": "Smith v. Jones, 123 F.3d 456 (9th Cir. 2024)"
+            "citation": "Smith v. Jones, 123 F.3d 456 (9th Cir. 2024)",
         },
         {
             "text": "Pursuant to 28 U.S.C. § 1331, this Court has federal question jurisdiction "
-                   "over this matter. The plaintiff's complaint raises substantial questions "
-                   "of federal law under the Securities Exchange Act of 1934.",
+            "over this matter. The plaintiff's complaint raises substantial questions "
+            "of federal law under the Securities Exchange Act of 1934.",
             "type": "Jurisdictional Statement",
-            "citation": "Doe v. Corp, No. CV-24-1234 (D.Del. 2024)"
+            "citation": "Doe v. Corp, No. CV-24-1234 (D.Del. 2024)",
         },
         {
             "text": "The parties hereby agree that any dispute arising out of or relating to this "
-                   "Agreement shall be resolved through binding arbitration in accordance with "
-                   "the Commercial Arbitration Rules of the American Arbitration Association.",
+            "Agreement shall be resolved through binding arbitration in accordance with "
+            "the Commercial Arbitration Rules of the American Arbitration Association.",
             "type": "Contract Provision",
-            "citation": "Services Agreement § 12.3"
-        }
+            "citation": "Services Agreement § 12.3",
+        },
     ]
 
     print("\nExample documents:")
@@ -184,16 +184,16 @@ def demo_medical_healthcare():
     - Patient records
     - Drug documentation
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("MEDICAL & HEALTHCARE - E5 LARGE MODEL")
-    print("="*80)
+    print("=" * 80)
 
     # Recommended: E5 Large for medical
     config = EmbeddingConfig(
         model_name="intfloat/e5-large-v2",
         dimension=1024,
         batch_size=32,
-        normalize=True  # Required for E5
+        normalize=True,  # Required for E5
     )
 
     print(f"Model: {config.model_name}")
@@ -204,25 +204,25 @@ def demo_medical_healthcare():
     medical_examples = [
         {
             "text": "Patient presents with acute myocardial infarction (STEMI). Troponin I "
-                   "elevated at 12.4 ng/mL. ECG shows ST-segment elevation in leads II, III, "
-                   "and aVF. Emergent cardiac catheterization recommended.",
+            "elevated at 12.4 ng/mL. ECG shows ST-segment elevation in leads II, III, "
+            "and aVF. Emergent cardiac catheterization recommended.",
             "type": "Clinical Note",
-            "specialty": "Cardiology"
+            "specialty": "Cardiology",
         },
         {
             "text": "Randomized controlled trial of 1,247 patients demonstrated that the novel "
-                   "PCSK9 inhibitor reduced LDL cholesterol by 58% compared to placebo "
-                   "(p<0.001), with significant reduction in major adverse cardiovascular events.",
+            "PCSK9 inhibitor reduced LDL cholesterol by 58% compared to placebo "
+            "(p<0.001), with significant reduction in major adverse cardiovascular events.",
             "type": "Research Abstract",
-            "specialty": "Clinical Research"
+            "specialty": "Clinical Research",
         },
         {
             "text": "Indications and Usage: This medication is indicated for the treatment of "
-                   "moderate to severe plaque psoriasis in adults who are candidates for "
-                   "systemic therapy or phototherapy.",
+            "moderate to severe plaque psoriasis in adults who are candidates for "
+            "systemic therapy or phototherapy.",
             "type": "Drug Documentation",
-            "specialty": "Dermatology"
-        }
+            "specialty": "Dermatology",
+        },
     ]
 
     print("\nExample documents:")
@@ -246,16 +246,16 @@ def demo_scientific_research():
     - Technical documentation
     - Academic abstracts
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("SCIENTIFIC RESEARCH - SFR MODEL (MAX ACCURACY)")
-    print("="*80)
+    print("=" * 80)
 
     # Recommended: SFR for maximum accuracy in research
     config = EmbeddingConfig(
         model_name="Salesforce/SFR-Embedding-2_R",
         dimension=4096,
         batch_size=16,
-        normalize=True
+        normalize=True,
     )
 
     print(f"Model: {config.model_name}")
@@ -266,29 +266,29 @@ def demo_scientific_research():
     research_examples = [
         {
             "text": "We propose a novel attention mechanism that achieves O(n log n) complexity "
-                   "while maintaining the representational power of standard self-attention. "
-                   "Empirical results on BERT pretraining show 2.3x speedup with minimal "
-                   "performance degradation.",
+            "while maintaining the representational power of standard self-attention. "
+            "Empirical results on BERT pretraining show 2.3x speedup with minimal "
+            "performance degradation.",
             "type": "Abstract",
             "field": "Machine Learning",
-            "venue": "NeurIPS 2024"
+            "venue": "NeurIPS 2024",
         },
         {
             "text": "The photocatalytic reduction of CO2 to methanol was achieved using a novel "
-                   "titanium-based metal-organic framework (Ti-MOF) under visible light "
-                   "irradiation, with quantum efficiency of 12.4% and selectivity of 89%.",
+            "titanium-based metal-organic framework (Ti-MOF) under visible light "
+            "irradiation, with quantum efficiency of 12.4% and selectivity of 89%.",
             "type": "Results",
             "field": "Chemistry",
-            "venue": "Nature Chemistry"
+            "venue": "Nature Chemistry",
         },
         {
             "text": "Cryo-EM structure of the SARS-CoV-2 spike protein in complex with ACE2 "
-                   "receptor reveals critical binding interactions at 2.9 Å resolution. "
-                   "The RBD adopts a previously undescribed 'up' conformation.",
+            "receptor reveals critical binding interactions at 2.9 Å resolution. "
+            "The RBD adopts a previously undescribed 'up' conformation.",
             "type": "Findings",
             "field": "Structural Biology",
-            "venue": "Science"
-        }
+            "venue": "Science",
+        },
     ]
 
     print("\nExample documents:")
@@ -306,9 +306,9 @@ def demo_complete_workflow():
     """
     Demo: Complete ProximaDB Integration with Domain-Specific Embeddings
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("COMPLETE WORKFLOW: SEC FILINGS + PROXIMADB")
-    print("="*80)
+    print("=" * 80)
 
     print("""
 # Complete workflow for SEC filings search system
@@ -387,26 +387,52 @@ def demo_model_selection_guide():
     """
     Quick reference guide for domain-specific model selection
     """
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("DOMAIN-SPECIFIC MODEL SELECTION GUIDE")
-    print("="*80)
+    print("=" * 80)
 
     print("\n📊 Quick Reference:")
-    print("┌─────────────────────────┬──────────────────────────┬────────┬─────────────────────┐")
-    print("│ Domain                  │ Recommended Model        │ Dims   │ Why?                │")
-    print("├─────────────────────────┼──────────────────────────┼────────┼─────────────────────┤")
-    print("│ Finance/SEC             │ bge-large-en-v1.5        │ 1024   │ Financial vocab     │")
-    print("│ Finance (Research)      │ SFR-Embedding-2_R        │ 4096   │ Max accuracy        │")
-    print("│ Legal (English)         │ SFR-Embedding-2_R        │ 4096   │ Complex reasoning   │")
-    print("│ Legal (Multilingual)    │ bge-m3                   │ 1024   │ 100+ languages      │")
-    print("│ Medical/Healthcare      │ e5-large-v2              │ 1024   │ Clinical terms      │")
-    print("│ Scientific Research     │ SFR-Embedding-2_R        │ 4096   │ Technical jargon    │")
-    print("│ Code/Tech Docs          │ bge-large-en-v1.5        │ 1024   │ Technical docs      │")
-    print("│ General Purpose         │ bge-large-en-v1.5        │ 1024   │ Best balance        │")
-    print("└─────────────────────────┴──────────────────────────┴────────┴─────────────────────┘")
+    print(
+        "┌─────────────────────────┬──────────────────────────┬────────┬─────────────────────┐"
+    )
+    print(
+        "│ Domain                  │ Recommended Model        │ Dims   │ Why?                │"
+    )
+    print(
+        "├─────────────────────────┼──────────────────────────┼────────┼─────────────────────┤"
+    )
+    print(
+        "│ Finance/SEC             │ bge-large-en-v1.5        │ 1024   │ Financial vocab     │"
+    )
+    print(
+        "│ Finance (Research)      │ SFR-Embedding-2_R        │ 4096   │ Max accuracy        │"
+    )
+    print(
+        "│ Legal (English)         │ SFR-Embedding-2_R        │ 4096   │ Complex reasoning   │"
+    )
+    print(
+        "│ Legal (Multilingual)    │ bge-m3                   │ 1024   │ 100+ languages      │"
+    )
+    print(
+        "│ Medical/Healthcare      │ e5-large-v2              │ 1024   │ Clinical terms      │"
+    )
+    print(
+        "│ Scientific Research     │ SFR-Embedding-2_R        │ 4096   │ Technical jargon    │"
+    )
+    print(
+        "│ Code/Tech Docs          │ bge-large-en-v1.5        │ 1024   │ Technical docs      │"
+    )
+    print(
+        "│ General Purpose         │ bge-large-en-v1.5        │ 1024   │ Best balance        │"
+    )
+    print(
+        "└─────────────────────────┴──────────────────────────┴────────┴─────────────────────┘"
+    )
 
     print("\n💡 Key Insights:")
-    print("  • Finance: BGE handles financial terminology (EBITDA, EPS, etc.) excellently")
+    print(
+        "  • Finance: BGE handles financial terminology (EBITDA, EPS, etc.) excellently"
+    )
     print("  • Legal: SFR's 4096 dimensions capture complex legal reasoning")
     print("  • Medical: E5 works well with clinical and pharmaceutical terms")
     print("  • Research: SFR maximum accuracy for technical papers")
@@ -421,9 +447,9 @@ def demo_model_selection_guide():
 
 def main():
     """Run all domain-specific demonstrations"""
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print(" " * 15 + "DOMAIN-SPECIFIC EMBEDDING GUIDE FOR PROXIMADB")
-    print("="*80)
+    print("=" * 80)
     print("\nThis guide shows best practices for embedding domain-specific documents:")
     print("  • Finance & SEC Filings")
     print("  • Legal Documents & Case Law")
@@ -439,9 +465,9 @@ def main():
     demo_complete_workflow()
     demo_model_selection_guide()
 
-    print("\n" + "="*80)
+    print("\n" + "=" * 80)
     print("GUIDE COMPLETE")
-    print("="*80)
+    print("=" * 80)
     print("\nFor more information:")
     print("  • EMBEDDING_PROVIDERS.md - Full documentation with domain recommendations")
     print("  • examples/embedding_providers_demo.py - General provider examples")
@@ -466,5 +492,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
         import traceback
+
         traceback.print_exc()
         exit(1)

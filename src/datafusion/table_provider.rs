@@ -23,11 +23,11 @@ use std::fmt::Debug;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{Schema as ArrowSchema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::catalog::Session;
 use datafusion::common::Statistics;
 use datafusion::datasource::{TableProvider, TableType};
-use datafusion::error::{DataFusionError, Result as DFResult};
+use datafusion::error::Result as DFResult;
 use datafusion::logical_expr::{Expr, TableProviderFilterPushDown};
 use datafusion::physical_plan::ExecutionPlan;
 use tracing::{debug, info, trace};
@@ -36,7 +36,7 @@ use crate::storage::formats::FileSplit;
 use crate::storage::formats::InternalFormat;
 use crate::storage::schema::ProximaSchema;
 
-use super::predicate_pushdown::{PushdownCapability, convert_expr_to_filter};
+use super::predicate_pushdown::convert_expr_to_filter;
 use super::proxima_scan_exec::{ProximaScanExec, SplitReader};
 use super::proxima_table_provider::{
     CollectionInfo, EngineType, ProximaTableProvider, PruningStatistics,
@@ -150,24 +150,6 @@ impl ProximaDBTableProvider {
     pub fn proxima_schema(&self) -> &ProximaSchema {
         &self.proxima_schema
     }
-
-    /// Convert DataFusion expressions to filter pushdown result.
-    fn analyze_filters(&self, filters: &[Expr]) -> Vec<(Expr, PushdownCapability)> {
-        filters
-            .iter()
-            .map(|expr| {
-                let capability = if self.config.enable_filter_pushdown {
-                    match convert_expr_to_filter(expr, &self.proxima_schema) {
-                        Ok(_) => PushdownCapability::Exact,
-                        Err(_) => PushdownCapability::Unsupported,
-                    }
-                } else {
-                    PushdownCapability::Unsupported
-                };
-                (expr.clone(), capability)
-            })
-            .collect()
-    }
 }
 
 impl std::fmt::Debug for ProximaDBTableProvider {
@@ -247,7 +229,7 @@ impl TableProvider for ProximaDBTableProvider {
         let combined_filter = if storage_filters.is_empty() {
             None
         } else if storage_filters.len() == 1 {
-            Some(storage_filters.into_iter().next().unwrap())
+            storage_filters.into_iter().next()
         } else {
             // Combine multiple filters with AND
             Some(crate::storage::formats::FilterExpression::And(
@@ -376,11 +358,11 @@ pub struct ProximaDataFusionTable {
     /// Split reader for this engine
     reader: Arc<dyn SplitReader>,
     /// Cached splits (populated lazily)
-    cached_splits: std::sync::RwLock<Option<Vec<FileSplit>>>,
+    cached_splits: parking_lot::RwLock<Option<Vec<FileSplit>>>,
     /// Configuration
     config: ProximaDataFusionTableConfig,
     /// Pruning statistics
-    pruning_stats: std::sync::RwLock<Option<PruningStatistics>>,
+    pruning_stats: parking_lot::RwLock<Option<PruningStatistics>>,
     /// Cached DataFusion statistics
     statistics: Option<Statistics>,
 }
@@ -398,9 +380,9 @@ impl ProximaDataFusionTable {
             collection_info,
             schema,
             reader,
-            cached_splits: std::sync::RwLock::new(None),
+            cached_splits: parking_lot::RwLock::new(None),
             config: ProximaDataFusionTableConfig::default(),
-            pruning_stats: std::sync::RwLock::new(None),
+            pruning_stats: parking_lot::RwLock::new(None),
             statistics: None,
         }
     }
@@ -418,9 +400,9 @@ impl ProximaDataFusionTable {
             collection_info,
             schema,
             reader,
-            cached_splits: std::sync::RwLock::new(None),
+            cached_splits: parking_lot::RwLock::new(None),
             config,
-            pruning_stats: std::sync::RwLock::new(None),
+            pruning_stats: parking_lot::RwLock::new(None),
             statistics: None,
         }
     }
@@ -428,8 +410,8 @@ impl ProximaDataFusionTable {
     /// Set pre-computed splits.
     pub fn with_splits(self, splits: Vec<FileSplit>) -> Self {
         let stats = PruningStatistics::from_splits(&splits);
-        *self.cached_splits.write().unwrap() = Some(splits);
-        *self.pruning_stats.write().unwrap() = Some(stats);
+        *self.cached_splits.write() = Some(splits);
+        *self.pruning_stats.write() = Some(stats);
         self
     }
 
@@ -523,7 +505,7 @@ impl TableProvider for ProximaDataFusionTable {
 
         // Get or create splits
         let splits = {
-            let cached = self.cached_splits.read().unwrap();
+            let cached = self.cached_splits.read();
             if let Some(ref splits) = *cached {
                 splits.clone()
             } else {
@@ -573,12 +555,12 @@ impl ProximaTableProvider for ProximaDataFusionTable {
     }
 
     async fn get_splits(&self, _filters: &[Expr]) -> DFResult<Vec<FileSplit>> {
-        let cached = self.cached_splits.read().unwrap();
+        let cached = self.cached_splits.read();
         Ok(cached.clone().unwrap_or_default())
     }
 
     fn pruning_stats(&self) -> Option<PruningStatistics> {
-        self.pruning_stats.read().unwrap().clone()
+        self.pruning_stats.read().clone()
     }
 }
 

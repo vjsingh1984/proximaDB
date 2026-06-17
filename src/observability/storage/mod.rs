@@ -29,7 +29,7 @@ use tracing::info;
 
 use self::traces::TraceSpan;
 use crate::proto::proximadb_v1::{LogEntry, MetricSample, ObservabilityNamespaceConfig};
-use crate::storage::persistence::write_ahead_log::unified_operations::{
+use crate::storage::persistence::write_ahead_log::wal_operations::{
     ObservabilityOperation, UnifiedWALOperation, UnifiedWALReader, UnifiedWALWriter,
 };
 
@@ -130,18 +130,18 @@ impl ObservabilityStorage {
                                 format!("{}/observability/{}", self.base_path, namespace);
                             let namespace_storage = NamespaceStorage {
                                 config: config.clone(),
-                                logs: partitioned::PartitionedStorage::new(&format!(
-                                    "{}/logs",
-                                    namespace_path
-                                ))?,
-                                metrics: metrics::MetricStorage::new(&format!(
-                                    "{}/metrics",
-                                    namespace_path
-                                ))?,
-                                traces: traces::TraceStorage::new(&format!(
-                                    "{}/traces",
-                                    namespace_path
-                                ))?,
+                                logs: partitioned::PartitionedStorage::new_for_namespace(
+                                    &format!("{}/logs", namespace_path),
+                                    &namespace,
+                                )?,
+                                metrics: metrics::MetricStorage::new_for_namespace(
+                                    &format!("{}/metrics", namespace_path),
+                                    &namespace,
+                                )?,
+                                traces: traces::TraceStorage::new_for_namespace(
+                                    &format!("{}/traces", namespace_path),
+                                    &namespace,
+                                )?,
                             };
                             let mut namespaces = self.namespaces.write().await;
                             namespaces.insert(namespace, namespace_storage);
@@ -246,9 +246,18 @@ impl ObservabilityStorage {
 
         let namespace_storage = NamespaceStorage {
             config: config.clone(),
-            logs: partitioned::PartitionedStorage::new(&format!("{}/logs", namespace_path))?,
-            metrics: metrics::MetricStorage::new(&format!("{}/metrics", namespace_path))?,
-            traces: traces::TraceStorage::new(&format!("{}/traces", namespace_path))?,
+            logs: partitioned::PartitionedStorage::new_for_namespace(
+                &format!("{}/logs", namespace_path),
+                name,
+            )?,
+            metrics: metrics::MetricStorage::new_for_namespace(
+                &format!("{}/metrics", namespace_path),
+                name,
+            )?,
+            traces: traces::TraceStorage::new_for_namespace(
+                &format!("{}/traces", namespace_path),
+                name,
+            )?,
         };
 
         let mut namespaces = self.namespaces.write().await;
@@ -407,7 +416,7 @@ impl ObservabilityStorage {
     }
 
     /// Get storage statistics for a namespace
-    pub async fn stats(&self, namespace: &str) -> Result<StorageStats> {
+    pub async fn stats(&self, namespace: &str) -> Result<ObservabilityStorageStats> {
         let namespaces = self.namespaces.read().await;
         let ns = namespaces
             .get(namespace)
@@ -418,7 +427,7 @@ impl ObservabilityStorage {
         let metric_bytes = ns.metrics.total_bytes().await;
         let trace_bytes = ns.traces.total_bytes().await;
 
-        Ok(StorageStats {
+        Ok(ObservabilityStorageStats {
             log_count: ns.logs.count().await,
             metric_series_count: ns.metrics.series_count().await,
             trace_count: ns.traces.count().await,
@@ -429,10 +438,13 @@ impl ObservabilityStorage {
 
 /// Storage statistics
 ///
+/// Backwards-compat alias for [`ObservabilityStorageStats`].
+pub type StorageStats = ObservabilityStorageStats;
+
 /// Provides statistics about a namespace's storage usage,
 /// including counts of logs, metric series, and traces.
 #[derive(Debug, Clone)]
-pub struct StorageStats {
+pub struct ObservabilityStorageStats {
     /// Number of log entries
     pub log_count: u64,
     /// Number of metric series
@@ -449,7 +461,7 @@ mod tests {
 
     #[test]
     fn test_storage_stats() {
-        let stats = StorageStats {
+        let stats = ObservabilityStorageStats {
             log_count: 1000,
             metric_series_count: 50,
             trace_count: 100,

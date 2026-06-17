@@ -13,7 +13,6 @@ import pytest
 
 from proximadb_sdk import (
     Protocol,
-    ProximaDBError,
     StorageEngine,
     VectorRecord,
     connect_grpc,

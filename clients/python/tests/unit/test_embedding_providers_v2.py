@@ -19,13 +19,11 @@ from proximadb_sdk.embedding_providers.core import (
 
 # Mixins
 from proximadb_sdk.embedding_providers.mixins import (
-    InstructionMixin,
     NormalizationMixin,
 )
 
 # Import the new provider
 from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
-    GTE_QWEN_MODELS,
     GTEQwenProvider,
 )
 
@@ -111,9 +109,6 @@ class TestProviderRegistry:
     def setup_class(cls):
         """Ensure provider is imported/registered before tests"""
         # Import triggers registration via decorator
-        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
-            GTEQwenProvider,
-        )
 
     def test_registry_decorator(self):
         """Test provider registration via decorator"""
@@ -161,9 +156,6 @@ class TestProviderRegistry:
     def test_get_models(self):
         """Test getting models for a provider"""
         # Re-import to ensure registration after previous test cleared registry
-        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
-            GTEQwenProvider,
-        )
 
         models = ProviderRegistry.get_models("gte-qwen")
         assert len(models) > 0
@@ -172,9 +164,6 @@ class TestProviderRegistry:
     def test_get_provider_info(self):
         """Test getting provider info"""
         # Re-import to ensure registration after previous test cleared registry
-        from proximadb_sdk.embedding_providers.providers.local.gte_qwen import (
-            GTEQwenProvider,
-        )
 
         info = ProviderRegistry.get_provider_info("gte-qwen")
         assert info["name"] == "gte-qwen"

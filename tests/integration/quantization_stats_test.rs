@@ -10,12 +10,12 @@ use proximadb::compute::quantization::{
     UnifiedQuantizationLevel,
 };
 use proximadb::core::SstConfig;
-use proximadb::proto::proximadb_v1::VectorRecord;
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::local::LocalConfig;
 use proximadb::storage::persistence::filesystem::{FileOptions, FilesystemPerformanceConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use proximadb_records::ProximaRecord;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::collections::HashMap;
@@ -159,7 +159,7 @@ async fn test_quantization_statistics_comprehensive() -> Result<()> {
 async fn run_quantization_test(
     config_name: &str,
     sparsity: usize,
-    vectors: &[VectorRecord],
+    vectors: &[ProximaRecord],
     dimension: usize,
     primary_level: Option<UnifiedQuantizationLevel>,
     fast_level: Option<UnifiedQuantizationLevel>,
@@ -204,14 +204,22 @@ async fn run_quantization_test(
             StorageQuantizationEngine::new(unified_engine, distance_compute, config);
 
         // Train quantization model
-        let vector_data: Vec<Vec<f32>> = vectors.iter().map(|v| v.vector.clone()).collect();
+        let vector_data: Vec<Vec<f32>> = vectors
+            .iter()
+            .map(|v| {
+                v.embeddings
+                    .first()
+                    .map(|e| e.values.to_fp32_owned())
+                    .unwrap_or_default()
+            })
+            .collect();
         quantization_engine.train(&vector_data).await?;
 
         // Quantize vectors
         let quantized_data = quantization_engine
             .quantize_batch(
                 &vector_data,
-                Some(&vectors.iter().map(|v| v.id.clone()).collect::<Vec<_>>()),
+                Some(&vectors.iter().map(|v| v.oid.clone()).collect::<Vec<_>>()),
             )
             .await?;
 
@@ -256,7 +264,11 @@ async fn run_quantization_test(
     let flush_time = flush_start.elapsed();
 
     // Perform search test
-    let query = vectors[0].vector.clone();
+    let query = vectors[0]
+        .embeddings
+        .first()
+        .map(|e| e.values.to_fp32_owned())
+        .unwrap_or_default();
     let search_params = std::sync::Arc::new(proximadb::core::search::SearchParams {
         vector: Some(query),
         top_k: Some(10),
@@ -328,37 +340,45 @@ async fn run_quantization_test(
     })
 }
 
-fn generate_sparse_vectors(count: usize, dim: usize, sparsity_percent: usize) -> Vec<VectorRecord> {
+fn generate_sparse_vectors(
+    count: usize,
+    dim: usize,
+    sparsity_percent: usize,
+) -> Vec<ProximaRecord> {
     let mut rng = StdRng::seed_from_u64(42);
     let mut vectors = Vec::with_capacity(count);
 
     for i in 0..count {
-        let mut vector = vec![0.0f32; dim];
+        let mut values = vec![0.0f32; dim];
         let non_zero_count = dim * (100 - sparsity_percent) / 100;
 
         // Randomly set non-zero values
-        for j in 0..non_zero_count {
+        for _j in 0..non_zero_count {
             let idx = rng.gen_range(0..dim);
-            vector[idx] = rng.gen_range(-1.0..1.0);
+            values[idx] = rng.gen_range(-1.0..1.0);
         }
 
         // Normalize vector
-        let norm: f32 = vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let norm: f32 = values.iter().map(|x| x * x).sum::<f32>().sqrt();
         if norm > 0.0 {
-            for val in &mut vector {
+            for val in &mut values {
                 *val /= norm;
             }
         }
 
-        vectors.push(VectorRecord {
-            id: format!("vec_{}", i),
-            vector,
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        vectors.push(ProximaRecord {
+            oid: format!("vec_{}", i),
+            embeddings: vec![proximadb_records::EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                dim: dim as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(values),
+                ..Default::default()
+            }],
+            record_version: 1,
+            created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            ..Default::default()
         });
     }
 

@@ -23,15 +23,14 @@ use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::core::config::StorageLocation;
 use proximadb::core::config::ViperConfig;
 use proximadb::core::config::{BloomFilterConfig, SstConfig};
+use proximadb::core::search::results::OptimizedSearchRecord;
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, CollectionStats, CompressionAlgorithm, DistanceMetric, SqlValue,
     StorageEngine, VectorRecord, sql_value,
 };
-// SearchResult moved to different location - using Vec<VectorRecord> for results
-// Note: Some imports like MetadataItem may have changed or been removed
 use proximadb::services::vector_operations_service::VectorOperationsService;
-use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::engines::impls::viper::engine::ViperEngine;
+use proximadb::storage::engines::sst::SstEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::metadata::store::MetadataCacheConfig;
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::persistence::write_ahead_log::config::WriteBufferStrategyType;
@@ -39,6 +38,8 @@ use proximadb::storage::persistence::write_ahead_log::{
     WALBatchFactory, WALConfig, WriteAheadLogManager,
 };
 use proximadb::storage::traits::{CompactionParameters, FlushParameters, UnifiedStorageEngine};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::ProximaRecord;
 
 static HARDWARE_INIT: Once = Once::new();
 
@@ -248,7 +249,10 @@ impl UnifiedTestEnvironment {
 
         let flush_params = FlushParameters {
             collection_id: Some(self.collection_id.clone()),
-            vector_records: vectors,
+            vector_records: vectors
+                .into_iter()
+                .map(|v: VectorRecord| v.into())
+                .collect(),
             force: true,
             synchronous: true,
             collection_config: Some(collection_config.clone()),
@@ -270,7 +274,10 @@ impl UnifiedTestEnvironment {
 
         let flush_params = FlushParameters {
             collection_id: Some(self.collection_id.clone()),
-            vector_records: vectors,
+            vector_records: vectors
+                .into_iter()
+                .map(|v: VectorRecord| v.into())
+                .collect(),
             force: true,
             synchronous: true,
             collection_config: Some(collection_config.clone()),
@@ -378,58 +385,99 @@ impl UnifiedTestEnvironment {
     }
 
     /// Create test vectors with metadata (enhanced version)
-    pub fn create_test_vectors(&self, count: usize) -> Vec<VectorRecord> {
+    pub fn create_test_vectors(&self, count: usize) -> Vec<ProximaRecord> {
         self.create_test_vectors_with_dimension(count, 3)
     }
 
-    /// Create test vectors with specific dimension
+    /// Create test vectors with specific dimension.
     pub fn create_test_vectors_with_dimension(
         &self,
         count: usize,
         dimension: usize,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         let categories = ["A", "B", "C"];
         let types = ["primary", "secondary", "tertiary"];
 
         (0..count)
-            .map(|i| VectorRecord {
-                id: format!("{}_{}", self.collection_id, i),
-                timestamp: Some((1000 + i) as i64),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
-                vector: (0..dimension).map(|j| (i + j) as f32).collect(),
-                metadata: std::collections::HashMap::from([
-                    (
-                        "category".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::StringValue(
-                                categories[i % categories.len()].to_string(),
-                            )),
-                        },
-                    ),
-                    (
-                        "type".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::StringValue(
-                                types[i % types.len()].to_string(),
-                            )),
-                        },
-                    ),
-                    (
-                        "test_id".to_string(),
-                        SqlValue {
-                            value: Some(sql_value::Value::StringValue(self.collection_id.clone())),
-                        },
-                    ),
-                ]),
-                ..Default::default()
+            .map(|i| {
+                let mut props = proximadb_records::ProximaTree::new();
+                props.insert(
+                    "category".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(ProximaValue::String(
+                        categories[i % categories.len()].to_string(),
+                    )),
+                );
+                props.insert(
+                    "type".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(ProximaValue::String(
+                        types[i % types.len()].to_string(),
+                    )),
+                );
+                props.insert(
+                    "test_id".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(ProximaValue::String(
+                        self.collection_id.clone(),
+                    )),
+                );
+                props.insert(
+                    "index".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(ProximaValue::Int64(i as i64)),
+                );
+
+                ProximaRecord {
+                    oid: format!("{}_{}", self.collection_id, i),
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp32(
+                            (0..dimension).map(|j| (i + j) as f32).collect(),
+                        ),
+                        ..Default::default()
+                    }],
+                    props,
+                    record_version: 1,
+                    created_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                    updated_at_ns: (1000 + i) as i64 * 1_000_000_000,
+                    ..Default::default()
+                }
             })
             .collect()
     }
 
-    /// Create a single test vector record (from sst_compactor_tests)
+    /// Create a single test vector record with canonical `ProximaValue` metadata.
+    /// Converts at the `VectorRecord` boundary for v1 compatibility.
+    pub fn create_test_vector_record_proxima(
+        &self,
+        id: String,
+        vector: Vec<f32>,
+        timestamp: i64,
+        expires_at: Option<i64>,
+        metadata: std::collections::HashMap<String, ProximaValue>,
+    ) -> VectorRecord {
+        let sql_meta = metadata
+            .into_iter()
+            .map(|(k, v)| {
+                (
+                    k,
+                    proximadb::core::search::results::proxima_value_to_sql_value(v),
+                )
+            })
+            .collect();
+        VectorRecord {
+            id,
+            vector,
+            metadata: sql_meta,
+            timestamp: Some(timestamp),
+            updated_at: None,
+            expires_at,
+            version: Some(1),
+            source: None,
+        }
+    }
+
+    /// Create a single test vector record with legacy `SqlValue` metadata.
+    /// Compatibility shim for integration tests that still build v1 `VectorRecord`s.
     pub fn create_test_vector_record(
         &self,
         id: String,
@@ -448,6 +496,18 @@ impl UnifiedTestEnvironment {
             version: Some(1),
             source: None,
         }
+    }
+
+    /// Backward-compatible alias for callers that name the legacy metadata type explicitly.
+    pub fn create_test_vector_record_sql(
+        &self,
+        id: String,
+        vector: Vec<f32>,
+        timestamp: i64,
+        expires_at: Option<i64>,
+        metadata: std::collections::HashMap<String, SqlValue>,
+    ) -> VectorRecord {
+        self.create_test_vector_record(id, vector, timestamp, expires_at, metadata)
     }
 
     /// Create a query vector for testing
@@ -573,6 +633,10 @@ impl UnifiedTestEnvironment {
 
             // Block format
             block_format: "ProximaBlocks".to_string(),
+
+            // Tier-migration integration — disabled in tests so the
+            // SST engine doesn't pull in the tiering policy engine.
+            tiering: None,
         }
     }
 
@@ -635,14 +699,18 @@ pub mod operations {
     /// Build correct FlushParameters - the critical configuration that was causing failures
     pub async fn build_flush_params(
         environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         engine: StorageEngine,
     ) -> Result<FlushParameters> {
         // Ensure directories exist
         environment.ensure_all_directories().await?;
 
         // Detect dimension from vectors
-        let dimension = vectors.first().map(|v| v.vector.len() as i32).unwrap_or(3); // Fallback to 3 if no vectors
+        let dimension = vectors
+            .first()
+            .and_then(|v| v.embeddings.first())
+            .map(|e| e.dim as i32)
+            .unwrap_or(3);
 
         let collection_config =
             environment.create_test_collection_with_settings(engine, dimension, None);
@@ -660,7 +728,7 @@ pub mod operations {
     /// Build FlushParameters for SST with custom compression - uses provided collection config
     pub async fn build_sst_flush_params_with_collection(
         environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         collection: Collection,
     ) -> Result<FlushParameters> {
         environment.ensure_all_directories().await?;
@@ -682,7 +750,7 @@ pub mod operations {
     /// VIPER/Parquet supports: none, snappy, gzip, lz4, zstd, brotli (limited by Parquet format)
     pub async fn build_viper_flush_params_with_compression(
         environment: &UnifiedTestEnvironment,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
         compression_algo: &str,
         _compression_level: i32,
     ) -> Result<FlushParameters> {
@@ -744,14 +812,14 @@ pub mod operations {
         )
     }
 
-    /// Search vectors in SST engine
+    /// Search vectors in SST engine.
+    /// Returns `OptimizedSearchRecord` which carries canonical `ProximaValue` metadata.
     pub async fn search_vectors_sst(
         engine: &SstEngine,
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<VectorRecord>> {
-        let storage_url = build_sst_storage_url(environment);
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let collection = Arc::new(environment.create_test_collection());
         let search_params = Arc::new(proximadb::core::search::SearchParams {
             vector: Some(query_vector.to_vec()),
@@ -799,41 +867,24 @@ pub mod operations {
             tenant_context: None,
         };
 
-        // Direct production call using unified search
-        let results = engine.search_vectors_unified(&query_context).await?;
-
-        // Convert OptimizedSearchRecord to VectorRecord
-        let vector_records: Vec<VectorRecord> = results
-            .into_iter()
-            .map(|record| VectorRecord {
-                id: record.id,
-                vector: record
-                    .vector
-                    .as_ref()
-                    .map(|v| (**v).clone())
-                    .unwrap_or_default(),
-                metadata: record.metadata,
-                timestamp: Some(record.timestamp.unwrap_or(0)),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            })
-            .collect();
-
-        Ok(vector_records)
+        engine.search_vectors_unified(&query_context).await
     }
 
-    /// Search vectors in VIPER engine - REAL search, not simulated
+    /// Search vectors in VIPER engine - REAL search, not simulated.
+    /// Returns `OptimizedSearchRecord` with canonical `ProximaValue` metadata.
     pub async fn search_vectors_viper(
-        engine: &proximadb::storage::engines::impls::viper::engine::ViperEngine,
+        engine: &proximadb::storage::engines::viper::ViperEngine,
         environment: &UnifiedTestEnvironment,
         query_vector: &[f32],
         top_k: usize,
-    ) -> Result<Vec<VectorRecord>> {
-        let storage_url = build_viper_storage_url(environment);
+    ) -> Result<Vec<OptimizedSearchRecord>> {
         let collection = Arc::new(environment.create_test_collection());
-        let search_params = Arc::new(proximadb::core::search::SearchParams::default());
+        let search_params = Arc::new(proximadb::core::search::SearchParams {
+            vector: Some(query_vector.to_vec()),
+            top_k: Some(top_k),
+            distance_metric: Some(proximadb::compute::distance_computation::DistanceMetric::Cosine),
+            ..Default::default()
+        });
         let query_context = proximadb::storage::traits::StorageQueryContext {
             search_params,
             collection: collection.clone(),
@@ -870,29 +921,7 @@ pub mod operations {
             tenant_context: None,
         };
 
-        // Direct production call using VIPER's unified search
-        let results = engine.search_vectors_unified(&query_context).await?;
-
-        // Convert OptimizedSearchRecord to VectorRecord
-        let vector_records: Vec<VectorRecord> = results
-            .into_iter()
-            .map(|record| VectorRecord {
-                id: record.id,
-                vector: record
-                    .vector
-                    .as_ref()
-                    .map(|v| (**v).clone())
-                    .unwrap_or_default(),
-                metadata: record.metadata,
-                timestamp: Some(record.timestamp.unwrap_or(0)),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            })
-            .collect();
-
-        Ok(vector_records)
+        engine.search_vectors_unified(&query_context).await
     }
 
     /// Build correct CompactionParameters for any storage engine
@@ -1058,7 +1087,7 @@ pub async fn flush_sst_with_block_stats(
     block_size_kb: usize,
 ) -> Result<FlushBlockStatsResult> {
     use proximadb::proto::proximadb_v1::{Collection, CollectionConfig, CompressionConfig};
-    use proximadb::storage::engines::impls::sst::SstEngine;
+    use proximadb::storage::engines::sst::SstEngine;
     use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};
 
     // Create SST config with specified block size
@@ -1125,7 +1154,7 @@ pub async fn flush_sst_with_block_stats(
     // Create flush parameters - production SST will handle quantization internally
     let flush_params = FlushParameters {
         collection_id: Some("test_collection".to_string()),
-        vector_records: vectors.clone(),
+        vector_records: vectors.iter().map(|v: &VectorRecord| v.into()).collect(),
         collection_config: Some(collection_config),
         force: true,
         synchronous: true,

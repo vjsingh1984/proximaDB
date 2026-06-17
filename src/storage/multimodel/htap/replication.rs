@@ -12,9 +12,12 @@ use anyhow::{Result, anyhow};
 use tokio::sync::{Notify, RwLock, mpsc};
 use tracing::{debug, info, warn};
 
+/// Backwards-compat alias for [`LegacyHtapReplicationConfig`].
+pub type ReplicationConfig = LegacyHtapReplicationConfig;
+
 /// Configuration for HTAP replication
 #[derive(Debug, Clone)]
-pub struct ReplicationConfig {
+pub struct LegacyHtapReplicationConfig {
     /// Batch size for replication
     pub batch_size: usize,
     /// Replication interval in milliseconds
@@ -29,7 +32,7 @@ pub struct ReplicationConfig {
     pub compress_batches: bool,
 }
 
-impl Default for ReplicationConfig {
+impl Default for LegacyHtapReplicationConfig {
     fn default() -> Self {
         Self {
             batch_size: 1000,
@@ -42,9 +45,12 @@ impl Default for ReplicationConfig {
     }
 }
 
+/// Backwards-compat alias for [`LegacyHtapReplicationStats`].
+pub type ReplicationStats = LegacyHtapReplicationStats;
+
 /// Statistics for replication monitoring
 #[derive(Debug, Default, Clone)]
-pub struct ReplicationStats {
+pub struct LegacyHtapReplicationStats {
     /// Total rows replicated
     pub rows_replicated: u64,
     /// Total batches processed
@@ -102,7 +108,7 @@ pub enum ChangeOperation {
 /// Replication coordinator manages OLTP to OLAP replication
 pub struct ReplicationCoordinator {
     /// Configuration
-    config: ReplicationConfig,
+    config: LegacyHtapReplicationConfig,
 
     /// Current OLTP LSN (source of truth)
     oltp_lsn: AtomicU64,
@@ -120,7 +126,7 @@ pub struct ReplicationCoordinator {
     table_lsns: RwLock<HashMap<String, u64>>,
 
     /// Statistics
-    stats: RwLock<ReplicationStats>,
+    stats: RwLock<LegacyHtapReplicationStats>,
 
     /// Pending changes channel
     pending_tx: Option<mpsc::Sender<ChangeRecord>>,
@@ -131,7 +137,7 @@ pub struct ReplicationCoordinator {
 
 impl ReplicationCoordinator {
     /// Create a new replication coordinator
-    pub fn new(config: ReplicationConfig) -> Self {
+    pub fn new(config: LegacyHtapReplicationConfig) -> Self {
         Self {
             config,
             oltp_lsn: AtomicU64::new(0),
@@ -139,7 +145,7 @@ impl ReplicationCoordinator {
             is_running: AtomicBool::new(false),
             shutdown: Arc::new(Notify::new()),
             table_lsns: RwLock::new(HashMap::new()),
-            stats: RwLock::new(ReplicationStats::default()),
+            stats: RwLock::new(LegacyHtapReplicationStats::default()),
             pending_tx: None,
             last_batch_time_ms: AtomicI64::new(0),
         }
@@ -232,7 +238,7 @@ impl ReplicationCoordinator {
     }
 
     /// Get replication statistics
-    pub async fn stats(&self) -> ReplicationStats {
+    pub async fn stats(&self) -> LegacyHtapReplicationStats {
         let stats = self.stats.read().await;
         let mut result = stats.clone();
         result.current_lag_ms = self.lag_ms();
@@ -280,7 +286,7 @@ impl ReplicationCoordinator {
     }
 
     /// Get configuration
-    pub fn config(&self) -> &ReplicationConfig {
+    pub fn config(&self) -> &LegacyHtapReplicationConfig {
         &self.config
     }
 
@@ -299,7 +305,7 @@ impl ReplicationCoordinator {
 
 impl Default for ReplicationCoordinator {
     fn default() -> Self {
-        Self::new(ReplicationConfig::default())
+        Self::new(LegacyHtapReplicationConfig::default())
     }
 }
 
@@ -309,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_replication_config_default() {
-        let config = ReplicationConfig::default();
+        let config = LegacyHtapReplicationConfig::default();
         assert_eq!(config.batch_size, 1000);
         assert_eq!(config.replication_interval_ms, 100);
         assert!(config.parallel_replication);
@@ -317,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_creation() {
-        let coordinator = ReplicationCoordinator::new(ReplicationConfig::default());
+        let coordinator = ReplicationCoordinator::new(LegacyHtapReplicationConfig::default());
         assert_eq!(coordinator.oltp_lsn(), 0);
         assert_eq!(coordinator.olap_lsn(), 0);
         assert!(coordinator.is_healthy());
@@ -325,7 +331,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_record_change() {
-        let coordinator = ReplicationCoordinator::new(ReplicationConfig::default());
+        let coordinator = ReplicationCoordinator::new(LegacyHtapReplicationConfig::default());
 
         let change = ChangeRecord {
             lsn: 100,
@@ -341,7 +347,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_mark_replicated() {
-        let coordinator = ReplicationCoordinator::new(ReplicationConfig::default());
+        let coordinator = ReplicationCoordinator::new(LegacyHtapReplicationConfig::default());
 
         // Record a change
         coordinator.advance_oltp_lsn(100);
@@ -357,7 +363,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lag_calculation() {
-        let coordinator = ReplicationCoordinator::new(ReplicationConfig::default());
+        let coordinator = ReplicationCoordinator::new(LegacyHtapReplicationConfig::default());
 
         // No lag when caught up
         assert_eq!(coordinator.lag_ms(), 0);
@@ -371,7 +377,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_use_olap() {
-        let coordinator = ReplicationCoordinator::new(ReplicationConfig::default());
+        let coordinator = ReplicationCoordinator::new(LegacyHtapReplicationConfig::default());
 
         // Initially can't use OLAP (no data replicated)
         assert!(!coordinator.can_use_olap("users", true).await);

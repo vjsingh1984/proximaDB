@@ -16,7 +16,7 @@ mod helix_cold_search_recall {
     use proximadb::compute::distance_computation::DistanceMetric;
     use proximadb::core::search::{BlockPruneConfig, SearchMode, SearchParams};
     use proximadb::proto::proximadb_v1::Collection;
-    use proximadb::storage::engines::impls::helix::HelixEngine;
+    use proximadb::storage::engines::helix::HelixEngine;
     use proximadb::storage::traits::{
         FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
     };
@@ -147,11 +147,16 @@ mod helix_cold_search_recall {
         // Store query vectors and expected IDs (first 10 vectors)
         let query_vectors: Vec<Vec<f32>> = vectors[0..TOP_K.min(vector_count)]
             .iter()
-            .map(|v| v.vector.clone())
+            .map(|v| {
+                v.embeddings
+                    .first()
+                    .map(|e| e.values.to_fp32_owned())
+                    .unwrap_or_default()
+            })
             .collect();
         let expected_ids: Vec<String> = vectors[0..TOP_K.min(vector_count)]
             .iter()
-            .map(|v| v.id.clone())
+            .map(|v| v.oid.clone())
             .collect();
 
         eprintln!("Query vectors: {:?}", expected_ids);
@@ -296,8 +301,12 @@ mod helix_cold_search_recall {
 
         // Generate small dataset for detailed debugging
         let vectors = vector_generator::random_seeded_with_prefix("test", 50, DIMENSION, 12345);
-        let query = vectors[0].vector.clone();
-        let expected_id = vectors[0].id.clone();
+        let query = vectors[0]
+            .embeddings
+            .first()
+            .map(|e| e.values.to_fp32_owned())
+            .unwrap_or_default();
+        let expected_id = vectors[0].oid.clone();
 
         // Test with HELIX
         let helix_collection = create_collection(

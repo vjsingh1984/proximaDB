@@ -11,10 +11,13 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::{debug, trace};
 
-use crate::storage::persistence::filesystem::unified::AccessOperation;
+use crate::storage::persistence::filesystem::caching_filesystem::AccessOperation;
+
+/// Backwards-compat alias for [`FsAccessPatternTracker`].
+pub type AccessPatternTracker = FsAccessPatternTracker;
 
 /// Tracks access patterns for intelligent caching decisions
-pub struct AccessPatternTracker {
+pub struct FsAccessPatternTracker {
     /// Access history per file
     access_history: Arc<DashMap<String, FileAccessHistory>>,
 
@@ -57,7 +60,7 @@ struct GlobalAccessStats {
     hot_files: Vec<String>,
 }
 
-impl AccessPatternTracker {
+impl FsAccessPatternTracker {
     /// Create new access pattern tracker
     pub fn new() -> Self {
         Self {
@@ -316,7 +319,7 @@ impl AccessPatternTracker {
     }
 }
 
-impl Default for AccessPatternTracker {
+impl Default for FsAccessPatternTracker {
     fn default() -> Self {
         Self::new()
     }
@@ -365,7 +368,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hot_file_detection() {
-        let tracker = AccessPatternTracker::new();
+        let tracker = FsAccessPatternTracker::new();
 
         // Record multiple accesses
         for _ in 0..6 {
@@ -380,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_access_frequency() {
-        let tracker = AccessPatternTracker::new();
+        let tracker = FsAccessPatternTracker::new();
 
         tracker.record("file1.parquet", AccessOperation::Read).await;
         assert_eq!(

@@ -65,15 +65,25 @@
 //! - **Smart Defaults**: Automatic selection of optimal configurations
 
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::{debug, error, info, warn};
 
 // Using String directly instead of String alias for proto-first architecture
+use crate::catalog::{
+    CatalogColumn, CatalogIndex, CatalogIndexType, CatalogManager, CatalogPhysicalFormat,
+    CatalogProjection, CatalogProjectionKind, CatalogStorageLayout, CatalogStorageLayoutKind,
+    CatalogTableSchema, ProjectionFreshness, TableIdentifier,
+};
 use crate::core::config::StorageConfig;
-use crate::proto::proximadb_v1::{Collection, CollectionConfig, StorageEngine};
+use crate::proto::proximadb_v1::{
+    Collection, CollectionConfig, CollectionStats, FilterableColumnSpec, FilterableDataType,
+    IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
+};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::traits::InternalCollectionProvider;
-use crate::utils::StoragePath;
+use proximadb_data_model::ProximaType;
+use proximadb_storage_common::storage_path::StoragePath;
 
 // Proto-first architecture - use crate::proto::proximadb_v1::Collection directly
 
@@ -97,15 +107,34 @@ pub struct CollectionService {
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
     /// Using dashmap for lock-free concurrent access
-    index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::IndexConfig>>,
+    index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::RuntimeIndexConfig>>,
     /// Global storage configuration for engine and WAL settings
     storage_config: StorageConfig,
+    /// Optional xCatalog manager. When present, collection lifecycle metadata is
+    /// mirrored through xCatalog and the legacy backend remains a storage-compatibility cache.
+    catalog_manager: Option<Arc<CatalogManager>>,
 
     // NEW: Multi-tenant integration
     /// Optional tenant manager for multi-tenant isolation
     tenant_manager: Option<Arc<crate::storage::tenant::TenantManager>>,
     /// Optional RBAC enforcer for role-based access control
     rbac_enforcer: Option<Arc<crate::storage::tenant::EnhancedRBACManager>>,
+
+    /// Per-collection TurboQuant store registry (Phase P — Quantization
+    /// Trait Convergence Plan). When present, `create_collection` with
+    /// `enable_turboquant=true` registers the per-collection store
+    /// immediately (no first-search latency hit) via
+    /// `registry.get_or_create(...)`. When absent (default test paths
+    /// + non-TurboQuant deployments), the create-time block falls back
+    /// to logging-only behavior so existing fixtures keep working.
+    ///
+    /// Same `Arc<dyn>` instance lives on `SharedServices.turboquant_registry`
+    /// — Phase P's hoist in `SharedServices::new` ensures the create-time
+    /// wire and the boot-time hydration share one map.
+    #[cfg(feature = "experimental-turboquant")]
+    turboquant_registry: Option<
+        Arc<dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry>,
+    >,
 }
 
 impl CollectionService {
@@ -135,9 +164,43 @@ impl CollectionService {
             filesystem_factory,
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
+            catalog_manager: None,
             tenant_manager: None, // Will be set via with_tenant_manager()
             rbac_enforcer: None,  // Will be set via with_rbac_enforcer()
+            #[cfg(feature = "experimental-turboquant")]
+            turboquant_registry: None, // Will be set via with_turboquant_registry()
         })
+    }
+
+    /// Attach a TurboQuant store registry (Phase P — Quantization Trait
+    /// Convergence Plan). When set, `create_collection` with
+    /// `enable_turboquant=true` registers the per-collection store
+    /// immediately via `registry.get_or_create(...)`. Mirrors the
+    /// `with_catalog_manager` pattern below.
+    ///
+    /// Production wiring: `SharedServices::new` hoists the registry
+    /// construction (Phase P Site 2) and threads the same `Arc<dyn>`
+    /// instance through here. Sharing one `Arc` means create-time
+    /// registrations land in the same map the boot-time hydration loop
+    /// populates.
+    #[cfg(feature = "experimental-turboquant")]
+    pub fn with_turboquant_registry(
+        mut self,
+        registry: Arc<
+            dyn crate::compute::quantization::turboquant_store_registry::TurboQuantStoreRegistry,
+        >,
+    ) -> Self {
+        self.turboquant_registry = Some(registry);
+        self
+    }
+
+    /// Attach the shared xCatalog manager.
+    ///
+    /// During migration, xCatalog is the lifecycle metadata authority when configured while the
+    /// legacy metadata backend is kept in sync for storage-engine callers that still read it.
+    pub fn with_catalog_manager(mut self, catalog_manager: Arc<CatalogManager>) -> Self {
+        self.catalog_manager = Some(catalog_manager);
+        self
     }
 
     /// Set tenant manager for multi-tenant support
@@ -222,7 +285,6 @@ impl CollectionService {
 
     async fn count_tenant_collections(&self, tenant_id: &str) -> Result<usize> {
         Ok(self
-            .metadata_backend
             .list_collections()
             .await?
             .into_iter()
@@ -247,10 +309,7 @@ impl CollectionService {
             return Ok(None);
         }
 
-        let collection = self
-            .metadata_backend
-            .get_collection(collection_identifier)
-            .await?;
+        let collection = self.collection(collection_identifier).await?;
 
         let Some(collection) = collection else {
             return Ok(None);
@@ -315,7 +374,7 @@ impl CollectionService {
         }
 
         // Proceed with normal collection retrieval
-        self.metadata_backend.get_collection(collection_name).await
+        self.collection(collection_name).await
     }
 
     /// List all collections, filtered to the given tenant context if multi-tenant mode is active.
@@ -323,7 +382,7 @@ impl CollectionService {
         &self,
         tenant_context: Option<&crate::storage::tenant::TenantContext>,
     ) -> Result<Vec<Collection>> {
-        let collections = self.metadata_backend.list_collections().await?;
+        let collections = self.list_collections().await?;
 
         if let Some(tenant_ctx) = tenant_context.filter(|_| self.tenant_manager.is_some()) {
             if let Some(ref tenant_manager) = self.tenant_manager
@@ -377,7 +436,26 @@ impl CollectionService {
             );
         }
 
-        self.delete_collection(collection_name).await
+        let response = self.delete_collection(collection_name).await?;
+
+        // Bump the corpus_version for (tenant, collection) so the
+        // process-wide PlanCache invalidates on the next planner
+        // lookup. Deleting a collection definitionally invalidates
+        // any cached plans for it. Only fires when we have a tenant
+        // context — anonymous deletions can't be keyed.
+        if let Some(tenant_ctx) = tenant_context
+            && response.success
+        {
+            let version = crate::catalog::CorpusVersionRegistry::global()
+                .bump(&tenant_ctx.tenant_id, collection_name)
+                .await;
+            debug!(
+                "🔄 corpus_version bumped after delete: tenant={} collection={} version={}",
+                tenant_ctx.tenant_id, collection_name, version
+            );
+        }
+
+        Ok(response)
     }
 
     /// Create collection with tenant context validation
@@ -437,8 +515,77 @@ impl CollectionService {
             );
         }
 
-        // Resolve compression and storage configuration
         let mut enriched_config = config.clone();
+
+        // Persist an explicit default metric so every downstream subsystem
+        // sees the same collection semantics instead of applying its own fallback.
+        let resolved_distance_metric = enriched_config
+            .distance_metric
+            .and_then(|metric| crate::proto::proximadb_v1::DistanceMetric::try_from(metric).ok())
+            .filter(|metric| *metric != crate::proto::proximadb_v1::DistanceMetric::Unspecified)
+            .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
+        enriched_config.distance_metric = Some(resolved_distance_metric as i32);
+
+        // Heuristic engine routing: collections that don't pin a
+        // storage_engine fall through to the rules in
+        // crate::services::collection::engine_selector. Vector
+        // collections with neither an index nor quantization land on
+        // HELIX (Hilbert-sorted blocks → usable recall without an
+        // external index); everything else stays on SST. Caller-pinned
+        // engine choices are passed through untouched.
+        let (selected_engine, selection_reason) =
+            crate::services::collection::engine_selector::infer_storage_engine(&enriched_config);
+        let previous_engine_field = enriched_config.storage_engine;
+        enriched_config.storage_engine = Some(selected_engine as i32);
+        tracing::info!(
+            target: "collection.engine_selector",
+            collection = %enriched_config.name,
+            chosen_engine = ?selected_engine,
+            reason = selection_reason,
+            previous_field = ?previous_engine_field,
+            dimension = enriched_config.dimension,
+            has_index = !enriched_config.index_configs.is_empty(),
+            has_quantization = enriched_config
+                .quantization
+                .as_ref()
+                .and_then(|q| q.enabled)
+                .unwrap_or(false),
+            "auto-selected storage engine"
+        );
+
+        // Recall-target advisor wiring: when the caller asked for a
+        // specific recall (via a `recall_target:<f32>` tag), invoke
+        // the algorithm-agnostic advisor. The selector picks HNSW
+        // vs IVF based on declared budgets (max_memory_mb,
+        // max_query_latency_ms) and sizes the chosen algorithm's
+        // params; results are stamped into the matching IndexConfig.
+        // See crate::services::collection::recall_target for the
+        // parse + apply contract.
+        if let Some(recall_target) =
+            crate::services::collection::recall_target::parse_recall_target(&enriched_config)
+        {
+            let applied = crate::services::collection::recall_target::apply_advisor_to_indexes(
+                &mut enriched_config,
+                recall_target,
+            );
+            for advice in &applied {
+                tracing::info!(
+                    target: "collection.recall_target",
+                    collection = %enriched_config.name,
+                    index = %advice.index_name,
+                    recall_target = recall_target,
+                    algorithm = %advice.output.kind.label(),
+                    clamped_by_budget = advice.output.clamped_by_budget,
+                    projected_recall = ?advice.output.projected_recall,
+                    estimated_memory_mb = advice.output.estimated_memory_mb,
+                    estimated_per_query_work = advice.output.estimated_per_query_work,
+                    rationale = %advice.output.rationale,
+                    "auto-sized index from recall_target"
+                );
+            }
+        }
+
+        // Resolve compression and storage configuration
 
         // NEW: Add tenant metadata to collection if tenant context is provided
         if let Some(tenant_ctx) = tenant_context {
@@ -529,47 +676,112 @@ impl CollectionService {
                         binary_threshold: Some(0.3),
                         int8_threshold: Some(0.1),
                         pq_threshold: Some(0.05),
+                        enable_turboquant: Some(false),
                     });
                 }
             }
         }
 
-        // Add default HNSW index configuration if not provided
-        // This enables AXIS indexes for accelerated vector search
-        let resolved_engine = crate::proto::proximadb_v1::StorageEngine::try_from(
-            config.storage_engine.unwrap_or(StorageEngine::Sst as i32),
-        )
-        .unwrap_or(StorageEngine::Sst);
+        // Phase N (opt-in plumbing) + Phase P (create-time register) —
+        // Quantization Trait Convergence Plan. When the SDK / handler
+        // sets `quantization.enable_turboquant = true`:
+        //
+        // 1. On `cfg(experimental-turboquant)` builds with a registry
+        //    attached: call `registry.get_or_create(...)` so the
+        //    per-collection TurboQuant store is registered NOW. The first
+        //    search reaches the kernel instead of a silent full-precision
+        //    fallback. Failures are logged but DO NOT abort collection
+        //    creation (Phase O "log + continue" pattern — registry
+        //    transient errors must not block the catalog write).
+        // 2. On `cfg(experimental-turboquant)` builds without a registry
+        //    (test fixtures + paths constructed via `CollectionService::new`
+        //    without the builder): emit the Phase N structured event so
+        //    operator dashboards still see the intent.
+        // 3. On builds without the feature: emit a `warn!` so silent
+        //    drops never go unnoticed.
+        //
+        // Defaults surfaced (per ADR-021 §"Authority mode"):
+        //   - `bit_width = 4`
+        //   - `calibration_mode = tq_plus`
+        //   - `rotation_seed = derive_rotation_seed(&collection_name)` —
+        //     same FNV-1a hash every other Phase-A→O surface uses, so
+        //     the runtime store, the EXPLAIN payload, and any future
+        //     catalog row all agree on the per-collection seed.
+        let opt_in = enriched_config
+            .quantization
+            .as_ref()
+            .and_then(|q| q.enable_turboquant)
+            .unwrap_or(false);
+        if opt_in {
+            #[cfg(feature = "experimental-turboquant")]
+            {
+                use proximadb_quantization_types::CalibrationMode;
+                let seed = proximadb_quantization_types::derive_rotation_seed(&config.name);
+                let bit_width: u8 = 4;
+                if let Some(registry) = &self.turboquant_registry {
+                    match registry
+                        .get_or_create(
+                            &config.name,
+                            config.dimension as usize,
+                            bit_width,
+                            CalibrationMode::TqPlus,
+                            seed,
+                        )
+                        .await
+                    {
+                        Ok(_store) => {
+                            tracing::info!(
+                                target: "proximadb::turboquant::opt_in",
+                                collection = %config.name,
+                                bit_width,
+                                calibration_mode = "tq_plus",
+                                rotation_seed = format!("{:#x}", seed),
+                                "Phase P opt-in: TurboQuant store registered for new collection",
+                            );
+                        }
+                        Err(e) => {
+                            // Log + continue. Collection-create must NOT
+                            // fail just because the registry hit an
+                            // error — boot-time hydration recovers on
+                            // next restart, and the next search retries
+                            // `get_or_create` lazily.
+                            tracing::warn!(
+                                target: "proximadb::turboquant::opt_in",
+                                collection = %config.name,
+                                error = %e,
+                                "Phase P opt-in: get_or_create failed; collection will fall \
+                                 back to full-precision scoring until next boot",
+                            );
+                        }
+                    }
+                } else {
+                    // Registry not attached (test path). Keep the Phase
+                    // N logging-only behavior so existing fixtures don't
+                    // break — the operator-visible intent still surfaces.
+                    tracing::info!(
+                        target: "proximadb::turboquant::opt_in",
+                        collection = %config.name,
+                        bit_width,
+                        calibration_mode = "tq_plus",
+                        rotation_seed = format!("{:#x}", seed),
+                        "Phase N opt-in (no registry attached): TurboQuant registered for collection",
+                    );
+                }
+            }
+            #[cfg(not(feature = "experimental-turboquant"))]
+            {
+                tracing::warn!(
+                    collection = %config.name,
+                    "Collection requested enable_turboquant=true but the server build \
+                     does not have the `experimental-turboquant` feature enabled; \
+                     opt-in is silently dropped",
+                );
+            }
+        }
 
-        if enriched_config.index_configs.is_empty() && resolved_engine != StorageEngine::Tst {
-            use crate::proto::proximadb_v1::{HnswConfig, IndexConfig, IndexingAlgorithm};
-
-            let default_hnsw_config = IndexConfig {
-                index_name: format!("{}_default_hnsw", config.name),
-                algorithm: IndexingAlgorithm::Hnsw as i32,
-                enabled: Some(true),
-                is_primary: Some(true),
-                hnsw_config: Some(HnswConfig {
-                    m: Some(16),                // Balanced connectivity
-                    ef_construction: Some(200), // Good build quality
-                    ef_search: Some(50),        // Fast search with good recall
-                    max_partition_size: Some(100_000),
-                    adaptive_parameters: Some(true),
-                    use_simd: Some(true),
-                    memory_limit_mb: Some(512),
-                    lazy_loading: Some(false),
-                }),
-                ..Default::default()
-            };
-
-            enriched_config.index_configs.push(default_hnsw_config);
+        if enriched_config.index_configs.is_empty() {
             info!(
-                "📊 Created default HNSW index for collection '{}' (dimension: {})",
-                config.name, config.dimension
-            );
-        } else if enriched_config.index_configs.is_empty() {
-            info!(
-                "📊 Skipping default HNSW index for time-series collection '{}'",
+                "📊 Collection '{}' created without an ANN index; exact/brute-force retrieval remains the default until indexes are explicitly configured",
                 config.name
             );
         }
@@ -651,15 +863,7 @@ impl CollectionService {
             // This allows collections to be created with quantization enabled, but enforces IDs at insert time
         }
 
-        // Check if collection already exists
-        // Check if collection already exists
-        // Check if collection already exists
-        if self
-            .metadata_backend
-            .get_collection(&config.name)
-            .await?
-            .is_some()
-        {
+        if self.collection(&config.name).await?.is_some() {
             return Ok(CollectionServiceResponse {
                 success: false,
                 collection: None,
@@ -670,7 +874,8 @@ impl CollectionService {
         }
 
         // Create proto collection directly - no Avro conversion needed!
-        // Generate base62 ID from microsecond timestamp with collision detection
+        // Collection IDs are UUIDs. Legacy base62/time IDs remain resolvable from older metadata,
+        // but new catalog assets use opaque UUID identity and keep names as stable logical aliases.
         let uuid = self.generate_unique_collection_id().await?;
         let now = chrono::Utc::now().timestamp_micros();
 
@@ -738,11 +943,27 @@ impl CollectionService {
             }),
         };
 
-        // Store proto collection using protobuf serialization (zero-copy)
-        self.metadata_backend
+        if let Err(e) = self
+            .upsert_collection_catalog_asset(&proto_collection)
+            .await
+        {
+            return Ok(CollectionServiceResponse::error(
+                format!("CATALOG_CREATE_FAILED: {}", e),
+                start_time.elapsed().as_micros() as i64,
+            ));
+        }
+
+        // Store proto collection using protobuf serialization (zero-copy). This remains as a
+        // compatibility cache for storage engines until all callers read xCatalog directly.
+        if let Err(e) = self
+            .metadata_backend
             .upsert_collection_proto(&proto_collection)
             .await
-            .context("Failed to store collection metadata_info")?;
+            .context("Failed to store collection metadata_info")
+        {
+            let _ = self.drop_collection_catalog_asset(&proto_collection).await;
+            return Err(e);
+        }
 
         info!(
             "✅ Collection created: {} (UUID: {}) with storage at: {} in {}μs",
@@ -756,6 +977,23 @@ impl CollectionService {
 
         // Generate storage path template
         let storage_path = format!("${{base_path}}/collections/{}", uuid);
+
+        // Bump the corpus_version for (tenant, collection) so the
+        // process-wide PlanCache invalidates on the first planner
+        // lookup against the freshly-created collection. New
+        // collections start at version 2 (default was 1), so any
+        // entry that ended up in the cache during a race condition
+        // — e.g. a search that arrived between catalog upsert and
+        // this bump — gets superseded immediately.
+        if let Some(tenant_ctx) = tenant_context {
+            let version = crate::catalog::CorpusVersionRegistry::global()
+                .bump(&tenant_ctx.tenant_id, &config.name)
+                .await;
+            debug!(
+                "🔄 corpus_version bumped after create: tenant={} collection={} version={}",
+                tenant_ctx.tenant_id, config.name, version
+            );
+        }
 
         Ok(CollectionServiceResponse {
             success: true,
@@ -774,7 +1012,11 @@ impl CollectionService {
 
     /// Get Collection by name or UUID
     async fn get_native_proto(&self, identifier: &str) -> Result<Option<Collection>> {
-        // Use the metadata backend's collection_metadata which handles both name and UUID
+        if let Some(collection) = self.collection_from_catalog_asset(identifier).await? {
+            return Ok(Some(collection));
+        }
+
+        // Use the metadata backend's collection_metadata which handles both legacy name and UUID.
         self.metadata_backend.collection_metadata(identifier).await
     }
 
@@ -820,7 +1062,7 @@ impl CollectionService {
     pub async fn native_index_config(
         &self,
         identifier: &str,
-    ) -> Result<Option<crate::index::config::IndexConfig>> {
+    ) -> Result<Option<crate::index::config::RuntimeIndexConfig>> {
         debug!("🔍 Getting IndexConfig for collection: {}", identifier);
 
         // Check cache first
@@ -852,7 +1094,7 @@ impl CollectionService {
     fn convert_proto_index_config(
         &self,
         _proto_config: &crate::proto::proximadb_v1::IndexConfig,
-    ) -> Result<crate::index::config::IndexConfig> {
+    ) -> Result<crate::index::config::RuntimeIndexConfig> {
         // Extract algorithm name from proto config
         let _algorithm_name = match _proto_config.algorithm {
             1 => "HNSW",
@@ -864,14 +1106,14 @@ impl CollectionService {
         };
 
         // Use the from_proto method that handles all the config extraction
-        crate::index::config::IndexConfig::from_proto(_proto_config)
+        crate::index::config::RuntimeIndexConfig::from_proto(_proto_config)
     }
 
     /// Parse IndexConfig from Collection
     fn parse_index_config_from_proto(
         &self,
         proto: &Collection,
-    ) -> Result<crate::index::config::IndexConfig> {
+    ) -> Result<crate::index::config::RuntimeIndexConfig> {
         // Check if proto has index_config field
         if let Some(config) = proto.config.as_ref()
             && !config.index_configs.is_empty()
@@ -909,7 +1151,7 @@ impl CollectionService {
             _ => "HNSW", // Default to HNSW
         };
 
-        let smart_config = crate::index::config::IndexConfig::create_smart_default(
+        let smart_config = crate::index::config::RuntimeIndexConfig::create_smart_default(
             algorithm_str,
             config.dimension as usize,
             None, // Collection size hint not available
@@ -1063,7 +1305,31 @@ impl CollectionService {
     /// List all collections - returns proto Collections directly (proto-first architecture)
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
         debug!("📋 Listing all collections");
-        self.metadata_backend.list_collections().await
+        let mut collections = self.list_collections_from_catalog().await?;
+        let mut seen = HashSet::new();
+        for collection in &collections {
+            seen.insert(collection.id.clone());
+            if let Some(config) = &collection.config {
+                seen.insert(config.name.clone());
+            }
+        }
+
+        for collection in self.metadata_backend.list_collections().await? {
+            let mut duplicate = seen.contains(&collection.id);
+            if let Some(config) = &collection.config {
+                duplicate |= seen.contains(&config.name);
+            }
+            if duplicate {
+                continue;
+            }
+            seen.insert(collection.id.clone());
+            if let Some(config) = &collection.config {
+                seen.insert(config.name.clone());
+            }
+            collections.push(collection);
+        }
+
+        Ok(collections)
     }
 
     /// Delete collection with comprehensive cleanup across all storage components
@@ -1074,11 +1340,9 @@ impl CollectionService {
         info!("🗑️ Deleting collection: {}", collection_identifier);
         let start_time = std::time::Instant::now();
 
-        // Get collection record first to retrieve UUID and other details
-        let collection_record = self
-            .metadata_backend
-            .get_collection(collection_identifier)
-            .await?;
+        // Get collection record first to retrieve UUID and other details. xCatalog is checked
+        // first; the legacy backend is only a compatibility fallback.
+        let collection_record = self.collection(collection_identifier).await?;
 
         if let Some(record) = collection_record {
             let collection_uuid = record.id.clone();
@@ -1118,10 +1382,28 @@ impl CollectionService {
             // Step 2: Assignment removal is no longer needed
             // Storage assignment is now part of collection metadata which gets deleted
 
-            // Step 3: Delete from metadata backend
-            self.metadata_backend
+            // Step 3: Delete from xCatalog and metadata backend
+            if let Err(e) = self.drop_collection_catalog_asset(&record).await {
+                return Ok(CollectionServiceResponse::error(
+                    format!("CATALOG_DELETE_FAILED: {}", e),
+                    start_time.elapsed().as_micros() as i64,
+                ));
+            }
+
+            if let Err(e) = self
+                .metadata_backend
                 .delete_collection(collection_name.as_deref().unwrap_or(collection_identifier))
-                .await?;
+                .await
+            {
+                if Self::is_not_found_error(&e) {
+                    debug!(
+                        "Legacy collection metadata cache was already absent for {}",
+                        collection_identifier
+                    );
+                } else {
+                    return Err(e);
+                }
+            }
             let deleted = true;
 
             if deleted {
@@ -1185,6 +1467,8 @@ impl CollectionService {
             }
             record.updated_at = chrono::Utc::now().timestamp_millis();
 
+            self.upsert_collection_catalog_asset(&record).await?;
+
             self.metadata_backend
                 .upsert_collection_proto(&record)
                 .await?;
@@ -1243,7 +1527,7 @@ impl CollectionService {
         debug!("🔍 Getting UUID for collection: {}", collection_id);
 
         // First check if it's already a UUID
-        if crate::utils::uuid::Uuid::parse(collection_id).is_ok() {
+        if proximadb_kernel::uuid::Uuid::parse(collection_id).is_ok() {
             // Verify it exists
             if let Some(collection) = self.collection(collection_id).await? {
                 return Ok(Some(collection.id));
@@ -1268,9 +1552,8 @@ impl CollectionService {
         info!("📝 Updating collection: {}", identifier);
         let start_time = std::time::Instant::now();
 
-        // Get current record (supports both names and UUIDs)
-        // Get current record (supports both names and UUIDs)
-        let mut record = match self.metadata_backend.get_collection(identifier).await? {
+        // Get current record (supports both names and UUIDs) through xCatalog first.
+        let mut record = match self.collection(identifier).await? {
             Some(record) => record,
             None => {
                 return Ok(CollectionServiceResponse {
@@ -1282,6 +1565,7 @@ impl CollectionService {
                 });
             }
         };
+        let previous_record = record.clone();
 
         // Apply updates using native proto types
         if let Some(new_config) = config_update {
@@ -1321,6 +1605,21 @@ impl CollectionService {
 
         // Update timestamp
         record.updated_at = chrono::Utc::now().timestamp_millis();
+
+        if previous_record
+            .config
+            .as_ref()
+            .zip(record.config.as_ref())
+            .is_some_and(|(previous, current)| previous.name != current.name)
+        {
+            self.drop_collection_catalog_asset(&previous_record)
+                .await
+                .context("Failed to remove previous collection catalog asset")?;
+        }
+
+        self.upsert_collection_catalog_asset(&record)
+            .await
+            .context("Failed to update collection catalog metadata")?;
 
         // Store updated record
         self.metadata_backend
@@ -1655,67 +1954,618 @@ impl CollectionService {
         Ok(cleaned_components)
     }
 
-    /// Generate unique collection ID using base62-encoded seconds with random padding
-    /// Format: {base62(seconds)}{random_base62_char}
-    async fn generate_unique_collection_id(&self) -> Result<String> {
-        use crate::core::base62;
+    async fn upsert_collection_catalog_asset(&self, collection: &Collection) -> Result<()> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(());
+        };
 
-        const BASE62_CHARS: &[u8] =
-            b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-        let base_timestamp = chrono::Utc::now().timestamp() as u64;
-        let base_id = base62::encode(base_timestamp);
+        let Some(config) = collection.config.as_ref() else {
+            return Ok(());
+        };
 
-        // Generate initial ID with random padding using rand::random which is Send
-        let random_index: u8 = rand::random::<u8>() % 62;
-        let random_char = BASE62_CHARS[random_index as usize] as char;
-        let id = format!("{}{}", base_id, random_char);
+        let catalog = catalog_manager.default_catalog().await?;
+        let identifier = Self::collection_table_identifier(config);
 
-        // Check if ID is available
-        if !self.metadata_backend.collection_id_exists(&id).await? {
-            return Ok(id);
+        if !catalog.namespace_exists(&identifier.namespace).await? {
+            catalog
+                .create_namespace(&identifier.namespace, std::collections::HashMap::new())
+                .await?;
         }
 
-        // If collision detected, try different random paddings
-        for _ in 0..62 {
-            let random_index: u8 = rand::random::<u8>() % 62;
-            let random_char = BASE62_CHARS[random_index as usize] as char;
-            let try_id = format!("{}{}", base_id, random_char);
-            if !self.metadata_backend.collection_id_exists(&try_id).await? {
-                return Ok(try_id);
+        let schema = Self::catalog_schema_from_collection(collection)?;
+        if catalog.table_exists(&identifier).await? {
+            let mut existing = catalog.get_table(&identifier).await?;
+            if existing
+                .properties
+                .get("asset.kind")
+                .is_none_or(|kind| kind != "collection")
+            {
+                existing
+                    .properties
+                    .insert("asset.capability.vector".to_string(), "true".to_string());
+                existing
+                    .properties
+                    .insert("collection.id".to_string(), collection.id.clone());
+                existing
+                    .properties
+                    .insert("collection.name".to_string(), config.name.clone());
+                existing
+                    .properties
+                    .insert("vector.dimension".to_string(), config.dimension.to_string());
+                existing.updated_at_ms = collection.updated_at / 1000;
+                if existing.storage_layouts.is_empty() {
+                    existing.storage_layouts = schema.storage_layouts.clone();
+                }
+                if existing.location.is_none() {
+                    existing.location = schema.location.clone();
+                }
+
+                let _ = catalog.drop_table(&identifier, false).await?;
+                catalog.create_table(&identifier, existing).await?;
+                return Ok(());
+            }
+
+            let _ = catalog.drop_table(&identifier, false).await?;
+        }
+        catalog.create_table(&identifier, schema).await?;
+        Ok(())
+    }
+
+    async fn drop_collection_catalog_asset(&self, collection: &Collection) -> Result<()> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(());
+        };
+
+        let Some(config) = collection.config.as_ref() else {
+            return Ok(());
+        };
+
+        let catalog = catalog_manager.default_catalog().await?;
+        let identifier = Self::collection_table_identifier(config);
+        if catalog.table_exists(&identifier).await? {
+            let _ = catalog.drop_table(&identifier, false).await?;
+        }
+        Ok(())
+    }
+
+    async fn collection_from_catalog_asset(&self, identifier: &str) -> Result<Option<Collection>> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(None);
+        };
+
+        if let Ok((catalog, table_id)) = catalog_manager.resolve_table(identifier).await
+            && catalog.table_exists(&table_id).await.unwrap_or(false)
+        {
+            let schema = catalog.get_table(&table_id).await?;
+            if let Some(collection) = Self::collection_from_catalog_schema(&table_id, &schema)? {
+                return Ok(Some(collection));
             }
         }
 
-        // If still colliding (very unlikely), try bidirectional search with padding
-        const MAX_ATTEMPTS: u64 = 100;
-
-        for offset in 1..=MAX_ATTEMPTS {
-            // Try incrementing seconds
-            let inc_timestamp = base_timestamp + offset;
-            let inc_base = base62::encode(inc_timestamp);
-            let random_index: u8 = rand::random::<u8>() % 62;
-            let random_char = BASE62_CHARS[random_index as usize] as char;
-            let inc_id = format!("{}{}", inc_base, random_char);
-            if !self.metadata_backend.collection_id_exists(&inc_id).await? {
-                return Ok(inc_id);
+        for collection in self.list_collections_from_catalog().await? {
+            if collection.id == identifier {
+                return Ok(Some(collection));
             }
+            if let Some(config) = &collection.config
+                && config.name == identifier
+            {
+                return Ok(Some(collection));
+            }
+        }
 
-            // Try decrementing seconds (if not underflow)
-            if base_timestamp > offset {
-                let dec_timestamp = base_timestamp - offset;
-                let dec_base = base62::encode(dec_timestamp);
-                let random_index: u8 = rand::random::<u8>() % 62;
-                let random_char = BASE62_CHARS[random_index as usize] as char;
-                let dec_id = format!("{}{}", dec_base, random_char);
-                if !self.metadata_backend.collection_id_exists(&dec_id).await? {
-                    return Ok(dec_id);
+        Ok(None)
+    }
+
+    async fn list_collections_from_catalog(&self) -> Result<Vec<Collection>> {
+        let Some(catalog_manager) = &self.catalog_manager else {
+            return Ok(Vec::new());
+        };
+
+        let catalog = match catalog_manager.default_catalog().await {
+            Ok(catalog) => catalog,
+            Err(_) => return Ok(Vec::new()),
+        };
+
+        let mut namespaces: Vec<Vec<String>> = catalog
+            .list_namespaces(None)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|namespace| namespace.levels)
+            .collect();
+        if !namespaces.iter().any(|namespace| namespace == &["default"]) {
+            namespaces.push(vec!["default".to_string()]);
+        }
+
+        let mut collections = Vec::new();
+        let mut seen_ids = HashSet::new();
+        for namespace in namespaces {
+            let table_ids = match catalog.list_tables(&namespace).await {
+                Ok(table_ids) => table_ids,
+                Err(_) => continue,
+            };
+
+            for table_id in table_ids {
+                let schema = match catalog.get_table(&table_id).await {
+                    Ok(schema) => schema,
+                    Err(_) => continue,
+                };
+                let Some(collection) = Self::collection_from_catalog_schema(&table_id, &schema)?
+                else {
+                    continue;
+                };
+                if seen_ids.insert(collection.id.clone()) {
+                    collections.push(collection);
                 }
             }
         }
 
-        // Extremely unlikely case: append another random character
-        let random_index: u8 = rand::random::<u8>() % 62;
-        let random_suffix = BASE62_CHARS[random_index as usize] as char;
-        Ok(format!("{}{}{}", base_id, random_char, random_suffix))
+        Ok(collections)
+    }
+
+    fn collection_from_catalog_schema(
+        table_id: &TableIdentifier,
+        schema: &CatalogTableSchema,
+    ) -> Result<Option<Collection>> {
+        if schema
+            .properties
+            .get("asset.kind")
+            .is_none_or(|kind| kind != "collection")
+        {
+            return Ok(None);
+        }
+
+        let Some(id) = schema.properties.get("collection.id").cloned() else {
+            return Ok(None);
+        };
+
+        let name = schema
+            .properties
+            .get("collection.name")
+            .cloned()
+            .unwrap_or_else(|| table_id.to_fqn());
+        let dimension = schema
+            .properties
+            .get("vector.dimension")
+            .and_then(|dimension| dimension.parse::<u32>().ok())
+            .or_else(|| {
+                schema
+                    .columns
+                    .iter()
+                    .find(|column| column.name == "embedding")
+                    .and_then(|column| column.properties.get("dimension"))
+                    .and_then(|dimension| dimension.parse::<u32>().ok())
+            })
+            .unwrap_or_default();
+
+        let storage_engine = schema
+            .storage_layouts
+            .first()
+            .and_then(|layout| layout.properties.get("storage_engine"))
+            .map(|engine| Self::storage_engine_from_catalog(engine))
+            .unwrap_or(StorageEngine::Sst as i32);
+
+        // Round-trip canonical_embedding_precision from the catalog
+        // schema. Mirror of the forward mapping in
+        // `catalog_schema_from_collection`. Unset / Fp32 maps back to
+        // None so legacy collections keep their existing serialized
+        // shape (no behavior change for fp32 callers).
+        let canonical_embedding_precision = {
+            use crate::proto::proximadb_v1::EmbeddingPrecision;
+            match schema.canonical_embedding_precision {
+                proximadb_records::EmbeddingScalarType::Fp32 => None,
+                proximadb_records::EmbeddingScalarType::Fp16 => {
+                    Some(EmbeddingPrecision::Fp16 as i32)
+                }
+                proximadb_records::EmbeddingScalarType::Bf16 => {
+                    Some(EmbeddingPrecision::Bf16 as i32)
+                }
+                proximadb_records::EmbeddingScalarType::Int8Scalar => {
+                    Some(EmbeddingPrecision::Int8 as i32)
+                }
+                proximadb_records::EmbeddingScalarType::UInt8Scalar => {
+                    Some(EmbeddingPrecision::Uint8 as i32)
+                }
+            }
+        };
+
+        let mut config = CollectionConfig {
+            name,
+            dimension,
+            storage_engine: Some(storage_engine),
+            owner: schema.properties.get("owner").cloned(),
+            tags: schema
+                .properties
+                .get("tags")
+                .map(|tags| {
+                    tags.split(',')
+                        .map(str::trim)
+                        .filter(|tag| !tag.is_empty())
+                        .map(ToString::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
+            canonical_embedding_precision,
+            ..Default::default()
+        };
+
+        config.filterable_columns = schema
+            .columns
+            .iter()
+            .filter(|column| column.id >= 100)
+            .map(|column| {
+                let indexed = schema
+                    .indexes
+                    .iter()
+                    .any(|index| index.columns.iter().any(|name| name == &column.name));
+                let supports_range = schema.indexes.iter().any(|index| {
+                    index.columns.iter().any(|name| name == &column.name)
+                        && index.index_type == CatalogIndexType::BTree
+                });
+                FilterableColumnSpec {
+                    name: column.name.clone(),
+                    data_type: Self::filterable_data_type(&column.data_type),
+                    indexed,
+                    supports_range,
+                    estimated_cardinality: None,
+                }
+            })
+            .collect();
+
+        config.index_configs = schema
+            .indexes
+            .iter()
+            .filter(|index| index.columns.iter().any(|column| column == "embedding"))
+            .map(|index| IndexConfig {
+                index_name: index.name.clone(),
+                algorithm: Self::indexing_algorithm(index.index_type),
+                parameters: index.properties.clone(),
+                enabled: Some(true),
+                ..Default::default()
+            })
+            .collect();
+
+        let location = schema
+            .storage_layouts
+            .first()
+            .and_then(|layout| layout.location.clone())
+            .or_else(|| schema.location.clone())
+            .unwrap_or_default();
+        let storage_assignment = if location.is_empty() {
+            None
+        } else {
+            Some(StorageAssignment {
+                primary_path: location.clone(),
+                engine: storage_engine,
+                base_location: location,
+                ..Default::default()
+            })
+        };
+
+        Ok(Some(Collection {
+            id,
+            config: Some(config),
+            stats: Some(CollectionStats {
+                vector_count: schema
+                    .properties
+                    .get("stats.row_count")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default(),
+                data_size_bytes: schema
+                    .properties
+                    .get("stats.data_size_bytes")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default(),
+                index_size_bytes: schema
+                    .properties
+                    .get("stats.index_size_bytes")
+                    .and_then(|value| value.parse().ok())
+                    .unwrap_or_default(),
+            }),
+            created_at: schema.created_at_ms * 1000,
+            updated_at: schema.updated_at_ms * 1000,
+            storage_assignment,
+        }))
+    }
+
+    fn collection_table_identifier(config: &CollectionConfig) -> TableIdentifier {
+        let parsed = TableIdentifier::parse(&config.name);
+        if parsed.namespace.is_empty() {
+            TableIdentifier::new(vec!["default".to_string()], parsed.name)
+        } else {
+            parsed
+        }
+    }
+
+    fn catalog_schema_from_collection(collection: &Collection) -> Result<CatalogTableSchema> {
+        let config = collection
+            .config
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Collection has no config"))?;
+        let identifier = Self::collection_table_identifier(config);
+        let mut embedding_column = CatalogColumn::new(
+            20,
+            "embedding",
+            ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            },
+        );
+        embedding_column
+            .properties
+            .insert("dimension".to_string(), config.dimension.to_string());
+
+        let mut schema = CatalogTableSchema::new(identifier.name.clone())
+            .with_column(CatalogColumn::new(0, "oid", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(1, "tenant_id", ProximaType::String))
+            .with_column(CatalogColumn::new(
+                2,
+                "created_at_ns",
+                ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
+            ))
+            .with_column(CatalogColumn::new(
+                3,
+                "updated_at_ns",
+                ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
+            ))
+            .with_column(CatalogColumn::new(8, "props", ProximaType::Json))
+            .with_column(embedding_column)
+            .with_primary_key(vec!["oid".to_string()]);
+
+        for (idx, column) in config.filterable_columns.iter().enumerate() {
+            if column.name.is_empty() {
+                continue;
+            }
+            schema = schema.with_column(CatalogColumn::new(
+                100 + idx as i32,
+                column.name.clone(),
+                Self::catalog_data_type(column.data_type),
+            ));
+
+            if column.indexed {
+                let index_type = if column.supports_range {
+                    CatalogIndexType::BTree
+                } else {
+                    CatalogIndexType::Hash
+                };
+                schema = schema.with_index(CatalogIndex::new(
+                    format!("idx_{}_{}", identifier.name, column.name),
+                    vec![column.name.clone()],
+                    index_type,
+                ));
+            }
+        }
+
+        for index in &config.index_configs {
+            let index_type = Self::catalog_index_type(index.algorithm);
+            schema = schema.with_index(CatalogIndex::new(
+                if index.index_name.is_empty() {
+                    format!("idx_{}_embedding", identifier.name)
+                } else {
+                    index.index_name.clone()
+                },
+                vec!["embedding".to_string()],
+                index_type,
+            ));
+
+            let mut projection = CatalogProjection::rebuildable(
+                if index.index_name.is_empty() {
+                    format!("{}_ann", identifier.name)
+                } else {
+                    index.index_name.clone()
+                },
+                CatalogProjectionKind::VectorAnn,
+                "primary",
+            );
+            projection.physical_format = CatalogPhysicalFormat::ProximaBlock;
+            projection.freshness = ProjectionFreshness::Lazy;
+            schema = schema.with_projection(projection);
+        }
+
+        let mut layout = CatalogStorageLayout::internal(
+            "primary",
+            match config.storage_engine.unwrap_or(StorageEngine::Sst as i32) {
+                value if value == StorageEngine::Viper as i32 => CatalogStorageLayoutKind::Columnar,
+                value if value == StorageEngine::Nova as i32 => CatalogStorageLayoutKind::Columnar,
+                value if value == StorageEngine::Helix as i32 => {
+                    CatalogStorageLayoutKind::LsmRecord
+                }
+                _ => CatalogStorageLayoutKind::RowRecord,
+            },
+        );
+        layout.location = collection
+            .storage_assignment
+            .as_ref()
+            .map(|assignment| assignment.base_location.clone())
+            .filter(|location| !location.is_empty());
+        layout
+            .properties
+            .insert("collection_id".to_string(), collection.id.clone());
+        layout.properties.insert(
+            "storage_engine".to_string(),
+            config
+                .storage_engine
+                .and_then(|engine| StorageEngine::try_from(engine).ok())
+                .map(|engine| format!("{:?}", engine))
+                .unwrap_or_else(|| "Sst".to_string()),
+        );
+
+        schema.storage_layouts = vec![layout];
+        schema.location = collection
+            .storage_assignment
+            .as_ref()
+            .map(|assignment| assignment.base_location.clone())
+            .filter(|location| !location.is_empty());
+        schema.created_at_ms = collection.created_at / 1000;
+        schema.updated_at_ms = collection.updated_at / 1000;
+        schema
+            .properties
+            .insert("asset.kind".to_string(), "collection".to_string());
+        schema
+            .properties
+            .insert("asset.capability.vector".to_string(), "true".to_string());
+        schema
+            .properties
+            .insert("collection.id".to_string(), collection.id.clone());
+        schema
+            .properties
+            .insert("collection.name".to_string(), config.name.clone());
+        schema
+            .properties
+            .insert("vector.dimension".to_string(), config.dimension.to_string());
+        if let Some(owner) = &config.owner {
+            schema.properties.insert("owner".to_string(), owner.clone());
+        }
+        if !config.tags.is_empty() {
+            schema
+                .properties
+                .insert("tags".to_string(), config.tags.join(","));
+        }
+        if let Some(stats) = &collection.stats {
+            schema.properties.insert(
+                "stats.row_count".to_string(),
+                stats.vector_count.to_string(),
+            );
+            schema.properties.insert(
+                "stats.data_size_bytes".to_string(),
+                stats.data_size_bytes.to_string(),
+            );
+            schema.properties.insert(
+                "stats.index_size_bytes".to_string(),
+                stats.index_size_bytes.to_string(),
+            );
+        }
+
+        // Map the proto EmbeddingPrecision discriminant to the catalog's
+        // EmbeddingScalarType so the canonical_embedding_precision field
+        // (read by CanonicalPrecisionResolver) reflects whatever the
+        // create-collection request asked for. Unspecified / Fp32 stays
+        // on the legacy default.
+        if let Some(precision_value) = config.canonical_embedding_precision {
+            use crate::proto::proximadb_v1::EmbeddingPrecision;
+            schema.canonical_embedding_precision =
+                match EmbeddingPrecision::try_from(precision_value) {
+                    Ok(EmbeddingPrecision::Fp16) => proximadb_records::EmbeddingScalarType::Fp16,
+                    Ok(EmbeddingPrecision::Bf16) => proximadb_records::EmbeddingScalarType::Bf16,
+                    Ok(EmbeddingPrecision::Int8) => {
+                        proximadb_records::EmbeddingScalarType::Int8Scalar
+                    }
+                    Ok(EmbeddingPrecision::Uint8) => {
+                        proximadb_records::EmbeddingScalarType::UInt8Scalar
+                    }
+                    // Unspecified / Fp32 / unknown all map to the legacy default
+                    _ => proximadb_records::EmbeddingScalarType::Fp32,
+                };
+        }
+
+        Ok(schema)
+    }
+
+    fn catalog_data_type(data_type: i32) -> ProximaType {
+        use proximadb_data_model::TimeUnit;
+        match FilterableDataType::try_from(data_type).ok() {
+            Some(FilterableDataType::FilterableInteger) => ProximaType::Int64,
+            Some(FilterableDataType::FilterableFloat) => ProximaType::Float64,
+            Some(FilterableDataType::FilterableBoolean) => ProximaType::Boolean,
+            Some(FilterableDataType::FilterableDatetime) => {
+                ProximaType::Timestamp(TimeUnit::Nanosecond)
+            }
+            Some(FilterableDataType::FilterableDecimal) => ProximaType::Decimal {
+                precision: 38,
+                scale: 10,
+            },
+            Some(FilterableDataType::FilterableTimestampTz) => {
+                ProximaType::TimestampTz(TimeUnit::Nanosecond)
+            }
+            Some(FilterableDataType::FilterableDate) => ProximaType::Date,
+            Some(FilterableDataType::FilterableTime) => ProximaType::Time(TimeUnit::Nanosecond),
+            Some(FilterableDataType::FilterableUuid) => ProximaType::Uuid,
+            Some(FilterableDataType::FilterableBinary) => ProximaType::Binary,
+            Some(FilterableDataType::FilterableJson)
+            | Some(FilterableDataType::FilterableMapStringAny) => ProximaType::Json,
+            _ => ProximaType::String,
+        }
+    }
+
+    fn catalog_index_type(algorithm: i32) -> CatalogIndexType {
+        match IndexingAlgorithm::try_from(algorithm).ok() {
+            Some(IndexingAlgorithm::Hnsw) => CatalogIndexType::Hnsw,
+            Some(IndexingAlgorithm::Ivf) => CatalogIndexType::Ivf,
+            Some(IndexingAlgorithm::Pq) => CatalogIndexType::Pq,
+            _ => CatalogIndexType::Hnsw,
+        }
+    }
+
+    fn filterable_data_type(data_type: &ProximaType) -> i32 {
+        match data_type {
+            ProximaType::Int8 | ProximaType::Int16 | ProximaType::Int32 | ProximaType::Int64 => {
+                FilterableDataType::FilterableInteger as i32
+            }
+            ProximaType::Float32 | ProximaType::Float64 => {
+                FilterableDataType::FilterableFloat as i32
+            }
+            ProximaType::Boolean => FilterableDataType::FilterableBoolean as i32,
+            ProximaType::Timestamp(_) => FilterableDataType::FilterableDatetime as i32,
+            ProximaType::TimestampTz(_) => FilterableDataType::FilterableTimestampTz as i32,
+            ProximaType::Decimal { .. } => FilterableDataType::FilterableDecimal as i32,
+            ProximaType::Date => FilterableDataType::FilterableDate as i32,
+            ProximaType::Time(_) => FilterableDataType::FilterableTime as i32,
+            ProximaType::Uuid => FilterableDataType::FilterableUuid as i32,
+            ProximaType::Binary => FilterableDataType::FilterableBinary as i32,
+            ProximaType::Json => FilterableDataType::FilterableJson as i32,
+            _ => FilterableDataType::FilterableString as i32,
+        }
+    }
+
+    fn indexing_algorithm(index_type: CatalogIndexType) -> i32 {
+        match index_type {
+            CatalogIndexType::Ivf => IndexingAlgorithm::Ivf as i32,
+            CatalogIndexType::Pq => IndexingAlgorithm::Pq as i32,
+            CatalogIndexType::Hnsw => IndexingAlgorithm::Hnsw as i32,
+            _ => IndexingAlgorithm::Hnsw as i32,
+        }
+    }
+
+    fn storage_engine_from_catalog(engine: &str) -> i32 {
+        match engine.to_ascii_uppercase().as_str() {
+            "VIPER" => StorageEngine::Viper as i32,
+            "NOVA" => StorageEngine::Nova as i32,
+            "HELIX" => StorageEngine::Helix as i32,
+            "SWIFT" => StorageEngine::Swift as i32,
+            "RAPTOR" => StorageEngine::Raptor as i32,
+            "MMAP" => StorageEngine::Mmap as i32,
+            "HYBRID" => StorageEngine::Hybrid as i32,
+            "TST" => StorageEngine::Tst as i32,
+            "CEDAR" => StorageEngine::Cedar as i32,
+            "TITAN" => StorageEngine::Titan as i32,
+            "CHRONO" => StorageEngine::Chrono as i32,
+            _ => StorageEngine::Sst as i32,
+        }
+    }
+
+    fn is_not_found_error(error: &anyhow::Error) -> bool {
+        let message = error.to_string().to_ascii_lowercase();
+        message.contains("not found") || message.contains("does not exist")
+    }
+
+    /// Generate unique collection ID using UUIDs.
+    ///
+    /// Base62 timestamp IDs are still accepted as legacy identifiers by lookup paths, but new
+    /// catalog assets use UUID strings so identity is opaque, non-time-leaking, and compatible
+    /// with catalog/schema UUID fields across SDKs and embedded mode.
+    async fn generate_unique_collection_id(&self) -> Result<String> {
+        for _ in 0..8 {
+            let id = uuid::Uuid::new_v4().to_string();
+            if !self.metadata_backend.collection_id_exists(&id).await?
+                && self.collection_from_catalog_asset(&id).await?.is_none()
+            {
+                return Ok(id);
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Unable to generate a unique UUID for collection"
+        ))
     }
 }
 
@@ -1902,6 +2752,8 @@ mod tests {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
         };
 
         // Test create with valid config
@@ -2057,6 +2909,8 @@ mod tests {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             };
 
             let result = service
@@ -2088,6 +2942,286 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn test_create_collection_persists_explicit_cosine_metric() -> Result<()> {
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+
+        let filestore_config = UniversalMetadataConfig {
+            storage_url: temp_path,
+            compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
+        let backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .context("Failed to create metadata backend for test")?,
+        );
+        let service = CollectionService::new(backend, StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?;
+
+        let config = CollectionConfig {
+            name: "metric_default_test".to_string(),
+            dimension: 128,
+            distance_metric: None,
+            storage_engine: Some(StorageEngine::Viper as i32),
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization: None,
+            primary_index: None,
+            auto_index_selection: Some(false),
+            storage_config: None,
+            description: Some("Test collection".to_string()),
+            tags: vec![],
+            owner: Some("test".to_string()),
+            embedding_models: vec![],
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
+        };
+
+        let result = service.create_collection(&config).await?;
+        assert!(
+            result.success,
+            "create failed with error_code={:?}",
+            result.error_code
+        );
+
+        let stored = service
+            .collection("metric_default_test")
+            .await?
+            .expect("collection should exist");
+        assert_eq!(
+            stored.config.as_ref().and_then(|cfg| cfg.distance_metric),
+            Some(crate::proto::proximadb_v1::DistanceMetric::Cosine as i32)
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_create_collection_preserves_exact_default_without_indexes() -> Result<()> {
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+
+        let filestore_config = UniversalMetadataConfig {
+            storage_url: temp_path,
+            compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
+        let backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .context("Failed to create metadata backend for test")?,
+        );
+        let service = CollectionService::new(backend, StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?;
+
+        let config = CollectionConfig {
+            name: "exact_default_case".to_string(),
+            dimension: 384,
+            storage_engine: Some(StorageEngine::Sst as i32),
+            index_configs: vec![],
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+
+        let result = service.create_collection(&config).await?;
+        assert!(
+            result.success,
+            "create failed with error_code={:?}",
+            result.error_code
+        );
+
+        let stored = service
+            .collection("exact_default_case")
+            .await?
+            .expect("collection should exist");
+        assert!(
+            stored
+                .config
+                .as_ref()
+                .is_some_and(|cfg| cfg.index_configs.is_empty())
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn test_collection_lifecycle_mirrors_to_xcatalog_with_uuid_id() -> Result<()> {
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+
+        let filestore_config = UniversalMetadataConfig {
+            storage_url: temp_path.clone(),
+            compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .context("Failed to create filesystem factory for test")?,
+        );
+        let backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .context("Failed to create metadata backend for test")?,
+        );
+
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
+
+        let service = CollectionService::new(backend, StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
+
+        let config = CollectionConfig {
+            name: "catalog_vector_assets".to_string(),
+            dimension: 384,
+            storage_engine: Some(StorageEngine::Sst as i32),
+            filterable_columns: vec![crate::proto::proximadb_v1::FilterableColumnSpec {
+                name: "category".to_string(),
+                data_type: FilterableDataType::FilterableString as i32,
+                indexed: true,
+                supports_range: false,
+                estimated_cardinality: Some(32),
+            }],
+            index_configs: vec![crate::proto::proximadb_v1::IndexConfig {
+                index_name: "catalog_vector_assets_hnsw".to_string(),
+                algorithm: IndexingAlgorithm::Hnsw as i32,
+                enabled: Some(true),
+                ..Default::default()
+            }],
+            auto_index_selection: Some(false),
+            ..Default::default()
+        };
+
+        let result = service.create_collection(&config).await?;
+        assert!(
+            result.success,
+            "create failed with error_code={:?}",
+            result.error_code
+        );
+        let collection = result.collection.expect("collection should be returned");
+        assert!(uuid::Uuid::parse_str(&collection.id).is_ok());
+
+        let catalog = catalog_manager.default_catalog().await?;
+        let table_id = TableIdentifier::new(
+            vec!["default".to_string()],
+            "catalog_vector_assets".to_string(),
+        );
+        let schema = catalog.get_table(&table_id).await?;
+        assert_eq!(schema.properties.get("collection.id"), Some(&collection.id));
+        assert_eq!(
+            schema.properties.get("asset.capability.vector"),
+            Some(&"true".to_string())
+        );
+        assert!(
+            schema
+                .columns
+                .iter()
+                .any(|column| column.name == "category")
+        );
+        assert_eq!(schema.projections.len(), 1);
+
+        service
+            .metadata_backend()
+            .delete_collection("catalog_vector_assets")
+            .await?;
+
+        let catalog_backed_by_name = service
+            .collection("catalog_vector_assets")
+            .await?
+            .expect("collection should be reconstructed from xCatalog by name");
+        assert_eq!(catalog_backed_by_name.id, collection.id);
+        let catalog_backed_by_id = service
+            .collection(&collection.id)
+            .await?
+            .expect("collection should be reconstructed from xCatalog by UUID");
+        assert_eq!(
+            catalog_backed_by_id
+                .config
+                .as_ref()
+                .map(|config| config.dimension),
+            Some(384)
+        );
+        assert!(catalog_backed_by_id.config.as_ref().is_some_and(|config| {
+            config.filterable_columns.iter().any(|column| {
+                column.name == "category"
+                    && column.data_type == FilterableDataType::FilterableString as i32
+            })
+        }));
+        assert!(
+            service
+                .list_collections()
+                .await?
+                .iter()
+                .any(|listed| listed.id == collection.id)
+        );
+
+        let duplicate = service.create_collection(&config).await?;
+        assert!(!duplicate.success);
+        assert_eq!(duplicate.error_code.as_deref(), Some("COLLECTION_EXISTS"));
+
+        let delete = service.delete_collection("catalog_vector_assets").await?;
+        assert!(delete.success);
+        assert!(!catalog.table_exists(&table_id).await?);
+
+        Ok(())
+    }
+
     #[test]
     fn test_response_conversion() {
         let response = CollectionServiceResponse::success(
@@ -2105,3 +3239,71 @@ mod tests {
 // The backend (LocalRocksDbBackend or UniversalMetadataBackend) implements MetadataProvider.
 // CollectionService can implement InternalCollectionProvider if needed for backward compatibility,
 // but it delegates to its metadata_backend which is the actual MetadataProvider.
+
+// ── CollectionPort impl ───────────────────────────────────────────────────────
+
+#[async_trait::async_trait]
+impl proximadb_runtime::CollectionPort for CollectionService {
+    async fn get_collection(
+        &self,
+        identifier: &str,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Option<crate::proto::proximadb_v1::Collection>> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        self.get_collection_with_tenant_context(identifier, ctx.as_ref())
+            .await
+    }
+
+    async fn create_collection(
+        &self,
+        config: crate::proto::proximadb_v1::CollectionConfig,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::Collection> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        let resp = self
+            .create_collection_with_tenant_context(&config, ctx.as_ref())
+            .await?;
+        resp.collection.ok_or_else(|| {
+            anyhow::anyhow!(
+                "create_collection returned no collection: error_code={:?}",
+                resp.error_code
+            )
+        })
+    }
+
+    async fn update_collection(
+        &self,
+        id: &str,
+        config: crate::proto::proximadb_v1::CollectionConfig,
+        _tenant_id: Option<&str>,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::Collection> {
+        let resp = CollectionService::update_collection(self, id, Some(config)).await?;
+        resp.collection.ok_or_else(|| {
+            anyhow::anyhow!(
+                "update_collection returned no collection: error_code={:?}",
+                resp.error_code
+            )
+        })
+    }
+
+    async fn delete_collection(&self, id: &str, tenant_id: Option<&str>) -> anyhow::Result<bool> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        let resp = self
+            .delete_collection_with_tenant_context(id, ctx.as_ref())
+            .await?;
+        Ok(resp.success)
+    }
+
+    async fn list_collections(
+        &self,
+        tenant_id: Option<&str>,
+    ) -> anyhow::Result<Vec<crate::proto::proximadb_v1::Collection>> {
+        let ctx = self.load_tenant_context(tenant_id)?;
+        self.list_collections_with_tenant_context(ctx.as_ref())
+            .await
+    }
+
+    async fn resolve_collection_id(&self, identifier: &str) -> anyhow::Result<Option<String>> {
+        CollectionService::resolve_collection_id(self, identifier).await
+    }
+}

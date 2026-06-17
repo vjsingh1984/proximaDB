@@ -583,3 +583,350 @@ mod tests {
         assert!(!needs_requant);
     }
 }
+
+// ---------------------------------------------------------------------------
+// PR 10 — PQ Codebook lifecycle for embedding-precision rollout (Q12)
+// ---------------------------------------------------------------------------
+//
+// Spec: docs/12-design/EMBEDDING_PRECISION_LLD_2026_05_22.adoc §"PQ
+// Codebook Lifecycle (Q12)".
+//
+// Each PQ codebook is tagged with the precision epoch it was trained
+// under. When xCatalog bumps `current_precision_epoch` on a collection,
+// the migration job walks every codebook for that collection and
+// transitions Fresh → Stale. Stale codebooks keep serving candidate
+// generation (rerank-against-canonical guarantees correctness); the
+// background retraining task atomic-swaps Stale → Retraining → Fresh
+// once new centroids land.
+
+use proximadb_records::EmbeddingScalarType;
+
+/// Status of a PQ codebook in the precision-migration lifecycle.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum CodebookStatus {
+    /// Built from the current canonical precision. Safe for derived
+    /// ranking. Default for any newly trained codebook.
+    #[default]
+    Fresh,
+    /// Canonical precision changed since training. Safe for lossy
+    /// candidate generation when callers rerank against canonical;
+    /// scheduled for retraining.
+    Stale {
+        /// Epoch the canonical precision moved to (the "new" epoch the
+        /// codebook needs to be retrained against).
+        since_epoch: u64,
+    },
+    /// A retraining job has claimed this codebook and is currently
+    /// computing new centroids. The job swaps back to `Fresh` (with a
+    /// fresh `built_at_epoch` + `built_from_precision`) on success.
+    Retraining,
+}
+
+impl CodebookStatus {
+    /// Whether this codebook is allowed to serve derived candidate
+    /// generation. LLD §Q12 contract: Fresh and Stale both serve
+    /// candidates; only Retraining is held out (its centroids are mid-
+    /// swap and reads should fall back to the previous Fresh snapshot).
+    pub fn can_serve_candidates(self) -> bool {
+        matches!(self, Self::Fresh | Self::Stale { .. })
+    }
+
+    /// Whether the background retraining job should pick this codebook
+    /// up. Only `Stale` is up for grabs; Fresh and Retraining are no-ops.
+    pub fn needs_retraining(self) -> bool {
+        matches!(self, Self::Stale { .. })
+    }
+}
+
+/// PQ codebook envelope with the LLD-locked precision tagging.
+///
+/// `centroids` is an opaque byte payload owned by the actual quantizer
+/// implementation (the lifecycle module doesn't care about the centroid
+/// data layout — only the routing tags).
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct PqCodebook {
+    pub codebook_id: String,
+    pub collection_id: String,
+    pub subvector_count: u16,
+    pub bits_per_subvector: u8,
+    /// Precision the source vectors carried when this codebook was
+    /// trained. Used by the migration job to decide which codebooks need
+    /// retraining when a collection's canonical precision changes.
+    pub built_from_precision: EmbeddingScalarType,
+    /// Epoch the source vectors were tagged with at training time.
+    pub built_at_epoch: u64,
+    /// Lifecycle state. Defaults to `Fresh` for newly trained codebooks.
+    #[serde(default)]
+    pub status: CodebookStatus,
+    /// Opaque centroid payload (typically `subvector_count * 2^bits *
+    /// dim_per_subvector * sizeof(fp32)` bytes). The lifecycle module
+    /// never touches these bytes.
+    pub centroids: Vec<u8>,
+}
+
+impl PqCodebook {
+    /// Construct a newly-trained codebook in `Fresh` status.
+    pub fn new_fresh(
+        codebook_id: impl Into<String>,
+        collection_id: impl Into<String>,
+        subvector_count: u16,
+        bits_per_subvector: u8,
+        built_from_precision: EmbeddingScalarType,
+        built_at_epoch: u64,
+        centroids: Vec<u8>,
+    ) -> Self {
+        Self {
+            codebook_id: codebook_id.into(),
+            collection_id: collection_id.into(),
+            subvector_count,
+            bits_per_subvector,
+            built_from_precision,
+            built_at_epoch,
+            status: CodebookStatus::Fresh,
+            centroids,
+        }
+    }
+
+    /// Mark this codebook stale because the collection's canonical
+    /// precision (or precision epoch) moved forward.
+    ///
+    /// Returns `true` if the status actually changed, `false` if the
+    /// codebook was already Stale at this or a later epoch. The bool
+    /// lets the migration job count exactly how many codebooks it
+    /// flipped per epoch bump (for the `migration_progress_ratio`
+    /// metric).
+    ///
+    /// Refuses to overwrite a `Retraining` status: if a retraining job
+    /// is mid-flight when the next epoch bump happens, the new epoch
+    /// gets recorded on the retraining job's swap-back path (the job
+    /// re-checks the current epoch before promoting back to `Fresh`).
+    pub fn mark_stale_on_epoch_bump(&mut self, new_epoch: u64) -> bool {
+        match self.status {
+            CodebookStatus::Fresh => {
+                self.status = CodebookStatus::Stale {
+                    since_epoch: new_epoch,
+                };
+                true
+            }
+            CodebookStatus::Stale { since_epoch } if new_epoch > since_epoch => {
+                self.status = CodebookStatus::Stale {
+                    since_epoch: new_epoch,
+                };
+                true
+            }
+            CodebookStatus::Stale { .. } | CodebookStatus::Retraining => false,
+        }
+    }
+
+    /// Background retraining job claim. Transitions `Stale → Retraining`
+    /// atomically; returns `true` on successful claim. Idempotent: if
+    /// the codebook is already `Retraining`, returns `false` so callers
+    /// don't double-claim.
+    pub fn try_claim_for_retraining(&mut self) -> bool {
+        if matches!(self.status, CodebookStatus::Stale { .. }) {
+            self.status = CodebookStatus::Retraining;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Retraining job completion. Atomically swaps in fresh centroids +
+    /// the new precision tag + epoch. Requires the codebook to be in
+    /// `Retraining` state — calling this on a Fresh/Stale codebook is a
+    /// programming error and returns `false` without mutation.
+    pub fn finish_retraining(
+        &mut self,
+        new_centroids: Vec<u8>,
+        new_precision: EmbeddingScalarType,
+        new_epoch: u64,
+    ) -> bool {
+        if !matches!(self.status, CodebookStatus::Retraining) {
+            return false;
+        }
+        self.centroids = new_centroids;
+        self.built_from_precision = new_precision;
+        self.built_at_epoch = new_epoch;
+        self.status = CodebookStatus::Fresh;
+        true
+    }
+}
+
+#[cfg(test)]
+mod codebook_lifecycle_tests {
+    use super::*;
+
+    fn sample_codebook() -> PqCodebook {
+        PqCodebook::new_fresh(
+            "cb_001",
+            "collection_a",
+            8,
+            8,
+            EmbeddingScalarType::Fp32,
+            1,
+            vec![0u8; 64],
+        )
+    }
+
+    #[test]
+    fn default_status_is_fresh() {
+        assert_eq!(CodebookStatus::default(), CodebookStatus::Fresh);
+    }
+
+    #[test]
+    fn fresh_and_stale_serve_candidates_retraining_does_not() {
+        assert!(CodebookStatus::Fresh.can_serve_candidates());
+        assert!(CodebookStatus::Stale { since_epoch: 5 }.can_serve_candidates());
+        assert!(!CodebookStatus::Retraining.can_serve_candidates());
+    }
+
+    #[test]
+    fn only_stale_needs_retraining() {
+        assert!(!CodebookStatus::Fresh.needs_retraining());
+        assert!(CodebookStatus::Stale { since_epoch: 5 }.needs_retraining());
+        assert!(!CodebookStatus::Retraining.needs_retraining());
+    }
+
+    #[test]
+    fn new_fresh_constructor_sets_lld_fields() {
+        let cb = sample_codebook();
+        assert_eq!(cb.codebook_id, "cb_001");
+        assert_eq!(cb.collection_id, "collection_a");
+        assert_eq!(cb.subvector_count, 8);
+        assert_eq!(cb.bits_per_subvector, 8);
+        assert_eq!(cb.built_from_precision, EmbeddingScalarType::Fp32);
+        assert_eq!(cb.built_at_epoch, 1);
+        assert_eq!(cb.status, CodebookStatus::Fresh);
+    }
+
+    #[test]
+    fn mark_stale_transitions_fresh_to_stale() {
+        let mut cb = sample_codebook();
+        assert!(cb.mark_stale_on_epoch_bump(2));
+        assert_eq!(cb.status, CodebookStatus::Stale { since_epoch: 2 });
+    }
+
+    #[test]
+    fn mark_stale_bumps_since_epoch_when_new_epoch_is_higher() {
+        let mut cb = sample_codebook();
+        cb.mark_stale_on_epoch_bump(2);
+        assert!(cb.mark_stale_on_epoch_bump(5));
+        assert_eq!(cb.status, CodebookStatus::Stale { since_epoch: 5 });
+    }
+
+    #[test]
+    fn mark_stale_noop_when_already_stale_at_same_or_earlier_epoch() {
+        let mut cb = sample_codebook();
+        cb.mark_stale_on_epoch_bump(5);
+        assert!(!cb.mark_stale_on_epoch_bump(5), "same epoch is a no-op");
+        assert!(!cb.mark_stale_on_epoch_bump(3), "earlier epoch is a no-op");
+        assert_eq!(cb.status, CodebookStatus::Stale { since_epoch: 5 });
+    }
+
+    #[test]
+    fn mark_stale_refuses_to_overwrite_retraining() {
+        // Concurrent epoch bump while a retraining job is mid-flight:
+        // the job's swap-back path handles the new epoch; the migration
+        // job's mark_stale must NOT clobber the in-flight job's state.
+        let mut cb = sample_codebook();
+        cb.mark_stale_on_epoch_bump(2);
+        assert!(cb.try_claim_for_retraining());
+        assert_eq!(cb.status, CodebookStatus::Retraining);
+        assert!(
+            !cb.mark_stale_on_epoch_bump(3),
+            "must not overwrite Retraining"
+        );
+        assert_eq!(cb.status, CodebookStatus::Retraining);
+    }
+
+    #[test]
+    fn try_claim_only_picks_up_stale_codebooks() {
+        let mut cb = sample_codebook();
+        assert!(!cb.try_claim_for_retraining(), "Fresh is not claimable");
+        cb.mark_stale_on_epoch_bump(2);
+        assert!(cb.try_claim_for_retraining());
+        assert!(
+            !cb.try_claim_for_retraining(),
+            "Retraining double-claim refused"
+        );
+    }
+
+    #[test]
+    fn finish_retraining_swaps_centroids_precision_and_epoch_atomically() {
+        let mut cb = sample_codebook();
+        cb.mark_stale_on_epoch_bump(2);
+        cb.try_claim_for_retraining();
+        let new_centroids = vec![0xAA; 64];
+        assert!(cb.finish_retraining(new_centroids.clone(), EmbeddingScalarType::Fp16, 2));
+        assert_eq!(cb.status, CodebookStatus::Fresh);
+        assert_eq!(cb.built_from_precision, EmbeddingScalarType::Fp16);
+        assert_eq!(cb.built_at_epoch, 2);
+        assert_eq!(cb.centroids, new_centroids);
+    }
+
+    #[test]
+    fn finish_retraining_refuses_when_not_retraining() {
+        // Programming-error guard: calling finish on a Fresh/Stale
+        // codebook returns false without mutation.
+        let mut cb = sample_codebook();
+        assert!(
+            !cb.finish_retraining(vec![0u8; 64], EmbeddingScalarType::Fp16, 2),
+            "Fresh codebook must reject finish_retraining"
+        );
+        assert_eq!(cb.status, CodebookStatus::Fresh);
+        cb.mark_stale_on_epoch_bump(2);
+        assert!(
+            !cb.finish_retraining(vec![0u8; 64], EmbeddingScalarType::Fp16, 2),
+            "Stale (un-claimed) codebook must reject finish_retraining"
+        );
+        assert!(matches!(cb.status, CodebookStatus::Stale { .. }));
+    }
+
+    #[test]
+    fn codebook_serde_round_trips_each_status() {
+        let mut cb = sample_codebook();
+        // Fresh round-trip
+        let json = serde_json::to_string(&cb).unwrap();
+        let back: PqCodebook = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cb);
+        // Stale round-trip
+        cb.mark_stale_on_epoch_bump(5);
+        let json = serde_json::to_string(&cb).unwrap();
+        let back: PqCodebook = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cb);
+        // Retraining round-trip
+        cb.try_claim_for_retraining();
+        let json = serde_json::to_string(&cb).unwrap();
+        let back: PqCodebook = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, cb);
+    }
+
+    #[test]
+    fn full_lifecycle_walk_from_fresh_to_stale_to_retraining_to_fresh() {
+        // The full LLD §Q12 happy path: epoch bumps, migration marks
+        // stale, retrainer claims + finishes, codebook is back to Fresh
+        // at the new epoch + precision.
+        let mut cb = sample_codebook();
+        assert_eq!(cb.status, CodebookStatus::Fresh);
+        assert_eq!(cb.built_at_epoch, 1);
+
+        // Catalog bumps current_precision_epoch from 1 -> 2 (and
+        // canonical precision from fp32 to fp16).
+        assert!(cb.mark_stale_on_epoch_bump(2));
+        assert!(cb.status.can_serve_candidates(), "stale still serves");
+
+        // Retraining job picks it up.
+        assert!(cb.try_claim_for_retraining());
+        assert!(!cb.status.can_serve_candidates(), "retraining is held out");
+
+        // Job finishes — codebook is at the new epoch + precision.
+        let new_centroids = vec![0xFF; 64];
+        assert!(cb.finish_retraining(new_centroids.clone(), EmbeddingScalarType::Fp16, 2));
+        assert_eq!(cb.status, CodebookStatus::Fresh);
+        assert_eq!(cb.built_at_epoch, 2);
+        assert_eq!(cb.built_from_precision, EmbeddingScalarType::Fp16);
+        assert_eq!(cb.centroids, new_centroids);
+        assert!(cb.status.can_serve_candidates());
+    }
+}

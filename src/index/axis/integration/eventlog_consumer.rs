@@ -306,6 +306,13 @@ impl AxisEventLogConsumer {
         result
     }
 
+    async fn acknowledge_skipped_event(&self, event: &IndexEvent) -> Result<()> {
+        self.metrics.events_skipped.fetch_add(1, Ordering::Relaxed);
+        self.event_log
+            .acknowledge_event(event.event_id.clone())
+            .await
+    }
+
     /// Process flush event - build or update indexes
     async fn process_flush_event(
         &self,
@@ -323,22 +330,14 @@ impl AxisEventLogConsumer {
 
         if !has_indexes {
             // No indexes configured - mark event as completed without processing
-            // This is CRITICAL for performance:
-            // 1. Flush creates event in EventLog
-            // 2. We immediately mark it complete (no work needed)
-            // 3. Compaction checks can_compact() which returns true
-            // 4. Compaction proceeds without delay
-            //
-            // Without this, compaction would wait forever for non-existent index processing
             info!(
                 "[AXIS Consumer] No indexes configured for collection {}, marking flush event {} as completed",
                 event.collection_id, event_id
             );
 
-            // Update metrics for skipped event
-            self.metrics.events_skipped.fetch_add(1, Ordering::Relaxed);
-
-            // Returning Ok() marks event as complete in EventLog
+            // Exact/brute-force is the default when no ANN index is configured, but
+            // we still need to acknowledge the EventLog entry so compaction can proceed.
+            self.acknowledge_skipped_event(&event).await?;
             return Ok(());
         }
 
@@ -414,7 +413,7 @@ impl AxisEventLogConsumer {
                     "[AXIS Consumer] Failed to get index config for {}: {}, using defaults",
                     event.collection_id, e
                 );
-                crate::index::config::IndexConfig::default()
+                crate::index::config::RuntimeIndexConfig::default()
             });
 
         // Update AXIS indexes using hybrid indexing (adapts based on batch size)
@@ -490,10 +489,8 @@ impl AxisEventLogConsumer {
                 event.collection_id, event_id
             );
 
-            // Update metrics for skipped event
-            self.metrics.events_skipped.fetch_add(1, Ordering::Relaxed);
-
-            // The compaction is done on storage side, we just have nothing to update
+            // The compaction is done on storage side, we just have nothing to update.
+            self.acknowledge_skipped_event(&event).await?;
             return Ok(());
         }
 
@@ -652,8 +649,8 @@ impl AxisEventLogConsumer {
         extraction_mode: ExtractionMode,
         storage_engine: StorageEngineType,
         collection_id: &str,
-    ) -> Result<Vec<crate::proto::proximadb_v1::VectorRecord>> {
-        use crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem;
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
+        use crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem;
         use crate::storage::trait_components::extractor::{
             ExtractionFactory, ExtractionMode as TraitMode, ExtractionRequest,
         };
@@ -732,58 +729,56 @@ impl AxisEventLogConsumer {
             result.stats.duration_ms
         );
 
-        // Convert ExtractedVector to proto::VectorRecord
-        let all_vectors: Vec<crate::proto::proximadb_v1::VectorRecord> = result
+        // Convert ExtractedVector to ProximaRecord
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let all_vectors: Vec<proximadb_records::ProximaRecord> = result
             .vectors
             .into_iter()
             .filter_map(|v| {
-                // Only include vectors with FP32 data for now
-                // (quantized-only extraction would need different handling)
                 v.fp32_vector.map(|fp32_vec| {
-                    crate::proto::proximadb_v1::VectorRecord {
-                        id: v.id,
-                        vector: fp32_vec,
-                        metadata: v
-                            .metadata
-                            .and_then(|m| {
-                                // Convert serde_json::Value to HashMap<String, SqlValue>
-                                if let serde_json::Value::Object(map) = m {
-                                    Some(
-                                        map.into_iter()
-                                            .filter_map(|(k, v)| {
-                                                // Convert JSON value to SqlValue
-                                                use crate::proto::proximadb_v1::sql_value::Value as V;
-                                                let sql_val = match v {
-                                                    serde_json::Value::String(s) => {
-                                                        Some(V::StringValue(s))
-                                                    }
-                                                    serde_json::Value::Number(n) => {
-                                                        Some(V::NumberValue(n.as_f64().unwrap_or(0.0)))
-                                                    }
-                                                    serde_json::Value::Bool(b) => {
-                                                        Some(V::BoolValue(b))
-                                                    }
-                                                    serde_json::Value::Null => {
-                                                        Some(V::NullValue(0))
-                                                    }
-                                                    _ => None,
-                                                };
-                                                sql_val.map(|sv| {
-                                                    (k, crate::proto::proximadb_v1::SqlValue { value: Some(sv) })
-                                                })
-                                            })
-                                            .collect(),
-                                    )
-                                } else {
-                                    None
-                                }
-                            })
-                            .unwrap_or_default(),
-                        timestamp: None,
-                        updated_at: None,
-                        expires_at: None,
-                        version: None,
-                        source: None,
+                    let dim = fp32_vec.len() as u32;
+                    let props: proximadb_records::ProximaTree = v
+                        .metadata
+                        .and_then(|m| {
+                            if let serde_json::Value::Object(map) = m {
+                                Some(
+                                    map.into_iter()
+                                        .map(|(k, val)| {
+                                            use proximadb_data_model::ProximaValue;
+                                            let pv = match val {
+                                                serde_json::Value::String(s) => {
+                                                    ProximaValue::String(s)
+                                                }
+                                                serde_json::Value::Number(n) => {
+                                                    ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
+                                                }
+                                                serde_json::Value::Bool(b) => {
+                                                    ProximaValue::Boolean(b)
+                                                }
+                                                _ => ProximaValue::Null,
+                                            };
+                                            (k, proximadb_records::ProximaTreeNode::Value(pv))
+                                        })
+                                        .collect(),
+                                )
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or_default();
+                    proximadb_records::ProximaRecord {
+                        oid: v.id,
+                        created_at_ns: now_ns,
+                        updated_at_ns: now_ns,
+                        props,
+                        embeddings: vec![proximadb_records::EmbeddingCell {
+                            model_id: "default".to_string(),
+                            modality: "vector".to_string(),
+                            values: proximadb_records::EmbeddingValues::Fp32(fp32_vec),
+                            dim,
+                            ..Default::default()
+                        }],
+                        ..Default::default()
                     }
                 })
             })
@@ -834,4 +829,160 @@ pub async fn start_axis_consumer(
     tokio::spawn(async move {
         consumer.run().await;
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::axis::AxisConfig;
+    use crate::index::axis::eventlog::{EventLogConfig, EventLogServiceAdapter, IndexEventBuilder};
+    use crate::proto::proximadb_v1::{CollectionConfig, CollectionStats};
+    use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
+    use crate::storage::persistence::filesystem::FilesystemConfig;
+    use tempfile::TempDir;
+
+    async fn create_no_index_consumer(
+        collection_id: &str,
+    ) -> (
+        AxisEventLogConsumer,
+        Arc<dyn EventLogService>,
+        Arc<Collection>,
+        TempDir,
+    ) {
+        let temp_dir = TempDir::new().unwrap();
+        let base_url = format!("file://{}", temp_dir.path().display());
+
+        let mut filesystem_config = FilesystemConfig::default();
+        filesystem_config.default_fs = Some(base_url.clone());
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(filesystem_config)
+                .await
+                .expect("filesystem factory"),
+        );
+
+        let collection = Arc::new(Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 384,
+                index_configs: vec![],
+                ..Default::default()
+            }),
+            stats: Some(CollectionStats {
+                vector_count: 0,
+                index_size_bytes: 0,
+                data_size_bytes: 0,
+            }),
+            ..Default::default()
+        });
+
+        let collection_cache = Arc::new(DashMap::new());
+        collection_cache.insert(collection_id.to_string(), collection.clone());
+
+        let event_log: Arc<dyn EventLogService> = EventLogServiceAdapter::embedded(
+            EventLogConfig {
+                base_storage_url: base_url,
+                max_events_in_memory: 100,
+                cleanup_interval_secs: 60,
+                enable_recovery: true,
+            },
+            filesystem_factory.clone(),
+            collection_cache.clone(),
+        )
+        .await
+        .expect("event log");
+
+        let axis_manager = Arc::new(AxisManager::new(AxisConfig::default()).await.unwrap());
+        let orchestrator = Arc::new(CrossCacheOrchestrator::new(1024 * 1024));
+        let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+        (
+            AxisEventLogConsumer::new(
+                ConsumerConfig::default(),
+                event_log.clone(),
+                axis_manager,
+                filesystem_factory,
+                collection_cache,
+                orchestrator,
+                shutdown_rx,
+            ),
+            event_log,
+            collection,
+            temp_dir,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_flush_without_indexes_acknowledges_event_immediately() {
+        let collection_id = "exact_default_collection";
+        let file_path = "file1.sstable".to_string();
+        let (consumer, event_log, collection, _temp_dir) =
+            create_no_index_consumer(collection_id).await;
+
+        let event = IndexEventBuilder::flush_event(
+            collection_id.to_string(),
+            vec![file_path.clone()],
+            1_000,
+            StorageEngineType::SST,
+            false,
+            true,
+        );
+
+        event_log.add_event(event.clone()).await.unwrap();
+        let initial_status = event_log
+            .get_file_status(&file_path)
+            .await
+            .unwrap()
+            .expect("file status");
+        assert!(!initial_status.ready_for_compaction);
+
+        consumer
+            .process_flush_event(event, collection)
+            .await
+            .expect("flush event should be acknowledged");
+
+        let final_status = event_log
+            .get_file_status(&file_path)
+            .await
+            .unwrap()
+            .expect("file status after acknowledgment");
+        assert!(final_status.pending_indexes.is_empty());
+        assert!(final_status.ready_for_compaction);
+    }
+
+    #[tokio::test]
+    async fn test_compaction_without_indexes_acknowledges_event_immediately() {
+        let collection_id = "exact_default_collection";
+        let file_path = "file1.sstable".to_string();
+        let (consumer, event_log, collection, _temp_dir) =
+            create_no_index_consumer(collection_id).await;
+
+        let event = crate::index::axis::eventlog::IndexEventBuilder::compaction_event(
+            collection_id.to_string(),
+            vec![file_path.clone()],
+            1_000,
+            StorageEngineType::SST,
+        );
+
+        event_log.add_event(event.clone()).await.unwrap();
+        let initial_status = event_log
+            .get_file_status(&file_path)
+            .await
+            .unwrap()
+            .expect("file status");
+        assert!(!initial_status.ready_for_compaction);
+
+        consumer
+            .process_compaction_event(event, collection)
+            .await
+            .expect("compaction event should be acknowledged");
+
+        let final_status = event_log
+            .get_file_status(&file_path)
+            .await
+            .unwrap()
+            .expect("file status after acknowledgment");
+        assert!(final_status.pending_indexes.is_empty());
+        assert!(final_status.ready_for_compaction);
+    }
 }

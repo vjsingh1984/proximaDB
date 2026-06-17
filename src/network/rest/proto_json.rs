@@ -145,7 +145,7 @@ pub struct ProtoApiResponse<T> {
     pub error: Option<ErrorInfo>,
 
     /// Additional metadata about the response
-    pub metadata: Option<ResponseMetadata>,
+    pub metadata: Option<RestProtoResponseMetadata>,
 }
 
 /// Error information included in failed API responses
@@ -159,9 +159,12 @@ pub struct ErrorInfo {
     pub details: Option<serde_json::Value>,
 }
 
+/// Backwards-compat alias for [`RestProtoResponseMetadata`].
+pub type ResponseMetadata = RestProtoResponseMetadata;
+
 /// Metadata attached to API responses for observability
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ResponseMetadata {
+pub struct RestProtoResponseMetadata {
     /// Unique request identifier for tracing
     pub request_id: String,
     /// Server-side processing time in milliseconds
@@ -199,7 +202,7 @@ where
     }
 
     /// Add metadata to the response
-    pub fn with_metadata(mut self, metadata: ResponseMetadata) -> Self {
+    pub fn with_metadata(mut self, metadata: RestProtoResponseMetadata) -> Self {
         self.metadata = Some(metadata);
         self
     }
@@ -217,17 +220,6 @@ where
 /// Utility functions for common proto-JSON conversions
 pub mod utils {
     use crate::proto::proximadb_v1 as proximadb;
-
-    /// Convert a VectorRecord to JSON-friendly format
-    pub fn vector_record_to_json(record: &proximadb::VectorRecord) -> serde_json::Value {
-        serde_json::json!({
-            "id": record.id,
-            "vector": record.vector,
-            "metadata": crate::core::proto_metadata_helper::sqlvalue_metadata_to_json(&record.metadata),
-            "timestamp": record.timestamp,
-            "version": record.version,
-        })
-    }
 
     /// Convert metadata items to JSON object
     pub fn metadata_to_json(

@@ -10,7 +10,7 @@ This guide covers installing ProximaDB v0.2.0 using native platform packages on 
 - [Post-Installation](#post-installation)
 - [Service Management](#service-management)
 - [Configuration](#configuration)
-- [Troubleshooting]((#troubleshooting)
+- [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -435,9 +435,9 @@ MemoryMax=2G
 
 ### Documentation
 
-- [Configuration Guide](../config/README.md)
-- [API Documentation](../docs/api/README.md)
-- [Architecture](../docs/concepts/architecture.adoc)
+- [Configuration Guide](../03-api-reference/configuration.adoc)
+- [API Documentation](../03-api-reference/index.md)
+- [Architecture](../05-concepts/architecture.adoc)
 
 ### Community
 
@@ -475,4 +475,4 @@ After installation:
 4. **Create Collection**: Use the API or Python SDK
 5. **Start Ingesting**: Add vectors and data
 
-For more information, see the [API Documentation](../docs/api/README.md).
+For more information, see the [API Documentation](../03-api-reference/index.md).

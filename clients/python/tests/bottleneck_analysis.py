@@ -15,12 +15,7 @@ This will reveal:
 """
 
 import os
-import shutil
 import subprocess
-import tempfile
-import time
-
-import proximadb
 
 
 def run_test(parallel: bool, wal: bool, nodes: int, edges: int):
@@ -121,7 +116,7 @@ def main():
         node_time, edge_time = run_test(parallel, wal, nodes, edges)
 
         if node_time is None:
-            print(f"  FAILED")
+            print("  FAILED")
             results.append((name, None, None, None, None))
         else:
             total = node_time + edge_time

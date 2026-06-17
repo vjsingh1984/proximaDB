@@ -101,7 +101,12 @@ fn test_configuration(
         metadata_algorithm: None,
     };
 
-    let block = ProximaDataBlock::new(vectors.to_vec(), config.clone());
+    let proxima_records: Vec<_> = vectors
+        .iter()
+        .cloned()
+        .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+        .collect();
+    let block = ProximaDataBlock::new(proxima_records, config.clone());
 
     // Test encoding
     let encoded = block.serialize_with_config(&config)?;
@@ -138,6 +143,8 @@ fn test_configuration(
             .take(3)
             .enumerate()
         {
+            // Convert ProximaRecord back to VectorRecord for comparison with the legacy shape.
+            let decoded = proximadb_records::conversions::proxima_record_to_vector(decoded);
             if original.id != decoded.id {
                 println!(
                     "   ❌ ID mismatch at {}: {} vs {}",

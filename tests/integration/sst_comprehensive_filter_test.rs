@@ -6,10 +6,9 @@
 use proximadb::compute::distance_computation::UnifiedDistanceCompute;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::{
-    Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue, VectorRecord,
-    sql_value::Value,
+    Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType,
 };
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
 use serde_json::json;
@@ -79,48 +78,38 @@ fn create_test_collection(temp_dir: &TempDir) -> Collection {
 }
 
 /// Create test vectors with diverse metadata values
-fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
+fn create_test_vectors(collection_id: &str, count: usize) -> Vec<proximadb_records::ProximaRecord> {
     (0..count)
         .map(|i| {
-            let mut metadata = HashMap::new();
-
-            // String field: category
-            metadata.insert(
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
                 "category".to_string(),
-                SqlValue {
-                    value: Some(Value::StringValue(format!("cat_{}", i % 10))),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(format!("cat_{}", i % 10)),
+                ),
             );
-
-            // Float field: price
-            metadata.insert(
+            props.insert(
                 "price".to_string(),
-                SqlValue {
-                    value: Some(Value::NumberValue(10.0 + (i as f64) * 5.0)),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Float64(10.0 + (i as f64) * 5.0),
+                ),
             );
-
-            // Boolean field: enabled
-            metadata.insert(
+            props.insert(
                 "enabled".to_string(),
-                SqlValue {
-                    value: Some(Value::BoolValue(i % 2 == 0)),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Boolean(i % 2 == 0),
+                ),
             );
-
-            // Float field: score
-            metadata.insert(
+            props.insert(
                 "score".to_string(),
-                SqlValue {
-                    value: Some(Value::NumberValue(0.1 * (i as f64))),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Float64(0.1 * (i as f64)),
+                ),
             );
-
-            // String field: status
-            metadata.insert(
+            props.insert(
                 "status".to_string(),
-                SqlValue {
-                    value: Some(Value::StringValue(
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(
                         if i % 3 == 0 {
                             "active"
                         } else if i % 3 == 1 {
@@ -129,23 +118,29 @@ fn create_test_vectors(collection_id: &str, count: usize) -> Vec<VectorRecord> {
                             "inactive"
                         }
                         .to_string(),
-                    )),
-                },
+                    ),
+                ),
             );
-
-            // Integer field: count
-            metadata.insert(
+            props.insert(
                 "count".to_string(),
-                SqlValue {
-                    value: Some(Value::Int64Value(i as i64 * 10)),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Int64(i as i64 * 10),
+                ),
             );
 
-            VectorRecord {
-                id: format!("{}_{}", collection_id, i),
-                vector: vec![0.1; 128],
-                metadata,
-                timestamp: Some(i as i64),
+            proximadb_records::ProximaRecord {
+                oid: format!("{}_{}", collection_id, i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 128,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![0.1; 128]),
+                    ..Default::default()
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: i as i64 * 1_000_000_000,
+                updated_at_ns: i as i64 * 1_000_000_000,
                 ..Default::default()
             }
         })

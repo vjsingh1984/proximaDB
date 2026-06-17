@@ -6,7 +6,7 @@
 //! ## Trait Hierarchy
 //!
 //! ```text
-//! UnifiedStorageEngine (composite - requires all sub-traits)
+//! UnifiedStorageFormat (composite - requires all sub-traits)
 //! ├── StorageIdentity       (engine_name, version, strategy, capabilities)
 //! ├── StorageReader         (vector_by_id, search_vectors_unified)
 //! ├── StorageWriter         (flush, staging operations)

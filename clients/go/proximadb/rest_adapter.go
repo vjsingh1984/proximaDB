@@ -101,7 +101,27 @@ func (a *restAdapter) DeleteCollection(ctx context.Context, name string) error {
 	return nil
 }
 
+// InsertRecords inserts canonical records into a collection.
+func (a *restAdapter) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertToRESTProximaRecords(records)
+	if err := a.inner.InsertRecords(ctx, collection, innerRecords); err != nil {
+		return convertRESTError(err)
+	}
+	return nil
+}
+
+// UpsertRecords inserts or updates canonical records in a collection.
+func (a *restAdapter) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertToRESTProximaRecords(records)
+	if err := a.inner.UpsertRecords(ctx, collection, innerRecords); err != nil {
+		return convertRESTError(err)
+	}
+	return nil
+}
+
 // Insert inserts vectors into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
 func (a *restAdapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToRESTRecords(records)
 	if err := a.inner.Insert(ctx, collection, innerRecords); err != nil {
@@ -111,6 +131,8 @@ func (a *restAdapter) Insert(ctx context.Context, collection string, records []*
 }
 
 // Upsert inserts or updates vectors in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
 func (a *restAdapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToRESTRecords(records)
 	if err := a.inner.Upsert(ctx, collection, innerRecords); err != nil {
@@ -172,6 +194,85 @@ func (a *restAdapter) Health(ctx context.Context) (*HealthStatus, error) {
 	}, nil
 }
 
+// HealthLive issues a Kubernetes-style liveness probe (GET /health/live).
+func (a *restAdapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
+	result, err := a.inner.HealthLive(ctx)
+	if err != nil {
+		return nil, convertRESTError(err)
+	}
+	return &ProbeResponse{Status: result.Status}, nil
+}
+
+// HealthReady issues a Kubernetes-style readiness probe (GET /health/ready).
+func (a *restAdapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
+	result, err := a.inner.HealthReady(ctx)
+	if err != nil {
+		return nil, convertRESTError(err)
+	}
+	return &ProbeResponse{Status: result.Status}, nil
+}
+
+// GetCollectionSchema fetches the typed schema for a collection.
+func (a *restAdapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
+	result, err := a.inner.GetCollectionSchema(ctx, collectionID)
+	if err != nil {
+		return nil, convertRESTError(err)
+	}
+	return convertRESTSchemaResponse(result), nil
+}
+
+// UpdateCollectionSchema updates the typed schema for a collection.
+func (a *restAdapter) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
+	innerReq := &rest.UpdateSchemaRequest{
+		Columns:               convertToRESTColumns(req.Columns),
+		Enforcement:           req.Enforcement,
+		AllowAdditionalFields: req.AllowAdditionalFields,
+		Force:                 req.Force,
+	}
+	result, err := a.inner.UpdateCollectionSchema(ctx, collectionID, innerReq)
+	if err != nil {
+		return nil, convertRESTError(err)
+	}
+	return &UpdateSchemaResponse{
+		SchemaID:         result.SchemaID,
+		SchemaVersion:    result.SchemaVersion,
+		PreviousSchemaID: result.PreviousSchemaID,
+		Changes:          result.Changes,
+		Warnings:         result.Warnings,
+		UpdatedAt:        result.UpdatedAt,
+	}, nil
+}
+
+// ExecuteQuery runs an AQL/UQL/federated query via the shared query facade.
+func (a *restAdapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
+	innerReq := &rest.QueryRequest{
+		Language:   string(req.Language),
+		Query:      req.Query,
+		Parameters: req.Parameters,
+		Collection: req.Collection,
+		Limit:      req.Limit,
+	}
+	result, err := a.inner.ExecuteQuery(ctx, innerReq)
+	if err != nil {
+		return nil, convertRESTError(err)
+	}
+	return QueryResponse(result), nil
+}
+
+// ExplainQuery returns the lowered plan/diagnostics for an AQL/UQL query.
+func (a *restAdapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
+	innerReq := &rest.ExplainQueryRequest{
+		Language:   string(req.Language),
+		Query:      req.Query,
+		Collection: req.Collection,
+	}
+	result, err := a.inner.ExplainQuery(ctx, innerReq)
+	if err != nil {
+		return nil, convertRESTError(err)
+	}
+	return QueryResponse(result), nil
+}
+
 // Close closes the adapter and releases resources.
 func (a *restAdapter) Close() error {
 	return a.inner.Close()
@@ -197,6 +298,19 @@ func convertToRESTRecords(records []*VectorRecord) []*rest.VectorRecord {
 			ID:       r.ID,
 			Vector:   r.Vector,
 			Metadata: r.Metadata,
+		}
+	}
+	return result
+}
+
+func convertToRESTProximaRecords(records []*ProximaRecord) []*rest.ProximaRecord {
+	result := make([]*rest.ProximaRecord, len(records))
+	for i, r := range records {
+		result[i] = &rest.ProximaRecord{
+			ID:     r.ID,
+			Vector: r.Vector,
+			Props:  r.Props,
+			Source: r.Source,
 		}
 	}
 	return result
@@ -256,6 +370,58 @@ func convertSearchResponse(r *rest.SearchResponse) *SearchResponse {
 		Results:    results,
 		TookMs:     r.TookMs,
 		TotalCount: r.TotalCount,
+	}
+}
+
+func convertToRESTColumns(cols []ColumnDefinition) []rest.ColumnDefinition {
+	result := make([]rest.ColumnDefinition, len(cols))
+	for i, c := range cols {
+		result[i] = rest.ColumnDefinition{
+			Name:            c.Name,
+			DataType:        c.DataType,
+			Nullable:        c.Nullable,
+			Indexed:         c.Indexed,
+			Filterable:      c.Filterable,
+			MaxLength:       c.MaxLength,
+			Precision:       c.Precision,
+			Scale:           c.Scale,
+			VectorDimension: c.VectorDimension,
+		}
+	}
+	return result
+}
+
+func convertFromRESTColumns(cols []rest.ColumnDefinition) []ColumnDefinition {
+	result := make([]ColumnDefinition, len(cols))
+	for i, c := range cols {
+		result[i] = ColumnDefinition{
+			Name:            c.Name,
+			DataType:        c.DataType,
+			Nullable:        c.Nullable,
+			Indexed:         c.Indexed,
+			Filterable:      c.Filterable,
+			MaxLength:       c.MaxLength,
+			Precision:       c.Precision,
+			Scale:           c.Scale,
+			VectorDimension: c.VectorDimension,
+		}
+	}
+	return result
+}
+
+func convertRESTSchemaResponse(r *rest.SchemaResponse) *SchemaResponse {
+	return &SchemaResponse{
+		SchemaID:      r.SchemaID,
+		SchemaVersion: r.SchemaVersion,
+		CollectionID:  r.CollectionID,
+		Schema: SchemaDefinition{
+			Columns:               convertFromRESTColumns(r.Schema.Columns),
+			Enforcement:           r.Schema.Enforcement,
+			AllowAdditionalFields: r.Schema.AllowAdditionalFields,
+		},
+		CreatedAt:      r.CreatedAt,
+		UpdatedAt:      r.UpdatedAt,
+		ParentSchemaID: r.ParentSchemaID,
 	}
 }
 

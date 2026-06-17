@@ -122,10 +122,12 @@ impl QuantizationSelector {
     pub fn supports_quantization(params: &FlushParameters) -> bool {
         // Basic checks for quantization support
         !params.vector_records.is_empty()
-            && params
-                .vector_records
-                .iter()
-                .all(|record| !record.vector.is_empty())
+            && params.vector_records.iter().all(|record| {
+                record
+                    .embeddings
+                    .first()
+                    .is_some_and(|e| !e.values.is_empty())
+            })
     }
 
     /// Get recommended quantization level based on operation context
@@ -133,10 +135,13 @@ impl QuantizationSelector {
         params: &FlushParameters,
     ) -> RecommendedQuantizationLevel {
         let vector_count = params.vector_records.len();
-        let dimension = params
-            .vector_records
-            .first()
-            .map_or(0, |record| record.vector.len());
+        let dimension = params.vector_records.first().map_or(0, |record| {
+            record
+                .embeddings
+                .first()
+                .map(|e| e.dim as usize)
+                .unwrap_or(0)
+        });
 
         // Recommendations based on data characteristics
         match (vector_count, dimension) {

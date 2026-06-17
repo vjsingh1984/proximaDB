@@ -5,8 +5,6 @@ Tests the complete workflow of chunking text, generating embeddings,
 and creating vector records with different providers.
 """
 
-from typing import List
-
 import numpy as np
 import pytest
 
@@ -18,9 +16,6 @@ from proximadb_sdk.chunking import (
     create_vector_records,
 )
 from proximadb_sdk.embedding_providers import get_provider, recommend_free_providers
-from proximadb_sdk.embedding_providers.core import (
-    BaseEmbeddingProvider as EmbeddingProvider,
-)
 
 
 class TestChunkingEmbeddingIntegration:

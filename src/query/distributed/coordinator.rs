@@ -23,18 +23,18 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
+use proximadb_graph_query::service::GraphQueryService;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::cluster::{ClusterManager, NodeInfo, RoutingService, ShardManager};
-use crate::core::error::ProximaDBError;
-use crate::graph::service::GraphOperationsService;
 use crate::observability::ObservabilityService;
 use crate::query::unified::ast::MultiModelQuery;
 use crate::query::unified::executor::ParallelExecutor;
 use crate::query::unified::fusion::SubQueryResult;
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::DocumentService;
+use proximadb_kernel::error::ProximaDBError;
 
 use super::aggregator::{AggregationStrategy, ResultAggregator};
 use super::planner::{DistributionStrategy, QueryPlanner, ShardedSubQuery};
@@ -106,6 +106,17 @@ pub struct DistributedQueryStats {
     pub shuffle_count: u64,
 }
 
+/// Result plus execution metadata from a distributed query.
+#[derive(Debug, Clone)]
+pub struct DistributedQueryExecution {
+    /// Query results from local, remote, and optional shuffle execution.
+    pub results: Vec<SubQueryResult>,
+    /// Plan used for execution. Cache hits return no fresh plan.
+    pub plan: Option<DistributedQueryPlan>,
+    /// Whether the result came from the coordinator result cache.
+    pub cache_hit: bool,
+}
+
 /// Distributed Query Coordinator
 ///
 /// Coordinates query execution across the cluster by:
@@ -136,7 +147,7 @@ pub struct DistributedQueryCoordinator {
     /// Document execution service for local subqueries
     document_service: Option<Arc<DocumentService>>,
     /// Graph execution service for local subqueries
-    graph_service: Option<Arc<GraphOperationsService>>,
+    graph_service: Option<Arc<dyn GraphQueryService>>,
     /// Observability execution service for local subqueries
     observability_service: Option<Arc<ObservabilityService>>,
     /// Execution statistics
@@ -212,9 +223,12 @@ impl DistributedQueryCoordinator {
         self
     }
 
-    /// Wire graph service into local subquery execution.
-    pub fn with_graph_service(mut self, graph_service: Arc<GraphOperationsService>) -> Self {
-        self.graph_service = Some(graph_service);
+    /// Wire graph query/traversal service into local subquery execution.
+    pub fn with_graph_service<G>(mut self, graph_service: Arc<G>) -> Self
+    where
+        G: GraphQueryService + 'static,
+    {
+        self.graph_service = Some(graph_service as Arc<dyn GraphQueryService>);
         self
     }
 
@@ -245,6 +259,14 @@ impl DistributedQueryCoordinator {
     /// The query is analyzed, decomposed into subqueries, routed to appropriate
     /// nodes, executed (locally and remotely), and results are aggregated.
     pub async fn execute(&self, query: &MultiModelQuery) -> Result<Vec<SubQueryResult>> {
+        Ok(self.execute_with_metadata(query).await?.results)
+    }
+
+    /// Execute a distributed query and return planning/cache metadata.
+    pub async fn execute_with_metadata(
+        &self,
+        query: &MultiModelQuery,
+    ) -> Result<DistributedQueryExecution> {
         let start = Instant::now();
 
         // Check cache
@@ -254,7 +276,11 @@ impl DistributedQueryCoordinator {
             let mut stats = self.stats.write().await;
             stats.cache_hits += 1;
             stats.total_queries += 1;
-            return Ok(cached);
+            return Ok(DistributedQueryExecution {
+                results: cached,
+                plan: None,
+                cache_hit: true,
+            });
         }
 
         // Plan the query distribution
@@ -295,11 +321,15 @@ impl DistributedQueryCoordinator {
             results.iter().map(|r| r.records.len()).sum::<usize>()
         );
 
-        Ok(results)
+        Ok(DistributedQueryExecution {
+            results,
+            plan: Some(plan),
+            cache_hit: false,
+        })
     }
 
     /// Plan query distribution across the cluster
-    async fn plan_query(&self, query: &MultiModelQuery) -> Result<QueryPlan> {
+    async fn plan_query(&self, query: &MultiModelQuery) -> Result<DistributedQueryPlan> {
         // Get cluster topology
         let nodes = self.get_available_nodes().await?;
 
@@ -366,7 +396,7 @@ impl DistributedQueryCoordinator {
     async fn execute_local_only(
         &self,
         _query: &MultiModelQuery,
-        plan: &QueryPlan,
+        plan: &DistributedQueryPlan,
     ) -> Result<Vec<SubQueryResult>> {
         debug!("Executing {} local subqueries", plan.local_subqueries.len());
 
@@ -384,7 +414,7 @@ impl DistributedQueryCoordinator {
     async fn execute_distributed(
         &self,
         query: &MultiModelQuery,
-        plan: &QueryPlan,
+        plan: &DistributedQueryPlan,
     ) -> Result<Vec<SubQueryResult>> {
         let start = Instant::now();
 
@@ -463,7 +493,7 @@ impl DistributedQueryCoordinator {
     async fn execute_broadcast(
         &self,
         _query: &MultiModelQuery,
-        plan: &QueryPlan,
+        plan: &DistributedQueryPlan,
     ) -> Result<Vec<SubQueryResult>> {
         // For broadcast, send to all nodes and aggregate
         let mut all_subqueries = plan.local_subqueries.clone();
@@ -576,7 +606,7 @@ impl DistributedQueryCoordinator {
     /// 1. Query has multiple collections that are sharded differently
     /// 2. Query has JOIN operations between collections on different nodes
     /// 3. Query has GROUP BY that needs data redistribution
-    fn requires_shuffle(&self, query: &MultiModelQuery, plan: &QueryPlan) -> bool {
+    fn requires_shuffle(&self, query: &MultiModelQuery, plan: &DistributedQueryPlan) -> bool {
         if !self.config.enable_shuffle {
             return false;
         }
@@ -718,9 +748,13 @@ pub struct ShardInfo {
     pub replica_nodes: Vec<String>,
 }
 
-/// Query plan with distribution strategy
+/// Distributed query plan: shard/locality split with cost estimate.
+///
+/// Naming note: this type used to be called `QueryPlan` and collided with
+/// the graph/federated/orchestration/proto `QueryPlan` types. Renamed
+/// to make the distribution-layer specialisation explicit at call sites.
 #[derive(Debug, Clone)]
-pub struct QueryPlan {
+pub struct DistributedQueryPlan {
     /// Distribution strategy to use
     pub strategy: DistributionStrategy,
     /// Subqueries to execute locally
@@ -731,7 +765,7 @@ pub struct QueryPlan {
     pub estimated_cost: f64,
 }
 
-impl QueryPlan {
+impl DistributedQueryPlan {
     /// Create an empty query plan
     pub fn empty() -> Self {
         Self {

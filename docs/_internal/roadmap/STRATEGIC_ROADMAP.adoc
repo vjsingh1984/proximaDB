@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: March 26, 2026
+:last-updated: May 8, 2026
 
 [.lead]
 **Strategic roadmap aligned with the Vision document phases. This file is authoritative for sequencing and prioritization, not for support tier by itself.**
@@ -25,8 +25,12 @@ This roadmap implements the three-phase approach from link:../../concepts/vision
 * **Phase 1**: Format and Catalog Contract (Foundation)
 * **Phase 2**: Cross-Model Query and Indexing (Differentiation)
 * **Phase 2.5**: Foundational Performance Alignment (Execution Layer) -- _added March 2026_
-* **Phase 3**: Deployment and Ecosystem Integration (Scale)
-* **Phase 4**: Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search)
+* Phase 3: Deployment and Ecosystem Integration (Scale)
+* Phase 4: Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search)
+* Phase 5: Agentic Intelligence & Research Frontier (2026 Strategy)
+* Phase 7: Competitive Platform Architecture & Storage Authority (2026+)
+* Phase 8: Continuous Data Loop & Elastic Compute (CS/CD, scale-to-zero, External Collection)
+
 
 == Status Legend
 
@@ -211,6 +215,29 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 | Multi-Region | 🔄 In Progress | P3 | LocalQuorum + geo-aware routing done; full multi-region pending
 |===
 
+=== SaaS MVP Operational Readiness [📅 Phase 3 -- CRITICAL]
+
+_Added June 04, 2026 to support the commercial revenue wedge._
+
+|===
+| Feature | Status | Priority | Notes
+
+| SaaS Path Isolation (DrPathBuilder)
+| 📅 Phase 3
+| P0
+| Enforce strict `data/{tenant_id}/{namespace_id}/...` prefixing across all Object Storage interactions to prevent cross-tenant data leakage.
+
+| Consumption Billing Telemetry
+| 📅 Phase 3
+| P0
+| Plumb accurate request/byte-level telemetry (`proximadb_object_store_ops_total`, `task_execution_time_ms`) tied to `TenantContext` for accurate billing.
+
+| Tenant Bootstrapping Resilience
+| 📅 Phase 3
+| P1
+| Implement aggressive caching/memory-pinning for `TenantTierStore` to prevent cyclic read dependencies during system initialization.
+|===
+
 === Compute Engine Adapters [📅 Phase 3]
 
 |===
@@ -276,7 +303,7 @@ _Performance Credibility: Align the execution layer between storage and API with
 
 [IMPORTANT]
 ====
-Added March 21, 2026 based on architectural review (`ARCHITECTURAL_REVIEW_2026_03_21.adoc`).
+Added March 21, 2026 based on architectural review (archived at `docs/_archive/roadmap/2026-05/ARCHITECTURAL_REVIEW_2026_03_21.adoc`).
 The storage layer (ProximaCodec, Parquet integration, WAL) is production-grade.
 The gap is in the *query execution layer above storage* -- the layer that turns columnar storage into fast analytical queries and eliminates format conversion at model boundaries.
 ====
@@ -545,24 +572,111 @@ _Category Leadership: Time-series, event sourcing, hybrid search, and framework 
 | Full ProximaDB-Only Operation | All above | P4 | Q3 2026
 |===
 
-== Features Marked for Future Consideration
+== Phase 5: Agentic Intelligence & Research Frontier [✅ Complete]
 
-=== AI & Intelligence [💡 Nice to Have]
+[.lead]
+_Agentic Memory: Specializing ProximaDB as the primary memory and intelligence layer for autonomous agent systems._
 
-These features are not aligned with the core vision of "format-first, multi-model database" and should be considered as optional add-ons or external integrations:
+[IMPORTANT]
+====
+Phase 5 foundations were completed in the April 2026 sprint. The system is now robustly aligned with
+state-of-the-art research (Stonebraker 2026, NUS 2025, Google 2026). Key highlights include the
+RUBICON auditable query layer, modular graph retrieval for RAG, and block-batched semantic joins.
+See link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] Phase 5 section for component-level status.
+====
+
+=== Agentic Architecture & Memory
 
 |===
-| Feature | Status | Recommendation
+| Feature | Status | TD ID | Notes
 
-| AIIntelligenceFoundation | 🚫 Out of Scope | Use external AI services
-| EnterpriseNLPEngine | 🚫 Out of Scope | Use external NLP services
-| AutomatedInsightEngine | 🚫 Out of Scope | Use external BI tools
-| PredictiveAnalyticsEngine | 🚫 Out of Scope | Use external ML platforms
-| ConversationalAnalyticsEngine | 🚫 Out of Scope | Use external chat services
-| ExecutiveDashboard | 💡 Nice to Have | Web UI partially addresses
-| NLQueryTranslator | 💡 Nice to Have | Could be LLM-based add-on
-| TrendAnalyzer | 🚫 Out of Scope | Use external analytics
-| AutoML Framework | 💡 Nice to Have | Foundation exists (~35%)
+| RUBICON / AQL Auditable Query Layer | ✅ Complete | TD-050 | Spec and prototype landed (April 2026). Supports auditable plans across 4 models.
+| Proactive Memory Retrieval (speculative) | 📅 Phase 5 — speculative | TD-052 | _No paper backing._ treat as future research direction.
+| SDP + Entanglement Index | ✅ Complete | TD-043 | 4-stage pipeline + EI metric landed. Collection-aware analysis live.
+| Dual-Use Embedding Integration | ✅ Complete | TD-051 | Server-side flag + Python SDK integration landed (April 2026).
+|===
+
+=== Advanced Search & Fusion
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Projection Fusion (B5) — speed/diversity opt-in | ✅ Complete | TD-044 | Score-level analog landed. RRF remains default; B5 for diversity/latency.
+| Modular Graph RAG (RGL) | ✅ Complete | TD-045 | `NodeRetriever` + `SubgraphBuilder` engine-backed impls and REST endpoint landed (April 2026).
+| GraphWalk Tool — single-step + BFS variants | ✅ Complete | TD-046 | `graph_step` primitive, REST, MCP schema, and agent SDK integration landed.
+|===
+
+=== Intelligent Query Optimization
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Evolutionary Query Planning (skeleton + measured fitness) | ✅ Complete | TD-047 | Skeleton + measured wall-time fitness wired.
+| DBPlanBench-style LLM-mutation operator | ✅ Complete | TD-047 | `llm_mutate` operator implemented and wired into the evolutionary loop.
+| AV-SQL — 3-Agent Decomposition | ✅ Complete | TD-048 | Rewriter / ViewGenerator / Composer traits and REST integration landed (April 2026).
+| Block-Batched Semantic Joins | ✅ Complete | TD-049 | LLM block-batched join with prompt packing implemented in executor.
+|===
+|===
+
+== Phase 6: Active Memory & Collective Reasoning [📅 NEW 2026+]
+
+[.lead]
+_Autonomous Memory: Enabling agents to actively manage, link, and gate their own long-term memory through verbatim preservation, entropy-based lazy loading, and typed semantic categories._
+
+=== Active Memory Management
+
+|===
+| Feature | Status | TD ID | Notes
+
+| True Memory Architecture (Encoding Gates) | 📅 Phase 6 | TD-053 | Verbatim event preservation; Novelty/Salience/Error gates. arXiv:2605.04897
+| Entropy-Based Lazy Loading (L-RAG) | 📅 Phase 6 | TD-054 | Hierarchical context management; gated retrieval. arXiv:2601.06551
+| Memanto Typed Semantic Memory | 📅 Phase 6 | TD-055 | 13 memory categories; Conflict Resolution. arXiv:2604.22085
+|===
+
+=== Discovery & Intent Alignment
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Agentic Hybrid Reference Architecture | 📅 Phase 6 | TD-056 | Plan-Retrieve-Evaluate loop; multi-agent horizontal design. arXiv:2604.16394
+| Metadata Pseudo-Query Generation | 📅 Phase 6 | TD-056 | (Sub) Solve vocabulary mismatch via augmented indexing. arXiv:2604.16394
+|===
+
+== Phase 7: Competitive Platform Architecture And Storage Authority [📅 NEW 2026+]
+
+[.lead]
+_Context Data Platform: tightening ProximaDB's competitive shape across vector, graph, document,
+OLAP, relational, open table formats, and observability/SIEM without splitting durable semantics._
+
+[IMPORTANT]
+====
+Phase 7 keeps the new architecture work in separate strategy documents until implementation
+maturity justifies consolidation. The governing documents are:
+
+* `docs/12-design/DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc`
+* `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`
+* `roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc`
+* `roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc`
+====
+
+=== Storage Authority And Relational Rigor
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Storage layout authority model | 🔄 Phase 7 | TD-060 | Contract skeleton, `CatalogTableSchema` persistence, internal `ObjectSchema` propagation, information-schema introspection, nullable EXPLAIN storage-authority metadata, SQL EXPLAIN catalog resolution, and unified EXPLAIN target extraction landed; planner-native resolved object context remains.
+| Optional relational capabilities | 📅 Phase 7 | TD-061 | Cataloged keys, unique indexes, secondary indexes, FKs, checks, materialized views, transaction profiles, and schema-evolution policy.
+| Predicate-aware vector correctness | 📅 Phase 7 | TD-064 | `VectorTopK` plans must disclose exact, predicate-aware ANN, prefilter-exact, or post-filter fallback behavior.
+|===
+
+=== Competitive Query And Observability Surface
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Hybrid retrieval and reranking planner surface | 📅 Phase 7 | TD-062 | Planner-level lexical + dense/sparse vector + graph + document path + time + rerank composition.
+| Observability/SIEM convergence | 📅 Phase 7 | TD-063 | Logs, metrics, traces, profiles, alerts, anomalies, and agent observability as canonical records plus projections.
+| Open table interoperability with semantic guardrails | 📅 Phase 7 | TD-060 | External formats are allowed as explicit authority modes, imports, exports, or projections; no hidden type/policy/recovery split.
 |===
 
 === Natural Language Admin [💡 Nice to Have]
@@ -573,6 +687,42 @@ These features are not aligned with the core vision of "format-first, multi-mode
 | Intent Classification | 💡 Nice to Have | LLM-based admin assistant
 | Query Generation | 💡 Nice to Have | SQL from natural language
 | Slack/Discord Bots | 💡 Nice to Have | ChatOps integration
+|===
+
+== Phase 8: Continuous Data Loop And Elastic Compute [📅 NEW 2026+]
+
+[.lead]
+_Continuous Serving + Continuous Discovery (CS/CD): turn ProximaDB from a serving engine into a data
+foundation that continuously improves its unstructured data and runs that loop economically via
+elastic compute over one logical store._
+
+[IMPORTANT]
+====
+Phase 8 internalizes the "Vector Lakebase" industry signal (Zilliz, 2026-05-26) without rebranding
+away from "The Context Database" — the Context Database category is a superset of Vector Lakebase.
+The governing document is `docs/12-design/VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc`, which contains
+the full trend analysis and the alignment scorecard. These workstreams realize the 2028 VISION
+"serverless deployment mode" milestone with a concrete mechanism.
+====
+
+=== Continuous Discovery Loop
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Continuous Discovery surface + atomic republish | 📅 Phase 8 | TD-086 | `DiscoveryJob` catalog asset (dedup, recluster, re-embed, drift/quality scan, agent-trajectory analysis) reads a pinned snapshot; completion republishes new data + rebuilt indexes as a new snapshot with an atomic serving switch. Mostly composition over manifest/branch versioning + projection freshness state machine + `compute_route`; converts `src/automl/` into the offline arm of the flywheel.
+| External Collection (index-in-place over lake data) | 📅 Phase 8 | TD-090 | ProximaDB-owned vector/inverted/JSON indexes over external-resident Iceberg/Lance/Parquet data, un-copied and externally governed. Extends `FederatedRead`/`ExternalAuthoritative` from read/federate to index-in-place. Lets the discovery loop cover lake data, not just imported data.
+| Lance format interoperability | 📅 Phase 8 | TD-091 | Lance as read/import/external-index substrate alongside Iceberg/Delta/Hudi/Parquet. Gates External Collection for Lance-resident corpora.
+|===
+
+=== Elastic Compute And Scale-To-Zero Economics
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Scale-to-zero cold path (binary-first two-stage + IVF pruning) | 📅 Phase 8 | TD-087 | Cold-path index profile loads a compact binary/RaBitQ-style representation first; two-stage rerank with disclosed recall envelope (`RecallProbeGate` TD-075 + predicate-aware disclosure TD-064); IVF pruning bounds bytes-touched-per-query. Makes scale-to-zero usable for large vector workloads.
+| Point-read I/O amplification (point-read-optimized lake layout) | 📅 Phase 8 | TD-088 | PAX row-aligned column-group mode + evaluate open Vortex format for point-read-heavy collections; serving (point read) and discovery (scan) over one logical copy.
+| Elastic compute modes + resources-follow-data scheduler | 📅 Phase 8 | TD-089 | `Long-running` / `OnDemand` (minute-billed) / `OfflineBatch` modes over one logical store; warm-pool scheduler attaches a pinned snapshot on request, releases on idle, metadata stays queryable with zero resident compute. Depends on TD-077 (distributed transport); gated by TD-087/TD-088 making scale-to-zero economical first.
 |===
 
 == Documentation Status
@@ -670,33 +820,33 @@ For v1.0 release, the following must be complete:
 * Documentation comprehensive overhaul
 * CI/CD pipeline hardening
 
-=== Q1 2026 [In Progress]
+=== Q1 2026 [Complete]
 
-* Hybrid search (BM25) implementation
-* Event sourcing engine foundation
-* Framework integrations (LangChain, LlamaIndex)
-* ibkrtrading: Replace JSONL with event sourcing
+* Hybrid search (BM25) implementation landed; support maturity remains Beta until gRPC/live-smoke and benchmark evidence close.
+* Event sourcing engine foundation landed (TD-010 resolved).
+* Framework integrations landed for LangChain, LlamaIndex, Haystack, CrewAI, DSPy, and AutoGen.
+* ibkrtrading replacement path began with event-sourcing/document-store foundations; documented 30-day dogfood evidence remains TD-030.
 
-=== Q2 2026 [Planned]
+=== Q2 2026 [Current hardening]
 
-* Time-series engine (TST) implementation
-* ibkrtrading: Replace PostgreSQL with TST
-* Backup / point-in-time recovery
-* mTLS completion
+* Time-series engine (TST) implementation is complete at engine level (TD-009 resolved); product packaging, API parity, and at-scale validation keep the surface Beta.
+* Backup / point-in-time recovery is complete (TD-013 resolved).
+* mTLS infrastructure is complete (TD-006 resolved); remaining security work is admin/status and stronger online revocation policy.
+* Pre-release foundations focus: dashboard/support-surface honesty, multi-tenant safety hardening, canonical WAL authority, ADR-012 minimum branch merge, and hybrid gRPC parity.
 
 === Q3 2026 [Planned]
 
-* ibkrtrading: Full ProximaDB-only operation
-* Integrated inference (ONNX runtime)
-* Streaming subscriptions
-* Published benchmarks
+* v0.2 GA validation: run the ibkrtrading dogfood window and publish documented results (TD-030).
+* Complete ADR-012 minimum branch merge write-back and close the remaining pgwire/SQL Phase 2 parity gaps from ADR-018.
+* Predicate-aware vector search correctness and planner disclosure work (TD-064).
+* Publish benchmark baselines tied to the support-surface and projection-retention criteria.
 
 === Q4 2026 [Planned]
 
-* Raft consensus foundation
-* Cross-model ACID transactions
-* DiskANN index
-* CNCF submission preparation
+* Competitive platform Phase 7 follow-through: storage authority planner integration, relational capability cataloging, and vector correctness hardening.
+* Distributed cluster execution: move from Experimental transport/remote-execution foundations toward validated multi-node behavior.
+* DiskANN / advanced ANN evaluation only after predicate-aware top-k correctness is explicit.
+* CNCF submission preparation after supported-surface claims, benchmark evidence, and operator docs converge.
 
 == Metrics and Success Criteria
 
@@ -721,6 +871,6 @@ For v1.0 release, the following must be complete:
 
 ---
 
-_Last Updated_: February 6, 2026
+_Last Updated_: May 27, 2026
 _Version_: 0.2.0
-_Next Review_: Q1 2026 End
+_Next Review_: End of Phase 6 Design Review (Graph-Linked Chunking + Uncertainty-Gated Search spec)

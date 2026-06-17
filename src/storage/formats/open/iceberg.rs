@@ -1426,9 +1426,13 @@ impl IcebergFormat {
             CompressionCodec::None => Compression::UNCOMPRESSED,
             CompressionCodec::Snappy => Compression::SNAPPY,
             CompressionCodec::Gzip => Compression::GZIP(Default::default()),
-            CompressionCodec::Lz4 => Compression::LZ4,
+            CompressionCodec::Lz4 | CompressionCodec::Lz4hc | CompressionCodec::Lzo => {
+                Compression::LZ4
+            }
             CompressionCodec::Zstd => Compression::ZSTD(Default::default()),
             CompressionCodec::Brotli => Compression::BROTLI(Default::default()),
+            // Algorithms not natively supported by Parquet: fall back to Snappy
+            _ => Compression::SNAPPY,
         };
 
         let props = WriterProperties::builder()

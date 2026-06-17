@@ -16,7 +16,7 @@ use proximadb::storage::engines::columnar::{
     NativeMetadataHandler, NativeMetadataQueryOptimizer,
     MetadataFieldType, PredicateOperator,
 };
-use proximadb::core::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;

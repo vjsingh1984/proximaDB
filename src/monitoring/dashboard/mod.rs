@@ -170,9 +170,12 @@ use std::sync::Arc;
 
 use crate::monitoring::MetricsCollector;
 
+/// Backwards-compat alias for [`DashboardServerState`].
+pub type DashboardState = DashboardServerState;
+
 /// Dashboard server state
 #[derive(Clone)]
-pub struct DashboardState {
+pub struct DashboardServerState {
     metrics_collector: Arc<MetricsCollector>,
 }
 
@@ -197,7 +200,9 @@ pub struct HealthResponse {
 }
 
 /// Dashboard home page
-async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<String>, StatusCode> {
+async fn dashboard_home(
+    State(state): State<DashboardServerState>,
+) -> Result<Html<String>, StatusCode> {
     let metrics = state.metrics_collector.current_metrics().await;
     let summary = state.metrics_collector.metrics_summary().await;
 
@@ -333,7 +338,7 @@ async fn dashboard_home(State(state): State<DashboardState>) -> Result<Html<Stri
 }
 
 /// Health check endpoint
-async fn health_check(State(state): State<DashboardState>) -> Json<HealthResponse> {
+async fn health_check(State(state): State<DashboardServerState>) -> Json<HealthResponse> {
     let metrics = state.metrics_collector.current_metrics().await;
 
     Json(HealthResponse {
@@ -347,7 +352,7 @@ async fn health_check(State(state): State<DashboardState>) -> Json<HealthRespons
 /// Metrics endpoint (Prometheus format)
 async fn metrics_endpoint(
     Query(params): Query<MetricsQuery>,
-    State(state): State<DashboardState>,
+    State(state): State<DashboardServerState>,
 ) -> Result<String, StatusCode> {
     let format = params.format.unwrap_or_else(|| "prometheus".to_string());
 
@@ -370,7 +375,7 @@ async fn metrics_endpoint(
 /// API metrics endpoint (JSON)
 async fn api_metrics_endpoint(
     Query(params): Query<MetricsQuery>,
-    State(state): State<DashboardState>,
+    State(state): State<DashboardServerState>,
 ) -> Json<crate::metrics::SystemMetrics> {
     let _since = params.since; // Deferred: Use this for historical data
     let metrics = state.metrics_collector.current_metrics().await;
@@ -378,13 +383,17 @@ async fn api_metrics_endpoint(
 }
 
 /// Alerts endpoint
-async fn alerts_endpoint(State(state): State<DashboardState>) -> Json<Vec<crate::metrics::Alert>> {
+async fn alerts_endpoint(
+    State(state): State<DashboardServerState>,
+) -> Json<Vec<crate::metrics::Alert>> {
     let alerts = state.metrics_collector.active_alerts().await;
     Json(alerts)
 }
 
 /// Alerts page
-async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>, StatusCode> {
+async fn alerts_page(
+    State(state): State<DashboardServerState>,
+) -> Result<Html<String>, StatusCode> {
     let alerts = state.metrics_collector.active_alerts().await;
 
     let alerts_html = if alerts.is_empty() {
@@ -477,7 +486,7 @@ async fn alerts_page(State(state): State<DashboardState>) -> Result<Html<String>
 
 /// Create dashboard router for integration with UnifiedServer
 pub fn create_dashboard_router(metrics_collector: Arc<MetricsCollector>) -> Router {
-    let state = DashboardState { metrics_collector };
+    let state = DashboardServerState { metrics_collector };
 
     Router::new()
         .route("/", get(dashboard_home))

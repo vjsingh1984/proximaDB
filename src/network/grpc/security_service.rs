@@ -1,3 +1,7 @@
+// DEPRECATED: This file has been migrated to crates/platform/proximadb-api/src/grpc/v1/security.rs
+// Please use: use proximadb_api::grpc::SecurityServiceImpl;
+// This compatibility shim will be removed in version 0.3.0
+
 /*
  * Copyright 2025 ProximaDB
  *
@@ -16,21 +20,29 @@ use tonic::{Request, Response, Status};
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1;
-use crate::proto::proximadb_v1::security_service_server::{SecurityService, SecurityServiceServer};
-use crate::security::unified_rbac::{
-    ConsolidatedRBACManager, RBACConfig, UnifiedPermission, UnifiedUserContext,
+use crate::security::auth_service::{AuthenticationData, UnifiedAuthService};
+use crate::security::rbac_service::{
+    ConsolidatedRBACManager, RBACConfig, UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext,
 };
 
 /// Security service implementation for RBAC operations
 pub struct SecurityServiceImpl {
     /// RBAC manager for permission validation
     rbac_manager: Arc<ConsolidatedRBACManager>,
+    /// Optional unified auth service for `SecurityPort::authenticate`
+    /// (ADR-016 / Task #69).  When `None`, the port's `authenticate`
+    /// method returns "not configured"; the existing gRPC RBAC methods
+    /// continue to work without it.
+    auth_service: Option<Arc<UnifiedAuthService>>,
 }
 
 impl SecurityServiceImpl {
     /// Create a new security service
     pub fn new(rbac_manager: Arc<ConsolidatedRBACManager>) -> Self {
-        Self { rbac_manager }
+        Self {
+            rbac_manager,
+            auth_service: None,
+        }
     }
 
     /// Create a new security service with default config
@@ -38,6 +50,15 @@ impl SecurityServiceImpl {
         let config = RBACConfig::default();
         let rbac_manager = Arc::new(ConsolidatedRBACManager::new(config));
         Self::new(rbac_manager)
+    }
+
+    /// Wire in the unified auth service so the port's
+    /// `authenticate(PortAuthCredential)` method can actually
+    /// authenticate.  Without this, `authenticate` returns
+    /// "not configured" — composition is opt-in.
+    pub fn with_auth_service(mut self, auth_service: Arc<UnifiedAuthService>) -> Self {
+        self.auth_service = Some(auth_service);
+        self
     }
 
     /// Convert gRPC auth context to UnifiedUserContext
@@ -64,7 +85,7 @@ impl SecurityServiceImpl {
             },
             roles: Vec::new(),
             effective_permissions: std::collections::HashSet::new(),
-            auth_method: crate::security::unified_rbac::AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: auth_ctx.session_id.clone(),
             expires_at,
             created_at: chrono::Utc::now(),
@@ -128,15 +149,14 @@ impl SecurityServiceImpl {
             _ => Ok(UnifiedPermission::SystemAdmin), // Fallback for unknown operations
         }
     }
-
-    /// Convert to gRPC service
-    pub fn into_server(self) -> SecurityServiceServer<Self> {
-        SecurityServiceServer::new(self)
-    }
 }
 
-#[tonic::async_trait]
-impl SecurityService for SecurityServiceImpl {
+// Inherent security operation handlers. These hold the real RBAC/auth logic
+// behind `SecurityPort` (below); the canonical tonic `SecurityService` wire
+// adapter lives in crates/platform/proximadb-api/src/grpc/v1/security.rs. TD-105
+// Phase B converted this from a (never-served) tonic `impl SecurityService` into
+// plain inherent methods.
+impl SecurityServiceImpl {
     async fn validate_access(
         &self,
         request: Request<proximadb_v1::ValidateAccessRequest>,
@@ -168,7 +188,7 @@ impl SecurityService for SecurityServiceImpl {
             },
             roles: Vec::new(),
             effective_permissions: std::collections::HashSet::new(),
-            auth_method: crate::security::unified_rbac::AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: uuid::Uuid::new_v4().to_string(),
             expires_at: None,
             created_at: chrono::Utc::now(),
@@ -447,6 +467,197 @@ impl SecurityService for SecurityServiceImpl {
     }
 }
 
+// ── SecurityPort impl ─────────────────────────────────────────────────────────
+//
+// Delegates every port method to the inherent handlers above, so the logic is
+// written once and the port is a thin unwrap/wrap layer. `authenticate` is the
+// one port-only method (no inherent handler) and carries its own logic.
+
+#[async_trait::async_trait]
+impl proximadb_runtime::SecurityPort for SecurityServiceImpl {
+    async fn validate_access(
+        &self,
+        request: crate::proto::proximadb_v1::ValidateAccessRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ValidateAccessResponse> {
+        self.validate_access(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn batch_validate_access(
+        &self,
+        request: crate::proto::proximadb_v1::BatchValidateAccessRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::BatchValidateAccessResponse> {
+        self.batch_validate_access(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn create_role(
+        &self,
+        request: crate::proto::proximadb_v1::CreateRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::CreateRoleResponse> {
+        self.create_role(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_roles(
+        &self,
+        request: crate::proto::proximadb_v1::ListRolesRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ListRolesResponse> {
+        self.list_roles(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn delete_role(
+        &self,
+        request: crate::proto::proximadb_v1::DeleteRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::DeleteRoleResponse> {
+        self.delete_role(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn assign_role(
+        &self,
+        request: crate::proto::proximadb_v1::AssignRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::AssignRoleResponse> {
+        self.assign_role(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn revoke_role(
+        &self,
+        request: crate::proto::proximadb_v1::RevokeRoleRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::RevokeRoleResponse> {
+        self.revoke_role(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_user_roles(
+        &self,
+        request: crate::proto::proximadb_v1::ListUserRolesRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ListUserRolesResponse> {
+        self.list_user_roles(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn list_audit_events(
+        &self,
+        request: crate::proto::proximadb_v1::ListAuditEventsRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::ListAuditEventsResponse> {
+        self.list_audit_events(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn get_tenant_security_policy(
+        &self,
+        request: crate::proto::proximadb_v1::GetTenantSecurityPolicyRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::GetTenantSecurityPolicyResponse> {
+        self.get_tenant_security_policy(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    async fn set_tenant_security_policy(
+        &self,
+        request: crate::proto::proximadb_v1::SetTenantSecurityPolicyRequest,
+    ) -> anyhow::Result<crate::proto::proximadb_v1::SetTenantSecurityPolicyResponse> {
+        self.set_tenant_security_policy(tonic::Request::new(request))
+            .await
+            .map(|r| r.into_inner())
+            .map_err(|s| anyhow::anyhow!("{}", s.message()))
+    }
+
+    /// ADR-016 / Task #69: lossy-projection authenticate.
+    ///
+    /// Converts `PortAuthCredential` → root-crate `AuthenticationData`,
+    /// calls the unified auth service, fills in effective permissions
+    /// via the RBAC manager (mirroring `SecurityCoordinator::authenticate_request`),
+    /// then projects `UnifiedUserContext` → `PortUserContext`.
+    ///
+    /// Returns "not configured" when no auth service is wired —
+    /// composition is opt-in via `with_auth_service`.
+    async fn authenticate(
+        &self,
+        credential: proximadb_runtime::PortAuthCredential,
+    ) -> anyhow::Result<proximadb_runtime::PortUserContext> {
+        let auth_service = self.auth_service.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "SecurityPort::authenticate: auth_service not configured on this SecurityServiceImpl (call with_auth_service to enable)"
+            )
+        })?;
+
+        let auth_data = match credential {
+            proximadb_runtime::PortAuthCredential::Jwt(token) => {
+                AuthenticationData::JWTToken(token)
+            }
+            proximadb_runtime::PortAuthCredential::ApiKey(key) => AuthenticationData::ApiKey(key),
+        };
+
+        let auth_result = auth_service.authenticate(auth_data).await?;
+        if !auth_result.success {
+            return Err(anyhow::anyhow!(
+                "Authentication failed: {}",
+                auth_result.error_message.as_deref().unwrap_or("unknown")
+            ));
+        }
+
+        let mut user_context = auth_result.user_context;
+        let effective_permissions = self
+            .rbac_manager
+            .get_effective_permissions(&user_context)
+            .await?;
+        user_context.effective_permissions = effective_permissions;
+
+        Ok(project_unified_to_port_context(user_context))
+    }
+}
+
+/// Lossy projection of root-crate `UnifiedUserContext` →
+/// port-level `PortUserContext` (ADR-016).
+fn project_unified_to_port_context(ctx: UnifiedUserContext) -> proximadb_runtime::PortUserContext {
+    let effective_permissions_json =
+        serde_json::to_string(&ctx.effective_permissions).unwrap_or_else(|_| "[]".to_string());
+    let auth_method = match ctx.auth_method {
+        UnifiedAuthMethod::SSO { .. } => "sso".to_string(),
+        UnifiedAuthMethod::JWT => "jwt".to_string(),
+        UnifiedAuthMethod::ApiKey => "apikey".to_string(),
+        UnifiedAuthMethod::ClientCertificate => "mtls".to_string(),
+        UnifiedAuthMethod::Internal => "internal".to_string(),
+    };
+    let session_id = if ctx.session_id.is_empty() {
+        None
+    } else {
+        Some(ctx.session_id)
+    };
+    proximadb_runtime::PortUserContext {
+        user_id: ctx.user_id,
+        tenant_id: ctx.tenant_id.unwrap_or_default(),
+        roles: ctx.roles,
+        scopes: Vec::new(),
+        effective_permissions_json,
+        auth_method,
+        session_id,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -476,5 +687,149 @@ mod tests {
         let response = result.unwrap().into_inner();
         // Default behavior: default_deny = false, so unassigned users are allowed
         assert_eq!(response.allowed, true);
+    }
+
+    /// ADR-016 / Task #69: lock in the lossy-projection semantics so
+    /// future step-4 consumer migrations can rely on the contract.
+    mod port_user_context_projection {
+        use super::*;
+        use chrono::Utc;
+        use std::collections::{HashMap, HashSet};
+
+        fn ctx(
+            tenant_id: Option<&str>,
+            roles: &[&str],
+            session_id: &str,
+            auth_method: UnifiedAuthMethod,
+            permissions: HashSet<UnifiedPermission>,
+        ) -> UnifiedUserContext {
+            UnifiedUserContext {
+                user_id: "u1".to_string(),
+                tenant_id: tenant_id.map(str::to_string),
+                roles: roles.iter().map(|s| s.to_string()).collect(),
+                effective_permissions: permissions,
+                auth_method,
+                session_id: session_id.to_string(),
+                expires_at: None,
+                created_at: Utc::now(),
+                metadata: HashMap::new(),
+            }
+        }
+
+        #[test]
+        fn tenant_id_none_becomes_empty_string() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.tenant_id, "");
+        }
+
+        #[test]
+        fn tenant_id_some_passes_through() {
+            let p = project_unified_to_port_context(ctx(
+                Some("acme"),
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.tenant_id, "acme");
+        }
+
+        #[test]
+        fn empty_session_id_becomes_none() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert!(p.session_id.is_none());
+        }
+
+        #[test]
+        fn nonempty_session_id_passes_through() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "sess-42",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.session_id.as_deref(), Some("sess-42"));
+        }
+
+        #[test]
+        fn auth_method_stringification() {
+            let cases = [
+                (
+                    UnifiedAuthMethod::SSO {
+                        provider: "okta".into(),
+                    },
+                    "sso",
+                ),
+                (UnifiedAuthMethod::JWT, "jwt"),
+                (UnifiedAuthMethod::ApiKey, "apikey"),
+                (UnifiedAuthMethod::ClientCertificate, "mtls"),
+                (UnifiedAuthMethod::Internal, "internal"),
+            ];
+            for (am, expected) in cases {
+                let p = project_unified_to_port_context(ctx(None, &[], "", am, HashSet::new()));
+                assert_eq!(p.auth_method, expected);
+            }
+        }
+
+        #[test]
+        fn roles_pass_through() {
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &["admin", "reader"],
+                "",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert_eq!(p.roles, vec!["admin", "reader"]);
+        }
+
+        #[test]
+        fn scopes_default_empty() {
+            // No source field on UnifiedUserContext — projection always
+            // emits an empty scopes vec.  Step 4 consumers needing
+            // scopes will require a port-surface extension first.
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &["any"],
+                "any",
+                UnifiedAuthMethod::Internal,
+                HashSet::new(),
+            ));
+            assert!(p.scopes.is_empty());
+        }
+
+        #[test]
+        fn effective_permissions_serializes_to_json() {
+            let mut perms = HashSet::new();
+            perms.insert(UnifiedPermission::CollectionRead("c1".to_string()));
+            let p = project_unified_to_port_context(ctx(
+                None,
+                &[],
+                "",
+                UnifiedAuthMethod::Internal,
+                perms,
+            ));
+            // Opaque JSON to the runtime layer — assert it round-trips
+            // through serde_json and contains the variant name so
+            // consumers know they can re-deserialize with the
+            // root-crate `UnifiedPermission` schema.
+            let v: serde_json::Value =
+                serde_json::from_str(&p.effective_permissions_json).expect("valid JSON");
+            assert!(v.is_array());
+            assert!(p.effective_permissions_json.contains("CollectionRead"));
+        }
     }
 }

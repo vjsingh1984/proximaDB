@@ -9,8 +9,11 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::info;
 
+/// Backwards-compat alias for [`StorageOperationMetrics`].
+pub type OperationMetrics = StorageOperationMetrics;
+
 /// Operation metrics for monitoring and optimization
-pub struct OperationMetrics {
+pub struct StorageOperationMetrics {
     /// Operation counts by type and collection
     #[allow(dead_code)]
     operation_counts: Arc<RwLock<HashMap<String, HashMap<OperationType, u64>>>>,
@@ -55,10 +58,10 @@ struct ResourceUsageStats {
     concurrent_operations_peak: usize,
 }
 
-impl OperationMetrics {
+impl StorageOperationMetrics {
     /// Create new operation metrics tracker
     pub fn new() -> Self {
-        info!("📊 Initializing OperationMetrics");
+        info!("📊 Initializing StorageOperationMetrics");
 
         Self {
             operation_counts: Arc::new(RwLock::new(HashMap::new())),
@@ -220,7 +223,7 @@ impl OperationMetrics {
     }
 }
 
-impl Default for OperationMetrics {
+impl Default for StorageOperationMetrics {
     fn default() -> Self {
         Self::new()
     }
@@ -252,7 +255,7 @@ mod metrics_tests {
 
     #[tokio::test]
     async fn test_metrics_recording() {
-        let metrics = OperationMetrics::new();
+        let metrics = StorageOperationMetrics::new();
 
         // Record some operations
         metrics
@@ -282,7 +285,7 @@ mod metrics_tests {
 
     #[tokio::test]
     async fn test_prometheus_metrics_generation() {
-        let metrics = OperationMetrics::new();
+        let metrics = StorageOperationMetrics::new();
 
         // Record some test data
         metrics

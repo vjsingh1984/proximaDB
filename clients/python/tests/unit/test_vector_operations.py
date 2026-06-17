@@ -8,17 +8,13 @@ Tests run against embedded ProximaDB database for fast, reliable testing.
 
 import logging
 import time
-from typing import Any, Dict, List
 
 import numpy as np
 import pytest
 
 from proximadb_sdk import (
     CollectionConfig,
-    DistanceMetric,
-    ProximaDBError,
     StorageEngine,
-    VectorDimensionError,
 )
 
 logger = logging.getLogger(__name__)
@@ -363,7 +359,7 @@ class TestLargeScaleOperations:
                     ),
                     metadata=updated_metadata,
                 )
-            except Exception as e:
+            except Exception:
                 pass
 
         # Verify final state

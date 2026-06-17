@@ -7,7 +7,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any
 
 
 class EmbeddingProvider(str, Enum):
@@ -32,7 +32,7 @@ class EmbeddingConfig:
 
     Attributes:
         provider: Embedding provider type
-        model_name: Model name (e.g., "all-MiniLM-L12-v2")
+        model_name: Model name (e.g., "BAAI/bge-small-en-v1.5")
         dimension: Embedding dimension (auto-detected if not specified)
         api_key: API key for cloud providers
         batch_size: Batch size for embedding generation
@@ -40,9 +40,9 @@ class EmbeddingConfig:
     """
 
     provider: EmbeddingProvider = EmbeddingProvider.SENTENCE_TRANSFORMERS
-    model_name: str = "all-MiniLM-L12-v2"
-    dimension: Optional[int] = None
-    api_key: Optional[str] = None
+    model_name: str = "BAAI/bge-small-en-v1.5"
+    dimension: int | None = None
+    api_key: str | None = None
     batch_size: int = 32
     base_url: str = "http://localhost:11434"  # For Ollama
 
@@ -103,7 +103,7 @@ class RAGConfig:
     llm_model: str = "llama3.1:8b"
     temperature: float = 0.7
     max_tokens: int = 1024
-    system_prompt: Optional[str] = None
+    system_prompt: str | None = None
 
 
 @dataclass
@@ -146,7 +146,7 @@ class LLMConfig:
     default_collection: str = "embeddings"
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "LLMConfig":
+    def from_dict(cls, data: dict[str, Any]) -> "LLMConfig":
         """Create config from dictionary."""
         embedding_data = data.get("embedding", {})
         if "provider" in embedding_data and isinstance(embedding_data["provider"], str):

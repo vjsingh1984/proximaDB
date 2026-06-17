@@ -13,9 +13,9 @@ use tempfile::tempdir;
 
 use super::*;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::proximadb_v1::SqlValue;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
 /// Example: VIPER engine using optimized columnar infrastructure
 pub async fn viper_optimization_example() -> Result<()> {
@@ -71,37 +71,33 @@ pub async fn viper_optimization_example() -> Result<()> {
         for i in 0..10_000 {
             let vector: Vec<f32> = (0..768).map(|j| ((i + j) as f32) * 0.001).collect();
 
-            let mut metadata = HashMap::new();
-            metadata.insert(
+            let mut props = HashMap::new();
+            props.insert(
                 "category".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("cat_{}", i % 10),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(format!("cat_{}", i % 10))),
             );
-            metadata.insert(
+            props.insert(
                 "batch_id".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
-                        i / 1000,
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::Int64(i / 1000)),
             );
 
-            let record = VectorRecord {
-                id: if !recommendations.use_id_less_storage {
+            let record = ProximaRecord {
+                oid: if !recommendations.use_id_less_storage {
                     format!("viper_vec_{:06}", i)
                 } else {
                     format!("implicit_{:06}", i) // ID-less storage uses implicit IDs
                 },
-                vector,
-                metadata,
-                timestamp: Some(i as i64),
-                source: None,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
+                props,
+                embeddings: vec![EmbeddingCell {
+                    model_id: "example-model".to_string(),
+                    modality: "text".to_string(),
+                    dim: vector.len() as u32,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
+                    ..Default::default()
+                }],
+                created_at_ns: i as i64,
+                record_version: 1,
+                ..Default::default()
             };
 
             records.push(record);
@@ -215,7 +211,7 @@ pub async fn viper_optimization_example() -> Result<()> {
 
         // TODO: Implement progressive_search method
         // For now, simulate search results
-        let search_results: Vec<crate::proto::proximadb_v1::VectorRecord> = vec![];
+        let search_results: Vec<crate::proto::proximadb_v1::ProximaRecord> = vec![];
         /*
         let search_results = reader
             .progressive_search(
@@ -244,7 +240,7 @@ pub async fn viper_optimization_example() -> Result<()> {
 
         // TODO: Implement lookup methods
         // For now, simulate lookup results
-        let lookup_results: Vec<crate::proto::proximadb_v1::VectorRecord> = vec![];
+        let lookup_results: Vec<crate::proto::proximadb_v1::ProximaRecord> = vec![];
         /*
         let lookup_results = if recommendations.use_id_less_storage {
             reader.lookup_by_implicit_ids(&[file_path.to_str().unwrap().to_string()], &test_ids).await?
@@ -329,53 +325,41 @@ pub async fn nova_optimization_example() -> Result<()> {
                 })
                 .collect();
 
-            let mut metadata = HashMap::new();
-            metadata.insert(
+            let mut props = HashMap::new();
+            props.insert(
                 "department".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        format!("dept_{}", i % 50),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String(format!("dept_{}", i % 50))),
             );
-            metadata.insert(
+            props.insert(
                 "project_id".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(
-                        i / 5000,
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::Int64(i / 5000)),
             );
-            metadata.insert(
+            props.insert(
                 "data_source".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "analytics_pipeline".to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String("analytics_pipeline".to_string())),
             );
-            metadata.insert(
+            props.insert(
                 "embedding_model".to_string(),
-                SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        "text-embedding-ada-002".to_string(),
-                    )),
-                },
+                ProximaTreeNode::Value(ProximaValue::String("text-embedding-ada-002".to_string())),
             );
 
-            let record = VectorRecord {
-                id: if !recommendations.use_id_less_storage {
+            let record = ProximaRecord {
+                oid: if !recommendations.use_id_less_storage {
                     format!("nova_analytics_{:08}", i)
                 } else {
                     format!("implicit_{:08}", i) // ID-less saves ~8 bytes per vector
                 },
-                vector,
-                metadata,
-                timestamp: Some((1700000000 + i) as i64),
-                source: None,
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
+                props,
+                embeddings: vec![EmbeddingCell {
+                    model_id: "text-embedding-ada-002".to_string(),
+                    modality: "text".to_string(),
+                    dim: vector.len() as u32,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
+                    ..Default::default()
+                }],
+                created_at_ns: (1_700_000_000 + i) as i64,
+                record_version: 1,
+                ..Default::default()
             };
 
             records.push(record);
@@ -451,7 +435,7 @@ pub async fn nova_optimization_example() -> Result<()> {
         // Create UnifiedCachingFilesystem for optimal performance
         let base_fs = filesystem.get_filesystem("file://").unwrap();
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "nova_collection".to_string(),
                 "nova".to_string(),

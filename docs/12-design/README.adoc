@@ -1,0 +1,147 @@
+= ProximaDB Architecture And Design Index
+:toc:
+:toclevels: 2
+
+This directory holds current architectural decisions and active implementation blueprints.
+Historical phase reports, superseded visions, and one-off audits belong under `docs/_archive/`.
+
+[IMPORTANT]
+====
+**Start here for the whole-system view.** link:SYSTEM_MAP_2026_05_30.adoc[SYSTEM_MAP_2026_05_30] is the
+apex single-pane-of-glass index — workspace layers → `src/` modules → engines → write/read paths →
+facade-to-authority convergence, with pointers to every feeder map. New whole-system diagrams belong
+there (or a feeder linked from it), never in a new competing map — this is enforced by the Convergence
+Gate in link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30].
+====
+
+[TIP]
+====
+**For a bookkeeping snapshot** (every doc here + every ADR, with status / wired-vs-not / consolidation cluster columns), see
+link:DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc[DESIGN_DOC_STATUS_INDEX_2026_05_26].
+Updated with a 2026-06-04 HTAP delta for TD-110 and the tiered OLTP/OLAP storage model.
+====
+
+== Canonical Architecture Path
+
+[WARNING]
+====
+**ARCHITECTURAL PIVOT (2026-06-04):** ProximaDB transitioned from protocol/vector-era
+storage silos toward a tiered HTAP architecture: xCatalog/WAL/`ProximaRecord` authority, native
+OLTP row/delta storage for PostgreSQL-style freshness and constraints, Parquet/Iceberg snapshots
+for DataFusion analytics, and PAX/specialized layouts as cataloged access methods/projections.
+Always prioritize `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` plus
+`RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` for current mandates.
+====
+
+Read these in order for future-shaping architecture work:
+
+1. `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` +
+   Strategic course correction prioritizing Postgres-wire compatibility, Rust-native distributed MPP (Spark-like data engineering), and decoupled object storage to compete with Snowflake, Databricks, and Trino.
+2. `DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc` +
+   Active ProximaDB-side blueprint for DataFusionLocal to Ballista-backed
+   DataFusionDistributed execution, including the repo boundary between database route contracts and
+   external AKS/Kubernetes operations.
+3. `DATA_AI_PLATFORM_ARCHITECTURE_ANCHOR_2026_05_12.adoc` +
+   Product/platform anchor for ProximaDB as a data and AI platform. Use for roadmap and ecosystem
+   shape.
+4. `COMPETITIVE_OLTP_OLAP_MPP_TRAJECTORY_2026_05_20.adoc` +
+   Competitive architecture trajectory for OLTP, OLAP, HTAP, MPP, open compute routing, and the
+   implementation knobs that xCatalog and the planner must expose.
+5. `VECTOR_OBJECT_ECONOMY_ROUTE_HLD_LLD_2026_05_27.adoc` +
+   Active HLD/LLD for object-storage vector economics, SST/HELIX centroid block pruning, cache
+   affinity, WAL freshness, EXPLAIN visibility, and cataloged vector access-method projections.
+6. `TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc` +
+   Active TD-064 blueprint for predicate-aware vector search correctness, ADR-011 route selection,
+   tenant/RLS predicate pushdown, record-aware ANN predicates, and fallback/shortfall disclosure.
+7. `RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc` +
+   Accepted stacked-durability mandate for records, storage authority, modality facades, and
+   projection/access-method boundaries. (Updated 2026-06-04 for Multi-Engine routing).
+8. `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` +
+   Relational/PAX/MVCC/open-format storage shape. (Updated 2026-06-04 for tiered HTAP:
+   OLTP row/delta authority, PAX as an internal HTAP candidate, and Parquet/Iceberg for analytics).
+9. `PAX_CODEC_LAYOUT_COMPRESSION_LLD_2026_05_20.adoc` +
+   Active HLD/LLD tracker for Iceberg statistics, Parquet shredding, and PAX block-layout work.
+   Subordinate to the storage-format HTAP decision above.
+10. `RELATIONAL_PGWIRE_DML_COMPUTE_BLUEPRINT_2026_05_20.adoc` +
+   Active HLD/LLD tracker for pgwire DML, legacy VectorOps routing, table-record execution, and compute-engine routing (DataFusion integration).
+11. `roadmap/techdebt/TD_110_OLTP_OLAP_HTAP_STORAGE_AND_CONSTRAINTS_PLAN_2026_06_04.adoc` +
+   Active roadmap tracker for PostgreSQL-style OLTP constraints, native row/delta commit,
+   Volcano strong-freshness execution, DataFusion snapshot-plus-delta reads, and distributed
+   consistency gates.
+12. `PROXIMA_NOTEBOOK_PSEUDO_DISTRIBUTED_BLUEPRINT_2026_06_04.adoc` +
+   Active HLD/LLD tracker for Python notebook/procedural APIs, PySpark-style lazy planning,
+   Rust-backed embedded execution, DataFusion routes, and single-node pseudo-distributed proof mode.
+13. `OPEN_FORMAT_CATALOG_2026_05_17.adoc` +
+   Iceberg REST catalog, OLTP catalog backends, open-format compatibility, and xCatalog ownership
+   for external engines.
+14. `COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` +
+   Engine contract for collection-level disaster recovery and cross-region object replication.
+15. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
+   Legacy foundational mandate. Superseded by the Data Warehouse course correction on 2026-06-04.
+
+== Stable Reference Docs
+
+* `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and
+  Victor/Cargo connectedness findings. Includes the system-level "Use Case Map" and "Deployment
+  Topology" UML diagrams.
+* `MODULE_COMPONENT_LLD_2026_05_22.adoc` - per-module LLD component and authority map. Includes the
+  "Recursive src Module Decomposition" (component, class, sequence, and activity UML diagrams for
+  every `src/` subsystem) and the write/search "Critical-Path Sequence And Activity Diagrams". All
+  diagrams are mermaid; render via the asciidoctor/kroki pipeline.
+* `DOCUMENTATION_CONSOLIDATION_AND_ARCHIVE_PLAN_2026_05_22.adoc` - OSS documentation taxonomy,
+  duplicate-doc findings, and archive batch plan.
+* `DESIGN_PATTERNS.adoc` - general design patterns and implementation references.
+* `SUPPORTED_SURFACES.adoc` - supported API/projection status and retirement candidates.
+
+== ADRs
+
+Accepted ADRs live under `adr/`.
+
+* `adr/ADR-001-capability-registry.adoc`
+* `adr/ADR-002-normalized-filter-candidate-contract.adoc`
+* `adr/ADR-003-multimodel-plan-contract.adoc`
+* `adr/ADR-004-unified-explain-contract.adoc`
+* `adr/ADR-005-document-graph-query-extensions.adoc`
+* `adr/ADR-006-infrastructure-platform-decisions.adoc`
+* `adr/ADR-007-iceberg-rest-catalog-server.adoc`
+* `adr/ADR-008-oltp-catalog-backends.adoc`
+* `adr/ADR-009-schema-modes-and-proximarecord-surfaces.adoc`
+* `adr/ADR-010-pax-block-format.adoc` — PAX block format; rebuild RTO estimates added 2026-05-20.
+* `adr/ADR-011-filtered-ann-routing-modes.adoc` — Selectivity-based Pre/Inline/PostFilter ANN routing.
+* `adr/ADR-012-graph-branch-merge-semantics.adoc` — CRDT-based graph branch merge policies.
+* `adr/ADR-013-protocol-type-coercion-matrix.adoc` — Lossless and lossy type conversions per protocol.
+* `adr/ADR-014-vector-query-2-shape.adoc` — Vector query two-shape boundary.
+* `adr/ADR-015-port-impl-location.adoc` — Port impl location (bare service vs gRPC wrapper).
+* `adr/ADR-016-port-user-context.adoc` — PortUserContext as the SecurityPort boundary type.
+* `adr/ADR-017-dr-engine-surface.adoc` — Public DR engine surface and OSS/operator boundary.
+* `adr/ADR-018-pgwire-sql-parity-roadmap.adoc` — pgwire/SQL parity roadmap: MVP → SQLite-parity → Postgres-parity (~3 months total).
+* `adr/ADR-019-relational-query-architecture.adoc` — five-layer relational query architecture (algebra, executor, transaction, storage) refining Phase 2.
+
+== Archived From This Directory
+
+The May 2026 cleanup moved superseded or progress-only documents to
+`docs/_archive/design/2026-05/`.
+
+Archived categories:
+
+* superseded platform vision replaced by the architecture anchor;
+* old module architecture guide replaced by repository guidelines and workspace refactor plan;
+* phase-specific quantization, gRPC, platform-runtime, and workspace-refactor progress reports;
+* historical workspace-layering ADR superseded operationally by
+  `roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc`.
+
+== Maintenance Rules
+
+* Add new future-shaping architecture as either an ADR or an active blueprint with owner, scope,
+  status, and implementation tracker.
+* Do not add phase reports or one-off session summaries to this directory; archive them after they
+  are no longer the active tracker.
+* Keep protocol-specific behavior aligned with the canonical record/type/catalog/storage mandates.
+* LLM-generated or agent-generated code changes must cite the active blueprint they implement and
+  must not introduce new catalog, record, WAL, policy, or compute-routing authority outside the
+  canonical architecture path.
+* If generated code adds a route, reader, writer, projection, or external adapter, the owning doc
+  must name its authority mode, policy boundary, freshness behavior, repair source, and supported
+  maturity before the path is enabled by default.
+* When a blueprint is superseded, move it to `docs/_archive/design/<yyyy-mm>/` and update this
+  index.

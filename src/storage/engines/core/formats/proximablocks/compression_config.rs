@@ -3,9 +3,9 @@
 
 use std::collections::HashMap;
 
-use crate::core::compression::{CompressionAlgorithm, CompressionContext};
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::CompressionConfig as ProtoCompressionConfig;
+use proximadb_compression::{CompressionAlgorithm, CompressionContext};
 
 /// Row-based compression configuration
 #[derive(Debug, Clone)]
@@ -235,9 +235,12 @@ pub struct CompressionParameters {
     pub collection_config: Option<ProtoCompressionConfig>,
 }
 
+/// Backwards-compat alias for [`BlockCompressionStats`].
+pub type CompressionStats = BlockCompressionStats;
+
 /// Compression statistics and results
 #[derive(Debug, Clone)]
-pub struct CompressionStats {
+pub struct BlockCompressionStats {
     /// Size information
     pub original_size: usize,
     pub compressed_size: usize,

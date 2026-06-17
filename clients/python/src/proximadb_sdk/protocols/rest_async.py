@@ -4,7 +4,7 @@ ProximaDB Python Client - Asynchronous REST Client (Graph subset)
 Provides async REST methods for graph operations with per-call prefetch overrides.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 
@@ -22,14 +22,15 @@ class ProximaDBAsyncClient:
         self,
         start_node_id: str,
         target_node_id: str,
-        max_depth: Optional[int] = None,
-        edge_types: Optional[List[str]] = None,
+        max_depth: int | None = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "DIJKSTRA",
-        k: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        body: Dict[str, Any] = {
+        k: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
             "start_node_id": start_node_id,
             "target_node_id": target_node_id,
             "algorithm": algorithm,
@@ -41,7 +42,7 @@ class ProximaDBAsyncClient:
         if k is not None:
             body["k"] = k
 
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         if enable_prefetch is not None:
             headers["x-graph-prefetch-enabled"] = "true" if enable_prefetch else "false"
         if prefetch_budget is not None:
@@ -54,7 +55,7 @@ class ProximaDBAsyncClient:
             body["prefetch_budget"] = int(prefetch_budget)
 
         resp = await self._client.post(
-            "/api/v1/graph/shortest_path", json=body, headers=headers
+            f"/api/v2/graphs/{graph_id}/shortest-path", json=body, headers=headers
         )
         resp.raise_for_status()
         return resp.json()
@@ -63,15 +64,16 @@ class ProximaDBAsyncClient:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-        timeout_ms: Optional[int] = None,
-        max_frontier: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-    ) -> Dict[str, Any]:
-        body: Dict[str, Any] = {
+        limit: int | None = None,
+        timeout_ms: int | None = None,
+        max_frontier: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {
             "start_node_id": start_node_id,
             "max_depth": max_depth,
             "algorithm": algorithm,
@@ -85,7 +87,7 @@ class ProximaDBAsyncClient:
         if max_frontier is not None:
             body["max_frontier"] = max_frontier
 
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         if enable_prefetch is not None:
             headers["x-graph-prefetch-enabled"] = "true" if enable_prefetch else "false"
         if prefetch_budget is not None:
@@ -98,7 +100,7 @@ class ProximaDBAsyncClient:
             body["prefetch_budget"] = int(prefetch_budget)
 
         resp = await self._client.post(
-            "/api/v1/graph/traverse", json=body, headers=headers
+            f"/api/v2/graphs/{graph_id}/traverse", json=body, headers=headers
         )
         resp.raise_for_status()
         return resp.json()

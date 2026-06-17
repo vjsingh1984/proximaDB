@@ -45,8 +45,8 @@ This guide implements optimizations discovered in the system optimization benchm
 5. **Metadata Projection Pattern** (16-26x overhead reduction)
 
 **Reference Benchmarks**:
-- `docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc`
-- `docs/benchmarks/SYSTEM_OPTIMIZATION_QUICKREF.adoc`
+- `docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc`
+- `docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_QUICKREF.adoc`
 
 == Phase 1: Arc-Based Memory Sharing (Week 1)
 
@@ -85,7 +85,7 @@ Create a configuration module for search optimization settings with the followin
 6. Add validation method to ensure config values are sensible
 
 Reference benchmark results from:
-- docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 2.4
+- docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 2.4
 
 The 1024D threshold avoids the 1536D performance inversion (12.7x slower).
 ```
@@ -191,7 +191,7 @@ Implement a CloneStrategySelector that manages clone strategy selection with the
    - Test cache hit rates
 
 Use lru crate for caching: lru = "0.12"
-Reference: docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 2.4
+Reference: docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 2.4
 ```
 
 **Expected Code Structure**:
@@ -449,7 +449,7 @@ Then update src/config.rs or the main config module to:
 3. Validate on load
 4. Provide getters for the configuration
 
-Reference: docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section "Configuration Template"
+Reference: docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section "Configuration Template"
 ```
 
 === 1.3 Testing Requirements
@@ -546,7 +546,7 @@ Create a Criterion benchmark to validate the optimization improvements:
 
 Run with: cargo bench --bench bench_17_clone_optimization
 
-Expected results should match docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc:
+Expected results should match docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc:
 - 384D Arc: 2.89µs per 100 records (6.5x faster)
 - 768D Arc: 4.45µs per 100 records (5.9x faster)
 - 1536D Deep: 4.10µs per 100 records (12.7x faster than Arc)
@@ -649,7 +649,7 @@ Implement the aggregation strategy selector based on benchmark findings:
    - Average aggregation time per strategy
    - Performance vs predicted performance
 
-Reference: docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 3
+Reference: docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 3
 Key finding: Heap provides 7.1x speedup for n=10K, k=10
 Warning: Heap 3.7x slower than partial sort at n=1000, k=100 (k/n=0.1)
 ```
@@ -796,7 +796,7 @@ Implement optimized heap-based top-K selection:
    - Should be faster than partial_sort for k/n < 0.1
    - May be slower than partial_sort at k/n ≈ 0.1 (acceptable tradeoff)
 
-Reference: docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 3
+Reference: docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 3
 - Heap 282.71µs vs Sort 1.996ms at n=10K, k=10 (7.1x faster)
 - Be aware: Heap 136.05µs vs Partial 36.59µs at n=1000, k=100 (3.7x slower)
 ```
@@ -1072,7 +1072,7 @@ Create bench_18_aggregation_optimization.rs to validate improvements:
 
 Run: cargo bench --bench bench_18_aggregation_optimization
 
-Expected to match docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 3.
+Expected to match docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 3.
 ```
 
 === 2.4 Configuration
@@ -1132,7 +1132,7 @@ Implement sparse-aware distance computation kernels:
    - Use existing SIMD infrastructure
    - Maintain API compatibility
 
-Reference: docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 4
+Reference: docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 4
 - L2 distance 44.80µs (50% sparse) vs 133.22µs (dense) = 2.97x faster
 - Cosine 1.479ms (99% sparse) vs 41.92µs (dense) = 35x slower!
 ```
@@ -1187,7 +1187,7 @@ Optimize batch processing to avoid parallel overhead:
    - src/api_handlers/insert.rs (bulk insert API)
    - src/services/vector_operations.rs
 
-Reference: docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 5
+Reference: docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 5
 - Sequential 569.98µs vs Parallel 1.638ms at n=1000 (2.87x faster)
 - Rayon overhead 1.06ms for small batches
 ```
@@ -1240,7 +1240,7 @@ Implement lazy metadata loading to avoid 16-26x overhead:
    - Large metadata lazy-loaded
    - Configurable threshold
 
-Reference: docs/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 6
+Reference: docs/10-quality/benchmarks/SYSTEM_OPTIMIZATION_ANALYSIS.adoc section 6
 - Metadata serialization: 527ns (0 fields) vs 13.934µs (50 fields) = 26.4x overhead
 ```
 

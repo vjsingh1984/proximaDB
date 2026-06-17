@@ -6,9 +6,7 @@ with semantic chunking using real BERT embeddings and ProximaDB server.
 """
 
 import sys
-import time
 from pathlib import Path
-from typing import List, Optional
 
 import numpy as np
 import pytest
@@ -16,7 +14,6 @@ import pytest
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
-from utils.server_utils import ensure_server_running
 
 from proximadb_sdk.embedding_interface import (
     BERTEmbeddingProvider,
@@ -312,7 +309,7 @@ class TestEmbeddingProviderFactory:
         assert provider.is_available() == True
 
         if isinstance(provider, BERTEmbeddingProvider):
-            assert provider.model_name == "all-MiniLM-L6-v2"
+            assert provider.model_name == "BAAI/bge-small-en-v1.5"
         else:
             assert isinstance(provider, SimulatedEmbeddingProvider)
 
@@ -407,7 +404,6 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
     def test_semantic_chunking_with_real_embeddings(self):
         """Test semantic chunking with real embedding providers"""
         # Note: Enhanced semantic chunking consolidated - using standard semantic strategy
-        from proximadb_sdk.chunking import ChunkingConfig, ChunkingStrategy, TextChunker
 
         # Get default provider (BERT or simulated)
         provider = get_default_embedding_provider()
@@ -493,7 +489,6 @@ class TestEmbeddingProviderIntegration(BaseProximaDBTest):
     def test_topic_boundary_with_real_embeddings(self):
         """Test topic boundary detection with real embeddings"""
         # Note: Enhanced semantic chunking consolidated - using standard semantic strategy
-        from proximadb_sdk.chunking import ChunkingConfig, ChunkingStrategy, TextChunker
 
         # Use BERT if available, otherwise simulated
         provider = get_default_embedding_provider()

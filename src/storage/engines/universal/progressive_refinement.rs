@@ -3,7 +3,7 @@
 //! This module implements the progressive refinement pipeline that enables
 //! Binary → INT8 → PQ → FP32 distance computation for optimal performance and accuracy.
 
-use crate::utils::uuid::Uuid;
+use proximadb_kernel::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -67,9 +67,12 @@ pub enum RefinementStrategy {
     },
 }
 
+/// Backwards-compat alias for [`UniversalProgressiveRefinementConfig`].
+pub type ProgressiveRefinementConfig = UniversalProgressiveRefinementConfig;
+
 /// Configuration for progressive refinement
 #[derive(Debug, Clone)]
-pub struct ProgressiveRefinementConfig {
+pub struct UniversalProgressiveRefinementConfig {
     /// Refinement strategy
     pub search_strategy: RefinementStrategy,
 
@@ -173,7 +176,7 @@ pub struct ProgressiveRefinementStats {
     pub average_memory_usage_mb: f32,
 }
 
-impl Default for ProgressiveRefinementConfig {
+impl Default for UniversalProgressiveRefinementConfig {
     fn default() -> Self {
         let mut candidates_per_stage = HashMap::new();
         candidates_per_stage.insert(RefinementStage::Binary, 1000);
@@ -222,7 +225,7 @@ impl ProgressiveRefinementPipeline {
         query_vector: &[f32],
         candidates: &[CandidateVector],
         distance_metric: &DistanceMetric,
-        config: &ProgressiveRefinementConfig,
+        config: &UniversalProgressiveRefinementConfig,
         max_results: usize,
     ) -> AdapterResult<ProgressiveRefinementResult> {
         let total_start_time = std::time::Instant::now();
@@ -371,7 +374,7 @@ impl ProgressiveRefinementPipeline {
         stage: RefinementStage,
         distance_metric: &DistanceMetric,
         target_count: usize,
-        _config: &ProgressiveRefinementConfig,
+        _config: &UniversalProgressiveRefinementConfig,
     ) -> AdapterResult<StageResult> {
         match stage {
             RefinementStage::Binary => {
@@ -656,6 +659,7 @@ impl ProgressiveRefinementPipeline {
                 values: int8_data,
                 scale: 1.0,
                 zero_point: 0,
+                length_renorm: None,
             }),
             pq: None,
         })
@@ -680,6 +684,7 @@ impl ProgressiveRefinementPipeline {
                 codes,
                 codebook: vec![vec![0.0; 8]; segments], // Placeholder codebook
                 codebook_hash: 0,                       // Placeholder hash
+                length_renorm: None,
             }),
         })
     }

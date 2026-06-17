@@ -5,8 +5,6 @@ Falls back to a clear error if the dependency is missing. To install:
     pip install sentence-transformers
 """
 
-from typing import Dict, List, Tuple
-
 try:
     from sentence_transformers import SentenceTransformer
 except Exception as e:
@@ -20,7 +18,7 @@ _MODEL = SentenceTransformer("all-MiniLM-L6-v2")  # 384D
 _BASE_DIM = _MODEL.get_sentence_embedding_dimension()
 
 # Simple in-memory cache: {(text, dim): vector}
-_CACHE: Dict[Tuple[str, int], List[float]] = {}
+_CACHE: dict[tuple[str, int], list[float]] = {}
 
 _SEED_TEXTS = [
     "machine learning for data analysis",
@@ -36,7 +34,7 @@ _SEED_TEXTS = [
 ]
 
 
-def _adjust_dim(vec: List[float], dim: int) -> List[float]:
+def _adjust_dim(vec: list[float], dim: int) -> list[float]:
     if len(vec) == dim:
         return vec
     if len(vec) > dim:
@@ -45,7 +43,7 @@ def _adjust_dim(vec: List[float], dim: int) -> List[float]:
     return vec + [0.0] * (dim - len(vec))
 
 
-def embed_text(text: str, dim: int) -> List[float]:
+def embed_text(text: str, dim: int) -> list[float]:
     """Encode text and adjust to requested dimension by truncate/pad with caching."""
     key = (text, dim)
     if key in _CACHE:
@@ -62,17 +60,17 @@ def embed_text(text: str, dim: int) -> List[float]:
     return vec
 
 
-def embed_seed(index: int, dim: int) -> List[float]:
+def embed_seed(index: int, dim: int) -> list[float]:
     """Use a deterministic seed text based on index for stable tests."""
     text = _SEED_TEXTS[index % len(_SEED_TEXTS)]
     return embed_text(text, dim)
 
 
-def embed_many(count: int, dim: int) -> List[List[float]]:
+def embed_many(count: int, dim: int) -> list[list[float]]:
     return [embed_seed(i, dim) for i in range(count)]
 
 
-def warm_cache(dims: List[int] = None) -> None:
+def warm_cache(dims: list[int] = None) -> None:
     """Precompute and cache embeddings for seed texts at common dimensions."""
     if dims is None:
         dims = [32, 64, 128, 256, 384, 512, 1536]

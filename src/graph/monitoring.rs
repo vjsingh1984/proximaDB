@@ -52,32 +52,34 @@
 //! └─────────────────────────────────────────┘
 //! ```
 
-use crate::core::error::ProximaDBError;
 use crate::graph::GraphMemoryPool;
-use crate::utils::Uuid;
+use proximadb_kernel::error::ProximaDBError;
+use proximadb_kernel::uuid::Uuid;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::mpsc;
 
+const METRIC_EVENT_CHANNEL_CAPACITY: usize = 10_000;
+
 /// Main monitoring system for graph operations
 pub struct GraphMonitor {
     /// Metrics collection and reporting
-    metrics_collector: Arc<GraphMetricsCollector>,
+    metrics_collector: Arc<MonitoringGraphMetricsCollector>,
     /// Slow query logger
     slow_query_logger: Arc<SlowQueryLogger>,
     /// Performance profiler
     profiler: Arc<GraphProfiler>,
     /// Configuration
-    config: MonitoringConfig,
+    config: GraphMonitoringConfig,
     /// Metrics export channel
-    metrics_sender: Option<mpsc::UnboundedSender<MetricEvent>>,
+    metrics_sender: Option<mpsc::Sender<MetricEvent>>,
 }
 
 /// Configuration for monitoring system
 #[derive(Debug, Clone)]
-pub struct MonitoringConfig {
+pub struct GraphMonitoringConfig {
     /// Enable/disable monitoring
     pub enabled: bool,
     /// Slow query threshold in milliseconds
@@ -96,8 +98,11 @@ pub struct MonitoringConfig {
     pub slow_query_log_path: Option<String>,
 }
 
+/// Backwards-compat alias for [`MonitoringGraphMetricsCollector`].
+pub type GraphMetricsCollector = MonitoringGraphMetricsCollector;
+
 /// Metrics collector for graph operations
-pub struct GraphMetricsCollector {
+pub struct MonitoringGraphMetricsCollector {
     /// Operation counters
     operation_counts: Arc<RwLock<HashMap<String, u64>>>,
     /// Error counters
@@ -109,7 +114,7 @@ pub struct GraphMetricsCollector {
     /// Business metrics
     business_metrics: Arc<RwLock<BusinessMetrics>>,
     /// Cache metrics
-    cache_metrics: Arc<RwLock<CacheMetrics>>,
+    cache_metrics: Arc<RwLock<GraphCacheMetrics>>,
 }
 
 /// Slow query logger
@@ -117,7 +122,7 @@ pub struct SlowQueryLogger {
     /// Recent slow queries (circular buffer)
     slow_queries: Arc<Mutex<VecDeque<SlowQueryRecord>>>,
     /// Configuration
-    config: Arc<MonitoringConfig>,
+    config: Arc<GraphMonitoringConfig>,
 }
 
 /// Performance profiler for detailed analysis
@@ -128,7 +133,7 @@ pub struct GraphProfiler {
     completed_profiles: Arc<RwLock<VecDeque<ProfileSummary>>>,
     /// Configuration
     #[allow(dead_code)]
-    config: Arc<MonitoringConfig>,
+    config: Arc<GraphMonitoringConfig>,
 }
 
 /// Latency histogram for tracking response times
@@ -188,9 +193,12 @@ pub struct BusinessMetrics {
     pub hybrid_queries_per_minute: f64,
 }
 
+/// Backwards-compat alias for [`GraphCacheMetrics`].
+pub type CacheMetrics = GraphCacheMetrics;
+
 /// Cache performance metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct CacheMetrics {
+pub struct GraphCacheMetrics {
     /// Query plan cache hits
     pub plan_cache_hits: u64,
     /// Query plan cache misses
@@ -351,7 +359,7 @@ pub struct ComponentHealth {
     pub response_time_ms: u64,
 }
 
-impl Default for MonitoringConfig {
+impl Default for GraphMonitoringConfig {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -368,8 +376,8 @@ impl Default for MonitoringConfig {
 
 impl GraphMonitor {
     /// Create a new graph monitor
-    pub fn new(config: MonitoringConfig) -> Self {
-        let metrics_collector = Arc::new(GraphMetricsCollector::new());
+    pub fn new(config: GraphMonitoringConfig) -> Self {
+        let metrics_collector = Arc::new(MonitoringGraphMetricsCollector::new());
         let slow_query_logger = Arc::new(SlowQueryLogger::new(Arc::new(config.clone())));
         let profiler = Arc::new(GraphProfiler::new(Arc::new(config.clone())));
 
@@ -389,7 +397,7 @@ impl GraphMonitor {
         }
 
         // Create metrics processing channel
-        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let (sender, mut receiver) = mpsc::channel(METRIC_EVENT_CHANNEL_CAPACITY);
         self.metrics_sender = Some(sender);
 
         // Start metrics processing task
@@ -446,7 +454,7 @@ impl GraphMonitor {
                 metadata: metadata.clone(),
             };
 
-            if sender.send(event).is_err() {
+            if sender.try_send(event).is_err() {
                 eprintln!("Failed to send operation metric event");
             }
         }
@@ -502,7 +510,7 @@ impl GraphMonitor {
     }
 
     /// Get current metrics snapshot
-    pub fn get_metrics_snapshot(&self) -> Result<MetricsSnapshot, ProximaDBError> {
+    pub fn get_metrics_snapshot(&self) -> Result<GraphMetricsSnapshot, ProximaDBError> {
         let operation_counts = self
             .metrics_collector
             .operation_counts
@@ -538,7 +546,7 @@ impl GraphMonitor {
             .map_err(|_| ProximaDBError::Internal("Failed to read cache metrics".to_string()))?
             .clone();
 
-        Ok(MetricsSnapshot {
+        Ok(GraphMetricsSnapshot {
             timestamp: SystemTime::now(),
             operation_counts,
             error_counts,
@@ -625,7 +633,7 @@ impl GraphMonitor {
 
         if let Some(ref sender) = self.metrics_sender {
             let event = MetricEvent::BusinessUpdate(business_metrics);
-            if sender.send(event).is_err() {
+            if sender.try_send(event).is_err() {
                 eprintln!("Failed to send business metrics update");
             }
         }
@@ -633,7 +641,7 @@ impl GraphMonitor {
 
     /// Process metric events
     async fn process_metric_event(
-        collector: &GraphMetricsCollector,
+        collector: &MonitoringGraphMetricsCollector,
         event: MetricEvent,
     ) -> Result<(), ProximaDBError> {
         match event {
@@ -739,7 +747,7 @@ impl GraphMonitor {
 
     /// Collect system-level metrics
     async fn collect_system_metrics(
-        collector: &GraphMetricsCollector,
+        collector: &MonitoringGraphMetricsCollector,
     ) -> Result<(), ProximaDBError> {
         // This is a simplified implementation
         // In production, you would use proper system monitoring libraries
@@ -848,7 +856,7 @@ impl GraphMonitor {
 
 /// Snapshot of all graph monitoring metrics at a point in time.
 #[derive(Debug, Clone)]
-pub struct MetricsSnapshot {
+pub struct GraphMetricsSnapshot {
     /// When this snapshot was captured.
     pub timestamp: SystemTime,
     /// Cumulative operation counts keyed by operation name.
@@ -860,10 +868,10 @@ pub struct MetricsSnapshot {
     /// Business-level metrics (queries served, data volume, etc.).
     pub business_metrics: BusinessMetrics,
     /// Cache hit/miss statistics.
-    pub cache_metrics: CacheMetrics,
+    pub cache_metrics: GraphCacheMetrics,
 }
 
-impl GraphMetricsCollector {
+impl MonitoringGraphMetricsCollector {
     /// Create a new metrics collector with empty counters and default resource metrics.
     pub fn new() -> Self {
         Self {
@@ -872,12 +880,12 @@ impl GraphMetricsCollector {
             latency_histograms: Arc::new(RwLock::new(HashMap::new())),
             resource_metrics: Arc::new(RwLock::new(ResourceMetrics::default())),
             business_metrics: Arc::new(RwLock::new(BusinessMetrics::default())),
-            cache_metrics: Arc::new(RwLock::new(CacheMetrics::default())),
+            cache_metrics: Arc::new(RwLock::new(GraphCacheMetrics::default())),
         }
     }
 }
 
-impl Default for GraphMetricsCollector {
+impl Default for MonitoringGraphMetricsCollector {
     fn default() -> Self {
         Self::new()
     }
@@ -941,7 +949,7 @@ impl LatencyHistogram {
 
 impl SlowQueryLogger {
     /// Create a new slow query logger with the given monitoring configuration.
-    pub fn new(config: Arc<MonitoringConfig>) -> Self {
+    pub fn new(config: Arc<GraphMonitoringConfig>) -> Self {
         Self {
             slow_queries: Arc::new(Mutex::new(VecDeque::new())),
             config,
@@ -974,7 +982,7 @@ impl SlowQueryLogger {
 
 impl GraphProfiler {
     /// Create a new graph profiler with the given monitoring configuration.
-    pub fn new(config: Arc<MonitoringConfig>) -> Self {
+    pub fn new(config: Arc<GraphMonitoringConfig>) -> Self {
         Self {
             active_profiles: Arc::new(RwLock::new(HashMap::new())),
             completed_profiles: Arc::new(RwLock::new(VecDeque::new())),
@@ -1096,7 +1104,7 @@ mod tests {
 
     #[test]
     fn test_monitoring_config_default() {
-        let config = MonitoringConfig::default();
+        let config = GraphMonitoringConfig::default();
         assert!(config.enabled);
         assert_eq!(config.slow_query_threshold_ms, 1000);
         assert_eq!(config.max_slow_queries, 1000);
@@ -1121,7 +1129,7 @@ mod tests {
 
     #[test]
     fn test_graph_monitor_creation() {
-        let config = MonitoringConfig::default();
+        let config = GraphMonitoringConfig::default();
         let monitor = GraphMonitor::new(config);
 
         assert!(monitor.config.enabled);
@@ -1129,7 +1137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_health_check() {
-        let config = MonitoringConfig::default();
+        let config = GraphMonitoringConfig::default();
         let monitor = GraphMonitor::new(config);
         let memory_pool = Arc::new(GraphMemoryPool::new());
 

@@ -24,12 +24,23 @@
 //! - Validates operations during prepare phase
 //! - Applies changes during commit phase
 //! - Rolls back changes during abort phase
+//!
+//! ## Error type note
+//!
+//! The four commit-failure sites in this module construct
+//! `proximadb_kernel::error::StorageError::TransactionCommitFailed`. This is
+//! intentionally kernel-owned (not migrated to `proximadb_storage_common`)
+//! because the kernel is the transaction-aware layer, and
+//! `TransactionCommitFailed` is part of the kernel transaction contract.
+//! Per the 2026-05-20 proliferation audit (P2): do NOT consolidate these
+//! sites — kernel ownership here is correct by design.
 
-use crate::core::error::ProximaDBError;
 use crate::transaction::two_phase_commit::{TransactionId, TransactionParticipant, Vote};
 use async_trait::async_trait;
+use proximadb_kernel::error::ProximaDBError;
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
@@ -124,7 +135,7 @@ pub struct VectorEngineParticipant {
     pub(crate) buffer: TransactionBuffer,
 
     /// Health flag
-    healthy: Arc<RwLock<bool>>,
+    healthy: Arc<AtomicBool>,
 
     /// Optional durable write callback for live engine commits (TD-038)
     durable_writer: Option<DurableWriteFn>,
@@ -136,7 +147,7 @@ impl VectorEngineParticipant {
         Self {
             id: format!("vector:{}", collection_id),
             buffer: TransactionBuffer::new(),
-            healthy: Arc::new(RwLock::new(true)),
+            healthy: Arc::new(AtomicBool::new(true)),
             durable_writer: None,
         }
     }
@@ -153,8 +164,7 @@ impl VectorEngineParticipant {
     /// Set health status
     /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
-        let mut h = self.healthy.write().await;
-        *h = healthy;
+        self.healthy.store(healthy, Ordering::Release);
     }
 }
 
@@ -165,7 +175,7 @@ impl TransactionParticipant for VectorEngineParticipant {
         debug!("Vector engine {} preparing tx {}", self.id, tx_id);
 
         // Check if healthy
-        let healthy = *self.healthy.read().await;
+        let healthy = self.healthy.load(Ordering::Acquire);
         if !healthy {
             warn!("Vector engine {} unhealthy, voting NO", self.id);
             return Ok(Vote::No);
@@ -205,7 +215,7 @@ impl TransactionParticipant for VectorEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),
@@ -249,7 +259,7 @@ impl TransactionParticipant for VectorEngineParticipant {
     }
 
     async fn is_healthy(&self) -> bool {
-        *self.healthy.read().await
+        self.healthy.load(Ordering::Acquire)
     }
 
     fn supports_durable_commit(&self) -> bool {
@@ -261,7 +271,7 @@ impl TransactionParticipant for VectorEngineParticipant {
 pub struct DocumentEngineParticipant {
     id: String,
     pub(crate) buffer: TransactionBuffer,
-    healthy: Arc<RwLock<bool>>,
+    healthy: Arc<AtomicBool>,
     durable_writer: Option<DurableWriteFn>,
 }
 
@@ -271,7 +281,7 @@ impl DocumentEngineParticipant {
         Self {
             id: format!("document:{}", collection_id),
             buffer: TransactionBuffer::new(),
-            healthy: Arc::new(RwLock::new(true)),
+            healthy: Arc::new(AtomicBool::new(true)),
             durable_writer: None,
         }
     }
@@ -284,8 +294,7 @@ impl DocumentEngineParticipant {
 
     /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
-        let mut h = self.healthy.write().await;
-        *h = healthy;
+        self.healthy.store(healthy, Ordering::Release);
     }
 }
 
@@ -293,7 +302,7 @@ impl DocumentEngineParticipant {
 impl TransactionParticipant for DocumentEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Document engine {} preparing tx {}", self.id, tx_id);
-        let healthy = *self.healthy.read().await;
+        let healthy = self.healthy.load(Ordering::Acquire);
         if !healthy {
             return Ok(Vote::No);
         }
@@ -308,7 +317,7 @@ impl TransactionParticipant for DocumentEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),
@@ -330,7 +339,7 @@ impl TransactionParticipant for DocumentEngineParticipant {
         &self.id
     }
     async fn is_healthy(&self) -> bool {
-        *self.healthy.read().await
+        self.healthy.load(Ordering::Acquire)
     }
     fn supports_durable_commit(&self) -> bool {
         self.durable_writer.is_some()
@@ -341,7 +350,7 @@ impl TransactionParticipant for DocumentEngineParticipant {
 pub struct GraphEngineParticipant {
     id: String,
     buffer: TransactionBuffer,
-    healthy: Arc<RwLock<bool>>,
+    healthy: Arc<AtomicBool>,
     durable_writer: Option<DurableWriteFn>,
 }
 
@@ -351,7 +360,7 @@ impl GraphEngineParticipant {
         Self {
             id: format!("graph:{}", graph_id),
             buffer: TransactionBuffer::new(),
-            healthy: Arc::new(RwLock::new(true)),
+            healthy: Arc::new(AtomicBool::new(true)),
             durable_writer: None,
         }
     }
@@ -364,8 +373,7 @@ impl GraphEngineParticipant {
 
     /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
-        let mut h = self.healthy.write().await;
-        *h = healthy;
+        self.healthy.store(healthy, Ordering::Release);
     }
 }
 
@@ -373,7 +381,7 @@ impl GraphEngineParticipant {
 impl TransactionParticipant for GraphEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Graph engine {} preparing tx {}", self.id, tx_id);
-        let healthy = *self.healthy.read().await;
+        let healthy = self.healthy.load(Ordering::Acquire);
         if !healthy {
             return Ok(Vote::No);
         }
@@ -388,7 +396,7 @@ impl TransactionParticipant for GraphEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),
@@ -410,7 +418,7 @@ impl TransactionParticipant for GraphEngineParticipant {
         &self.id
     }
     async fn is_healthy(&self) -> bool {
-        *self.healthy.read().await
+        self.healthy.load(Ordering::Acquire)
     }
     fn supports_durable_commit(&self) -> bool {
         self.durable_writer.is_some()
@@ -421,7 +429,7 @@ impl TransactionParticipant for GraphEngineParticipant {
 pub struct TimeSeriesEngineParticipant {
     id: String,
     buffer: TransactionBuffer,
-    healthy: Arc<RwLock<bool>>,
+    healthy: Arc<AtomicBool>,
     durable_writer: Option<DurableWriteFn>,
 }
 
@@ -431,7 +439,7 @@ impl TimeSeriesEngineParticipant {
         Self {
             id: format!("tst:{}", collection_id),
             buffer: TransactionBuffer::new(),
-            healthy: Arc::new(RwLock::new(true)),
+            healthy: Arc::new(AtomicBool::new(true)),
             durable_writer: None,
         }
     }
@@ -444,8 +452,7 @@ impl TimeSeriesEngineParticipant {
 
     /// Mark this participant as healthy or unhealthy.
     pub async fn set_healthy(&self, healthy: bool) {
-        let mut h = self.healthy.write().await;
-        *h = healthy;
+        self.healthy.store(healthy, Ordering::Release);
     }
 }
 
@@ -453,7 +460,7 @@ impl TimeSeriesEngineParticipant {
 impl TransactionParticipant for TimeSeriesEngineParticipant {
     async fn prepare(&self, tx_id: TransactionId) -> Result<Vote> {
         debug!("Time-series engine {} preparing tx {}", self.id, tx_id);
-        let healthy = *self.healthy.read().await;
+        let healthy = self.healthy.load(Ordering::Acquire);
         if !healthy {
             return Ok(Vote::No);
         }
@@ -468,7 +475,7 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
             for op in &operations {
                 writer(op).map_err(|e| {
                     ProximaDBError::Storage(
-                        crate::core::error::StorageError::TransactionCommitFailed(format!(
+                        proximadb_kernel::error::StorageError::TransactionCommitFailed(format!(
                             "durable commit failed for {}: {}",
                             self.id, e
                         )),
@@ -490,7 +497,7 @@ impl TransactionParticipant for TimeSeriesEngineParticipant {
         &self.id
     }
     async fn is_healthy(&self) -> bool {
-        *self.healthy.read().await
+        self.healthy.load(Ordering::Acquire)
     }
     fn supports_durable_commit(&self) -> bool {
         self.durable_writer.is_some()

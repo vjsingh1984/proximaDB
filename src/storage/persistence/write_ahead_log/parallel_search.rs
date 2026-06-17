@@ -14,10 +14,10 @@ use tracing::debug;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::metadata_types::{MetadataValue, TypedMetadata};
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 /// Parallel WAL search coordinator
 pub struct ParallelWALSearch {
@@ -76,7 +76,7 @@ impl ParallelWALSearch {
         let distance_metric_arc = Arc::new(*distance_metric);
 
         // Process batches in parallel using rayon
-        let candidates: Vec<SearchCandidate> = batches
+        let candidates: Vec<WalSearchCandidate> = batches
             .into_par_iter()
             .flat_map(|batch| {
                 self.process_batch_parallel(
@@ -100,7 +100,7 @@ impl ParallelWALSearch {
         // Convert to SearchResults and set ranks
         let results = sorted_candidates
             .into_iter()
-            .map(|candidate| candidate.to_search_result())
+            .map(|candidate| candidate.into_search_result())
             .collect();
 
         let elapsed = start.elapsed();
@@ -123,7 +123,7 @@ impl ParallelWALSearch {
         distance_metric: Arc<DistanceMetric>,
         include_vectors: bool,
         include_metadata: bool,
-    ) -> Vec<SearchCandidate> {
+    ) -> Vec<WalSearchCandidate> {
         // Use SIMD-optimized distance computation when available
         let use_simd =
             self.hardware.cpu.features.avx2_support || self.hardware.cpu.features.sse42_support;
@@ -138,15 +138,23 @@ impl ParallelWALSearch {
             .vector_records
             .par_iter()
             .filter_map(|record| {
-                // Skip tombstones (empty vector + expires_at in past or 0)
-                let is_tombstone = record.vector.is_empty()
-                    && record.expires_at.is_some_and(|e| e <= current_time_secs);
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.as_fp32_slice())
+                    .unwrap_or(&[]);
+
+                // Skip tombstones (no vector payload + expired validity marker)
+                let is_tombstone = vector.is_empty()
+                    && record
+                        .valid_to_ns
+                        .is_some_and(|e| e <= current_time_secs * 1_000_000_000);
                 if is_tombstone {
                     return None;
                 }
 
                 // Skip empty vectors (safety check)
-                if record.vector.is_empty() {
+                if vector.is_empty() {
                     return None;
                 }
 
@@ -159,12 +167,12 @@ impl ParallelWALSearch {
 
                 // Calculate distance using SIMD when available
                 let score = if use_simd {
-                    self.compute_distance_simd(&query_vector, &record.vector, &distance_metric)
+                    self.compute_distance_simd(&query_vector, vector, &distance_metric)
                 } else {
-                    self.compute_distance_scalar(&query_vector, &record.vector, &distance_metric)
+                    self.compute_distance_scalar(&query_vector, vector, &distance_metric)
                 };
 
-                Some(SearchCandidate {
+                Some(WalSearchCandidate {
                     record: record.clone(),
                     score,
                     include_vectors,
@@ -375,9 +383,9 @@ impl ParallelWALSearch {
     /// Parallel top-k sorting for large result sets
     fn parallel_top_k_sort(
         &self,
-        mut candidates: Vec<SearchCandidate>,
+        mut candidates: Vec<WalSearchCandidate>,
         k: usize,
-    ) -> Vec<SearchCandidate> {
+    ) -> Vec<WalSearchCandidate> {
         // Use parallel partial sort for large datasets
         candidates.par_sort_unstable_by(|a, b| {
             b.score
@@ -391,9 +399,9 @@ impl ParallelWALSearch {
     /// Sequential top-k sorting for small result sets
     fn sequential_top_k_sort(
         &self,
-        mut candidates: Vec<SearchCandidate>,
+        mut candidates: Vec<WalSearchCandidate>,
         k: usize,
-    ) -> Vec<SearchCandidate> {
+    ) -> Vec<WalSearchCandidate> {
         candidates.sort_unstable_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
@@ -404,42 +412,24 @@ impl ParallelWALSearch {
     }
 
     /// Evaluate metadata filter on a record
-    fn evaluate_filter(&self, record: &VectorRecord, filter: &FilterExpression) -> bool {
+    fn evaluate_filter(&self, record: &ProximaRecord, filter: &FilterExpression) -> bool {
         use crate::core::search::json_comparison::evaluate_filter;
 
-        // Convert proto metadata to HashMap for evaluation
+        // Convert canonical metadata to HashMap for evaluation.
         let metadata = self.convert_metadata(record);
         evaluate_filter(filter, &metadata)
     }
 
-    /// Convert proto metadata to HashMap
+    /// Convert canonical metadata to HashMap.
     fn convert_metadata(
         &self,
-        record: &VectorRecord,
+        record: &ProximaRecord,
     ) -> std::collections::HashMap<String, serde_json::Value> {
         let mut map = std::collections::HashMap::new();
 
-        for (key, sql_value) in &record.metadata {
-            if let Some(value) = &sql_value.value {
-                let json_value = match value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                        serde_json::Value::String(s.clone())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                        serde_json::Value::Number(
-                            serde_json::Number::from_f64(*n)
-                                .unwrap_or_else(|| serde_json::Number::from(0)),
-                        )
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                        serde_json::Value::Number(serde_json::Number::from(*i))
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                        serde_json::Value::Bool(*b)
-                    }
-                    _ => serde_json::Value::Null, // Handle other variants
-                };
-                map.insert(key.clone(), json_value);
+        for (key, node) in &record.props {
+            if let ProximaTreeNode::Value(value) = node {
+                map.insert(key.clone(), proxima_value_to_json(value));
             }
         }
 
@@ -447,67 +437,61 @@ impl ParallelWALSearch {
     }
 }
 
+/// Backwards-compat alias for [`WalSearchCandidate`].
+pub type SearchCandidate = WalSearchCandidate;
+
 /// Intermediate search candidate
 #[derive(Clone)]
-pub struct SearchCandidate {
-    record: VectorRecord,
+pub struct WalSearchCandidate {
+    record: ProximaRecord,
     score: f32,
     include_vectors: bool,
     include_metadata: bool,
 }
 
-impl SearchCandidate {
+impl WalSearchCandidate {
     /// Convert to OptimizedSearchRecord - preserves all source information
-    fn to_search_result(self) -> OptimizedSearchRecord {
-        // Convert metadata from proto to TypedMetadata
-        let _metadata = if self.include_metadata {
-            let mut metadata_map = std::collections::HashMap::new();
-            for (key, sql_value) in &self.record.metadata {
-                if let Some(value) = &sql_value.value {
-                    let typed_value = match value {
-                        crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                            MetadataValue::String(Arc::from(s.as_str()))
-                        }
-                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
-                            MetadataValue::Number(*f)
-                        }
-                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                            MetadataValue::Number(*i as f64)
-                        }
-                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                            MetadataValue::Bool(*b)
-                        }
-                        _ => continue, // Skip other variants for now
-                    };
-                    metadata_map.insert(key.clone(), typed_value);
-                }
-            }
-            TypedMetadata::from_map(metadata_map)
+    fn into_search_result(self) -> OptimizedSearchRecord {
+        let metadata = if self.include_metadata {
+            self.record
+                .props
+                .iter()
+                .filter_map(|(key, node)| match node {
+                    ProximaTreeNode::Value(value) => Some((key.clone(), value.clone())),
+                    ProximaTreeNode::Object(_) => None,
+                })
+                .collect()
         } else {
-            TypedMetadata::default()
+            HashMap::new()
         };
 
-        let mut result = OptimizedSearchRecord::new(self.record.id.clone(), self.score)
+        let mut result = OptimizedSearchRecord::new(self.record.oid.clone(), self.score)
             .with_similarity(self.score)
-            .with_metadata(HashMap::new()) // Deferred: Fix metadata conversion
+            .with_proxima_metadata(metadata)
             .with_version_info(
-                self.record.version.unwrap_or(0),
-                self.record.timestamp.unwrap_or(0),
+                self.record.record_version as u32,
+                self.record.updated_at_ns / 1_000_000,
             );
 
-        if self.include_vectors {
-            result = result.add_vector(self.record.vector.clone());
+        if self.include_vectors
+            && let Some(embedding) = self.record.embeddings.first()
+        {
+            result = result.add_vector(embedding.values.to_fp32_owned());
         }
 
         result
     }
 }
 
+fn proxima_value_to_json(value: &ProximaValue) -> serde_json::Value {
+    serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
+}
+
 /// Early termination support for large searches
 pub struct EarlyTerminationTracker {
     target_k: usize,
     multiplier: f32,
-    candidates: Arc<RwLock<Vec<SearchCandidate>>>,
+    candidates: Arc<RwLock<Vec<WalSearchCandidate>>>,
 }
 
 impl EarlyTerminationTracker {
@@ -526,13 +510,13 @@ impl EarlyTerminationTracker {
     }
 
     /// Add candidates
-    pub fn add_candidates(&self, mut new_candidates: Vec<SearchCandidate>) {
+    pub fn add_candidates(&self, mut new_candidates: Vec<WalSearchCandidate>) {
         let mut candidates = self.candidates.write();
         candidates.append(&mut new_candidates);
     }
 
     /// Get final results
-    pub fn get_top_k(self) -> Vec<SearchCandidate> {
+    pub fn get_top_k(self) -> Vec<WalSearchCandidate> {
         let mut candidates = Arc::try_unwrap(self.candidates)
             .map_or_else(|arc| arc.read().clone(), |rwlock| rwlock.into_inner());
 
@@ -569,8 +553,8 @@ mod tests {
 
         let mut candidates = vec![];
         for i in 0..1000 {
-            candidates.push(SearchCandidate {
-                record: VectorRecord::default(),
+            candidates.push(WalSearchCandidate {
+                record: ProximaRecord::default(),
                 score: (i as f32) / 1000.0,
                 include_vectors: false,
                 include_metadata: false,

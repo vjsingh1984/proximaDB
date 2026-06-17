@@ -6,6 +6,8 @@ use crate::query::ast::{BinaryOp, Expr, Literal, ProjectionItem, Query, TableRef
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::sql_frontend::lowering::QueryLowering;
+    use crate::storage::FilesystemFactory;
 
     #[test]
     fn test_parse_simple_select() {
@@ -961,5 +963,157 @@ mod tests {
         let result = parser.parse(sql);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("unit must be"));
+    }
+
+    // ============================================================================
+    // Additional Unique Tests from parsing_tests.rs
+    // ============================================================================
+
+    use crate::core::config::StorageConfig;
+    use crate::proto::proximadb_v1::CollectionConfig;
+    use crate::services::collection::manager::CollectionService;
+    use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
+    use std::sync::Arc;
+
+    /// Create mock collection service for testing
+    async fn setup_test_collection_service() -> Arc<CollectionService> {
+        let config = UniversalMetadataConfig::default();
+        let filesystem_config = Default::default();
+        let filesystem_factory =
+            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+        let backend =
+            crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(
+                config,
+                filesystem_factory,
+            )
+            .await
+            .unwrap();
+        let storage_config = StorageConfig::default();
+        let service = Arc::new(
+            CollectionService::new(Arc::new(backend), storage_config)
+                .await
+                .unwrap(),
+        );
+
+        // Create test collection "products" (8 characters minimum)
+        let collection_config = CollectionConfig {
+            name: "products".to_string(),
+            dimension: 128,
+            ..Default::default()
+        };
+
+        // Ignore errors if collection already exists
+        let _ = service.create_collection(&collection_config).await;
+
+        service
+    }
+
+    #[tokio::test]
+    async fn test_vector_similarity_order_by() {
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
+        let sql = "SELECT * FROM products ORDER BY VECTOR_SIMILARITY(embedding, [0.1, 0.2, 0.3], 'cosine') DESC LIMIT 5";
+
+        let ast = lowering.lower_sql(sql).await.unwrap();
+
+        match ast {
+            Query::Select(select) => {
+                assert!(!select.order_by.is_empty());
+                assert_eq!(select.limit, Some(5));
+
+                // Verify vector similarity function is properly recognized
+                if let Expr::FuncCall { name, args } = &select.order_by[0].expr {
+                    assert!(name.to_uppercase().contains("VECTOR_SIMILARITY"));
+                    assert_eq!(args.len(), 3); // field, vector, metric
+                }
+            }
+            _ => panic!("Unexpected query type"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_parameter_placeholder_recognition() {
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
+        let sql = "SELECT * FROM products WHERE category = $1 AND price > $2";
+
+        let ast = lowering.lower_sql(sql).await.unwrap();
+
+        match ast {
+            Query::Select(select) => {
+                assert!(select.selection.is_some());
+
+                // Verify parameter placeholders are preserved in the AST
+                if let Some(Expr::Binary { left, op: _, right }) = &select.selection {
+                    // Left side: category = $1
+                    if let Expr::Binary {
+                        left: _,
+                        op: _,
+                        right: param1,
+                    } = left.as_ref()
+                    {
+                        assert!(
+                            matches!(param1.as_ref(), Expr::Param(_)),
+                            "First parameter should be Expr::Param"
+                        );
+                    }
+                    // Right side: price > $2
+                    if let Expr::Binary {
+                        left: _,
+                        op: _,
+                        right: param2,
+                    } = right.as_ref()
+                    {
+                        assert!(
+                            matches!(param2.as_ref(), Expr::Param(_)),
+                            "Second parameter should be Expr::Param"
+                        );
+                    }
+                }
+            }
+            _ => panic!("Unexpected query type"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_performance_filter_pattern_generation() {
+        // This test validates that the lowering generates efficient metadata access patterns
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
+        let sql = "WHERE metadata.brand = 'apple' AND metadata.price > 500";
+
+        // CompoundIdentifier handling is now implemented in lower_expr for metadata.field syntax
+        // The lowered AST represents metadata access with "metadata.field" identifiers
+        // which the execution engine can optimize to O(1) HashMap lookups
+
+        let ast = lowering
+            .lower_sql(&format!("SELECT * FROM products {}", sql))
+            .await
+            .unwrap();
+
+        // The lowered AST should represent metadata access in a way that
+        // the execution engine can optimize to O(1) HashMap lookups
+        assert!(matches!(ast, Query::Select(_)));
+    }
+
+    #[tokio::test]
+    async fn test_collection_name_resolution() {
+        let collection_service = setup_test_collection_service().await;
+        let lowering = QueryLowering::new(collection_service);
+        let sql = "SELECT * FROM products";
+
+        let ast = lowering.lower_sql(sql).await.unwrap();
+
+        match ast {
+            Query::Select(select) => {
+                // Verify collection name was resolved
+                assert!(!select.from.is_empty());
+                assert!(select.from[0].name.is_some());
+                // The name should be resolved to collection ID (UUID format)
+                let table_name = select.from[0].name.as_ref().unwrap();
+                assert!(!table_name.is_empty(), "Collection name should be resolved");
+            }
+            _ => panic!("Unexpected query type"),
+        }
     }
 }

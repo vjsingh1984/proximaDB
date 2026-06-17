@@ -4,9 +4,9 @@ Recursive chunking strategy
 Applies multiple strategies recursively to achieve optimal chunk sizes.
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
+from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 from .paragraph import ParagraphStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy
@@ -31,8 +31,8 @@ class RecursiveStrategy(ChunkingStrategyInterface):
         self.sliding_window_strategy = SlidingWindowStrategy(config)
 
     def chunk(
-        self, text: str, source_id: str, base_metadata: Optional[Dict[str, Any]] = None
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
         """Create chunks using recursive strategy selection"""
         self.validate_config()
 
@@ -87,10 +87,10 @@ class RecursiveStrategy(ChunkingStrategyInterface):
         start_pos: int,
         source_id: str,
         chunk_index: int,
-        base_metadata: Dict[str, Any],
+        base_metadata: dict[str, Any],
         parent_chunk_id: str,
         level: int = 2,
-    ) -> List[TextChunk]:
+    ) -> list[TextChunk]:
         """Recursively split text using finer-grained strategies"""
         chunks = []
 
@@ -143,9 +143,9 @@ class RecursiveStrategy(ChunkingStrategyInterface):
         start_pos: int,
         source_id: str,
         chunk_index: int,
-        base_metadata: Dict[str, Any],
+        base_metadata: dict[str, Any],
         parent_chunk_id: str,
-    ) -> List[TextChunk]:
+    ) -> list[TextChunk]:
         """Final resort: sliding window split"""
         chunks = []
 

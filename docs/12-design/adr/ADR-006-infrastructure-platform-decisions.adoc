@@ -150,6 +150,10 @@ Implementation:
 
 === 4. Pulsar Distributed Graph Posture (Issue #61)
 
+**Superseded June 2026**: Pulsar was retired as a separate graph engine. Runtime
+selection now accepts ORION only; distributed graph behavior is a relational
+distributed-substrate requirement.
+
 **Decision**: **Formal experimental designation with API warnings**.
 
 Rationale:
@@ -161,7 +165,7 @@ Rationale:
 Implementation:
 1. Add runtime warning when Pulsar is selected via `GraphServiceFactory`
 2. Return structured warning in graph query responses when using Pulsar
-3. Update `docs/05-concepts/graph-engines.md` with explicit recommendation matrix
+3. Update `docs/05-concepts/graph-engines.adoc` with explicit recommendation matrix
 4. Add `CapabilityDescriptor` for Pulsar with `tier: Experimental` and explicit limits
 5. Do NOT attempt to complete — focus engineering effort on ORION improvements instead
 

@@ -11,7 +11,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, Ordering};
 
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 use super::super::traits::{ModelType, StoreCapabilities};
 
@@ -77,9 +77,9 @@ pub enum QueryType {
 /// ```
 pub struct RDBMSStore {
     /// Row-oriented engine for OLTP (SST)
-    row_store: Option<Arc<dyn UnifiedStorageEngine>>,
+    row_store: Option<Arc<dyn UnifiedStorageFormat>>,
     /// Column-oriented engine for OLAP (VIPER)
-    column_store: Option<Arc<dyn UnifiedStorageEngine>>,
+    column_store: Option<Arc<dyn UnifiedStorageFormat>>,
     /// Current replication lag in nanoseconds
     replication_lag_ns: AtomicI64,
     /// Configuration
@@ -98,13 +98,13 @@ impl RDBMSStore {
     }
 
     /// Set the SST engine for OLTP
-    pub fn with_row_store(mut self, engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_row_store(mut self, engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.row_store = Some(engine);
         self
     }
 
     /// Set the VIPER engine for OLAP
-    pub fn with_column_store(mut self, engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn with_column_store(mut self, engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         self.column_store = Some(engine);
         self
     }
@@ -144,22 +144,22 @@ impl RDBMSStore {
     }
 
     /// Get the row store (SST) engine
-    pub fn row_store(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn row_store(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.row_store.as_ref()
     }
 
     /// Get the column store (VIPER) engine
-    pub fn column_store(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn column_store(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.column_store.as_ref()
     }
 
     /// Get the primary engine for writes (row store)
-    pub fn primary_engine(&self) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn primary_engine(&self) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         self.row_store.as_ref().or(self.column_store.as_ref())
     }
 
     /// Route to appropriate engine based on query type
-    pub fn route_engine(&self, query_type: QueryType) -> Option<&Arc<dyn UnifiedStorageEngine>> {
+    pub fn route_engine(&self, query_type: QueryType) -> Option<&Arc<dyn UnifiedStorageFormat>> {
         match query_type {
             QueryType::OLTP => self.row_store.as_ref().or(self.column_store.as_ref()),
             QueryType::OLAP => {

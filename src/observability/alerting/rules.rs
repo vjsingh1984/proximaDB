@@ -185,7 +185,7 @@ impl RuleCondition {
             } => match operator {
                 LogicalOp::And => conditions.iter().all(|c| c.matches(value)),
                 LogicalOp::Or => conditions.iter().any(|c| c.matches(value)),
-                LogicalOp::Not => conditions.first().map_or(true, |c| !c.matches(value)),
+                LogicalOp::Not => conditions.first().is_none_or(|c| !c.matches(value)),
             },
         }
     }

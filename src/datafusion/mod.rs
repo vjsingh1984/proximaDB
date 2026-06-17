@@ -60,6 +60,20 @@ pub mod proxima_table_provider;
 // Engine-specific TableProvider adapters
 pub mod engine_adapters;
 
+// Custom scalar UDFs (e.g. Monte Carlo option pricing)
+pub mod udf;
+
+// P4: shared logical lowering — relational LogicalNode -> DataFusion LogicalPlan
+pub mod logical_lowering;
+
+// Track B (§8 moat): cross-modal source bridge — vector-search results as a
+// DataFusion-joinable table so one SQL plan joins vector similarity with relational data.
+pub mod cross_modal;
+
+// F2: registry -> DataFusion scalar-UDF adapter. Binds engine-neutral ProximaFunctionRegistry
+// kernels into DataFusion as ScalarUDFs (native builtins stay the fast path).
+pub mod registry_udf;
+
 // Re-exports for convenience
 pub use table_provider::{
     // Original format-based provider
@@ -107,16 +121,26 @@ pub use crate::storage::formats::FileSplit;
 
 // Re-export engine-specific adapters
 pub use engine_adapters::{
+    // Parquet-over-FileSystem adapter (local file:// and s3:// via the canonical trait)
+    FilesystemParquetSplitReader,
+    FilesystemParquetTable,
     HelixSplitReader,
     // HELIX engine adapter
     HelixTableProvider,
+    ObjectStoreParquetSplitReader,
+    ObjectStoreParquetTable,
     SstSplitReader,
     // SST engine adapter
     SstTableProvider,
     ViperSplitReader,
     // VIPER engine adapter
     ViperTableProvider,
+    register_object_store_parquet_location,
+    register_parquet_path,
 };
+
+// Re-export custom scalar UDFs
+pub use udf::mc_price_udf;
 
 use datafusion::prelude::*;
 
@@ -127,6 +151,22 @@ use datafusion::prelude::*;
 /// - Custom vector distance functions (cosine, euclidean, dot_product)
 /// - Optimizer rules for predicate pushdown
 pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
+    build_session_context(None)
+}
+
+/// Like [`create_session_context`] but also registers the live `vector_search` table function
+/// (F4), backed by `vector_ops` — so a cross-modal
+/// `... JOIN vector_search('coll', '[..]', k) v ON d.id = v.id` is expressible directly over
+/// the DataFusion path. Used by the pgwire OLAP route, which owns the vector service.
+pub fn create_session_context_with_vector_ops(
+    vector_ops: std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>,
+) -> datafusion::error::Result<SessionContext> {
+    build_session_context(Some(vector_ops))
+}
+
+fn build_session_context(
+    vector_ops: Option<std::sync::Arc<dyn proximadb_runtime::VectorOpsPort>>,
+) -> datafusion::error::Result<SessionContext> {
     let config = SessionConfig::new()
         .with_batch_size(8192)
         .with_target_partitions(num_cpus::get());
@@ -137,8 +177,27 @@ pub fn create_session_context() -> datafusion::error::Result<SessionContext> {
     // Deferred: Implement ProximaDBCatalogProvider
     // ctx.register_catalog("proximadb", Arc::new(ProximaDBCatalogProvider::new(...)));
 
-    // Register vector functions
-    // Deferred: Register cosine_distance, euclidean_distance, etc.
+    // Register custom scalar UDFs.
+    // - mc_price: Monte Carlo European option pricing (financial compute benchmark).
+    // Deferred: cosine_distance, euclidean_distance, etc.
+    ctx.register_udf(udf::mc_price_udf());
+
+    // F2: bind every NON-native registry scalar as a DataFusion ScalarUDF (the consolidated
+    // engine-neutral functions defined once in proximadb-functions). DataFusion's own
+    // vectorized builtins (UPPER/ABS/…) stay the fast path; this covers registry/custom
+    // functions DataFusion lacks.
+    registry_udf::register_proxima_scalars(&ctx, proximadb_functions::builtins());
+    // F3b: bind every registry aggregate as a DataFusion AggregateUDF (e.g. `product`).
+    registry_udf::register_proxima_aggregates(&ctx, proximadb_functions::builtins());
+
+    // F4: the cross-modal moat — `vector_search(collection, query, k)` as a joinable table,
+    // backed by the live vector service (registered only when one is supplied).
+    if let Some(ops) = vector_ops {
+        ctx.register_udtf(
+            "vector_search",
+            std::sync::Arc::new(cross_modal::VectorSearchTableFunction::new(ops)),
+        );
+    }
 
     Ok(ctx)
 }
@@ -154,6 +213,90 @@ pub fn create_session_context_with_config(
     let ctx = SessionContext::new_with_config(session_config);
 
     Ok(ctx)
+}
+
+/// Timing breakdown for the Monte Carlo option-pricing benchmark.
+#[derive(Debug, Clone)]
+pub struct McBenchTiming {
+    /// Number of priced rows returned.
+    pub rows: usize,
+    /// Physical-plan partition count actually executed (proves intra-node parallelism).
+    pub partitions: usize,
+    /// Table registration time — reads the Parquet footer/metadata through the
+    /// `FileSystem` trait (the I/O-bound phase).
+    pub register: std::time::Duration,
+    /// Query execution time — the compute-bound phase (the `mc_price` UDF), with all
+    /// partitions driven concurrently.
+    pub compute: std::time::Duration,
+}
+
+/// Benchmark helper: register a Parquet options table (read through `fs`) and run the
+/// `mc_price` UDF over every row at the given parallelism, returning row count plus an
+/// I/O-vs-compute timing split.
+///
+/// Keeps DataFusion types out of downstream benchmark binaries — callers pass a filesystem
+/// handle + URL and receive timings. The SQL the DataFrame API lowers to is identical.
+pub async fn benchmark_mc_price_over_parquet(
+    fs: std::sync::Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
+    url: &str,
+    n_paths: usize,
+    target_partitions: usize,
+) -> datafusion::error::Result<McBenchTiming> {
+    use std::time::Instant;
+
+    let session_config = SessionConfig::new()
+        .with_batch_size(8192)
+        .with_target_partitions(target_partitions.max(1));
+    let ctx = SessionContext::new_with_config(session_config);
+    ctx.register_udf(udf::mc_price_udf());
+
+    let t_io = Instant::now();
+    let _table = engine_adapters::register_parquet_path(&ctx, fs, "options", url).await?;
+    let register = t_io.elapsed();
+
+    let sql = format!(
+        "SELECT id, mc_price(spot, strike, vol, rate, t, is_call, {n_paths}) AS price FROM options"
+    );
+    // Build the physical plan and drive every partition concurrently via
+    // `collect_partitioned` (each partition runs as its own task), so intra-node
+    // parallelism is real and measured — `collect()` would coalesce to one stream first.
+    let plan = ctx.sql(&sql).await?.create_physical_plan().await?;
+    let partitions = plan.properties().output_partitioning().partition_count();
+
+    // Drive each partition on its OWN spawned task so the CPU-heavy `mc_price` projection
+    // runs on a separate worker thread per partition — true intra-node parallelism. This is
+    // the coordinator-drives-workers pattern; `collect_partitioned` would instead poll every
+    // partition on one task, serializing synchronous CPU work.
+    use datafusion::error::DataFusionError;
+    use futures::StreamExt;
+
+    let task_ctx = ctx.task_ctx();
+    let t_compute = Instant::now();
+    let mut handles = Vec::with_capacity(partitions);
+    for p in 0..partitions {
+        let mut stream = plan.execute(p, task_ctx.clone())?;
+        handles.push(tokio::spawn(async move {
+            let mut rows = 0usize;
+            while let Some(batch) = stream.next().await {
+                rows += batch?.num_rows();
+            }
+            Ok::<usize, DataFusionError>(rows)
+        }));
+    }
+    let mut rows = 0usize;
+    for h in handles {
+        rows += h
+            .await
+            .map_err(|e| DataFusionError::Execution(format!("partition task join: {e}")))??;
+    }
+    let compute = t_compute.elapsed();
+
+    Ok(McBenchTiming {
+        rows,
+        partitions,
+        register,
+        compute,
+    })
 }
 
 /// Configuration for DataFusion integration.

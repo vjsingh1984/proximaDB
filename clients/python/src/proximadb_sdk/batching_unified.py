@@ -23,13 +23,14 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any
 
-from .exceptions import BatchError, ProximaDBError
-from .models import VectorOperationResponse, VectorRecord
+from .models import VectorRecord
+from .models_v2 import ProximaRecord
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +48,10 @@ class BatchStrategy(str, Enum):
 class BatchOperationType(str, Enum):
     """Types of operations that can be batched"""
 
-    INSERT_VECTORS = "insert_vectors"
-    UPSERT_VECTORS = "upsert_vectors"
+    INSERT_RECORDS = "insert_records"
+    UPSERT_RECORDS = "upsert_records"
+    INSERT_VECTORS = "insert_vectors"  # compatibility alias
+    UPSERT_VECTORS = "upsert_vectors"  # compatibility alias
     DELETE_VECTORS = "delete_vectors"
     SEARCH_VECTORS = "search_vectors"
     GET_VECTORS = "get_vectors"
@@ -94,10 +97,10 @@ class BatchRequest:
     operation: BatchOperationType = None
     collection_id: str = None
     data: Any = None
-    callback: Optional[Callable] = None
+    callback: Callable | None = None
     priority: int = 1
     timestamp: float = field(default_factory=time.time)
-    future: Optional[Union[Future, asyncio.Future]] = None
+    future: Future | asyncio.Future | None = None
 
     def __lt__(self, other):
         """Priority comparison for heap operations"""
@@ -153,8 +156,8 @@ class AsyncBatchProcessor(BatchProcessor):
     def __init__(self, config: BatchConfig, execute_batch_fn: Callable):
         super().__init__(config)
         self.execute_batch_fn = execute_batch_fn
-        self._batches: Dict[str, List[BatchRequest]] = defaultdict(list)
-        self._timers: Dict[str, asyncio.Task] = {}
+        self._batches: dict[str, list[BatchRequest]] = defaultdict(list)
+        self._timers: dict[str, asyncio.Task] = {}
         self._lock = asyncio.Lock()
 
     async def start(self):
@@ -239,7 +242,7 @@ class AsyncBatchProcessor(BatchProcessor):
                 await self._execute_batch(batch_key, self._batches[batch_key])
                 self._batches[batch_key] = []
 
-    async def _execute_batch(self, batch_key: str, requests: List[BatchRequest]):
+    async def _execute_batch(self, batch_key: str, requests: list[BatchRequest]):
         """Execute a batch of requests"""
         if not requests:
             return
@@ -296,10 +299,10 @@ class ThreadedBatchProcessor(BatchProcessor):
     def __init__(self, config: BatchConfig, execute_batch_fn: Callable):
         super().__init__(config)
         self.execute_batch_fn = execute_batch_fn
-        self._request_queues: Dict[str, deque] = defaultdict(lambda: deque())
-        self._queue_locks: Dict[str, threading.RLock] = defaultdict(threading.RLock)
-        self._processing_threads: Dict[str, threading.Thread] = {}
-        self._stop_events: Dict[str, threading.Event] = {}
+        self._request_queues: dict[str, deque] = defaultdict(lambda: deque())
+        self._queue_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
+        self._processing_threads: dict[str, threading.Thread] = {}
+        self._stop_events: dict[str, threading.Event] = {}
         self._executor = ThreadPoolExecutor(max_workers=config.max_concurrent_batches)
 
     def start(self):
@@ -369,7 +372,7 @@ class ThreadedBatchProcessor(BatchProcessor):
                 # No requests, sleep briefly
                 time.sleep(0.01)  # 10ms
 
-    def _collect_batch(self, batch_key: str) -> List[BatchRequest]:
+    def _collect_batch(self, batch_key: str) -> list[BatchRequest]:
         """Collect requests for batching"""
         batch = []
         start_time = time.time()
@@ -390,7 +393,7 @@ class ThreadedBatchProcessor(BatchProcessor):
 
         return batch
 
-    def _execute_batch_sync(self, batch_key: str, requests: List[BatchRequest]):
+    def _execute_batch_sync(self, batch_key: str, requests: list[BatchRequest]):
         """Execute a batch of requests synchronously"""
         if not requests:
             return
@@ -449,14 +452,14 @@ class UnifiedBatchManager:
 
     def __init__(self, config: BatchConfig = None):
         self.config = config or BatchConfig()
-        self._processors: Dict[str, BatchProcessor] = {}
+        self._processors: dict[str, BatchProcessor] = {}
         self._lock = threading.RLock()
 
     def get_processor(
         self,
         protocol: str,
         execute_batch_fn: Callable,
-        processor_id: Optional[str] = None,
+        processor_id: str | None = None,
     ) -> BatchProcessor:
         """
         Get or create a batch processor for the given protocol
@@ -482,7 +485,7 @@ class UnifiedBatchManager:
 
             return self._processors[key]
 
-    def get_all_metrics(self) -> Dict[str, BatchMetrics]:
+    def get_all_metrics(self) -> dict[str, BatchMetrics]:
         """Get metrics from all processors"""
         with self._lock:
             return {
@@ -507,13 +510,26 @@ def create_vector_batcher(
 
 
 def batch_insert_vectors(
-    client, collection_id: str, vectors: List["VectorRecord"], batch_size: int = 100
-) -> List[Dict]:
-    """Helper function to batch insert vectors"""
+    client, collection_id: str, vectors: list["VectorRecord"], batch_size: int = 100
+) -> list[dict]:
+    """Compatibility alias for batch_insert_records."""
+    return batch_insert_records(client, collection_id, vectors, batch_size)
+
+
+def batch_insert_records(
+    client,
+    collection_id: str,
+    records: list[ProximaRecord | dict[str, Any]],
+    batch_size: int = 100,
+) -> list[dict]:
+    """Helper function to batch insert ProximaRecord-shaped records."""
     results = []
-    for i in range(0, len(vectors), batch_size):
-        batch = vectors[i : i + batch_size]
-        response = client.insert_vectors(collection_id, records=batch)
+    for i in range(0, len(records), batch_size):
+        batch = records[i : i + batch_size]
+        if hasattr(client, "insert_records"):
+            response = client.insert_records(collection_id, batch)
+        else:
+            response = client.insert_vectors(collection_id, records=batch)
         results.append(response)
     return results
 

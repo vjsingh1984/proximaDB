@@ -265,17 +265,18 @@ curl http://localhost:5678/health
 ### Test Collection
 
 ```bash
-# Create a collection
-curl -X POST http://localhost:5678/api/v1/collections \
+# Create a canonical record collection
+curl -X POST http://localhost:5678/api/v2/collections \
   -H "Content-Type: application/json" \
   -d '{
     "name": "test",
     "dimension": 128,
-    "metric": "cosine"
+    "distance_metric": "cosine",
+    "enable_proxima_record": true
   }'
 
 # List collections
-curl http://localhost:5678/api/v1/collections
+curl http://localhost:5678/api/v2/collections
 ```
 
 ---
@@ -358,8 +359,8 @@ rm -rf /usr/local/var/proximadb
 
 - [Quick Start](./index.md) - 5-minute overview
 - [First Query](./first-query.md) - Tutorial
-- [Configuration](../03-api-reference/configuration.md) - Full config reference
-- [Deployment](../04-operations/deployment.md) - Production setup
+- [Configuration](../03-api-reference/configuration.adoc) - Full config reference
+- [Deployment](../04-operations/deployment.adoc) - Production setup
 
 ---
 

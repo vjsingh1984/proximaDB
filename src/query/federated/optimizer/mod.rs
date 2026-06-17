@@ -10,14 +10,31 @@
 //! - **Parallel execution planning**: Identify parallelizable operations
 
 use anyhow::{Result, anyhow};
+use proximadb_graph_subset::describe_supported_graph_query;
 use std::collections::HashMap;
 
 use super::parser::{
     FederatedQuery, QueryTarget, QueryType, SqlExtension, TargetModelType, VectorQuery,
 };
-use crate::core::error::VectorDBError;
 use crate::query::capability::{Capability, CapabilitySet};
 use crate::storage::multimodel::ModelType;
+use proximadb_kernel::error::VectorDBError;
+
+mod sql_parsing;
+mod vector_query_parsing;
+
+pub mod cached_plan_builder;
+pub mod filter_strategy;
+pub mod gls;
+pub mod plan_builder;
+pub mod plan_calibration;
+pub mod plan_inference_gate;
+pub mod plan_quality;
+pub mod plan_v2_inference;
+pub mod plan_v2_training;
+pub mod predicate_normalizer;
+pub mod selectivity;
+pub mod trace_replay;
 
 /// Physical plan node types
 #[derive(Debug, Clone)]
@@ -40,12 +57,34 @@ pub enum PlanNodeType {
         /// Source of the query vector
         query_vector_source: VectorSource,
     },
+    /// Multi-phase rank pipeline (RERANK SRF surface).
+    ///
+    /// R-7c.4c.1: parser-recognized RERANK(...) lowers into this
+    /// node. The optimizer doesn't break it down further — execution
+    /// dispatches to the rank pipeline (first-phase retrieval +
+    /// optional second-phase rescorer per `rank_profile`).
+    RerankSearch {
+        /// Collection to retrieve from
+        collection: String,
+        /// Free-text query (threaded into the rank pipeline's
+        /// `QueryContext.query_text` for tokenized scorers)
+        query_text: String,
+        /// Source of the dense embedding for first-phase retrieval
+        query_vector_source: VectorSource,
+        /// First-phase k (cut-off before second-phase rescoring)
+        k: usize,
+        /// Optional rank profile name. `None` = retrieval-only path
+        /// (skip second phase).
+        rank_profile: Option<String>,
+    },
     /// Graph traversal
     GraphTraversal {
         /// Cypher query to execute
         cypher: String,
         /// Optional starting node IDs
         start_nodes: Option<Vec<String>>,
+        /// SQL alias for the source when present
+        source_alias: Option<String>,
     },
     /// Document query
     DocumentQuery {
@@ -53,6 +92,8 @@ pub enum PlanNodeType {
         collection: String,
         /// Optional filter expression
         filter: Option<String>,
+        /// SQL alias for the source when present
+        source_alias: Option<String>,
     },
     /// Observability query (logs/metrics)
     ObservabilityQuery {
@@ -434,9 +475,27 @@ impl PlanNode {
                 }
             }
 
+            PlanNodeType::RerankSearch {
+                query_vector_source,
+                ..
+            } => {
+                // R-7c.4c.1: rerank requires vector retrieval; the
+                // optional second-phase rescorer is profile-driven and
+                // doesn't surface as a separate capability here.
+                capabilities.add(Capability::VectorSearch);
+                capabilities.add(Capability::Scan);
+                capabilities.add(Capability::CosineDistance);
+                capabilities.add(Capability::EuclideanDistance);
+                capabilities.add(Capability::DotProduct);
+                if matches!(query_vector_source, VectorSource::ColumnRef { .. }) {
+                    capabilities.add(Capability::Project);
+                }
+            }
+
             PlanNodeType::GraphTraversal {
                 cypher,
                 start_nodes: _,
+                source_alias: _,
             } => {
                 capabilities.add(Capability::GraphQuery);
                 capabilities.add(Capability::GraphTraversal);
@@ -452,6 +511,7 @@ impl PlanNode {
             PlanNodeType::DocumentQuery {
                 collection: _,
                 filter,
+                source_alias: _,
             } => {
                 capabilities.add(Capability::DocumentQuery);
                 capabilities.add(Capability::Scan);
@@ -701,6 +761,7 @@ impl PlanNodeType {
         match self {
             PlanNodeType::Scan { model_type: mt, .. } => *mt == model_type,
             PlanNodeType::VectorSearch { .. } => model_type == ModelType::Vector,
+            PlanNodeType::RerankSearch { .. } => model_type == ModelType::Vector,
             PlanNodeType::GraphTraversal { .. } => model_type == ModelType::Graph,
             PlanNodeType::DocumentQuery { .. } => model_type == ModelType::Document,
             PlanNodeType::ObservabilityQuery { .. } => model_type == ModelType::Observability,
@@ -726,9 +787,15 @@ impl PlanNodeType {
     }
 }
 
-/// Complete query plan
+/// Cross-model federated query plan: PlanNode tree + cost + metadata.
+///
+/// Naming note: this type used to be called `QueryPlan` and collided with
+/// the graph/distributed/orchestration/proto `QueryPlan` types. Renamed
+/// to make the federation-layer specialisation explicit at call sites.
+/// `src/query/mod.rs` previously re-exported it as `FederatedQueryPlan`;
+/// the rename makes that alias redundant.
 #[derive(Debug, Clone)]
-pub struct QueryPlan {
+pub struct FederatedQueryPlan {
     /// Root of the plan tree
     pub root: PlanNode,
     /// Total estimated cost
@@ -763,8 +830,92 @@ struct SelectItem {
 
 #[derive(Clone, Copy)]
 enum QuerySourceRef<'a> {
-    Extension(&'a SqlExtension),
+    Extension {
+        extension: &'a SqlExtension,
+        ordinal: usize,
+    },
     Target(&'a QueryTarget),
+}
+
+struct GraphQueryPlanShape {
+    graph_name: String,
+    output_columns: Vec<String>,
+}
+
+impl GraphQueryPlanShape {
+    fn from_cypher(cypher: &str) -> Self {
+        match describe_supported_graph_query(cypher, None, Some("default")) {
+            Ok(descriptor) => Self {
+                graph_name: descriptor.graph_id().to_string(),
+                output_columns: descriptor.output_columns().to_vec(),
+            },
+            Err(_) => Self {
+                graph_name: "default".to_string(),
+                output_columns: vec![
+                    "node_id".to_string(),
+                    "label".to_string(),
+                    "properties".to_string(),
+                ],
+            },
+        }
+    }
+}
+
+/// Fallback selectivity policy for federated SQL predicates when stats are absent.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PredicateSelectivityPolicy {
+    pub eq: f64,
+    pub ne: f64,
+    pub range: f64,
+    pub like: f64,
+    pub in_list: f64,
+    pub is_null: f64,
+    pub is_not_null: f64,
+    pub between: f64,
+}
+
+impl Default for PredicateSelectivityPolicy {
+    fn default() -> Self {
+        Self {
+            eq: 0.1,
+            ne: 0.9,
+            range: 0.3,
+            like: 0.2,
+            in_list: 0.15,
+            is_null: 0.05,
+            is_not_null: 0.95,
+            between: 0.25,
+        }
+    }
+}
+
+impl PredicateSelectivityPolicy {
+    pub fn validate(&self) -> Result<()> {
+        for (name, value) in [
+            ("eq", self.eq),
+            ("ne", self.ne),
+            ("range", self.range),
+            ("like", self.like),
+            ("in_list", self.in_list),
+            ("is_null", self.is_null),
+            ("is_not_null", self.is_not_null),
+            ("between", self.between),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                anyhow::bail!(
+                    "predicate selectivity policy {name} must be finite and between 0.0 and 1.0, got {value}"
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+fn validate_unit_interval(name: &str, value: f64) -> Result<()> {
+    if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+        anyhow::bail!("{name} must be finite and between 0.0 and 1.0, got {value}");
+    }
+    Ok(())
 }
 
 /// Cost model for different data models
@@ -812,9 +963,12 @@ pub struct VectorCollectionStats {
     pub avg_query_latency_ms: Option<f64>,
 }
 
+/// Backwards-compat alias for [`FederatedGraphStats`].
+pub type GraphStats = FederatedGraphStats;
+
 /// Statistics for a graph
 #[derive(Debug, Clone, Default)]
-pub struct GraphStats {
+pub struct FederatedGraphStats {
     /// Total number of nodes
     pub node_count: u64,
     /// Total number of edges
@@ -857,7 +1011,7 @@ pub struct ObservabilityStats {
 #[derive(Debug, Clone)]
 pub enum ModelStatistics {
     Vector(VectorCollectionStats),
-    Graph(GraphStats),
+    Graph(FederatedGraphStats),
     Document(DocumentCollectionStats),
     Observability(ObservabilityStats),
     Relational { row_count: u64, avg_row_size: usize },
@@ -921,7 +1075,7 @@ impl CachedStatisticsProvider {
 
     /// Create default statistics for a graph
     pub fn default_graph_stats(node_count: u64, edge_count: u64) -> ModelStatistics {
-        ModelStatistics::Graph(GraphStats {
+        ModelStatistics::Graph(FederatedGraphStats {
             node_count,
             edge_count,
             avg_degree: if node_count > 0 {
@@ -960,6 +1114,8 @@ pub struct AdvancedCostEstimator {
     io_cost_per_page: f64,
     /// Memory access cost factor
     memory_access_cost: f64,
+    /// Smoothing factor for feedback-driven cost model updates.
+    feedback_ema_alpha: f64,
 }
 
 impl Default for AdvancedCostEstimator {
@@ -969,6 +1125,7 @@ impl Default for AdvancedCostEstimator {
             cpu_cycles_per_distance: 0.001,
             io_cost_per_page: 1.0,
             memory_access_cost: 0.1,
+            feedback_ema_alpha: 0.2,
         }
     }
 }
@@ -977,6 +1134,21 @@ impl AdvancedCostEstimator {
     /// Create a new advanced cost estimator
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Create an advanced cost estimator with explicit feedback EMA smoothing.
+    pub fn with_feedback_ema_alpha(mut self, alpha: f64) -> Self {
+        debug_assert!(
+            validate_unit_interval("feedback_ema_alpha", alpha).is_ok(),
+            "invalid feedback_ema_alpha: {alpha}"
+        );
+        self.feedback_ema_alpha = alpha;
+        self
+    }
+
+    /// Validate advanced cost estimator tuning.
+    pub fn validate(&self) -> Result<()> {
+        validate_unit_interval("feedback_ema_alpha", self.feedback_ema_alpha)
     }
 
     /// Calculate cost for vector search based on collection size and top_k
@@ -1026,7 +1198,7 @@ impl AdvancedCostEstimator {
     /// Cost model:
     /// - BFS/DFS: O(V + E) for full traversal, O(branching_factor^depth) for limited depth
     /// - With label index: reduces initial node lookup to O(log V)
-    pub fn graph_traversal_cost(&self, stats: &GraphStats, max_depth: usize) -> f64 {
+    pub fn graph_traversal_cost(&self, stats: &FederatedGraphStats, max_depth: usize) -> f64 {
         let v = stats.node_count as f64;
         let _e = stats.edge_count as f64; // Used in future sophisticated cost models
 
@@ -1155,21 +1327,21 @@ impl AdvancedCostEstimator {
     }
 
     /// Update cost model parameters from observed execution feedback.
-    /// Uses exponential moving average (alpha=0.2) to smooth parameter updates.
+    /// Uses exponential moving average to smooth parameter updates.
     pub fn update_from_feedback(&mut self, feedback: &ExecutionFeedback) {
-        const ALPHA: f64 = 0.2; // EMA smoothing factor
+        let alpha = self.feedback_ema_alpha;
 
         if let Some(observed_cpu_per_distance) = feedback.observed_cpu_per_distance {
             self.cpu_cycles_per_distance =
-                self.cpu_cycles_per_distance * (1.0 - ALPHA) + observed_cpu_per_distance * ALPHA;
+                self.cpu_cycles_per_distance * (1.0 - alpha) + observed_cpu_per_distance * alpha;
         }
         if let Some(observed_io_per_page) = feedback.observed_io_per_page {
             self.io_cost_per_page =
-                self.io_cost_per_page * (1.0 - ALPHA) + observed_io_per_page * ALPHA;
+                self.io_cost_per_page * (1.0 - alpha) + observed_io_per_page * alpha;
         }
         if let Some(observed_mem_cost) = feedback.observed_memory_cost {
             self.memory_access_cost =
-                self.memory_access_cost * (1.0 - ALPHA) + observed_mem_cost * ALPHA;
+                self.memory_access_cost * (1.0 - alpha) + observed_mem_cost * alpha;
         }
     }
 }
@@ -1488,7 +1660,7 @@ impl CardinalityEstimator {
     /// Estimate output cardinality for a graph traversal
     pub fn estimate_graph_traversal_cardinality(
         &self,
-        stats: &GraphStats,
+        stats: &FederatedGraphStats,
         max_depth: usize,
     ) -> u64 {
         let avg_degree = stats.avg_degree.max(1.0);
@@ -1740,7 +1912,7 @@ impl JoinOrderOptimizer {
                     let join_keys = self.find_join_keys(&left_set, &right_set, join_predicates);
 
                     // Calculate join cost and cardinality
-                    let join_selectivity = join_keys.is_empty().then(|| 1.0).unwrap_or(0.1);
+                    let join_selectivity = if join_keys.is_empty() { 1.0 } else { 0.1 };
                     let join_cardinality = self.cardinality_estimator.estimate_join_cardinality(
                         left_entry.cardinality,
                         right_entry.cardinality,
@@ -1905,10 +2077,10 @@ impl PlanCacheKey {
         for ext in &query.extensions {
             match ext {
                 SqlExtension::VectorSearch { collection, .. }
-                | SqlExtension::DocumentQuery { collection, .. } => {
-                    if !targets.contains(collection) {
-                        targets.push(collection.clone());
-                    }
+                | SqlExtension::DocumentQuery { collection, .. }
+                    if !targets.contains(collection) =>
+                {
+                    targets.push(collection.clone());
                 }
                 _ => {}
             }
@@ -1955,7 +2127,7 @@ impl PlanCacheKey {
 #[derive(Debug, Clone)]
 pub struct CachedPlan {
     /// The cached query plan
-    pub plan: QueryPlan,
+    pub plan: FederatedQueryPlan,
     /// When the plan was created
     pub created_at: std::time::Instant,
     /// Number of times this plan was used
@@ -1991,7 +2163,7 @@ impl PlanCache {
     }
 
     /// Get a cached plan if available
-    pub fn get(&self, key: &PlanCacheKey) -> Option<QueryPlan> {
+    pub fn get(&self, key: &PlanCacheKey) -> Option<FederatedQueryPlan> {
         let mut cache = self.cache.write();
 
         if let Some(entry) = cache.get_mut(key) {
@@ -2009,7 +2181,7 @@ impl PlanCache {
     }
 
     /// Cache a plan
-    pub fn put(&self, key: PlanCacheKey, plan: QueryPlan) {
+    pub fn put(&self, key: PlanCacheKey, plan: FederatedQueryPlan) {
         let mut cache = self.cache.write();
 
         // Evict if at capacity
@@ -2052,11 +2224,11 @@ impl PlanCache {
     }
 
     /// Get cache statistics
-    pub fn stats(&self) -> PlanCacheStats {
+    pub fn stats(&self) -> FederatedPlanCacheStats {
         let cache = self.cache.read();
         let total_hits: u64 = cache.values().map(|e| e.hit_count).sum();
 
-        PlanCacheStats {
+        FederatedPlanCacheStats {
             cached_plans: cache.len(),
             total_hits,
             avg_plan_age_ms: cache
@@ -2086,9 +2258,17 @@ impl PlanCache {
     }
 }
 
-/// Plan cache statistics
+/// Federated optimizer plan-cache statistics with plan-age tracking.
+///
+/// Naming note: this type used to be called `PlanCacheStats` and collided
+/// with three other `PlanCacheStats` types (proximadb-query optimizer
+/// support, src/query/cache observability, src/query/execution). Renamed
+/// because the field set is federation-specific — only this variant tracks
+/// average plan age. The canonical `proximadb_query::PlanCacheStats`
+/// (re-exported via the proximadb-query crate root) is what generic
+/// callers should reach for.
 #[derive(Debug, Clone)]
-pub struct PlanCacheStats {
+pub struct FederatedPlanCacheStats {
     /// Number of cached plans
     pub cached_plans: usize,
     /// Total cache hits
@@ -2117,6 +2297,8 @@ pub struct CrossModelOptimizer {
     statistics_provider: Option<std::sync::Arc<dyn StatisticsProvider>>,
     /// Runtime statistics collector for adaptive cost model tuning
     runtime_stats: std::sync::Arc<RuntimeStatisticsCollector>,
+    /// Predicate selectivity policy used when statistics are unavailable.
+    predicate_selectivity_policy: PredicateSelectivityPolicy,
 }
 
 impl CrossModelOptimizer {
@@ -2180,6 +2362,7 @@ impl CrossModelOptimizer {
             plan_cache: std::sync::Arc::new(PlanCache::default()),
             statistics_provider: None,
             runtime_stats: std::sync::Arc::new(RuntimeStatisticsCollector::default()),
+            predicate_selectivity_policy: PredicateSelectivityPolicy::default(),
         }
     }
 
@@ -2195,6 +2378,17 @@ impl CrossModelOptimizer {
     /// Create an optimizer with a custom runtime statistics collector
     pub fn with_runtime_stats(mut self, stats: std::sync::Arc<RuntimeStatisticsCollector>) -> Self {
         self.runtime_stats = stats;
+        self
+    }
+
+    /// Create an optimizer with explicit predicate selectivity policy.
+    pub fn with_predicate_selectivity_policy(mut self, policy: PredicateSelectivityPolicy) -> Self {
+        debug_assert!(
+            policy.validate().is_ok(),
+            "invalid predicate selectivity policy: {:?}",
+            policy.validate().err()
+        );
+        self.predicate_selectivity_policy = policy;
         self
     }
 
@@ -2251,14 +2445,18 @@ impl CrossModelOptimizer {
     }
 
     fn ordered_query_sources<'a>(query: &'a FederatedQuery) -> Vec<QuerySourceRef<'a>> {
-        let sql_upper = query.sql.to_uppercase();
+        let sql_upper = query.sql.to_ascii_uppercase();
         let mut sources = Vec::new();
 
         for (ordinal, extension) in query.extensions.iter().enumerate() {
             sources.push((
-                Self::query_source_position(&sql_upper, QuerySourceRef::Extension(extension)),
+                Self::query_source_position(
+                    query,
+                    &sql_upper,
+                    QuerySourceRef::Extension { extension, ordinal },
+                ),
                 ordinal,
-                QuerySourceRef::Extension(extension),
+                QuerySourceRef::Extension { extension, ordinal },
             ));
         }
 
@@ -2271,7 +2469,7 @@ impl CrossModelOptimizer {
             }
 
             sources.push((
-                Self::query_source_position(&sql_upper, QuerySourceRef::Target(target)),
+                Self::query_source_position(query, &sql_upper, QuerySourceRef::Target(target)),
                 query.extensions.len() + ordinal,
                 QuerySourceRef::Target(target),
             ));
@@ -2284,19 +2482,23 @@ impl CrossModelOptimizer {
             .collect::<Vec<_>>()
     }
 
-    fn query_source_position(sql_upper: &str, source: QuerySourceRef<'_>) -> usize {
+    fn query_source_position(
+        query: &FederatedQuery,
+        sql_upper: &str,
+        source: QuerySourceRef<'_>,
+    ) -> usize {
         match source {
-            QuerySourceRef::Extension(extension) => match extension {
-                SqlExtension::VectorSearch { .. } => sql_upper.find("VECTOR_SEARCH("),
-                SqlExtension::GraphQuery { .. } => sql_upper.find("GRAPH_QUERY("),
-                SqlExtension::DocumentQuery { .. } => sql_upper.find("DOCUMENT_QUERY("),
-                SqlExtension::Logs { .. } => sql_upper.find("LOGS("),
-                SqlExtension::Metrics { .. } => sql_upper.find("METRICS("),
-                SqlExtension::VectorDistance { .. } => sql_upper.find("<->"),
-            }
-            .unwrap_or(usize::MAX),
+            QuerySourceRef::Extension { ordinal, .. } => query
+                .extension_positions
+                .get(ordinal)
+                .copied()
+                .unwrap_or(usize::MAX),
             QuerySourceRef::Target(target) => Self::target_position(sql_upper, target),
         }
+    }
+
+    fn extension_alias(query: &FederatedQuery, ordinal: usize) -> Option<String> {
+        query.extension_aliases.get(ordinal).cloned().flatten()
     }
 
     fn target_position(sql_upper: &str, target: &QueryTarget) -> usize {
@@ -2322,6 +2524,10 @@ impl CrossModelOptimizer {
     fn collect_correlations_into(plan: &PlanNode, correlations: &mut Vec<String>) {
         match &plan.node_type {
             PlanNodeType::VectorSearch {
+                query_vector_source,
+                ..
+            }
+            | PlanNodeType::RerankSearch {
                 query_vector_source,
                 ..
             } => Self::collect_vector_source_correlations(query_vector_source, correlations),
@@ -2397,7 +2603,7 @@ impl CrossModelOptimizer {
     ///
     /// If a statistics provider is configured, uses cardinality-aware
     /// cost estimation for better plan selection.
-    pub fn optimize(&self, query: &FederatedQuery) -> Result<QueryPlan> {
+    pub fn optimize(&self, query: &FederatedQuery) -> Result<FederatedQueryPlan> {
         // If we have a statistics provider, collect stats for referenced collections
         // and delegate to optimize_with_statistics for cardinality-aware planning
         if let Some(ref provider) = self.statistics_provider {
@@ -2453,7 +2659,7 @@ impl CrossModelOptimizer {
         &self,
         query: &FederatedQuery,
         stats: &HashMap<String, ModelStatistics>,
-    ) -> Result<QueryPlan> {
+    ) -> Result<FederatedQueryPlan> {
         // Check plan cache first
         let cache_key = PlanCacheKey::from_query(query);
         if let Some(cached_plan) = self.plan_cache.get(&cache_key) {
@@ -2509,7 +2715,7 @@ impl CrossModelOptimizer {
                 {
                     Some((
                         collection.clone(),
-                        Self::vector_source_from_query(query_vector),
+                        vector_query_parsing::vector_source_from_query(query_vector),
                         *top_k,
                     ))
                 } else {
@@ -2565,10 +2771,11 @@ impl CrossModelOptimizer {
                 }
             })
             .unwrap_or_default();
+        let graph_shape = GraphQueryPlanShape::from_cypher(&cypher);
 
         // Estimate max depth from cypher (simple heuristic)
         let max_depth = cypher.matches("->").count().max(1);
-        let graph_name = "default"; // Would need to parse from cypher
+        let graph_name = graph_shape.graph_name.as_str();
 
         // Get statistics
         let (cost, rows) = if let Some(ModelStatistics::Graph(graph_stats)) = stats.get(graph_name)
@@ -2582,7 +2789,7 @@ impl CrossModelOptimizer {
             (cost, rows)
         } else {
             // Default estimation
-            let default_stats = GraphStats {
+            let default_stats = FederatedGraphStats {
                 node_count: 10000,
                 edge_count: 50000,
                 avg_degree: 5.0,
@@ -2600,14 +2807,11 @@ impl CrossModelOptimizer {
             node_type: PlanNodeType::GraphTraversal {
                 cypher,
                 start_nodes: None, // Will be populated from query parsing
+                source_alias: None,
             },
             estimated_cost: cost,
             estimated_rows: rows,
-            output_columns: vec![
-                "node_id".to_string(),
-                "label".to_string(),
-                "properties".to_string(),
-            ],
+            output_columns: graph_shape.output_columns,
             required_capabilities: CapabilitySet::new(),
         })
     }
@@ -2656,7 +2860,11 @@ impl CrossModelOptimizer {
 
         Ok(PlanNode {
             id: self.next_id(),
-            node_type: PlanNodeType::DocumentQuery { collection, filter },
+            node_type: PlanNodeType::DocumentQuery {
+                collection,
+                filter,
+                source_alias: None,
+            },
             estimated_cost: cost,
             estimated_rows: rows,
             output_columns: vec!["id".to_string(), "document".to_string()],
@@ -2675,11 +2883,15 @@ impl CrossModelOptimizer {
 
         for source in Self::ordered_query_sources(query) {
             let sub_plan = match source {
-                QuerySourceRef::Extension(SqlExtension::VectorSearch {
-                    collection,
-                    query_vector,
-                    top_k,
-                }) => {
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorSearch {
+                            collection,
+                            query_vector,
+                            top_k,
+                        },
+                    ..
+                } => {
                     let vec_stats = stats.get(collection).and_then(|s| {
                         if let ModelStatistics::Vector(vs) = s {
                             Some(vs)
@@ -2702,7 +2914,9 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: collection.clone(),
                             top_k: *top_k,
-                            query_vector_source: Self::vector_source_from_query(query_vector),
+                            query_vector_source: vector_query_parsing::vector_source_from_query(
+                                query_vector,
+                            ),
                         },
                         estimated_cost: cost,
                         estimated_rows: rows,
@@ -2710,10 +2924,14 @@ impl CrossModelOptimizer {
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
-                QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::GraphQuery { cypher },
+                    ordinal,
+                } => {
+                    let graph_shape = GraphQueryPlanShape::from_cypher(cypher);
                     let max_depth = cypher.matches("->").count().max(1);
                     // Use default stats for graph
-                    let default_stats = GraphStats::default();
+                    let default_stats = FederatedGraphStats::default();
                     let cost = self
                         .advanced_cost_estimator
                         .graph_traversal_cost(&default_stats, max_depth);
@@ -2723,18 +2941,18 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::GraphTraversal {
                             cypher: cypher.clone(),
                             start_nodes: None, // Will be populated from query parsing
+                            source_alias: Self::extension_alias(query, ordinal),
                         },
                         estimated_cost: cost,
                         estimated_rows: 100,
-                        output_columns: vec![
-                            "node_id".to_string(),
-                            "label".to_string(),
-                            "properties".to_string(),
-                        ],
+                        output_columns: graph_shape.output_columns,
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
-                QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::DocumentQuery { collection, filter },
+                    ordinal,
+                } => {
                     let doc_stats = stats.get(collection).and_then(|s| {
                         if let ModelStatistics::Document(ds) = s {
                             Some(ds)
@@ -2756,6 +2974,7 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::DocumentQuery {
                             collection: collection.clone(),
                             filter: filter.clone(),
+                            source_alias: Self::extension_alias(query, ordinal),
                         },
                         estimated_cost: cost,
                         estimated_rows: rows,
@@ -2763,7 +2982,10 @@ impl CrossModelOptimizer {
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
-                QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Logs { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -2779,7 +3001,10 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Metrics { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -2795,10 +3020,34 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::VectorDistance {
-                    left_column,
-                    right_literal,
-                }) => {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Traces { namespace },
+                    ..
+                } => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::ObservabilityQuery {
+                        namespace: namespace.clone(),
+                        query_type: ObservabilityQueryType::Traces,
+                        time_range: None,
+                    },
+                    estimated_cost: 20.0,
+                    estimated_rows: 500,
+                    output_columns: vec![
+                        "trace_id".to_string(),
+                        "span_id".to_string(),
+                        "operation".to_string(),
+                        "duration_ns".to_string(),
+                    ],
+                    required_capabilities: CapabilitySet::new(),
+                },
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorDistance {
+                            left_column,
+                            right_literal,
+                        },
+                    ..
+                } => {
                     let target = query
                         .targets
                         .first()
@@ -2808,7 +3057,9 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: target,
                             top_k: 10,
-                            query_vector_source: Self::vector_source_from_literal(right_literal),
+                            query_vector_source: vector_query_parsing::vector_source_from_literal(
+                                right_literal,
+                            ),
                         },
                         estimated_cost: 10.0,
                         estimated_rows: 10,
@@ -2831,6 +3082,62 @@ impl CrossModelOptimizer {
                         estimated_cost: rows as f64 * 0.1,
                         estimated_rows: rows,
                         output_columns: vec!["*".to_string()],
+                        required_capabilities: CapabilitySet::new(),
+                    }
+                }
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::RerankSearch {
+                            collection,
+                            query_text,
+                            query_vector,
+                            k,
+                            rank_profile,
+                        },
+                    ..
+                } => {
+                    // R-7c.4c.1: emit RerankSearch plan node; execution
+                    // dispatches to the rank pipeline (first-phase
+                    // retrieval + optional second-phase rescore).
+                    let vec_stats = stats.get(collection).and_then(|s| {
+                        if let ModelStatistics::Vector(vs) = s {
+                            Some(vs)
+                        } else {
+                            None
+                        }
+                    });
+                    let (cost, rows) = if let Some(vs) = vec_stats {
+                        (
+                            self.advanced_cost_estimator.vector_search_cost(vs, *k),
+                            self.cardinality_estimator
+                                .estimate_vector_search_cardinality(*k, vs),
+                        )
+                    } else {
+                        (100.0, *k as u64)
+                    };
+                    // Second-phase rescoring adds latency on top of
+                    // retrieval — bump cost when a profile is set.
+                    let rerank_cost_factor = if rank_profile.is_some() { 2.5 } else { 1.0 };
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::RerankSearch {
+                            collection: collection.clone(),
+                            query_text: query_text.clone(),
+                            query_vector_source: vector_query_parsing::vector_source_from_query(
+                                query_vector,
+                            ),
+                            k: *k,
+                            rank_profile: rank_profile.clone(),
+                        },
+                        estimated_cost: cost * rerank_cost_factor,
+                        estimated_rows: rows,
+                        output_columns: vec![
+                            "id".to_string(),
+                            "score".to_string(),
+                            "phase".to_string(),
+                            "match_features".to_string(),
+                            "summary_features".to_string(),
+                        ],
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
@@ -2897,27 +3204,37 @@ impl CrossModelOptimizer {
             QueryType::VectorSearch => self.plan_vector_search(query),
             QueryType::GraphQuery => self.plan_graph_query(query),
             QueryType::DocumentQuery => self.plan_document_query(query),
-            QueryType::LogQuery | QueryType::MetricQuery => self.plan_observability_query(query),
+            QueryType::LogQuery | QueryType::MetricQuery | QueryType::TraceQuery => {
+                self.plan_observability_query(query)
+            }
             QueryType::Federated => self.plan_federated_query(query),
+            // R-7c.4c.1: RERANK(...) SRF is expressed as a
+            // SqlExtension::RerankSearch source. Route through
+            // plan_federated_query so the per-source match arm fires
+            // and emits PlanNodeType::RerankSearch (instead of the
+            // legacy Scan/VectorSearch fallback this branch used
+            // before the variant existed).
+            QueryType::RerankSearch => self.plan_federated_query(query),
         }?;
 
         self.apply_sql_clauses(plan, query)
     }
 
+    #[allow(clippy::nonminimal_bool)]
     fn apply_sql_clauses(&self, mut plan: PlanNode, query: &FederatedQuery) -> Result<PlanNode> {
-        let has_distinct = Self::select_has_distinct(&query.sql);
-        if Self::find_top_level_keyword(&query.sql, "UNION").is_some() {
+        let has_distinct = sql_parsing::select_has_distinct(&query.sql);
+        if sql_parsing::find_top_level_keyword(&query.sql, "UNION").is_some() {
             return Err(anyhow!(
                 "UNION queries are not yet supported in federated SQL execution"
             ));
         }
-        if Self::find_top_level_keyword(&query.sql, "HAVING").is_some() {
+        if sql_parsing::find_top_level_keyword(&query.sql, "HAVING").is_some() {
             return Err(anyhow!(
                 "HAVING is not yet supported in federated SQL execution"
             ));
         }
 
-        if let Some(predicate) = Self::extract_where_predicate(&query.sql) {
+        if let Some(predicate) = sql_parsing::extract_where_predicate(&query.sql) {
             let output_columns = plan.output_columns.clone();
             let estimated_cost = plan.estimated_cost * 1.05;
             let estimated_rows = plan.estimated_rows;
@@ -2934,18 +3251,18 @@ impl CrossModelOptimizer {
             };
         }
 
-        let select_items = Self::extract_select_items(&query.sql);
-        let group_by = Self::extract_group_by_columns(&query.sql);
+        let select_items = sql_parsing::extract_select_items(&query.sql);
+        let group_by = sql_parsing::extract_group_by_columns(&query.sql);
         let aggregates = select_items
             .iter()
-            .filter_map(Self::parse_aggregate_expr)
+            .filter_map(sql_parsing::parse_aggregate_expr)
             .collect::<Vec<_>>();
         let has_group_by = !group_by.is_empty();
         let has_aggregate_projection = !aggregates.is_empty();
         if has_group_by {
             let invalid_group_projection = select_items
                 .iter()
-                .filter(|item| Self::parse_aggregate_expr(item).is_none())
+                .filter(|item| sql_parsing::parse_aggregate_expr(item).is_none())
                 .any(|item| !group_by.contains(&item.expression));
 
             if invalid_group_projection {
@@ -2990,7 +3307,7 @@ impl CrossModelOptimizer {
         let projection_sources = select_items
             .iter()
             .map(|item| {
-                Self::parse_aggregate_expr(item)
+                sql_parsing::parse_aggregate_expr(item)
                     .map_or_else(|| item.expression.clone(), |aggregate| aggregate.alias)
             })
             .collect::<Vec<_>>();
@@ -3002,7 +3319,8 @@ impl CrossModelOptimizer {
                     .unwrap_or_else(|| item.expression.clone())
             })
             .collect::<Vec<_>>();
-        if (!has_aggregate_projection && !has_group_by)
+        if !has_aggregate_projection
+            && !has_group_by
             && !projection_sources.is_empty()
             && !(projection_sources.len() == 1 && projection_sources[0] == "*")
             && !projection_sources
@@ -3064,7 +3382,7 @@ impl CrossModelOptimizer {
             };
         }
 
-        let order_by = Self::extract_order_by(&query.sql);
+        let order_by = sql_parsing::extract_order_by(&query.sql);
         if !order_by.is_empty() {
             let output_columns = plan.output_columns.clone();
             let estimated_cost = plan.estimated_cost * 1.1;
@@ -3082,7 +3400,7 @@ impl CrossModelOptimizer {
             };
         }
 
-        let (limit, offset) = Self::extract_limit_offset(&query.sql);
+        let (limit, offset) = sql_parsing::extract_limit_offset(&query.sql);
         if let Some(limit) = limit {
             let output_columns = plan.output_columns.clone();
             let estimated_cost = plan.estimated_cost;
@@ -3102,448 +3420,6 @@ impl CrossModelOptimizer {
         }
 
         Ok(plan)
-    }
-
-    fn find_top_level_keyword(sql: &str, keyword: &str) -> Option<usize> {
-        Self::find_top_level_keyword_from(sql, keyword, 0)
-    }
-
-    fn find_top_level_keyword_from(sql: &str, keyword: &str, start_at: usize) -> Option<usize> {
-        let sql_upper = sql.to_uppercase();
-        let keyword_upper = keyword.to_uppercase();
-        let bytes = sql_upper.as_bytes();
-        let keyword_len = keyword_upper.len();
-        let mut depth = 0usize;
-        let mut in_quote = None;
-        let mut escaped = false;
-
-        for (index, ch) in sql.char_indices() {
-            if let Some(quote) = in_quote {
-                if ch == quote && !escaped {
-                    in_quote = None;
-                }
-                escaped = ch == '\\' && !escaped;
-                continue;
-            }
-
-            match ch {
-                '\'' | '"' => {
-                    in_quote = Some(ch);
-                    escaped = false;
-                    continue;
-                }
-                '(' => depth += 1,
-                ')' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-
-            if index < start_at || depth != 0 || index + keyword_len > sql_upper.len() {
-                escaped = false;
-                continue;
-            }
-
-            if &sql_upper[index..index + keyword_len] == keyword_upper.as_str() {
-                let before_ok = index == 0
-                    || (!bytes[index - 1].is_ascii_alphanumeric() && bytes[index - 1] != b'_');
-                let after_index = index + keyword_len;
-                let after_ok = after_index == bytes.len()
-                    || (!bytes[after_index].is_ascii_alphanumeric() && bytes[after_index] != b'_');
-                if before_ok && after_ok {
-                    return Some(index);
-                }
-            }
-
-            escaped = false;
-        }
-
-        None
-    }
-
-    fn find_clause_end(sql: &str, start_at: usize, keywords: &[&str]) -> usize {
-        keywords
-            .iter()
-            .filter_map(|keyword| Self::find_top_level_keyword_from(sql, keyword, start_at))
-            .min()
-            .unwrap_or(sql.len())
-    }
-
-    fn split_top_level_list(input: &str) -> Vec<String> {
-        let mut items = Vec::new();
-        let mut current = String::new();
-        let mut depth = 0usize;
-        let mut in_quote = None;
-        let mut escaped = false;
-
-        for ch in input.chars() {
-            if let Some(quote) = in_quote {
-                current.push(ch);
-                if ch == quote && !escaped {
-                    in_quote = None;
-                }
-                escaped = ch == '\\' && !escaped;
-                continue;
-            }
-
-            match ch {
-                '\'' | '"' => {
-                    in_quote = Some(ch);
-                    current.push(ch);
-                }
-                '(' | '[' => {
-                    depth += 1;
-                    current.push(ch);
-                }
-                ')' | ']' => {
-                    depth = depth.saturating_sub(1);
-                    current.push(ch);
-                }
-                ',' if depth == 0 => {
-                    if !current.trim().is_empty() {
-                        items.push(current.trim().to_string());
-                    }
-                    current.clear();
-                }
-                _ => current.push(ch),
-            }
-
-            escaped = false;
-        }
-
-        if !current.trim().is_empty() {
-            items.push(current.trim().to_string());
-        }
-
-        items
-    }
-
-    fn select_has_distinct(sql: &str) -> bool {
-        let Some(select_pos) = Self::find_top_level_keyword(sql, "SELECT") else {
-            return false;
-        };
-        let Some(from_pos) = Self::find_top_level_keyword_from(sql, "FROM", select_pos + 6) else {
-            return false;
-        };
-
-        sql[select_pos + 6..from_pos]
-            .trim_start()
-            .to_uppercase()
-            .starts_with("DISTINCT ")
-    }
-
-    fn extract_select_items(sql: &str) -> Vec<SelectItem> {
-        let Some(select_pos) = Self::find_top_level_keyword(sql, "SELECT") else {
-            return vec![];
-        };
-        let Some(from_pos) = Self::find_top_level_keyword_from(sql, "FROM", select_pos + 6) else {
-            return vec![];
-        };
-
-        let clause = sql[select_pos + 6..from_pos].trim();
-        let clause = clause
-            .strip_prefix("DISTINCT ")
-            .or_else(|| clause.strip_prefix("distinct "))
-            .unwrap_or(clause);
-
-        Self::split_top_level_list(clause)
-            .into_iter()
-            .map(|item| {
-                let upper = item.to_uppercase();
-                if let Some(as_pos) = upper.rfind(" AS ") {
-                    SelectItem {
-                        expression: item[..as_pos].trim().to_string(),
-                        alias: Some(item[as_pos + 4..].trim().to_string()),
-                    }
-                } else {
-                    SelectItem {
-                        expression: item.trim().to_string(),
-                        alias: None,
-                    }
-                }
-            })
-            .collect()
-    }
-
-    #[allow(dead_code)]
-    fn extract_select_columns(sql: &str) -> Vec<String> {
-        Self::extract_select_items(sql)
-            .into_iter()
-            .map(|item| item.expression)
-            .collect()
-    }
-
-    fn extract_group_by_columns(sql: &str) -> Vec<String> {
-        let Some(group_by_pos) = Self::find_top_level_keyword(sql, "GROUP BY") else {
-            return vec![];
-        };
-        let end = Self::find_clause_end(
-            sql,
-            group_by_pos + 8,
-            &["ORDER BY", "LIMIT", "OFFSET", "HAVING", ";"],
-        );
-
-        Self::split_top_level_list(sql[group_by_pos + 8..end].trim())
-    }
-
-    fn parse_aggregate_expr(item: &SelectItem) -> Option<AggregateExpr> {
-        let expression = item.expression.trim();
-        let open_paren = expression.find('(')?;
-        if !expression.ends_with(')') {
-            return None;
-        }
-
-        let function_name = expression[..open_paren].trim().to_uppercase();
-        let inner = expression[open_paren + 1..expression.len() - 1].trim();
-        let alias = item.alias.clone().unwrap_or_else(|| expression.to_string());
-
-        match function_name.as_str() {
-            "COUNT" => {
-                if inner == "*" {
-                    Some(AggregateExpr {
-                        function: AggregateFunction::Count,
-                        column: None,
-                        alias,
-                    })
-                } else if let Some(distinct_column) = inner
-                    .strip_prefix("DISTINCT ")
-                    .or_else(|| inner.strip_prefix("distinct "))
-                {
-                    Some(AggregateExpr {
-                        function: AggregateFunction::CountDistinct,
-                        column: Some(distinct_column.trim().to_string()),
-                        alias,
-                    })
-                } else {
-                    Some(AggregateExpr {
-                        function: AggregateFunction::Count,
-                        column: Some(inner.to_string()),
-                        alias,
-                    })
-                }
-            }
-            "SUM" => Some(AggregateExpr {
-                function: AggregateFunction::Sum,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            "AVG" => Some(AggregateExpr {
-                function: AggregateFunction::Avg,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            "MIN" => Some(AggregateExpr {
-                function: AggregateFunction::Min,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            "MAX" => Some(AggregateExpr {
-                function: AggregateFunction::Max,
-                column: Some(inner.to_string()),
-                alias,
-            }),
-            _ => None,
-        }
-    }
-
-    fn extract_limit_offset(sql: &str) -> (Option<usize>, usize) {
-        let limit = Self::find_top_level_keyword(sql, "LIMIT").and_then(|limit_pos| {
-            let end = Self::find_clause_end(sql, limit_pos + 5, &["OFFSET", ";"]);
-            sql[limit_pos + 5..end]
-                .split_whitespace()
-                .next()
-                .and_then(|value| value.parse::<usize>().ok())
-        });
-
-        let offset = Self::find_top_level_keyword(sql, "OFFSET")
-            .and_then(|offset_pos| {
-                let end = Self::find_clause_end(sql, offset_pos + 6, &["LIMIT", ";"]);
-                sql[offset_pos + 6..end]
-                    .split_whitespace()
-                    .next()
-                    .and_then(|value| value.parse::<usize>().ok())
-            })
-            .unwrap_or(0);
-
-        (limit, offset)
-    }
-
-    fn extract_order_by(sql: &str) -> Vec<OrderByClause> {
-        let Some(order_pos) = Self::find_top_level_keyword(sql, "ORDER BY") else {
-            return vec![];
-        };
-        let end = Self::find_clause_end(sql, order_pos + 8, &["LIMIT", "OFFSET", ";"]);
-        let clause = sql[order_pos + 8..end].trim();
-
-        Self::split_top_level_list(clause)
-            .into_iter()
-            .filter_map(|entry| {
-                let upper = entry.to_uppercase();
-                let nulls_first = upper.ends_with(" NULLS FIRST");
-                let nulls_last = upper.ends_with(" NULLS LAST");
-                let trimmed = if nulls_first {
-                    entry[..entry.len() - "NULLS FIRST".len()].trim()
-                } else if nulls_last {
-                    entry[..entry.len() - "NULLS LAST".len()].trim()
-                } else {
-                    entry.trim()
-                };
-
-                let upper_trimmed = trimmed.to_uppercase();
-                let ascending = !upper_trimmed.ends_with(" DESC");
-                let column = if upper_trimmed.ends_with(" ASC") || upper_trimmed.ends_with(" DESC")
-                {
-                    trimmed[..trimmed.rfind(' ').unwrap_or(trimmed.len())]
-                        .trim()
-                        .to_string()
-                } else {
-                    trimmed.to_string()
-                };
-
-                if column.is_empty() {
-                    None
-                } else {
-                    Some(OrderByClause {
-                        column,
-                        ascending,
-                        nulls_first: if nulls_first {
-                            true
-                        } else if nulls_last {
-                            false
-                        } else {
-                            !ascending
-                        },
-                    })
-                }
-            })
-            .collect()
-    }
-
-    fn find_top_level_operator(input: &str, operator: &str) -> Option<usize> {
-        let upper = input.to_uppercase();
-        let operator_upper = operator.to_uppercase();
-        let mut depth = 0usize;
-        let mut in_quote = None;
-        let mut escaped = false;
-
-        for (index, ch) in input.char_indices() {
-            if let Some(quote) = in_quote {
-                if ch == quote && !escaped {
-                    in_quote = None;
-                }
-                escaped = ch == '\\' && !escaped;
-                continue;
-            }
-
-            match ch {
-                '\'' | '"' => {
-                    in_quote = Some(ch);
-                    escaped = false;
-                    continue;
-                }
-                '(' => depth += 1,
-                ')' => depth = depth.saturating_sub(1),
-                _ => {}
-            }
-
-            if depth == 0
-                && index + operator_upper.len() <= upper.len()
-                && &upper[index..index + operator_upper.len()] == operator_upper.as_str()
-            {
-                return Some(index);
-            }
-
-            escaped = false;
-        }
-
-        None
-    }
-
-    fn parse_predicate_value(raw: &str) -> Option<PredicateValue> {
-        let trimmed = raw.trim();
-        if trimmed.eq_ignore_ascii_case("NULL") {
-            return Some(PredicateValue::Null);
-        }
-        if trimmed.eq_ignore_ascii_case("TRUE") {
-            return Some(PredicateValue::Bool(true));
-        }
-        if trimmed.eq_ignore_ascii_case("FALSE") {
-            return Some(PredicateValue::Bool(false));
-        }
-        if (trimmed.starts_with('\'') && trimmed.ends_with('\''))
-            || (trimmed.starts_with('"') && trimmed.ends_with('"'))
-        {
-            return Some(PredicateValue::String(
-                trimmed[1..trimmed.len() - 1].to_string(),
-            ));
-        }
-        if let Ok(value) = trimmed.parse::<i64>() {
-            return Some(PredicateValue::Int(value));
-        }
-        if let Ok(value) = trimmed.parse::<f64>() {
-            return Some(PredicateValue::Float(value));
-        }
-        None
-    }
-
-    fn extract_where_predicate(sql: &str) -> Option<Predicate> {
-        let where_pos = Self::find_top_level_keyword(sql, "WHERE")?;
-        let end = Self::find_clause_end(
-            sql,
-            where_pos + 5,
-            &["ORDER BY", "GROUP BY", "LIMIT", "OFFSET", "HAVING", ";"],
-        );
-        let clause = sql[where_pos + 5..end].trim();
-        if clause.is_empty()
-            || Self::find_top_level_keyword(clause, "AND").is_some()
-            || Self::find_top_level_keyword(clause, "OR").is_some()
-        {
-            return None;
-        }
-
-        let upper = clause.to_uppercase();
-        if upper.ends_with(" IS NOT NULL") {
-            return Some(Predicate {
-                column: clause[..clause.len() - "IS NOT NULL".len()]
-                    .trim()
-                    .to_string(),
-                op: PredicateOp::IsNotNull,
-                value: PredicateValue::Null,
-            });
-        }
-        if upper.ends_with(" IS NULL") {
-            return Some(Predicate {
-                column: clause[..clause.len() - "IS NULL".len()].trim().to_string(),
-                op: PredicateOp::IsNull,
-                value: PredicateValue::Null,
-            });
-        }
-
-        if let Some(index) = Self::find_top_level_keyword(clause, "LIKE") {
-            return Some(Predicate {
-                column: clause[..index].trim().to_string(),
-                op: PredicateOp::Like,
-                value: Self::parse_predicate_value(clause[index + 4..].trim())?,
-            });
-        }
-
-        for (operator, predicate_op) in [
-            ("!=", PredicateOp::Ne),
-            ("<>", PredicateOp::Ne),
-            (">=", PredicateOp::Ge),
-            ("<=", PredicateOp::Le),
-            ("=", PredicateOp::Eq),
-            (">", PredicateOp::Gt),
-            ("<", PredicateOp::Lt),
-        ] {
-            if let Some(index) = Self::find_top_level_operator(clause, operator) {
-                return Some(Predicate {
-                    column: clause[..index].trim().to_string(),
-                    op: predicate_op,
-                    value: Self::parse_predicate_value(clause[index + operator.len()..].trim())?,
-                });
-            }
-        }
-
-        None
     }
 
     /// Plan a simple SQL query
@@ -3579,7 +3455,7 @@ impl CrossModelOptimizer {
                     top_k,
                 } => Some((
                     collection.clone(),
-                    Self::vector_source_from_query(query_vector),
+                    vector_query_parsing::vector_source_from_query(query_vector),
                     *top_k,
                 )),
                 SqlExtension::VectorDistance { right_literal, .. } => {
@@ -3587,7 +3463,7 @@ impl CrossModelOptimizer {
                     query.targets.first().map(|t| {
                         (
                             t.name.clone(),
-                            Self::vector_source_from_literal(right_literal),
+                            vector_query_parsing::vector_source_from_literal(right_literal),
                             10,
                         )
                     })
@@ -3620,20 +3496,18 @@ impl CrossModelOptimizer {
                 _ => None,
             })
             .unwrap_or_default();
+        let graph_shape = GraphQueryPlanShape::from_cypher(&cypher);
 
         Ok(PlanNode {
             id: self.next_id(),
             node_type: PlanNodeType::GraphTraversal {
                 cypher,
                 start_nodes: None,
+                source_alias: None,
             },
             estimated_cost: 50.0,
             estimated_rows: 100,
-            output_columns: vec![
-                "node_id".to_string(),
-                "label".to_string(),
-                "properties".to_string(),
-            ],
+            output_columns: graph_shape.output_columns,
             required_capabilities: CapabilitySet::new(),
         })
     }
@@ -3653,7 +3527,11 @@ impl CrossModelOptimizer {
 
         Ok(PlanNode {
             id: self.next_id(),
-            node_type: PlanNodeType::DocumentQuery { collection, filter },
+            node_type: PlanNodeType::DocumentQuery {
+                collection,
+                filter,
+                source_alias: None,
+            },
             estimated_cost: 30.0,
             estimated_rows: 500,
             output_columns: vec!["id".to_string(), "document".to_string()],
@@ -3672,6 +3550,9 @@ impl CrossModelOptimizer {
                 }
                 SqlExtension::Metrics { namespace } => {
                     Some((namespace.clone(), ObservabilityQueryType::Metrics))
+                }
+                SqlExtension::Traces { namespace } => {
+                    Some((namespace.clone(), ObservabilityQueryType::Traces))
                 }
                 _ => None,
             })
@@ -3716,51 +3597,65 @@ impl CrossModelOptimizer {
 
         for source in Self::ordered_query_sources(query) {
             let sub_plan = match source {
-                QuerySourceRef::Extension(SqlExtension::VectorSearch {
-                    collection,
-                    query_vector,
-                    top_k,
-                }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorSearch {
+                            collection,
+                            query_vector,
+                            top_k,
+                        },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::VectorSearch {
                         collection: collection.clone(),
                         top_k: *top_k,
-                        query_vector_source: Self::vector_source_from_query(query_vector),
+                        query_vector_source: vector_query_parsing::vector_source_from_query(
+                            query_vector,
+                        ),
                     },
                     estimated_cost: 10.0,
                     estimated_rows: *top_k as u64,
                     output_columns: vec!["id".to_string(), "score".to_string()],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::GraphQuery { cypher }) => PlanNode {
-                    id: self.next_id(),
-                    node_type: PlanNodeType::GraphTraversal {
-                        cypher: cypher.clone(),
-                        start_nodes: None,
-                    },
-                    estimated_cost: 50.0,
-                    estimated_rows: 100,
-                    output_columns: vec![
-                        "node_id".to_string(),
-                        "label".to_string(),
-                        "properties".to_string(),
-                    ],
-                    required_capabilities: CapabilitySet::new(),
-                },
-                QuerySourceRef::Extension(SqlExtension::DocumentQuery { collection, filter }) => {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::GraphQuery { cypher },
+                    ordinal,
+                } => {
+                    let graph_shape = GraphQueryPlanShape::from_cypher(cypher);
                     PlanNode {
                         id: self.next_id(),
-                        node_type: PlanNodeType::DocumentQuery {
-                            collection: collection.clone(),
-                            filter: filter.clone(),
+                        node_type: PlanNodeType::GraphTraversal {
+                            cypher: cypher.clone(),
+                            start_nodes: None,
+                            source_alias: Self::extension_alias(query, ordinal),
                         },
-                        estimated_cost: 30.0,
-                        estimated_rows: 500,
-                        output_columns: vec!["id".to_string(), "document".to_string()],
+                        estimated_cost: 50.0,
+                        estimated_rows: 100,
+                        output_columns: graph_shape.output_columns,
                         required_capabilities: CapabilitySet::new(),
                     }
                 }
-                QuerySourceRef::Extension(SqlExtension::Logs { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::DocumentQuery { collection, filter },
+                    ordinal,
+                } => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::DocumentQuery {
+                        collection: collection.clone(),
+                        filter: filter.clone(),
+                        source_alias: Self::extension_alias(query, ordinal),
+                    },
+                    estimated_cost: 30.0,
+                    estimated_rows: 500,
+                    output_columns: vec!["id".to_string(), "document".to_string()],
+                    required_capabilities: CapabilitySet::new(),
+                },
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Logs { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -3776,7 +3671,10 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::Metrics { namespace }) => PlanNode {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Metrics { namespace },
+                    ..
+                } => PlanNode {
                     id: self.next_id(),
                     node_type: PlanNodeType::ObservabilityQuery {
                         namespace: namespace.clone(),
@@ -3792,10 +3690,34 @@ impl CrossModelOptimizer {
                     ],
                     required_capabilities: CapabilitySet::new(),
                 },
-                QuerySourceRef::Extension(SqlExtension::VectorDistance {
-                    left_column,
-                    right_literal,
-                }) => {
+                QuerySourceRef::Extension {
+                    extension: SqlExtension::Traces { namespace },
+                    ..
+                } => PlanNode {
+                    id: self.next_id(),
+                    node_type: PlanNodeType::ObservabilityQuery {
+                        namespace: namespace.clone(),
+                        query_type: ObservabilityQueryType::Traces,
+                        time_range: None,
+                    },
+                    estimated_cost: 20.0,
+                    estimated_rows: 500,
+                    output_columns: vec![
+                        "trace_id".to_string(),
+                        "span_id".to_string(),
+                        "operation".to_string(),
+                        "duration_ns".to_string(),
+                    ],
+                    required_capabilities: CapabilitySet::new(),
+                },
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::VectorDistance {
+                            left_column,
+                            right_literal,
+                        },
+                    ..
+                } => {
                     let target = query
                         .targets
                         .first()
@@ -3805,7 +3727,9 @@ impl CrossModelOptimizer {
                         node_type: PlanNodeType::VectorSearch {
                             collection: target,
                             top_k: 10,
-                            query_vector_source: Self::vector_source_from_literal(right_literal),
+                            query_vector_source: vector_query_parsing::vector_source_from_literal(
+                                right_literal,
+                            ),
                         },
                         estimated_cost: 10.0,
                         estimated_rows: 10,
@@ -3825,6 +3749,45 @@ impl CrossModelOptimizer {
                     output_columns: vec!["*".to_string()],
                     required_capabilities: CapabilitySet::new(),
                 },
+                QuerySourceRef::Extension {
+                    extension:
+                        SqlExtension::RerankSearch {
+                            collection,
+                            query_text,
+                            query_vector,
+                            k,
+                            rank_profile,
+                        },
+                    ..
+                } => {
+                    // R-7c.4c.1: parallel arm to the
+                    // plan_federated_query_with_statistics path, but
+                    // without a stats-table lookup (cost falls back to
+                    // the default vector-search heuristic).
+                    let rerank_cost_factor = if rank_profile.is_some() { 2.5 } else { 1.0 };
+                    PlanNode {
+                        id: self.next_id(),
+                        node_type: PlanNodeType::RerankSearch {
+                            collection: collection.clone(),
+                            query_text: query_text.clone(),
+                            query_vector_source: vector_query_parsing::vector_source_from_query(
+                                query_vector,
+                            ),
+                            k: *k,
+                            rank_profile: rank_profile.clone(),
+                        },
+                        estimated_cost: 10.0 * rerank_cost_factor,
+                        estimated_rows: *k as u64,
+                        output_columns: vec![
+                            "id".to_string(),
+                            "score".to_string(),
+                            "phase".to_string(),
+                            "match_features".to_string(),
+                            "summary_features".to_string(),
+                        ],
+                        required_capabilities: CapabilitySet::new(),
+                    }
+                }
             };
             sub_plans.push(sub_plan);
         }
@@ -3862,56 +3825,6 @@ impl CrossModelOptimizer {
         } else {
             Err(anyhow!("No valid plan nodes generated"))
         }
-    }
-
-    fn vector_source_from_query(query: &VectorQuery) -> VectorSource {
-        match query {
-            VectorQuery::Literal(vector) => VectorSource::Literal(vector.clone()),
-            VectorQuery::Expression(expr) => Self::vector_source_from_expression(expr),
-        }
-    }
-
-    fn vector_source_from_literal(raw: &str) -> VectorSource {
-        Self::parse_vector_literal(raw).map_or_else(
-            || Self::vector_source_from_expression(raw),
-            VectorSource::Literal,
-        )
-    }
-
-    fn vector_source_from_expression(expr: &str) -> VectorSource {
-        let trimmed = expr.trim();
-        if let Some((table, column)) = trimmed.split_once('.') {
-            VectorSource::ColumnRef {
-                table: table.trim().to_string(),
-                column: column.trim().to_string(),
-            }
-        } else {
-            VectorSource::Expression(trimmed.to_string())
-        }
-    }
-
-    fn parse_vector_literal(raw: &str) -> Option<Vec<f32>> {
-        let trimmed = raw.trim();
-        let without_cast = trimmed
-            .strip_suffix("::vector")
-            .or_else(|| trimmed.strip_suffix("::VECTOR"))
-            .unwrap_or(trimmed)
-            .trim();
-        let unquoted = without_cast.trim_matches('\'').trim_matches('"').trim();
-
-        if !(unquoted.starts_with('[') && unquoted.ends_with(']')) {
-            return None;
-        }
-
-        let inner = &unquoted[1..unquoted.len() - 1];
-        if inner.trim().is_empty() {
-            return Some(Vec::new());
-        }
-
-        inner
-            .split(',')
-            .map(|value| value.trim().parse::<f32>().ok())
-            .collect()
     }
 
     /// Apply optimization rules in order:
@@ -4174,7 +4087,11 @@ impl CrossModelOptimizer {
                     predicate_pushed: false,
                 })
             }
-            PlanNodeType::DocumentQuery { collection, filter } => {
+            PlanNodeType::DocumentQuery {
+                collection,
+                filter,
+                source_alias,
+            } => {
                 // Document queries can have filters pushed into them
                 if self.predicate_references_target(&predicate, collection) {
                     let new_filter = match filter {
@@ -4192,6 +4109,7 @@ impl CrossModelOptimizer {
                             node_type: PlanNodeType::DocumentQuery {
                                 collection: collection.clone(),
                                 filter: new_filter,
+                                source_alias: source_alias.clone(),
                             },
                             estimated_cost: node.estimated_cost * selectivity,
                             estimated_rows: ((node.estimated_rows as f64) * selectivity) as u64,
@@ -4286,15 +4204,16 @@ impl CrossModelOptimizer {
 
     /// Estimate selectivity of a predicate (fraction of rows that match)
     fn estimate_predicate_selectivity(&self, predicate: &Predicate) -> f64 {
+        let policy = &self.predicate_selectivity_policy;
         match predicate.op {
-            PredicateOp::Eq => 0.1, // Equality typically selects 10%
-            PredicateOp::Ne => 0.9, // Not equal selects 90%
-            PredicateOp::Lt | PredicateOp::Le | PredicateOp::Gt | PredicateOp::Ge => 0.3, // Range selects ~30%
-            PredicateOp::Like => 0.2,       // Pattern match ~20%
-            PredicateOp::In => 0.15,        // IN clause ~15%
-            PredicateOp::IsNull => 0.05,    // Null check ~5%
-            PredicateOp::IsNotNull => 0.95, // Not null ~95%
-            PredicateOp::Between => 0.25,   // Between ~25%
+            PredicateOp::Eq => policy.eq,
+            PredicateOp::Ne => policy.ne,
+            PredicateOp::Lt | PredicateOp::Le | PredicateOp::Gt | PredicateOp::Ge => policy.range,
+            PredicateOp::Like => policy.like,
+            PredicateOp::In => policy.in_list,
+            PredicateOp::IsNull => policy.is_null,
+            PredicateOp::IsNotNull => policy.is_not_null,
+            PredicateOp::Between => policy.between,
         }
     }
 
@@ -5272,11 +5191,11 @@ impl CrossModelOptimizer {
     }
 
     /// Build physical plan from logical plan
-    fn build_physical_plan(&self, plan: PlanNode) -> Result<QueryPlan> {
+    fn build_physical_plan(&self, plan: PlanNode) -> Result<FederatedQueryPlan> {
         let total_cost = self.calculate_total_cost(&plan);
         let involved_models = self.collect_involved_models(&plan);
 
-        Ok(QueryPlan {
+        Ok(FederatedQueryPlan {
             root: plan,
             total_cost,
             metadata: PlanMetadata {
@@ -5344,7 +5263,7 @@ impl CrossModelOptimizer {
                     models.push(*model_type);
                 }
             }
-            PlanNodeType::VectorSearch { .. } => {
+            PlanNodeType::VectorSearch { .. } | PlanNodeType::RerankSearch { .. } => {
                 if !models.contains(&ModelType::Vector) {
                     models.push(ModelType::Vector);
                 }
@@ -5445,1343 +5364,4 @@ pub fn select_join_strategy(left_rows: u64, right_rows: u64, has_index: bool) ->
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_optimizer_creation() {
-        let optimizer = CrossModelOptimizer::new();
-        assert!(optimizer.cost_models.contains_key(&ModelType::Vector));
-        assert!(optimizer.cost_models.contains_key(&ModelType::Graph));
-    }
-
-    #[test]
-    fn test_optimize_sql_query() {
-        let optimizer = CrossModelOptimizer::new();
-        let query = FederatedQuery {
-            sql: "SELECT * FROM users".to_string(),
-            query_type: QueryType::Sql,
-            extensions: vec![],
-            targets: vec![super::super::parser::QueryTarget {
-                name: "users".to_string(),
-                alias: None,
-                model_type: TargetModelType::Table,
-            }],
-            parameters: HashMap::new(),
-            is_cross_model_join: false,
-        };
-
-        let plan = optimizer
-            .optimize(&query)
-            .expect("optimize should succeed for valid query");
-        assert!(plan.total_cost > 0.0);
-        assert!(!plan.metadata.is_cross_model);
-    }
-
-    #[test]
-    fn test_optimize_vector_search() {
-        let optimizer = CrossModelOptimizer::new();
-        let query = FederatedQuery {
-            sql: "SELECT * FROM VECTOR_SEARCH('embeddings', '[0.1]', 10)".to_string(),
-            query_type: QueryType::VectorSearch,
-            extensions: vec![SqlExtension::VectorSearch {
-                collection: "embeddings".to_string(),
-                query_vector: VectorQuery::Literal(vec![0.1]),
-                top_k: 10,
-            }],
-            targets: vec![],
-            parameters: HashMap::new(),
-            is_cross_model_join: false,
-        };
-
-        let plan = optimizer
-            .optimize(&query)
-            .expect("optimize should succeed for vector search query");
-        assert!(plan.metadata.involved_models.contains(&ModelType::Vector));
-    }
-
-    #[test]
-    fn test_lateral_plan_preserves_sql_source_order_and_correlation() {
-        let parser = super::super::parser::FederatedParser::new();
-        let query = parser
-            .parse(
-                "SELECT * FROM DOCUMENT_QUERY('profiles') p JOIN LATERAL VECTOR_SEARCH('products', p.document.embedding, 1) v ON true",
-            )
-            .expect("parser should accept function-backed lateral query");
-        let optimizer = CrossModelOptimizer::new();
-
-        let plan = optimizer
-            .optimize(&query)
-            .expect("optimizer should preserve lateral source ordering");
-
-        match &plan.root.node_type {
-            PlanNodeType::NestedLoopJoin {
-                outer,
-                inner,
-                correlation,
-            } => {
-                assert!(matches!(
-                    outer.node_type,
-                    PlanNodeType::DocumentQuery { .. }
-                ));
-                assert!(matches!(inner.node_type, PlanNodeType::VectorSearch { .. }));
-                assert_eq!(correlation, &vec!["p.document.embedding".to_string()]);
-            }
-            other => panic!("expected nested-loop join, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_cost_model_defaults() {
-        let cost_model = CostModel::default();
-        assert_eq!(cost_model.row_scan_cost, 1.0);
-        assert_eq!(cost_model.index_lookup_cost, 0.1);
-    }
-
-    // ========================================================================
-    // OPTIMIZATION RULE TESTS
-    // ========================================================================
-
-    /// Helper to create a scan node
-    fn make_scan(optimizer: &CrossModelOptimizer, target: &str, cost: f64, rows: u64) -> PlanNode {
-        PlanNode {
-            id: optimizer.next_id(),
-            node_type: PlanNodeType::Scan {
-                target: target.to_string(),
-                model_type: ModelType::Relational,
-                predicates: vec![],
-            },
-            estimated_cost: cost,
-            estimated_rows: rows,
-            output_columns: vec!["id".to_string(), "name".to_string(), "value".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        }
-    }
-
-    /// Helper to create a filter node
-    fn make_filter(
-        optimizer: &CrossModelOptimizer,
-        input: PlanNode,
-        column: &str,
-        value: &str,
-    ) -> PlanNode {
-        PlanNode {
-            id: optimizer.next_id(),
-            node_type: PlanNodeType::Filter {
-                input: Box::new(input),
-                predicate: Predicate {
-                    column: column.to_string(),
-                    op: PredicateOp::Eq,
-                    value: PredicateValue::String(value.to_string()),
-                },
-            },
-            estimated_cost: 10.0,
-            estimated_rows: 100,
-            output_columns: vec!["id".to_string(), "name".to_string(), "value".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        }
-    }
-
-    /// Helper to create a hash join node
-    fn make_hash_join(
-        optimizer: &CrossModelOptimizer,
-        left: PlanNode,
-        right: PlanNode,
-    ) -> PlanNode {
-        PlanNode {
-            id: optimizer.next_id(),
-            node_type: PlanNodeType::HashJoin {
-                left: Box::new(left),
-                right: Box::new(right),
-                join_keys: vec![("id".to_string(), "id".to_string())],
-                join_type: JoinType::Inner,
-            },
-            estimated_cost: 200.0,
-            estimated_rows: 1000,
-            output_columns: vec!["*".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        }
-    }
-
-    #[test]
-    fn test_predicate_pushdown_to_scan() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: Filter(Scan(users))
-        let scan = make_scan(&optimizer, "users", 100.0, 1000);
-        let filter = make_filter(&optimizer, scan, "name", "Alice");
-
-        // Apply predicate pushdown
-        let optimized = optimizer
-            .push_predicates(filter)
-            .expect("push_predicates should succeed for filter node");
-
-        // The filter should be pushed into the scan
-        match &optimized.node_type {
-            PlanNodeType::Scan { predicates, .. } => {
-                assert_eq!(predicates.len(), 1);
-                assert_eq!(predicates[0].column, "name");
-            }
-            _ => panic!(
-                "Expected scan with pushed predicate, got {:?}",
-                optimized.node_type
-            ),
-        }
-
-        // Cost should be reduced (10% selectivity)
-        assert!(optimized.estimated_cost < 100.0);
-    }
-
-    #[test]
-    fn test_predicate_pushdown_through_join() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: Filter(HashJoin(Scan(users), Scan(orders)))
-        let users_scan = make_scan(&optimizer, "users", 100.0, 1000);
-        let orders_scan = make_scan(&optimizer, "orders", 150.0, 2000);
-        let join = make_hash_join(&optimizer, users_scan, orders_scan);
-        let filter = make_filter(&optimizer, join, "users.name", "Alice");
-
-        // Apply predicate pushdown
-        let optimized = optimizer
-            .push_predicates(filter)
-            .expect("push_predicates should succeed for filter with join");
-
-        // The filter should be pushed through the join
-        match &optimized.node_type {
-            PlanNodeType::HashJoin { left, .. } => {
-                // Left side should have the pushed predicate
-                match &left.node_type {
-                    PlanNodeType::Scan { predicates, .. } => {
-                        assert_eq!(predicates.len(), 1);
-                    }
-                    _ => panic!("Expected scan with pushed predicate on left"),
-                }
-            }
-            _ => panic!("Expected hash join at top level"),
-        }
-    }
-
-    #[test]
-    fn test_join_reordering_swaps_cheaper_to_left() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: HashJoin(expensive_scan, cheap_scan)
-        let expensive = make_scan(&optimizer, "big_table", 1000.0, 100000);
-        let cheap = make_scan(&optimizer, "small_table", 10.0, 100);
-        let join = make_hash_join(&optimizer, expensive, cheap);
-
-        // Apply join reordering
-        let optimized = optimizer
-            .reorder_joins(join)
-            .expect("reorder_joins should succeed for hash join");
-
-        // For inner joins, cheaper table should be on the left
-        match &optimized.node_type {
-            PlanNodeType::HashJoin { left, right, .. } => {
-                assert!(
-                    left.estimated_cost < right.estimated_cost,
-                    "Expected left ({}) to be cheaper than right ({})",
-                    left.estimated_cost,
-                    right.estimated_cost
-                );
-            }
-            _ => panic!("Expected hash join"),
-        }
-    }
-
-    #[test]
-    fn test_projection_pushdown() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: Project(Scan(users), [id, name])
-        let scan = make_scan(&optimizer, "users", 100.0, 1000);
-        let project = PlanNode {
-            id: optimizer.next_id(),
-            node_type: PlanNodeType::Project {
-                input: Box::new(scan),
-                columns: vec!["id".to_string(), "name".to_string()],
-            },
-            estimated_cost: 5.0,
-            estimated_rows: 1000,
-            output_columns: vec!["id".to_string(), "name".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        // Apply projection pushdown
-        let optimized = optimizer
-            .push_projections(project)
-            .expect("push_projections should succeed for project node");
-
-        // The projection should be pushed down and the scan should only read needed columns
-        // Cost should be reduced
-        assert!(optimized.estimated_cost <= 105.0);
-    }
-
-    #[test]
-    fn test_parallel_execution_identification_hash_join() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: HashJoin(Scan(a), Scan(b))
-        let scan_a = make_scan(&optimizer, "table_a", 100.0, 1000);
-        let scan_b = make_scan(&optimizer, "table_b", 100.0, 1000);
-        let join = make_hash_join(&optimizer, scan_a, scan_b);
-
-        // Apply parallel identification
-        let optimized = optimizer
-            .identify_parallelism(join)
-            .expect("identify_parallelism should succeed for hash join");
-
-        // Cost should account for parallel execution (max of children, not sum)
-        match &optimized.node_type {
-            PlanNodeType::HashJoin { left, right, .. } => {
-                // Parallel cost model: max(left, right) + overhead
-                // This should be less than left + right + join overhead
-                assert!(
-                    optimized.estimated_cost < left.estimated_cost + right.estimated_cost + 200.0,
-                    "Parallel cost {} should be less than sequential {}",
-                    optimized.estimated_cost,
-                    left.estimated_cost + right.estimated_cost + 200.0
-                );
-            }
-            _ => panic!("Expected hash join"),
-        }
-    }
-
-    #[test]
-    fn test_parallel_execution_identification_union() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: Union(Scan(a), Scan(b), Scan(c))
-        let scan_a = make_scan(&optimizer, "table_a", 50.0, 500);
-        let scan_b = make_scan(&optimizer, "table_b", 100.0, 1000);
-        let scan_c = make_scan(&optimizer, "table_c", 75.0, 750);
-
-        let union = PlanNode {
-            id: optimizer.next_id(),
-            node_type: PlanNodeType::Union {
-                inputs: vec![scan_a, scan_b, scan_c],
-                all: true,
-            },
-            estimated_cost: 250.0,
-            estimated_rows: 2250,
-            output_columns: vec!["*".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        // Apply parallel identification
-        let optimized = optimizer
-            .identify_parallelism(union)
-            .expect("identify_parallelism should succeed for union node");
-
-        // All union inputs can run in parallel, cost should be max + overhead
-        assert!(
-            optimized.estimated_cost < 250.0,
-            "Union cost {} should be less than original 250.0 due to parallelism",
-            optimized.estimated_cost
-        );
-    }
-
-    #[test]
-    fn test_find_parallel_stages() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: HashJoin(HashJoin(a, b), c)
-        let scan_a = make_scan(&optimizer, "table_a", 50.0, 500);
-        let scan_b = make_scan(&optimizer, "table_b", 100.0, 1000);
-        let scan_c = make_scan(&optimizer, "table_c", 75.0, 750);
-
-        let inner_join = make_hash_join(&optimizer, scan_a.clone(), scan_b.clone());
-        let outer_join = make_hash_join(&optimizer, inner_join.clone(), scan_c.clone());
-
-        let stages = optimizer.find_parallel_stages(&outer_join);
-
-        // Should identify that a and b can run in parallel
-        // and that (a join b) and c can run in parallel
-        assert!(stages.len() >= 1, "Should find at least one parallel stage");
-    }
-
-    #[test]
-    fn test_predicate_selectivity_estimation() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Equality predicate should have ~10% selectivity
-        let eq_pred = Predicate {
-            column: "id".to_string(),
-            op: PredicateOp::Eq,
-            value: PredicateValue::Int(42),
-        };
-        assert!((optimizer.estimate_predicate_selectivity(&eq_pred) - 0.1).abs() < 0.001);
-
-        // Not equal should have ~90% selectivity
-        let ne_pred = Predicate {
-            column: "status".to_string(),
-            op: PredicateOp::Ne,
-            value: PredicateValue::String("deleted".to_string()),
-        };
-        assert!((optimizer.estimate_predicate_selectivity(&ne_pred) - 0.9).abs() < 0.001);
-
-        // Range predicates should have ~30% selectivity
-        let range_pred = Predicate {
-            column: "price".to_string(),
-            op: PredicateOp::Gt,
-            value: PredicateValue::Float(100.0),
-        };
-        assert!((optimizer.estimate_predicate_selectivity(&range_pred) - 0.3).abs() < 0.001);
-    }
-
-    #[test]
-    fn test_predicate_to_string() {
-        let optimizer = CrossModelOptimizer::new();
-
-        let pred = Predicate {
-            column: "name".to_string(),
-            op: PredicateOp::Eq,
-            value: PredicateValue::String("Alice".to_string()),
-        };
-        assert_eq!(optimizer.predicate_to_string(&pred), "name = 'Alice'");
-
-        let in_pred = Predicate {
-            column: "status".to_string(),
-            op: PredicateOp::In,
-            value: PredicateValue::List(vec![
-                PredicateValue::String("active".to_string()),
-                PredicateValue::String("pending".to_string()),
-            ]),
-        };
-        assert_eq!(
-            optimizer.predicate_to_string(&in_pred),
-            "status IN ('active', 'pending')"
-        );
-    }
-
-    #[test]
-    fn test_optimization_reduces_cost() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create a complex plan that should benefit from all optimizations
-        let scan_users = make_scan(&optimizer, "users", 100.0, 1000);
-        let scan_orders = make_scan(&optimizer, "orders", 200.0, 5000);
-        let join = make_hash_join(&optimizer, scan_users, scan_orders);
-        let filter = make_filter(&optimizer, join, "users.status", "active");
-
-        let original_cost = optimizer.calculate_total_cost(&filter);
-
-        // Apply all optimizations
-        let optimized = optimizer
-            .apply_optimizations(filter)
-            .expect("apply_optimizations should succeed for filter node");
-        let optimized_cost = optimizer.calculate_total_cost(&optimized);
-
-        // Optimized plan should have lower or equal cost
-        // Note: Allow larger variance (1.5x) because predicate pushdown may initially
-        // increase intermediate costs while ultimately reducing overall execution cost.
-        // The optimizer focuses on reducing I/O and network costs, not just the cost metric.
-        assert!(
-            optimized_cost <= original_cost * 1.5,
-            "Optimized cost {} should not be much higher than original {}",
-            optimized_cost,
-            original_cost
-        );
-    }
-
-    #[test]
-    fn test_collect_required_columns() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create: Filter(Project(Scan(users), [id, name, email]), name = 'Alice')
-        let scan = make_scan(&optimizer, "users", 100.0, 1000);
-        let project = PlanNode {
-            id: optimizer.next_id(),
-            node_type: PlanNodeType::Project {
-                input: Box::new(scan),
-                columns: vec!["id".to_string(), "name".to_string(), "email".to_string()],
-            },
-            estimated_cost: 5.0,
-            estimated_rows: 1000,
-            output_columns: vec!["id".to_string(), "name".to_string(), "email".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-        let filter = make_filter(&optimizer, project, "name", "Alice");
-
-        let required = optimizer.collect_required_columns(&filter);
-
-        // Should include all projected columns plus the filter column
-        assert!(required.contains(&"id".to_string()));
-        assert!(required.contains(&"name".to_string()));
-        assert!(required.contains(&"email".to_string()));
-    }
-
-    #[test]
-    fn test_greedy_join_order() {
-        let optimizer = CrossModelOptimizer::new();
-
-        // Create relations with different costs
-        let mut relations = vec![
-            make_scan(&optimizer, "big", 1000.0, 100000),
-            make_scan(&optimizer, "small", 10.0, 100),
-            make_scan(&optimizer, "medium", 100.0, 1000),
-        ];
-
-        let result = optimizer
-            .greedy_join_order(
-                &mut relations,
-                &[("id".to_string(), "id".to_string())],
-                &JoinType::Inner,
-            )
-            .expect("greedy_join_order should succeed for valid relations");
-
-        // Result should be a nested join tree starting with smallest tables
-        match &result.node_type {
-            PlanNodeType::HashJoin { .. } => {
-                // The greedy algorithm should have built a left-deep tree
-                // with the cheapest tables joined first
-                assert!(result.estimated_cost > 0.0);
-            }
-            _ => panic!("Expected hash join as result"),
-        }
-    }
-
-    // ========================================================================
-    // JOIN STRATEGY SELECTION TESTS
-    // ========================================================================
-
-    #[test]
-    fn test_join_strategy_index_join_small_right() {
-        let strategy = select_join_strategy(50_000, 500, true);
-        assert_eq!(strategy, JoinStrategy::IndexJoin);
-    }
-
-    #[test]
-    fn test_join_strategy_hash_join_large_both() {
-        let strategy = select_join_strategy(10_000, 5_000, false);
-        assert_eq!(strategy, JoinStrategy::HashJoin);
-    }
-
-    #[test]
-    fn test_join_strategy_nested_loop_small_inputs() {
-        let strategy = select_join_strategy(100, 50, false);
-        assert_eq!(strategy, JoinStrategy::NestedLoopJoin);
-    }
-
-    #[test]
-    fn test_join_strategy_hash_over_index_when_right_large() {
-        // Even with an index, if the right side is large prefer hash join
-        let strategy = select_join_strategy(5_000, 5_000, true);
-        assert_eq!(strategy, JoinStrategy::HashJoin);
-    }
-
-    #[test]
-    fn test_join_strategy_nested_loop_one_side_small() {
-        let strategy = select_join_strategy(500, 50, true);
-        assert_eq!(strategy, JoinStrategy::IndexJoin);
-    }
-
-    // ========================================================================
-    // Runtime Statistics Feedback Tests
-    // ========================================================================
-
-    #[test]
-    fn test_runtime_stats_collector_creation() {
-        let collector = RuntimeStatisticsCollector::new(500);
-        let snapshot = collector.snapshot();
-        assert_eq!(snapshot.tracked_operations, 0);
-        assert_eq!(snapshot.total_observations, 0);
-    }
-
-    #[test]
-    fn test_runtime_stats_record_single_feedback() {
-        let collector = RuntimeStatisticsCollector::default();
-        let feedback = ExecutionFeedback {
-            operation_key: "vector_search:embeddings:top10".to_string(),
-            estimated_cardinality: 10,
-            actual_cardinality: 8,
-            estimated_cost: 100.0,
-            actual_latency_ms: 12.5,
-            ..Default::default()
-        };
-
-        collector.record_feedback(&feedback);
-
-        let snapshot = collector.snapshot();
-        assert_eq!(snapshot.cardinality_entries, 1);
-        assert_eq!(snapshot.latency_entries, 1);
-
-        // Check correction ratio was recorded
-        let correction = collector
-            .cardinality_correction("vector_search:embeddings:top10")
-            .expect("correction should exist");
-        // Initial ratio=1.0, actual/est=0.8, EMA with alpha=0.3 → 1.0*0.7 + 0.8*0.3 = 0.94
-        assert!((correction - 0.94).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_runtime_stats_ema_convergence() {
-        let collector = RuntimeStatisticsCollector::default();
-
-        // Simulate 20 executions where actual is consistently 2x estimated
-        for _ in 0..20 {
-            collector.record_feedback(&ExecutionFeedback {
-                operation_key: "graph:traverse:depth3".to_string(),
-                estimated_cardinality: 100,
-                actual_cardinality: 200,
-                estimated_cost: 50.0,
-                actual_latency_ms: 25.0,
-                ..Default::default()
-            });
-        }
-
-        let correction = collector
-            .cardinality_correction("graph:traverse:depth3")
-            .expect("correction should exist after 20 observations");
-        // After 20 iterations of EMA(alpha=0.3) toward ratio=2.0, should be close to 2.0
-        assert!(
-            correction > 1.8,
-            "correction ratio should converge toward 2.0, got {}",
-            correction
-        );
-    }
-
-    #[test]
-    fn test_runtime_stats_latency_tracking() {
-        let collector = RuntimeStatisticsCollector::default();
-
-        collector.record_feedback(&ExecutionFeedback {
-            operation_key: "doc_query:users".to_string(),
-            estimated_cardinality: 50,
-            actual_cardinality: 50,
-            estimated_cost: 200.0,
-            actual_latency_ms: 15.0,
-            ..Default::default()
-        });
-
-        let avg = collector
-            .avg_latency("doc_query:users")
-            .expect("latency should be tracked");
-        assert!((avg - 15.0).abs() < 0.1);
-
-        let ratio = collector
-            .cost_latency_ratio("doc_query:users")
-            .expect("ratio should be tracked");
-        // 15.0 / 200.0 = 0.075
-        assert!((ratio - 0.075).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_runtime_stats_selectivity_tracking() {
-        let collector = RuntimeStatisticsCollector::default();
-
-        collector.record_feedback(&ExecutionFeedback {
-            operation_key: "filter:age>30".to_string(),
-            estimated_cardinality: 30,
-            actual_cardinality: 30,
-            estimated_cost: 10.0,
-            actual_latency_ms: 1.0,
-            rows_scanned: Some(100),
-            ..Default::default()
-        });
-
-        let selectivity = collector
-            .calibrated_selectivity("filter:age>30")
-            .expect("selectivity should be tracked");
-        // 30/100 = 0.3
-        assert!((selectivity - 0.3).abs() < 0.01);
-    }
-
-    #[test]
-    fn test_runtime_stats_plan_invalidation_detection() {
-        let collector = RuntimeStatisticsCollector::default();
-
-        // Establish a baseline cost-to-latency ratio
-        for _ in 0..5 {
-            collector.record_feedback(&ExecutionFeedback {
-                operation_key: "vector_search:imgs".to_string(),
-                estimated_cardinality: 10,
-                actual_cardinality: 10,
-                estimated_cost: 50.0,
-                actual_latency_ms: 5.0, // ratio = 0.1
-                ..Default::default()
-            });
-        }
-
-        // Normal latency: should NOT invalidate
-        assert!(!collector.should_invalidate_plan("vector_search:imgs", 50.0, 6.0));
-
-        // 3x+ regression: should invalidate
-        // Expected = 50.0 * 0.1 = 5.0, threshold = 15.0
-        assert!(collector.should_invalidate_plan("vector_search:imgs", 50.0, 20.0));
-    }
-
-    #[test]
-    fn test_runtime_stats_unknown_operation_no_invalidation() {
-        let collector = RuntimeStatisticsCollector::default();
-        // No history for this op — should not recommend invalidation
-        assert!(!collector.should_invalidate_plan("unknown:op", 100.0, 500.0));
-    }
-
-    #[test]
-    fn test_advanced_cost_estimator_feedback_update() {
-        let mut estimator = AdvancedCostEstimator::new();
-        let initial_cpu = estimator.cpu_cycles_per_distance;
-
-        estimator.update_from_feedback(&ExecutionFeedback {
-            observed_cpu_per_distance: Some(0.005),
-            ..Default::default()
-        });
-
-        // EMA: 0.001 * 0.8 + 0.005 * 0.2 = 0.0018
-        let expected = initial_cpu * 0.8 + 0.005 * 0.2;
-        assert!(
-            (estimator.cpu_cycles_per_distance - expected).abs() < 1e-6,
-            "cpu cost should update via EMA, got {}",
-            estimator.cpu_cycles_per_distance
-        );
-    }
-
-    #[test]
-    fn test_advanced_cost_estimator_multiple_feedback_convergence() {
-        let mut estimator = AdvancedCostEstimator::new();
-
-        // Apply 50 feedbacks with observed io_cost = 2.0 (initial is 1.0)
-        for _ in 0..50 {
-            estimator.update_from_feedback(&ExecutionFeedback {
-                observed_io_per_page: Some(2.0),
-                ..Default::default()
-            });
-        }
-
-        assert!(
-            (estimator.io_cost_per_page - 2.0).abs() < 0.05,
-            "io_cost_per_page should converge to 2.0, got {}",
-            estimator.io_cost_per_page
-        );
-    }
-
-    #[test]
-    fn test_optimizer_record_execution_feedback() {
-        let mut optimizer = CrossModelOptimizer::new();
-
-        // Record feedback for a vector search
-        optimizer.record_execution_feedback(ExecutionFeedback {
-            operation_key: "vector_search:embeddings:top10".to_string(),
-            estimated_cardinality: 10,
-            actual_cardinality: 7,
-            estimated_cost: 100.0,
-            actual_latency_ms: 8.0,
-            ..Default::default()
-        });
-
-        // Calibrated cardinality should now differ from base
-        let calibrated = optimizer.calibrated_cardinality("vector_search:embeddings:top10", 10);
-        // With ratio ~0.94 (EMA from 1.0 toward 0.7): 10 * 0.94 = 9
-        assert!(
-            calibrated < 10,
-            "calibrated should be less than base, got {}",
-            calibrated
-        );
-    }
-
-    #[test]
-    fn test_optimizer_plan_invalidation_on_regression() {
-        let mut optimizer = CrossModelOptimizer::new();
-
-        // First, build up a baseline
-        for _ in 0..10 {
-            optimizer.record_execution_feedback(ExecutionFeedback {
-                operation_key: "vector_search:products:top5".to_string(),
-                estimated_cardinality: 5,
-                actual_cardinality: 5,
-                estimated_cost: 80.0,
-                actual_latency_ms: 4.0, // ratio ~0.05
-                ..Default::default()
-            });
-        }
-
-        // Cache a plan for "products"
-        let query = FederatedQuery {
-            sql: "SELECT * FROM VECTOR_SEARCH('products', '[0.1]', 5)".to_string(),
-            query_type: QueryType::VectorSearch,
-            extensions: vec![SqlExtension::VectorSearch {
-                collection: "products".to_string(),
-                query_vector: VectorQuery::Literal(vec![0.1]),
-                top_k: 5,
-            }],
-            targets: vec![],
-            parameters: HashMap::new(),
-            is_cross_model_join: false,
-        };
-        let _plan = optimizer.optimize(&query).unwrap();
-        let cache_key = PlanCacheKey::from_query(&query);
-        assert!(optimizer.plan_cache.get(&cache_key).is_some());
-
-        // Now record a massive regression
-        optimizer.record_execution_feedback(ExecutionFeedback {
-            operation_key: "vector_search:products:top5".to_string(),
-            estimated_cardinality: 5,
-            actual_cardinality: 5,
-            estimated_cost: 80.0,
-            actual_latency_ms: 500.0, // 125x regression
-            ..Default::default()
-        });
-
-        // The plan for "products" should have been invalidated
-        assert!(
-            optimizer.plan_cache.get(&cache_key).is_none(),
-            "cached plan should be invalidated after performance regression"
-        );
-    }
-
-    #[test]
-    fn test_runtime_stats_snapshot_completeness() {
-        let collector = RuntimeStatisticsCollector::new(100);
-
-        // Record various operation types
-        collector.record_feedback(&ExecutionFeedback {
-            operation_key: "op1".to_string(),
-            estimated_cardinality: 10,
-            actual_cardinality: 12,
-            estimated_cost: 50.0,
-            actual_latency_ms: 5.0,
-            rows_scanned: Some(100),
-            ..Default::default()
-        });
-        collector.record_feedback(&ExecutionFeedback {
-            operation_key: "op2".to_string(),
-            estimated_cardinality: 100,
-            actual_cardinality: 80,
-            estimated_cost: 200.0,
-            actual_latency_ms: 20.0,
-            ..Default::default()
-        });
-
-        let snap = collector.snapshot();
-        assert_eq!(snap.cardinality_entries, 2);
-        assert_eq!(snap.latency_entries, 2);
-        assert_eq!(snap.selectivity_entries, 1); // Only op1 had rows_scanned
-        assert!(snap.total_observations >= 4); // 2 cardinality + 2 latency minimum
-    }
-
-    #[test]
-    fn test_calibrated_cardinality_falls_back_to_estimator() {
-        let mut optimizer = CrossModelOptimizer::new();
-
-        // Record in the cardinality_estimator directly (bypassing runtime stats)
-        optimizer
-            .cardinality_estimator
-            .record_actual_cardinality("legacy:op".to_string(), 100, 50);
-
-        // Should use the cardinality estimator as fallback
-        let calibrated = optimizer.calibrated_cardinality("legacy:op", 200);
-        // ratio = 50/100 = 0.5 → 200 * 0.5 = 100
-        assert_eq!(calibrated, 100);
-    }
-
-    #[test]
-    fn test_runtime_stats_compaction() {
-        let collector = RuntimeStatisticsCollector::new(5);
-
-        // Insert more than 2 * max_history_per_op entries to trigger compaction
-        for i in 0..12 {
-            collector.record_feedback(&ExecutionFeedback {
-                operation_key: format!("op_{}", i),
-                estimated_cardinality: 10,
-                actual_cardinality: 10,
-                estimated_cost: 10.0,
-                actual_latency_ms: 1.0,
-                ..Default::default()
-            });
-        }
-
-        let snap = collector.snapshot();
-        // After compaction, cardinality entries should be significantly less than 12
-        // Compaction triggers at > 2*max (10) and removes down to max (5), then
-        // remaining inserts may add a few more.
-        assert!(
-            snap.cardinality_entries < 12,
-            "compaction should have removed entries, got {}",
-            snap.cardinality_entries
-        );
-    }
-
-    // ============================================================================
-    // CAPABILITY INFERENCE TESTS
-    // ============================================================================
-
-    #[test]
-    fn test_scan_node_capability_inference() {
-        // Test basic scan with vector model
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::Scan {
-                target: "vectors".to_string(),
-                model_type: ModelType::Vector,
-                predicates: vec![],
-            },
-            estimated_cost: 100.0,
-            estimated_rows: 1000,
-            output_columns: vec!["id".to_string(), "embedding".to_string()],
-            required_capabilities: CapabilitySet::new(), // Empty initially
-        };
-
-        let caps = node.infer_capabilities();
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::Scan,
-            Capability::VectorSearch,
-            Capability::CosineDistance,
-        ])));
-    }
-
-    #[test]
-    fn test_scan_with_predicates_capability_inference() {
-        // Test scan with predicates (should add filter capabilities)
-        let predicate = Predicate {
-            column: "category".to_string(),
-            op: PredicateOp::Eq,
-            value: PredicateValue::String("electronics".to_string()),
-        };
-
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::Scan {
-                target: "products".to_string(),
-                model_type: ModelType::Vector,
-                predicates: vec![predicate],
-            },
-            estimated_cost: 100.0,
-            estimated_rows: 1000,
-            output_columns: vec!["id".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::Scan,
-            Capability::Filter,
-            Capability::PredicatePushdown,
-        ])));
-    }
-
-    #[test]
-    fn test_vector_search_capability_inference() {
-        // Test vector search node
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::VectorSearch {
-                collection: "embeddings".to_string(),
-                top_k: 10,
-                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
-            },
-            estimated_cost: 50.0,
-            estimated_rows: 10,
-            output_columns: vec!["id".to_string(), "score".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Scan,
-            Capability::CosineDistance,
-            Capability::EuclideanDistance,
-            Capability::DotProduct,
-        ])));
-    }
-
-    #[test]
-    fn test_graph_traversal_capability_inference() {
-        // Test graph traversal node
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::GraphTraversal {
-                cypher: "MATCH (a)-[:KNOWS]->(b) RETURN b".to_string(),
-                start_nodes: None,
-            },
-            estimated_cost: 75.0,
-            estimated_rows: 100,
-            output_columns: vec!["name".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::GraphQuery,
-            Capability::GraphTraversal,
-            Capability::PatternMatching,
-            Capability::Scan,
-        ])));
-    }
-
-    #[test]
-    fn test_document_query_capability_inference() {
-        // Test document query node
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::DocumentQuery {
-                collection: "docs".to_string(),
-                filter: Some("status = 'active'".to_string()),
-            },
-            estimated_cost: 60.0,
-            estimated_rows: 500,
-            output_columns: vec!["id".to_string(), "content".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::DocumentQuery,
-            Capability::Scan,
-            Capability::FullTextSearch,
-            Capability::JSONPathQueries,
-            Capability::Filter,
-            Capability::PredicatePushdown,
-        ])));
-    }
-
-    #[test]
-    fn test_observability_query_capability_inference() {
-        // Test logs query
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::ObservabilityQuery {
-                namespace: "production".to_string(),
-                query_type: ObservabilityQueryType::Logs,
-                time_range: None,
-            },
-            estimated_cost: 40.0,
-            estimated_rows: 1000,
-            output_columns: vec!["timestamp".to_string(), "message".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::LogQuery,
-            Capability::LogAggregation,
-            Capability::Scan,
-        ])));
-    }
-
-    #[test]
-    fn test_join_capability_inference() {
-        // Test hash join with two child nodes
-        let left_child = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::Scan {
-                target: "users".to_string(),
-                model_type: ModelType::Document,
-                predicates: vec![],
-            },
-            estimated_cost: 50.0,
-            estimated_rows: 100,
-            output_columns: vec!["id".to_string(), "name".to_string()],
-            required_capabilities: CapabilitySet::from_capabilities(&[
-                Capability::Scan,
-                Capability::DocumentQuery,
-            ]),
-        };
-
-        let right_child = PlanNode {
-            id: 2,
-            node_type: PlanNodeType::VectorSearch {
-                collection: "embeddings".to_string(),
-                top_k: 5,
-                query_vector_source: VectorSource::Literal(vec![0.1; 128]),
-            },
-            estimated_cost: 30.0,
-            estimated_rows: 5,
-            output_columns: vec!["id".to_string(), "score".to_string()],
-            required_capabilities: CapabilitySet::from_capabilities(&[
-                Capability::VectorSearch,
-                Capability::Scan,
-            ]),
-        };
-
-        let node = PlanNode {
-            id: 3,
-            node_type: PlanNodeType::HashJoin {
-                left: Box::new(left_child.clone()),
-                right: Box::new(right_child.clone()),
-                join_keys: vec![("user_id".to_string(), "id".to_string())],
-                join_type: JoinType::Inner,
-            },
-            estimated_cost: 150.0,
-            estimated_rows: 500,
-            output_columns: vec!["name".to_string(), "score".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        // Should include Join, Scan, and capabilities from both children
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::Join,
-            Capability::Scan,
-            Capability::DocumentQuery,
-            Capability::VectorSearch,
-        ])));
-    }
-
-    #[test]
-    fn test_filter_capability_inference() {
-        // Test filter node
-        let child = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::Scan {
-                target: "products".to_string(),
-                model_type: ModelType::Vector,
-                predicates: vec![],
-            },
-            estimated_cost: 100.0,
-            estimated_rows: 1000,
-            output_columns: vec!["id".to_string()],
-            required_capabilities: CapabilitySet::from_capabilities(&[
-                Capability::Scan,
-                Capability::VectorSearch,
-            ]),
-        };
-
-        let predicate = Predicate {
-            column: "price".to_string(),
-            op: PredicateOp::Lt,
-            value: PredicateValue::Float(100.0),
-        };
-
-        let node = PlanNode {
-            id: 2,
-            node_type: PlanNodeType::Filter {
-                input: Box::new(child.clone()),
-                predicate,
-            },
-            estimated_cost: 80.0,
-            estimated_rows: 500,
-            output_columns: vec!["id".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        // Should include Filter and child capabilities
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::Filter,
-            Capability::PredicatePushdown,
-            Capability::Scan,
-            Capability::VectorSearch,
-        ])));
-    }
-
-    #[test]
-    fn test_aggregate_capability_inference() {
-        // Test aggregate node
-        let child = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::Scan {
-                target: "sales".to_string(),
-                model_type: ModelType::Document,
-                predicates: vec![],
-            },
-            estimated_cost: 100.0,
-            estimated_rows: 1000,
-            output_columns: vec!["category".to_string(), "amount".to_string()],
-            required_capabilities: CapabilitySet::from_capabilities(&[
-                Capability::Scan,
-                Capability::DocumentQuery,
-            ]),
-        };
-
-        let node = PlanNode {
-            id: 2,
-            node_type: PlanNodeType::Aggregate {
-                input: Box::new(child.clone()),
-                group_by: vec!["category".to_string()],
-                aggregates: vec![AggregateExpr {
-                    function: AggregateFunction::Sum,
-                    column: Some("amount".to_string()),
-                    alias: "total".to_string(),
-                }],
-            },
-            estimated_cost: 120.0,
-            estimated_rows: 10,
-            output_columns: vec!["category".to_string(), "total".to_string()],
-            required_capabilities: CapabilitySet::new(),
-        };
-
-        let caps = node.infer_capabilities();
-        // Should include Aggregate and child capabilities
-        assert!(caps.contains(&CapabilitySet::from_capabilities(&[
-            Capability::Aggregate,
-            Capability::Scan,
-            Capability::DocumentQuery,
-        ])));
-    }
-
-    #[test]
-    fn test_pre_inferred_capabilities_used() {
-        // Test that pre-inferred capabilities are used without re-inferring
-        let pre_inferred =
-            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
-
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::VectorSearch {
-                collection: "embeddings".to_string(),
-                top_k: 10,
-                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
-            },
-            estimated_cost: 50.0,
-            estimated_rows: 10,
-            output_columns: vec!["id".to_string()],
-            required_capabilities: pre_inferred.clone(),
-        };
-
-        let caps = node.infer_capabilities();
-        // Should return the pre-inferred capabilities, not re-infer
-        assert_eq!(caps, pre_inferred);
-    }
-
-    #[test]
-    fn test_honest_capability_reporting() {
-        // Test that honest capability reporting correctly identifies gaps
-        let claimed_capabilities = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-            Capability::PredicatePushdown,
-            Capability::CosineDistance,
-        ]);
-
-        let actual_engine_capabilities = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-            // Note: Missing PredicatePushdown and CosineDistance
-        ]);
-
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::Scan {
-                target: "test_collection".to_string(),
-                model_type: ModelType::Vector,
-                predicates: vec![],
-            },
-            estimated_cost: 50.0,
-            estimated_rows: 100,
-            output_columns: vec!["id".to_string(), "vector".to_string()],
-            required_capabilities: claimed_capabilities.clone(),
-        };
-
-        let (honest, missing, extra) =
-            node.get_capability_honesty_report(&actual_engine_capabilities);
-
-        // Honest capabilities should only include what's actually available
-        assert!(honest.contains_capability(&Capability::VectorSearch));
-        assert!(honest.contains_capability(&Capability::Filter));
-        assert!(!honest.contains_capability(&Capability::PredicatePushdown));
-
-        // Missing capabilities should include the gap
-        assert!(missing.contains_capability(&Capability::PredicatePushdown));
-        assert!(missing.contains_capability(&Capability::CosineDistance));
-        assert!(!missing.contains_capability(&Capability::VectorSearch));
-
-        // Extra capabilities show what's available but not claimed
-        assert!(!extra.contains_capability(&Capability::VectorSearch));
-    }
-
-    #[test]
-    fn test_capability_validation_passes_when_supported() {
-        // Test that validation passes when all claimed capabilities are supported
-        let claimed_capabilities =
-            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
-
-        let engine_capabilities = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::Filter,
-            Capability::PredicatePushdown, // Extra capability not claimed
-        ]);
-
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::VectorSearch {
-                collection: "embeddings".to_string(),
-                top_k: 10,
-                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
-            },
-            estimated_cost: 50.0,
-            estimated_rows: 10,
-            output_columns: vec!["id".to_string()],
-            required_capabilities: claimed_capabilities.clone(),
-        };
-
-        // Should pass validation
-        assert!(
-            node.validate_capabilities(&engine_capabilities, "test node")
-                .is_ok()
-        );
-    }
-
-    #[test]
-    fn test_capability_validation_fails_when_unsupported() {
-        // Test that validation fails when claimed capabilities are not supported
-        let claimed_capabilities = CapabilitySet::from_capabilities(&[
-            Capability::VectorSearch,
-            Capability::GraphQuery, // Not supported by engine
-        ]);
-
-        let engine_capabilities =
-            CapabilitySet::from_capabilities(&[Capability::VectorSearch, Capability::Filter]);
-
-        let node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::VectorSearch {
-                collection: "embeddings".to_string(),
-                top_k: 10,
-                query_vector_source: VectorSource::Literal(vec![0.1, 0.2, 0.3]),
-            },
-            estimated_cost: 50.0,
-            estimated_rows: 10,
-            output_columns: vec!["id".to_string()],
-            required_capabilities: claimed_capabilities.clone(),
-        };
-
-        // Should fail validation with descriptive error
-        let result = node.validate_capabilities(&engine_capabilities, "vector search node");
-        assert!(result.is_err());
-
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("GraphQuery"));
-        assert!(error_msg.contains("capabilities that the storage engine doesn't support"));
-    }
-
-    #[test]
-    fn test_scan_honesty_gap_detection() {
-        // Test detection of honesty gap in scan operations
-        let scan_node = PlanNode {
-            id: 1,
-            node_type: PlanNodeType::Scan {
-                target: "products".to_string(),
-                model_type: ModelType::Vector,
-                predicates: vec![Predicate {
-                    column: "price".to_string(),
-                    op: PredicateOp::Lt,
-                    value: PredicateValue::Int(100),
-                }],
-            },
-            estimated_cost: 50.0,
-            estimated_rows: 100,
-            output_columns: vec!["id".to_string(), "vector".to_string(), "price".to_string()],
-            required_capabilities: CapabilitySet::new(), // Will be inferred
-        };
-
-        // Infer capabilities
-        let _claimed = scan_node.infer_capabilities();
-
-        // Simulate a storage engine that doesn't support predicate pushdown
-        let limited_engine = CapabilitySet::from_capabilities(&[
-            Capability::Scan,
-            Capability::VectorSearch,
-            // Missing: Filter, PredicatePushdown
-        ]);
-
-        let (_honest, missing, _extra) = scan_node.get_capability_honesty_report(&limited_engine);
-
-        // Should detect the honesty gap
-        assert!(missing.contains_capability(&Capability::Filter));
-        assert!(missing.contains_capability(&Capability::PredicatePushdown));
-        assert!(missing.len() >= 2);
-    }
-}
+mod tests;

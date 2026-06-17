@@ -16,12 +16,25 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+# Pre-existing typo in this file used lowercase `callable` (the builtin
+# function) instead of `typing.Callable` in several annotations
+# (e.g. `Optional[callable]`). That was silently accepted by
+# `typing.Optional[…]` (lazy generic). Ruff's PEP 604 modernization
+# rewrote them to `callable | None`, which Python evaluates eagerly at
+# class-body parse time → `TypeError: unsupported operand types for |`
+# because `callable` is a builtin function, not a type. Adding
+# `from __future__ import annotations` defers all annotation
+# evaluation to string-form, restoring import-time correctness without
+# requiring a wholesale `callable` → `Callable` rename.
+from __future__ import annotations
+
+import base64
 import gzip
 import json
 import logging
 import time
 import warnings
-from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
+from typing import Any
 
 import httpx
 import numpy as np
@@ -34,11 +47,9 @@ from tenacity import (
 
 from ..batching_unified import (
     BatchConfig,
-    BatchStrategy,
     ThreadedBatchProcessor,
-    UnifiedBatchManager,
 )
-from ..cache import CacheStrategy, ResponseCache
+from ..cache import ResponseCache
 from ..config import ClientConfig, load_config
 from ..exceptions import (
     NetworkError,
@@ -47,36 +58,31 @@ from ..exceptions import (
     TimeoutError,
     map_http_error,
 )
-from ..metadata_utils import json_compatible_value
 from ..models import (
     BatchResult,
     Collection,
     CollectionConfig,
     CollectionStats,
     DeleteResult,
-    FilterCondition,
     FilterDict,
-    FilterOperation,
-    FilterOperator,
     HealthStatus,
-    IncludeFields,
     MetadataDict,
-    MetadataFilter,
     OperationMetrics,
-    SearchQuery,
+    ProbeResponse,
+    SchemaDefinition,
+    SchemaResponse,
     SearchResult,
     ServerCapabilities,
+    UpdateSchemaResponse,
     VectorArray,
-    VectorBatchRequest,
-    VectorRecord,
-    VectorSearchRequest,
 )
+from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
 
 logger = logging.getLogger(__name__)
 
 
-def _convert_quantization_config_to_proto(quant_config) -> Dict[str, Any]:
+def _convert_quantization_config_to_proto(quant_config) -> dict[str, Any]:
     """Convert SDK's flat QuantizationConfig to proto's nested structure
 
     The SDK uses flat fields like bits_per_subvector, num_subvectors, bits_per_vector,
@@ -88,7 +94,6 @@ def _convert_quantization_config_to_proto(quant_config) -> Dict[str, Any]:
     Returns:
         Dict with proto-compatible nested structure
     """
-    from ..models import QuantizationType
 
     # Start with dict conversion
     try:
@@ -166,13 +171,13 @@ class ProximaDBClient:
 
     def __init__(
         self,
-        url: Optional[str] = None,
-        api_key: Optional[str] = None,
-        config: Optional[ClientConfig] = None,
+        url: str | None = None,
+        api_key: str | None = None,
+        config: ClientConfig | None = None,
         enable_batching: bool = False,
-        batch_config: Optional[BatchConfig] = None,
+        batch_config: BatchConfig | None = None,
         enable_caching: bool = False,
-        cache_config: Optional[Dict[str, Any]] = None,
+        cache_config: dict[str, Any] | None = None,
         **kwargs,
     ) -> None:
         """Initialize ProximaDB client
@@ -196,12 +201,12 @@ class ProximaDBClient:
         # Initialize HTTP client
         self._http_client = self._create_http_client()
         # Capability probes (cached after first attempt)
-        self._sks_search_supported: Optional[bool] = None
-        self._sks_entities_supported: Optional[bool] = None
+        self._sks_search_supported: bool | None = None
+        self._sks_entities_supported: bool | None = None
 
         # Initialize request batching if enabled
         self.enable_batching = enable_batching
-        self._batch_processor: Optional[ThreadedBatchProcessor] = None
+        self._batch_processor: ThreadedBatchProcessor | None = None
 
         if enable_batching:
             # Create batch processor for REST operations
@@ -216,7 +221,7 @@ class ProximaDBClient:
 
         # Initialize response caching if enabled
         self.enable_caching = enable_caching
-        self._response_cache: Optional[ResponseCache] = None
+        self._response_cache: ResponseCache | None = None
 
         if enable_caching:
             self._response_cache = ResponseCache(
@@ -231,8 +236,8 @@ class ProximaDBClient:
             logger.info("Enabled response caching for read operations")
 
         # SKS capability cache and warmup tracking
-        self._sks_search_supported: Optional[bool] = None
-        self._sks_entities_supported: Optional[bool] = None
+        self._sks_search_supported: bool | None = None
+        self._sks_entities_supported: bool | None = None
         self._warmed_collections: set[str] = set()
         logger.info(f"Initialized ProximaDB client for {self.config.url}")
 
@@ -247,13 +252,37 @@ class ProximaDBClient:
                 pass
         self._warmed_collections.add(collection_id)
 
-    def get_capabilities(self) -> Dict[str, Any]:
+    def get_capabilities(self) -> dict[str, Any]:
         """Return cached capability flags and warmed collections."""
         return {
             "sks_search_supported": self._sks_search_supported,
             "sks_entities_supported": self._sks_entities_supported,
             "warmed_collections": list(self._warmed_collections),
         }
+
+    def server_capabilities(self, refresh: bool = False) -> dict[str, Any]:
+        """Negotiate capabilities with the server (GET /api/v2/_meta/capabilities).
+
+        The result (api_version, features, limits, error-envelope contract) is
+        cached after the first call. Returns ``{}`` on older servers that don't
+        expose the endpoint, so callers can degrade gracefully.
+        """
+        cached = getattr(self, "_server_capabilities", None)
+        if cached is not None and not refresh:
+            return cached
+        try:
+            resp = self._make_request("GET", "/api/v2/_meta/capabilities")
+            caps = resp.json() if hasattr(resp, "json") else {}
+            if not isinstance(caps, dict):
+                caps = {}
+        except Exception:
+            caps = {}
+        self._server_capabilities = caps  # type: ignore[attr-defined]
+        return caps
+
+    def supports(self, feature: str) -> bool:
+        """True if the server advertises ``feature`` (via server_capabilities)."""
+        return feature in (self.server_capabilities().get("features") or [])
 
     def _setup_logging(self) -> None:
         """Setup logging configuration"""
@@ -415,19 +444,22 @@ class ProximaDBClient:
                 "message": response.text or f"HTTP {response.status_code} error"
             }
 
-        # DEBUG: Log error details
-        logger.error(f"❌ HTTP {response.status_code} ERROR - URL: {response.url}")
+        # DEBUG: Log error details (incl. the server correlation id)
+        request_id = response.headers.get("x-request-id")
+        logger.error(
+            f"❌ HTTP {response.status_code} ERROR - URL: {response.url} "
+            f"request_id={request_id}"
+        )
         logger.error(f"❌ ERROR DATA: {error_data}")
-        logger.error(f"❌ RESPONSE TEXT: {response.text[:500]}")
 
-        raise map_http_error(response.status_code, error_data)
+        raise map_http_error(response.status_code, error_data, headers=response.headers)
 
-    def _http_post(self, endpoint: str, data: Any) -> Dict[str, Any]:
+    def _http_post(self, endpoint: str, data: Any) -> dict[str, Any]:
         """Helper method for POST requests"""
         response = self._make_request("POST", endpoint, json=data)
         return response.json()
 
-    def _normalize_vectors(self, vectors: VectorArray) -> List[List[float]]:
+    def _normalize_vectors(self, vectors: VectorArray) -> list[list[float]]:
         """Normalize vectors to list of lists format"""
         if isinstance(vectors, np.ndarray):
             if vectors.dtype != np.float32:
@@ -436,7 +468,7 @@ class ProximaDBClient:
         return vectors
 
     def _validate_vector_dimensions(
-        self, vectors: VectorArray, expected_dim: Optional[int] = None
+        self, vectors: VectorArray, expected_dim: int | None = None
     ) -> None:
         """Validate vector dimensions"""
         if not self.config.validate_inputs:
@@ -493,14 +525,32 @@ class ProximaDBClient:
             timestamp_ms=timestamp_ms,
         )
 
+    def live(self) -> ProbeResponse:
+        """Kubernetes liveness probe — GET /health/live."""
+        response = self._make_request("GET", "/health/live")
+        return ProbeResponse.model_validate(response.json())
+
+    def ready(self) -> ProbeResponse:
+        """Kubernetes readiness probe — GET /health/ready."""
+        response = self._make_request("GET", "/health/ready")
+        return ProbeResponse.model_validate(response.json())
+
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self,
+        name: str,
+        config: CollectionConfig | None = None,
+        *,
+        schema: SchemaDefinition | dict[str, Any] | None = None,
+        initial_capacity: int | None = None,
+        **kwargs,
     ) -> Collection:
         """Create a new vector collection
 
         Args:
             name: Collection name
             config: Collection configuration
+            schema: Optional SchemaDefinition (OpenAPI CreateCollectionRequest.schema)
+            initial_capacity: Optional initial capacity hint
             **kwargs: Additional configuration parameters
 
         Returns:
@@ -584,8 +634,8 @@ class ProximaDBClient:
             combined_message = (
                 f"ProximaDB server will make intelligent fallback decisions for collection '{name}':\n"
                 + "\n".join(f"  • {warning}" for warning in fallback_warnings)
-                + f"\n\n📚 Server uses smart defaults to ensure your collection works. "
-                f"Check the returned collection config to see final server decisions."
+                + "\n\n📚 Server uses smart defaults to ensure your collection works. "
+                "Check the returned collection config to see final server decisions."
             )
             warnings.warn(combined_message, UserWarning)
 
@@ -600,6 +650,10 @@ class ProximaDBClient:
             "angular": 7,
             "chebyshev": 8,
             "canberra": 9,
+            "minkowski": 10,
+            "bray_curtis": 11,
+            "hellinger": 12,
+            "custom": 13,
         }
         STORAGE_ENGINE_MAP = {
             "viper": 1,
@@ -631,7 +685,7 @@ class ProximaDBClient:
         )  # Default to SST=2
 
         # Build config object as expected by server (all required proto fields)
-        config_data: Dict[str, Any] = {
+        config_data: dict[str, Any] = {
             "name": name,
             "dimension": config.dimension,
             "distance_metric": distance_metric_int,
@@ -659,15 +713,15 @@ class ProximaDBClient:
         }
 
         # Build index_configs aligned with proto
-        index_configs: List[Dict[str, Any]] = []
-        primary_index_name: Optional[str] = None
+        index_configs: list[dict[str, Any]] = []
+        primary_index_name: str | None = None
         if getattr(config, "index_configs", None):
             for ic in config.index_configs or []:
                 algo_str = ProtoConverter.index_type_to_str(ic.algorithm)
                 algo_int = INDEXING_ALGORITHM_MAP.get(
                     algo_str.lower(), 1
                 )  # Default to HNSW
-                entry: Dict[str, Any] = {
+                entry: dict[str, Any] = {
                     "index_name": ic.index_name,
                     "algorithm": algo_int,
                     "parameters": {},
@@ -786,11 +840,50 @@ class ProximaDBClient:
         if config.description:
             config_data["description"] = config.description
 
-        response = self._make_request("POST", "/api/v1/collections", json=request_data)
+        v2_request_data: dict[str, Any] = {
+            "name": name,
+            "dimension": config.dimension,
+            "engine": getattr(config.storage_engine, "value", config.storage_engine),
+            "distance_metric": getattr(
+                config.distance_metric, "value", config.distance_metric
+            ),
+            "enable_proxima_record": True,
+        }
+        precision = getattr(config, "canonical_embedding_precision", None)
+        if precision is not None:
+            # EmbeddingPrecision is a str-Enum; send the canonical lower-case
+            # string (server normalises aliases via the same dispatch the
+            # pgwire / Arrow Flight surfaces use).
+            v2_request_data["canonical_embedding_precision"] = getattr(
+                precision, "value", precision
+            )
+        if schema is not None:
+            if isinstance(schema, SchemaDefinition):
+                v2_request_data["schema"] = schema.model_dump(
+                    exclude_none=True, by_alias=True
+                )
+            else:
+                v2_request_data["schema"] = schema
+        if initial_capacity is not None:
+            v2_request_data["initial_capacity"] = initial_capacity
+        response = self._make_request(
+            "POST", "/api/v2/collections", json=v2_request_data
+        )
         response_data = response.json()
 
         # Handle unified API response format
-        if "collection" in response_data:
+        if "collection_id" in response_data:
+            return Collection(
+                id=response_data.get("collection_id", name),
+                config=CollectionConfig(
+                    name=response_data.get("name", name),
+                    dimension=response_data.get("dimension", config.dimension),
+                    distance_metric=v2_request_data.get("distance_metric") or "cosine",
+                    storage_engine=response_data.get("engine") or "auto",
+                ),
+                created_at=response_data.get("created_at"),
+            )
+        elif "collection" in response_data:
             coll_data = response_data["collection"]
             if not coll_data:
                 if "error" in response_data:
@@ -804,13 +897,14 @@ class ProximaDBClient:
 
             # Map Proto enum integers to string values for Pydantic
             # Server returns Proto enums as integers
+            # NOTE: These MUST match the proto enum values from proximadb.proto
+            # DistanceMetric: COSINE=1, EUCLIDEAN=2, DOT_PRODUCT=3, HAMMING=4, MANHATTAN=5, JACCARD=6, ...
             DISTANCE_METRIC_MAP = {
-                0: "cosine",
                 1: "cosine",
                 2: "euclidean",
                 3: "dot_product",
-                4: "manhattan",
-                5: "hamming",
+                4: "hamming",
+                5: "manhattan",
                 6: "jaccard",
                 7: "chebyshev",
                 8: "canberra",
@@ -821,7 +915,8 @@ class ProximaDBClient:
                 13: "custom",
             }
             STORAGE_ENGINE_MAP = {
-                0: "viper",
+                # NOTE: These MUST match the proto enum values from proximadb.proto
+                # StorageEngine: VIPER=1, SST=2, NOVA=3, HELIX=4, SWIFT=5, RAPTOR=6, MMAP=7, HYBRID=8
                 1: "viper",
                 2: "sst",
                 3: "nova",
@@ -855,7 +950,7 @@ class ProximaDBClient:
             # Deserialize filterable_columns from server response
             filterable_columns = None
             if "filterable_columns" in cfg_src and cfg_src["filterable_columns"]:
-                from proximadb_sdk.models import FilterableColumn, FilterableDataType
+                from proximadb_sdk.models import FilterableColumn
 
                 # Map proto integer values to FilterableDataType strings
                 FILTERABLE_DATATYPE_REVERSE_MAP = {
@@ -909,9 +1004,9 @@ class ProximaDBClient:
         """Get collection metadata"""
         # Use the updated GET endpoint
         logger.debug(
-            f"Collection get request to GET /api/v1/collections/{collection_id}"
+            f"Collection get request to GET /api/v2/collections/{collection_id}"
         )
-        response = self._make_request("GET", f"/api/v1/collections/{collection_id}")
+        response = self._make_request("GET", f"/api/v2/collections/{collection_id}")
         response_data = response.json()
 
         # Check for error responses
@@ -965,7 +1060,7 @@ class ProximaDBClient:
         if "dimension" not in collection_data and "config" in collection_data:
             if isinstance(collection_data["config"], dict):
                 # Server returns nested config structure - extract dimension from config
-                logger.debug(f"Extracting dimension from nested config structure")
+                logger.debug("Extracting dimension from nested config structure")
                 collection_data = collection_data["config"]
 
         # Convert proto enum values to string names if needed
@@ -1036,11 +1131,32 @@ class ProximaDBClient:
             updated_at=collection_data.get("updated_at"),
         )
 
-    def list_collections(self) -> List[Collection]:
-        """List all collections"""
-        # Use the updated GET endpoint
-        logger.debug(f"Collection list request to GET /api/v1/collections")
-        response = self._make_request("GET", "/api/v1/collections")
+    def list_collections(
+        self,
+        limit: int | None = None,
+        offset: int | None = None,
+        include_stats: bool | None = None,
+    ) -> list[Collection]:
+        """List collections.
+
+        Args:
+            limit: Page size (OpenAPI default 100).
+            offset: Page offset (OpenAPI default 0).
+            include_stats: Include CollectionStats in each entry.
+        """
+        params: dict[str, Any] = {}
+        if limit is not None:
+            params["limit"] = limit
+        if offset is not None:
+            params["offset"] = offset
+        if include_stats is not None:
+            params["include_stats"] = "true" if include_stats else "false"
+
+        logger.debug("Collection list request to GET /api/v2/collections")
+        request_kwargs: dict[str, Any] = {}
+        if params:
+            request_kwargs["params"] = params
+        response = self._make_request("GET", "/api/v2/collections", **request_kwargs)
         response_data = response.json()
 
         # Server returns:
@@ -1086,7 +1202,8 @@ class ProximaDBClient:
                 13: "custom",
             }
             STORAGE_ENGINE_MAP = {
-                0: "viper",
+                # NOTE: These MUST match the proto enum values from proximadb.proto
+                # StorageEngine: VIPER=1, SST=2, NOVA=3, HELIX=4, SWIFT=5, RAPTOR=6, MMAP=7, HYBRID=8
                 1: "viper",
                 2: "sst",
                 3: "nova",
@@ -1144,10 +1261,39 @@ class ProximaDBClient:
         """Delete a collection"""
         # Use standard REST DELETE endpoint
         logger.debug(
-            f"Collection delete request to DELETE /api/v1/collections/{collection_id}"
+            f"Collection delete request to DELETE /api/v2/collections/{collection_id}"
         )
-        response = self._make_request("DELETE", f"/api/v1/collections/{collection_id}")
+        response = self._make_request("DELETE", f"/api/v2/collections/{collection_id}")
         return response.json().get("success", False)
+
+    def get_schema(self, collection_id: str) -> SchemaResponse:
+        """Get a collection's schema — GET /api/v2/collections/{id}/schema."""
+        response = self._make_request(
+            "GET", f"/api/v2/collections/{collection_id}/schema"
+        )
+        return SchemaResponse.model_validate(response.json())
+
+    def update_schema(
+        self,
+        collection_id: str,
+        schema: SchemaDefinition | dict[str, Any],
+        *,
+        force: bool = False,
+    ) -> UpdateSchemaResponse:
+        """Update a collection's schema — PUT /api/v2/collections/{id}/schema.
+
+        The body conforms to OpenAPI UpdateSchemaRequest, which extends
+        SchemaDefinition with an optional `force` flag.
+        """
+        if isinstance(schema, SchemaDefinition):
+            body = schema.model_dump(exclude_none=True, by_alias=True)
+        else:
+            body = dict(schema)
+        body["force"] = bool(force)
+        response = self._make_request(
+            "PUT", f"/api/v2/collections/{collection_id}/schema", json=body
+        )
+        return UpdateSchemaResponse.model_validate(response.json())
 
     def get_collection_stats(self, collection_id: str) -> CollectionStats:
         """Get collection statistics"""
@@ -1158,8 +1304,8 @@ class ProximaDBClient:
         self,
         collection_id: str,
         vector_id: str,
-        vector: Union[List[float], np.ndarray],
-        metadata: Optional[MetadataDict] = None,
+        vector: list[float] | np.ndarray,
+        metadata: MetadataDict | None = None,
         upsert: bool = False,
     ) -> BatchResult:
         """Insert a single vector
@@ -1174,84 +1320,204 @@ class ProximaDBClient:
         Returns:
             Insert operation result
         """
-        import time
-
-        # Normalize vector format
-        if isinstance(vector, np.ndarray):
-            if vector.dtype != np.float32:
-                vector = vector.astype(np.float32)
-            vector = vector.tolist()
-
-        # Convert metadata to server format
-        metadata_items = (
-            self._convert_metadata_to_rest_format(metadata) if metadata else []
+        return self.insert_records(
+            collection_id,
+            [
+                {
+                    "id": vector_id,
+                    "vector": vector,
+                    "props": metadata or {},
+                }
+            ],
+            upsert=upsert,
         )
 
-        # Use batch API with single vector
-        vector_record = {
-            "id": vector_id,
-            "collection_id": collection_id,
-            "vector": vector,
-            "metadata": metadata_items,
-            "timestamp": int(time.time()),  # Seconds (proto expects seconds)
-            "version": 1,
-        }
-
-        request_data = {
-            "operation": "upsert" if upsert else "insert",
-            "collection_id": collection_id,
-            "vectors": [vector_record],
-        }
-
-        response = self._make_request(
-            "POST", "/api/v1/vectors/batch", json=request_data
-        )
-
-        # Convert response to BatchResult
-        resp_data = response.json()
-        logger.debug(f"Server response for batch operation: {resp_data}")
-        metrics_data = resp_data.get("metrics", {}) or {}
-        logger.debug(f"Metrics data extracted: {metrics_data}")
-
-        # Extract counts from vector_ids array (the actual list of inserted vectors)
-        vector_ids = resp_data.get("vector_ids", [])
-        total_count = len(vector_ids)
-        success_count = len(vector_ids)  # If we got vector_ids, they were successful
-        failed_count = 0  # Server would set error_code if there were failures
-
+    def _record_write_result(self, response_data: dict[str, Any]) -> BatchResult:
+        """Convert v2 record batch response JSON to the SDK batch result."""
+        inserted_count = int(response_data.get("inserted_count", 0) or 0)
+        failed_count = int(response_data.get("failed_count", 0) or 0)
+        total_count = inserted_count + failed_count
         return BatchResult(
             total=total_count,
-            success=success_count,
+            success=inserted_count,
             failed=failed_count,
-            errors=resp_data.get("errors", []),
-            duration_ms=resp_data.get("duration_ms", 0.0),
+            errors=response_data.get("errors", []),
+            duration_ms=response_data.get("duration_ms", 0.0),
             metrics=OperationMetrics(
-                total_processed=(
-                    metrics_data.get("total_processed")
-                    if metrics_data.get("total_processed") is not None
-                    else total_count
-                ),
-                successful_count=(
-                    metrics_data.get("successful_count")
-                    if metrics_data.get("successful_count") is not None
-                    else success_count
-                ),
-                failed_count=(
-                    metrics_data.get("failed_count")
-                    if metrics_data.get("failed_count") is not None
-                    else failed_count
-                ),
-                processing_time_us=(
-                    metrics_data.get("processing_time_us")
-                    if metrics_data.get("processing_time_us") is not None
-                    else int(resp_data.get("duration_ms", 0) * 1000)
-                ),
+                total_processed=total_count,
+                successful_count=inserted_count,
+                failed_count=failed_count,
+                processing_time_us=int(response_data.get("duration_ms", 0) * 1000),
             ),
         )
 
+    def _proxima_rest_value(self, value: Any) -> Any:
+        """Convert Python values to v2 REST ProximaValue JSON."""
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return {
+                "type": "binary",
+                "value": base64.b64encode(bytes(value)).decode("ascii"),
+            }
+        if isinstance(value, tuple):
+            return {
+                "type": "array",
+                "value": [self._proxima_rest_value(v) for v in value],
+            }
+        if isinstance(value, dict):
+            if set(value.keys()) == {"type", "value"}:
+                return value
+            return {
+                "type": "jsonb",
+                "value": {str(k): self._json_scalar(v) for k, v in value.items()},
+            }
+        return self._json_scalar(value)
+
+    def _json_scalar(self, value: Any) -> Any:
+        if isinstance(value, np.generic):
+            return value.item()
+        if isinstance(value, np.ndarray):
+            return value.tolist()
+        return value
+
+    def _normalize_record_payload(self, record: Any, index: int = 0) -> dict[str, Any]:
+        """Normalize SDK record-like inputs to the v2 REST ProximaRecord shape."""
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(exclude_none=True)
+        elif hasattr(record, "dict"):
+            record = record.dict(exclude_none=True)
+
+        if not isinstance(record, dict):
+            if hasattr(record, "id") and hasattr(record, "vector"):
+                record = {
+                    "id": getattr(record, "id", None),
+                    "vector": record.vector,
+                    "props": getattr(record, "metadata", {}) or {},
+                }
+            else:
+                raise TypeError(f"Unsupported record input: {type(record)!r}")
+
+        vector = record.get("vector")
+        if vector is None and "embeddings" in record and record["embeddings"]:
+            first = record["embeddings"][0]
+            vector = first.get("values") if isinstance(first, dict) else first
+        if vector is None:
+            raise ValueError("record is missing vector")
+        if isinstance(vector, np.ndarray):
+            vector = vector.astype(np.float32, copy=False).tolist()
+        vector = [float(v) for v in vector]
+        if not vector:
+            raise ValueError("record vector cannot be empty")
+
+        props = {}
+        for prop_source in ("props", "metadata", "flexible_fields"):
+            values = record.get(prop_source)
+            if isinstance(values, dict):
+                props.update(
+                    {str(k): self._proxima_rest_value(v) for k, v in values.items()}
+                )
+        typed_fields = record.get("typed_fields")
+        if isinstance(typed_fields, dict):
+            for key, typed_value in typed_fields.items():
+                if hasattr(typed_value, "model_dump"):
+                    typed_value = typed_value.model_dump(exclude_none=True)
+                if hasattr(typed_value, "dict"):
+                    typed_value = typed_value.dict(exclude_none=True)
+                if isinstance(typed_value, dict):
+                    props[str(key)] = {
+                        "type": typed_value.get("value_type")
+                        or typed_value.get("type")
+                        or typed_value.get("declared_type"),
+                        "value": typed_value.get("value"),
+                    }
+                else:
+                    props[str(key)] = self._proxima_rest_value(typed_value)
+
+        text_fields = record.get("text_fields") or []
+        normalized = {
+            "id": record.get("id") or record.get("oid") or f"record_{index}",
+            "vector": vector,
+            "props": props,
+        }
+        if text_fields:
+            normalized["text_fields"] = text_fields
+        return normalized
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord | dict[str, Any]],
+        *,
+        upsert: bool = False,
+        batch_size: int | None = None,
+        validate_schema: bool = True,
+    ) -> BatchResult:
+        """Insert record batches through the v2 ProximaRecord REST surface."""
+        self._auto_warmup(collection_id)
+        record_data = [
+            self._normalize_record_payload(record, index)
+            for index, record in enumerate(records)
+        ]
+        effective_batch_size = batch_size or self.config.default_batch_size
+
+        total_successful = 0
+        total_failed = 0
+        all_errors = []
+        for start in range(0, len(record_data), effective_batch_size):
+            batch_data = record_data[start : start + effective_batch_size]
+            response = self._make_request(
+                "POST",
+                f"/api/v2/collections/{collection_id}/records/batch",
+                json={
+                    "records": batch_data,
+                    "validate_schema": validate_schema,
+                    "upsert": upsert,
+                },
+            )
+            result = self._record_write_result(response.json())
+            total_successful += result.success
+            total_failed += result.failed
+            all_errors.extend(result.errors or [])
+
+        if total_successful > 0:
+            self._invalidate_collection_cache(collection_id)
+
+        return BatchResult(
+            total=total_successful + total_failed,
+            success=total_successful,
+            failed=total_failed,
+            errors=all_errors,
+            duration_ms=0.0,
+            metrics=OperationMetrics(
+                total_processed=total_successful + total_failed,
+                successful_count=total_successful,
+                failed_count=total_failed,
+            ),
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord | dict[str, Any]],
+        *,
+        batch_size: int | None = None,
+        validate_schema: bool = True,
+    ) -> BatchResult:
+        """Upsert records through the canonical record batch surface."""
+        return self.insert_records(
+            collection_id,
+            records,
+            upsert=True,
+            batch_size=batch_size,
+            validate_schema=validate_schema,
+        )
+
     def _convert_metadata_to_rest_format(
-        self, metadata_dict: Dict[str, Any]
-    ) -> Dict[str, Dict[str, Any]]:
+        self, metadata_dict: dict[str, Any]
+    ) -> dict[str, dict[str, Any]]:
         """Convert Python dict metadata to REST API SqlValue format
 
         The server expects metadata as a dict of SqlValues:
@@ -1264,35 +1530,57 @@ class ProximaDBClient:
         if not metadata_dict:
             return {}
 
-        sql_metadata = {}
-        for key, value in metadata_dict.items():
-            # Convert to SqlValue format
-            if isinstance(value, bool):
-                sql_metadata[key] = {"bool_value": value}
-            elif isinstance(value, int):
-                sql_metadata[key] = {"int64_value": value}
-            elif isinstance(value, float):
-                sql_metadata[key] = {"number_value": value}
-            elif isinstance(value, str):
-                sql_metadata[key] = {"string_value": value}
-            elif value is None:
-                sql_metadata[key] = {"null_value": None}
-            else:
-                sql_metadata[key] = {"string_value": str(value)}
+        sql_metadata = {
+            str(key): self._convert_value_to_rest_sql_value(value)
+            for key, value in metadata_dict.items()
+        }
 
         return sql_metadata
+
+    def _convert_value_to_rest_sql_value(self, value: Any) -> dict[str, Any]:
+        """Convert Python values to the REST JSON shape for v1 SqlValue."""
+        if value is None:
+            return {"null_value": None}
+        if isinstance(value, bool):
+            return {"bool_value": value}
+        if isinstance(value, int) and not isinstance(value, bool):
+            return {"int64_value": value}
+        if isinstance(value, float):
+            return {"number_value": value}
+        if isinstance(value, str):
+            return {"string_value": value}
+        if isinstance(value, (bytes, bytearray, memoryview)):
+            return {"bytes_value": base64.b64encode(bytes(value)).decode("ascii")}
+        if isinstance(value, (list, tuple)):
+            return {
+                "array_value": {
+                    "values": [
+                        self._convert_value_to_rest_sql_value(item) for item in value
+                    ]
+                }
+            }
+        if isinstance(value, dict):
+            return {
+                "object_value": {
+                    "fields": {
+                        str(key): self._convert_value_to_rest_sql_value(item)
+                        for key, item in value.items()
+                    }
+                }
+            }
+        return {"string_value": str(value)}
 
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: Union[VectorArray, List[Dict[str, Any]]],  # Accept VectorRecord dicts
-        ids: Optional[List[str]] = None,
-        metadata: Optional[List[MetadataDict]] = None,
+        vectors: VectorArray | list[dict[str, Any]],  # Accept VectorRecord dicts
+        ids: list[str] | None = None,
+        metadata: list[MetadataDict] | None = None,
         upsert: bool = False,
-        batch_size: Optional[int] = None,
-        vector_records: Optional[
-            List[Dict[str, Any]]
-        ] = None,  # NEW: Full VectorRecord dicts
+        batch_size: int | None = None,
+        vector_records: (
+            list[dict[str, Any]] | None
+        ) = None,  # NEW: Full VectorRecord dicts
     ) -> BatchResult:
         """Insert multiple vectors
 
@@ -1308,216 +1596,51 @@ class ProximaDBClient:
         Returns:
             Batch insert operation result
         """
-        self._auto_warmup(collection_id)
-
-        # NEW: If vector_records provided, use them directly (full VectorRecord support)
         if vector_records is not None:
-            vector_data = []
-            for record in vector_records:
-                # Convert metadata to REST format
-                metadata_items = self._convert_metadata_to_rest_format(
-                    record.get("metadata", {})
-                )
-                item = {
-                    "id": record.get("id", f"vec_{len(vector_data)}"),
-                    "vector": record["vector"],
-                    "metadata": metadata_items,
-                }
-                # Add all VectorRecord fields if present
-                if "timestamp" in record:
-                    item["timestamp"] = record["timestamp"]
-                if "updated_at" in record:
-                    item["updated_at"] = record["updated_at"]
-                if "expires_at" in record:
-                    item["expires_at"] = record["expires_at"]
-                if "version" in record:
-                    item["version"] = record["version"]
-                if "source" in record:
-                    item["source"] = record["source"]
-
-                vector_data.append(item)
+            records = vector_records
+        elif isinstance(vectors, list) and vectors and isinstance(vectors[0], dict):
+            records = vectors
         else:
-            # OLD PATH: Legacy array interface
             vectors_list = self._normalize_vectors(vectors)
-
             if ids is None:
-                ids = [f"vec_{i}" for i in range(len(vectors_list))]
-
+                ids = [f"record_{i}" for i in range(len(vectors_list))]
             if len(vectors_list) != len(ids):
                 raise ValueError("Number of vectors must match number of IDs")
-
             if metadata and len(metadata) != len(vectors_list):
                 raise ValueError(
                     "Number of metadata items must match number of vectors"
                 )
-
-            # Prepare vector data with basic fields
-            vector_data = []
-            for i, (vector_id, vector) in enumerate(zip(ids, vectors_list)):
-                # Convert metadata dict to REST API format
-                metadata_items = self._convert_metadata_to_rest_format(
-                    metadata[i] if metadata else {}
-                )
-                item = {
+            records = [
+                {
                     "id": vector_id,
                     "vector": vector,
-                    "metadata": metadata_items,
-                    "timestamp": int(
-                        time.time() * 1000
-                    ),  # Current time in milliseconds
+                    "props": metadata[i] if metadata else {},
                 }
-                vector_data.append(item)
+                for i, (vector_id, vector) in enumerate(zip(ids, vectors_list))
+            ]
 
-        # Use batching for large datasets
-        effective_batch_size = batch_size or self.config.default_batch_size
-
-        if len(vector_data) <= effective_batch_size:
-            # Single batch - use unified API
-            unified_request = {
-                "operation": "upsert" if upsert else "insert",
-                "collection_id": collection_id,
-                "vectors": vector_data,
-            }
-
-            # Debug logging
-            logger.debug(
-                f"Sending vector batch request with {len(vector_data)} vectors"
-            )
-            logger.debug(
-                f"Request payload preview: operation={unified_request['operation']}, collection_id={collection_id}, vector_count={len(vector_data)}"
-            )
-            if vector_data:
-                logger.debug(
-                    f"First vector: id={vector_data[0].get('id')}, metadata_items={len(vector_data[0].get('metadata', []))}"
-                )
-
-            # Print full request for debugging
-            import json as debug_json
-
-            logger.debug(
-                f"Full request JSON:\n{debug_json.dumps(unified_request, indent=2)[:1000]}"
-            )
-
-            # Use vector batch API (entities API is for different use case - SKS)
-            response = self._make_request(
-                "POST", "/api/v1/vectors/batch", json=unified_request
-            )
-
-            response_data = response.json()
-            # Handle unified API response
-            if "metrics" in response_data:
-                metrics_data = response_data["metrics"]
-                result = BatchResult(
-                    total=metrics_data.get("total_processed", len(vector_data)),
-                    success=metrics_data.get("successful_count", len(vector_data)),
-                    failed=metrics_data.get("failed_count", 0),
-                    errors=[],
-                    duration_ms=metrics_data.get("processing_time_us", 0) / 1000.0,
-                    metrics=OperationMetrics(
-                        total_processed=metrics_data.get(
-                            "total_processed", len(vector_data)
-                        ),
-                        successful_count=metrics_data.get(
-                            "successful_count", len(vector_data)
-                        ),
-                        failed_count=metrics_data.get("failed_count", 0),
-                        processing_time_us=metrics_data.get("processing_time_us", 0),
-                        wal_write_time_us=metrics_data.get("wal_write_time_us", 0),
-                        index_update_time_us=metrics_data.get(
-                            "index_update_time_us", 0
-                        ),
-                    ),
-                )
-
-                # Invalidate cache for collection after successful write
-                if result.success > 0:
-                    self._invalidate_collection_cache(collection_id)
-
-                return result
-            else:
-                success_count = len(vector_data) if response_data.get("success") else 0
-                failed_count = 0 if response_data.get("success") else len(vector_data)
-                return BatchResult(
-                    total=len(vector_data),
-                    success=success_count,
-                    failed=failed_count,
-                    errors=[],
-                    duration_ms=0.0,
-                    metrics=OperationMetrics(
-                        total_processed=len(vector_data),
-                        successful_count=success_count,
-                        failed_count=failed_count,
-                    ),
-                )
-
-        else:
-            # Multiple batches
-            total_successful = 0
-            total_failed = 0
-            all_errors = []
-
-            for i in range(0, len(vector_data), effective_batch_size):
-                batch_data = vector_data[i : i + effective_batch_size]
-
-                try:
-                    # Send batch using unified API
-                    unified_request = {
-                        "operation": "upsert" if upsert else "insert",
-                        "collection_id": collection_id,
-                        "vectors": batch_data,
-                    }
-                    # For multi-batch, use legacy endpoint to minimize negotiation overhead
-                    response = self._make_request(
-                        "POST", "/api/v1/vectors/batch", json=unified_request
-                    )
-
-                    batch_response = response.json()
-                    if "data" in batch_response and "success" in batch_response:
-                        batch_count = (
-                            len(batch_response["data"]) if batch_response["data"] else 0
-                        )
-                        total_successful += batch_count
-                    else:
-                        total_failed += len(batch_data)
-
-                    # Check for errors in response
-                    if batch_response.get("error"):
-                        all_errors.append(
-                            f"Batch {i//effective_batch_size}: {batch_response['error']}"
-                        )
-
-                except Exception as e:
-                    total_failed += len(batch_data)
-                    all_errors.append(f"Batch {i//effective_batch_size}: {str(e)}")
-
-            return BatchResult(
-                total=len(vector_data),
-                success=total_successful,
-                failed=total_failed,
-                duration_ms=0,  # Total duration not tracked for multi-batch
-                errors=all_errors if all_errors else [],
-                metrics=OperationMetrics(
-                    total_processed=len(vector_data),
-                    successful_count=total_successful,
-                    failed_count=total_failed,
-                ),
-            )
+        return self.insert_records(
+            collection_id,
+            records,
+            upsert=upsert,
+            batch_size=batch_size,
+        )
 
     def search(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[FilterDict] = None,
+        metadata_filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         optimization_level: str = "high",
         use_storage_aware: bool = True,
         quantization_level: str = "FP32",
         enable_simd: bool = True,
-        timeout: Optional[float] = None,
-        search_hints: Optional[Dict[str, Any]] = None,
-    ) -> List[SearchResult]:
+        timeout: float | None = None,
+        search_hints: dict[str, Any] | None = None,
+    ) -> list[SearchResult]:
         """Search for similar vectors with storage-aware optimizations
 
         Args:
@@ -1542,42 +1665,17 @@ class ProximaDBClient:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
 
-        # Build metadata filter if provided
-        metadata_filter_obj = None
+        request_data = {
+            "vector": vector,
+            "top_k": top_k,
+            "include_vector": include_vectors,
+            "include_text": False,
+        }
         if metadata_filter:
-            conditions = [
-                FilterCondition(
-                    field_name=key, operation=FilterOperation.EQUALS, value=value
-                )
+            request_data["filters"] = [
+                {"field": key, "op": "eq", "value": value}
                 for key, value in metadata_filter.items()
             ]
-            metadata_filter_obj = MetadataFilter(
-                conditions=conditions, operator=FilterOperator.AND
-            )
-
-        # Create search query using model
-        search_query = SearchQuery(
-            vector=vector,
-            filters={},  # Always include filters field (required by proto)
-            id=None,
-            metadata_filter=metadata_filter_obj,
-        )
-
-        # Create search request using model (legacy/compat path)
-        search_request = VectorSearchRequest(
-            collection_id=collection_id,
-            queries=[search_query],
-            top_k=top_k,
-            distance_metric_override=None,  # Use collection default
-            search_parameters=None,  # Use defaults
-            include_fields=IncludeFields(
-                vector=include_vectors, metadata=include_metadata, score=True, rank=True
-            ),
-            search_optimization=None,  # Will be set below
-        )
-
-        # Convert model to dict for JSON serialization
-        request_data = search_request.model_dump(exclude_none=True)
 
         # Add search optimization if hints provided
         if search_hints:
@@ -1598,10 +1696,9 @@ class ProximaDBClient:
             if optimization:
                 request_data["search_optimization"] = optimization
 
-        # Use the standard /api/v1/search endpoint
         response = self._make_request(
             "POST",
-            "/api/v1/search",
+            f"/api/v2/collections/{collection_id}/search",
             json=request_data,
             timeout=timeout or self.config.timeout,
         )
@@ -1615,7 +1712,7 @@ class ProximaDBClient:
             raise ProximaDBError(f"Search failed: {error_msg}")
 
         # Handle proto-aligned response format
-        results: List[SearchResult] = []
+        results: list[SearchResult] = []
 
         # Debug: Log response structure
         if not isinstance(response_data, dict):
@@ -1665,7 +1762,11 @@ class ProximaDBClient:
                     score=result.get("score", 0.0),
                     rank=result.get("rank", 0),
                     vector=(result.get("vector", []) if include_vectors else None),
-                    metadata=(result.get("metadata", {}) if include_metadata else None),
+                    metadata=(
+                        result.get("props", result.get("metadata", {}))
+                        if include_metadata
+                        else None
+                    ),
                     # Add all SearchVectorRecord fields (proto field 5-13)
                     version=result.get("version"),
                     similarity=result.get("similarity"),
@@ -1683,17 +1784,17 @@ class ProximaDBClient:
     def search_envelope(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> "SearchEnvelope":
         """Search returning SKS envelope (cursor/progress) when supported.
 
         Falls back to legacy path and returns envelope with no cursor/progress.
         """
-        from ..models import SearchEnvelope, SearchProgress
+        from ..models import SearchEnvelope
 
         self._auto_warmup(collection_id)
         # Normalize vector
@@ -1702,79 +1803,8 @@ class ProximaDBClient:
                 vector = vector.astype(np.float32)
             vector = vector.tolist()
 
-        # Try SKS
-        if self._sks_search_supported is not False:
-            try:
-                sks_body = {
-                    "vector": vector,
-                    "top_k": top_k,
-                    "include_vector": include_vectors,
-                    "include_metadata": include_metadata,
-                }
-                sks_resp = self._make_request(
-                    "POST",
-                    f"/api/v1/search/{collection_id}",
-                    json=sks_body,
-                    timeout=timeout or self.config.timeout,
-                )
-                sks_data = sks_resp.json()
-                if isinstance(sks_data, dict) and ("items" in sks_data):
-                    self._sks_search_supported = True
-                    # Map envelope
-                    items: List[SearchResult] = []
-                    for item in sks_data.get("items", []) or []:
-                        items.append(
-                            SearchResult(
-                                id=item.get("entity_id") or item.get("id", ""),
-                                score=item.get("score", 0.0),
-                                vector=(
-                                    None if not include_vectors else item.get("vector")
-                                ),
-                                metadata=(
-                                    (
-                                        item.get("typed_metadata")
-                                        or item.get("metadata")
-                                        or {}
-                                    )
-                                    if include_metadata
-                                    else None
-                                ),
-                            )
-                        )
-                    progress = None
-                    if sks_data.get("progress"):
-                        pr = sks_data["progress"]
-                        progress = SearchProgress(
-                            stage=pr.get("stage", 0),
-                            stages=pr.get("stages", 0),
-                            complete=pr.get("complete", False),
-                        )
-                    cursor = None
-                    has_more = False
-                    if sks_data.get("page"):
-                        page = sks_data["page"]
-                        cursor = page.get("cursor")
-                        has_more = page.get("has_more", False)
-                    return SearchEnvelope(
-                        items=items,
-                        total=sks_data.get("total"),
-                        cursor=cursor,
-                        has_more=has_more,
-                        progress=progress,
-                    )
-            except Exception as e:
-                try:
-                    status = (
-                        getattr(e, "response", None).status_code
-                        if hasattr(e, "response")
-                        else None
-                    )
-                except Exception:
-                    status = None
-                if status in (404, 405, 501):
-                    self._sks_search_supported = False
-
-        # Legacy fallback
+        # Keep SDK REST on the OpenAPI v2 record search contract. The legacy SKS
+        # envelope route is intentionally outside the published SDK surface.
         results = self.search(
             collection_id,
             vector,
@@ -1794,14 +1824,15 @@ class ProximaDBClient:
         self,
         start_node_id: str,
         target_node_id: str,
-        max_depth: Optional[int] = None,
-        edge_types: Optional[List[str]] = None,
+        max_depth: int | None = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "DIJKSTRA",
-        k: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-        timeout: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        k: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+        timeout: float | None = None,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
         """Compute shortest path via REST with optional prefetch overrides.
 
         Per-call overrides can be sent as JSON fields or HTTP headers. This method
@@ -1819,7 +1850,7 @@ class ProximaDBClient:
         if k is not None:
             body["k"] = k
 
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         if enable_prefetch is not None:
             headers["x-graph-prefetch-enabled"] = "true" if enable_prefetch else "false"
         if prefetch_budget is not None:
@@ -1833,7 +1864,7 @@ class ProximaDBClient:
 
         resp = self._make_request(
             "POST",
-            "/api/v1/graph/shortest_path",
+            f"/api/v2/graphs/{graph_id}/shortest-path",
             json=body,
             headers=headers,
             timeout=timeout or self.config.timeout,
@@ -1844,20 +1875,21 @@ class ProximaDBClient:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-        timeout_ms: Optional[int] = None,
-        max_frontier: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-        timeout: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+        timeout_ms: int | None = None,
+        max_frontier: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+        timeout: float | None = None,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
         """Perform graph traversal via REST with optional prefetch overrides.
 
         Overrides are sent via headers. Returns the traversal response JSON.
         """
-        body: Dict[str, Any] = {
+        body: dict[str, Any] = {
             "start_node_id": start_node_id,
             "max_depth": max_depth,
             "algorithm": algorithm,
@@ -1871,7 +1903,7 @@ class ProximaDBClient:
         if max_frontier is not None:
             body["max_frontier"] = max_frontier
 
-        headers: Dict[str, str] = {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
         if enable_prefetch is not None:
             headers["x-graph-prefetch-enabled"] = "true" if enable_prefetch else "false"
         if prefetch_budget is not None:
@@ -1885,7 +1917,7 @@ class ProximaDBClient:
 
         resp = self._make_request(
             "POST",
-            "/api/v1/graph/traverse",
+            f"/api/v2/graphs/{graph_id}/traverse",
             json=body,
             headers=headers,
             timeout=timeout or self.config.timeout,
@@ -1898,7 +1930,7 @@ class ProximaDBClient:
         cursor: str,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> "SearchEnvelope":
         """Fetch next SKS search page by cursor. Returns empty envelope if unsupported."""
         from ..models import SearchEnvelope, SearchProgress
@@ -1917,7 +1949,7 @@ class ProximaDBClient:
         try:
             resp = self._make_request(
                 "POST",
-                f"/api/v1/search/{collection_id}?cursor={cursor}",
+                f"/api/v2/collections/{collection_id}/search?cursor={cursor}",
                 json={
                     "include_vector": include_vectors,
                     "include_metadata": include_metadata,
@@ -1929,7 +1961,7 @@ class ProximaDBClient:
                 return SearchEnvelope(
                     items=[], total=None, cursor=None, has_more=False, progress=None
                 )
-            items: List[SearchResult] = []
+            items: list[SearchResult] = []
             for item in data.get("items", []) or []:
                 items.append(
                     SearchResult(
@@ -1974,9 +2006,9 @@ class ProximaDBClient:
         collection_id: str,
         queries: VectorArray,
         k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         **kwargs,
-    ) -> List[List[SearchResult]]:
+    ) -> list[list[SearchResult]]:
         """Search multiple queries in batch
 
         Args:
@@ -2018,85 +2050,39 @@ class ProximaDBClient:
         ]
 
     def delete_vector(self, collection_id: str, vector_id: str) -> DeleteResult:
-        """Delete a single vector"""
+        """Delete a single record by ID."""
         self._auto_warmup(collection_id)
 
-        # Use new vector DELETE endpoint
         response = self._make_request(
-            "DELETE", f"/api/v1/vectors/{collection_id}/{vector_id}"
+            "DELETE", f"/api/v2/collections/{collection_id}/records/{vector_id}"
         )
         response_data = response.json()
         return DeleteResult(
             success=response_data.get("success", False),
-            deleted_count=response_data.get("metrics", {}).get("successful_count", 0),
+            deleted_count=1 if response_data.get("success", False) else 0,
             errors=[],
         )
 
-    def delete_vectors(self, collection_id: str, vector_ids: List[str]) -> DeleteResult:
-        """Delete multiple vectors by reading them first, then marking with expires_at=0"""
+    def delete_vectors(self, collection_id: str, vector_ids: list[str]) -> DeleteResult:
+        """Delete multiple records by ID through the record delete endpoint."""
         self._auto_warmup(collection_id)
 
-        # Fetch existing vectors to get their current state (vector data, version, metadata)
-        vectors_to_delete = []
-        fetch_errors = []
-
+        deleted_count = 0
+        errors = []
         for vector_id in vector_ids:
             try:
-                # Get the current vector with all its data
-                existing = self.get_vector(
-                    collection_id, vector_id, include_vector=True, include_metadata=True
-                )
-                if existing:
-                    # Prepare delete record with existing vector data and expires_at=0
-                    delete_record = {
-                        "id": vector_id,
-                        "vector": existing.get(
-                            "vector", existing.get("values", [])
-                        ),  # Keep original vector
-                        "metadata": existing.get(
-                            "metadata", {}
-                        ),  # Keep original metadata
-                        "version": existing.get("version"),  # Keep version for MVCC
-                        "expires_at": 0,  # Set to 0 (past time) for immediate deletion
-                    }
-                    vectors_to_delete.append(delete_record)
+                result = self.delete_vector(collection_id, vector_id)
+                if result.success:
+                    deleted_count += result.deleted_count
+                else:
+                    errors.extend(result.errors or [f"Delete failed for {vector_id}"])
             except Exception as e:
-                # Vector might not exist or already deleted - skip it
-                fetch_errors.append(f"Failed to fetch {vector_id}: {str(e)}")
-                continue
-
-        if not vectors_to_delete:
-            # No vectors found to delete
-            return DeleteResult(
-                success=(len(fetch_errors) == 0), deleted_count=0, errors=fetch_errors
-            )
-
-        # Use batch insert API with expires_at=0 for tombstoning
-        unified_request = {"collection_id": collection_id, "vectors": vectors_to_delete}
-
-        response = self._make_request(
-            "POST", "/api/v1/vectors/batch", json=unified_request
-        )
-        response_data = response.json()
-
-        # Extract metrics from VectorOperationResponse
-        # The response may be nested in "results" field
-        if "results" in response_data and isinstance(response_data["results"], dict):
-            metrics = response_data["results"].get("metrics", {})
-        else:
-            metrics = response_data.get("metrics", {})
-
-        successful_count = metrics.get("successful_count", 0)
-        failed_count = metrics.get("failed_count", 0)
-
-        # If metrics are missing, count from response success field and vector count
-        if successful_count == 0 and response_data.get("success", False):
-            successful_count = len(vectors_to_delete)
+                errors.append(f"Delete failed for {vector_id}: {str(e)}")
 
         return DeleteResult(
-            success=(failed_count == 0 or response_data.get("success", False)),
-            deleted_count=successful_count,
-            errors=fetch_errors,
+            success=not errors,
+            deleted_count=deleted_count,
+            errors=errors,
         )
 
     def get_vector(
@@ -2105,17 +2091,18 @@ class ProximaDBClient:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get a single vector by ID"""
         self._auto_warmup(collection_id)
 
-        # Use new vector GET endpoint
         params = {
             "include_vector": include_vector,
-            "include_metadata": include_metadata,
+            "include_text": False,
         }
         response = self._make_request(
-            "GET", f"/api/v1/vectors/{collection_id}/{vector_id}", params=params
+            "GET",
+            f"/api/v2/collections/{collection_id}/records/{vector_id}",
+            params=params,
         )
         data = response.json()
 
@@ -2140,7 +2127,7 @@ class ProximaDBClient:
     def upsert_vectors(
         self,
         collection_id: str,
-        records: List[Any],
+        records: list[Any],
     ) -> BatchResult:
         """Upsert multiple vectors (insert or update)
 
@@ -2173,65 +2160,29 @@ class ProximaDBClient:
         self,
         collection_id: str,
         vector_id: str,
-        vector: Optional[Union[List[float], np.ndarray]] = None,
-        metadata: Optional[MetadataDict] = None,
+        vector: list[float] | np.ndarray | None = None,
+        metadata: MetadataDict | None = None,
     ) -> BatchResult:
         """Update an existing vector"""
-        update_data = {}
+        if vector is None:
+            raise ValueError("v2 record updates require a replacement vector")
 
         if vector is not None:
             if isinstance(vector, np.ndarray):
                 if vector.dtype != np.float32:
                     vector = vector.astype(np.float32)
                 vector = vector.tolist()
-            update_data["vector"] = vector
 
-        if metadata is not None:
-            update_data["metadata"] = metadata
-
-        response = self._make_request(
-            "PUT", f"/collections/{collection_id}/vectors/{vector_id}", json=update_data
-        )
-        # Convert response to BatchResult
-        resp_data = response.json()
-        logger.debug(f"Server response for batch operation: {resp_data}")
-        metrics_data = resp_data.get("metrics", {}) or {}
-        logger.debug(f"Metrics data extracted: {metrics_data}")
-
-        # Extract counts from vector_ids array (the actual list of inserted vectors)
-        vector_ids = resp_data.get("vector_ids", [])
-        total_count = len(vector_ids)
-        success_count = len(vector_ids)  # If we got vector_ids, they were successful
-        failed_count = 0  # Server would set error_code if there were failures
-
-        return BatchResult(
-            total=total_count,
-            success=success_count,
-            failed=failed_count,
-            errors=resp_data.get("errors", []),
-            duration_ms=resp_data.get("duration_ms", 0.0),
-            metrics=OperationMetrics(
-                total_processed=(
-                    metrics_data.get("total_processed")
-                    if metrics_data.get("total_processed") is not None
-                    else total_count
-                ),
-                successful_count=(
-                    metrics_data.get("successful_count")
-                    if metrics_data.get("successful_count") is not None
-                    else success_count
-                ),
-                failed_count=(
-                    metrics_data.get("failed_count")
-                    if metrics_data.get("failed_count") is not None
-                    else failed_count
-                ),
-                processing_time_us=(
-                    metrics_data.get("processing_time_us")
-                    if metrics_data.get("processing_time_us") is not None
-                    else int(resp_data.get("duration_ms", 0) * 1000)
-                ),
-            ),
+        return self.insert_records(
+            collection_id,
+            [
+                {
+                    "id": vector_id,
+                    "vector": vector or [],
+                    "props": metadata or {},
+                }
+            ],
+            upsert=True,
         )
 
     def close(self) -> None:
@@ -2250,7 +2201,7 @@ class ProximaDBClient:
             self._http_client.close()
 
     # Batch processing
-    def _execute_batch(self, operation, collection_id, batch_data) -> List[Any]:
+    def _execute_batch(self, operation, collection_id, batch_data) -> list[Any]:
         """Execute a batch of requests
 
         Args:
@@ -2333,9 +2284,9 @@ class ProximaDBClient:
         self,
         operation: str,
         collection_id: str,
-        params: Dict[str, Any],
+        params: dict[str, Any],
         fetch_func: callable,
-        ttl_seconds: Optional[float] = None,
+        ttl_seconds: float | None = None,
     ) -> Any:
         """Helper method for cache-aware GET operations"""
         if not self.enable_caching or not self._response_cache:
@@ -2373,14 +2324,14 @@ class ProximaDBClient:
     def search_cached(
         self,
         collection_id: str,
-        vector: Union[List[float], np.ndarray],
+        vector: list[float] | np.ndarray,
         top_k: int = 10,
-        metadata_filter: Optional[FilterDict] = None,
+        metadata_filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        ttl_seconds: Optional[float] = None,
+        ttl_seconds: float | None = None,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Cache-aware vector search
 
         Args:
@@ -2437,8 +2388,8 @@ class ProximaDBClient:
         collection_id: str,
         vector_id: str,
         include_metadata: bool = True,
-        ttl_seconds: Optional[float] = None,
-    ) -> Optional[Dict[str, Any]]:
+        ttl_seconds: float | None = None,
+    ) -> dict[str, Any] | None:
         """Cache-aware vector retrieval
 
         Args:
@@ -2463,8 +2414,8 @@ class ProximaDBClient:
         )
 
     def list_collections_cached(
-        self, ttl_seconds: Optional[float] = None
-    ) -> List[Collection]:
+        self, ttl_seconds: float | None = None
+    ) -> list[Collection]:
         """Cache-aware collection listing
 
         Args:
@@ -2486,8 +2437,8 @@ class ProximaDBClient:
         )
 
     def get_collection_cached(
-        self, collection_id: str, ttl_seconds: Optional[float] = None
-    ) -> Optional[Collection]:
+        self, collection_id: str, ttl_seconds: float | None = None
+    ) -> Collection | None:
         """Cache-aware collection retrieval
 
         Args:
@@ -2509,7 +2460,7 @@ class ProximaDBClient:
             "get_collection", collection_id, cache_params, fetch_func, ttl_seconds
         )
 
-    def get_cache_stats(self) -> Dict[str, Any]:
+    def get_cache_stats(self) -> dict[str, Any]:
         """Get cache performance statistics
 
         Returns:
@@ -2576,8 +2527,8 @@ class ProximaDBClient:
 
     def warm_cache(
         self,
-        warmup_operations: List[Tuple[str, str, Dict[str, Any], Any]],
-        batch_size: Optional[int] = None,
+        warmup_operations: list[tuple[str, str, dict[str, Any], Any]],
+        batch_size: int | None = None,
     ) -> int:
         """Warm cache with predefined operations
 
@@ -2603,9 +2554,9 @@ class ProximaDBClient:
         self,
         collection_id: str,
         vectors: VectorArray,
-        ids: List[str],
-        metadata: Optional[List[MetadataDict]] = None,
-        callback: Optional[callable] = None,
+        ids: list[str],
+        metadata: list[MetadataDict] | None = None,
+        callback: callable | None = None,
         priority: int = 1,
     ) -> str:
         """Submit vectors for batched insertion
@@ -2666,9 +2617,9 @@ class ProximaDBClient:
         self,
         collection_id: str,
         vectors: VectorArray,
-        ids: List[str],
-        metadata: Optional[List[MetadataDict]] = None,
-        callback: Optional[callable] = None,
+        ids: list[str],
+        metadata: list[MetadataDict] | None = None,
+        callback: callable | None = None,
         priority: int = 1,
     ) -> str:
         """Submit vectors for batched upsert
@@ -2725,8 +2676,8 @@ class ProximaDBClient:
     def delete_vectors_batched(
         self,
         collection_id: str,
-        ids: List[str],
-        callback: Optional[callable] = None,
+        ids: list[str],
+        callback: callable | None = None,
         priority: int = 1,
     ) -> str:
         """Submit vector IDs for batched deletion
@@ -2756,7 +2707,7 @@ class ProximaDBClient:
         )
         return self._batch_processor.submit_request(request)
 
-    def get_batch_metrics(self) -> Dict[str, Any]:
+    def get_batch_metrics(self) -> dict[str, Any]:
         """Get batching performance metrics
 
         Returns:
@@ -2790,11 +2741,11 @@ class ProximaDBClient:
     def create_node(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph node via REST
 
         Args:
@@ -2818,7 +2769,7 @@ class ProximaDBClient:
         payload = {"node": node_data}
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/nodes", json=payload
+            f"/api/v2/graphs/{graph_id}/nodes", json=payload
         )
         response.raise_for_status()
         return response.json()
@@ -2829,10 +2780,10 @@ class ProximaDBClient:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None,
+        properties: dict[str, Any] | None = None,
+        weight: float | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph edge via REST
 
         Args:
@@ -2860,7 +2811,7 @@ class ProximaDBClient:
         payload = {"edge": edge_data}
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/edges", json=payload
+            f"/api/v2/graphs/{graph_id}/edges", json=payload
         )
         response.raise_for_status()
         return response.json()
@@ -2869,12 +2820,12 @@ class ProximaDBClient:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
+        limit: int | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Traverse graph from a starting node via REST
 
         Args:
@@ -2901,7 +2852,7 @@ class ProximaDBClient:
             payload["limit"] = limit
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/traverse", json=payload
+            f"/api/v2/graphs/{graph_id}/traverse", json=payload
         )
         response.raise_for_status()
         result = response.json()
@@ -2929,12 +2880,12 @@ class ProximaDBClient:
 
     def query_nodes(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query nodes by labels and properties via REST
 
         Args:
@@ -2954,7 +2905,7 @@ class ProximaDBClient:
             payload["offset"] = offset
 
         response = self._http_client.post(
-            f"/api/v1/graph/graphs/{graph_id}/query/nodes", json=payload
+            f"/api/v2/graphs/{graph_id}/query/nodes", json=payload
         )
         response.raise_for_status()
         result = response.json()
@@ -2969,16 +2920,114 @@ class ProximaDBClient:
             "next_token": result.get("next_token"),
         }
 
+    def query_edges(
+        self,
+        edge_type: str = "",
+        from_node_id: str | None = None,
+        to_node_id: str | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Query edges by endpoints, type, and properties via REST."""
+        payload: dict[str, Any] = {
+            "edge_type": edge_type,
+            "properties": properties or {},
+        }
+        if from_node_id is not None:
+            payload["from_node_id"] = from_node_id
+        if to_node_id is not None:
+            payload["to_node_id"] = to_node_id
+        if limit is not None:
+            payload["limit"] = limit
+        if offset is not None:
+            payload["offset"] = offset
+
+        response = self._http_client.post(
+            f"/api/v2/graphs/{graph_id}/query/edges", json=payload
+        )
+        response.raise_for_status()
+        result = response.json()
+        return {
+            "success": result.get("success", True),
+            "edges": result.get("data", []),
+            "total_count": len(result.get("data", [])),
+            "next_token": result.get("next_token"),
+        }
+
+    def get_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> dict[str, Any] | None:
+        """Get a graph node by ID via REST."""
+        response = self._http_client.get(f"/api/v2/graphs/{graph_id}/nodes/{node_id}")
+        response.raise_for_status()
+        result = response.json()
+        return result.get("data", result)
+
+    def get_outgoing_edges(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+        graph_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """Get outgoing graph edges for a node via REST."""
+        edge_types = edge_types or [""]
+        edges: list[dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                from_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def get_incoming_edges(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+        graph_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """Get incoming graph edges for a node via REST."""
+        edge_types = edge_types or [""]
+        edges: list[dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                to_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def delete_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Delete a graph node by ID via REST."""
+        response = self._http_client.delete(
+            f"/api/v2/graphs/{graph_id}/nodes/{node_id}"
+        )
+        response.raise_for_status()
+        result = response.json()
+        return result.get("data", result)
+
     # ==================== Graph Collection Management ====================
     # Methods for managing graph collections (create, delete, list, get)
 
     def create_graph(
         self,
         graph_id: str,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        schema: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        name: str | None = None,
+        description: str | None = None,
+        schema: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Create a new graph collection
 
         Args:
@@ -3001,11 +3050,11 @@ class ProximaDBClient:
         if schema is not None:
             payload["schema"] = schema
 
-        response = self._http_client.post("/api/v1/graph/graphs", json=payload)
+        response = self._http_client.post("/api/v2/graphs", json=payload)
         response.raise_for_status()
         return response.json()
 
-    def delete_graph(self, graph_id: str) -> Dict[str, Any]:
+    def delete_graph(self, graph_id: str) -> dict[str, Any]:
         """Delete a graph collection
 
         Args:
@@ -3017,11 +3066,11 @@ class ProximaDBClient:
         Example:
             >>> result = client.delete_graph("social_network")
         """
-        response = self._http_client.delete(f"/api/v1/graph/graphs/{graph_id}")
+        response = self._http_client.delete(f"/api/v2/graphs/{graph_id}")
         response.raise_for_status()
         return response.json()
 
-    def get_graph(self, graph_id: str) -> Dict[str, Any]:
+    def get_graph(self, graph_id: str) -> dict[str, Any]:
         """Get graph collection metadata
 
         Args:
@@ -3034,11 +3083,11 @@ class ProximaDBClient:
             >>> graph = client.get_graph("social_network")
             >>> print(graph["name"])
         """
-        response = self._http_client.get(f"/api/v1/graph/graphs/{graph_id}")
+        response = self._http_client.get(f"/api/v2/graphs/{graph_id}")
         response.raise_for_status()
         return response.json()
 
-    def list_graphs(self) -> Dict[str, Any]:
+    def list_graphs(self) -> dict[str, Any]:
         """List all graph collections
 
         Returns:
@@ -3049,11 +3098,11 @@ class ProximaDBClient:
             >>> for graph in graphs.get("graphs", []):
             ...     print(graph["graph_id"])
         """
-        response = self._http_client.get("/api/v1/graph/graphs")
+        response = self._http_client.get("/api/v2/graphs")
         response.raise_for_status()
         return response.json()
 
-    def get_graph_stats(self, graph_id: str) -> Dict[str, Any]:
+    def get_graph_stats(self, graph_id: str) -> dict[str, Any]:
         """Get statistics for a graph collection
 
         Args:
@@ -3066,20 +3115,111 @@ class ProximaDBClient:
             >>> stats = client.get_graph_stats("social_network")
             >>> print(f"Nodes: {stats['node_count']}, Edges: {stats['edge_count']}")
         """
-        response = self._http_client.get(f"/api/v1/graph/graphs/{graph_id}/stats")
+        response = self._http_client.get(f"/api/v2/graphs/{graph_id}/stats")
         response.raise_for_status()
         return response.json()
 
     # ==================== End Graph Collection Management ====================
+
+    # ==================== AQL/UQL Query API ====================
+
+    def execute_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute an AQL, UQL, or federated SQL-extension query."""
+        payload: dict[str, Any] = {"language": language, "query": query}
+        if parameters is not None:
+            payload["parameters"] = parameters
+        if collection is not None:
+            payload["collection"] = collection
+        if limit is not None:
+            payload["limit"] = limit
+
+        response = self._make_request("POST", "/api/v2/query", json=payload)
+        return response.json()
+
+    def explain_query(
+        self,
+        query: str,
+        *,
+        language: str = "uql",
+        collection: str | None = None,
+    ) -> dict[str, Any]:
+        """Explain an AQL or UQL query through the OpenAPI v2 query surface."""
+        payload: dict[str, Any] = {"language": language, "query": query}
+        if collection is not None:
+            payload["collection"] = collection
+
+        response = self._make_request("POST", "/api/v2/query/explain", json=payload)
+        return response.json()
+
+    def execute_uql(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute a UQL query through the OpenAPI v2 query surface."""
+        return self.execute_query(
+            query,
+            language="uql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_aql(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute an AQL query through the OpenAPI v2 query surface."""
+        return self.execute_query(
+            query,
+            language="aql",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    def execute_federated(
+        self,
+        query: str,
+        *,
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        """Execute federated SQL extensions through the OpenAPI v2 query surface."""
+        return self.execute_query(
+            query,
+            language="federated",
+            parameters=parameters,
+            collection=collection,
+            limit=limit,
+        )
+
+    # ==================== End AQL/UQL Query API ====================
 
     # ==================== SQL Query API ====================
 
     def execute_sql(
         self,
         query: str,
-        parameters: Optional[List[Any]] = None,
-        collection: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        parameters: list[Any] | None = None,
+        collection: str | None = None,
+    ) -> dict[str, Any]:
         """Execute SQL query against the database.
 
         Args:
@@ -3104,7 +3244,10 @@ class ProximaDBClient:
             >>> for row in result['rows']:
             ...     print(row)
         """
-        payload: Dict[str, Any] = {"query": query}
+        # Canonical v2 query facade. Raw SQL is submitted via the unified query
+        # language ("uql"); the legacy /api/v1/sql/execute route was removed in
+        # the API standardization hard-rename.
+        payload: dict[str, Any] = {"language": "uql", "query": query}
 
         if parameters:
             payload["parameters"] = parameters
@@ -3113,7 +3256,7 @@ class ProximaDBClient:
             payload["collection"] = collection
 
         try:
-            response = self._http_client.post("/api/v1/sql/execute", json=payload)
+            response = self._http_client.post("/api/v2/query", json=payload)
             response.raise_for_status()
             result = response.json()
 
@@ -3155,7 +3298,7 @@ class ProximaDBClient:
 
 # Convenience functions
 def connect(
-    url: Optional[str] = None, api_key: Optional[str] = None, **kwargs
+    url: str | None = None, api_key: str | None = None, **kwargs
 ) -> ProximaDBClient:
     """Create a ProximaDB client with simplified parameters"""
     return ProximaDBClient(url=url, api_key=api_key, **kwargs)
@@ -3163,11 +3306,11 @@ def connect(
 
 def quick_search(
     collection_id: str,
-    query: Union[List[float], np.ndarray],
+    query: list[float] | np.ndarray,
     k: int = 10,
-    url: Optional[str] = None,
-    api_key: Optional[str] = None,
-) -> List[SearchResult]:
+    url: str | None = None,
+    api_key: str | None = None,
+) -> list[SearchResult]:
     """Quick one-off search without creating persistent client"""
     with connect(url=url, api_key=api_key) as client:
         return client.search(collection_id, query, k)

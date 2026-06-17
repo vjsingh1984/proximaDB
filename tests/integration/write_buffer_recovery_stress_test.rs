@@ -9,10 +9,10 @@
 //! without depending on VectorOperationsService.
 
 use anyhow::Result;
-use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::storage::persistence::write_ahead_log::serialization::{
     SerializationFormat, SerializerFactory, VectorBatchSerializer,
 };
+use proximadb_records::ProximaRecord;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 use tracing::info;
@@ -22,40 +22,42 @@ fn create_test_vectors_with_metadata(
     start_id: usize,
     count: usize,
     dimension: usize,
-) -> Vec<VectorRecord> {
+) -> Vec<ProximaRecord> {
     (start_id..start_id + count)
         .map(|i| {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert(
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
                 "batch_id".to_string(),
-                proximadb::proto::proximadb_v1::SqlValue {
-                    value: Some(
-                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                            (i / 100).to_string(),
-                        ),
-                    ),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String((i / 100).to_string()),
+                ),
             );
-            metadata.insert(
+            props.insert(
                 "timestamp".to_string(),
-                proximadb::proto::proximadb_v1::SqlValue {
-                    value: Some(
-                        proximadb::proto::proximadb_v1::sql_value::Value::StringValue(
-                            chrono::Utc::now().timestamp().to_string(),
-                        ),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(
+                        chrono::Utc::now().timestamp().to_string(),
                     ),
-                },
+                ),
             );
 
-            VectorRecord {
-                id: format!("vec_{}", i),
-                vector: vec![(i % 256) as f32; dimension],
-                metadata,
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                updated_at: Some(chrono::Utc::now().timestamp()),
-                expires_at: None,
-                version: Some(1),
-                source: None,
+            ProximaRecord {
+                oid: format!("vec_{}", i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: dimension as u32,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![
+                        (i % 256) as f32;
+                        dimension
+                    ]),
+                    ..Default::default()
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                ..Default::default()
             }
         })
         .collect()

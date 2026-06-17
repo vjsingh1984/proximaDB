@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use tracing::{debug, info};
 
 use crate::core::search::FilterExpression;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Qualifying row indices with metadata about the filtering process
 #[derive(Debug, Clone)]
@@ -22,12 +22,15 @@ pub struct FilterIndices {
     /// Total rows evaluated
     pub total_rows: usize,
     /// Engine-specific metadata for optimization decisions
-    pub metadata: IndexMetadata,
+    pub metadata: FilterIndexMetadata,
 }
+
+/// Backwards-compat alias for [`FilterIndexMetadata`].
+pub type IndexMetadata = FilterIndexMetadata;
 
 /// Metadata about the filter evaluation process for optimization decisions
 #[derive(Debug, Clone)]
-pub struct IndexMetadata {
+pub struct FilterIndexMetadata {
     /// Source identifier (block ID, file path, etc.)
     pub source_id: String,
     /// Selectivity ratio (0.0 = no matches, 1.0 = all match)
@@ -99,7 +102,7 @@ pub trait MetadataSource: Send + Sync {
     fn get_row_count(&self) -> usize;
 
     /// Get column metadata for filtering optimization
-    fn get_column_metadata(&self, column_name: &str) -> Option<ColumnMetadata>;
+    fn get_column_metadata(&self, column_name: &str) -> Option<FilterColumnMetadata>;
 
     /// Extract metadata value for a specific row and column
     fn get_metadata_value(&self, row_idx: usize, column_name: &str) -> Option<serde_json::Value>;
@@ -111,9 +114,12 @@ pub trait MetadataSource: Send + Sync {
     fn supports_selective_reading(&self) -> bool;
 }
 
+/// Backwards-compat alias for [`FilterColumnMetadata`].
+pub type ColumnMetadata = FilterColumnMetadata;
+
 /// Statistical metadata about a column for filter optimization
 #[derive(Debug, Clone)]
-pub struct ColumnMetadata {
+pub struct FilterColumnMetadata {
     /// Whether an inverted index exists on this column
     pub has_index: bool,
     /// Approximate number of distinct values
@@ -176,7 +182,7 @@ pub trait IndexBasedDataReader: Send + Sync {
         source_id: &str,
         read_strategy: &ReadStrategy,
         metadata_source: &(dyn MetadataSource + Send + Sync),
-    ) -> Result<Vec<VectorRecord>>;
+    ) -> Result<Vec<ProximaRecord>>;
 
     /// Estimate the cost/benefit of selective reading vs full reading
     fn estimate_selective_read_benefit(&self, indices: &[usize], total_rows: usize) -> f32 {
@@ -213,7 +219,7 @@ where
         &self,
         filter_expr: &FilterExpression,
         sources: &[&(dyn MetadataSource + Send + Sync)],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "Index-based filtering: {} sources to evaluate",
             sources.len()
@@ -269,7 +275,7 @@ where
         );
 
         // Step 3: Execute optimized data reading based on indices
-        let mut all_results = Vec::new();
+        let mut all_results: Vec<ProximaRecord> = Vec::new();
 
         for (source, read_strategy) in read_plans {
             let source_results = self
@@ -416,7 +422,7 @@ impl FilterIndexEvaluator for BaseFilterIndexEvaluator {
         Ok(FilterIndices {
             indices: qualifying_indices,
             total_rows,
-            metadata: IndexMetadata {
+            metadata: FilterIndexMetadata {
                 source_id,
                 selectivity,
                 filter_complexity: FilterComplexity::Simple, // Deferred: Analyze complexity

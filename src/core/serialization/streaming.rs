@@ -6,7 +6,7 @@
 //! - Memory-efficient streaming operations
 //! - Real-time performance monitoring
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use parking_lot::RwLock;
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -15,12 +15,15 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, info, trace, warn};
 
-use crate::core::memory::VectorMemoryPool;
 use crate::core::serialization::VectorSerializationConfig;
+use proximadb_runtime_common::pool::VectorMemoryPool;
+
+/// Backwards-compat alias for [`SerializationStreamingConfig`].
+pub type StreamingConfig = SerializationStreamingConfig;
 
 /// Configuration for streaming compression
 #[derive(Debug, Clone)]
-pub struct StreamingConfig {
+pub struct SerializationStreamingConfig {
     /// Buffer size for batching vectors
     pub buffer_size: usize,
     /// Maximum time to wait before flushing buffer
@@ -37,7 +40,7 @@ pub struct StreamingConfig {
     pub enable_monitoring: bool,
 }
 
-impl Default for StreamingConfig {
+impl Default for SerializationStreamingConfig {
     fn default() -> Self {
         Self {
             buffer_size: 100,                         // Vectors per batch
@@ -51,9 +54,12 @@ impl Default for StreamingConfig {
     }
 }
 
+/// Backwards-compat alias for [`SerializationStreamingMetrics`].
+pub type StreamingMetrics = SerializationStreamingMetrics;
+
 /// Performance metrics for streaming compression
 #[derive(Debug, Clone, Default)]
-pub struct StreamingMetrics {
+pub struct SerializationStreamingMetrics {
     /// Total number of vectors processed
     pub vectors_processed: u64,
     /// Number of batches processed
@@ -76,7 +82,7 @@ pub struct StreamingMetrics {
     pub queue_depth: usize,
 }
 
-impl StreamingMetrics {
+impl SerializationStreamingMetrics {
     /// Log a human-readable summary of streaming compression metrics
     pub fn print_summary(&self) {
         info!("🌊 Streaming Compression Metrics:");
@@ -132,11 +138,11 @@ pub struct CompressionResult {
 
 /// Streaming vector compressor for real-time workloads
 pub struct StreamingCompressor {
-    config: StreamingConfig,
+    config: SerializationStreamingConfig,
     #[allow(dead_code)]
     memory_pool: Arc<VectorMemoryPool>,
     work_tx: mpsc::Sender<CompressionWork>,
-    metrics: Arc<RwLock<StreamingMetrics>>,
+    metrics: Arc<RwLock<SerializationStreamingMetrics>>,
     workers: Vec<JoinHandle<()>>,
     next_batch_id: Arc<std::sync::atomic::AtomicU64>,
     adaptive_controller: Arc<RwLock<AdaptiveController>>,
@@ -222,10 +228,10 @@ impl AdaptiveController {
 
 impl StreamingCompressor {
     /// Create a new streaming compressor
-    pub fn new(config: StreamingConfig) -> Result<Self> {
+    pub fn new(config: SerializationStreamingConfig) -> Result<Self> {
         let memory_pool = Arc::new(VectorMemoryPool::new());
         let (work_tx, work_rx) = mpsc::channel(config.channel_capacity);
-        let metrics = Arc::new(RwLock::new(StreamingMetrics::default()));
+        let metrics = Arc::new(RwLock::new(SerializationStreamingMetrics::default()));
         let next_batch_id = Arc::new(std::sync::atomic::AtomicU64::new(1));
         let adaptive_controller =
             Arc::new(RwLock::new(AdaptiveController::new(config.buffer_size)));
@@ -323,7 +329,7 @@ impl StreamingCompressor {
     }
 
     /// Get current performance metrics
-    pub fn metrics(&self) -> StreamingMetrics {
+    pub fn metrics(&self) -> SerializationStreamingMetrics {
         self.metrics.read().clone()
     }
 
@@ -351,7 +357,7 @@ impl StreamingCompressor {
         worker_count: usize,
         work_rx: mpsc::Receiver<CompressionWork>,
         memory_pool: Arc<VectorMemoryPool>,
-        metrics: Arc<RwLock<StreamingMetrics>>,
+        metrics: Arc<RwLock<SerializationStreamingMetrics>>,
     ) -> Result<Vec<JoinHandle<()>>> {
         let work_rx = Arc::new(tokio::sync::Mutex::new(work_rx));
         let mut handles = Vec::new();
@@ -378,7 +384,7 @@ impl StreamingCompressor {
         worker_id: usize,
         work_rx: Arc<tokio::sync::Mutex<mpsc::Receiver<CompressionWork>>>,
         memory_pool: Arc<VectorMemoryPool>,
-        metrics: Arc<RwLock<StreamingMetrics>>,
+        metrics: Arc<RwLock<SerializationStreamingMetrics>>,
     ) {
         trace!("🔧 Worker {} started", worker_id);
 
@@ -449,10 +455,20 @@ impl StreamingCompressor {
             .map(|v| v.len() * 4) // f32 = 4 bytes
             .sum::<usize>();
 
-        // Serialize vectors using memory pool
-        let compressed_data = memory_pool
-            .serialize_vector_batch_pooled(&work.vectors, &work.config)
-            .context("Failed to serialize vector batch")?;
+        // Serialize vectors using pooled buffer
+        let compressed_data = {
+            let mut pooled = memory_pool.serialization_buffers.acquire();
+            let buf = &mut *pooled;
+            buf.clear();
+            let est = work.vectors.iter().map(|v| v.len() * 4 + 4).sum();
+            buf.reserve(est);
+            for v in &work.vectors {
+                let vd = work.config.serialize_vector(v)?;
+                buf.extend_from_slice(&(vd.len() as u32).to_le_bytes());
+                buf.extend_from_slice(&vd);
+            }
+            buf.clone()
+        };
 
         let processing_time = start_time.elapsed();
         let compressed_size = compressed_data.len();
@@ -486,27 +502,42 @@ impl StreamingCompressor {
 
 /// Streaming decompressor for real-time workloads
 pub struct StreamingDecompressor {
-    memory_pool: Arc<VectorMemoryPool>,
     config: VectorSerializationConfig,
 }
 
 impl StreamingDecompressor {
     /// Create a new streaming decompressor
     pub fn new(config: VectorSerializationConfig) -> Self {
-        Self {
-            memory_pool: Arc::new(VectorMemoryPool::new()),
-            config,
-        }
+        Self { config }
     }
 
     /// Decompress a batch of compressed data
     pub async fn decompress_batch(&self, compressed_data: &[u8]) -> Result<Vec<Vec<f32>>> {
         let start_time = Instant::now();
 
-        let vectors = self
-            .memory_pool
-            .deserialize_vector_batch_pooled(compressed_data, &self.config)
-            .context("Failed to deserialize vector batch")?;
+        let vectors = {
+            let mut result = Vec::new();
+            let mut cursor = 0usize;
+            while cursor + 4 <= compressed_data.len() {
+                // The `cursor + 4 <= len` while-condition guarantees the
+                // 4-byte slice is in bounds; `try_into` to `[u8; 4]` from
+                // an exactly-4-byte slice is infallible.
+                #[allow(clippy::unwrap_used)]
+                let len =
+                    u32::from_le_bytes(compressed_data[cursor..cursor + 4].try_into().unwrap())
+                        as usize;
+                cursor += 4;
+                if cursor + len > compressed_data.len() {
+                    return Err(anyhow::anyhow!("Invalid vector data: length mismatch"));
+                }
+                result.push(
+                    self.config
+                        .deserialize_vector(&compressed_data[cursor..cursor + len])?,
+                );
+                cursor += len;
+            }
+            result
+        };
 
         let processing_time = start_time.elapsed();
 
@@ -539,6 +570,7 @@ impl StreamingDecompressor {
 mod tests {
     use super::*;
     use crate::core::serialization::CompressionAlgorithm;
+    use anyhow::Context;
 
     fn create_test_vectors(count: usize, dimension: usize) -> Vec<Vec<f32>> {
         (0..count)
@@ -552,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_streaming_compression_basic() -> Result<()> {
-        let config = StreamingConfig {
+        let config = SerializationStreamingConfig {
             worker_count: 2,
             buffer_size: 10,
             ..Default::default()
@@ -593,7 +625,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_batch_compression() -> Result<()> {
-        let config = StreamingConfig::default();
+        let config = SerializationStreamingConfig::default();
         let compressor =
             StreamingCompressor::new(config).context("Failed to create streaming compressor")?;
 
@@ -627,7 +659,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_performance_monitoring() -> Result<()> {
-        let mut config = StreamingConfig::default();
+        let mut config = SerializationStreamingConfig::default();
         config.enable_monitoring = true;
         config.worker_count = 1;
 
@@ -658,7 +690,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adaptive_sizing() -> Result<()> {
-        let mut config = StreamingConfig::default();
+        let mut config = SerializationStreamingConfig::default();
         config.adaptive_sizing = true;
         config.target_latency_us = 1000; // 1ms target
         config.buffer_size = 20;
@@ -696,7 +728,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_compression() -> Result<()> {
-        let config = StreamingConfig {
+        let config = SerializationStreamingConfig {
             worker_count: 4,
             channel_capacity: 100,
             ..Default::default()

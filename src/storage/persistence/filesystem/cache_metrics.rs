@@ -10,10 +10,13 @@ use dashmap::DashMap;
 use tokio::sync::RwLock;
 use tracing::trace;
 
-use crate::storage::persistence::filesystem::unified::CacheType;
+use crate::storage::persistence::filesystem::caching_filesystem::CacheType;
+
+/// Backwards-compat alias for [`FsCacheMetrics`].
+pub type CacheMetrics = FsCacheMetrics;
 
 /// Comprehensive cache metrics collector
-pub struct CacheMetrics {
+pub struct FsCacheMetrics {
     /// Per-cache-type metrics
     cache_metrics: Arc<DashMap<CacheType, CacheTypeMetrics>>,
 
@@ -58,7 +61,7 @@ struct PerformanceMetrics {
     latency_samples: Vec<u64>,
 }
 
-impl CacheMetrics {
+impl FsCacheMetrics {
     /// Create new metrics collector
     pub fn new() -> Self {
         Self {
@@ -257,7 +260,7 @@ impl CacheMetrics {
     }
 }
 
-impl Default for CacheMetrics {
+impl Default for FsCacheMetrics {
     fn default() -> Self {
         Self::new()
     }
@@ -370,7 +373,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_metrics_recording() {
-        let metrics = CacheMetrics::new();
+        let metrics = FsCacheMetrics::new();
 
         metrics.record_cache_hit(CacheType::Metadata);
         metrics.record_cache_hit(CacheType::Disk);
@@ -385,7 +388,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_latency_tracking() {
-        let metrics = CacheMetrics::new();
+        let metrics = FsCacheMetrics::new();
 
         metrics.record_latency(100, true).await;
         metrics.record_latency(200, true).await;

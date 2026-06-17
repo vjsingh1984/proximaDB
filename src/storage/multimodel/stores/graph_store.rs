@@ -1,30 +1,40 @@
 //! # Graph Store
 //!
-//! Wraps the ORION graph engine for native graph storage with CSR format.
+//! Wraps the ORION graph engine for native graph traversal with CSR projections.
+//! In the canonical architecture, durable graph facts live as `ProximaRecord`
+//! node/edge records; ORION CSR is a rebuildable topology projection/cache.
 //!
 //! ## Engine: ORION
 //!
-//! - **CSR (Compressed Sparse Row)** format for efficient adjacency traversal
+//! - **CSR (Compressed Sparse Row)** projection for efficient adjacency traversal
 //! - **Arc-based zero-copy** memory sharing
 //! - **DashMap** concurrent access
-//! - **WAL persistence** for durability
+//! - **WAL persistence** for legacy/compatibility operation logging
 //! - **1M+ edges/sec** traversal throughput
 
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::core::error::ProximaDBError;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphService, Node, NodeId};
+use crate::proto::proximadb_v1::{PropertyValue, property_value};
+use proximadb_kernel::error::ProximaDBError;
 
 use super::super::traits::{ModelType, StoreCapabilities};
+use super::super::transaction::participants::{
+    GraphEdge as TransactionGraphEdge, GraphNode as TransactionGraphNode, GraphWriteOperations,
+};
 
 // Use the graph engine's Result type
 type Result<T> = std::result::Result<T, ProximaDBError>;
 
+/// Backwards-compat aliases.
+pub type GraphStore = LegacyMultimodelGraphStore;
+pub type GraphStoreConfig = LegacyMultimodelGraphStoreConfig;
+
 /// Configuration for the graph store
 #[derive(Debug, Clone)]
-pub struct GraphStoreConfig {
+pub struct LegacyMultimodelGraphStoreConfig {
     /// Enable WAL persistence
     pub enable_wal: bool,
     /// WAL path (if enabled)
@@ -33,7 +43,7 @@ pub struct GraphStoreConfig {
     pub enable_property_indexes: bool,
 }
 
-impl Default for GraphStoreConfig {
+impl Default for LegacyMultimodelGraphStoreConfig {
     fn default() -> Self {
         Self {
             enable_wal: true,
@@ -63,20 +73,20 @@ impl Default for GraphStoreConfig {
 /// │    └─────────────────────────────────┘  │
 /// └─────────────────────────────────────────┘
 /// ```
-pub struct GraphStore {
-    /// The underlying graph engine (ORION, PULSAR, or QUASAR)
+pub struct LegacyMultimodelGraphStore {
+    /// The underlying ORION graph runtime
     engine: Option<Arc<dyn GraphEngine>>,
     /// Shared graph service used by the server/runtime path
     service: Option<Arc<GraphService>>,
     /// Optional default graph identifier for service-backed queries
     default_graph: Option<String>,
     /// Configuration
-    config: GraphStoreConfig,
+    config: LegacyMultimodelGraphStoreConfig,
 }
 
 impl GraphStore {
     /// Create a new GraphStore with the given configuration
-    pub fn new(config: GraphStoreConfig) -> Self {
+    pub fn new(config: LegacyMultimodelGraphStoreConfig) -> Self {
         Self {
             engine: None,
             service: None,
@@ -107,7 +117,7 @@ impl GraphStore {
     pub fn capabilities(&self) -> StoreCapabilities {
         StoreCapabilities {
             model_type: ModelType::Graph,
-            supports_transactions: false, // Future: add graph transactions
+            supports_transactions: true,
             supports_secondary_indexes: true, // Property indexes
             supports_acid: false,
             supports_streaming: true,
@@ -128,7 +138,7 @@ impl GraphStore {
     }
 
     /// Get the configuration
-    pub fn config(&self) -> &GraphStoreConfig {
+    pub fn config(&self) -> &LegacyMultimodelGraphStoreConfig {
         &self.config
     }
 
@@ -237,6 +247,94 @@ impl GraphStore {
             .and_then(|e| e.edge_count().ok())
             .unwrap_or(0)
     }
+}
+
+#[async_trait]
+impl GraphWriteOperations for GraphStore {
+    async fn create_node(&self, graph_id: &str, node: TransactionGraphNode) -> anyhow::Result<()> {
+        let now_ms = current_epoch_ms();
+        let graph_node = Node {
+            id: node.id,
+            labels: vec![node.label],
+            properties: string_properties_to_proto(node.properties),
+            embedding: None,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+
+        if let Some(service) = &self.service {
+            service.create_node(graph_id, graph_node).await?;
+        } else {
+            self.insert_node(graph_node).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn create_edge(&self, graph_id: &str, edge: TransactionGraphEdge) -> anyhow::Result<()> {
+        let now_ms = current_epoch_ms();
+        let graph_edge = Edge {
+            id: edge.id,
+            from_node_id: edge.source,
+            to_node_id: edge.target,
+            edge_type: edge.edge_type,
+            properties: string_properties_to_proto(edge.properties),
+            weight: None,
+            created_at_ms: now_ms,
+            updated_at_ms: now_ms,
+        };
+
+        if let Some(service) = &self.service {
+            service.create_edge(graph_id, graph_edge).await?;
+        } else {
+            self.insert_edge(graph_edge).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn delete_node(&self, graph_id: &str, node_id: &str) -> anyhow::Result<()> {
+        if let Some(service) = &self.service {
+            service.delete_node(graph_id, &node_id.to_string()).await?;
+        } else {
+            GraphEngine::delete_node(self, &node_id.to_string()).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn delete_edge(&self, graph_id: &str, edge_id: &str) -> anyhow::Result<()> {
+        if let Some(service) = &self.service {
+            service.delete_edge(graph_id, &edge_id.to_string()).await?;
+        } else {
+            GraphEngine::delete_edge(self, &edge_id.to_string()).await?;
+        }
+
+        Ok(())
+    }
+}
+
+fn string_properties_to_proto(
+    properties: std::collections::HashMap<String, String>,
+) -> std::collections::HashMap<String, PropertyValue> {
+    properties
+        .into_iter()
+        .map(|(key, value)| {
+            (
+                key,
+                PropertyValue {
+                    value: Some(property_value::Value::StringValue(value)),
+                },
+            )
+        })
+        .collect()
+}
+
+fn current_epoch_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(i64::MAX as u128) as i64)
+        .unwrap_or_default()
 }
 
 /// Delegate to the underlying GraphEngine trait
@@ -377,14 +475,14 @@ mod tests {
 
     #[test]
     fn test_graph_store_config_default() {
-        let config = GraphStoreConfig::default();
+        let config = LegacyMultimodelGraphStoreConfig::default();
         assert!(config.enable_wal);
         assert!(config.enable_property_indexes);
     }
 
     #[test]
     fn test_graph_store_capabilities() {
-        let store = GraphStore::new(GraphStoreConfig::default());
+        let store = GraphStore::new(LegacyMultimodelGraphStoreConfig::default());
         let caps = store.capabilities();
 
         assert_eq!(caps.model_type, ModelType::Graph);

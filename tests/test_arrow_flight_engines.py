@@ -631,6 +631,8 @@ class TestArrowFlightServer:
         # Should have flush, compact, and flush_and_compact actions
         action_types = [a[0] for a in actions]
         assert "flush_collection" in action_types or len(actions) >= 0
+        assert "bulk_upsert" in action_types
+        assert "bulk_delete" in action_types
 
     def test_bulk_insert_and_search(self, flight_client, sample_vectors):
         """Test bulk insert via Arrow Flight and search."""
@@ -681,6 +683,108 @@ class TestArrowFlightServer:
 
             # Arrow Flight should be fast
             assert vectors_per_sec > 1000, "Arrow Flight insert too slow"
+
+    def test_bulk_upsert_and_delete_doput(self, flight_client, sample_vectors):
+        """Test DoPut bulk upsert followed by DoPut bulk delete."""
+        collection_name = f"arrow_doput_delete_{int(time.time())}"
+        created = flight_client._do_action(
+            "create_collection",
+            {
+                "name": collection_name,
+                "dimension": sample_vectors["dimension"],
+                "engine": "sst",
+                "distance_metric": "cosine",
+            },
+        )
+        if not created:
+            pytest.skip("Could not create collection over Arrow Flight")
+
+        table = vectors_to_arrow_table(
+            ids=sample_vectors["ids"][:8],
+            vectors=sample_vectors["vectors"][:8],
+            metadata=sample_vectors["metadata"][:8],
+        )
+
+        upsert = flight_client.bulk_upsert(collection_name, table, batch_size=3)
+        if not upsert.success:
+            pytest.skip(f"Bulk upsert failed before delete: {upsert.message}")
+
+        assert upsert.records_processed == 8
+
+        delete = flight_client.bulk_delete(
+            collection_name,
+            sample_vectors["ids"][:4],
+            batch_size=2,
+        )
+
+        assert delete.success
+        assert delete.records_processed == 4
+        assert delete.records_failed == 0
+
+    def test_bulk_upsert_exchange(self, flight_client, sample_vectors):
+        """Test progress-aware bulk upsert via Arrow Flight DoExchange."""
+        collection_name = f"arrow_exchange_upsert_{int(time.time())}"
+        created = flight_client._do_action(
+            "create_collection",
+            {
+                "name": collection_name,
+                "dimension": sample_vectors["dimension"],
+                "engine": "sst",
+                "distance_metric": "cosine",
+            },
+        )
+        if not created:
+            pytest.skip("Could not create collection over Arrow Flight")
+
+        table = vectors_to_arrow_table(
+            ids=sample_vectors["ids"][:10],
+            vectors=sample_vectors["vectors"][:10],
+            metadata=sample_vectors["metadata"][:10],
+        )
+
+        result = flight_client.bulk_upsert_exchange(collection_name, table, batch_size=4)
+
+        assert result.success
+        assert result.records_processed == 10
+        assert result.records_failed == 0
+        assert result.batches_processed >= 1
+        assert result.metadata["operation"] == "upsert"
+
+    def test_bulk_delete_exchange(self, flight_client, sample_vectors):
+        """Test progress-aware bulk delete via Arrow Flight DoExchange."""
+        collection_name = f"arrow_exchange_delete_{int(time.time())}"
+        created = flight_client._do_action(
+            "create_collection",
+            {
+                "name": collection_name,
+                "dimension": sample_vectors["dimension"],
+                "engine": "sst",
+                "distance_metric": "cosine",
+            },
+        )
+        if not created:
+            pytest.skip("Could not create collection over Arrow Flight")
+
+        table = vectors_to_arrow_table(
+            ids=sample_vectors["ids"][:10],
+            vectors=sample_vectors["vectors"][:10],
+            metadata=sample_vectors["metadata"][:10],
+        )
+        upsert = flight_client.bulk_upsert_exchange(collection_name, table, batch_size=5)
+        if not upsert.success:
+            pytest.skip(f"Bulk upsert failed before delete: {upsert.message}")
+
+        result = flight_client.bulk_delete_exchange(
+            collection_name,
+            sample_vectors["ids"][:5],
+            batch_size=3,
+        )
+
+        assert result.success
+        assert result.records_processed == 5
+        assert result.records_failed == 0
+        assert result.batches_processed >= 1
+        assert result.metadata["operation"] == "delete"
 
 
 # =============================================================================

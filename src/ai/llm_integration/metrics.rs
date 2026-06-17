@@ -46,7 +46,7 @@ pub struct GlobalMetrics {
 
 /// Snapshot of metrics at a point in time
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetricsSnapshot {
+pub struct LlmMetricsSnapshot {
     pub timestamp: DateTime<Utc>,
     pub provider_stats: HashMap<LLMProvider, ProviderStats>,
     pub global_stats: GlobalStats,
@@ -205,7 +205,7 @@ impl LLMMetrics {
     }
 
     /// Get comprehensive metrics snapshot
-    pub async fn get_snapshot(&self) -> MetricsSnapshot {
+    pub async fn get_snapshot(&self) -> LlmMetricsSnapshot {
         let provider_metrics = self.provider_metrics.read().await;
         let mut provider_stats = HashMap::new();
 
@@ -246,7 +246,7 @@ impl LLMMetrics {
                 .iter()
                 .map(|(k, v)| (k.clone(), *v))
                 .collect();
-            common_errors.sort_by(|a, b| b.1.cmp(&a.1));
+            common_errors.sort_by_key(|e| std::cmp::Reverse(e.1));
             common_errors.truncate(5);
 
             provider_stats.insert(
@@ -318,7 +318,7 @@ impl LLMMetrics {
         // Calculate performance summary
         let performance_summary = self.calculate_performance_summary(&provider_stats);
 
-        MetricsSnapshot {
+        LlmMetricsSnapshot {
             timestamp: Utc::now(),
             provider_stats,
             global_stats,

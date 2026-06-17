@@ -11,19 +11,15 @@ Based on current gRPC specifications and SDK implementation.
 import glob
 import json
 import os
-import sys
 import time
 
-import numpy as np
 from sentence_transformers import SentenceTransformer
 
 from proximadb_sdk import (
     CollectionConfig,
-    DistanceMetric,
     Protocol,
     ProximaDBClient,
     StorageEngine,
-    VectorRecord,
 )
 
 
@@ -94,7 +90,7 @@ def verify_collection_persistence(collection_name):
                 contents = os.listdir(collections_path)
                 print(f"   Directory contents: {contents[:3]}...")  # Show first 3
 
-    print(f"❌ No metadata files found in any location")
+    print("❌ No metadata files found in any location")
     return False
 
 
@@ -203,7 +199,7 @@ def test_end_to_end_flow():
         )
 
         if vector_data:
-            print(f"✅ Retrieved vector 'vec_0'")
+            print("✅ Retrieved vector 'vec_0'")
             print(f"   Vector dimension: {len(vector_data.get('vector', []))}")
             if "metadata" in vector_data:
                 print(f"   Text: {vector_data['metadata'].get('text', 'N/A')}")
@@ -223,7 +219,7 @@ def test_end_to_end_flow():
             upsert=True,
         )
 
-        print(f"✅ Upsert completed")
+        print("✅ Upsert completed")
         print(f"   Duration: {upsert_result.metrics.processing_time_us / 1000:.2f}ms")
 
         # Step 8: Verify upsert by getting the vector again
@@ -244,7 +240,7 @@ def test_end_to_end_flow():
         # Step 9: Delete a vector
         print("\n9️⃣ Deleting a vector...")
         delete_result = client.delete_vector(collection_name, "vec_4")
-        print(f"✅ Delete operation completed")
+        print("✅ Delete operation completed")
 
         # Step 10: Verify persistence
         print("\n🔟 Verifying data persistence...")
@@ -283,7 +279,7 @@ def test_end_to_end_flow():
         # Step 12: Collection stats
         print("\n1️⃣2️⃣ Checking collection information...")
         collection_info = client.get_collection(collection_name)
-        print(f"✅ Collection info retrieved")
+        print("✅ Collection info retrieved")
         if hasattr(collection_info, "stats") and collection_info.stats:
             print(f"   Vector count: {collection_info.stats.vector_count}")
         print(f"   Dimension: {collection_info.config.dimension}")
@@ -295,7 +291,7 @@ def test_end_to_end_flow():
         print(f"   - Protocol used: {client.active_protocol.value}")
         print(f"   - WAL persistence: {'✅' if wal_verified else '❌'}")
         print(f"   - Collection persistence: {'✅' if collection_verified else '❌'}")
-        print(f"   - All operations: ✅")
+        print("   - All operations: ✅")
 
         # Write performance report
         report = {

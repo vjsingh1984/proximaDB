@@ -12,7 +12,7 @@ use proximadb::storage::engines::raptor::{RaptorEngine, RaptorConfig};
 use proximadb::storage::engines::raptor::common::{
     AccuracyLevel, PxKStrategy, RaptorCompressionCodec
 };
-use proximadb::core::models::VectorRecord;
+use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::core::distance::DistanceMetric;
 use std::sync::Arc;
 use tempfile::TempDir;

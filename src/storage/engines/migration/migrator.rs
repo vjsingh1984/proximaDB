@@ -11,8 +11,8 @@ use super::{
     MigrationConfig, MigrationEvent, MigrationEventType, MigrationStatus, MigrationStrategy,
 };
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
-use crate::storage::engines::factory::StorageEngineFactory;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::engines::factory::StorageFormatFactory;
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Engine migrator for moving data between storage engines
 pub struct EngineMigrator {
@@ -21,9 +21,9 @@ pub struct EngineMigrator {
 
     /// Source and target engines
     #[allow(dead_code)]
-    source_engine: Arc<dyn UnifiedStorageEngine>,
+    source_engine: Arc<dyn UnifiedStorageFormat>,
     #[allow(dead_code)]
-    target_engine: Arc<dyn UnifiedStorageEngine>,
+    target_engine: Arc<dyn UnifiedStorageFormat>,
 
     /// Migration state
     status: Arc<RwLock<MigrationStatus>>,
@@ -49,9 +49,12 @@ pub struct MigrationProgress {
     pub throughput_records_per_second: f64,
 }
 
+/// Backwards-compat alias for [`MigratorMigrationResult`].
+pub type MigrationResult = MigratorMigrationResult;
+
 /// Migration result
 #[derive(Debug, Clone)]
-pub struct MigrationResult {
+pub struct MigratorMigrationResult {
     pub success: bool,
     pub migrated_collections: Vec<String>,
     pub total_records_migrated: u64,
@@ -64,21 +67,24 @@ pub struct MigrationResult {
     pub warnings: Vec<String>,
 }
 
+/// Backwards-compat alias for [`MigratorMigrationPlan`].
+pub type MigrationPlan = MigratorMigrationPlan;
+
 /// Migration plan
 #[derive(Debug, Clone)]
-pub struct MigrationPlan {
+pub struct MigratorMigrationPlan {
     pub migration_id: String,
     pub source_engine: ProtoStorageEngine,
     pub target_engine: ProtoStorageEngine,
-    pub collections: Vec<CollectionMigrationPlan>,
+    pub collections: Vec<CollectionMigratorMigrationPlan>,
     pub estimated_duration: chrono::Duration,
-    pub resource_requirements: ResourceRequirements,
+    pub resource_requirements: MigratorResourceRequirements,
     pub risk_assessment: RiskAssessment,
 }
 
 /// Collection-specific migration plan
 #[derive(Debug, Clone)]
-pub struct CollectionMigrationPlan {
+pub struct CollectionMigratorMigrationPlan {
     pub collection_id: String,
     pub record_count: u64,
     pub data_size_bytes: u64,
@@ -88,9 +94,12 @@ pub struct CollectionMigrationPlan {
     pub special_requirements: Vec<String>,
 }
 
+/// Backwards-compat alias for [`MigratorResourceRequirements`].
+pub type ResourceRequirements = MigratorResourceRequirements;
+
 /// Resource requirements for migration
 #[derive(Debug, Clone)]
-pub struct ResourceRequirements {
+pub struct MigratorResourceRequirements {
     pub min_memory_gb: f64,
     pub recommended_memory_gb: f64,
     pub min_storage_gb: f64,
@@ -123,9 +132,9 @@ impl EngineMigrator {
     pub async fn new(config: MigrationConfig) -> Result<Self> {
         // Create source and target engines using async versions for test compatibility
         let source_engine =
-            StorageEngineFactory::create_from_proto_async(config.source_engine).await?;
+            StorageFormatFactory::create_from_proto_async(config.source_engine).await?;
         let target_engine =
-            StorageEngineFactory::create_from_proto_async(config.target_engine).await?;
+            StorageFormatFactory::create_from_proto_async(config.target_engine).await?;
 
         let semaphore = Arc::new(Semaphore::new(config.performance.parallel_workers));
 
@@ -141,7 +150,7 @@ impl EngineMigrator {
     }
 
     /// Create migration plan
-    pub async fn create_plan(&self) -> Result<MigrationPlan> {
+    pub async fn create_plan(&self) -> Result<MigratorMigrationPlan> {
         info!(
             "Creating migration plan from {:?} to {:?}",
             self.config.source_engine, self.config.target_engine
@@ -168,8 +177,8 @@ impl EngineMigrator {
         let resource_requirements = self.calculate_resource_requirements(total_data_size);
         let risk_assessment = self.assess_migration_risks(&collection_plans);
 
-        Ok(MigrationPlan {
-            migration_id: crate::utils::uuid::Uuid::new_v4().to_string(),
+        Ok(MigratorMigrationPlan {
+            migration_id: proximadb_kernel::uuid::Uuid::new_v4().to_string(),
             source_engine: self.config.source_engine,
             target_engine: self.config.target_engine,
             // strategy removed -  self.config.strategy.clone(),
@@ -181,7 +190,7 @@ impl EngineMigrator {
     }
 
     /// Execute migration
-    pub async fn execute(&self, plan: &MigrationPlan) -> Result<MigrationResult> {
+    pub async fn execute(&self, plan: &MigratorMigrationPlan) -> Result<MigratorMigrationResult> {
         info!("Starting migration execution: {}", plan.migration_id);
 
         // Update status
@@ -256,7 +265,7 @@ impl EngineMigrator {
             };
         }
 
-        Ok(MigrationResult {
+        Ok(MigratorMigrationResult {
             success: errors.is_empty(),
             migrated_collections,
             total_records_migrated,
@@ -295,7 +304,7 @@ impl EngineMigrator {
         &self,
         collection_id: &str,
         order: usize,
-    ) -> Result<CollectionMigrationPlan> {
+    ) -> Result<CollectionMigratorMigrationPlan> {
         // Estimate collection size and complexity
         let record_count = 1000; // Would be queried from source engine
         let data_size_bytes = record_count * 768 * 4; // Estimate based on dimension
@@ -307,7 +316,7 @@ impl EngineMigrator {
             &self.config.performance,
         );
 
-        Ok(CollectionMigrationPlan {
+        Ok(CollectionMigratorMigrationPlan {
             collection_id: collection_id.to_string(),
             record_count,
             data_size_bytes,
@@ -320,7 +329,7 @@ impl EngineMigrator {
 
     async fn execute_copy_then_switch(
         &self,
-        collections: &[CollectionMigrationPlan],
+        collections: &[CollectionMigratorMigrationPlan],
     ) -> Result<MigrationExecutionResult> {
         let mut migrated_collections = Vec::new();
         let mut total_records = 0u64;
@@ -376,7 +385,7 @@ impl EngineMigrator {
 
     async fn execute_gradual_migration(
         &self,
-        collections: &[CollectionMigrationPlan],
+        collections: &[CollectionMigratorMigrationPlan],
     ) -> Result<MigrationExecutionResult> {
         // Implementation for gradual migration
         // For brevity, using same implementation as copy-then-switch
@@ -385,7 +394,7 @@ impl EngineMigrator {
 
     async fn execute_in_place_migration(
         &self,
-        collections: &[CollectionMigrationPlan],
+        collections: &[CollectionMigratorMigrationPlan],
     ) -> Result<MigrationExecutionResult> {
         // Implementation for in-place migration
         // For brevity, using same implementation as copy-then-switch
@@ -394,7 +403,7 @@ impl EngineMigrator {
 
     async fn execute_blue_green_migration(
         &self,
-        collections: &[CollectionMigrationPlan],
+        collections: &[CollectionMigratorMigrationPlan],
     ) -> Result<MigrationExecutionResult> {
         // Implementation for blue-green migration
         // For brevity, using same implementation as copy-then-switch
@@ -403,7 +412,7 @@ impl EngineMigrator {
 
     async fn migrate_collection_copy_then_switch(
         &self,
-        plan: &CollectionMigrationPlan,
+        plan: &CollectionMigratorMigrationPlan,
     ) -> Result<u64> {
         let _permit = self.semaphore.acquire().await?;
 
@@ -419,10 +428,13 @@ impl EngineMigrator {
         Ok(plan.record_count)
     }
 
-    fn calculate_resource_requirements(&self, total_data_size: u64) -> ResourceRequirements {
+    fn calculate_resource_requirements(
+        &self,
+        total_data_size: u64,
+    ) -> MigratorResourceRequirements {
         let data_size_gb = total_data_size as f64 / (1024.0 * 1024.0 * 1024.0);
 
-        ResourceRequirements {
+        MigratorResourceRequirements {
             min_memory_gb: (data_size_gb * 0.1).max(2.0), // At least 10% of data size, min 2GB
             recommended_memory_gb: (data_size_gb * 0.5).max(8.0), // 50% of data size, min 8GB
             min_storage_gb: data_size_gb * 1.2,           // 20% overhead
@@ -437,7 +449,10 @@ impl EngineMigrator {
         }
     }
 
-    fn assess_migration_risks(&self, collections: &[CollectionMigrationPlan]) -> RiskAssessment {
+    fn assess_migration_risks(
+        &self,
+        collections: &[CollectionMigratorMigrationPlan],
+    ) -> RiskAssessment {
         let mut overall_risk = RiskLevel::Low;
         let mut mitigation_strategies = Vec::new();
 
@@ -588,7 +603,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_risk_assessment() {
-        let collections = vec![CollectionMigrationPlan {
+        let collections = vec![CollectionMigratorMigrationPlan {
             collection_id: "small_collection".to_string(),
             record_count: 1000,
             data_size_bytes: 1024 * 1024, // 1MB

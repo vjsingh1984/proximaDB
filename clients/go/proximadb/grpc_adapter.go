@@ -102,7 +102,27 @@ func (a *grpcAdapter) DeleteCollection(ctx context.Context, name string) error {
 	return nil
 }
 
+// InsertRecords inserts canonical records into a collection.
+func (a *grpcAdapter) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertProximaToGRPCRecords(records)
+	if err := a.inner.Insert(ctx, collection, innerRecords); err != nil {
+		return convertGRPCError(err)
+	}
+	return nil
+}
+
+// UpsertRecords inserts or updates canonical records in a collection.
+func (a *grpcAdapter) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	innerRecords := convertProximaToGRPCRecords(records)
+	if err := a.inner.Upsert(ctx, collection, innerRecords); err != nil {
+		return convertGRPCError(err)
+	}
+	return nil
+}
+
 // Insert inserts vectors into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
 func (a *grpcAdapter) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToGRPCRecords(records)
 	if err := a.inner.Insert(ctx, collection, innerRecords); err != nil {
@@ -112,6 +132,8 @@ func (a *grpcAdapter) Insert(ctx context.Context, collection string, records []*
 }
 
 // Upsert inserts or updates vectors in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
 func (a *grpcAdapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
 	innerRecords := convertToGRPCRecords(records)
 	if err := a.inner.Upsert(ctx, collection, innerRecords); err != nil {
@@ -173,6 +195,36 @@ func (a *grpcAdapter) Health(ctx context.Context) (*HealthStatus, error) {
 	}, nil
 }
 
+// HealthLive issues a liveness probe. Not supported over gRPC; use REST.
+func (a *grpcAdapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "HealthLive is not supported over gRPC; use the REST protocol")
+}
+
+// HealthReady issues a readiness probe. Not supported over gRPC; use REST.
+func (a *grpcAdapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "HealthReady is not supported over gRPC; use the REST protocol")
+}
+
+// GetCollectionSchema is not supported over gRPC; use REST.
+func (a *grpcAdapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "GetCollectionSchema is not supported over gRPC; use the REST protocol")
+}
+
+// UpdateCollectionSchema is not supported over gRPC; use REST.
+func (a *grpcAdapter) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "UpdateCollectionSchema is not supported over gRPC; use the REST protocol")
+}
+
+// ExecuteQuery is not supported over gRPC; use REST.
+func (a *grpcAdapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "ExecuteQuery is not supported over gRPC; use the REST protocol")
+}
+
+// ExplainQuery is not supported over gRPC; use REST.
+func (a *grpcAdapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
+	return nil, NewError(ErrCodeUnavailable, "ExplainQuery is not supported over gRPC; use the REST protocol")
+}
+
 // Close closes the adapter and releases resources.
 func (a *grpcAdapter) Close() error {
 	return a.inner.Close()
@@ -201,6 +253,18 @@ func convertToGRPCRecords(records []*VectorRecord) []*igrpc.VectorRecord {
 			ID:       r.ID,
 			Vector:   r.Vector,
 			Metadata: r.Metadata,
+		}
+	}
+	return result
+}
+
+func convertProximaToGRPCRecords(records []*ProximaRecord) []*igrpc.VectorRecord {
+	result := make([]*igrpc.VectorRecord, len(records))
+	for i, r := range records {
+		result[i] = &igrpc.VectorRecord{
+			ID:       r.ID,
+			Vector:   r.Vector,
+			Metadata: r.Props,
 		}
 	}
 	return result

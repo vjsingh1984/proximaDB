@@ -20,9 +20,12 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::{debug, info, trace};
 
+/// Backwards-compat alias for [`QuantizationProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = QuantizationProgressiveSearchConfig;
+
 /// Configuration for progressive quantization-aware search
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct QuantizationProgressiveSearchConfig {
     /// Recall rate for binary quantization (e.g., 0.85 for 85%)
     pub binary_recall: f32,
 
@@ -42,7 +45,7 @@ pub struct ProgressiveSearchConfig {
     pub min_candidates_per_stage: usize,
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for QuantizationProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             binary_recall: 0.85, // 85% recall at binary stage
@@ -77,7 +80,7 @@ pub struct StageSizes {
     pub effective_expansion: f32,
 }
 
-impl ProgressiveSearchConfig {
+impl QuantizationProgressiveSearchConfig {
     /// Compute the number of candidates needed at each stage
     /// Based on the formula: k_stage = k · Π(1/r_i) for all subsequent stages
     pub fn compute_stage_sizes(&self, k: usize) -> StageSizes {
@@ -207,13 +210,13 @@ pub struct ObservedRecalls {
 
 /// Progressive search executor that implements the staged refinement
 pub struct ProgressiveSearchExecutor {
-    config: ProgressiveSearchConfig,
+    config: QuantizationProgressiveSearchConfig,
     metrics: SearchMetrics,
 }
 
 impl ProgressiveSearchExecutor {
     /// Create a new progressive search executor with the given configuration
-    pub fn new(config: ProgressiveSearchConfig) -> Self {
+    pub fn new(config: QuantizationProgressiveSearchConfig) -> Self {
         Self {
             config,
             metrics: SearchMetrics::default(),
@@ -370,7 +373,7 @@ mod tests {
 
     #[test]
     fn test_stage_size_computation() {
-        let config = ProgressiveSearchConfig::default();
+        let config = QuantizationProgressiveSearchConfig::default();
         let sizes = config.compute_stage_sizes(100);
 
         // With default recalls (0.85, 0.95, 0.98)
@@ -388,8 +391,10 @@ mod tests {
 
     #[test]
     fn test_scenario_configs() {
-        let high_recall = ProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall);
-        let high_speed = ProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed);
+        let high_recall =
+            QuantizationProgressiveSearchConfig::for_scenario(SearchScenario::HighRecall);
+        let high_speed =
+            QuantizationProgressiveSearchConfig::for_scenario(SearchScenario::HighSpeed);
 
         assert!(high_recall.binary_recall > high_speed.binary_recall);
         assert!(high_recall.max_expansion_factor > high_speed.max_expansion_factor);
@@ -397,7 +402,7 @@ mod tests {
 
     #[test]
     fn test_adaptive_recall() {
-        let mut config = ProgressiveSearchConfig::default();
+        let mut config = QuantizationProgressiveSearchConfig::default();
         let initial_binary = config.binary_recall;
 
         let observed = ObservedRecalls {
@@ -415,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_max_expansion_constraint() {
-        let mut config = ProgressiveSearchConfig::default();
+        let mut config = QuantizationProgressiveSearchConfig::default();
         config.max_expansion_factor = 2.0;
         config.binary_recall = 0.5; // Very low recall would normally cause huge expansion
 

@@ -116,9 +116,8 @@ impl ReplicationStream {
 
     /// Whether enough time has passed to send a status update.
     pub fn should_send_status(&self) -> bool {
-        self.last_status_at.map_or(true, |last| {
-            last.elapsed() >= self.config.heartbeat_interval
-        })
+        self.last_status_at
+            .is_none_or(|last| last.elapsed() >= self.config.heartbeat_interval)
     }
 
     /// Record that a status update was sent.

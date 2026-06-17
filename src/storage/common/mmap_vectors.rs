@@ -201,12 +201,12 @@ impl MmapVectorStorage {
     /// - `start_idx + count` does not exceed the number of vectors in the mmap
     /// - The mmap contains valid vector data for the requested range
     /// - `dimension` matches the actual dimension of vectors in the mmap
-    pub unsafe fn get_vector_slice<'a>(
-        mmap: &'a Mmap,
+    pub unsafe fn get_vector_slice(
+        mmap: &Mmap,
         start_idx: usize,
         count: usize,
         dimension: usize,
-    ) -> &'a [f32] {
+    ) -> &[f32] {
         unsafe {
             let floats_per_vector = dimension;
             let start_float = start_idx * floats_per_vector;

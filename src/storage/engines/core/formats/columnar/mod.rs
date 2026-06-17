@@ -83,11 +83,11 @@
 // - 90% faster similarity search with progressive quantization
 // - Zero code duplication between engines for core columnar operations
 
+pub mod columnar_io;
 pub mod constants; // Column name constants
 pub mod id_index;
 pub mod metadata_filter_strategy;
-pub mod optimization;
-pub mod unified_columnar_io; // NEW: Consolidated Parquet and Arrow IPC operations
+pub mod optimization; // NEW: Consolidated Parquet and Arrow IPC operations
 
 // Modular components with semantic names (replacing old monolithic files)
 pub mod columnar_query_engine;
@@ -105,7 +105,7 @@ pub mod parquet_io_layer; // Low-level I/O operations (formerly shared_parquet_r
 pub mod parquet_metadata; // NEW: Zero-copy metadata serialization for Parquet
 pub mod utilities; // NEW: Zero-copy metadata serialization for NOVA // NEW: Trait for engine-specific metadata collection during writes
 pub use metadata_collector::MetadataCollector;
-pub mod unified_compaction; // Unified Parquet compaction using StreamingParquetWriter
+pub mod columnar_compaction; // Unified Parquet compaction using StreamingParquetWriter
 // quantization_config_conversion moved to common/quantization_adapter.rs
 
 // New unified columnar infrastructure
@@ -144,11 +144,11 @@ pub use constants::{
 };
 
 // Re-exports for convenience
-pub use id_index::{ColumnarIdIndex, IndexStats, ParquetLocation};
-pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowGroupIterator};
-pub use unified_compaction::{
+pub use columnar_compaction::{
     ColumnarCompactionResult, UnifiedColumnarCompaction, VersionContinuityMode,
 };
+pub use id_index::{ColumnarIdIndex, IndexStats, ParquetLocation};
+pub use optimization::{ColumnarOptimizer, ProgressiveSearchConfig, StreamingRowGroupIterator};
 // Re-export from columnar_query_engine module
 pub use columnar_query_engine::{
     BranchedFilterExecutor,
@@ -189,7 +189,7 @@ pub use self::metadata_filter_strategy::{
 };
 pub use batch_operations::ColumnarBatchOperations;
 pub use columnar_schema::ColumnarSchema;
-pub use footer_cache::{CacheStats, FooterCacheConfig, ParquetFooterCache, WarmingStrategy};
+pub use footer_cache::{FooterCacheConfig, FooterCacheStats, ParquetFooterCache, WarmingStrategy};
 pub use utilities::ColumnarUtilities;
 
 pub use config_builder::{
@@ -279,12 +279,12 @@ pub use fulltext_index::{
     FullTextIndex,
     FullTextIndexBuilder,
     FullTextIndexError,
+    FulltextSearchResult as FullTextSearchResult,
     // Posting types
     Posting,
     PostingList,
     // Search types
     SearchOptions,
-    SearchResult as FullTextSearchResult,
     // Statistics
     TextStatistics,
     // Tokenization
@@ -301,7 +301,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Common configuration for columnar operations
 ///
@@ -380,7 +380,7 @@ pub struct ColumnarFileMetadata {
     pub quantization: QuantizationConfig,
 
     /// Column statistics
-    pub column_stats: HashMap<String, ColumnStatistics>,
+    pub column_stats: HashMap<String, ColumnarColumnStatistics>,
 
     /// File version
     pub version: u32,
@@ -392,9 +392,12 @@ pub struct ColumnarFileMetadata {
     pub modified_at: chrono::DateTime<chrono::Utc>,
 }
 
+/// Backwards-compat alias for [`ColumnarColumnStatistics`].
+pub type ColumnStatistics = ColumnarColumnStatistics;
+
 /// Column statistics for query optimization
 #[derive(Debug, Clone)]
-pub struct ColumnStatistics {
+pub struct ColumnarColumnStatistics {
     pub null_count: u64,
     pub distinct_count: u64,
     pub min_value: Option<serde_json::Value>,
@@ -413,7 +416,7 @@ pub enum ColumnarSearchMode {
     IndexFree {
         query: Vec<f32>,
         top_k: usize,
-        filter: Option<MetadataFilter>,
+        filter: Option<ColumnarMetadataFilter>,
     },
 
     /// Hybrid mode - use AXIS for initial candidates, refine with local search
@@ -424,9 +427,12 @@ pub enum ColumnarSearchMode {
     },
 }
 
+/// Backwards-compat alias for [`ColumnarMetadataFilter`].
+pub type MetadataFilter = ColumnarMetadataFilter;
+
 /// Metadata filter for queries
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct ColumnarMetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
 }
@@ -459,8 +465,8 @@ impl FilterCondition {
     }
 }
 
-impl MetadataFilter {
-    /// Convert from core::search::FilterExpression to columnar::MetadataFilter
+impl ColumnarMetadataFilter {
+    /// Convert from core::search::FilterExpression to columnar::ColumnarMetadataFilter
     /// This enables row group pruning using FilterExpression
     pub fn from_filter_expression(expr: &crate::core::search::FilterExpression) -> Option<Self> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
@@ -562,7 +568,7 @@ impl MetadataFilter {
                     }
                 }
                 FilterExpression::Not(_) => {
-                    // NOT expressions can't be easily converted to MetadataFilter
+                    // NOT expressions can't be easily converted to ColumnarMetadataFilter
                     // Skip them for now
                 }
             }
@@ -576,14 +582,17 @@ impl MetadataFilter {
         if conditions.is_empty() {
             None
         } else {
-            Some(MetadataFilter { conditions, logic })
+            Some(ColumnarMetadataFilter { conditions, logic })
         }
     }
 }
 
+/// Backwards-compat alias for [`ColumnarRowGroupStats`].
+pub type RowGroupStats = ColumnarRowGroupStats;
+
 /// Row group statistics for optimization
 #[derive(Debug, Clone)]
-pub struct RowGroupStats {
+pub struct ColumnarRowGroupStats {
     pub row_group_id: usize,
     pub num_rows: u64,
     pub compressed_size: u64,
@@ -593,9 +602,12 @@ pub struct RowGroupStats {
     pub bloom_filter_size: Option<usize>,
 }
 
+/// Backwards-compat alias for [`ColumnarSearchCandidate`].
+pub type SearchCandidate = ColumnarSearchCandidate;
+
 /// Search candidate for progressive refinement
 #[derive(Debug, Clone)]
-pub struct SearchCandidate {
+pub struct ColumnarSearchCandidate {
     pub row_group_id: usize,
     pub row_offset: u32,
     pub similarity: f32,
@@ -606,21 +618,21 @@ pub struct SearchCandidate {
 #[allow(async_fn_in_trait)]
 pub trait ColumnarOperations {
     /// Search vectors based on mode
-    async fn search(&self, mode: ColumnarSearchMode) -> Result<Vec<VectorRecord>>;
+    async fn search(&self, mode: ColumnarSearchMode) -> Result<Vec<ProximaRecord>>;
 
     /// Get vectors by IDs (optimized batch lookup)
-    async fn get_by_ids(&self, ids: &[String]) -> Result<Vec<VectorRecord>>;
+    async fn get_by_ids(&self, ids: &[String]) -> Result<Vec<ProximaRecord>>;
 
     /// Progressive similarity search
     async fn progressive_search(
         &self,
         query: &[f32],
         top_k: usize,
-        filter: Option<MetadataFilter>,
-    ) -> Result<Vec<VectorRecord>>;
+        filter: Option<ColumnarMetadataFilter>,
+    ) -> Result<Vec<ProximaRecord>>;
 
     /// Get row group statistics
-    fn row_group_stats(&self) -> Vec<RowGroupStats>;
+    fn row_group_stats(&self) -> Vec<ColumnarRowGroupStats>;
 
     /// Optimize row group layout
     async fn optimize_layout(&self, collection_id: &str) -> Result<()>;
@@ -798,7 +810,7 @@ impl ColumnarFactory {
         );
         let base_fs = filesystem_factory.get_filesystem("file://")?;
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "default_collection".to_string(),
                 "columnar".to_string(),

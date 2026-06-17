@@ -1,7 +1,7 @@
 //! Parquet Reader Core Implementation
 //!
 //! This module provides the core reader functionality for Parquet files,
-//! including file access, record batch reading, and conversion to VectorRecords.
+//! including file access, record batch reading, and conversion to ProximaRecords.
 
 use crate::storage::persistence::filesystem::FileSystem;
 use anyhow::{Context, Result};
@@ -14,12 +14,13 @@ use std::fs::File;
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::constants::{
     FIELD_EXPIRES_AT, FIELD_ID, FIELD_IS_DELETED, FIELD_TIMESTAMP, FIELD_VECTOR_FP32, FIELD_VERSION,
 };
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 
-use super::unified_reader::UnifiedParquetReader;
+use super::columnar_query_reader::UnifiedParquetReader;
 use super::{QueryConfig, QueryStatistics};
 
 /// Core Parquet reader implementation
@@ -42,7 +43,7 @@ impl ParquetReader {
     pub fn read_all(
         &mut self,
         file_path: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<VectorRecord>>> + Send + '_>>
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<ProximaRecord>>> + Send + '_>>
     {
         let file_path = file_path.to_string();
         Box::pin(async move {
@@ -67,7 +68,7 @@ impl ParquetReader {
             );
             let base_fs = filesystem_factory.get_filesystem("file://")?;
             let cached_filesystem = Arc::new(
-                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                     base_fs,
                     "default_collection".to_string(),
                     "columnar".to_string(),
@@ -99,7 +100,7 @@ impl ParquetReader {
         &mut self,
         file_path: &str,
         filesystem: Arc<dyn FileSystem>,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         info!(
             "Reading all records from {} using filesystem API",
             file_path
@@ -148,7 +149,7 @@ impl ParquetReader {
         &mut self,
         file_path: &str,
         row_groups: &[usize],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         debug!("Reading row groups {:?} from {}", row_groups, file_path);
 
         let mut all_records = Vec::new();
@@ -204,8 +205,8 @@ impl ParquetReader {
         Ok(batch)
     }
 
-    /// Convert Arrow RecordBatch to VectorRecords
-    fn batch_to_records(&self, batch: RecordBatch) -> Result<Vec<VectorRecord>> {
+    /// Convert Arrow RecordBatch to ProximaRecords
+    fn batch_to_records(&self, batch: RecordBatch) -> Result<Vec<ProximaRecord>> {
         let num_rows = batch.num_rows();
         let mut records = Vec::with_capacity(num_rows);
 
@@ -309,7 +310,8 @@ impl ParquetReader {
         ];
 
         for row in 0..num_rows {
-            let mut metadata = std::collections::HashMap::new();
+            let mut metadata: std::collections::HashMap<String, ProximaTreeNode> =
+                std::collections::HashMap::new();
 
             // Check each column to see if it's a metadata column
             for field in schema.fields() {
@@ -393,9 +395,9 @@ impl ParquetReader {
                                                     );
                                                     metadata.insert(
                                                         key.to_string(),
-                                                        crate::proto::proximadb_v1::SqlValue {
-                                                            value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(value.to_string())),
-                                                        }
+                                                        ProximaTreeNode::Value(
+                                                            ProximaValue::String(value.to_string()),
+                                                        ),
                                                     );
                                                 }
                                             }
@@ -420,13 +422,7 @@ impl ParquetReader {
                             );
                             metadata.insert(
                                 column_name.to_string(),
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                                            value.to_string(),
-                                        ),
-                                    ),
-                                },
+                                ProximaTreeNode::Value(ProximaValue::String(value.to_string())),
                             );
                         }
                     } else if let Some(int_array) =
@@ -440,13 +436,7 @@ impl ParquetReader {
                             );
                             metadata.insert(
                                 column_name.to_string(),
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(
-                                            value,
-                                        ),
-                                    ),
-                                },
+                                ProximaTreeNode::Value(ProximaValue::Int64(value)),
                             );
                         }
                     } else if let Some(float_array) =
@@ -460,13 +450,7 @@ impl ParquetReader {
                             );
                             metadata.insert(
                                 column_name.to_string(),
-                                crate::proto::proximadb_v1::SqlValue {
-                                    value: Some(
-                                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                            value,
-                                        ),
-                                    ),
-                                },
+                                ProximaTreeNode::Value(ProximaValue::Float64(value)),
                             );
                         }
                     } else if let Some(bool_array) =
@@ -480,44 +464,45 @@ impl ParquetReader {
                         );
                         metadata.insert(
                             column_name.to_string(),
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(
-                                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(value),
-                                ),
-                            },
+                            ProximaTreeNode::Value(ProximaValue::Boolean(value)),
                         );
                     }
                 }
             }
 
-            let record = VectorRecord {
-                id: id_array.value(row).to_string(),
-                timestamp: Some(timestamp_array.value(row)),
-                vector: vector_values[row].clone(),
-                metadata,
+            let values = vector_values[row].clone();
+            let dim = values.len() as u32;
+            let mut record = ProximaRecord {
+                oid: id_array.value(row).to_string(),
+                created_at_ns: timestamp_array.value(row) * 1_000_000,
+                props: metadata,
                 ..Default::default()
             };
+            if !values.is_empty() {
+                record.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+            }
 
-            if row < 3 || record.id.contains("_A_") || record.id.contains("_B_") && row < 25 {
+            if row < 3 || record.oid.contains("_A_") || record.oid.contains("_B_") && row < 25 {
                 debug!(
                     "🔍 DEBUG: Created record {}: metadata keys={:?}, values={:?}",
-                    record.id,
-                    record.metadata.keys().collect::<Vec<_>>(),
+                    record.oid,
+                    record.props.keys().collect::<Vec<_>>(),
                     record
-                        .metadata
+                        .props
                         .iter()
                         .map(|(k, v)| {
-                            let val_str = if let Some(value) = &v.value {
-                                use crate::proto::proximadb_v1::sql_value::Value;
-                                match value {
-                                    Value::StringValue(s) => s.clone(),
-                                    Value::NumberValue(f) => f.to_string(),
-                                    Value::BoolValue(b) => b.to_string(),
-                                    Value::Int64Value(i) => i.to_string(),
-                                    _ => "?".to_string(),
-                                }
-                            } else {
-                                "null".to_string()
+                            let val_str = match v {
+                                ProximaTreeNode::Value(ProximaValue::String(s)) => s.clone(),
+                                ProximaTreeNode::Value(ProximaValue::Float64(f)) => f.to_string(),
+                                ProximaTreeNode::Value(ProximaValue::Boolean(b)) => b.to_string(),
+                                ProximaTreeNode::Value(ProximaValue::Int64(i)) => i.to_string(),
+                                _ => "?".to_string(),
                             };
                             format!("{k}={val_str}")
                         })

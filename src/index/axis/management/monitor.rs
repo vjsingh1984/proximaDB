@@ -21,12 +21,15 @@ use crate::index::axis::{AlertThresholds, AxisConfig, MonitoringConfig};
 
 // Type aliases for compatibility
 /// Type alias for backward compatibility.
-pub type AxisMonitor = PerformanceMonitor;
+pub type AxisMonitor = AxisPerformanceMonitor;
 /// Type alias for backward compatibility.
 pub type MonitoringMetrics = SystemMetrics;
 
+/// Backwards-compat alias for [`AxisPerformanceMonitor`].
+pub type PerformanceMonitor = AxisPerformanceMonitor;
+
 /// Performance monitor for AXIS with real-time alerting
-pub struct PerformanceMonitor {
+pub struct AxisPerformanceMonitor {
     /// Configuration
     #[allow(dead_code)]
     config: MonitoringConfig,
@@ -35,7 +38,7 @@ pub struct PerformanceMonitor {
     #[allow(dead_code)]
     metrics_collector: Arc<MetricsCollector>,
 
-    /// Alert manager
+    /// AxisMonitorAlert manager
     #[allow(dead_code)]
     alert_manager: Arc<AlertManager>,
 
@@ -51,9 +54,9 @@ pub struct PerformanceMonitor {
     event_broadcaster: broadcast::Sender<MonitoringEvent>,
 }
 
-impl std::fmt::Debug for PerformanceMonitor {
+impl std::fmt::Debug for AxisPerformanceMonitor {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PerformanceMonitor")
+        f.debug_struct("AxisPerformanceMonitor")
             .field("config", &self.config)
             .finish()
     }
@@ -63,7 +66,7 @@ impl std::fmt::Debug for PerformanceMonitor {
 #[derive(Debug)]
 struct MetricsCollector {
     /// Current metrics per collection
-    collection_metrics: Arc<RwLock<HashMap<String, CollectionMetrics>>>,
+    collection_metrics: Arc<RwLock<HashMap<String, AxisMonitorCollectionMetrics>>>,
 
     /// System-wide metrics
     system_metrics: Arc<RwLock<SystemMetrics>>,
@@ -75,18 +78,18 @@ struct MetricsCollector {
     retention_period: Duration,
 }
 
-/// Alert manager for performance issues
+/// AxisMonitorAlert manager for performance issues
 struct AlertManager {
-    /// Alert thresholds
+    /// AxisMonitorAlert thresholds
     thresholds: AlertThresholds,
 
     /// Active alerts
-    active_alerts: Arc<RwLock<HashMap<String, Alert>>>,
+    active_alerts: Arc<RwLock<HashMap<String, AxisMonitorAlert>>>,
 
-    /// Alert history
+    /// AxisMonitorAlert history
     alert_history: Arc<RwLock<Vec<AlertHistory>>>,
 
-    /// Alert subscribers
+    /// AxisMonitorAlert subscribers
     subscribers: Arc<RwLock<Vec<Box<dyn AlertSubscriber + Send + Sync>>>>,
 }
 
@@ -115,9 +118,12 @@ struct HealthChecker {
     check_interval: Duration,
 }
 
+/// Backwards-compat alias for [`AxisMonitorCollectionMetrics`].
+pub type CollectionMetrics = AxisMonitorCollectionMetrics;
+
 /// Collection-specific metrics
 #[derive(Debug, Clone)]
-pub struct CollectionMetrics {
+pub struct AxisMonitorCollectionMetrics {
     /// Collection identifier.
     pub collection_id: String,
     /// Query latency percentile metrics in milliseconds.
@@ -230,9 +236,9 @@ pub enum MetricType {
     CacheHitRate,
 }
 
-/// Alert definition
+/// AxisMonitorAlert definition
 #[derive(Debug, Clone)]
-pub struct Alert {
+pub struct AxisMonitorAlert {
     /// Unique identifier for this alert instance.
     pub alert_id: String,
     /// Category of the alert.
@@ -272,7 +278,7 @@ pub enum AlertType {
     SystemHealth,
 }
 
-/// Alert severity levels
+/// AxisMonitorAlert severity levels
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum AlertSeverity {
     /// Informational alert, no action required.
@@ -285,24 +291,24 @@ pub enum AlertSeverity {
     Emergency,
 }
 
-/// Alert history entry
+/// AxisMonitorAlert history entry
 #[derive(Debug, Clone)]
 struct AlertHistory {
     #[allow(dead_code)]
-    pub alert: Alert,
+    pub alert: AxisMonitorAlert,
     #[allow(dead_code)]
     pub resolved_at: Option<DateTime<Utc>>,
     #[allow(dead_code)]
     pub resolution_time_ms: Option<u64>,
 }
 
-/// Alert subscriber trait
+/// AxisMonitorAlert subscriber trait
 #[async_trait::async_trait]
 pub trait AlertSubscriber {
     /// Called when a new alert is triggered.
-    async fn on_alert(&self, alert: &Alert) -> Result<()>;
+    async fn on_alert(&self, alert: &AxisMonitorAlert) -> Result<()>;
     /// Called when a previously triggered alert is resolved.
-    async fn on_alert_resolved(&self, alert: &Alert) -> Result<()>;
+    async fn on_alert_resolved(&self, alert: &AxisMonitorAlert) -> Result<()>;
 }
 
 /// Performance trend analysis
@@ -415,15 +421,15 @@ pub enum MonitoringEvent {
         /// Collection whose metrics were updated.
         collection_id: String,
         /// Updated metrics snapshot.
-        metrics: CollectionMetrics,
+        metrics: AxisMonitorCollectionMetrics,
     },
     /// A new alert has been triggered.
-    AlertTriggered {
+    AxisMonitorAlertTriggered {
         /// The triggered alert.
-        alert: Alert,
+        alert: AxisMonitorAlert,
     },
     /// A previously active alert has been resolved.
-    AlertResolved {
+    AxisMonitorAlertResolved {
         /// Identifier of the resolved alert.
         alert_id: String,
     },
@@ -447,7 +453,7 @@ pub enum MonitoringEvent {
     },
 }
 
-impl PerformanceMonitor {
+impl AxisPerformanceMonitor {
     /// Create new performance monitor
     pub async fn new(config: AxisConfig) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(1000);
@@ -471,7 +477,7 @@ impl PerformanceMonitor {
     pub async fn record_metrics(
         &self,
         collection_id: &str,
-        metrics: CollectionMetrics,
+        metrics: AxisMonitorCollectionMetrics,
     ) -> Result<()> {
         // Update current metrics
         self.metrics_collector
@@ -500,7 +506,7 @@ impl PerformanceMonitor {
     }
 
     /// Get current metrics for a collection
-    pub async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
+    pub async fn get_metrics(&self, collection_id: &str) -> Option<AxisMonitorCollectionMetrics> {
         self.metrics_collector.get_metrics(collection_id).await
     }
 
@@ -510,7 +516,7 @@ impl PerformanceMonitor {
     }
 
     /// Get active alerts
-    pub async fn get_active_alerts(&self) -> Vec<Alert> {
+    pub async fn get_active_alerts(&self) -> Vec<AxisMonitorAlert> {
         self.alert_manager
             .active_alerts
             .read()
@@ -548,7 +554,7 @@ impl PerformanceMonitor {
             }
         });
 
-        // Alert processing task
+        // AxisMonitorAlert processing task
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(30));
             loop {
@@ -584,7 +590,7 @@ impl MetricsCollector {
     }
 
     /// Update metrics for a collection
-    async fn update_metrics(&self, collection_id: &str, metrics: CollectionMetrics) {
+    async fn update_metrics(&self, collection_id: &str, metrics: AxisMonitorCollectionMetrics) {
         let mut collection_metrics = self.collection_metrics.write().await;
         collection_metrics.insert(collection_id.to_string(), metrics.clone());
         drop(collection_metrics);
@@ -605,7 +611,7 @@ impl MetricsCollector {
     }
 
     /// Get metrics for a collection
-    async fn get_metrics(&self, collection_id: &str) -> Option<CollectionMetrics> {
+    async fn get_metrics(&self, collection_id: &str) -> Option<AxisMonitorCollectionMetrics> {
         let collection_metrics = self.collection_metrics.read().await;
         collection_metrics.get(collection_id).cloned()
     }
@@ -647,12 +653,12 @@ impl AlertManager {
     }
 
     /// Check thresholds and trigger alerts if needed
-    async fn check_thresholds(&self, collection_id: &str, metrics: &CollectionMetrics) {
+    async fn check_thresholds(&self, collection_id: &str, metrics: &AxisMonitorCollectionMetrics) {
         let mut alerts_to_trigger = Vec::new();
 
         // Check latency threshold
         if metrics.query_latency_ms.p99 > self.thresholds.max_query_latency_ms as f64 {
-            alerts_to_trigger.push(Alert {
+            alerts_to_trigger.push(AxisMonitorAlert {
                 alert_id: format!("latency_{}_{}", collection_id, Utc::now().timestamp()),
                 alert_type: AlertType::HighLatency,
                 severity: AlertSeverity::Warning,
@@ -670,7 +676,7 @@ impl AlertManager {
 
         // Check throughput threshold
         if metrics.throughput_qps < self.thresholds.min_query_throughput {
-            alerts_to_trigger.push(Alert {
+            alerts_to_trigger.push(AxisMonitorAlert {
                 alert_id: format!("throughput_{}_{}", collection_id, Utc::now().timestamp()),
                 alert_type: AlertType::LowThroughput,
                 severity: AlertSeverity::Warning,
@@ -688,7 +694,7 @@ impl AlertManager {
 
         // Check error rate threshold
         if metrics.error_rate > self.thresholds.max_error_rate {
-            alerts_to_trigger.push(Alert {
+            alerts_to_trigger.push(AxisMonitorAlert {
                 alert_id: format!("error_rate_{}_{}", collection_id, Utc::now().timestamp()),
                 alert_type: AlertType::HighErrorRate,
                 severity: AlertSeverity::Critical,
@@ -712,7 +718,7 @@ impl AlertManager {
     }
 
     /// Trigger an alert
-    async fn trigger_alert(&self, alert: Alert) {
+    async fn trigger_alert(&self, alert: AxisMonitorAlert) {
         let alert_id = alert.alert_id.clone();
 
         // Add to active alerts
@@ -731,7 +737,7 @@ impl AlertManager {
 
     /// Get active alerts
     #[allow(dead_code)]
-    async fn get_active_alerts(&self) -> Vec<Alert> {
+    async fn get_active_alerts(&self) -> Vec<AxisMonitorAlert> {
         let active_alerts = self.active_alerts.read().await;
         active_alerts.values().cloned().collect()
     }
@@ -755,7 +761,7 @@ impl AlertManager {
                 let is_resolved = self.check_alert_resolution(alert).await;
 
                 if is_resolved {
-                    info!("Alert {} resolved: {}", alert_id, alert.message);
+                    info!("AxisMonitorAlert {} resolved: {}", alert_id, alert.message);
                     alerts_to_remove.push(alert_id.clone());
                 } else {
                     // Check if alert needs escalation (been active too long)
@@ -774,7 +780,7 @@ impl AlertManager {
 
                         alerts_to_update.push((alert_id.clone(), escalated_alert));
                         warn!(
-                            "Alert {} escalated due to age: {:.0} minutes",
+                            "AxisMonitorAlert {} escalated due to age: {:.0} minutes",
                             alert_id,
                             alert_age.num_minutes()
                         );
@@ -821,7 +827,7 @@ impl AlertManager {
     }
 
     /// Check if an alert's triggering condition has been resolved
-    async fn check_alert_resolution(&self, alert: &Alert) -> bool {
+    async fn check_alert_resolution(&self, alert: &AxisMonitorAlert) -> bool {
         match alert.alert_type {
             AlertType::HighLatency => {
                 // Check if latency has improved (with buffer to prevent flapping)
@@ -866,7 +872,7 @@ impl PerformanceTracker {
     }
 
     /// Update performance trends
-    async fn update_trends(&self, _collection_id: &str, _metrics: &CollectionMetrics) {
+    async fn update_trends(&self, _collection_id: &str, _metrics: &AxisMonitorCollectionMetrics) {
         // Deferred: Implement trend analysis
     }
 }

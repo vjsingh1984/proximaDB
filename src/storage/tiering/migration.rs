@@ -150,9 +150,12 @@ impl MigrationTask {
     }
 }
 
+/// Backwards-compat alias for [`TieringMigrationResult`].
+pub type MigrationResult = TieringMigrationResult;
+
 /// Result of a completed migration
 #[derive(Debug, Clone)]
-pub struct MigrationResult {
+pub struct TieringMigrationResult {
     /// Task ID
     pub task_id: String,
     /// Collection
@@ -205,7 +208,7 @@ pub struct MigrationCoordinator {
     /// In-progress tasks
     in_progress: Arc<RwLock<HashMap<String, MigrationTask>>>,
     /// Completed tasks (recent)
-    completed: Arc<RwLock<VecDeque<MigrationResult>>>,
+    completed: Arc<RwLock<VecDeque<TieringMigrationResult>>>,
     /// Maximum completed history
     max_history: usize,
     /// Statistics
@@ -274,7 +277,7 @@ impl MigrationCoordinator {
     }
 
     /// Mark a task as completed
-    pub async fn complete(&self, task_id: &str, result: MigrationResult) {
+    pub async fn complete(&self, task_id: &str, result: TieringMigrationResult) {
         // Remove from in-progress
         {
             let mut in_progress = self.in_progress.write().await;
@@ -370,7 +373,7 @@ impl MigrationCoordinator {
     }
 
     /// Get recent completed tasks
-    pub async fn get_completed(&self, limit: usize) -> Vec<MigrationResult> {
+    pub async fn get_completed(&self, limit: usize) -> Vec<TieringMigrationResult> {
         self.completed
             .read()
             .await
@@ -575,7 +578,7 @@ mod tests {
         coordinator.submit(task).await;
         let _ = coordinator.next().await;
 
-        let result = MigrationResult {
+        let result = TieringMigrationResult {
             task_id: task_id.clone(),
             collection: "test".to_string(),
             item_id: "item1".to_string(),

@@ -141,7 +141,12 @@ fn test_proximadatablock_with_proximacodec() {
             metadata_algorithm: None,
         };
 
-        let block = ProximaDataBlock::new(records.clone(), config);
+        let proxima_records: Vec<_> = records
+            .iter()
+            .cloned()
+            .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+            .collect();
+        let block = ProximaDataBlock::new(proxima_records, config);
         println!("Block created with {} records", block.records.len());
 
         // Serialize (uses ProximaCodec internally)
@@ -164,6 +169,9 @@ fn test_proximadatablock_with_proximacodec() {
             .zip(deserialized.records.iter())
             .enumerate()
         {
+            // Convert back to VectorRecord shape for field-level comparison.
+            let orig = proximadb_records::conversions::proxima_record_to_vector(orig);
+            let deser = proximadb_records::conversions::proxima_record_to_vector(deser);
             if orig.id != deser.id {
                 println!(
                     "ID mismatch at index {}: orig='{}', deser='{}'",

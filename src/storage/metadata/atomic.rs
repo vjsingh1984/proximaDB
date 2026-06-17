@@ -11,10 +11,10 @@
 //! - Optimistic concurrency control
 //! - Atomic batch operations
 
-use crate::utils::uuid::Uuid;
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use proximadb_kernel::uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -771,20 +771,18 @@ impl MetadataStoreInterface for AtomicMetadataStore {
         // Convert filter to write buffer manager format
         let write_buffer_filter = filter.map(|f| {
             Box::new(move |versioned: &VersionedCollectionMetadata| -> bool {
-                if let Some(ref owner) = f.owner {
-                    if versioned.owner.as_deref() != Some(owner.as_str()) {
-                        return false;
-                    }
+                if let Some(ref owner) = f.owner
+                    && versioned.owner.as_deref() != Some(owner.as_str())
+                {
+                    return false;
                 }
-                if let Some(min_count) = f.min_vector_count {
-                    if versioned.vector_count < min_count {
-                        return false;
-                    }
+                if let Some(min_count) = f.min_vector_count
+                    && versioned.vector_count < min_count
+                {
+                    return false;
                 }
-                if !f.tags.is_empty() {
-                    if !f.tags.iter().all(|tag| versioned.tags.contains(tag)) {
-                        return false;
-                    }
+                if !f.tags.is_empty() && !f.tags.iter().all(|tag| versioned.tags.contains(tag)) {
+                    return false;
                 }
                 true
             }) as Box<dyn Fn(&VersionedCollectionMetadata) -> bool + Send>

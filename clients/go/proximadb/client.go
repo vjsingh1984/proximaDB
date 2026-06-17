@@ -36,9 +36,17 @@ type Client interface {
 
 	// Vector operations
 
+	// InsertRecords inserts canonical records into a collection.
+	InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
+	// UpsertRecords inserts or updates canonical records in a collection.
+	UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
 	// Insert inserts vectors into a collection.
+	//
+	// Deprecated: use InsertRecords with ProximaRecord.
 	Insert(ctx context.Context, collection string, records []*VectorRecord) error
 	// Upsert inserts or updates vectors in a collection.
+	//
+	// Deprecated: use UpsertRecords with ProximaRecord.
 	Upsert(ctx context.Context, collection string, records []*VectorRecord) error
 	// Search performs a vector similarity search.
 	Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error)
@@ -50,6 +58,8 @@ type Client interface {
 	// Batch operations
 
 	// BatchInsert inserts vectors in batches with progress tracking.
+	//
+	// Deprecated: use InsertRecords with ProximaRecord batches.
 	BatchInsert(ctx context.Context, collection string, records []*VectorRecord, opts *BatchOptions) (*BatchResult, error)
 	// BatchSearch performs multiple searches in parallel.
 	BatchSearch(ctx context.Context, collection string, queries []*SearchQuery, opts *BatchOptions) ([]*SearchResponse, error)
@@ -65,8 +75,26 @@ type Client interface {
 
 	// Health checks the server health.
 	Health(ctx context.Context) (*HealthStatus, error)
+	// HealthLive issues a Kubernetes-style liveness probe.
+	HealthLive(ctx context.Context) (*ProbeResponse, error)
+	// HealthReady issues a Kubernetes-style readiness probe.
+	HealthReady(ctx context.Context) (*ProbeResponse, error)
 	// Close closes the client and releases resources.
 	Close() error
+
+	// Schema operations
+
+	// GetCollectionSchema fetches the typed schema for a collection.
+	GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error)
+	// UpdateCollectionSchema updates the typed schema for a collection.
+	UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error)
+
+	// Query facade
+
+	// ExecuteQuery runs an AQL/UQL/federated query via the shared query facade.
+	ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error)
+	// ExplainQuery returns the lowered plan/diagnostics for an AQL/UQL query.
+	ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error)
 
 	// Metrics returns client metrics.
 	Metrics() *ClientMetrics
@@ -191,6 +219,8 @@ type Adapter interface {
 	DeleteCollection(ctx context.Context, name string) error
 
 	// Vector operations
+	InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
+	UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error
 	Insert(ctx context.Context, collection string, records []*VectorRecord) error
 	Upsert(ctx context.Context, collection string, records []*VectorRecord) error
 	Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error)
@@ -199,6 +229,16 @@ type Adapter interface {
 
 	// Health
 	Health(ctx context.Context) (*HealthStatus, error)
+	HealthLive(ctx context.Context) (*ProbeResponse, error)
+	HealthReady(ctx context.Context) (*ProbeResponse, error)
+
+	// Schema operations
+	GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error)
+	UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error)
+
+	// Query facade
+	ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error)
+	ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error)
 
 	// Close
 	Close() error
@@ -330,7 +370,31 @@ func (c *client) DeleteCollection(ctx context.Context, name string) error {
 	return err
 }
 
+// InsertRecords inserts canonical records into a collection.
+func (c *client) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	_, err := withRetry(ctx, c.config, func() (struct{}, error) {
+		return struct{}{}, c.adapter.InsertRecords(ctx, collection, records)
+	})
+	return err
+}
+
+// UpsertRecords inserts or updates canonical records in a collection.
+func (c *client) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
+	if err := c.ensureOpen(); err != nil {
+		return err
+	}
+	_, err := withRetry(ctx, c.config, func() (struct{}, error) {
+		return struct{}{}, c.adapter.UpsertRecords(ctx, collection, records)
+	})
+	return err
+}
+
 // Insert inserts vectors into a collection.
+//
+// Deprecated: use InsertRecords with ProximaRecord.
 func (c *client) Insert(ctx context.Context, collection string, records []*VectorRecord) error {
 	if err := c.ensureOpen(); err != nil {
 		return err
@@ -342,6 +406,8 @@ func (c *client) Insert(ctx context.Context, collection string, records []*Vecto
 }
 
 // Upsert inserts or updates vectors in a collection.
+//
+// Deprecated: use UpsertRecords with ProximaRecord.
 func (c *client) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
 	if err := c.ensureOpen(); err != nil {
 		return err
@@ -390,6 +456,66 @@ func (c *client) Health(ctx context.Context) (*HealthStatus, error) {
 	}
 	return withRetry(ctx, c.config, func() (*HealthStatus, error) {
 		return c.adapter.Health(ctx)
+	})
+}
+
+// HealthLive issues a Kubernetes-style liveness probe.
+func (c *client) HealthLive(ctx context.Context) (*ProbeResponse, error) {
+	if err := c.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return withRetry(ctx, c.config, func() (*ProbeResponse, error) {
+		return c.adapter.HealthLive(ctx)
+	})
+}
+
+// HealthReady issues a Kubernetes-style readiness probe.
+func (c *client) HealthReady(ctx context.Context) (*ProbeResponse, error) {
+	if err := c.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return withRetry(ctx, c.config, func() (*ProbeResponse, error) {
+		return c.adapter.HealthReady(ctx)
+	})
+}
+
+// GetCollectionSchema fetches the typed schema for a collection.
+func (c *client) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
+	if err := c.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return withRetry(ctx, c.config, func() (*SchemaResponse, error) {
+		return c.adapter.GetCollectionSchema(ctx, collectionID)
+	})
+}
+
+// UpdateCollectionSchema updates the typed schema for a collection.
+func (c *client) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
+	if err := c.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return withRetry(ctx, c.config, func() (*UpdateSchemaResponse, error) {
+		return c.adapter.UpdateCollectionSchema(ctx, collectionID, req)
+	})
+}
+
+// ExecuteQuery runs an AQL/UQL query through the shared query facade.
+func (c *client) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
+	if err := c.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return withRetry(ctx, c.config, func() (QueryResponse, error) {
+		return c.adapter.ExecuteQuery(ctx, req)
+	})
+}
+
+// ExplainQuery returns the lowered plan / diagnostics for an AQL/UQL query.
+func (c *client) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
+	if err := c.ensureOpen(); err != nil {
+		return nil, err
+	}
+	return withRetry(ctx, c.config, func() (QueryResponse, error) {
+		return c.adapter.ExplainQuery(ctx, req)
 	})
 }
 

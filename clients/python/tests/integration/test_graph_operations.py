@@ -8,7 +8,6 @@ REST and gRPC protocols using the Python SDK.
 import logging
 import time
 import uuid
-from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -301,7 +300,7 @@ class TestGraphOperationsSDK:
         )
 
         assert result is not None
-        logger.info(f"Filtered traversal with edge_types=['KNOWS']")
+        logger.info("Filtered traversal with edge_types=['KNOWS']")
 
     def test_traverse_graph_with_node_label_filter(self, client, graph_id):
         """Test graph traversal with node label filtering"""
@@ -330,7 +329,7 @@ class TestGraphOperationsSDK:
         )
 
         assert result is not None
-        logger.info(f"Filtered traversal with node_labels=['Person']")
+        logger.info("Filtered traversal with node_labels=['Person']")
 
     def test_traverse_graph_max_depth(self, client, graph_id):
         """Test that max_depth parameter limits traversal"""
@@ -355,7 +354,7 @@ class TestGraphOperationsSDK:
         assert result is not None
         if "stats" in result:
             assert result["stats"]["max_depth_reached"] <= 2
-        logger.info(f"Max depth=2 traversal completed")
+        logger.info("Max depth=2 traversal completed")
 
     def test_traverse_graph_with_limit(self, client, graph_id):
         """Test that limit parameter restricts result count"""

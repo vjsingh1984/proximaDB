@@ -1,7 +1,8 @@
+use crate::ai::LLMConfig;
 use crate::network::NetworkConfig;
+use crate::query::unified::RerankConfig;
 use crate::security::SecurityConfig;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use tracing::info;
 
 /// Top-level application configuration loaded from `config.toml`
@@ -37,172 +38,32 @@ pub struct Config {
     /// Query processing configuration (including RL planner)
     #[serde(default)]
     pub query: Option<QueryConfig>,
+    /// LLM integration configuration (optional)
+    pub llm: Option<LLMConfig>,
+    /// Async-ingest queue runtime configuration (optional).
+    ///
+    /// When present, ProximaDB opens the queue subsystem at startup
+    /// and async ingest (`/v3/documents?mode=async`) routes through
+    /// `producer.send` → background drainer → bulk-load. When absent,
+    /// async ingest degrades to inline embed.
+    ///
+    /// Override precedence (highest wins) — see
+    /// [`QueueRuntimeConfig::resolve`] for the implementation:
+    ///   1. CLI flag (none today; reserved)
+    ///   2. Environment variable (`PROXIMADB_QUEUE_ROOT`,
+    ///      `PROXIMADB_QUEUE_OBJECT_ARCHIVE`, `PROXIMADB_QUEUE_SYNC_MODE`,
+    ///      `PROXIMADB_EMBED_DRAINER_PARTITIONS`)
+    ///   3. TOML `[queue]` section (this field) — the canonical artifact
+    ///   4. Built-in defaults
+    ///
+    /// The TOML is intentionally the authoritative declarative source
+    /// (downloadable from object store, version-controlled, identical
+    /// across replicas). Env vars exist for per-pod emergency tuning
+    /// without rebuilding the artifact.
+    pub queue: Option<QueueRuntimeConfig>,
 }
 
-/// TLS transport security configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TlsConfig {
-    /// Path to the PEM-encoded TLS certificate file
-    pub cert_file: Option<String>,
-    /// Path to the PEM-encoded TLS private key file
-    pub key_file: Option<String>,
-    /// Whether TLS is enabled
-    pub enabled: bool,
-    /// Network interface to bind the TLS listener to
-    pub bind_interface: Option<String>,
-}
-
-/// Hardware acceleration configuration controlling SIMD and GPU features
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HardwareConfig {
-    /// Enable automatic hardware detection (default: true)
-    pub enable_detection: bool,
-
-    /// Enable GPU acceleration if detected (default: true)
-    pub enable_gpu_acceleration: bool,
-
-    /// Enable SIMD acceleration if detected (default: true)
-    pub enable_simd: bool,
-
-    /// Enable AVX-512 if available (default: true)
-    pub enable_avx512: bool,
-
-    /// Enable GPU for SQL parsing (default: true)
-    pub enable_gpu_parsing: bool,
-
-    /// Enable GPU for distance calculations (default: true)
-    pub enable_gpu_similarity: bool,
-
-    /// Minimum vector size to use GPU (default: 64)
-    pub gpu_min_vector_size: usize,
-
-    /// Minimum batch size to use GPU (default: 100)
-    pub gpu_min_batch_size: usize,
-}
-
-#[allow(dead_code)]
-fn default_true() -> bool {
-    true
-}
-
-#[allow(dead_code)]
-fn default_gpu_min_vector_size() -> usize {
-    64
-}
-
-#[allow(dead_code)]
-fn default_gpu_min_batch_size() -> usize {
-    100
-}
-
-impl Default for HardwareConfig {
-    fn default() -> Self {
-        Self {
-            enable_detection: true,
-            enable_gpu_acceleration: true,
-            enable_simd: true,
-            enable_avx512: true,
-            enable_gpu_parsing: true,
-            enable_gpu_similarity: true,
-            gpu_min_vector_size: 64,
-            gpu_min_batch_size: 100,
-        }
-    }
-}
-
-/// Semantic Knowledge Store (SKS) configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SksConfig {
-    /// Enable SKS features (default: false)
-    pub enabled: bool,
-
-    /// Enable entity storage (default: true when SKS enabled)
-    pub enable_entities: bool,
-
-    /// Enable graph relationships (default: true when SKS enabled)
-    pub enable_relations: bool,
-
-    /// Enable provenance tracking (default: true when SKS enabled)
-    pub enable_provenance: bool,
-
-    /// Enable temporal versioning (default: false)
-    pub enable_temporal: bool,
-
-    /// Enable SQL extensions (SIMILAR, FOLLOW, ASSEMBLE)
-    pub enable_sql_extensions: bool,
-
-    /// Maximum embedding versions per entity (default: 10)
-    pub max_embedding_versions: usize,
-
-    /// Maximum graph traversal depth (default: 5)
-    pub max_traversal_depth: usize,
-
-    /// Cache size for entity store in MB (default: 256)
-    pub entity_cache_mb: usize,
-
-    /// Cache size for relations in MB (default: 128)
-    pub relations_cache_mb: usize,
-
-    /// Default embedding model for text-to-vector conversion
-    pub default_embedding_model: String,
-
-    /// Storage backend for SKS data ("memory", "sst", "viper")
-    pub storage_backend: String,
-}
-
-#[allow(dead_code)]
-fn default_false_sks() -> bool {
-    false
-}
-
-#[allow(dead_code)]
-fn default_max_embedding_versions() -> usize {
-    10
-}
-
-#[allow(dead_code)]
-fn default_max_traversal_depth() -> usize {
-    5
-}
-
-#[allow(dead_code)]
-fn default_entity_cache_mb() -> usize {
-    256
-}
-
-#[allow(dead_code)]
-fn default_relations_cache_mb() -> usize {
-    128
-}
-
-#[allow(dead_code)]
-fn default_embedding_model() -> String {
-    "openai/text-embedding-3-large".to_string()
-}
-
-#[allow(dead_code)]
-fn default_sks_backend() -> String {
-    "sst".to_string()
-}
-
-impl Default for SksConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            enable_entities: true,
-            enable_relations: true,
-            enable_provenance: true,
-            enable_temporal: false,
-            enable_sql_extensions: true,
-            max_embedding_versions: 10,
-            max_traversal_depth: 5,
-            entity_cache_mb: 256,
-            relations_cache_mb: 128,
-            default_embedding_model: "openai/text-embedding-3-large".to_string(),
-            storage_backend: "sst".to_string(),
-        }
-    }
-}
+pub use proximadb_config::{HardwareConfig, SksConfig, TlsConfig};
 
 impl Default for Config {
     fn default() -> Self {
@@ -221,7 +82,258 @@ impl Default for Config {
             graph: Some(GraphRuntimeConfig::default()),
             hybrid: Some(HybridRuntimeConfig::default()),
             query: None, // Uses default RL planner settings when None
+            llm: None,
+            queue: None,
         }
+    }
+}
+
+/// Queue subsystem runtime configuration. Lives at the `[queue]` TOML
+/// section. See `Config.queue` for the precedence rules — short version:
+/// the TOML is the canonical declarative source; env vars exist for
+/// per-pod emergency overrides; defaults fill in the gaps.
+///
+/// Wire-format example:
+///
+/// ```toml
+/// [queue]
+/// root = "file:///var/lib/proximadb/queue"
+/// object_archive = "adls://example-operator/queue-cold"   # optional
+/// sync_mode = "strict"                             # "strict" or "lazy"
+/// drainer_partitions = "0..16"                    # this replica's range
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct QueueRuntimeConfig {
+    /// Filesystem URL where queue segments live (e.g.
+    /// `file:///var/lib/proximadb/queue`, `adls://...`, `s3://...`).
+    /// Required to enable async ingest.
+    pub root: Option<String>,
+    /// Optional second-tier archive URL. Sealed segments are mirrored
+    /// here so the queue survives ECS pod loss / k8s reschedule onto a
+    /// fresh-disk node.
+    pub object_archive: Option<String>,
+    /// `"strict"` (default, fsync-before-ack) or `"lazy"`.
+    pub sync_mode: Option<String>,
+    /// Partition range this replica drains, e.g. `"0..16"` or
+    /// `"0,3..6,9"`. Single-replica deployments leave it unset; multi-
+    /// replica deployments pass disjoint ranges per pod (the cross-
+    /// process leases enforce ownership).
+    pub drainer_partitions: Option<String>,
+}
+
+impl QueueRuntimeConfig {
+    /// Build the runtime queue settings by layering env over TOML over
+    /// defaults. Returns `None` when none of the layers supplied a
+    /// `root` URL — that's the explicit signal that async ingest is
+    /// disabled.
+    ///
+    /// Precedence (highest wins):
+    /// 1. **Environment variable** (`PROXIMADB_QUEUE_*`) — per-pod
+    ///    emergency override. Set in the k8s/ECS task spec.
+    /// 2. **TOML `[queue]` section** — canonical declarative artifact.
+    ///    Downloadable from object store; identical across replicas.
+    /// 3. **Compiled-in defaults** — `sync_mode = "strict"`,
+    ///    `drainer_partitions = "0..16"`.
+    ///
+    /// A future CLI-flag layer (e.g. `--queue-root <url>`) would slot
+    /// above env without changing the return type.
+    pub fn resolve(toml_section: Option<&QueueRuntimeConfig>) -> Option<ResolvedQueueConfig> {
+        let from_toml = toml_section.cloned().unwrap_or_default();
+        let root = std::env::var("PROXIMADB_QUEUE_ROOT")
+            .ok()
+            .or(from_toml.root.clone());
+        // No root anywhere → async ingest stays off entirely.
+        let root = root?;
+
+        let object_archive = std::env::var("PROXIMADB_QUEUE_OBJECT_ARCHIVE")
+            .ok()
+            .or(from_toml.object_archive.clone());
+        let sync_mode = std::env::var("PROXIMADB_QUEUE_SYNC_MODE")
+            .ok()
+            .or(from_toml.sync_mode.clone())
+            .unwrap_or_else(|| "strict".to_string());
+        let drainer_partitions = std::env::var("PROXIMADB_EMBED_DRAINER_PARTITIONS")
+            .ok()
+            .or(from_toml.drainer_partitions.clone())
+            .unwrap_or_else(|| "0..16".to_string());
+
+        Some(ResolvedQueueConfig {
+            root,
+            object_archive,
+            sync_mode,
+            drainer_partitions,
+        })
+    }
+}
+
+/// Resolved queue configuration after the precedence layers are
+/// folded. All fields are populated (no Options) so callers can
+/// consume directly without per-field defaulting.
+#[derive(Debug, Clone)]
+pub struct ResolvedQueueConfig {
+    pub root: String,
+    pub object_archive: Option<String>,
+    pub sync_mode: String,
+    pub drainer_partitions: String,
+}
+
+#[cfg(test)]
+mod queue_config_tests {
+    use super::*;
+
+    /// Restoring env vars after a test mutates them is fragile (other
+    /// tests run in the same process and see the changes). Each test
+    /// scopes its env reads via this guard, which restores the value
+    /// on drop.
+    struct EnvGuard {
+        key: String,
+        original: Option<String>,
+    }
+
+    impl EnvGuard {
+        fn set(key: &str, value: Option<&str>) -> Self {
+            let original = std::env::var(key).ok();
+            match value {
+                Some(v) => unsafe { std::env::set_var(key, v) },
+                None => unsafe { std::env::remove_var(key) },
+            }
+            EnvGuard {
+                key: key.to_string(),
+                original,
+            }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            match self.original.take() {
+                Some(v) => unsafe { std::env::set_var(&self.key, v) },
+                None => unsafe { std::env::remove_var(&self.key) },
+            }
+        }
+    }
+
+    /// Without any TOML section AND without env vars, async ingest is
+    /// disabled — resolve returns None. This is the "no behavior
+    /// change for unaware deployments" guarantee.
+    #[test]
+    fn resolve_returns_none_when_no_toml_and_no_env() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", None);
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
+        assert!(QueueRuntimeConfig::resolve(None).is_none());
+        assert!(QueueRuntimeConfig::resolve(Some(&QueueRuntimeConfig::default())).is_none());
+    }
+
+    /// TOML-only flow: a TOML `[queue]` section with `root` set
+    /// activates the queue. Defaults fill in everything else.
+    #[test]
+    fn resolve_uses_toml_when_env_unset() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", None);
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
+        let toml = QueueRuntimeConfig {
+            root: Some("file:///srv/queue".to_string()),
+            object_archive: Some("adls://example-operator/archive".to_string()),
+            sync_mode: Some("lazy".to_string()),
+            drainer_partitions: Some("0..4".to_string()),
+        };
+        let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
+        assert_eq!(resolved.root, "file:///srv/queue");
+        assert_eq!(
+            resolved.object_archive.as_deref(),
+            Some("adls://example-operator/archive")
+        );
+        assert_eq!(resolved.sync_mode, "lazy");
+        assert_eq!(resolved.drainer_partitions, "0..4");
+    }
+
+    /// Env beats TOML — the documented precedence in `Config.queue`.
+    /// All four fields swap when env is set even when TOML provided a
+    /// different value.
+    #[test]
+    fn resolve_env_overrides_toml() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", Some("file:///emergency"));
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", Some("s3://hotfix"));
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", Some("strict"));
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", Some("8..16"));
+        let toml = QueueRuntimeConfig {
+            root: Some("file:///canonical".to_string()),
+            object_archive: Some("adls://canonical".to_string()),
+            sync_mode: Some("lazy".to_string()),
+            drainer_partitions: Some("0..16".to_string()),
+        };
+        let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
+        assert_eq!(resolved.root, "file:///emergency");
+        assert_eq!(resolved.object_archive.as_deref(), Some("s3://hotfix"));
+        assert_eq!(resolved.sync_mode, "strict");
+        assert_eq!(resolved.drainer_partitions, "8..16");
+    }
+
+    /// Env-only flow: when there's no TOML section at all, env vars
+    /// can still activate the queue (useful for ad-hoc local runs).
+    #[test]
+    fn resolve_env_alone_activates_queue() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", Some("file:///env-only"));
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", None);
+        let resolved = QueueRuntimeConfig::resolve(None).expect("resolved");
+        assert_eq!(resolved.root, "file:///env-only");
+        assert!(resolved.object_archive.is_none());
+        assert_eq!(resolved.sync_mode, "strict", "default fills in");
+        assert_eq!(resolved.drainer_partitions, "0..16", "default fills in");
+    }
+
+    /// Per-field precedence: env can override SOME fields while TOML
+    /// supplies others. This is the "partial emergency tuning" case —
+    /// e.g., a hot pod gets a different partition range without
+    /// touching the canonical TOML.
+    #[test]
+    fn resolve_per_field_override() {
+        let _g_root = EnvGuard::set("PROXIMADB_QUEUE_ROOT", None);
+        let _g_arc = EnvGuard::set("PROXIMADB_QUEUE_OBJECT_ARCHIVE", None);
+        let _g_sync = EnvGuard::set("PROXIMADB_QUEUE_SYNC_MODE", None);
+        let _g_part = EnvGuard::set("PROXIMADB_EMBED_DRAINER_PARTITIONS", Some("12..16"));
+        let toml = QueueRuntimeConfig {
+            root: Some("file:///canonical".to_string()),
+            object_archive: Some("adls://canonical".to_string()),
+            sync_mode: Some("strict".to_string()),
+            drainer_partitions: Some("0..16".to_string()),
+        };
+        let resolved = QueueRuntimeConfig::resolve(Some(&toml)).expect("resolved");
+        // TOML wins for the unmasked fields...
+        assert_eq!(resolved.root, "file:///canonical");
+        assert_eq!(resolved.object_archive.as_deref(), Some("adls://canonical"));
+        assert_eq!(resolved.sync_mode, "strict");
+        // ...env wins for the one field that's set.
+        assert_eq!(resolved.drainer_partitions, "12..16");
+    }
+
+    /// Round-trip the [queue] section through serde + TOML to lock the
+    /// wire format. Future renames will fail this test loudly.
+    #[test]
+    fn queue_section_round_trips_through_toml() {
+        let original = QueueRuntimeConfig {
+            root: Some("file:///canonical".to_string()),
+            object_archive: Some("adls://example-operator/archive".to_string()),
+            sync_mode: Some("strict".to_string()),
+            drainer_partitions: Some("0..16".to_string()),
+        };
+        let serialized = toml::to_string(&original).expect("ser");
+        // Lock the literal field names — these are the public TOML
+        // surface and changing them is a breaking config-file change.
+        assert!(serialized.contains("root ="));
+        assert!(serialized.contains("object_archive ="));
+        assert!(serialized.contains("sync_mode ="));
+        assert!(serialized.contains("drainer_partitions ="));
+        let restored: QueueRuntimeConfig = toml::from_str(&serialized).expect("de");
+        assert_eq!(restored.root, original.root);
+        assert_eq!(restored.object_archive, original.object_archive);
+        assert_eq!(restored.sync_mode, original.sync_mode);
+        assert_eq!(restored.drainer_partitions, original.drainer_partitions);
     }
 }
 
@@ -428,84 +540,7 @@ impl Default for CacheWarmingConfig {
     }
 }
 
-/// Graph runtime configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GraphRuntimeConfig {
-    /// Enable bounded prefetch hints during traversals
-    pub enable_prefetch: bool,
-    /// Per-node/iteration adjacency prefetch budget
-    pub prefetch_budget: usize,
-    /// Select graph engine ("ORION"|"PULSAR"|"QUASAR")
-    pub engine: String,
-    /// Embedding storage mode: "none" (default), "cold", "memory"
-    /// - "none": No embeddings stored (pure graph, best performance)
-    /// - "cold": Embeddings in vector engine (SST/HELIX/VIPER)
-    /// - "memory": Embeddings cached in memory (for SKS-heavy workloads)
-    #[serde(default = "default_embedding_mode")]
-    pub embedding_mode: String,
-    /// Vector engine for cold tier embeddings (only if embedding_mode = "cold")
-    /// Options: "sst", "helix", "viper"
-    #[serde(default = "default_embedding_engine")]
-    pub embedding_engine: String,
-    /// Memory cache size in MB for embeddings (only if embedding_mode = "memory")
-    #[serde(default)]
-    pub embedding_memory_cache_mb: Option<usize>,
-}
-
-impl Default for GraphRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            enable_prefetch: true,
-            prefetch_budget: 8,
-            engine: default_graph_engine(),
-            embedding_mode: default_embedding_mode(),
-            embedding_engine: default_embedding_engine(),
-            embedding_memory_cache_mb: None,
-        }
-    }
-}
-
-fn default_graph_engine() -> String {
-    "ORION".to_string()
-}
-
-fn default_embedding_mode() -> String {
-    "none".to_string()
-}
-
-fn default_embedding_engine() -> String {
-    "sst".to_string()
-}
-
-/// Hybrid query runtime configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HybridRuntimeConfig {
-    /// Default seeding strategy ("AVERAGE"|"PER_SEED"|"NONE")
-    pub seeding_strategy: String,
-    /// Fusion weights for [vector, graph]
-    pub fusion_weights: Option<Vec<f64>>,
-}
-
-impl Default for HybridRuntimeConfig {
-    fn default() -> Self {
-        Self {
-            seeding_strategy: "AVERAGE".to_string(),
-            fusion_weights: Some(vec![0.6, 0.4]),
-        }
-    }
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            node_id: "node-1".to_string(),
-            bind_address: "127.0.0.1".to_string(),
-            port: 5678,
-            grpc_port: None,
-            data_dir: PathBuf::from("./data"),
-        }
-    }
-}
+pub use proximadb_config::{GraphRuntimeConfig, HybridRuntimeConfig};
 
 impl Default for StorageConfig {
     fn default() -> Self {
@@ -527,24 +562,14 @@ impl Default for StorageConfig {
     }
 }
 
-/// Server identity and network bind configuration
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct ServerConfig {
-    /// Unique node identifier within the cluster
-    pub node_id: String,
-    /// IP address or hostname to bind the server to
-    pub bind_address: String,
-    /// Primary listening port (REST/unified)
-    pub port: u16,
-    /// Optional gRPC port for convenience; if not set, ApiConfig.grpc_port is used
-    pub grpc_port: Option<u16>,
-    /// Root directory for persistent data files
-    pub data_dir: PathBuf,
-}
+pub use proximadb_config::ServerConfig;
+
+/// Backwards-compat alias for [`CoreStorageConfig`].
+pub type StorageConfig = CoreStorageConfig;
 
 /// Storage engine layout, WAL, compaction, and filesystem optimization settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageConfig {
+pub struct CoreStorageConfig {
     /// Storage locations - each can host WriteBuffer, data, and indexes
     pub storage_locations: Vec<StorageLocation>,
 
@@ -583,302 +608,12 @@ pub struct StorageConfig {
     pub optimization: OptimizationConfig,
 }
 
-/// Configuration for search pruning, allowing for simple or advanced setup.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(untagged)]
-pub enum PruneModeConfig {
-    /// Simple pruning mode specified by a single strategy name
-    Simple(String),
-    /// Advanced pruning mode with fine-grained control
-    Advanced(AdvancedPruneConfig),
-}
-
-/// Advanced configuration for search pruning.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct AdvancedPruneConfig {
-    /// Pruning algorithm type (e.g., "sqrt", "log")
-    #[serde(default = "default_prune_type")]
-    pub r#type: String,
-    /// Minimum number of candidates to keep after pruning
-    pub min_keep: Option<usize>,
-    /// Maximum number of candidates to keep after pruning
-    pub max_keep: Option<usize>,
-    /// Pruning ratio controlling aggressiveness (0.0 to 1.0)
-    pub ratio: Option<f32>,
-}
-
-fn default_prune_type() -> String {
-    "sqrt".to_string()
-}
-
-/// Storage location configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StorageLocation {
-    /// Storage URL (e.g., "file:///nvme1/proximadb", "s3://bucket/proximadb")
-    pub url: String,
-
-    /// Weight for weighted distribution (default: 1)
-    pub weight: u32,
-
-    /// Tags for filtering (e.g., ["fast", "local"], ["cloud", "archive"])
-    pub tags: Vec<String>,
-}
-
-#[allow(dead_code)]
-fn default_weight() -> u32 {
-    1
-}
-
-impl Default for StorageLocation {
-    fn default() -> Self {
-        Self {
-            url: "file://./data".to_string(),
-            weight: 1,
-            tags: vec!["local".to_string()],
-        }
-    }
-}
-
-/// Assignment configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AssignmentConfig {
-    /// Assignment strategy: "hash", "round-robin", "weighted"
-    pub strategy: String,
-    /// Keep all collection data together (WAL, data, index on same location)
-    pub affinity: bool,
-}
-
-fn default_assignment_strategy() -> String {
-    "hash".to_string()
-}
-
-fn default_affinity() -> bool {
-    true
-}
-
-impl Default for AssignmentConfig {
-    fn default() -> Self {
-        Self {
-            strategy: default_assignment_strategy(),
-            affinity: default_affinity(),
-        }
-    }
-}
-
-/// Performance optimization configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OptimizationConfig {
-    /// Enable memory-mapped I/O for large files (40-60% faster reads)
-    #[serde(default = "default_enable_mmap")]
-    pub enable_mmap: bool,
-
-    /// Enable zone map pruning to skip irrelevant blocks (30-50% faster search)
-    #[serde(default = "default_enable_zone_map_pruning")]
-    pub enable_zone_map_pruning: bool,
-
-    /// Enable AXIS indexes for approximate nearest neighbor search
-    #[serde(default = "default_enable_axis_indexes")]
-    pub enable_axis_indexes: bool,
-
-    /// Default index type for new collections: flat, hnsw, ivf, lsh
-    #[serde(default = "default_index_type")]
-    pub default_index_type: String,
-
-    /// Enable progressive quantization search (Binary → INT8 → FP32)
-    #[serde(default = "default_enable_progressive_search")]
-    pub enable_progressive_search: bool,
-
-    /// Enable block-level bloom filters for metadata filtering
-    #[serde(default = "default_enable_bloom_filters")]
-    pub enable_bloom_filters: bool,
-}
-
-fn default_enable_mmap() -> bool {
-    true
-}
-
-fn default_enable_zone_map_pruning() -> bool {
-    true
-}
-
-fn default_enable_axis_indexes() -> bool {
-    true
-}
-
-fn default_index_type() -> String {
-    "hnsw".to_string()
-}
-
-fn default_enable_progressive_search() -> bool {
-    true
-}
-
-fn default_enable_bloom_filters() -> bool {
-    true
-}
-
-impl Default for OptimizationConfig {
-    fn default() -> Self {
-        Self {
-            enable_mmap: default_enable_mmap(),
-            enable_zone_map_pruning: default_enable_zone_map_pruning(),
-            enable_axis_indexes: default_enable_axis_indexes(),
-            default_index_type: default_index_type(),
-            enable_progressive_search: default_enable_progressive_search(),
-            enable_bloom_filters: default_enable_bloom_filters(),
-        }
-    }
-}
-
-/// Metadata backend configuration for cloud and local storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MetadataBackendConfig {
-    /// Backend type (filestore, memory)
-    pub backend_type: String,
-
-    /// Storage URL (file://, s3://, adls://, gcs://)
-    pub storage_url: String,
-
-    /// Cloud-specific configuration
-    pub cloud_config: Option<CloudStorageConfig>,
-
-    /// In-memory cache size in megabytes for metadata
-    pub cache_size_mb: Option<u64>,
-    /// Interval in seconds between metadata flush operations
-    pub flush_interval_secs: Option<u64>,
-}
-
-impl Default for MetadataBackendConfig {
-    fn default() -> Self {
-        Self {
-            backend_type: "filestore".to_string(),
-            storage_url: "file://./metadata".to_string(),
-            cloud_config: None,
-            cache_size_mb: Some(256),
-            flush_interval_secs: Some(60),
-        }
-    }
-}
-
-/// Cloud storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CloudStorageConfig {
-    /// AWS S3 configuration
-    pub s3_config: Option<S3Config>,
-
-    /// Azure Blob Storage configuration
-    pub azure_config: Option<AzureConfig>,
-
-    /// Google Cloud Storage configuration
-    pub gcs_config: Option<GcsConfig>,
-}
-
-/// AWS S3 configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct S3Config {
-    /// AWS region (e.g., "us-east-1")
-    pub region: String,
-    /// S3 bucket name
-    pub bucket: String,
-    /// AWS access key ID (optional if using IAM role)
-    pub access_key_id: Option<String>,
-    /// AWS secret access key (optional if using IAM role)
-    pub secret_access_key: Option<String>,
-    /// Use IAM role-based authentication instead of static keys
-    pub use_iam_role: bool,
-    /// Custom S3-compatible endpoint URL (e.g., MinIO)
-    pub endpoint: Option<String>,
-}
-
-/// Azure Blob Storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AzureConfig {
-    /// Azure Storage account name
-    pub account_name: String,
-    /// Blob container name
-    pub container: String,
-    /// Storage account access key (optional if using managed identity)
-    pub access_key: Option<String>,
-    /// Shared Access Signature token (optional)
-    pub sas_token: Option<String>,
-    /// Use Azure Managed Identity for authentication
-    pub use_managed_identity: bool,
-}
-
-/// Google Cloud Storage configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GcsConfig {
-    /// Google Cloud project ID
-    pub project_id: String,
-    /// GCS bucket name
-    pub bucket: String,
-    /// Path to the service account JSON key file
-    pub service_account_path: Option<String>,
-    /// Use GKE Workload Identity for authentication
-    pub use_workload_identity: bool,
-}
-
-/// Filesystem configuration for performance optimization
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FilesystemOptimizationConfig {
-    /// Enable write strategy caching
-    pub enable_write_strategy_cache: bool,
-
-    /// Temp directory configuration
-    pub temp_strategy: TempStrategy,
-
-    /// Atomic operations configuration
-    pub atomic_config: TransactionalOperationsConfig,
-}
-
-/// Temp strategy configuration
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum TempStrategy {
-    /// Same directory temp (recommended for local filesystem)
-    SameDirectory,
-
-    /// Configured temp directory
-    ConfiguredTemp {
-        /// Path to the custom temporary directory
-        temp_dir: String,
-    },
-
-    /// System temp directory (fallback)
-    SystemTemp,
-}
-
-/// Atomic operations configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TransactionalOperationsConfig {
-    /// Enable atomic writes for local filesystem
-    pub enable_local_atomic: bool,
-
-    /// Enable write-temp-rename for object stores
-    pub enable_object_store_atomic: bool,
-
-    /// Cleanup temp files on startup
-    pub cleanup_temp_on_startup: bool,
-}
-
-impl Default for FilesystemOptimizationConfig {
-    fn default() -> Self {
-        Self {
-            enable_write_strategy_cache: true,
-            temp_strategy: TempStrategy::SameDirectory,
-            atomic_config: TransactionalOperationsConfig::default(),
-        }
-    }
-}
-
-impl Default for TransactionalOperationsConfig {
-    fn default() -> Self {
-        Self {
-            enable_local_atomic: true,
-            enable_object_store_atomic: true,
-            cleanup_temp_on_startup: true,
-        }
-    }
-}
+pub use proximadb_config::{
+    AdvancedPruneConfig, AssignmentConfig, AzureConfig, CloudStorageConfig, CompactionConfig,
+    ConsensusConfig, FilesystemOptimizationConfig, GcsConfig, MetadataBackendConfig,
+    MonitoringConfig, OptimizationConfig, PruneModeConfig, S3Config, StorageLocation, TempStrategy,
+    TransactionalOperationsConfig,
+};
 
 impl StorageConfig {
     /// Get storage URLs from locations
@@ -983,60 +718,6 @@ impl WriteBufferUserConfig {
     }
 }
 
-/// Common compaction configuration shared across engines
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CompactionConfig {
-    /// L0 file count threshold for compaction (default: 5)
-    pub l0_file_threshold: usize,
-
-    /// L0 size threshold in MB for compaction (default: 256MB)
-    pub l0_size_threshold_mb: usize,
-
-    /// Multiplier for higher level thresholds (default: 2.0)
-    pub level_multiplier: f64,
-
-    /// Maximum number of levels (default: 7)
-    pub max_levels: u8,
-
-    /// Compaction strategy: "count", "size", or "hybrid" (default: "hybrid")
-    pub strategy: String,
-
-    /// Target output file size in MB for size-based compaction (default: 128MB)
-    pub target_file_size_mb: usize,
-}
-
-fn default_l0_file_threshold() -> usize {
-    5
-}
-fn default_l0_size_threshold_mb() -> usize {
-    256
-}
-fn default_level_multiplier() -> f64 {
-    2.0
-}
-fn default_max_levels() -> u8 {
-    7
-}
-fn default_compaction_strategy() -> String {
-    "hybrid".to_string()
-}
-fn default_target_file_size_mb() -> usize {
-    128
-}
-
-impl Default for CompactionConfig {
-    fn default() -> Self {
-        Self {
-            l0_file_threshold: default_l0_file_threshold(),
-            l0_size_threshold_mb: default_l0_size_threshold_mb(),
-            level_multiplier: default_level_multiplier(),
-            max_levels: default_max_levels(),
-            strategy: default_compaction_strategy(),
-            target_file_size_mb: default_target_file_size_mb(),
-        }
-    }
-}
-
 /// SST (Sorted String Table) engine configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SstConfig {
@@ -1093,7 +774,7 @@ pub struct SstConfig {
     pub prefetch_size_kb: u32,
     /// Decompression cache configuration
     pub decompression_cache_config:
-        Option<crate::storage::engines::impls::sst::decompression_cache::CacheConfig>,
+        Option<crate::storage::engines::sst::decompression_cache::CacheConfig>,
 
     /// Vector encoding strategy: Controls how vectors are encoded in blocks
     ///
@@ -1198,6 +879,23 @@ pub struct SstConfig {
     /// Default: ProximaBlocks
     #[serde(default = "default_block_format")]
     pub block_format: String,
+
+    /// Tier-migration configuration. When `None` or when the inner
+    /// config has `enabled = false`, the engine's flush / search /
+    /// compaction tiering hooks are no-ops.
+    ///
+    /// When `enabled = true`, the engine attaches an
+    /// `SstTieringIntegration` at bootstrap (see
+    /// `src/network/shared_services.rs`) and the policy engine begins
+    /// observing per-collection access patterns, flush events, and
+    /// compaction-time evaluations. Physical byte-movement between
+    /// tier paths is still deferred — the policy engine generates
+    /// migration tasks but no executor moves the bytes yet.
+    ///
+    /// Configure under `[storage.sst_config.tiering]` in TOML.
+    /// Default: `None` (disabled).
+    #[serde(default)]
+    pub tiering: Option<crate::storage::engines::sst::tiering_integration::SstTieringConfig>,
 }
 
 fn default_block_format() -> String {
@@ -1275,10 +973,11 @@ impl Default for SstConfig {
             prefetch_enabled: true,
             prefetch_size_kb: 64,
             decompression_cache_config: Some(
-                crate::storage::engines::impls::sst::decompression_cache::CacheConfig::default(),
+                crate::storage::engines::sst::decompression_cache::CacheConfig::default(),
             ),
             vector_encoding_strategy: default_vector_encoding_strategy(),
             block_format: default_block_format(),
+            tiering: None, // Default: tier-migration disabled
         }
     }
 }
@@ -1381,249 +1080,9 @@ impl SstConfig {
     }
 }
 
-/// Raft consensus configuration for clustered deployments
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConsensusConfig {
-    /// Raft node identifier (unique within the cluster)
-    pub node_id: Option<u64>,
-    /// Addresses of other cluster peers
-    pub cluster_peers: Vec<String>,
-    /// Election timeout in milliseconds
-    pub election_timeout_ms: u64,
-    /// Heartbeat interval in milliseconds
-    pub heartbeat_interval_ms: u64,
-    /// Number of log entries before taking a snapshot
-    pub snapshot_threshold: u64,
-}
+pub use proximadb_config::ApiConfig;
 
-impl Default for ConsensusConfig {
-    fn default() -> Self {
-        Self {
-            node_id: None,
-            cluster_peers: Vec::new(),
-            election_timeout_ms: 5000,
-            heartbeat_interval_ms: 1000,
-            snapshot_threshold: 10000,
-        }
-    }
-}
-
-/// REST and gRPC API endpoint configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApiConfig {
-    /// gRPC listening port (used in multi-port mode)
-    pub grpc_port: u16,
-    /// REST listening port (used in multi-port mode)
-    pub rest_port: u16,
-    /// Maximum request body size in megabytes
-    pub max_request_size_mb: u64,
-    /// Request timeout in seconds
-    pub timeout_seconds: u64,
-    /// Whether TLS is enabled for API endpoints
-    pub enable_tls: Option<bool>,
-    /// Interval for background TTL sweeper in seconds (default: 900 = 15 minutes)
-    pub ttl_sweep_interval_seconds: u64,
-
-    /// Enable REST API compression (default: false)
-    pub rest_compression: bool,
-
-    /// Enable gRPC compression (default: false)
-    pub grpc_compression: bool,
-
-    /// Compression algorithm: "gzip", "deflate", "br" (default: "gzip")
-    pub compression_algorithm: String,
-
-    /// Compression level 1-9 for gzip, 1-11 for brotli (default: 6)
-    pub compression_level: i32,
-
-    // ============================================================
-    // Unified Port Architecture (Phase 14)
-    // ============================================================
-    /// Enable unified port mode (REST + gRPC + Arrow Flight on single port)
-    /// When enabled, `unified_port` is used; individual ports are ignored.
-    /// Default: false (legacy multi-port mode for backward compatibility)
-    #[serde(default)]
-    pub unified_mode: bool,
-
-    /// Unified port for all HTTP-based protocols (REST, gRPC, Arrow Flight)
-    /// Only used when `unified_mode = true`
-    /// Default: 5678
-    #[serde(default = "default_unified_port")]
-    pub unified_port: u16,
-
-    /// Arrow Flight port (used when unified_mode = false)
-    /// Default: 5680
-    #[serde(default = "default_arrow_flight_port")]
-    pub arrow_flight_port: u16,
-
-    /// Enable REST protocol in unified mode
-    /// Default: true
-    #[serde(default = "default_true_api")]
-    pub enable_rest: bool,
-
-    /// Enable gRPC protocol in unified mode
-    /// Default: true
-    #[serde(default = "default_true_api")]
-    pub enable_grpc: bool,
-
-    /// Enable Arrow Flight protocol in unified mode
-    /// Default: true
-    #[serde(default = "default_true_api")]
-    pub enable_arrow_flight: bool,
-
-    /// HTTP/2 max concurrent streams (for gRPC and Arrow Flight)
-    /// Default: 1000
-    #[serde(default = "default_http2_max_concurrent_streams")]
-    pub http2_max_concurrent_streams: u32,
-
-    /// Maximum connections for unified server
-    /// Default: 10000
-    #[serde(default = "default_max_connections")]
-    pub max_connections: usize,
-}
-
-fn default_unified_port() -> u16 {
-    5678
-}
-
-fn default_arrow_flight_port() -> u16 {
-    5680
-}
-
-fn default_true_api() -> bool {
-    true
-}
-
-fn default_http2_max_concurrent_streams() -> u32 {
-    1000
-}
-
-fn default_max_connections() -> usize {
-    10000
-}
-
-#[allow(dead_code)]
-fn default_false() -> bool {
-    false
-}
-
-#[allow(dead_code)]
-fn default_compression_algorithm() -> String {
-    "gzip".to_string()
-}
-
-#[allow(dead_code)]
-fn default_compression_level_api() -> i32 {
-    6
-}
-
-impl Default for ApiConfig {
-    fn default() -> Self {
-        Self {
-            grpc_port: 5679,
-            rest_port: 5678,
-            max_request_size_mb: 100,
-            timeout_seconds: 60,
-            enable_tls: Some(false),
-            rest_compression: false,
-            grpc_compression: false,
-            compression_algorithm: "gzip".to_string(),
-            compression_level: 6,
-            ttl_sweep_interval_seconds: 900,
-            // Unified port settings (Phase 14)
-            unified_mode: false, // Legacy multi-port mode by default
-            unified_port: 5678,
-            arrow_flight_port: 5680,
-            enable_rest: true,
-            enable_grpc: true,
-            enable_arrow_flight: true,
-            http2_max_concurrent_streams: 1000,
-            max_connections: 10000,
-        }
-    }
-}
-
-#[allow(dead_code)]
-fn default_ttl_sweep_interval() -> u64 {
-    900
-}
-
-/// WAL storage configuration supporting multiple directories and cloud storage
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WalStorageConfig {
-    /// Distribution strategy for collections across storage locations
-    pub distribution_strategy: WalDistributionStrategy,
-
-    /// Whether to keep each collection on a single WAL directory
-    pub collection_affinity: bool,
-
-    /// Memory flush threshold per collection (bytes)
-    pub memory_flush_size_bytes: usize,
-
-    /// Global WAL size threshold for forced flush (bytes)
-    pub global_flush_threshold: usize,
-
-    /// WAL strategy type (Avro vs Bincode)
-    pub strategy_type: Option<String>,
-
-    /// Memtable type for memory structure
-    pub memtable_type: Option<String>,
-
-    /// Sync mode for durability vs performance tradeoff
-    pub sync_mode: Option<String>,
-
-    /// Batch threshold for operations
-    pub batch_threshold: Option<usize>,
-
-    /// Write buffer size in MB
-    pub write_buffer_size_mb: Option<usize>,
-
-    /// Maximum concurrent flush operations
-    pub concurrent_flushes: Option<usize>,
-
-    /// Shrink factor for global threshold management (percentage)
-    /// When global threshold is exceeded, flush collections until memory usage drops to this percentage
-    pub global_shrink_factor: Option<f64>,
-
-    /// Global manifest location (optional - explicit configuration)
-    /// If not specified, defaults to {first write_buffer_url}/wal
-    /// Examples:
-    /// - "file:///data/wal-metadata" (dedicated fast SSD)
-    /// - "file:///shared/nfs/wal" (shared storage for HA)
-    /// - "s3://bucket/wal-global" (cloud-based)
-    pub global_manifest_url: Option<String>,
-}
-
-/// Strategy for distributing WAL segments across multiple storage directories
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-pub enum WalDistributionStrategy {
-    /// Round-robin across WAL directories
-    RoundRobin,
-    /// Hash-based distribution (consistent)
-    Hash,
-    /// Load-balanced distribution (dynamic)
-    #[default]
-    LoadBalanced,
-}
-
-impl Default for WalStorageConfig {
-    fn default() -> Self {
-        Self {
-            global_manifest_url: None, // Defaults to {storage_locations[0]}/wal
-            distribution_strategy: WalDistributionStrategy::LoadBalanced,
-            collection_affinity: true,
-            memory_flush_size_bytes: 10 * 1024 * 1024, // 10MB - recommended for collection-level flush
-            global_flush_threshold: 4 * 1024 * 1024 * 1024, // 4GB - recommended for global memory threshold
-            strategy_type: None,                            // Use WAL defaults
-            memtable_type: None,                            // Use WAL defaults
-            sync_mode: None,                                // Use WAL defaults
-            batch_threshold: None,                          // Use WAL defaults
-            write_buffer_size_mb: None,                     // Use WAL defaults
-            concurrent_flushes: None,                       // Use WAL defaults
-            global_shrink_factor: Some(0.4),                // 40% shrink factor - recommended
-        }
-    }
-}
+pub use proximadb_config::{WalDistributionStrategy, WalStorageConfig};
 
 // Helper functions for serde defaults
 #[allow(dead_code)]
@@ -1667,45 +1126,22 @@ fn default_global_shrink_factor() -> Option<f64> {
     Some(0.4) // 40% shrink factor - recommended for global threshold management
 }
 
-/// Observability and monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
-    /// Whether Prometheus metrics collection is enabled
-    pub metrics_enabled: bool,
-    /// Default tracing log level (e.g., "info", "debug", "trace")
-    pub log_level: String,
-    /// Dashboard refresh interval in seconds (default: 60, minimum: 15)
-    #[serde(default = "default_dashboard_refresh_interval")]
-    pub dashboard_refresh_interval_seconds: u64,
-}
-
-fn default_dashboard_refresh_interval() -> u64 {
-    60
-}
-
-impl Default for MonitoringConfig {
-    fn default() -> Self {
-        Self {
-            metrics_enabled: true,
-            log_level: "info".to_string(),
-            dashboard_refresh_interval_seconds: 60,
-        }
-    }
-}
-
-impl MonitoringConfig {
-    /// Get dashboard refresh interval, ensuring it's at least 15 seconds
-    pub fn dashboard_refresh_interval(&self) -> u64 {
-        self.dashboard_refresh_interval_seconds.max(15)
-    }
-}
-
 /// Query processing configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QueryConfig {
     /// RL-based adaptive query planner configuration
     #[serde(default)]
     pub rl_planner: RLPlannerConfig,
+    /// Cross-modal reranking policy. Defaults are neutral and disabled.
+    #[serde(default)]
+    pub reranking: RerankConfig,
+}
+
+impl QueryConfig {
+    /// Validate query-scoped runtime policy before the server starts.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        self.reranking.validate()
+    }
 }
 
 /// RL-based Adaptive Query Planner Configuration

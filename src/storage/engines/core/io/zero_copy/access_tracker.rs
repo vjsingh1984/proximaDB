@@ -9,9 +9,12 @@ use tracing::{debug, trace};
 
 use super::traits::QueryType;
 
+/// Backwards-compat alias for [`ZeroCopyAccessEvent`].
+pub type AccessEvent = ZeroCopyAccessEvent;
+
 /// Access event for pattern tracking
 #[derive(Debug, Clone, Serialize)]
-pub struct AccessEvent {
+pub struct ZeroCopyAccessEvent {
     /// File path that was accessed
     pub file_path: String,
     /// Collection ID
@@ -27,7 +30,7 @@ pub struct AccessEvent {
 
 /// Access pattern statistics for a file
 #[derive(Debug, Clone, Serialize)]
-pub struct AccessStats {
+pub struct ZeroCopyAccessStats {
     /// Total number of accesses
     pub total_accesses: u64,
     /// Last access time
@@ -43,7 +46,7 @@ pub struct AccessStats {
     /// Distribution of query types
     pub query_type_distribution: HashMap<QueryType, u64>,
     /// Recent access pattern (last 10 accesses)
-    pub recent_pattern: VecDeque<AccessEvent>,
+    pub recent_pattern: VecDeque<ZeroCopyAccessEvent>,
     /// Access timing pattern
     pub timing_pattern: TimingPattern,
 }
@@ -92,7 +95,7 @@ pub struct CollectionAccessPattern {
 /// Access pattern predictor
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct AccessPrediction {
+pub struct ZeroCopyAccessPrediction {
     /// Probability of access in next time window (0.0-1.0)
     pub access_probability: f64,
     /// Predicted time until next access
@@ -107,14 +110,17 @@ pub struct AccessPrediction {
     pub prediction_rationale: String,
 }
 
+/// Backwards-compat alias for [`ZeroCopyAccessPatternTracker`].
+pub type AccessPatternTracker = ZeroCopyAccessPatternTracker;
+
 /// Access pattern tracker with learning capabilities
-pub struct AccessPatternTracker {
+pub struct ZeroCopyAccessPatternTracker {
     /// File-level access statistics
-    file_stats: HashMap<String, AccessStats>,
+    file_stats: HashMap<String, ZeroCopyAccessStats>,
     /// Collection-level patterns
     collection_patterns: HashMap<String, CollectionAccessPattern>,
     /// Recent access events (sliding window)
-    recent_events: VecDeque<AccessEvent>,
+    recent_events: VecDeque<ZeroCopyAccessEvent>,
     /// Maximum number of events to keep in memory
     max_events: usize,
     /// Time window for pattern analysis
@@ -153,7 +159,7 @@ impl Default for LearningParameters {
 }
 
 #[allow(dead_code)]
-impl AccessPatternTracker {
+impl ZeroCopyAccessPatternTracker {
     /// Create new access pattern tracker
     pub fn new(max_events: usize, analysis_window: Duration) -> Self {
         Self {
@@ -167,7 +173,7 @@ impl AccessPatternTracker {
     }
 
     /// Record a file access event
-    pub fn record_access(&mut self, event: AccessEvent) {
+    pub fn record_access(&mut self, event: ZeroCopyAccessEvent) {
         let file_key = self.create_file_key(&event.file_path, &event.collection_id);
 
         // Update file-level statistics
@@ -202,11 +208,11 @@ impl AccessPatternTracker {
         file_path: &str,
         collection_id: &str,
         prediction_window: Duration,
-    ) -> AccessPrediction {
+    ) -> ZeroCopyAccessPrediction {
         let file_key = self.create_file_key(file_path, collection_id);
 
         match self.file_stats.get(&file_key) {
-            None => AccessPrediction {
+            None => ZeroCopyAccessPrediction {
                 access_probability: 0.1,
                 predicted_next_access: None,
                 confidence: 0.2,
@@ -218,7 +224,11 @@ impl AccessPatternTracker {
     }
 
     /// Get access statistics for a file
-    pub fn get_file_stats(&self, file_path: &str, collection_id: &str) -> Option<&AccessStats> {
+    pub fn get_file_stats(
+        &self,
+        file_path: &str,
+        collection_id: &str,
+    ) -> Option<&ZeroCopyAccessStats> {
         let file_key = self.create_file_key(file_path, collection_id);
         self.file_stats.get(&file_key)
     }
@@ -338,11 +348,11 @@ impl AccessPatternTracker {
         }
     }
 
-    fn update_file_stats(&mut self, file_key: &str, event: &AccessEvent) {
+    fn update_file_stats(&mut self, file_key: &str, event: &ZeroCopyAccessEvent) {
         let stats = self
             .file_stats
             .entry(file_key.to_string())
-            .or_insert_with(|| AccessStats {
+            .or_insert_with(|| ZeroCopyAccessStats {
                 total_accesses: 0,
                 last_accessed: event.timestamp,
                 first_accessed: event.timestamp,
@@ -391,7 +401,7 @@ impl AccessPatternTracker {
         stats.timing_pattern = Self::analyze_timing_pattern_static(&recent_pattern);
     }
 
-    fn update_collection_patterns(&mut self, event: &AccessEvent) {
+    fn update_collection_patterns(&mut self, event: &ZeroCopyAccessEvent) {
         let pattern = self
             .collection_patterns
             .entry(event.collection_id.clone())
@@ -419,7 +429,9 @@ impl AccessPatternTracker {
         }
     }
 
-    fn analyze_timing_pattern_static(recent_events: &VecDeque<AccessEvent>) -> TimingPattern {
+    fn analyze_timing_pattern_static(
+        recent_events: &VecDeque<ZeroCopyAccessEvent>,
+    ) -> TimingPattern {
         if recent_events.len() < 3 {
             return TimingPattern::Random;
         }
@@ -532,11 +544,11 @@ impl AccessPatternTracker {
 
     fn make_prediction(
         &self,
-        stats: &AccessStats,
+        stats: &ZeroCopyAccessStats,
         prediction_window: Duration,
-    ) -> AccessPrediction {
+    ) -> ZeroCopyAccessPrediction {
         if stats.total_accesses < self.learning_params.min_accesses_for_prediction as u64 {
-            return AccessPrediction {
+            return ZeroCopyAccessPrediction {
                 access_probability: 0.3,
                 predicted_next_access: None,
                 confidence: 0.4,
@@ -564,7 +576,7 @@ impl AccessPatternTracker {
                     confidence * 0.3
                 };
 
-                AccessPrediction {
+                ZeroCopyAccessPrediction {
                     access_probability: probability,
                     predicted_next_access: Some(time_until_next),
                     confidence: *confidence,
@@ -578,7 +590,7 @@ impl AccessPatternTracker {
 
             TimingPattern::Trending { growth_rate } => {
                 let probability = (0.8 + growth_rate * 0.2).clamp(0.0, 1.0);
-                AccessPrediction {
+                ZeroCopyAccessPrediction {
                     access_probability: probability,
                     predicted_next_access: Some(Duration::from_secs(
                         (3600.0 / stats.access_frequency) as u64,
@@ -596,7 +608,7 @@ impl AccessPatternTracker {
                 let in_burst = time_since_last_access < *burst_duration;
                 let probability = if in_burst { 0.8 } else { 0.2 };
 
-                AccessPrediction {
+                ZeroCopyAccessPrediction {
                     access_probability: probability,
                     predicted_next_access: if in_burst {
                         Some(Duration::from_secs(60)) // Soon
@@ -626,7 +638,7 @@ impl AccessPatternTracker {
                     0.3
                 };
 
-                AccessPrediction {
+                ZeroCopyAccessPrediction {
                     access_probability: probability,
                     predicted_next_access: Some(expected_interval),
                     confidence: 0.5,
@@ -726,14 +738,14 @@ mod tests {
 
     #[test]
     fn test_access_tracker_creation() {
-        let tracker = AccessPatternTracker::new(1000, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(1000, Duration::from_secs(3600));
         assert_eq!(tracker.max_events, 1000);
         assert_eq!(tracker.analysis_window, Duration::from_secs(3600));
     }
 
     #[test]
     fn test_file_key_creation() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
         let key = tracker.create_file_key("/path/to/file.sst", "collection1");
         assert_eq!(key, "collection1:/path/to/file.sst");
 
@@ -744,9 +756,9 @@ mod tests {
 
     #[test]
     fn test_access_recording() {
-        let mut tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let mut tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
-        let event = AccessEvent {
+        let event = ZeroCopyAccessEvent {
             file_path: "/test/file.sst".to_string(),
             collection_id: "test_collection".to_string(),
             query_type: QueryType::SimilaritySearch,
@@ -768,7 +780,7 @@ mod tests {
 
     #[test]
     fn test_prediction_with_no_data() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
         let prediction = tracker.predict_access(
             "/unknown/file.sst",
@@ -783,7 +795,7 @@ mod tests {
 
     #[test]
     fn test_periodicity_detection() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
         // Create intervals with similar duration (periodic pattern)
         let intervals = vec![
@@ -802,7 +814,7 @@ mod tests {
 
     #[test]
     fn test_burst_pattern_detection() {
-        let tracker = AccessPatternTracker::new(100, Duration::from_secs(3600));
+        let tracker = ZeroCopyAccessPatternTracker::new(100, Duration::from_secs(3600));
 
         // Create short intervals (burst pattern)
         let intervals = vec![

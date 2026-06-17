@@ -11,7 +11,7 @@ pytest.skip(
     "Tests access internal implementation details - need refactoring for public API",
     allow_module_level=True,
 )
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 try:
     import grpc

@@ -70,6 +70,7 @@ pub mod experience;
 pub mod integration;
 pub mod logging;
 pub mod paths;
+pub mod rank_choice;
 pub mod reward;
 pub mod state;
 
@@ -84,7 +85,7 @@ pub use logging::{
     ActionHistory, ExecutionLog, ExplainIntegration, RLDecisionContext, RLDecisionLogger, StageLog,
 };
 pub use reward::{OptimizationGoal, OptimizationTarget, RewardCalculator};
-pub use state::{FilterComplexity, PlannerState};
+pub use state::{FilterComplexity, ObjectEconomyFeatures, PlannerState};
 
 // Re-export integration utilities
 pub use integration::{RLPlannerIntegration, get_rl_planner, init_rl_planner, rl_select_action};
@@ -166,6 +167,17 @@ impl RLPlanner {
     /// Check if RL planning is enabled
     pub fn is_enabled(&self) -> bool {
         self.config.enabled
+    }
+
+    /// Return the best action by deterministic expected-value exploitation (α/(α+β) per arm).
+    ///
+    /// This is the **hot-path method**. Thompson Sampling stochastic exploration is
+    /// intentionally excluded here; it only runs during the background `batch_update` cycle
+    /// so that exploration variance never adds latency to live queries (CAKE arXiv:2602.04181,
+    /// Scheduling Decisions arXiv:2501.16256).
+    pub async fn exploit_best_action(&self, state: &PlannerState) -> ExecutionAction {
+        let bandit = self.bandit.read().await;
+        bandit.exploit_best_action(state)
     }
 
     /// Select optimal action for given state

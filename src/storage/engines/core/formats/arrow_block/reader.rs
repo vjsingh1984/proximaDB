@@ -1,6 +1,6 @@
 //! Arrow Block Reader
 //!
-//! Reads VectorRecords from Arrow IPC format with B+ tree index support.
+//! Reads ProximaRecords from Arrow IPC format with B+ tree index support.
 
 use std::fs::File;
 use std::io::{BufReader, Read};
@@ -10,11 +10,11 @@ use std::sync::Arc;
 use arrow_array::RecordBatch;
 use arrow_ipc::reader::FileReader;
 use memmap2::Mmap;
+use proximadb_records::ProximaRecord;
 use tracing::debug;
 
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::schema::proxima_record_bridge::DefaultProximaRecordBridge;
 use crate::storage::schema::proxima_schema::ProximaSchema;
-use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 
 use super::config::ArrowBlockMetadata;
 use super::index::ArrowBlockIndex;
@@ -54,10 +54,10 @@ pub struct ArrowBlockReader {
     /// Contains file-level statistics like block count, total records, and dimension.
     metadata: ArrowBlockMetadata,
 
-    /// VectorRecord bridge
+    /// ProximaRecord bridge
     ///
-    /// Handles conversion between Arrow RecordBatch and VectorRecord types.
-    bridge: DefaultVectorRecordBridge,
+    /// Handles conversion between Arrow RecordBatch and ProximaRecord types.
+    bridge: DefaultProximaRecordBridge,
 
     /// Cached Arrow schema
     ///
@@ -84,7 +84,7 @@ impl ArrowBlockReader {
         let (index, metadata) = Self::read_sidecar_index(&index_path)?;
 
         let schema = ProximaSchema::vector_record_schema(metadata.dimension);
-        let bridge = DefaultVectorRecordBridge::new(schema);
+        let bridge = DefaultProximaRecordBridge::new(schema);
 
         Ok(Self {
             mmap,
@@ -168,7 +168,7 @@ impl ArrowBlockReader {
     }
 
     /// Read a specific block by number
-    pub fn read_block(&self, block_num: usize) -> ArrowBlockResult<Vec<VectorRecord>> {
+    pub fn read_block(&self, block_num: usize) -> ArrowBlockResult<Vec<ProximaRecord>> {
         if block_num >= self.metadata.num_blocks as usize {
             return Err(ArrowBlockError::BlockNotFound(block_num));
         }
@@ -183,8 +183,8 @@ impl ArrowBlockReader {
         // Read Arrow data
         let batch = self.read_batch_from_file(block_num)?;
 
-        // Convert to VectorRecords
-        let records = self.bridge.batch_to_records(&batch)?;
+        // Convert to ProximaRecords
+        let records = self.bridge.batch_to_proxima_records(&batch)?;
 
         debug!(
             "Read block {} with {} records from offset {}",
@@ -213,7 +213,7 @@ impl ArrowBlockReader {
     }
 
     /// Lookup a single vector by ID using B+ tree index
-    pub fn lookup_by_id(&self, id: &str) -> ArrowBlockResult<Option<VectorRecord>> {
+    pub fn lookup_by_id(&self, id: &str) -> ArrowBlockResult<Option<ProximaRecord>> {
         // Find block that might contain the ID
         let entry = match self.index.find_block_for_id(id) {
             Some(e) => e,
@@ -225,7 +225,7 @@ impl ArrowBlockReader {
 
         // Find the specific record
         for record in records {
-            if record.id == id {
+            if record.oid == id {
                 return Ok(Some(record));
             }
         }
@@ -234,7 +234,7 @@ impl ArrowBlockReader {
     }
 
     /// Batch lookup multiple IDs
-    pub fn lookup_batch(&self, ids: &[&str]) -> ArrowBlockResult<Vec<(String, VectorRecord)>> {
+    pub fn lookup_batch(&self, ids: &[&str]) -> ArrowBlockResult<Vec<(String, ProximaRecord)>> {
         // Group IDs by block for efficient reads
         let mut block_to_ids: std::collections::HashMap<u32, Vec<&str>> =
             std::collections::HashMap::new();
@@ -253,8 +253,8 @@ impl ArrowBlockReader {
             let id_set: std::collections::HashSet<&str> = target_ids.into_iter().collect();
 
             for record in records {
-                if id_set.contains(record.id.as_str()) {
-                    results.push((record.id.clone(), record));
+                if id_set.contains(record.oid.as_str()) {
+                    results.push((record.oid.clone(), record));
                 }
             }
         }
@@ -263,20 +263,24 @@ impl ArrowBlockReader {
     }
 
     /// Find all records in an ID range
-    pub fn range_query(&self, start_id: &str, end_id: &str) -> ArrowBlockResult<Vec<VectorRecord>> {
+    pub fn range_query(
+        &self,
+        start_id: &str,
+        end_id: &str,
+    ) -> ArrowBlockResult<Vec<ProximaRecord>> {
         let blocks = self.index.find_blocks_in_range(start_id, end_id);
         let mut results = Vec::new();
 
         for entry in blocks {
             let records = self.read_block(entry.block_num as usize)?;
             for record in records {
-                if record.id.as_str() >= start_id && record.id.as_str() <= end_id {
+                if record.oid.as_str() >= start_id && record.oid.as_str() <= end_id {
                     results.push(record);
                 }
             }
         }
 
-        results.sort_by(|a, b| a.id.cmp(&b.id));
+        results.sort_by(|a, b| a.oid.cmp(&b.oid));
         Ok(results)
     }
 
@@ -285,28 +289,26 @@ impl ArrowBlockReader {
         &self,
         start_ts: i64,
         end_ts: i64,
-    ) -> ArrowBlockResult<Vec<VectorRecord>> {
+    ) -> ArrowBlockResult<Vec<ProximaRecord>> {
         let blocks = self.index.find_blocks_in_time_range(start_ts, end_ts);
         let mut results = Vec::new();
 
         for entry in blocks {
             let records = self.read_block(entry.block_num as usize)?;
             for record in records {
-                if let Some(ts) = record.timestamp
-                    && ts >= start_ts
-                    && ts <= end_ts
-                {
+                let ts = record.created_at_ns / 1_000_000;
+                if ts >= start_ts && ts <= end_ts {
                     results.push(record);
                 }
             }
         }
 
-        results.sort_by_key(|r| r.timestamp);
+        results.sort_by_key(|r| r.created_at_ns);
         Ok(results)
     }
 
     /// Get all records (full scan)
-    pub fn read_all(&self) -> ArrowBlockResult<Vec<VectorRecord>> {
+    pub fn read_all(&self) -> ArrowBlockResult<Vec<ProximaRecord>> {
         let mut all_records = Vec::with_capacity(self.metadata.total_records as usize);
 
         for block_num in 0..self.metadata.num_blocks as usize {
@@ -334,21 +336,32 @@ mod tests {
     use super::*;
     use crate::storage::engines::core::formats::arrow_block::config::ArrowBlockConfig;
     use crate::storage::engines::core::formats::arrow_block::writer::ArrowBlockWriter;
-    use std::collections::HashMap;
+    use proximadb_records::EmbeddingCell;
     use tempfile::tempdir;
 
-    fn create_test_record(id: &str, dim: usize) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: (0..dim).map(|i| i as f32 * 0.1).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            version: Some(1),
-            ..Default::default()
+    fn create_test_record(id: &str, dim: usize) -> ProximaRecord {
+        let timestamp_ns = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_mul(1_000_000);
+        ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            record_version: 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: dim as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(
+                    (0..dim).map(|i| i as f32 * 0.1).collect(),
+                ),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
         }
     }
 
-    fn create_test_file(dir: &Path, records: &[VectorRecord], config: ArrowBlockConfig) -> String {
+    fn create_test_file(dir: &Path, records: &[ProximaRecord], config: ArrowBlockConfig) -> String {
         let path = dir.join("test.arrow");
         let mut writer = ArrowBlockWriter::new(&path, config)
             .expect("Failed to create ArrowBlockWriter for test file");
@@ -383,7 +396,7 @@ mod tests {
             .read_block(0)
             .expect("Failed to read block 0 in test_read_basic");
         assert_eq!(read_records.len(), 100);
-        assert_eq!(read_records[0].id, "vec_00000");
+        assert_eq!(read_records[0].oid, "vec_00000");
     }
 
     #[test]
@@ -410,7 +423,7 @@ mod tests {
         assert_eq!(
             result
                 .expect("Expected Some result in test_lookup_by_id")
-                .id,
+                .oid,
             "vec_00025"
         );
 
@@ -465,7 +478,7 @@ mod tests {
             .range_query("vec_00020", "vec_00030")
             .expect("Failed to perform range query in test_range_query");
         assert_eq!(results.len(), 11); // Inclusive range
-        assert_eq!(results[0].id, "vec_00020");
-        assert_eq!(results[10].id, "vec_00030");
+        assert_eq!(results[0].oid, "vec_00020");
+        assert_eq!(results[10].oid, "vec_00030");
     }
 }

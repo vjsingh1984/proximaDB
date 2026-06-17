@@ -7,3 +7,4 @@ pub mod parser;
 mod tests;
 
 pub use parser::SqlFrontendParser;
+pub use parser::parse_explain_kind;

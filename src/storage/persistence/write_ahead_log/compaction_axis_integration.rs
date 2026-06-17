@@ -16,8 +16,8 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use crate::index::axis::{AxisManager, AxisVectorIndex};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::traits::CompactionResult;
+use proximadb_records::ProximaRecord;
 
 /// AXIS index updater for compaction operations
 #[derive(Clone)]
@@ -43,7 +43,7 @@ impl CompactionAxisUpdater {
         collection_id: &str,
         _compaction_result: &CompactionResult,
         deleted_vector_ids: &[String],
-        merged_vectors: &[VectorRecord],
+        merged_vectors: &[ProximaRecord],
     ) -> Result<()> {
         let axis = match &self.axis_manager {
             Some(manager) => manager,
@@ -161,7 +161,7 @@ impl CompactionAxisUpdater {
     async fn update_merged_vectors_in_indexes(
         &self,
         indexes: &[(String, Arc<dyn AxisVectorIndex>)],
-        merged_vectors: &[VectorRecord],
+        merged_vectors: &[ProximaRecord],
         collection_id: &str,
     ) -> Result<()> {
         info!(
@@ -179,13 +179,23 @@ impl CompactionAxisUpdater {
             );
 
             for vector in merged_vectors {
-                let vector_id = &vector.id;
+                let vector_id = &vector.oid;
+                let Some(embedding) = vector.embeddings.first() else {
+                    debug!(
+                        "Skipping merged record {} with no embedding for index {}",
+                        vector_id, index_name
+                    );
+                    continue;
+                };
 
                 // Remove old version first (if it exists)
                 let _ = index.remove(vector_id).await; // Ignore errors as it might not exist
 
                 // Add updated version
-                match index.add(vector_id.clone(), vector.vector.clone()).await {
+                match index
+                    .add(vector_id.clone(), embedding.values.to_fp32_owned())
+                    .await
+                {
                     Ok(_) => {
                         debug!("Updated vector {} in index {}", vector_id, index_name);
                     }

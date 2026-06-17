@@ -9,13 +9,13 @@ import logging
 # import sys  # Removed - using editable install
 import os
 import time
-from typing import Any, Dict, Generator
+from collections.abc import Generator
+from typing import Any
 
 import pytest
 
 from proximadb_sdk import (
     CollectionConfig,
-    DistanceMetric,
     ProximaDBClient,
     ProximaDBError,
     connect_grpc,
@@ -41,7 +41,7 @@ TEST_CONFIG = {
 
 
 @pytest.fixture(scope="session")
-def test_config() -> Dict[str, Any]:
+def test_config() -> dict[str, Any]:
     """Test configuration fixture"""
     return TEST_CONFIG.copy()
 
@@ -155,7 +155,7 @@ def test_collection(rest_client, unique_collection_name, basic_collection_config
 class TestCollectionManager:
     """Helper class for managing test collections"""
 
-    def __init__(self, client: ProximaDBClient, config: Dict[str, Any]):
+    def __init__(self, client: ProximaDBClient, config: dict[str, Any]):
         self.client = client
         self.config = config
         self.created_collections = []
@@ -326,7 +326,7 @@ def performance_monitor():
                 return duration
             return 0.0
 
-        def get_timings(self) -> Dict[str, float]:
+        def get_timings(self) -> dict[str, float]:
             return self.timings.copy()
 
         def assert_performance(self, operation: str, max_seconds: float):

@@ -319,29 +319,35 @@ impl KafkaVectorConsumer {
             }
         };
 
-        // Convert VectorMessage to VectorRecord
-        let records: Vec<crate::proto::proximadb_v1::VectorRecord> = vectors
+        // Convert VectorMessage to canonical ProximaRecord at Kafka boundary
+        let records: Vec<proximadb_records::ProximaRecord> = vectors
             .into_iter()
-            .map(|v| crate::proto::proximadb_v1::VectorRecord {
-                id: v.id,
-                vector: v.vector,
-                metadata: v
-                    .metadata
-                    .into_iter()
-                    .map(|(k, v)| {
-                        (
-                            k,
-                            crate::proto::proximadb_v1::SqlValue {
-                                value: Some(json_to_sql_value(&v)),
-                            },
-                        )
-                    })
-                    .collect(),
-                timestamp: v.timestamp.map(|t| t as i64),
-                updated_at: None,
-                expires_at: None,
-                version: None,
-                source: None,
+            .map(|v| {
+                let dim = v.vector.len() as u32;
+                let mut props = proximadb_records::ProximaTree::new();
+                for (k, jv) in v.metadata {
+                    let pv = json_to_proxima_value(&jv);
+                    props.insert(k, proximadb_records::ProximaTreeNode::Value(pv));
+                }
+                let ts_ns = v
+                    .timestamp
+                    .map(|t| (t as i64) * 1_000_000_000)
+                    .unwrap_or_else(|| chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0));
+                proximadb_records::ProximaRecord {
+                    oid: v.id,
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim,
+                        values: proximadb_records::EmbeddingValues::Fp32(v.vector),
+                        ..Default::default()
+                    }],
+                    props,
+                    record_version: 1,
+                    created_at_ns: ts_ns,
+                    updated_at_ns: ts_ns,
+                    ..Default::default()
+                }
             })
             .collect();
 
@@ -382,26 +388,19 @@ impl KafkaVectorConsumer {
     }
 }
 
-/// Convert serde_json Value to SqlValue
-fn json_to_sql_value(v: &serde_json::Value) -> crate::proto::proximadb_v1::sql_value::Value {
-    use crate::proto::proximadb_v1::sql_value::Value;
-
+/// Convert serde_json Value to ProximaValue at the protocol boundary
+fn json_to_proxima_value(v: &serde_json::Value) -> proximadb_data_model::ProximaValue {
     match v {
-        serde_json::Value::String(s) => Value::StringValue(s.clone()),
+        serde_json::Value::String(s) => proximadb_data_model::ProximaValue::String(s.clone()),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                Value::Int64Value(i)
-            } else if let Some(f) = n.as_f64() {
-                Value::NumberValue(f)
+                proximadb_data_model::ProximaValue::Int64(i)
             } else {
-                Value::StringValue(n.to_string())
+                proximadb_data_model::ProximaValue::Float64(n.as_f64().unwrap_or(0.0))
             }
         }
-        serde_json::Value::Bool(b) => Value::BoolValue(*b),
-        serde_json::Value::Null => Value::NullValue(0),
-        serde_json::Value::Array(_) | serde_json::Value::Object(_) => {
-            Value::StringValue(v.to_string())
-        }
+        serde_json::Value::Bool(b) => proximadb_data_model::ProximaValue::Boolean(*b),
+        _ => proximadb_data_model::ProximaValue::String(v.to_string()),
     }
 }
 

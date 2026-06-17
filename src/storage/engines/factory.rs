@@ -109,11 +109,11 @@ use tracing::{info, warn};
 use crate::metrics::collectors::EngineMetricsCollector;
 use crate::proto::proximadb_v1::StorageEngine as ProtoStorageEngine;
 use crate::query::capability::CapabilityRegistry;
-use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageEngine};
+use crate::storage::traits::{StorageEngineStrategy, UnifiedStorageFormat};
 
-use super::impls::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
+use super::{nova::NovaEngine, sst::SstEngine, viper::ViperEngine};
 #[cfg(feature = "experimental-engines")]
-use super::impls::{raptor::RaptorEngine, swift::SwiftEngine};
+use super::{raptor::RaptorEngine, swift::SwiftEngine};
 
 /// Global capability registry for storage engine capabilities
 ///
@@ -132,9 +132,9 @@ pub fn global_capability_registry() -> &'static CapabilityRegistry {
 /// This function is called automatically when engines are created by the factory.
 /// It ensures that the capability registry has up-to-date information about
 /// what each engine supports.
-fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageEngine>) {
+fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageFormat>) {
     let caps = engine.capabilities();
-    let engine_name = engine.engine_name();
+    let engine_name = engine.format_name();
     global_capability_registry().register_capabilities(engine_name, caps);
     info!("✅ Registered capabilities for engine: {}", engine_name);
 }
@@ -155,6 +155,12 @@ fn register_engine_capabilities(engine: &Arc<dyn UnifiedStorageEngine>) {
 /// concurrent access across multiple tokio tasks.
 pub struct StorageEngineFactory;
 
+/// Backwards-compat **format** alias for [`StorageEngineFactory`] (engines →
+/// formats convergence). New code may use `StorageFormatFactory`;
+/// `StorageEngineFactory` remains during the migration window (see
+/// `docs/12-design/NAMING_CONVENTIONS.adoc`).
+pub type StorageFormatFactory = StorageEngineFactory;
+
 impl StorageEngineFactory {
     /// Create a storage engine from proto enum
     ///
@@ -169,7 +175,7 @@ impl StorageEngineFactory {
     /// - Unknown → SST as safe default
     pub fn create_from_proto(
         engine_type: ProtoStorageEngine,
-    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+    ) -> Result<Arc<dyn UnifiedStorageFormat>> {
         match engine_type {
             ProtoStorageEngine::Unspecified => {
                 warn!("Unspecified storage engine, defaulting to SST (VIPER not available)");
@@ -211,7 +217,7 @@ impl StorageEngineFactory {
             ProtoStorageEngine::Cedar => Self::create_cedar(),
             ProtoStorageEngine::Chrono => Self::create_chrono(),
             ProtoStorageEngine::Titan => {
-                // TITAN is primarily a GraphEngine; for UnifiedStorageEngine, use SST as backing
+                // TITAN is primarily a GraphEngine; for UnifiedStorageFormat, use SST as backing
                 warn!("TITAN is a graph engine; using SST for vector storage operations");
                 Self::create_sst()
             }
@@ -229,7 +235,7 @@ impl StorageEngineFactory {
     /// Async version of create_from_proto for use in async contexts (e.g., tests)
     pub async fn create_from_proto_async(
         engine_type: ProtoStorageEngine,
-    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+    ) -> Result<Arc<dyn UnifiedStorageFormat>> {
         match engine_type {
             ProtoStorageEngine::Unspecified => {
                 warn!("Unspecified storage engine, defaulting to SST (VIPER not available)");
@@ -301,7 +307,7 @@ impl StorageEngineFactory {
     /// - **Helix**: PCA+Hilbert for high dimensions
     pub fn create_from_strategy(
         strategy: StorageEngineStrategy,
-    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+    ) -> Result<Arc<dyn UnifiedStorageFormat>> {
         match strategy {
             StorageEngineStrategy::Viper => Self::create_viper(),
             StorageEngineStrategy::Sst => Self::create_sst(),
@@ -381,15 +387,15 @@ impl StorageEngineFactory {
     /// - OHLC aggregation for trading data
     /// - ASOF joins for temporal queries
     /// - Automatic downsampling
-    pub fn create_tst() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_tst() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating TST (Time-Series) storage engine");
         Ok(Arc::new(
-            crate::storage::engines::impls::tst::TimeSeriesEngine::new()?,
+            crate::storage::engines::tst::TimeSeriesEngine::new()?,
         ))
     }
 
     /// Async version for use within async contexts (e.g., tests)
-    pub async fn create_tst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_tst_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         Self::create_tst()
     }
 
@@ -399,15 +405,13 @@ impl StorageEngineFactory {
     /// - JSON document CRUD with MVCC versioning
     /// - Secondary indexes on document fields
     /// - BSON encoding with LZ4 compression
-    pub fn create_cedar() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_cedar() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating CEDAR (Document) storage engine");
-        Ok(Arc::new(
-            crate::storage::engines::impls::cedar::CedarEngine::new()?,
-        ))
+        Ok(Arc::new(crate::storage::engines::cedar::CedarEngine::new()?))
     }
 
     /// Async version for CEDAR
-    pub async fn create_cedar_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_cedar_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         Self::create_cedar()
     }
 
@@ -418,15 +422,15 @@ impl StorageEngineFactory {
     /// - Logs with label indexing and text search
     /// - Traces with span assembly
     /// - Time-window compaction with downsampling
-    pub fn create_chrono() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_chrono() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating CHRONO (Observability) storage engine");
         Ok(Arc::new(
-            crate::storage::engines::impls::chrono::ChronoEngine::new()?,
+            crate::storage::engines::chrono::ChronoEngine::new()?,
         ))
     }
 
     /// Async version for CHRONO
-    pub async fn create_chrono_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_chrono_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         Self::create_chrono()
     }
 
@@ -441,20 +445,20 @@ impl StorageEngineFactory {
     ///
     /// Uses tokio runtime blocking to bridge async/sync gap.
     /// In production, prefer async factory methods.
-    pub fn create_viper() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_viper() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating VIPER storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { ViperEngine::new().await })?;
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
-    pub async fn create_viper_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_viper_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating VIPER storage engine");
         let engine = ViperEngine::new().await?;
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
@@ -470,20 +474,20 @@ impl StorageEngineFactory {
     ///
     /// SST serves as the default fallback engine due to its
     /// general-purpose nature and production stability.
-    pub fn create_sst() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_sst() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating SST storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { SstEngine::new().await })?;
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
-    pub async fn create_sst_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_sst_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating SST storage engine");
         let engine = SstEngine::new().await?;
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
@@ -503,7 +507,7 @@ impl StorageEngineFactory {
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
     #[allow(deprecated)]
-    pub fn create_swift() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_swift() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT (Storage With Instant Fast Traversal) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
@@ -516,7 +520,7 @@ impl StorageEngineFactory {
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
     #[allow(deprecated)]
-    pub async fn create_swift_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_swift_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!("SWIFT engine is experimental and not production-ready");
         info!("Creating SWIFT storage engine");
         let engine = SwiftEngine::new().await?;
@@ -534,20 +538,20 @@ impl StorageEngineFactory {
     ///
     /// HELIX excels at high-dimensional data by reducing dimensions
     /// while preserving 95%+ of variance.
-    pub fn create_helix() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_helix() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating HELIX storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async {
-            use crate::storage::engines::impls::helix::HelixEngine;
+            use crate::storage::engines::helix::HelixEngine;
             HelixEngine::new().await
         })?;
         Ok(Arc::new(engine))
     }
 
     /// Async version for use within async contexts (e.g., tests)
-    pub async fn create_helix_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_helix_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating HELIX storage engine");
-        use crate::storage::engines::impls::helix::HelixEngine;
+        use crate::storage::engines::helix::HelixEngine;
         let engine = HelixEngine::new().await?;
         Ok(Arc::new(engine))
     }
@@ -563,20 +567,20 @@ impl StorageEngineFactory {
     ///
     /// NOVA enhances columnar storage with advanced indexing
     /// and statistics for superior analytics performance.
-    pub fn create_nova() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_nova() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating NOVA (Next-gen Optimized Vector Analytics) storage engine");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(NovaEngine::new())?;
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
 
     /// Async version for use within async contexts (e.g., tests)
-    pub async fn create_nova_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_nova_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         info!("Creating NOVA storage engine");
         let engine = NovaEngine::new().await?;
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(engine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(engine);
         register_engine_capabilities(&engine);
         Ok(engine)
     }
@@ -597,7 +601,7 @@ impl StorageEngineFactory {
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
     #[allow(deprecated)]
-    pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_raptor() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!("RAPTOR engine is experimental and not production-ready");
         let runtime = tokio::runtime::Runtime::new()?;
         let engine = runtime.block_on(async { RaptorEngine::new().await })?;
@@ -609,7 +613,7 @@ impl StorageEngineFactory {
     /// **Requires `experimental-engines` feature flag.**
     #[cfg(feature = "experimental-engines")]
     #[allow(deprecated)]
-    pub async fn create_raptor_async() -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub async fn create_raptor_async() -> Result<Arc<dyn UnifiedStorageFormat>> {
         warn!("RAPTOR engine is experimental and not production-ready");
         info!("Creating RAPTOR storage engine");
         let engine = RaptorEngine::new().await?;
@@ -620,7 +624,7 @@ impl StorageEngineFactory {
     pub fn create_with_metrics(
         engine_type: ProtoStorageEngine,
         metrics_collector: Arc<EngineMetricsCollector>,
-    ) -> Result<Arc<dyn UnifiedStorageEngine>> {
+    ) -> Result<Arc<dyn UnifiedStorageFormat>> {
         let engine = Self::create_from_proto(engine_type)?;
 
         // Set up metrics for SWIFT and NOVA engines
@@ -631,11 +635,11 @@ impl StorageEngineFactory {
                 // if false { // Temporarily disable this complex downcasting
                 //     swift.set_metrics_collector(metrics_collector.clone());
                 //     // Register engine with collector
-                //     let weak_ref = Arc::downgrade(&(Arc::new(swift) as Arc<dyn UnifiedStorageEngine>));
+                //     let weak_ref = Arc::downgrade(&(Arc::new(swift) as Arc<dyn UnifiedStorageFormat>));
                 //     tokio::spawn(async move {
                 //         metrics_collector.register_engine("SWIFT".to_string(), weak_ref).await;
                 //     });
-                //     return Ok(Arc::new(swift) as Arc<dyn UnifiedStorageEngine>);
+                //     return Ok(Arc::new(swift) as Arc<dyn UnifiedStorageFormat>);
                 // }
             }
             ProtoStorageEngine::Nova => {
@@ -664,7 +668,7 @@ impl StorageEngineFactory {
     }
 
     /// Create the best engine for a given workload
-    pub fn create_for_workload(workload: WorkloadType) -> Result<Arc<dyn UnifiedStorageEngine>> {
+    pub fn create_for_workload(workload: WorkloadType) -> Result<Arc<dyn UnifiedStorageFormat>> {
         match workload {
             WorkloadType::Analytics => {
                 info!("Analytics workload detected, using NOVA for advanced columnar analytics");
@@ -1008,7 +1012,7 @@ mod tests {
         let engine = StorageEngineFactory::create_sst_async()
             .await
             .expect("Failed to create SST engine");
-        assert_eq!(engine.engine_name(), "sst");
+        assert_eq!(engine.format_name(), "sst");
     }
 
     #[tokio::test]
@@ -1016,7 +1020,7 @@ mod tests {
         let engine = StorageEngineFactory::create_viper_async()
             .await
             .expect("Failed to create VIPER engine");
-        assert_eq!(engine.engine_name(), "VIPER");
+        assert_eq!(engine.format_name(), "VIPER");
     }
 
     #[tokio::test]
@@ -1024,7 +1028,7 @@ mod tests {
         let engine = StorageEngineFactory::create_nova_async()
             .await
             .expect("Failed to create NOVA engine");
-        assert_eq!(engine.engine_name(), "NOVA");
+        assert_eq!(engine.format_name(), "NOVA");
     }
 
     #[tokio::test]
@@ -1032,7 +1036,7 @@ mod tests {
         let engine = StorageEngineFactory::create_helix_async()
             .await
             .expect("Failed to create HELIX engine");
-        assert_eq!(engine.engine_name(), "helix");
+        assert_eq!(engine.format_name(), "helix");
     }
 
     #[tokio::test]
@@ -1040,7 +1044,7 @@ mod tests {
         let engine = StorageEngineFactory::create_cedar_async()
             .await
             .expect("Failed to create CEDAR engine");
-        assert_eq!(engine.engine_name(), "cedar");
+        assert_eq!(engine.format_name(), "cedar");
     }
 
     #[tokio::test]
@@ -1048,16 +1052,16 @@ mod tests {
         let engine = StorageEngineFactory::create_chrono_async()
             .await
             .expect("Failed to create CHRONO engine");
-        assert_eq!(engine.engine_name(), "chrono");
+        assert_eq!(engine.format_name(), "chrono");
     }
 
     #[tokio::test]
     async fn test_create_sequoia_engine() {
         // Sequoia is not yet in the proto enum, so we create it directly
-        use super::super::impls::sequoia::SequoiaEngine;
+        use super::super::sequoia::SequoiaEngine;
         let engine = SequoiaEngine::new();
         assert_eq!(
-            crate::storage::traits::UnifiedStorageEngine::engine_name(&engine),
+            crate::storage::traits::UnifiedStorageFormat::engine_name(&engine),
             "sequoia"
         );
     }
@@ -1067,7 +1071,7 @@ mod tests {
         let engine = StorageEngineFactory::create_tst_async()
             .await
             .expect("Failed to create TST engine");
-        assert_eq!(engine.engine_name(), "tst");
+        assert_eq!(engine.format_name(), "tst");
     }
 
     #[tokio::test]
@@ -1076,7 +1080,7 @@ mod tests {
         let engine = StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Unspecified)
             .await
             .expect("Failed to create default engine");
-        assert_eq!(engine.engine_name(), "sst");
+        assert_eq!(engine.format_name(), "sst");
     }
 
     #[tokio::test]
@@ -1119,7 +1123,7 @@ mod tests {
             mmap_engine.is_ok(),
             "Mmap should fallback to SST, not error"
         );
-        assert_eq!(mmap_engine.as_ref().unwrap().engine_name(), "sst");
+        assert_eq!(mmap_engine.as_ref().unwrap().format_name(), "sst");
 
         let hybrid_engine =
             StorageEngineFactory::create_from_proto_async(ProtoStorageEngine::Hybrid).await;
@@ -1127,7 +1131,7 @@ mod tests {
             hybrid_engine.is_ok(),
             "Hybrid should fallback to SST, not error"
         );
-        assert_eq!(hybrid_engine.as_ref().unwrap().engine_name(), "sst");
+        assert_eq!(hybrid_engine.as_ref().unwrap().format_name(), "sst");
     }
 
     // -----------------------------------------------------------------------

@@ -12,7 +12,7 @@ use tracing::{info, warn};
 use super::WALConfig;
 use crate::metrics::InternalMetricsUpdater;
 use crate::storage::background_flush_context::BackgroundFlushContext;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 /// Background task status enumeration
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +55,7 @@ pub struct BackgroundMaintenanceManager {
     config: Arc<WALConfig>,
     collection_status: Arc<RwLock<HashMap<String, BackgroundTaskStatus>>>,
     stats: Arc<Mutex<BackgroundMaintenanceStats>>,
-    storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engines: Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
     /// Metrics updater for tracking compaction operations
     metrics_updater: Option<Arc<dyn InternalMetricsUpdater>>,
 }
@@ -76,7 +76,7 @@ impl BackgroundMaintenanceManager {
     pub async fn register_storage_engine(
         &self,
         engine_name: &str,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<()> {
         let mut engines = self.storage_engines.write().await;
         engines.insert(engine_name.to_string(), engine);
@@ -95,7 +95,7 @@ impl BackgroundMaintenanceManager {
 
     /// 🚀 OPTIMIZED: Context-based compaction that eliminates collection service calls
     pub async fn execute_compaction_with_context(
-        storage_engines: &Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        storage_engines: &Arc<RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         context: &BackgroundFlushContext,
         metrics_updater: Option<&Arc<dyn InternalMetricsUpdater>>,
     ) -> Result<Vec<String>> {
@@ -179,7 +179,7 @@ impl BackgroundMaintenanceManager {
 
         info!(
             "📋 [COMPACTION] Delegating to {} engine: do_compact({})",
-            engine.engine_name(),
+            engine.format_name(),
             context.collection_id
         );
 
@@ -189,7 +189,7 @@ impl BackgroundMaintenanceManager {
                 if result.success {
                     info!(
                         "✅ [COMPACTION] {} compaction completed for collection {}: {} entries processed, {} files {} → {}",
-                        engine.engine_name(),
+                        engine.format_name(),
                         context.collection_id,
                         result.entries_processed.unwrap_or(0),
                         result.input_files.unwrap_or(0),
@@ -219,7 +219,7 @@ impl BackgroundMaintenanceManager {
                     }
 
                     // Return file list for compatibility - for VIPER this would be the compacted files
-                    // Since the UnifiedStorageEngine doesn't return file paths, we'll return a placeholder
+                    // Since the UnifiedStorageFormat doesn't return file paths, we'll return a placeholder
                     Ok(vec![format!(
                         "compacted_collection_{}_{}files",
                         context.collection_id,
@@ -228,7 +228,7 @@ impl BackgroundMaintenanceManager {
                 } else {
                     warn!(
                         "❌ [COMPACTION] {} compaction failed for collection {}",
-                        engine.engine_name(),
+                        engine.format_name(),
                         context.collection_id
                     );
                     Err(anyhow::anyhow!("Storage engine compaction failed"))
@@ -237,7 +237,7 @@ impl BackgroundMaintenanceManager {
             Err(e) => {
                 warn!(
                     "❌ [COMPACTION] {} compaction error for collection {}: {}",
-                    engine.engine_name(),
+                    engine.format_name(),
                     context.collection_id,
                     e
                 );

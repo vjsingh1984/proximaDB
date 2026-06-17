@@ -4,8 +4,6 @@ Factory for creating chunking strategies
 Provides a clean interface for instantiating chunking strategies.
 """
 
-from typing import Dict, List, Optional, Type, Union
-
 from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface
 from .code import CodeChunkingConfig, CodeChunkingStrategy
 from .fixed_size import FixedSizeStrategy
@@ -20,7 +18,7 @@ class ChunkingStrategyFactory:
     """Factory for creating chunking strategy instances"""
 
     # Registry of available strategies
-    _strategies: Dict[ChunkingStrategy, Type[ChunkingStrategyInterface]] = {
+    _strategies: dict[ChunkingStrategy, type[ChunkingStrategyInterface]] = {
         ChunkingStrategy.SLIDING_WINDOW: SlidingWindowStrategy,
         ChunkingStrategy.SENTENCE: SentenceStrategy,
         ChunkingStrategy.PARAGRAPH: ParagraphStrategy,
@@ -32,7 +30,7 @@ class ChunkingStrategyFactory:
 
     @classmethod
     def create_strategy(
-        cls, strategy: ChunkingStrategy, config: Optional[ChunkingConfig] = None
+        cls, strategy: ChunkingStrategy, config: ChunkingConfig | None = None
     ) -> ChunkingStrategyInterface:
         """
         Create a chunking strategy instance
@@ -82,7 +80,7 @@ class ChunkingStrategyFactory:
 
     @classmethod
     def register_strategy(
-        cls, strategy: ChunkingStrategy, strategy_class: Type[ChunkingStrategyInterface]
+        cls, strategy: ChunkingStrategy, strategy_class: type[ChunkingStrategyInterface]
     ) -> None:
         """
         Register a custom chunking strategy
@@ -94,13 +92,13 @@ class ChunkingStrategyFactory:
         cls._strategies[strategy] = strategy_class
 
     @classmethod
-    def list_strategies(cls) -> List[str]:
+    def list_strategies(cls) -> list[str]:
         """List all available chunking strategies"""
         return [s.value for s in cls._strategies.keys()]
 
 
 def get_chunking_strategy(
-    strategy: Union[str, ChunkingStrategy] = ChunkingStrategy.SLIDING_WINDOW, **kwargs
+    strategy: str | ChunkingStrategy = ChunkingStrategy.SLIDING_WINDOW, **kwargs
 ) -> ChunkingStrategyInterface:
     """
     Convenience function to get a chunking strategy

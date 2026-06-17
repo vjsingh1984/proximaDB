@@ -8,7 +8,7 @@ WARNING: Requires API key and incurs costs per token.
 import logging
 import os
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -124,7 +124,7 @@ class OpenAIProvider(EmbeddingProvider):
             self._available = False
             logger.error(f"Failed to initialize OpenAI: {e}")
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -219,7 +219,7 @@ class OpenAIProvider(EmbeddingProvider):
             self._initialize()
         return self._available
 
-    def get_token_usage(self) -> Dict[str, Any]:
+    def get_token_usage(self) -> dict[str, Any]:
         """Get token usage statistics"""
         return {
             "estimated_tokens": self._token_count,
@@ -228,7 +228,7 @@ class OpenAIProvider(EmbeddingProvider):
         }
 
     @classmethod
-    def list_models(cls) -> Dict[str, Dict[str, Any]]:
+    def list_models(cls) -> dict[str, dict[str, Any]]:
         """List available models with details"""
         return {
             "text-embedding-3-small": {

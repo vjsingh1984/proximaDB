@@ -34,9 +34,9 @@ class DashboardMetricsDemo:
 
     def check_health(self) -> Dict[str, Any]:
         """Check server health status"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("1. Health Check")
-        print("="*60)
+        print("=" * 60)
 
         try:
             response = self.session.get(f"{self.base_url}/health", timeout=5)
@@ -52,9 +52,9 @@ class DashboardMetricsDemo:
 
     def get_metrics_json(self) -> Dict[str, Any]:
         """Retrieve metrics in JSON format"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("2. Metrics (JSON Format)")
-        print("="*60)
+        print("=" * 60)
 
         try:
             response = self.session.get(f"{self.base_url}/metrics/json", timeout=5)
@@ -62,7 +62,7 @@ class DashboardMetricsDemo:
             metrics = response.json()
 
             # Display key metrics
-            storage = metrics.get('storage', {})
+            storage = metrics.get("storage", {})
             print(f"📊 Storage Metrics:")
             print(f"   Collections: {storage.get('total_collections', 0)}")
             print(f"   Vectors: {storage.get('total_vectors', 0)}")
@@ -71,7 +71,7 @@ class DashboardMetricsDemo:
             print(f"\n⏱️  System Metrics:")
             print(f"   Uptime: {metrics.get('uptime_seconds', 0):.1f}s")
 
-            query_metrics = metrics.get('query_performance', {})
+            query_metrics = metrics.get("query_performance", {})
             if query_metrics:
                 print(f"\n🔍 Query Performance:")
                 print(f"   Total Queries: {query_metrics.get('total_queries', 0)}")
@@ -84,9 +84,9 @@ class DashboardMetricsDemo:
 
     def get_metrics_prometheus(self) -> str:
         """Retrieve metrics in Prometheus format"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("3. Metrics (Prometheus Format)")
-        print("="*60)
+        print("=" * 60)
 
         try:
             response = self.session.get(f"{self.base_url}/metrics", timeout=5)
@@ -94,9 +94,9 @@ class DashboardMetricsDemo:
             metrics_text = response.text
 
             # Parse and display sample metrics
-            lines = metrics_text.split('\n')
-            help_lines = [l for l in lines if l.startswith('# HELP')]
-            metric_lines = [l for l in lines if l and not l.startswith('#')]
+            lines = metrics_text.split("\n")
+            help_lines = [l for l in lines if l.startswith("# HELP")]
+            metric_lines = [l for l in lines if l and not l.startswith("#")]
 
             print(f"📈 Prometheus Metrics:")
             print(f"   Total Size: {len(metrics_text)} bytes")
@@ -116,9 +116,9 @@ class DashboardMetricsDemo:
 
     def get_metrics_health(self) -> Dict[str, Any]:
         """Check metrics collection health"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("4. Metrics System Health")
-        print("="*60)
+        print("=" * 60)
 
         try:
             response = self.session.get(f"{self.base_url}/metrics/health", timeout=5)
@@ -127,7 +127,9 @@ class DashboardMetricsDemo:
 
             print(f"✅ Metrics Status: {health.get('status', 'unknown')}")
             print(f"   Enabled: {health.get('metrics_enabled', False)}")
-            print(f"   Collection Interval: {health.get('collection_interval_ms', 0)}ms")
+            print(
+                f"   Collection Interval: {health.get('collection_interval_ms', 0)}ms"
+            )
 
             return health
         except Exception as e:
@@ -136,12 +138,14 @@ class DashboardMetricsDemo:
 
     def get_collections(self) -> list:
         """Retrieve list of collections"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("5. Collections API")
-        print("="*60)
+        print("=" * 60)
 
         try:
-            response = self.session.get(f"{self.base_url}/api/v1/collections", timeout=5)
+            response = self.session.get(
+                f"{self.base_url}/api/v1/collections", timeout=5
+            )
             response.raise_for_status()
             collections = response.json()
 
@@ -152,12 +156,14 @@ class DashboardMetricsDemo:
                 display_count = min(5, len(collections))
                 for i in range(display_count):
                     coll = collections[i]
-                    name = coll.get('name', 'unknown')
-                    dimension = coll.get('dimension', 0)
-                    engine = coll.get('engine', 'unknown')
-                    vectors = coll.get('vector_count', 0)
+                    name = coll.get("name", "unknown")
+                    dimension = coll.get("dimension", 0)
+                    engine = coll.get("engine", "unknown")
+                    vectors = coll.get("vector_count", 0)
                     print(f"   {i+1}. {name}")
-                    print(f"      Dimension: {dimension}, Engine: {engine}, Vectors: {vectors}")
+                    print(
+                        f"      Dimension: {dimension}, Engine: {engine}, Vectors: {vectors}"
+                    )
 
                 if len(collections) > 5:
                     print(f"   ... and {len(collections) - 5} more")
@@ -169,9 +175,9 @@ class DashboardMetricsDemo:
 
     def access_dashboard(self) -> bool:
         """Verify dashboard is accessible"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("6. Dashboard Access")
-        print("="*60)
+        print("=" * 60)
 
         try:
             response = self.session.get(f"{self.base_url}/dashboard", timeout=5)
@@ -210,9 +216,9 @@ class DashboardMetricsDemo:
 
     def monitor_metrics(self, duration_seconds: int = 30, interval_seconds: int = 5):
         """Monitor metrics over time"""
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print(f"7. Real-Time Monitoring ({duration_seconds}s)")
-        print("="*60)
+        print("=" * 60)
 
         start_time = time.time()
         samples = []
@@ -225,16 +231,20 @@ class DashboardMetricsDemo:
                 if response.status_code == 200:
                     metrics = response.json()
                     sample = {
-                        'timestamp': time.time(),
-                        'uptime': metrics.get('uptime_seconds', 0),
-                        'collections': metrics.get('storage', {}).get('total_collections', 0),
-                        'vectors': metrics.get('storage', {}).get('total_vectors', 0),
+                        "timestamp": time.time(),
+                        "uptime": metrics.get("uptime_seconds", 0),
+                        "collections": metrics.get("storage", {}).get(
+                            "total_collections", 0
+                        ),
+                        "vectors": metrics.get("storage", {}).get("total_vectors", 0),
                     }
                     samples.append(sample)
 
                     elapsed = time.time() - start_time
-                    print(f"   [{elapsed:.0f}s] Uptime: {sample['uptime']:.1f}s, "
-                          f"Collections: {sample['collections']}, Vectors: {sample['vectors']}")
+                    print(
+                        f"   [{elapsed:.0f}s] Uptime: {sample['uptime']:.1f}s, "
+                        f"Collections: {sample['collections']}, Vectors: {sample['vectors']}"
+                    )
             except Exception as e:
                 print(f"   ⚠️  Sample failed: {e}")
 
@@ -243,14 +253,18 @@ class DashboardMetricsDemo:
         print(f"\n📊 Monitoring Summary:")
         print(f"   Total Samples: {len(samples)}")
         if samples:
-            print(f"   Uptime Range: {samples[0]['uptime']:.1f}s → {samples[-1]['uptime']:.1f}s")
-            print(f"   Final Metrics: {samples[-1]['collections']} collections, {samples[-1]['vectors']} vectors")
+            print(
+                f"   Uptime Range: {samples[0]['uptime']:.1f}s → {samples[-1]['uptime']:.1f}s"
+            )
+            print(
+                f"   Final Metrics: {samples[-1]['collections']} collections, {samples[-1]['vectors']} vectors"
+            )
 
     def run_full_demo(self, with_monitoring: bool = False):
         """Run complete dashboard and metrics demonstration"""
-        print("\n" + "🚀"*30)
+        print("\n" + "🚀" * 30)
         print("ProximaDB Dashboard & Metrics API Demo")
-        print("🚀"*30)
+        print("🚀" * 30)
 
         # Run all demo sections
         health = self.check_health()
@@ -269,9 +283,9 @@ class DashboardMetricsDemo:
             self.monitor_metrics(duration_seconds=30, interval_seconds=5)
 
         # Final summary
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("Demo Summary")
-        print("="*60)
+        print("=" * 60)
         print(f"✅ Health Check: {'OK' if health else 'FAILED'}")
         print(f"✅ JSON Metrics: {'OK' if metrics_json else 'FAILED'}")
         print(f"✅ Prometheus Metrics: {'OK' if metrics_prom else 'FAILED'}")
@@ -279,15 +293,15 @@ class DashboardMetricsDemo:
         print(f"✅ Collections API: {len(collections)} collections")
         print(f"✅ Dashboard: {'Accessible' if dashboard_ok else 'FAILED'}")
 
-        print("\n" + "🎯"*30)
+        print("\n" + "🎯" * 30)
         print("Key Endpoints:")
-        print("🎯"*30)
+        print("🎯" * 30)
         print(f"🖥️  Dashboard:        {self.base_url}/dashboard")
         print(f"📊 Metrics (JSON):   {self.base_url}/metrics/json")
         print(f"📈 Metrics (Prom):   {self.base_url}/metrics")
         print(f"🏥 Health:           {self.base_url}/health")
         print(f"📁 Collections:      {self.base_url}/api/v1/collections")
-        print("="*60)
+        print("=" * 60)
 
         return True
 

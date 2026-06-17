@@ -4,13 +4,14 @@
 //! improvement through O(1) HashMap metadata lookups instead of O(n) linear scans.
 
 use crate::core::search::FilterExpression;
-use crate::graph::GraphOperationsService;
 use crate::query::execution::{
     ExecutionOperation, ExecutionPlan, QueryPerformanceMetrics, QueryResult, QueryRow,
 };
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::cache::orchestrator::CrossCacheOrchestrator;
 use anyhow::{Result, anyhow};
+use proximadb_data_model::ProximaValue;
+use proximadb_graph_query::service::GraphExecutionService;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -93,19 +94,22 @@ impl Default for VectorPool {
     }
 }
 
+/// Backwards-compat alias for [`MultiModalQueryExecutor`].
+pub type QueryExecutor = MultiModalQueryExecutor;
+
 /// High-performance query executor with multi-modal support
-pub struct QueryExecutor {
+pub struct MultiModalQueryExecutor {
     vector_service: Option<Arc<VectorOperationsService>>, // Optional for tests
-    graph_service: Arc<GraphOperationsService>,
+    graph_service: Arc<dyn GraphExecutionService>,
     #[allow(dead_code)]
     memory_pool: VectorPool,
 }
 
-impl QueryExecutor {
+impl MultiModalQueryExecutor {
     /// Create new query executor with memory pool optimization
     pub fn new(
         vector_service: Option<Arc<VectorOperationsService>>,
-        graph_service: Arc<GraphOperationsService>,
+        graph_service: Arc<dyn GraphExecutionService>,
     ) -> Self {
         Self {
             vector_service,
@@ -174,7 +178,7 @@ impl QueryExecutor {
     /// Create new query executor with service integrations (non-optional vector service)
     pub fn with_services(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphOperationsService>,
+        graph_service: Arc<dyn GraphExecutionService>,
     ) -> Self {
         Self {
             vector_service: Some(vector_service),
@@ -184,7 +188,7 @@ impl QueryExecutor {
     }
 
     #[cfg(test)]
-    pub fn new_for_tests(graph_service: Arc<GraphOperationsService>) -> Self {
+    pub fn new_for_tests(graph_service: Arc<dyn GraphExecutionService>) -> Self {
         Self {
             vector_service: None,
             graph_service,
@@ -204,9 +208,9 @@ impl QueryExecutor {
         let mut all_rows = Vec::new();
         let mut buffers: Vec<Vec<QueryRow>> = Vec::new();
 
-        for operation in &plan.operations {
+        for operation in &plan.execution_steps {
             match operation {
-                ExecutionOperation::VectorSearch {
+                ExecutionOperation::VectorQuery {
                     collection_id,
                     query_vector,
                     filters,
@@ -352,8 +356,12 @@ impl QueryExecutor {
             rows: final_rows,
             total_found,
             execution_time_ms: execution_time,
-            operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
-            cache_hits: performance_metrics.cache_hit_ratio as usize,
+            operations_performed: plan
+                .execution_steps
+                .iter()
+                .map(|op| op.describe())
+                .collect(),
+            cache_hits: 0,
             performance_metrics,
         })
     }
@@ -365,7 +373,7 @@ impl QueryExecutor {
         let mut all_rows = Vec::new();
         let mut buffers: Vec<Vec<QueryRow>> = Vec::new();
 
-        for operation in &plan.operations {
+        for operation in &plan.execution_steps {
             match operation {
                 ExecutionOperation::GraphTraversal {
                     start_nodes,
@@ -448,7 +456,11 @@ impl QueryExecutor {
             rows: final_rows,
             total_found,
             execution_time_ms: execution_time,
-            operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
+            operations_performed: plan
+                .execution_steps
+                .iter()
+                .map(|op| op.describe())
+                .collect(),
             cache_hits: 0, // Deferred: Implement graph caching
             performance_metrics,
         })
@@ -468,9 +480,9 @@ impl QueryExecutor {
             Vec<String>,
             Vec<String>,
         )> = None;
-        for op in &plan.operations {
+        for op in &plan.execution_steps {
             match op {
-                ExecutionOperation::VectorSearch { .. } => vector_ops.push(op.clone()),
+                ExecutionOperation::VectorQuery { .. } => vector_ops.push(op.clone()),
                 ExecutionOperation::GraphTraversal { .. } => graph_ops.push(op.clone()),
                 ExecutionOperation::Fusion { strategy, weights } => {
                     fusion_strategy = Some((strategy.clone(), weights.clone()))
@@ -694,13 +706,17 @@ impl QueryExecutor {
             rows: fused_results,
             total_found,
             execution_time_ms: execution_time,
-            operations_performed: plan.operations.iter().map(|op| op.describe()).collect(),
-            cache_hits: performance_metrics.cache_hit_ratio as usize,
+            operations_performed: plan
+                .execution_steps
+                .iter()
+                .map(|op| op.describe())
+                .collect(),
+            cache_hits: 0,
             performance_metrics,
         };
 
         // Post-fusion aggregate if requested
-        for op in &plan.operations {
+        for op in &plan.execution_steps {
             if let ExecutionOperation::Aggregate {
                 group_keys,
                 aggs,
@@ -735,7 +751,6 @@ impl QueryExecutor {
                     // Update performance metrics for test data
                     metrics.vectors_scanned = rows.len();
                     metrics.metadata_lookups += rows.len(); // Each result involves metadata access
-                    metrics.cache_hit_ratio = 0.8; // Simulated cache hit ratio
 
                     // Avoid clone by using Arc for shared test data
                     return Ok(rows.clone());
@@ -745,13 +760,14 @@ impl QueryExecutor {
         // Convert FilterExpression to VOS-compatible format
         // The FilterExpression already represents HashMap.get() patterns from lowering
         let search_config = crate::services::operations::vectors::UnifiedSearchConfig {
-            optimization_goal: crate::query::unified_query_optimizer::OptimizationGoal::Balanced,
+            optimization_goal: crate::query::query_optimizer::OptimizationGoal::Balanced,
             progressive_search: true, // Enable 7-phase progressive optimization
             progressive_recalls: None, // Use default progressive recall targets
             include_vectors: false,   // Don't return vectors unless explicitly requested
             include_metadata: true,   // Include metadata for filtering
             scenario: Some("query_execution".to_string()),
             search_mode: crate::core::search::SearchMode::default(),
+            freshness_mode: None,
         };
 
         // Execute with VOS - this will use HashMap metadata filtering internally
@@ -832,7 +848,6 @@ impl QueryExecutor {
         // Update performance metrics
         metrics.vectors_scanned = vos_results.len();
         metrics.metadata_lookups += vos_results.len(); // Each result involves metadata access
-        metrics.cache_hit_ratio = 0.8; // Deferred: Get actual cache hit ratio from VOS
 
         // Convert VOS results to QueryRow format
         let rows = vos_results
@@ -863,7 +878,9 @@ impl QueryExecutor {
                                 serde_json::Value::Number(serde_json::Number::from(*i))
                             }
                             Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                                serde_json::Value::String(crate::utils::encoding::base64_encode(b))
+                                serde_json::Value::String(
+                                    proximadb_kernel::encoding::base64_encode(b),
+                                )
                             }
                             Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
                                 serde_json::Value::Null
@@ -1139,7 +1156,6 @@ impl QueryExecutor {
         parts.join("\u{1F}")
     }
 
-    #[expect(clippy::ptr_arg)] // Accepting &mut Vec for API compatibility
     pub fn apply_limit_offset(
         rows: &mut Vec<QueryRow>,
         offset: Option<usize>,
@@ -1322,7 +1338,7 @@ impl QueryExecutor {
             }
         }
 
-        // Minimal traversal: depth-1 neighbors via GraphOperationsService; track cache accesses
+        // Minimal traversal: depth-1 neighbors via the extracted traversal contract; track cache accesses
         let mut rows = Vec::new();
         for start in start_nodes {
             if let Ok(neighbors) = self.graph_service.get_neighbors("default", start).await {
@@ -1440,7 +1456,7 @@ impl QueryExecutor {
     ) -> Result<Vec<QueryRow>> {
         #[cfg(test)]
         {
-            if let ExecutionOperation::VectorSearch { collection_id, .. } = operation {
+            if let ExecutionOperation::VectorQuery { collection_id, .. } = operation {
                 if let Some(map) = TEST_VECTOR_RESULTS.get() {
                     if let Some(guard) = map.lock().ok() {
                         if let Some(rows) = guard.get(collection_id) {
@@ -1450,7 +1466,7 @@ impl QueryExecutor {
                 }
             }
         }
-        if let ExecutionOperation::VectorSearch {
+        if let ExecutionOperation::VectorQuery {
             collection_id,
             query_vector,
             filters,
@@ -1599,46 +1615,19 @@ impl QueryExecutor {
         }
     }
 
-    /// Convert v1 metadata HashMap to field map for result formatting
-    ///
-    /// This method showcases the HashMap metadata structure in action
+    /// Convert canonical metadata to a field map for result formatting.
     #[allow(dead_code)]
     fn convert_metadata_to_fields(
         &self,
-        metadata: &std::collections::HashMap<String, crate::proto::proximadb_v1::SqlValue>,
+        metadata: &std::collections::HashMap<String, ProximaValue>,
     ) -> std::collections::HashMap<String, serde_json::Value> {
         metadata
             .iter()
-            .map(|(key, sql_value)| {
-                // Demonstrate efficient HashMap iteration (vs Vec<MetadataItem> linear scan)
-                let json_value = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => {
-                        serde_json::Value::String(s.clone())
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                        serde_json::json!(n)
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                        serde_json::Value::Bool(*b)
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                        serde_json::Value::Number(serde_json::Number::from(*i))
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BytesValue(b)) => {
-                        serde_json::Value::String(crate::utils::encoding::base64_encode(b))
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NullValue(_)) => {
-                        serde_json::Value::Null
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_)) => {
-                        serde_json::Value::String("[Array]".to_string()) // Simplified for now
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_)) => {
-                        serde_json::Value::String("[Object]".to_string()) // Simplified for now
-                    }
-                    None => serde_json::Value::Null,
-                };
-                (key.clone(), json_value)
+            .map(|(key, value)| {
+                (
+                    key.clone(),
+                    crate::core::search::sql_value_filter::proxima_value_to_json(value),
+                )
             })
             .collect()
     }
@@ -1656,6 +1645,7 @@ impl QueryExecutor {
 #[cfg(test)]
 mod executor_tests {
     use super::*;
+    use crate::graph::GraphOperationsService;
     use crate::query::execution::{ExecutionPlan, ExecutionStrategy};
     use crate::storage::entity_store::{
         CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
@@ -1681,20 +1671,20 @@ mod executor_tests {
             .collect();
 
         // offset 2, limit 3 => rows [2,3,4]
-        super::QueryExecutor::apply_limit_offset(&mut rows, Some(2), Some(3));
+        super::MultiModalQueryExecutor::apply_limit_offset(&mut rows, Some(2), Some(3));
         assert_eq!(rows.len(), 3);
         assert_eq!(rows[0].fields.get("id").and_then(|v| v.as_str()), Some("2"));
         assert_eq!(rows[2].fields.get("id").and_then(|v| v.as_str()), Some("4"));
 
         // offset beyond length => empty
         let mut rows2 = rows.clone();
-        super::QueryExecutor::apply_limit_offset(&mut rows2, Some(100), Some(1));
+        super::MultiModalQueryExecutor::apply_limit_offset(&mut rows2, Some(100), Some(1));
         assert_eq!(rows2.len(), 0);
     }
 
     #[test]
     fn test_join_rows_with_qualified_keys() {
-        let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
+        let exec = MultiModalQueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
 
         // left: a.id
         let mut lfields = std::collections::HashMap::new();
@@ -1757,7 +1747,7 @@ mod executor_tests {
 
     #[test]
     fn test_join_rows_composite_keys_and_left_join() {
-        let exec = QueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
+        let exec = MultiModalQueryExecutor::new_for_tests(Arc::new(GraphOperationsService::new()));
         // left rows: (id, type)
         let mut l1 = std::collections::HashMap::new();
         l1.insert(
@@ -1862,9 +1852,9 @@ mod executor_tests {
         }
 
         // Create execution plan with metadata filtering
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::VectorOnly,
+            vec![ExecutionOperation::VectorQuery {
                 collection_id: "test_collection".to_string(),
                 query_vector: Some(vec![0.1, 0.2, 0.3]),
                 filters: Some(FilterExpression::Comparison {
@@ -1875,13 +1865,13 @@ mod executor_tests {
                 top_k: 10,
                 distance_metric: "cosine".to_string(),
             }],
-            estimated_cost: 2.5,
-            optimizations: vec!["HashMap metadata filtering".to_string()],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            2.5,
+            vec!["HashMap metadata filtering".to_string()],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
         let result = executor
             .execute_vector_plan(plan)
@@ -1920,10 +1910,10 @@ mod executor_tests {
         }
 
         // Create hybrid execution plan
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::Hybrid,
-            operations: vec![
-                ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::Hybrid,
+            vec![
+                ExecutionOperation::VectorQuery {
                     collection_id: "test_collection".to_string(),
                     query_vector: Some(vec![0.1, 0.2, 0.3]),
                     filters: None,
@@ -1945,13 +1935,13 @@ mod executor_tests {
                     weights: vec![0.6, 0.4],
                 },
             ],
-            estimated_cost: 5.0,
-            optimizations: vec!["RRF fusion algorithm".to_string()],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            5.0,
+            vec!["RRF fusion algorithm".to_string()],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
         let result = executor
             .execute_hybrid_plan(plan)
@@ -1994,9 +1984,9 @@ mod executor_tests {
         }
 
         // Create query with multiple metadata filters
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::VectorOnly,
-            operations: vec![ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::VectorOnly,
+            vec![ExecutionOperation::VectorQuery {
                 collection_id: "test_collection".to_string(),
                 query_vector: Some(vec![0.1, 0.2, 0.3]),
                 filters: Some(FilterExpression::And(vec![
@@ -2014,13 +2004,13 @@ mod executor_tests {
                 top_k: 100,
                 distance_metric: "cosine".to_string(),
             }],
-            estimated_cost: 3.0,
-            optimizations: vec!["HashMap filtering".to_string()],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            3.0,
+            vec!["HashMap filtering".to_string()],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
         let start = std::time::Instant::now();
         let result = executor
@@ -2045,15 +2035,15 @@ mod executor_tests {
         // Setup global SKS store with one entity embedding
         struct NoopEngine;
         #[async_trait]
-        impl crate::storage::traits::UnifiedStorageEngine for NoopEngine {
+        impl crate::storage::traits::UnifiedStorageFormat for NoopEngine {
             fn engine_name(&self) -> &'static str {
                 "noop"
             }
             fn engine_version(&self) -> &'static str {
                 "0"
             }
-            fn strategy(&self) -> crate::storage::traits::StorageEngineStrategy {
-                crate::storage::traits::StorageEngineStrategy::Viper
+            fn strategy(&self) -> crate::storage::traits::StorageFormatStrategy {
+                crate::storage::traits::StorageFormatStrategy::Viper
             }
             async fn do_flush(
                 &self,
@@ -2077,7 +2067,7 @@ mod executor_tests {
                 _: &str,
                 _: &str,
                 _: &str,
-            ) -> anyhow::Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+            ) -> anyhow::Result<Option<proximadb_records::ProximaRecord>> {
                 Ok(None)
             }
             async fn search_vectors_unified(
@@ -2094,7 +2084,7 @@ mod executor_tests {
                 unimplemented!("Test method - requires async FilesystemFactory::new")
             }
         }
-        let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageEngine>;
+        let engine = Arc::new(NoopEngine) as Arc<dyn crate::storage::traits::UnifiedStorageFormat>;
         let store = Arc::new(ProximaEntityStore::new(
             engine,
             Arc::new(CsrRelationsStore::new()),
@@ -2118,7 +2108,7 @@ mod executor_tests {
         }];
 
         // Derive function is independent from services
-        let derived = QueryExecutor::derive_vector_rows_from_graph_seeds(&graph_rows);
+        let derived = MultiModalQueryExecutor::derive_vector_rows_from_graph_seeds(&graph_rows);
         assert_eq!(derived.len(), 1);
         // Since we don't have actual embedding data in the mock store,
         // embedding_dim won't be present - only the id field
@@ -2207,10 +2197,10 @@ mod executor_tests {
         }
 
         // Build plan: VectorSearch then GraphTraversal with empty seeds (to be seeded)
-        let plan = ExecutionPlan {
-            execution_strategy: ExecutionStrategy::Hybrid,
-            operations: vec![
-                ExecutionOperation::VectorSearch {
+        let plan = ExecutionPlan::runtime(
+            ExecutionStrategy::Hybrid,
+            vec![
+                ExecutionOperation::VectorQuery {
                     collection_id: "c1".to_string(),
                     query_vector: None,
                     filters: None,
@@ -2226,15 +2216,15 @@ mod executor_tests {
                     vector_target_collection: Some("c1".to_string()),
                 },
             ],
-            estimated_cost: 0.0,
-            optimizations: vec![],
-            performance_hints: vec![],
-            seeding_strategy: crate::query::execution::SeedingStrategy::Average,
-            limit: None,
-            offset: None,
-        };
+            0.0,
+            vec![],
+            vec![],
+            crate::query::execution::SeedingStrategy::Average,
+            None,
+            None,
+        );
 
-        let executor = QueryExecutor::new_for_tests(graph_service);
+        let executor = MultiModalQueryExecutor::new_for_tests(graph_service);
 
         let result = executor
             .execute_hybrid_plan(plan)
@@ -2260,11 +2250,11 @@ mod executor_tests {
         );
     }
 
-    async fn create_test_executor() -> QueryExecutor {
+    async fn create_test_executor() -> MultiModalQueryExecutor {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::engines::impls::sst::SstEngine;
+        use crate::storage::engines::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
         // Create temporary directory for storage
@@ -2354,7 +2344,7 @@ mod executor_tests {
             storage_engine,
             wal_manager,
             axis_manager,
-            collection_service,
+            collection_service as Arc<dyn proximadb_runtime::CollectionPort>,
         ));
 
         // Create graph service
@@ -2363,14 +2353,14 @@ mod executor_tests {
         // Keep temp_dir alive by leaking it (tests are short-lived)
         std::mem::forget(temp_dir);
 
-        QueryExecutor::new(Some(vector_service), graph_service)
+        MultiModalQueryExecutor::new(Some(vector_service), graph_service)
     }
 
-    async fn create_test_executor_with_collection() -> QueryExecutor {
+    async fn create_test_executor_with_collection() -> MultiModalQueryExecutor {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::engines::impls::sst::SstEngine;
+        use crate::storage::engines::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
 
         // Create temporary directory for storage
@@ -2476,6 +2466,8 @@ mod executor_tests {
             enable_proxima_record: None,
             text_columns: vec![],
             text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
         };
         let _ = collection_service.create_collection(&config).await;
 
@@ -2484,7 +2476,7 @@ mod executor_tests {
             storage_engine,
             wal_manager,
             axis_manager,
-            collection_service,
+            collection_service as Arc<dyn proximadb_runtime::CollectionPort>,
         ));
 
         // Create graph service
@@ -2493,7 +2485,7 @@ mod executor_tests {
         // Keep temp_dir alive by leaking it (tests are short-lived)
         std::mem::forget(temp_dir);
 
-        QueryExecutor::new(Some(vector_service), graph_service)
+        MultiModalQueryExecutor::new(Some(vector_service), graph_service)
     }
 
     #[test]

@@ -6,11 +6,11 @@ use std::sync::Arc;
 
 use tracing::{trace, warn};
 
-use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::traits::{
     DataRange, EngineMetadata, MetadataSerializer, QueryContext, QueryType,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 
 /// SWIFT global metadata header (bytemuck compatible)
 #[repr(C)]

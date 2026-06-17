@@ -1,0 +1,467 @@
+= ProximaDB Production Readiness Criteria
+:toc: left
+:toclevels: 3
+:icons: font
+:last-updated: 2026-05-01
+
+== Status
+
+Accepted
+
+== Context
+
+This document defines the production readiness criteria for ProximaDB features, engines, and capabilities. These criteria ensure that features marked as "Production Ready" in docs/SUPPORTED_SURFACE.adoc meet the quality, performance, and operational standards required for production deployments.
+
+== Purpose
+
+* Provide clear, objective criteria for production readiness
+* Guide feature development from experimental to production-ready
+* Enable users to make informed decisions about feature adoption
+* Maintain ProximaDB's reputation for reliability and performance
+
+== Production Readiness Framework
+
+=== Maturity Levels
+
+[cols="1,4"]
+|===
+| Level | Description
+
+| **Alpha**
+| Experimental, under active development. Breaking changes likely. Limited testing. Not for production use. Example: PULSAR distributed graph engine.
+
+| **Beta**
+| Feature complete, actively being tested. Limited production use acceptable with caveats. Backward compatibility best effort. Example: Java SDK, Node.js SDK.
+
+| **Production Ready**
+| Extensively tested, meets all criteria below. Backward compatibility guaranteed. Fully documented. Example: ORION graph engine, SST storage engine.
+
+|**Deprecated**
+| Superseded by better alternatives. Will be removed in future version. Do not use in new deployments. Migration path provided.
+
+|**Archived**
+| Removed from active development. Moved to archive/ directory. Maintained for historical reference only.
+|===]
+
+=== Core Criteria
+
+==== 1. Test Coverage
+
+[cols="1,2,3"]
+|===
+| Component | Minimum Coverage | Notes
+
+| Core features (search, storage)
+| 80%+
+| Critical path: vector operations, indexing, queries
+
+| Optional features (CDC, streaming)
+| 70%+
+| Non-critical but important integration points
+
+| Experimental features
+| 50%+
+| Acceptable for alpha/beta features
+
+| Documentation examples
+| 90%+
+| Code examples in docs must be accurate
+|===]
+
+**Measurement**:
+[source,bash]
+----
+# Run with coverage report
+cargo llvm-cov --lib --html --output-dir coverage
+
+# Check specific module coverage
+cargo llvm-cov --lib -- proximadb::storage::engines::sst
+----
+
+**Acceptance**: Coverage report shows ≥80% for core features
+
+==== 2. Performance Benchmarks
+
+All production-ready features must meet documented performance benchmarks:
+
+[cols="1,3,2"]
+|===
+| Capability | Benchmark Target | Measurement Method
+
+| Vector search (10K vectors)
+| <10ms p99 latency
+| `cargo bench --bench vector_search`
+
+| Write throughput
+| >100K ops/sec
+| `cargo bench --bench write_throughput`
+
+| Filtered ANN
+| <15ms p99 latency
+| `cargo bench --bench filtered_ann`
+
+| Graph traversal (1M edges)
+| <100ms p99 latency
+| `cargo bench --bench graph_traversal`
+
+| WAL recovery
+| <30s for 10GB data
+| Integration test with crash recovery
+
+| Query planning
+| <50ms for complex queries
+| `cargo bench --bench query_planning`
+
+| Memory usage
+| <2GB for 1M vectors (768d)
+| `cargo test --lib -- --test-threads=1 | grep memory`
+|===]
+
+**Acceptance**: All benchmarks meet or exceed targets in CI
+
+==== 3. Security Validation
+
+Production-ready features must pass security validation:
+
+[cols="1,4"]
+|===
+| Requirement | Validation Method
+
+| No `unwrap()` or `expect()` in production code
+| `#![warn(clippy::unwrap_used)]` enforced, CI blocks violations
+
+| No unsafe code without extensive justification
+| Code review + SAFETY comments required
+
+| Input validation on all public APIs
+| Security audit of REST/gRPC handlers
+
+| SQL injection protection
+| Parameterized queries only, no string concatenation
+
+| Authentication and authorization
+| JWT/API key/mTLS implemented correctly
+
+| Encryption at rest
+| AES-256-GCM for sensitive data
+
+| Encryption in transit
+| TLS 1.2+ required for all network traffic
+|===]
+
+**Acceptance**: Security audit passes with no critical findings
+
+==== 4. Documentation Standards
+
+Production-ready features require comprehensive documentation:
+
+[cols="1,4"]
+|===
+| Documentation | Requirements
+
+| API Reference
+| Complete REST/gRPC/proto documentation with examples
+
+| Usage Guide
+| Getting started guide, common patterns, best practices
+
+| Performance Characteristics
+| Documented latency, throughput, resource usage
+
+| Operational Guidance
+| Deployment, monitoring, troubleshooting
+
+| Migration Guide
+| How to upgrade from previous versions
+
+| Backward Compatibility
+| Documented breaking changes and migration paths
+|===]
+
+**Acceptance**: All documentation complete and reviewed
+
+==== 5. Error Handling
+
+Production-ready features must handle errors gracefully:
+
+[cols="1,4"]
+|===
+| Requirement | Implementation
+
+| No panics in production code
+| All errors return `Result<T, Error>`
+
+| Meaningful error messages
+| Include context, suggested fixes
+
+| Proper error codes
+| HTTP status codes, gRPC Status, error types
+
+| Error propagation
+| Errors bubble up correctly, not swallowed
+
+| Graceful degradation
+| Fail-safe behavior when possible
+|===**
+
+**Acceptance**: Error handling review passes
+
+==== 6. Backward Compatibility
+
+Production-ready features maintain backward compatibility:
+
+[cols="1,4"]
+|===
+| Requirement | Policy
+
+| API stability
+| No breaking changes without major version bump
+
+| Configuration compatibility
+| Old configs work with deprecation warnings
+
+| Data format compatibility
+| Can read data from previous versions
+
+| Protocol compatibility
+| Old clients can talk to new servers (within major version)
+|===**
+
+**Acceptance**: Migration guide provided for any breaking changes
+
+==== 7. Operational Readiness
+
+Production-ready features must be operable at scale:
+
+[cols="1,4"]
+|===
+| Capability | Requirements
+
+| Monitoring
+| Prometheus metrics, structured logging
+
+| Debugging
+| Traces, profiling support, debug endpoints
+
+| Health checks
+| `/health` endpoint, dependency health
+
+| Configuration
+| Sensible defaults, environment variable override
+
+| Deployment
+| Docker images, platform packages (RPM/DEB/MSI)
+
+| Testing
+| Integration tests, load tests, chaos tests
+|===**
+
+**Acceptance**: Operations review passes
+
+== Feature Evaluation Process
+
+=== Phase 1: Self-Assessment
+
+Feature owner completes self-assessment checklist:
+
+* Test coverage ≥80%
+* Performance benchmarks meet targets
+* Security review passes
+* Documentation complete
+* Error handling reviewed
+* Backward compatibility documented
+* Operational readiness verified
+
+=== Phase 2: Peer Review
+
+Two reviewers evaluate feature against criteria:
+
+* Code review for quality and patterns
+* Security review for vulnerabilities
+* Performance review for benchmarks
+* Documentation review for completeness
+
+=== Phase 3: Integration Testing
+
+Feature tested in production-like environment:
+
+* Integration tests pass
+* Load tests validate performance
+* Chaos tests validate resilience
+* Upgrade tests validate migration path
+
+=== Phase 4: Staged Rollout
+
+Gradual rollout to production:
+
+* Canary deployment (5% of traffic)
+* Monitor metrics and logs
+* Gradual rollout to 100%
+* Rollback plan ready
+
+=== Phase 5: Production Validation
+
+One week in production with:
+
+* No critical bugs
+* Performance meets SLA
+* No user complaints
+* Metrics stable
+
+== Current Production Status
+
+=== Production Ready Features
+
+==== Storage Engines
+
+* **SST** - ✅ Production Ready (recommended for write-heavy workloads)
+* **VIPER** - ✅ Production Ready (recommended for analytics)
+* **HELIX** - ✅ Production Ready (spatial locality workloads)
+* **NOVA** - ✅ Production Ready (mixed workloads)
+
+==== Graph Engines
+
+* **ORION** - ✅ Production Ready (recommended for all graph workloads)
+
+==== Query Capabilities
+
+* **Vector Search** - ✅ Production Ready (HNSW, IVF, filtered ANN)
+* **SQL Query** - ✅ Production Ready (full SQL with extensions)
+* **Document Query** - ✅ Production Ready (JSON path queries)
+* **Graph Query** - ✅ Production Ready (Cypher-compatible)
+
+==== Network Protocols
+
+* **REST API** - ✅ Production Ready (port 5678)
+* **gRPC API** - ✅ Production Ready (port 5679)
+* **PostgreSQL Wire** - ✅ Production Ready (port 5433, pgvector compatible)
+* **Arrow Flight** - ✅ Production Ready (port 5680)
+
+==== Security
+
+* **JWT Authentication** - ✅ Production Ready
+* **API Key Authentication** - ✅ Production Ready
+* **RBAC** - ✅ Production Ready
+* **mTLS** - ✅ Production Ready
+* **Encryption at Rest** - ✅ Production Ready
+
+==== Framework Integrations
+
+* **LangChain** - ✅ Production Ready
+* **LlamaIndex** - ✅ Production Ready
+* **Haystack** - ✅ Production Ready
+* **CrewAI** - ✅ Production Ready
+* **DSPy** - ✅ Production Ready
+* **AutoGen** - ✅ Production Ready
+
+=== Beta Features
+
+==== SDKs
+
+* **Go SDK** - ⚠️ Beta (basic functionality complete, advanced features in progress)
+* **Java SDK** - ⚠️ Beta (JNI bindings complete, testing ongoing)
+* **Node.js SDK** - ⚠️ Beta (NAPI-RS bindings complete, testing ongoing)
+
+==== Distributed Features
+
+* **Cluster Mode** - ⚠️ Beta (Raft consensus complete, production validation ongoing)
+* **Multi-Region** - ⚠️ Beta (LocalQuorum complete, full multi-region in progress)
+
+=== Experimental Features
+
+==== Graph Engines
+
+* **PULSAR** - ❌ Experimental (cross-shard traversal incomplete, no distributed WAL)
+* **QUASAR** - ❌ Experimental (tiered storage incomplete, no WAL for cold tier)
+
+==== Storage Engines
+
+* **SWIFT** - ❌ Deprecated (archived, use SST or NOVA instead)
+* **RAPTOR** - ❌ Deprecated (archived, use SST or VIPER instead)
+
+==== Experimental Features
+
+* **LLM Joins** - ⚠️ Experimental (block-batched joins in development)
+* **AVX512 SIMD** - ❌ Experimental (requires nightly Rust, disabled by default)
+
+== Exception Process
+
+=== Granting Exceptions to Criteria
+
+In rare cases, exceptions to criteria may be granted:
+
+1. **Document justification** for exception
+2. **Risk assessment** for production use
+3. **Mitigation plan** for documented gaps
+4. **User notification** of known limitations
+5. **Review date** for re-evaluation
+
+Example: LLK Joins marked as Experimental due to LLM dependency, but available for users who accept the risk.
+
+== Continuous Improvement
+
+=== Metrics Tracking
+
+Track production readiness metrics over time:
+
+* Number of features at each maturity level
+* Average test coverage per maturity level
+* Performance benchmark pass rate
+* Security audit findings trend
+* User-reported issues per maturity level
+
+=== Criteria Evolution
+
+Criteria evolve based on:
+
+* Production experience
+* User feedback
+* Industry best practices
+* Regulatory requirements
+* Security threats
+
+=== Review Schedule
+
+* **Quarterly**: Review criteria for relevance
+* **Annually**: Major criteria updates
+* **As needed**: Critical security or performance issues
+
+== Related Documentation
+
+* link:../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] - Feature status matrix
+* link:../10-quality/feature_toggles.md[Feature Toggles] - Feature flag documentation
+* link:../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] - Known gaps and limitations
+* link:../_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap] - Feature roadmap
+
+== Governance
+
+=== Approval Authority
+
+* **Technical Lead** - Approves technical criteria
+* **Security Lead** - Approves security criteria
+* **Operations Lead** - Approves operational criteria
+* **Product Lead** - Approves documentation and user-facing criteria
+
+=== Change Process
+
+1. Propose criteria change with rationale
+2. Review with technical leadership
+3. Update this document with new criteria
+4. Communicate changes to development team
+5. Update feature evaluation process
+
+== Summary
+
+Production readiness at ProximaDB means:
+
+* ✅ **80%+ test coverage** for core functionality
+* ✅ **Performance benchmarks met** and documented
+* ✅ **Security validated** with no critical findings
+* ✅ **Comprehensive documentation** with examples
+* ✅ **Graceful error handling** with meaningful messages
+* ✅ **Backward compatibility** with migration guides
+* ✅ **Operational readiness** for production deployment
+
+Features meeting these criteria earn "Production Ready" status in docs/SUPPORTED_SURFACE.adoc and can be deployed with confidence.
+
+'''

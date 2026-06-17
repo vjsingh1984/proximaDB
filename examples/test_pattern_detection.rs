@@ -146,8 +146,14 @@ fn test_pattern(pattern_name: &str, vectors: Vec<VectorRecord>) {
             metadata_algorithm: None,
         };
 
-        // Test serialization and compression
-        let block = ProximaDataBlock::new(vectors.clone(), config.clone());
+        // Test serialization and compression. Convert legacy proto VectorRecord
+        // to canonical ProximaRecord — ProximaDataBlock now takes the new shape.
+        let proxima_records: Vec<_> = vectors
+            .iter()
+            .cloned()
+            .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+            .collect();
+        let block = ProximaDataBlock::new(proxima_records, config.clone());
         match block.serialize_with_config(&config) {
             Ok(serialized) => {
                 let original_size = vectors.len()

@@ -765,7 +765,7 @@ The following matrix maps ProximaDB features to the use cases that require them.
 * link:IBKRTRADING_DOGFOOD.adoc[ibkrtrading Dogfood Blueprint]
 * link:../00-product/VISION.adoc[Vision Document]
 * link:../00-product/PRD.adoc[Product Requirements Document]
-* link:../concepts/architecture.adoc[Architecture Overview]
+* link:../05-concepts/architecture.adoc[Architecture Overview]
 
 '''
 

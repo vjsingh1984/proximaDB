@@ -318,7 +318,7 @@ impl CheckpointManager {
     pub async fn list_checkpoints(&self) -> Vec<CheckpointInfo> {
         let checkpoints = self.checkpoints.read().await;
         let mut list: Vec<_> = checkpoints.values().cloned().collect();
-        list.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        list.sort_by_key(|c| c.timestamp);
         list
     }
 

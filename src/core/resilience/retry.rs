@@ -11,9 +11,12 @@ use std::future::Future;
 use std::time::Duration;
 use thiserror::Error;
 
+/// Backwards-compat alias for [`ResilienceRetryConfig`].
+pub type RetryConfig = ResilienceRetryConfig;
+
 /// Configuration for retry behavior
 #[derive(Debug, Clone)]
-pub struct RetryConfig {
+pub struct ResilienceRetryConfig {
     /// Maximum number of retry attempts (total attempts = max_retries + 1)
     pub max_retries: u32,
     /// Initial delay before first retry
@@ -28,7 +31,7 @@ pub struct RetryConfig {
     pub jitter_factor: f64,
 }
 
-impl Default for RetryConfig {
+impl Default for ResilienceRetryConfig {
     fn default() -> Self {
         Self {
             max_retries: 3,
@@ -41,7 +44,7 @@ impl Default for RetryConfig {
     }
 }
 
-impl RetryConfig {
+impl ResilienceRetryConfig {
     /// Create a config with exponential backoff
     pub fn exponential(max_retries: u32, initial_delay: Duration) -> Self {
         Self {
@@ -104,23 +107,26 @@ pub enum RetryError<E> {
 
 /// Retry policy for executing operations with automatic retry
 pub struct RetryPolicy {
-    config: RetryConfig,
+    config: ResilienceRetryConfig,
 }
 
 impl RetryPolicy {
     /// Create a new retry policy with the given configuration
-    pub fn new(config: RetryConfig) -> Self {
+    pub fn new(config: ResilienceRetryConfig) -> Self {
         Self { config }
     }
 
     /// Create a retry policy with exponential backoff
     pub fn exponential_backoff(max_retries: u32, initial_delay: Duration) -> Self {
-        Self::new(RetryConfig::exponential(max_retries, initial_delay))
+        Self::new(ResilienceRetryConfig::exponential(
+            max_retries,
+            initial_delay,
+        ))
     }
 
     /// Create a retry policy with fixed delay
     pub fn fixed_delay(max_retries: u32, delay: Duration) -> Self {
-        Self::new(RetryConfig::fixed(max_retries, delay))
+        Self::new(ResilienceRetryConfig::fixed(max_retries, delay))
     }
 
     /// Calculate the delay for a given attempt number
@@ -257,7 +263,7 @@ impl RetryPolicy {
 
 impl Default for RetryPolicy {
     fn default() -> Self {
-        Self::new(RetryConfig::default())
+        Self::new(ResilienceRetryConfig::default())
     }
 }
 
@@ -292,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_retry_config_defaults() {
-        let config = RetryConfig::default();
+        let config = ResilienceRetryConfig::default();
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.initial_delay, Duration::from_millis(100));
         assert_eq!(config.backoff_multiplier, 2.0);
@@ -301,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_retry_config_fixed() {
-        let config = RetryConfig::fixed(5, Duration::from_millis(500));
+        let config = ResilienceRetryConfig::fixed(5, Duration::from_millis(500));
         assert_eq!(config.max_retries, 5);
         assert_eq!(config.initial_delay, Duration::from_millis(500));
         assert_eq!(config.backoff_multiplier, 1.0);
@@ -310,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_calculate_delay_exponential() {
-        let policy = RetryPolicy::new(RetryConfig {
+        let policy = RetryPolicy::new(ResilienceRetryConfig {
             initial_delay: Duration::from_millis(100),
             backoff_multiplier: 2.0,
             max_delay: Duration::from_secs(10),
@@ -326,7 +332,7 @@ mod tests {
 
     #[test]
     fn test_calculate_delay_capped() {
-        let policy = RetryPolicy::new(RetryConfig {
+        let policy = RetryPolicy::new(ResilienceRetryConfig {
             initial_delay: Duration::from_secs(1),
             backoff_multiplier: 2.0,
             max_delay: Duration::from_secs(5),
@@ -361,7 +367,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_succeeds_after_failures() {
-        let policy = RetryPolicy::new(RetryConfig::fixed(3, Duration::from_millis(10)));
+        let policy = RetryPolicy::new(ResilienceRetryConfig::fixed(3, Duration::from_millis(10)));
         let counter = Arc::new(AtomicU32::new(0));
         let counter_clone = counter.clone();
 
@@ -385,7 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_exhausted() {
-        let policy = RetryPolicy::new(RetryConfig::fixed(2, Duration::from_millis(10)));
+        let policy = RetryPolicy::new(ResilienceRetryConfig::fixed(2, Duration::from_millis(10)));
         let counter = Arc::new(AtomicU32::new(0));
         let counter_clone = counter.clone();
 

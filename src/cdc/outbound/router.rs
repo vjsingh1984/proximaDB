@@ -330,9 +330,12 @@ impl MetadataCondition {
     }
 }
 
+/// Backwards-compat alias for [`CdcRoutingDecision`].
+pub type RoutingDecision = CdcRoutingDecision;
+
 /// Result of routing decision
 #[derive(Debug, Clone)]
-pub struct RoutingDecision {
+pub struct CdcRoutingDecision {
     /// Event being routed
     pub event: ChangeEvent,
     /// Matched rules
@@ -343,7 +346,7 @@ pub struct RoutingDecision {
     pub has_match: bool,
 }
 
-impl RoutingDecision {
+impl CdcRoutingDecision {
     /// Create decision for no matches
     pub fn no_match(event: ChangeEvent) -> Self {
         Self {
@@ -372,12 +375,12 @@ pub struct EventRouter {
     /// Default sink IDs (when no rules match)
     default_sinks: RwLock<Vec<String>>,
     /// Statistics
-    stats: RwLock<RouterStats>,
+    stats: RwLock<CdcRouterStats>,
 }
 
 /// Statistics for routing
 #[derive(Debug, Clone, Default)]
-pub struct RouterStats {
+pub struct CdcRouterStats {
     /// Total events routed
     pub events_routed: u64,
     /// Events matched by rules
@@ -404,7 +407,7 @@ impl EventRouter {
         Self {
             rules: RwLock::new(Vec::new()),
             default_sinks: RwLock::new(Vec::new()),
-            stats: RwLock::new(RouterStats::default()),
+            stats: RwLock::new(CdcRouterStats::default()),
         }
     }
 
@@ -438,7 +441,7 @@ impl EventRouter {
     }
 
     /// Route an event
-    pub fn route(&self, event: ChangeEvent) -> RoutingDecision {
+    pub fn route(&self, event: ChangeEvent) -> CdcRoutingDecision {
         let rules = self
             .rules
             .read()
@@ -477,7 +480,7 @@ impl EventRouter {
 
         if !matched_rules.is_empty() {
             stats.events_matched += 1;
-            return RoutingDecision::with_matches(event, matched_rules, sink_ids);
+            return CdcRoutingDecision::with_matches(event, matched_rules, sink_ids);
         }
 
         // Use default sinks if no rules matched
@@ -490,7 +493,7 @@ impl EventRouter {
             for sink_id in default_sinks.iter() {
                 *stats.sink_events.entry(sink_id.clone()).or_insert(0) += 1;
             }
-            return RoutingDecision::with_matches(
+            return CdcRoutingDecision::with_matches(
                 event,
                 vec!["_default".to_string()],
                 default_sinks.clone(),
@@ -498,11 +501,11 @@ impl EventRouter {
         }
 
         stats.events_dropped += 1;
-        RoutingDecision::no_match(event)
+        CdcRoutingDecision::no_match(event)
     }
 
     /// Route multiple events
-    pub fn route_batch(&self, events: Vec<ChangeEvent>) -> Vec<RoutingDecision> {
+    pub fn route_batch(&self, events: Vec<ChangeEvent>) -> Vec<CdcRoutingDecision> {
         events.into_iter().map(|e| self.route(e)).collect()
     }
 
@@ -515,7 +518,7 @@ impl EventRouter {
     }
 
     /// Get statistics
-    pub fn stats(&self) -> RouterStats {
+    pub fn stats(&self) -> CdcRouterStats {
         self.stats
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -527,7 +530,7 @@ impl EventRouter {
         *self
             .stats
             .write()
-            .unwrap_or_else(|poisoned| poisoned.into_inner()) = RouterStats::default();
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = CdcRouterStats::default();
     }
 
     /// Enable/disable a rule

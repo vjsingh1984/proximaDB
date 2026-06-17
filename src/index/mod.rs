@@ -76,21 +76,26 @@
 
 pub mod axis;
 pub mod config;
-pub mod diskann;
 /// Enhanced Dense Retrieval with late interaction.
 pub mod edr;
 /// Geo-spatial indexing (geohash-based).
 pub mod geo;
-/// HNSW filtered search implementation.
-pub mod hnsw;
-/// IVF filtered search implementation.
-pub mod ivf;
-/// Sparse vector HNSW index for text and feature-based applications.
-pub mod sparse_hnsw;
+/// TurboQuant root-crate bridge: `CandidateSet` → `TurboQuantStore`
+/// dispatch + EXPLAIN hint set. ADR-021 / TURBOQUANT_LLD §"xCatalog &
+/// EXPLAIN Wiring". Gated by `experimental-turboquant`.
+#[cfg(feature = "experimental-turboquant")]
+pub mod turboquant_bridge;
+
+// Note: `src/index/{hnsw,ivf,diskann,sparse_hnsw}` were removed 2026-05-27.
+// They were orphan duplicates of AXIS-native indexes — see
+// `docs/12-design/NON_AXIS_INDEX_MIGRATION_AUDIT_2026_05_27.adoc`.
+// The canonical implementations live in `src/index/axis/indexes/`.
 
 // Re-export main types for easier access
 pub use axis::{AxisConfig, AxisManager};
-pub use config::{HnswConfig, IndexConfig, IndexUpdateMode, IvfConfig};
+pub use config::{
+    IndexUpdateMode, RuntimeHnswConfig, RuntimeIndexConfig, RuntimeIvfConfig, RuntimeLshConfig,
+};
 
 // Re-export geospatial types
 pub use geo::{
@@ -102,7 +107,8 @@ pub use geo::{
 use anyhow::Result;
 use std::sync::Arc;
 
-use crate::core::{VectorId, VectorRecord};
+use crate::core::VectorId;
+use proximadb_records::ProximaRecord;
 
 /// Global ID Index for cross-collection vector tracking
 ///
@@ -122,13 +128,14 @@ use crate::core::{VectorId, VectorRecord};
 ///
 /// ```rust,ignore
 /// # use proximadb::index::GlobalIdIndex;
-/// # use proximadb::core::{VectorId, VectorRecord};
+/// # use proximadb::core::VectorId;
+/// # use proximadb_records::ProximaRecord;
 /// # async fn example() -> anyhow::Result<()> {
 /// let index = GlobalIdIndex::new().await?;
 ///
 /// // Track vector across collections
 /// let vector_id = VectorId::new();
-/// let record = VectorRecord::default();
+/// let record = ProximaRecord::default();
 /// index.insert(vector_id.clone(), "collection_1", &record).await?;
 ///
 /// // Update storage location
@@ -166,7 +173,7 @@ impl GlobalIdIndex {
         &self,
         _id: VectorId,
         _collection_id: &str,
-        _vector: &VectorRecord,
+        _vector: &ProximaRecord,
     ) -> Result<()> {
         // Deferred: Implement with atomic CAS operation
         Ok(())
@@ -213,7 +220,7 @@ impl MetadataIndex {
     }
 
     /// Inserts a vector's metadata fields into the index.
-    pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+    pub async fn insert(&self, _vector: &ProximaRecord) -> Result<()> {
         Ok(())
     }
 
@@ -246,7 +253,7 @@ impl DenseVectorIndex {
     }
 
     /// Inserts a dense vector record into the index.
-    pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+    pub async fn insert(&self, _vector: &ProximaRecord) -> Result<()> {
         Ok(())
     }
 
@@ -279,7 +286,7 @@ impl SparseVectorIndex {
     }
 
     /// Inserts a sparse vector record into the index.
-    pub async fn insert(&self, _vector: &VectorRecord) -> Result<()> {
+    pub async fn insert(&self, _vector: &ProximaRecord) -> Result<()> {
         Ok(())
     }
 

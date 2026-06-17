@@ -15,16 +15,10 @@ use std::sync::Arc;
 
 mod schema_tests {
     use super::*;
-    use proximadb::storage::schema::{
-        ProximaColumn, ProximaDataType, ProximaSchema, VectorElementType,
-    };
+    use proximadb::storage::schema::{ProximaColumn, ProximaSchema};
+    use proximadb_data_model::{ProximaType, VectorElement};
 
-    fn make_column(
-        id: i32,
-        name: &str,
-        data_type: ProximaDataType,
-        nullable: bool,
-    ) -> ProximaColumn {
+    fn make_column(id: i32, name: &str, data_type: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),
@@ -32,7 +26,7 @@ mod schema_tests {
             nullable,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: false,
             original_id: None,
         }
@@ -40,20 +34,20 @@ mod schema_tests {
 
     #[test]
     fn test_proxima_schema_creation() {
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "test_schema".to_string(),
             vec![
-                make_column(0, "id", ProximaDataType::String, false),
+                make_column(0, "id", ProximaType::String, false),
                 make_column(
                     1,
                     "embedding",
-                    ProximaDataType::Vector {
-                        dimension: 128,
-                        element_type: VectorElementType::Float32,
+                    ProximaType::DenseVector {
+                        element: VectorElement::Float32,
+                        dim: 128,
                     },
                     false,
                 ),
-                make_column(2, "metadata", ProximaDataType::Json, true),
+                make_column(2, "metadata", ProximaType::Json, true),
             ],
             vec![0],
         );
@@ -66,11 +60,11 @@ mod schema_tests {
 
     #[test]
     fn test_proxima_schema_to_arrow() {
-        let schema = ProximaSchema::new(
+        let schema = ProximaSchema::from_columns(
             "arrow_test".to_string(),
             vec![
-                make_column(0, "id", ProximaDataType::String, false),
-                make_column(1, "count", ProximaDataType::Int64, true),
+                make_column(0, "id", ProximaType::String, false),
+                make_column(1, "count", ProximaType::Int64, true),
             ],
             vec![0],
         );
@@ -83,15 +77,15 @@ mod schema_tests {
 
     #[test]
     fn test_schema_fingerprint_consistency() {
-        let schema1 = ProximaSchema::new(
+        let schema1 = ProximaSchema::from_columns(
             "fingerprint_test".to_string(),
-            vec![make_column(0, "field1", ProximaDataType::String, false)],
+            vec![make_column(0, "field1", ProximaType::String, false)],
             vec![0],
         );
 
-        let schema2 = ProximaSchema::new(
+        let schema2 = ProximaSchema::from_columns(
             "fingerprint_test".to_string(),
-            vec![make_column(0, "field1", ProximaDataType::String, false)],
+            vec![make_column(0, "field1", ProximaType::String, false)],
             vec![0],
         );
 
@@ -269,9 +263,10 @@ mod spark_tests {
         SparkTable, SparkWriteBuilder, SparkWriteMode,
     };
     use proximadb::storage::formats::FileSplit;
-    use proximadb::storage::schema::{ProximaColumn, ProximaDataType, ProximaSchema};
+    use proximadb::storage::schema::{ProximaColumn, ProximaSchema};
+    use proximadb_data_model::ProximaType;
 
-    fn make_column(id: i32, name: &str, data_type: ProximaDataType) -> ProximaColumn {
+    fn make_column(id: i32, name: &str, data_type: ProximaType) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),
@@ -279,7 +274,7 @@ mod spark_tests {
             nullable: false,
             default_value: None,
             comment: None,
-            metadata: HashMap::new(),
+            properties: HashMap::new(),
             is_deleted: false,
             original_id: None,
         }
@@ -311,11 +306,11 @@ mod spark_tests {
 
     #[test]
     fn test_spark_scan_builder() {
-        let proxima_schema = Arc::new(ProximaSchema::new(
+        let proxima_schema = Arc::new(ProximaSchema::from_columns(
             "test".to_string(),
             vec![
-                make_column(0, "id", ProximaDataType::String),
-                make_column(1, "value", ProximaDataType::Int64),
+                make_column(0, "id", ProximaType::String),
+                make_column(1, "value", ProximaType::Int64),
             ],
             vec![0],
         ));
@@ -517,11 +512,11 @@ mod duckdb_tests {
     use super::*;
     use arrow::datatypes::Schema as ArrowSchema;
     use proximadb::connectors::{
-        DuckDBColumnRef, DuckDBConnectorConfig, DuckDBDistanceMetric, DuckDBFilter,
-        DuckDBFilterType, DuckDBGlobalState, DuckDBInitData, DuckDBLocalState, DuckDBTableScan,
-        DuckDBVectorSearchParams,
+        DuckDBColumnRef, DuckDBConnectorConfig, DuckDBFilter, DuckDBFilterType, DuckDBGlobalState,
+        DuckDBInitData, DuckDBLocalState, DuckDBTableScan, DuckDBVectorSearchParams,
     };
     use proximadb::storage::formats::{FileSplit, SplitLocality, SplitStatistics, SplitType};
+    use proximadb_distance_types::DistanceMetric;
 
     #[test]
     fn test_duckdb_config_default() {
@@ -533,12 +528,12 @@ mod duckdb_tests {
         assert_eq!(config.max_threads, 8);
     }
 
-    #[test]
-    fn test_duckdb_table_scan_bind() {
+    #[tokio::test]
+    async fn test_duckdb_table_scan_bind() {
         let config = DuckDBConnectorConfig::default();
         let mut scan = DuckDBTableScan::new(config);
 
-        let result = scan.bind("test_collection");
+        let result = scan.bind("test_collection").await;
         assert!(result.is_ok());
 
         let bind_data = result.unwrap();
@@ -577,7 +572,7 @@ mod duckdb_tests {
             collection: "embeddings".to_string(),
             query_vector: vec![0.1, 0.2, 0.3, 0.4],
             top_k: 10,
-            metric: DuckDBDistanceMetric::Cosine,
+            metric: DistanceMetric::Cosine,
             filter: None,
             include_distances: true,
         };
@@ -590,16 +585,12 @@ mod duckdb_tests {
 
     #[test]
     fn test_duckdb_distance_metrics() {
-        assert_eq!(
-            DuckDBDistanceMetric::default(),
-            DuckDBDistanceMetric::Cosine
-        );
+        assert_eq!(DistanceMetric::default(), DistanceMetric::L2);
 
-        // Test all variants exist
-        let _l2 = DuckDBDistanceMetric::L2;
-        let _cosine = DuckDBDistanceMetric::Cosine;
-        let _dot = DuckDBDistanceMetric::DotProduct;
-        let _inner = DuckDBDistanceMetric::InnerProduct;
+        let _l2 = DistanceMetric::L2;
+        let _cosine = DistanceMetric::Cosine;
+        let _inner = DistanceMetric::InnerProduct;
+        let _l1 = DistanceMetric::L1;
     }
 
     #[test]

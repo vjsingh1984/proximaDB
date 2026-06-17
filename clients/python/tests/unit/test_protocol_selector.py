@@ -8,9 +8,8 @@ the new unified IntelligentRouter system.
 import sys
 import threading
 import time
-from collections import deque
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -430,7 +429,6 @@ class TestBackwardCompatibility:
         # These imports should work due to backward compatibility
         from proximadb_sdk.protocol_selector import (
             ProtocolSelector,
-            create_protocol_selector,
         )
 
         # Create router using old interface

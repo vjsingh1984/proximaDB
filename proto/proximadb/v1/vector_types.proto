@@ -238,10 +238,24 @@ message QuantizationConfig {
   optional float binary_threshold = 20; // Default: 0.0
   optional float int8_threshold = 21; // Default: 0.0
   optional float pq_threshold = 22; // Default: 0.0
-  
+  // Phase N (Quantization Trait Convergence Plan): operator opt-in for
+  // TurboQuant — data-oblivious read-time scalar quantizer per ADR-021.
+  // Defaults to false so non-TurboQuant collections see no change. When
+  // true on collection-create, the embedding-precision policy is
+  // extended via `EmbeddingPrecisionPolicy::with_turboquant_for_collection`
+  // (which seeds the per-collection rotation_seed via FNV-1a of the
+  // collection id) and the resulting `DerivedQuantizationLevel::TurboQuant`
+  // is persisted in the catalog row.
+  //
+  // Honored only when the server build has the `experimental-turboquant`
+  // feature enabled. Builds without the feature silently ignore the
+  // flag — same conservative behavior as `enable_binary`/`enable_pq`
+  // on builds that don't compile the relevant kernels.
+  optional bool enable_turboquant = 23; // Default: false
+
   enum Strategy {
     SMART_DEFAULTS = 0;
-    CUSTOM_LEVELS = 1; 
+    CUSTOM_LEVELS = 1;
     MINIMAL = 2;
     AGGRESSIVE = 3;
   }

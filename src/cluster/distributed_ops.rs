@@ -22,78 +22,17 @@ use super::rpc::{
 };
 use super::shard::{Shard, ShardId, ShardManager, ShardState};
 
-/// Configuration for distributed operations
-#[derive(Debug, Clone)]
-pub struct DistributedOpsConfig {
-    /// Timeout for distributed operations in milliseconds
-    pub operation_timeout_ms: u64,
-    /// Maximum concurrent shard operations
-    pub max_concurrent_ops: usize,
-    /// Enable parallel shard queries
-    pub parallel_queries: bool,
-    /// Consistency level for writes
-    pub write_consistency: ConsistencyLevel,
-    /// Consistency level for reads
-    pub read_consistency: ConsistencyLevel,
-    /// Retry configuration
-    pub retry_config: RetryConfig,
-}
-
-impl Default for DistributedOpsConfig {
-    fn default() -> Self {
-        Self {
-            operation_timeout_ms: 30000,
-            max_concurrent_ops: 16,
-            parallel_queries: true,
-            write_consistency: ConsistencyLevel::Quorum,
-            read_consistency: ConsistencyLevel::One,
-            retry_config: RetryConfig::default(),
-        }
-    }
-}
-
-/// Retry configuration for failed operations
-#[derive(Debug, Clone)]
-pub struct RetryConfig {
-    /// Maximum number of retries
-    pub max_retries: u32,
-    /// Initial backoff in milliseconds
-    pub initial_backoff_ms: u64,
-    /// Maximum backoff in milliseconds
-    pub max_backoff_ms: u64,
-    /// Backoff multiplier
-    pub backoff_multiplier: f64,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_backoff_ms: 100,
-            max_backoff_ms: 5000,
-            backoff_multiplier: 2.0,
-        }
-    }
-}
-
-/// Consistency levels for distributed operations
-#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ConsistencyLevel {
-    /// Only one node needs to acknowledge
-    One,
-    /// Majority of nodes must acknowledge
-    Quorum,
-    /// All nodes must acknowledge
-    All,
-    /// Local datacenter quorum
-    LocalQuorum,
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{
+    ConsistencyLevel, DistributedOpsConfig, DistributedRetryConfig, RetryConfig,
+};
 
 /// Result of a distributed search operation
 #[derive(Debug, Clone)]
 pub struct DistributedSearchResult {
     /// Merged results from all shards
-    pub results: Vec<SearchResult>,
+    pub results: Vec<ShardSearchResult>,
     /// Number of shards queried
     pub shards_queried: usize,
     /// Number of shards that succeeded
@@ -106,7 +45,7 @@ pub struct DistributedSearchResult {
 
 /// Individual search result
 #[derive(Debug, Clone)]
-pub struct SearchResult {
+pub struct ShardSearchResult {
     /// Record ID
     pub id: String,
     /// Distance/similarity score
@@ -130,9 +69,12 @@ pub struct DistributedWriteResult {
     pub total_time_ms: u64,
 }
 
+/// Backwards-compat alias for [`DistributedQueryContext`].
+pub type QueryContext = DistributedQueryContext;
+
 /// Query context for metadata-aware shard pruning
 #[derive(Debug, Clone, Default)]
-pub struct QueryContext {
+pub struct DistributedQueryContext {
     /// Tenant ID for tenant-based filtering/pruning
     pub tenant_id: Option<String>,
     /// Domain ID for domain-based filtering/pruning
@@ -143,7 +85,7 @@ pub struct QueryContext {
     pub field_filters: HashMap<String, serde_json::Value>,
 }
 
-impl QueryContext {
+impl DistributedQueryContext {
     /// Create a new empty query context
     pub fn new() -> Self {
         Self::default()
@@ -216,7 +158,7 @@ pub struct DistributedSearchRequest {
     /// Exclude specific shards
     pub exclude_shards: Option<Vec<String>>,
     /// Query context for metadata-aware shard pruning
-    pub query_context: Option<QueryContext>,
+    pub query_context: Option<DistributedQueryContext>,
 }
 
 /// Distributed write request
@@ -420,7 +362,7 @@ impl DistributedCollectionOps {
         shards: &[Shard],
         request: &DistributedSearchRequest,
         timings: &mut HashMap<String, u64>,
-    ) -> Result<Vec<Vec<SearchResult>>> {
+    ) -> Result<Vec<Vec<ShardSearchResult>>> {
         use futures::future::join_all;
 
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.max_concurrent_ops));
@@ -490,7 +432,7 @@ impl DistributedCollectionOps {
         shards: &[Shard],
         request: &DistributedSearchRequest,
         timings: &mut HashMap<String, u64>,
-    ) -> Result<Vec<Vec<SearchResult>>> {
+    ) -> Result<Vec<Vec<ShardSearchResult>>> {
         let mut results = Vec::new();
 
         for shard in shards {
@@ -537,7 +479,7 @@ impl DistributedCollectionOps {
         fanout: Option<&dyn SearchFanout>,
         node_registry: &NodeRegistry,
         timeout_ms: u64,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<ShardSearchResult>> {
         // Check if shard is on local node
         let is_local =
             shard.primary_node() == Some(local_node) || shard.replica_nodes().contains(&local_node);
@@ -563,7 +505,7 @@ impl DistributedCollectionOps {
         fanout: Option<&dyn SearchFanout>,
         node_registry: &NodeRegistry,
         timeout_ms: u64,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<ShardSearchResult>> {
         // Get the target node ID
         let target_node = shard
             .primary_node()
@@ -626,11 +568,11 @@ impl DistributedCollectionOps {
         let vectors_scanned = response.vectors_scanned;
         let latency = response.latency;
 
-        // Convert RPC results to SearchResult
-        let results: Vec<SearchResult> = response
+        // Convert RPC results to ShardSearchResult
+        let results: Vec<ShardSearchResult> = response
             .results
             .into_iter()
-            .map(|r| SearchResult {
+            .map(|r| ShardSearchResult {
                 id: r.id,
                 distance: r.score,
                 shard_id: shard.id.id().to_string(),
@@ -653,10 +595,10 @@ impl DistributedCollectionOps {
     /// Merge search results from multiple shards
     fn merge_search_results(
         &self,
-        shard_results: Vec<Vec<SearchResult>>,
+        shard_results: Vec<Vec<ShardSearchResult>>,
         top_k: usize,
-    ) -> Vec<SearchResult> {
-        let mut all_results: Vec<SearchResult> = shard_results.into_iter().flatten().collect();
+    ) -> Vec<ShardSearchResult> {
+        let mut all_results: Vec<ShardSearchResult> = shard_results.into_iter().flatten().collect();
 
         // Sort by distance (ascending - lower is better)
         all_results.sort_by(|a, b| {
@@ -680,7 +622,7 @@ impl DistributedCollectionOps {
     fn prune_shards_by_metadata(
         &self,
         shards: &[Shard],
-        query_context: &Option<QueryContext>,
+        query_context: &Option<DistributedQueryContext>,
     ) -> Vec<Shard> {
         let context = match query_context {
             Some(ctx) if ctx.has_filters() => ctx,
@@ -719,7 +661,7 @@ impl DistributedCollectionOps {
     }
 
     /// Check if a shard might contain data matching the query context
-    fn shard_matches_context(&self, shard: &Shard, context: &QueryContext) -> bool {
+    fn shard_matches_context(&self, shard: &Shard, context: &DistributedQueryContext) -> bool {
         // Use the Shard's may_contain_data method for tenant/domain checks
         if !shard.may_contain_data(context.tenant_id.as_deref(), context.domain_id.as_deref()) {
             return false;
@@ -1233,16 +1175,14 @@ impl DistributedCollectionOps {
             total_writes: stats.total_writes,
             failed_searches: stats.failed_searches,
             failed_writes: stats.failed_writes,
-            avg_search_time_ms: if stats.total_searches > 0 {
-                stats.total_search_time_ms / stats.total_searches
-            } else {
-                0
-            },
-            avg_write_time_ms: if stats.total_writes > 0 {
-                stats.total_write_time_ms / stats.total_writes
-            } else {
-                0
-            },
+            avg_search_time_ms: stats
+                .total_search_time_ms
+                .checked_div(stats.total_searches)
+                .unwrap_or(0),
+            avg_write_time_ms: stats
+                .total_write_time_ms
+                .checked_div(stats.total_writes)
+                .unwrap_or(0),
         }
     }
 
@@ -1385,20 +1325,20 @@ mod tests {
 
         let shard_results = vec![
             vec![
-                SearchResult {
+                ShardSearchResult {
                     id: "r1".to_string(),
                     distance: 0.5,
                     shard_id: "shard1".to_string(),
                     metadata: HashMap::new(),
                 },
-                SearchResult {
+                ShardSearchResult {
                     id: "r2".to_string(),
                     distance: 1.0,
                     shard_id: "shard1".to_string(),
                     metadata: HashMap::new(),
                 },
             ],
-            vec![SearchResult {
+            vec![ShardSearchResult {
                 id: "r3".to_string(),
                 distance: 0.3,
                 shard_id: "shard2".to_string(),
@@ -1423,23 +1363,23 @@ mod tests {
     #[test]
     fn test_query_context_builder() {
         // Test empty context
-        let ctx = QueryContext::new();
+        let ctx = DistributedQueryContext::new();
         assert!(!ctx.has_filters());
         assert!(ctx.tenant_id.is_none());
         assert!(ctx.domain_id.is_none());
 
         // Test with tenant
-        let ctx = QueryContext::with_tenant("tenant-1");
+        let ctx = DistributedQueryContext::with_tenant("tenant-1");
         assert!(ctx.has_filters());
         assert_eq!(ctx.tenant_id, Some("tenant-1".to_string()));
 
         // Test with domain
-        let ctx = QueryContext::with_domain("domain-1");
+        let ctx = DistributedQueryContext::with_domain("domain-1");
         assert!(ctx.has_filters());
         assert_eq!(ctx.domain_id, Some("domain-1".to_string()));
 
         // Test builder pattern
-        let ctx = QueryContext::new()
+        let ctx = DistributedQueryContext::new()
             .tenant("tenant-2")
             .domain("domain-2")
             .partition("partition-1")
@@ -1478,13 +1418,13 @@ mod tests {
         let shards = vec![shard1, shard2];
 
         // Test: Query for tenant-1 should only include shard1
-        let ctx = QueryContext::with_tenant("tenant-1");
+        let ctx = DistributedQueryContext::with_tenant("tenant-1");
         let pruned = coordinator.prune_shards_by_metadata(&shards, &Some(ctx));
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].id.id(), "test-collection_0000");
 
         // Test: Query for tenant-3 should only include shard2
-        let ctx = QueryContext::with_tenant("tenant-3");
+        let ctx = DistributedQueryContext::with_tenant("tenant-3");
         let pruned = coordinator.prune_shards_by_metadata(&shards, &Some(ctx));
         assert_eq!(pruned.len(), 1);
         assert_eq!(pruned[0].id.id(), "test-collection_0001");
@@ -1573,7 +1513,9 @@ mod tests {
             routing_key: None,
             include_shards: None,
             exclude_shards: None,
-            query_context: Some(QueryContext::with_tenant("tenant-1").domain("domain-1")),
+            query_context: Some(
+                DistributedQueryContext::with_tenant("tenant-1").domain("domain-1"),
+            ),
         };
 
         let ctx = request

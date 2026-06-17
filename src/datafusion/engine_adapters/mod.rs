@@ -46,16 +46,24 @@
 //! ctx.register_table("vectors", Arc::new(sst_provider))?;
 //! ```
 
+pub mod filesystem_parquet_reader;
 pub mod helix_adapter;
+pub mod object_store_parquet_reader;
 pub mod sst_adapter;
 pub mod viper_adapter;
 
 // Re-export main types for convenience
+pub use filesystem_parquet_reader::{
+    FilesystemParquetSplitReader, FilesystemParquetTable, register_parquet_path,
+};
 pub use helix_adapter::{HelixSplitReader, HelixTableProvider};
+pub use object_store_parquet_reader::{
+    ObjectStoreParquetSplitReader, ObjectStoreParquetTable, register_object_store_parquet_location,
+};
 pub use sst_adapter::{SstSplitReader, SstTableProvider};
 pub use viper_adapter::{ViperSplitReader, ViperTableProvider};
 
-// Common utilities shared across adapters
+/// Common schema/utility helpers shared across the engine adapters.
 pub mod common {
     use arrow_schema::{DataType, Field, Schema, SchemaRef};
     use std::sync::Arc;

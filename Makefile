@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust benchmark release install help capability-matrix-check panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -8,6 +8,7 @@ all: build test
 PANIC_POLICY_BASELINE ?= docs/_internal/roadmap/PANIC_POLICY_BASELINE.json
 PANIC_POLICY_ARTIFACT ?= artifacts/panic_policy/latest_metrics.json
 PANIC_POLICY_CRITICAL_MODULES ?= network_rest,api_handlers,graph,query
+PYTHON ?= python3
 
 # Build targets
 build:
@@ -34,9 +35,37 @@ test-integration:
 	@echo "🔗 Running integration tests..."
 	cargo test --test integration --verbose
 
+# Fast iteration loop. Uses nextest (parallel, process-isolated) if installed;
+# falls back to libtest with parallel --test-threads. Bypasses the
+# RUST_TEST_THREADS=1 env in .cargo/config.toml (which is for integration tests).
+test-fast:
+	@if command -v cargo-nextest >/dev/null 2>&1; then \
+		echo "Running unit tests via nextest (profile=unit)..."; \
+		cargo nextest run --lib --profile unit; \
+	else \
+		echo "nextest not installed; falling back to: cargo test --lib --test-threads=6"; \
+		echo "  install with: make install-fast-tools"; \
+		cargo test --lib -- --test-threads=6; \
+	fi
+
+# Type-check only (no codegen, no link) for the tightest inner edit loop.
+check-fast:
+	@cargo check-fast
+
+# Install optional build-speed tools. Idempotent.
+install-fast-tools:
+	@if ! command -v cargo-nextest >/dev/null 2>&1; then \
+		echo "Installing cargo-nextest..."; \
+		cargo install cargo-nextest --locked; \
+	else echo "cargo-nextest: already installed"; fi
+	@if ! command -v cargo-watch >/dev/null 2>&1; then \
+		echo "Installing cargo-watch..."; \
+		cargo install cargo-watch --locked; \
+	else echo "cargo-watch: already installed"; fi
+
 test-python:
 	@echo "🐍 Running Python tests..."
-	cd clients/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=$(PWD)/clients/python/src python3 -m pytest -v
+	cd clients/python && PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python PYTHONPATH=$(PWD)/clients/python/src $(PYTHON) -m pytest -v
 
 test-python-install:
 	@echo "📦 Installing Python test dependencies..."
@@ -64,12 +93,35 @@ clippy:
 	@echo "📎 Running clippy..."
 	cargo clippy -- -D warnings
 
-check: fmt clippy test
+hygiene-check:
+	@echo "🧹 Running tracked artifact hygiene check..."
+	@bad_files=$$(git ls-files | rg '(^|/)\\.victor($|/)|\\.bak[0-9]*$|\\.disabled$'); \
+	if [ -n "$$bad_files" ]; then \
+		echo "❌ Forbidden tracked artifacts detected:"; \
+		echo "$$bad_files"; \
+		exit 1; \
+	fi; \
+	echo "✅ No tracked artifact files detected."
+
+check: fmt clippy test hygiene-check
 	@echo "✅ Code quality checks passed"
 
 capability-matrix-check:
 	@echo "🧭 Validating capability matrix..."
 	python3 scripts/validate_capability_matrix.py
+
+proto-check:
+	@echo "🧬 Validating protobuf/OpenAPI contract drift..."
+	cargo check -p proximadb-proto
+	cd clients/python && $(PYTHON) -m pytest --confcutdir=tests/unit -q tests/unit/test_grpc_proto_drift.py tests/unit/test_openapi_contract.py
+
+workspace-boundaries-check:
+	@echo "🧱 Validating workspace dependency boundaries..."
+	python3 scripts/check_workspace_boundaries.py
+
+workspace-rebuild-baseline:
+	@echo "⏱️ Measuring targeted workspace rebuild baseline..."
+	python3 scripts/measure_workspace_rebuild.py --keep-going
 
 panic-policy-report:
 	@echo "🧯 WS-2 panic policy report (non-blocking)..."
@@ -97,6 +149,61 @@ release: clean build-server test benchmark
 	@echo "📊 Release artifacts:"
 	@ls -la target/release-server/proximadb-server 2>/dev/null || echo "Server binary not found"
 	@ls -la target/release/proximadb-server 2>/dev/null || echo "Fallback to release binary"
+
+# Release-cut gate: one command that must be green before the v0.2 release tag.
+# Sequence is fail-fast — early steps (fmt, doc-claim, proto) are cheap.
+release-check: fmt-check docs-claim-check proto-check release-smoke build-server
+	@echo "✅ release-check: all gates passed"
+
+fmt-check:
+	@echo "🎨 Checking formatting (cargo fmt --check)..."
+	cargo fmt --check
+
+# Fails if release-cut docs contain MVP-completion / production-readiness claims that
+# exceed docs/SUPPORTED_SURFACE.adoc. The matched files in _archive/ and enterprise/
+# marketing copy are intentionally excluded; everything else must reconcile.
+docs-claim-check:
+	@echo "📝 Checking release-facing docs for stale MVP/production claims..."
+	@hits=$$(grep -rnE "96% complete|full cross-model query support|production[- ]ready MVP" docs/ \
+		--exclude-dir=_archive --exclude-dir=enterprise --exclude-dir=business 2>/dev/null | \
+		grep -v "Historical\|superseded\|Superseded\|MVP_RELEASE_READINESS"); \
+	if [ -n "$$hits" ]; then \
+		echo "❌ Release-facing docs still contain stale MVP/production claims:"; \
+		echo "$$hits"; \
+		echo ""; \
+		echo "Either remove the claim, or tag the file as historical/superseded."; \
+		exit 1; \
+	fi; \
+	echo "✅ No stale MVP/production claims in release-facing docs."
+	@echo "📝 Checking that internal marketing copy is not referenced from public docs (TD-085)..."
+	@xrefs=$$(grep -rnE "_internal/enterprise/|_internal/business/" docs/ \
+		--exclude-dir=_internal --exclude-dir=_archive \
+		--exclude=TECHNICAL_DEBT.adoc 2>/dev/null); \
+	if [ -n "$$xrefs" ]; then \
+		echo "❌ Public docs reference internal marketing copy:"; \
+		echo "$$xrefs"; \
+		echo ""; \
+		echo "Files under docs/_internal/enterprise/ and docs/_internal/business/"; \
+		echo "are sealed internal-only (TD-085). Move the referenced material out of"; \
+		echo "those directories, or remove the reference from the public doc."; \
+		echo "The Technical Debt Register is exempt from this rule (it tracks the work)."; \
+		exit 1; \
+	fi; \
+	echo "✅ No public-doc references to internal marketing copy."
+
+# Minimum smoke battery for the release cut. Each entry must be a non-ignored test
+# that exercises the canonical v2 record path or one of the diagnostic blocks
+# whose contract v0.2 commits to.
+release-smoke:
+	@echo "🚦 Running release-smoke tests..."
+	cargo test --lib route_health -- --test-threads=1
+	cargo test --lib query_optimizer -- --test-threads=1
+	cargo test --lib object_economy_directory -- --test-threads=1
+	cargo test --lib vector_hints_from_search_plan_hints_preserves_ann_reason -- --test-threads=1
+	cargo test --test graph_branch_merge_integration_test -- --test-threads=1
+	cargo test --test grpc_hybrid_integration_test -- --test-threads=1
+	cargo test --test release_smoke_v2 -- --test-threads=1 --nocapture
+	@echo "✅ release-smoke green"
 
 install: build-release
 	@echo "📦 Installing ProximaDB..."
@@ -186,7 +293,9 @@ help:
 	@echo "  fmt                - Format code"
 	@echo "  clippy             - Run linter"
 	@echo "  check              - Format + lint + test"
+	@echo "  hygiene-check      - Detect tracked backup/disabled/.victor artifacts"
 	@echo "  capability-matrix-check - Validate docs/_internal/roadmap/CAPABILITY_MATRIX.toml"
+	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
 	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
@@ -240,6 +349,16 @@ install-tdd-hooks:
 	@chmod +x .git/hooks/pre-commit.tdd
 	@cp .git/hooks/pre-commit.tdd .git/hooks/pre-commit
 	@echo "✓ TDD pre-commit hook installed"
+
+# Install layering validation pre-commit hook
+install-layering-hooks:
+	@echo "Installing workspace layering validation pre-commit hook..."
+	@chmod +x scripts/pre-commit-layering-hook.sh
+	@ln -sf ../../scripts/pre-commit-layering-hook.sh .git/hooks/pre-commit
+	@echo "✓ Layering validation pre-commit hook installed"
+	@echo ""
+	@echo "This hook will validate workspace layering before each commit."
+	@echo "Run './scripts/check-layering.sh' manually to check for violations."
 
 # Start TDD cycle for a new feature
 tdd-start:

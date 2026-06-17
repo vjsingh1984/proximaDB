@@ -157,9 +157,12 @@ impl ZeroOverheadVector {
     }
 }
 
+/// Backwards-compat alias for [`ZeroOverheadCollectionConfig`].
+pub type CollectionConfig = ZeroOverheadCollectionConfig;
+
 /// Configuration for a zero-overhead collection
 #[derive(Debug, Clone)]
-pub struct CollectionConfig {
+pub struct ZeroOverheadCollectionConfig {
     /// Number of dimensions in each vector
     pub dimension: usize,
     /// Whether vectors are stored in quantized form
@@ -181,7 +184,7 @@ pub enum QuantizationMethod {
     Binary,
 }
 
-impl CollectionConfig {
+impl ZeroOverheadCollectionConfig {
     /// Create config for FP32 collection
     pub fn fp32(dimension: usize) -> Self {
         Self {
@@ -225,12 +228,12 @@ pub struct ZeroOverheadCollection {
     id_index: DashMap<String, usize>,
 
     /// Shared configuration (would come from collection cache in practice)
-    config: Arc<CollectionConfig>,
+    config: Arc<ZeroOverheadCollectionConfig>,
 }
 
 impl ZeroOverheadCollection {
     /// Create new collection with configuration
-    pub fn new(config: CollectionConfig) -> Self {
+    pub fn new(config: ZeroOverheadCollectionConfig) -> Self {
         Self {
             vectors: Vec::new(),
             id_index: DashMap::new(),
@@ -239,7 +242,7 @@ impl ZeroOverheadCollection {
     }
 
     /// Create with pre-allocated capacity
-    pub fn with_capacity(config: CollectionConfig, capacity: usize) -> Self {
+    pub fn with_capacity(config: ZeroOverheadCollectionConfig, capacity: usize) -> Self {
         Self {
             vectors: Vec::with_capacity(capacity),
             id_index: DashMap::with_capacity(capacity),
@@ -355,7 +358,7 @@ impl ZeroOverheadCollection {
     }
 
     /// Get configuration
-    pub fn config(&self) -> &CollectionConfig {
+    pub fn config(&self) -> &ZeroOverheadCollectionConfig {
         &self.config
     }
 }
@@ -363,7 +366,7 @@ impl ZeroOverheadCollection {
 /// Zero-copy view of a vector with its configuration
 pub struct VectorView<'a> {
     vector: &'a ZeroOverheadVector,
-    config: &'a CollectionConfig,
+    config: &'a ZeroOverheadCollectionConfig,
 }
 
 impl<'a> VectorView<'a> {
@@ -406,7 +409,7 @@ mod tests {
 
     #[test]
     fn test_zero_overhead_fp32() {
-        let config = CollectionConfig::fp32(3);
+        let config = ZeroOverheadCollectionConfig::fp32(3);
         let mut collection = ZeroOverheadCollection::new(config);
 
         collection
@@ -429,7 +432,7 @@ mod tests {
 
     #[test]
     fn test_zero_overhead_quantized() {
-        let config = CollectionConfig::quantized(4, QuantizationMethod::INT8);
+        let config = ZeroOverheadCollectionConfig::quantized(4, QuantizationMethod::INT8);
         let mut collection = ZeroOverheadCollection::new(config);
 
         let quantized = vec![128, 255, 0, 64];
@@ -450,19 +453,20 @@ mod tests {
         // Demonstrate memory savings for 384-dimensional vectors
 
         // FP32: 384 * 4 = 1536 bytes for vector data
-        let fp32_config = CollectionConfig::fp32(384);
+        let fp32_config = ZeroOverheadCollectionConfig::fp32(384);
         assert_eq!(fp32_config.vector_size_bytes(), 1536);
 
         // INT8: 384 * 1 = 384 bytes (75% reduction)
-        let int8_config = CollectionConfig::quantized(384, QuantizationMethod::INT8);
+        let int8_config = ZeroOverheadCollectionConfig::quantized(384, QuantizationMethod::INT8);
         assert_eq!(int8_config.vector_size_bytes(), 384);
 
         // PQ4: 384 * 0.5 = 192 bytes (87.5% reduction)
-        let pq4_config = CollectionConfig::quantized(384, QuantizationMethod::PQ4);
+        let pq4_config = ZeroOverheadCollectionConfig::quantized(384, QuantizationMethod::PQ4);
         assert_eq!(pq4_config.vector_size_bytes(), 192);
 
         // Binary: 384 / 8 = 48 bytes (96.9% reduction)
-        let binary_config = CollectionConfig::quantized(384, QuantizationMethod::Binary);
+        let binary_config =
+            ZeroOverheadCollectionConfig::quantized(384, QuantizationMethod::Binary);
         assert_eq!(binary_config.vector_size_bytes(), 48);
     }
 }

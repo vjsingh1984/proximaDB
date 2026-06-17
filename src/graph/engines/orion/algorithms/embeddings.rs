@@ -24,8 +24,8 @@
 //! and the vector engine for embedding storage and similarity search.
 
 use super::traits::{AlgorithmComplexity, GraphAlgorithm, NoInput, ParallelAlgorithm};
-use crate::core::error::ProximaDBError;
 use crate::graph::engines::orion::OrionGraphEngine;
+use proximadb_kernel::error::ProximaDBError;
 use rand::Rng;
 use std::collections::HashMap;
 use std::sync::Arc;

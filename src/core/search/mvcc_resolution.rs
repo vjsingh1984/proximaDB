@@ -1,151 +1,124 @@
 //! MVCC (Multi-Version Concurrency Control) Resolution for ProximaDB
 //!
-//! Centralized logic for resolving vector versions according to MVCC rules:
-//! 1. Records with expires_at < current_time are considered deleted
-//! 2. Any record with non-empty ID and expires_at < current_time marks all versions deleted
-//! 3. Records with empty/null/blank/none ID are append-only (no versioning)
+//! Centralized logic for resolving record versions according to MVCC rules:
+//! 1. Records with valid_to_ns < current_time_ns are considered deleted (expired)
+//! 2. Any record with non-empty ID and an expired version marks all versions deleted
+//! 3. Records with empty OID are append-only (no versioning)
 //! 4. For records with same ID, highest version without gaps wins
-//! 5. Versions start from 1; None/null/empty version is treated as version 1
+//! 5. record_version == 0 is treated as version 1 (legacy compatibility)
 //! 6. For same version, earliest timestamp wins
 
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 use std::collections::HashMap;
 use tracing::debug;
 
-/// MVCC resolution result for a single record
-#[derive(Debug, Clone)]
-pub struct MvccResolutionResult {
-    /// Whether this record should be included in results
-    pub include: bool,
-    /// Reason for exclusion (if applicable)
-    pub exclusion_reason: Option<String>,
-    /// The resolved record (if included)
-    pub record: Option<VectorRecord>,
-}
-
-/// MVCC resolver for vector records
+/// MVCC resolver for ProximaRecord instances.
 pub struct MvccResolver {
-    /// Current timestamp for expiry checks
-    current_timestamp: u32,
+    /// Current timestamp in nanoseconds for expiry checks.
+    current_timestamp_ns: i64,
 }
 
 impl MvccResolver {
-    /// Create a new MVCC resolver
+    /// Create a new resolver using the system clock.
     pub fn new() -> Self {
+        let ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as i64;
         Self {
-            current_timestamp: chrono::Utc::now().timestamp() as u32,
+            current_timestamp_ns: ns,
         }
     }
 
-    /// Create with specific timestamp (for testing)
-    pub fn with_timestamp(timestamp: u32) -> Self {
+    /// Create with a specific nanosecond timestamp (for deterministic tests).
+    pub fn with_timestamp_ns(ns: i64) -> Self {
         Self {
-            current_timestamp: timestamp,
+            current_timestamp_ns: ns,
         }
     }
 
-    /// Resolve a batch of vector records according to MVCC rules
-    pub fn resolve_batch(&self, records: Vec<VectorRecord>) -> Vec<VectorRecord> {
-        // Separate records by ID presence
-        let mut id_groups: HashMap<String, Vec<VectorRecord>> = HashMap::new();
-        let mut append_only_records = Vec::new();
+    /// Backward-compat constructor — accepts seconds, converts to nanoseconds.
+    pub fn with_timestamp(seconds: u32) -> Self {
+        Self::with_timestamp_ns(seconds as i64 * 1_000_000_000)
+    }
+
+    // -----------------------------------------------------------------------
+    // ProximaRecord API (canonical)
+    // -----------------------------------------------------------------------
+
+    /// Resolve a batch of `ProximaRecord`s according to MVCC rules.
+    pub fn resolve_batch(&self, records: Vec<ProximaRecord>) -> Vec<ProximaRecord> {
+        let mut id_groups: HashMap<String, Vec<ProximaRecord>> = HashMap::new();
+        let mut append_only: Vec<ProximaRecord> = Vec::new();
 
         for record in records {
-            let id = &record.id;
-            if !id.is_empty() {
-                if id == "null" || id == "none" || id.trim().is_empty() {
-                    // Treat as append-only
-                    append_only_records.push(record);
-                } else {
-                    id_groups.entry(id.clone()).or_default().push(record);
-                }
+            let oid = &record.oid;
+            if oid.is_empty() || oid == "null" || oid == "none" || oid.trim().is_empty() {
+                append_only.push(record);
             } else {
-                // No ID = append-only
-                append_only_records.push(record);
+                id_groups.entry(oid.clone()).or_default().push(record);
             }
         }
 
         let mut resolved = Vec::new();
 
-        // Process each ID group
         for (id, mut versions) in id_groups {
-            // Check if any version is expired (marks all versions as deleted)
-            let has_expired = versions.iter().any(|r| self.is_expired(r));
-
-            if has_expired {
-                debug!(
-                    "MVCC: All versions of ID '{}' are deleted due to expiry",
-                    id
-                );
-                continue; // Skip this ID entirely
+            // Any expired version marks the entire ID as deleted
+            if versions.iter().any(|r| self.is_expired(r)) {
+                debug!("MVCC: all versions of '{}' deleted due to expiry", id);
+                continue;
             }
 
-            // Sort by version, then timestamp
+            // Sort ascending by (effective_version, created_at_ns)
             versions.sort_by(|a, b| {
-                let ver_a = a.version.unwrap_or(1);
-                let ver_b = b.version.unwrap_or(1);
-
-                ver_a.cmp(&ver_b).then_with(|| {
-                    // For same version, earliest timestamp wins
-                    a.timestamp.cmp(&b.timestamp)
-                })
+                effective_version(a)
+                    .cmp(&effective_version(b))
+                    .then_with(|| a.created_at_ns.cmp(&b.created_at_ns))
             });
 
-            // Validate version continuity and find the latest valid version
-            // Version sequences must start at 0 or 1, otherwise it's a gap from start
-            let starting_version = if let Some(first_record) = versions.first() {
-                first_record.version.unwrap_or(1)
-            } else {
-                1
-            };
-
-            // Check if there's a gap from the beginning (must start with 0 or 1)
-            if starting_version > 1 {
+            // Require the sequence to start at 0 or 1. `versions.first()` is
+            // safe to unwrap because the Vec was built via
+            // `id_groups.entry(oid).or_default().push(record)`, so every
+            // entry in `id_groups` has at least one record by construction.
+            #[allow(clippy::unwrap_used)]
+            let start = effective_version(versions.first().unwrap());
+            if start > 1 {
                 debug!(
-                    "MVCC: Version gap from start for ID '{}': starts with version {} instead of 0 or 1",
-                    id, starting_version
+                    "MVCC: version gap from start for '{}': starts at {}",
+                    id, start
                 );
-                continue; // Skip this ID entirely
+                continue;
             }
 
-            let mut expected_version = starting_version;
-            let mut last_valid: Option<VectorRecord> = None;
+            let mut expected = start;
+            let mut last_valid: Option<ProximaRecord> = None;
 
             for record in versions {
-                let version = record.version.unwrap_or(1);
-
-                if version == expected_version {
-                    // This version is continuous
+                let ver = effective_version(&record);
+                if ver == expected {
                     last_valid = Some(record);
-                    expected_version += 1;
-                } else if version > expected_version {
-                    // Version gap detected - stop processing this ID
+                    expected += 1;
+                } else if ver > expected {
                     debug!(
-                        "MVCC: Version gap detected for ID '{}': expected {}, found {}",
-                        id, expected_version, version
+                        "MVCC: version gap for '{}': expected {}, found {}",
+                        id, expected, ver
                     );
                     break;
-                } else {
-                    // Version < expected_version, this is an older version, skip it
-                    debug!(
-                        "MVCC: Skipping older version {} for ID '{}' (expected {})",
-                        version, id, expected_version
-                    );
                 }
+                // ver < expected → older duplicate; skip
             }
 
             if let Some(record) = last_valid {
                 debug!(
-                    "MVCC: Selected version {} for ID '{}'",
-                    record.version.unwrap_or(0),
+                    "MVCC: selected version {} for '{}'",
+                    effective_version(&record),
                     id
                 );
                 resolved.push(record);
             }
         }
 
-        // Add all append-only records (also check for expiry)
-        for record in append_only_records {
+        for record in append_only {
             if !self.is_expired(&record) {
                 resolved.push(record);
             }
@@ -154,44 +127,45 @@ impl MvccResolver {
         resolved
     }
 
-    /// Check if a record is expired
-    pub fn is_expired(&self, record: &VectorRecord) -> bool {
-        if let Some(expires_at) = record.expires_at {
-            expires_at < self.current_timestamp as i64
-        } else {
-            false
-        }
+    /// Return `true` if the record's TTL has elapsed.
+    pub fn is_expired(&self, record: &ProximaRecord) -> bool {
+        record
+            .valid_to_ns
+            .is_some_and(|vt| vt < self.current_timestamp_ns)
     }
 
-    /// Compare two records for the same ID and determine which should win
-    /// Returns true if record1 should win, false if record2 should win
-    pub fn compare_records(&self, record1: &VectorRecord, record2: &VectorRecord) -> bool {
-        // Check expiry first
-        let r1_expired = self.is_expired(record1);
-        let r2_expired = self.is_expired(record2);
+    /// Return `true` if `r1` should win over `r2` (for same-ID tie-breaking).
+    ///
+    /// Priority: non-expired > higher version > earlier timestamp.
+    pub fn compare_records(&self, r1: &ProximaRecord, r2: &ProximaRecord) -> bool {
+        let e1 = self.is_expired(r1);
+        let e2 = self.is_expired(r2);
 
-        if r1_expired && !r2_expired {
-            return false; // r2 wins
-        }
-        if !r1_expired && r2_expired {
-            return true; // r1 wins
-        }
-        if r1_expired && r2_expired {
-            return false; // Both expired, doesn't matter
+        match (e1, e2) {
+            (true, false) => return false,
+            (false, true) => return true,
+            _ => {}
         }
 
-        // Compare versions - treat None as version 1
-        let v1 = record1.version.unwrap_or(1);
-        let v2 = record2.version.unwrap_or(1);
+        let v1 = effective_version(r1);
+        let v2 = effective_version(r2);
 
-        if v1 > v2 {
-            true
-        } else if v1 < v2 {
-            false
-        } else {
-            // Same version - earliest timestamp wins
-            record1.timestamp <= record2.timestamp
+        if v1 != v2 {
+            return v1 > v2;
         }
+
+        // Same version — earliest creation timestamp wins
+        r1.created_at_ns <= r2.created_at_ns
+    }
+}
+
+/// Treat `record_version == 0` as version 1 for historical stored records.
+#[inline]
+fn effective_version(r: &ProximaRecord) -> u64 {
+    if r.record_version == 0 {
+        1
+    } else {
+        r.record_version
     }
 }
 
@@ -204,41 +178,64 @@ impl Default for MvccResolver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::{EmbeddingCell, LabelSet, ProximaTree};
 
     fn create_record(
-        id: Option<String>,
-        version: Option<u32>,
-        timestamp: u32,
-        expires_at: Option<u32>,
-    ) -> VectorRecord {
-        // Use empty string to represent append-only semantics when id is None
-        crate::proto::proximadb_v1::VectorRecord {
-            id: id.unwrap_or_default(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(timestamp as i64),
-            updated_at: Some(timestamp as i64),
-            expires_at: expires_at.map(|t| t as i64),
-            version,
-            source: None,
+        id: Option<&str>,
+        version: u64,
+        created_at_s: i64,
+        valid_to_s: Option<i64>,
+    ) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.unwrap_or("").to_string(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: version,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns: created_at_s * 1_000_000_000,
+            updated_at_ns: created_at_s * 1_000_000_000,
+            valid_from_ns: None,
+            valid_to_ns: valid_to_s.map(|s| s * 1_000_000_000),
+            origin: None,
+            actor: None,
+            method: None,
+            memory_type: None,
+            props: ProximaTree::new(),
+            refs: Vec::new(),
+            edge: None,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
+                dim: 3,
+                ..Default::default()
+            }],
+            sequence: None,
+            labels: LabelSet::new(),
+            ..Default::default()
         }
     }
 
     #[test]
     fn test_version_continuity() {
+        // current time = 1000 s
         let resolver = MvccResolver::with_timestamp(1000);
 
         let records = vec![
-            create_record(Some("v1".to_string()), Some(1), 100, None),
-            create_record(Some("v1".to_string()), Some(3), 300, None), // Gap!
-            create_record(Some("v1".to_string()), Some(2), 200, None),
+            create_record(Some("v1"), 1, 100, None),
+            create_record(Some("v1"), 3, 300, None), // Gap!
+            create_record(Some("v1"), 2, 200, None),
         ];
 
         let resolved = resolver.resolve_batch(records);
 
-        // Should only include version 3 (highest in continuous sequence 1,2,3)
+        // Continuous sequence 1→2→3, highest wins
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].version, Some(3));
+        assert_eq!(resolved[0].record_version, 3);
     }
 
     #[test]
@@ -246,15 +243,13 @@ mod tests {
         let resolver = MvccResolver::with_timestamp(1000);
 
         let records = vec![
-            create_record(Some("v1".to_string()), Some(1), 100, None),
-            create_record(Some("v1".to_string()), Some(2), 200, Some(500)), // Expired!
-            create_record(Some("v1".to_string()), Some(3), 300, None),
+            create_record(Some("v1"), 1, 100, None),
+            create_record(Some("v1"), 2, 200, Some(500)), // expires at 500 s
+            create_record(Some("v1"), 3, 300, None),
         ];
 
         let resolved = resolver.resolve_batch(records);
-
-        // All versions should be excluded due to one expired version
-        assert_eq!(resolved.len(), 0);
+        assert_eq!(resolved.len(), 0); // All excluded due to one expired version
     }
 
     #[test]
@@ -262,15 +257,13 @@ mod tests {
         let resolver = MvccResolver::with_timestamp(1000);
 
         let records = vec![
-            create_record(None, None, 100, None),
-            create_record(Some("".to_string()), None, 200, None),
-            create_record(Some("null".to_string()), None, 300, None),
-            create_record(Some("  ".to_string()), None, 400, None),
+            create_record(None, 0, 100, None),
+            create_record(Some(""), 0, 200, None),
+            create_record(Some("null"), 0, 300, None),
+            create_record(Some("  "), 0, 400, None),
         ];
 
         let resolved = resolver.resolve_batch(records);
-
-        // All should be included as append-only
         assert_eq!(resolved.len(), 4);
     }
 
@@ -279,16 +272,14 @@ mod tests {
         let resolver = MvccResolver::with_timestamp(1000);
 
         let records = vec![
-            create_record(Some("v1".to_string()), Some(1), 200, None),
-            create_record(Some("v1".to_string()), Some(1), 100, None), // Earlier timestamp
-            create_record(Some("v1".to_string()), Some(1), 300, None),
+            create_record(Some("v1"), 1, 200, None),
+            create_record(Some("v1"), 1, 100, None), // Earlier wins
+            create_record(Some("v1"), 1, 300, None),
         ];
 
         let resolved = resolver.resolve_batch(records);
-
-        // Should pick the one with earliest timestamp
         assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].timestamp, Some(100));
+        assert_eq!(resolved[0].created_at_ns, 100 * 1_000_000_000);
     }
 
     #[test]
@@ -296,127 +287,43 @@ mod tests {
         let resolver = MvccResolver::with_timestamp(1000);
 
         let records = vec![
-            create_record(Some("id1".to_string()), Some(1), 100, None),
-            create_record(Some("id1".to_string()), Some(2), 200, None),
-            create_record(Some("id2".to_string()), Some(1), 150, None),
-            create_record(Some("id2".to_string()), Some(3), 350, None), // Gap at version 2
-            create_record(Some("id3".to_string()), Some(5), 500, None), // Gap from 1-4
+            create_record(Some("id1"), 1, 100, None),
+            create_record(Some("id1"), 2, 200, None),
+            create_record(Some("id2"), 1, 150, None),
+            create_record(Some("id2"), 3, 350, None), // Gap at version 2
+            create_record(Some("id3"), 5, 500, None), // Starts at 5 — gap from beginning
         ];
 
         let resolved = resolver.resolve_batch(records);
 
-        // Should have: id1 v2, id2 v1 (gap stops at v1), id3 none (gap from start)
+        // id1 v2, id2 v1 (gap stops it), id3 excluded
         assert_eq!(resolved.len(), 2);
 
-        let mut by_id: std::collections::HashMap<String, &VectorRecord> =
-            std::collections::HashMap::new();
-        for record in &resolved {
-            by_id.insert(record.id.clone(), record);
-        }
-        assert_eq!(by_id.get("id1").unwrap().version, Some(2));
-        assert_eq!(by_id.get("id2").unwrap().version, Some(1));
-        assert!(!by_id.contains_key("id3")); // Excluded due to gap
+        let by_id: HashMap<String, &ProximaRecord> =
+            resolved.iter().map(|r| (r.oid.clone(), r)).collect();
+        assert_eq!(by_id["id1"].record_version, 2);
+        assert_eq!(by_id["id2"].record_version, 1);
+        assert!(!by_id.contains_key("id3"));
     }
 
     #[test]
-    fn test_version_none_treated_as_one() {
+    fn test_version_zero_treated_as_one() {
         let resolver = MvccResolver::with_timestamp(1000);
 
         let records = vec![
-            create_record(Some("id1".to_string()), None, 100, None), // Should be treated as version 1
-            create_record(Some("id1".to_string()), Some(2), 200, None),
-            create_record(Some("id2".to_string()), None, 150, None), // Should be treated as version 1
-            create_record(Some("id2".to_string()), None, 120, None), // Duplicate version 1, earlier timestamp wins
+            create_record(Some("id1"), 0, 100, None), // treated as version 1
+            create_record(Some("id1"), 2, 200, None),
+            create_record(Some("id2"), 0, 150, None),
+            create_record(Some("id2"), 0, 120, None), // same effective v1, earlier wins
         ];
 
         let resolved = resolver.resolve_batch(records);
-
         assert_eq!(resolved.len(), 2);
 
-        let mut by_id: std::collections::HashMap<String, &VectorRecord> =
-            std::collections::HashMap::new();
-        for record in &resolved {
-            by_id.insert(record.id.clone(), record);
-        }
-        assert_eq!(by_id.get("id1").unwrap().version, Some(2));
-        assert_eq!(by_id.get("id2").unwrap().version, None); // Original None preserved
-        assert_eq!(by_id.get("id2").unwrap().timestamp, Some(120)); // Earlier timestamp wins
-    }
-
-    #[test]
-    fn test_continuous_vs_non_continuous_versions() {
-        let resolver = MvccResolver::with_timestamp(1000);
-
-        let records = vec![
-            // ID1: Continuous versions 1,2,3
-            create_record(Some("id1".to_string()), Some(1), 100, None),
-            create_record(Some("id1".to_string()), Some(2), 200, None),
-            create_record(Some("id1".to_string()), Some(3), 300, None),
-            // ID2: Gap at version 2 (1,3,4)
-            create_record(Some("id2".to_string()), Some(1), 110, None),
-            create_record(Some("id2".to_string()), Some(3), 330, None), // Gap!
-            create_record(Some("id2".to_string()), Some(4), 440, None),
-            // ID3: Starting with version 3 (gap from 1-2)
-            create_record(Some("id3".to_string()), Some(3), 330, None),
-            create_record(Some("id3".to_string()), Some(4), 440, None),
-        ];
-
-        let resolved = resolver.resolve_batch(records);
-
-        assert_eq!(resolved.len(), 2); // Only id1 and id2 should be included
-
-        let mut by_id: std::collections::HashMap<String, &VectorRecord> =
-            std::collections::HashMap::new();
-        for record in &resolved {
-            by_id.insert(record.id.clone(), record);
-        }
-        assert_eq!(by_id.get("id1").unwrap().version, Some(3)); // Continuous, gets highest
-        assert_eq!(by_id.get("id2").unwrap().version, Some(1)); // Gap at 2, stops at 1
-        assert!(!by_id.contains_key("id3")); // Gap from start, excluded
-    }
-
-    #[test]
-    fn test_mixed_append_only_and_versioned() {
-        let resolver = MvccResolver::with_timestamp(1000);
-
-        let records = vec![
-            // Append-only records (various ways to represent no ID)
-            create_record(None, None, 100, None),
-            create_record(Some("".to_string()), Some(5), 200, None), // Empty ID = append-only
-            create_record(Some("null".to_string()), Some(1), 300, None), // "null" = append-only
-            create_record(Some("  ".to_string()), None, 400, None),  // Blank = append-only
-            // Versioned records
-            create_record(Some("real_id".to_string()), Some(1), 150, None),
-            create_record(Some("real_id".to_string()), Some(2), 250, None),
-        ];
-
-        let resolved = resolver.resolve_batch(records);
-
-        // Should have 4 append-only + 1 versioned = 5 total
-        assert_eq!(resolved.len(), 5);
-
-        // Count by type
-        let mut append_only_count = 0;
-        let mut versioned_count = 0;
-
-        for record in &resolved {
-            let id = record.id.as_str();
-            if id.is_empty() || id.trim().is_empty() || id == "null" || id == "none" {
-                append_only_count += 1;
-            } else {
-                versioned_count += 1;
-            }
-        }
-
-        assert_eq!(append_only_count, 4);
-        assert_eq!(versioned_count, 1);
-
-        // Find the versioned record
-        let versioned_record = resolved
-            .iter()
-            .find(|r| r.id.as_str() == "real_id")
-            .unwrap();
-        assert_eq!(versioned_record.version, Some(2)); // Should get highest version
+        let by_id: HashMap<String, &ProximaRecord> =
+            resolved.iter().map(|r| (r.oid.clone(), r)).collect();
+        assert_eq!(by_id["id1"].record_version, 2);
+        assert_eq!(by_id["id2"].created_at_ns, 120 * 1_000_000_000);
     }
 
     #[test]
@@ -424,416 +331,43 @@ mod tests {
         let resolver = MvccResolver::with_timestamp(1000);
 
         let records = vec![
-            // ID1: Has one expired version - all should be deleted
-            create_record(Some("id1".to_string()), Some(1), 100, None),
-            create_record(Some("id1".to_string()), Some(2), 200, Some(500)), // Expired
-            create_record(Some("id1".to_string()), Some(3), 300, None),
-            // ID2: No expired versions - should be included
-            create_record(Some("id2".to_string()), Some(1), 110, None),
-            create_record(Some("id2".to_string()), Some(2), 210, None),
-            // ID3: Expired version is not the latest
-            create_record(Some("id3".to_string()), Some(1), 120, Some(800)), // Not expired
-            create_record(Some("id3".to_string()), Some(2), 220, Some(500)), // Expired
-            create_record(Some("id3".to_string()), Some(3), 320, None),
-            // Append-only records should not be affected by expiry rules
-            create_record(None, None, 130, Some(500)), // Expired append-only
+            create_record(Some("id1"), 1, 100, None),
+            create_record(Some("id1"), 2, 200, Some(500)), // expired → all id1 deleted
+            create_record(Some("id1"), 3, 300, None),
+            create_record(Some("id2"), 1, 110, None),
+            create_record(Some("id2"), 2, 210, None),
+            create_record(None, 0, 130, Some(500)), // expired append-only, excluded
         ];
 
         let resolved = resolver.resolve_batch(records);
-
-        // Should have: only id2 (no expired versions)
-        // id1 and id3 should be completely excluded due to expired versions
-        // append-only expired record should also be excluded
         assert_eq!(resolved.len(), 1);
 
-        let mut by_id: std::collections::HashMap<String, &VectorRecord> =
-            std::collections::HashMap::new();
-        for record in &resolved {
-            by_id.insert(record.id.clone(), record);
-        }
-
-        assert_eq!(by_id.len(), 1);
-        // Expired append-only is excluded
-        assert!(!by_id.contains_key(""));
+        let by_id: HashMap<String, &ProximaRecord> =
+            resolved.iter().map(|r| (r.oid.clone(), r)).collect();
         assert!(by_id.contains_key("id2"));
-        assert_eq!(by_id.get("id2").unwrap().version, Some(2));
+        assert_eq!(by_id["id2"].record_version, 2);
     }
 
     #[test]
     fn test_compare_records_function() {
         let resolver = MvccResolver::with_timestamp(1000);
 
-        // Test version comparison
-        let record_v1 = create_record(Some("id".to_string()), Some(1), 100, None);
-        let record_v2 = create_record(Some("id".to_string()), Some(2), 200, None);
+        let v1 = create_record(Some("id"), 1, 100, None);
+        let v2 = create_record(Some("id"), 2, 200, None);
 
-        assert!(resolver.compare_records(&record_v2, &record_v1)); // v2 should win over v1
-        assert!(!resolver.compare_records(&record_v1, &record_v2)); // v1 should not win over v2
+        assert!(resolver.compare_records(&v2, &v1)); // v2 wins
+        assert!(!resolver.compare_records(&v1, &v2)); // v1 loses
 
-        // Test timestamp comparison for same version
-        let record_early = create_record(Some("id".to_string()), Some(1), 100, None);
-        let record_late = create_record(Some("id".to_string()), Some(1), 200, None);
+        let early = create_record(Some("id"), 1, 100, None);
+        let late = create_record(Some("id"), 1, 200, None);
 
-        assert!(resolver.compare_records(&record_early, &record_late)); // Earlier timestamp wins
-        assert!(!resolver.compare_records(&record_late, &record_early)); // Later timestamp loses
+        assert!(resolver.compare_records(&early, &late)); // earlier ts wins
+        assert!(!resolver.compare_records(&late, &early));
 
-        // Test expiry handling
-        let record_expired = create_record(Some("id".to_string()), Some(2), 100, Some(500)); // Expired
-        let record_valid = create_record(Some("id".to_string()), Some(1), 200, None);
+        let expired = create_record(Some("id"), 2, 100, Some(500));
+        let valid = create_record(Some("id"), 1, 200, None);
 
-        assert!(resolver.compare_records(&record_valid, &record_expired)); // Valid should win over expired
-        assert!(!resolver.compare_records(&record_expired, &record_valid)); // Expired should not win over valid
-
-        // Test None version treated as 1
-        let record_none_version = create_record(Some("id".to_string()), None, 100, None);
-        let record_v1_explicit = create_record(Some("id".to_string()), Some(1), 200, None);
-
-        assert!(resolver.compare_records(&record_none_version, &record_v1_explicit)); // Earlier timestamp wins for same version
-        assert!(!resolver.compare_records(&record_v1_explicit, &record_none_version)); // Later timestamp loses
-    }
-
-    #[test]
-    fn test_edge_case_zero_version() {
-        let resolver = MvccResolver::with_timestamp(1000);
-
-        let records = vec![
-            create_record(Some("id1".to_string()), Some(0), 100, None), // Version 0 should still work
-            create_record(Some("id1".to_string()), Some(1), 200, None),
-        ];
-
-        let resolved = resolver.resolve_batch(records);
-
-        // Version 0 is valid, should get version 1 as next continuous version
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].version, Some(1));
-    }
-
-    #[test]
-    fn test_large_version_numbers() {
-        let resolver = MvccResolver::with_timestamp(1000);
-
-        let records = vec![
-            create_record(Some("id1".to_string()), Some(1), 100, None),
-            create_record(Some("id1".to_string()), Some(2), 200, None),
-            create_record(Some("id1".to_string()), Some(u32::MAX), 300, None), // Very large version gap
-        ];
-
-        let resolved = resolver.resolve_batch(records);
-
-        // Should stop at version 2 due to gap to MAX
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(resolved[0].version, Some(2));
-    }
-
-    #[test]
-    fn test_empty_batch() {
-        let resolver = MvccResolver::with_timestamp(1000);
-        let records: Vec<VectorRecord> = vec![];
-
-        let resolved = resolver.resolve_batch(records);
-        assert_eq!(resolved.len(), 0);
-    }
-
-    #[test]
-    fn test_all_records_expired() {
-        let resolver = MvccResolver::with_timestamp(1000);
-
-        let records = vec![
-            create_record(Some("id1".to_string()), Some(1), 100, Some(500)), // Expired
-            create_record(Some("id2".to_string()), Some(1), 200, Some(600)), // Expired
-            create_record(None, None, 300, Some(700)),                       // Expired append-only
-        ];
-
-        let resolved = resolver.resolve_batch(records);
-
-        // All records should be excluded due to expiry
-        assert_eq!(resolved.len(), 0);
-    }
-
-    // ========================================================================
-    // Tests inlined from tests/unit/storage/mvcc_resolution_tests.rs
-    // ========================================================================
-
-    use crate::proto::proximadb_v1::SearchVectorRecord;
-
-    /// Test helper to create a SearchVectorRecord with specific ID, version, and timestamp
-    fn create_search_result(
-        id: &str,
-        version: u32,
-        timestamp: u32,
-        score: f32,
-    ) -> SearchVectorRecord {
-        SearchVectorRecord {
-            id: id.to_string(),
-            score: score as f64,
-            vector: vec![0.1; 128],
-            metadata: std::collections::HashMap::new(),
-            version: Some(version),
-            similarity: Some(score),
-            timestamp: Some(timestamp as i64),
-            source: None,
-            expanded_context: vec![],
-            semantic_similarity: None,
-            quantization_info: None,
-            engine_stats: std::collections::HashMap::new(),
-            index_path: None,
-        }
-    }
-
-    /// MVCC deduplication logic (extracted from standalone test)
-    fn apply_mvcc_logic(results: Vec<SearchVectorRecord>) -> Vec<SearchVectorRecord> {
-        use std::collections::HashMap;
-
-        let mut id_groups: HashMap<String, Vec<SearchVectorRecord>> = HashMap::new();
-        let mut results_without_id = Vec::new();
-
-        for result in results {
-            if result.id.is_empty() {
-                results_without_id.push(result);
-            } else {
-                id_groups
-                    .entry(result.id.clone())
-                    .or_insert_with(Vec::new)
-                    .push(result);
-            }
-        }
-
-        let mut deduplicated = Vec::new();
-
-        for (_id, mut versions) in id_groups {
-            versions.sort_by(|a, b| {
-                let version_a = a.version.unwrap_or(1) as u32;
-                let version_b = b.version.unwrap_or(1) as u32;
-
-                version_a.cmp(&version_b).then_with(|| {
-                    let ts_a = a.timestamp.unwrap_or(i64::MAX) as u32;
-                    let ts_b = b.timestamp.unwrap_or(i64::MAX) as u32;
-                    ts_a.cmp(&ts_b)
-                })
-            });
-
-            let mut expected_version = 1;
-            let mut last_valid: Option<SearchVectorRecord> = None;
-
-            for result in versions {
-                let version = result.version.unwrap_or(1) as u32;
-
-                if version == expected_version {
-                    if let Some(ref existing) = last_valid {
-                        if existing.version.unwrap_or(1) == result.version.unwrap_or(1) {
-                            let existing_ts = existing.timestamp.unwrap_or(i64::MAX) as u32;
-                            let current_ts = result.timestamp.unwrap_or(i64::MAX) as u32;
-                            if current_ts < existing_ts {
-                                last_valid = Some(result);
-                            }
-                            continue;
-                        }
-                    }
-                    last_valid = Some(result);
-                    expected_version += 1;
-                } else if version > expected_version {
-                    break;
-                }
-            }
-
-            if let Some(result) = last_valid {
-                deduplicated.push(result);
-            }
-        }
-
-        deduplicated.extend(results_without_id);
-        deduplicated.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        deduplicated
-    }
-
-    /// Helper to check if versions are continuous starting from 1
-    fn is_version_continuous(versions: &[u32]) -> bool {
-        if versions.is_empty() {
-            return true;
-        }
-
-        let mut sorted = versions.to_vec();
-        sorted.sort();
-
-        if sorted[0] != 1 {
-            return false;
-        }
-
-        for i in 1..sorted.len() {
-            if sorted[i] != sorted[i - 1] + 1 {
-                return false;
-            }
-        }
-
-        true
-    }
-
-    #[test]
-    fn test_apply_mvcc_deduplication() {
-        // Test case 1: Normal version progression
-        let results = vec![
-            create_search_result("doc1", 1, 100, 0.9),
-            create_search_result("doc1", 2, 200, 0.8),
-            create_search_result("doc1", 3, 300, 0.7),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 1);
-        assert_eq!(deduplicated[0].id, "doc1");
-        assert_eq!(deduplicated[0].version, Some(3));
-
-        // Test case 2: Version gap
-        let results = vec![
-            create_search_result("doc2", 1, 100, 0.9),
-            create_search_result("doc2", 2, 200, 0.8),
-            create_search_result("doc2", 4, 400, 0.6),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 1);
-        assert_eq!(deduplicated[0].id, "doc2");
-        assert_eq!(deduplicated[0].version, Some(2));
-
-        // Test case 3: Duplicate versions (earliest timestamp wins)
-        let results = vec![
-            create_search_result("doc3", 1, 300, 0.7),
-            create_search_result("doc3", 1, 100, 0.9),
-            create_search_result("doc3", 1, 200, 0.8),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 1);
-        assert_eq!(deduplicated[0].id, "doc3");
-        assert_eq!(deduplicated[0].version, Some(1));
-        assert_eq!(deduplicated[0].timestamp, Some(100));
-
-        // Test case 4: Multiple documents
-        let results = vec![
-            create_search_result("doc4", 1, 100, 0.95),
-            create_search_result("doc4", 2, 200, 0.94),
-            create_search_result("doc5", 1, 150, 0.85),
-            create_search_result("doc5", 2, 250, 0.84),
-            create_search_result("doc5", 3, 350, 0.83),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 2);
-        let doc4 = deduplicated.iter().find(|r| r.id == "doc4").unwrap();
-        assert_eq!(doc4.version, Some(2));
-        let doc5 = deduplicated.iter().find(|r| r.id == "doc5").unwrap();
-        assert_eq!(doc5.version, Some(3));
-
-        // Test case 5: Append-only vectors (no ID)
-        let results = vec![
-            create_search_result("", 1, 100, 0.9),
-            create_search_result("", 1, 200, 0.8),
-            create_search_result("", 1, 300, 0.7),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 3);
-    }
-
-    #[test]
-    fn test_version_continuity_validation() {
-        let continuous = vec![1, 2, 3, 4, 5];
-        assert!(is_version_continuous(&continuous));
-
-        let with_gap = vec![1, 2, 4, 5];
-        assert!(!is_version_continuous(&with_gap));
-
-        let single = vec![1];
-        assert!(is_version_continuous(&single));
-
-        let empty: Vec<u32> = vec![];
-        assert!(is_version_continuous(&empty));
-
-        let non_one_start = vec![2, 3, 4];
-        assert!(!is_version_continuous(&non_one_start));
-    }
-
-    #[test]
-    fn test_mvcc_edge_cases_standalone() {
-        let mut result = create_search_result("doc1", 1, 100, 0.9);
-        result.version = None;
-        let results = vec![result];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 1);
-        assert_eq!(deduplicated[0].version, None);
-
-        let mut result = create_search_result("doc2", 1, 100, 0.9);
-        result.timestamp = None;
-        let results = vec![result, create_search_result("doc2", 1, 200, 0.8)];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 1);
-        assert_eq!(deduplicated[0].timestamp, Some(200));
-
-        let results = vec![
-            create_search_result("doc3", 1, 100, 0.95),
-            create_search_result("doc3", 2, 200, 0.94),
-            create_search_result("", 1, 150, 0.85),
-            create_search_result("", 1, 250, 0.84),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 3);
-        let with_id = deduplicated.iter().filter(|r| !r.id.is_empty()).count();
-        let without_id = deduplicated.iter().filter(|r| r.id.is_empty()).count();
-        assert_eq!(with_id, 1);
-        assert_eq!(without_id, 2);
-    }
-
-    #[test]
-    fn test_mvcc_result_sorting() {
-        let results = vec![
-            create_search_result("doc1", 1, 100, 0.5),
-            create_search_result("doc2", 1, 100, 0.9),
-            create_search_result("doc3", 1, 100, 0.7),
-            create_search_result("doc4", 1, 100, 0.3),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 4);
-        assert!(
-            (deduplicated[0].score - 0.9).abs() < 1e-6,
-            "Expected ~0.9, got {}",
-            deduplicated[0].score
-        );
-        assert!(
-            (deduplicated[1].score - 0.7).abs() < 1e-6,
-            "Expected ~0.7, got {}",
-            deduplicated[1].score
-        );
-        assert!(
-            (deduplicated[2].score - 0.5).abs() < 1e-6,
-            "Expected ~0.5, got {}",
-            deduplicated[2].score
-        );
-        assert!(
-            (deduplicated[3].score - 0.3).abs() < 1e-6,
-            "Expected ~0.3, got {}",
-            deduplicated[3].score
-        );
-    }
-
-    #[test]
-    fn test_mvcc_complex_scenario() {
-        let results = vec![
-            create_search_result("docA", 1, 100, 0.9),
-            create_search_result("docA", 2, 200, 0.9),
-            create_search_result("docA", 3, 300, 0.9),
-            create_search_result("docB", 1, 100, 0.8),
-            create_search_result("docB", 2, 200, 0.8),
-            create_search_result("docB", 4, 400, 0.8),
-            create_search_result("docC", 1, 300, 0.7),
-            create_search_result("docC", 1, 100, 0.7),
-            create_search_result("docC", 1, 200, 0.7),
-            create_search_result("docC", 2, 400, 0.7),
-            create_search_result("", 1, 500, 0.6),
-            create_search_result("", 1, 600, 0.5),
-        ];
-        let deduplicated = apply_mvcc_logic(results);
-        assert_eq!(deduplicated.len(), 5);
-        let doc_a = deduplicated.iter().find(|r| r.id == "docA").unwrap();
-        assert_eq!(doc_a.version, Some(3));
-        let doc_b = deduplicated.iter().find(|r| r.id == "docB").unwrap();
-        assert_eq!(doc_b.version, Some(2));
-        let doc_c = deduplicated.iter().find(|r| r.id == "docC").unwrap();
-        assert_eq!(doc_c.version, Some(2));
-        let no_id_count = deduplicated.iter().filter(|r| r.id.is_empty()).count();
-        assert_eq!(no_id_count, 2);
+        assert!(resolver.compare_records(&valid, &expired));
+        assert!(!resolver.compare_records(&expired, &valid));
     }
 }

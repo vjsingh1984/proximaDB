@@ -8,7 +8,6 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::{ColumnarConfig, ColumnarFileMetadata};
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 
 /// Utility functions for columnar storage operations
@@ -16,16 +15,12 @@ pub struct ColumnarUtilities {
     /// Filesystem factory for storage operations
     filesystem: Arc<FilesystemFactory>,
 
-    /// Hardware capabilities
-    #[allow(dead_code)]
-    hardware: Arc<HardwareCapabilities>,
-
     /// Configuration
     #[allow(dead_code)]
     config: ColumnarConfig,
 
     /// Performance metrics cache
-    metrics_cache: Arc<RwLock<HashMap<String, PerformanceMetrics>>>,
+    metrics_cache: Arc<RwLock<HashMap<String, ColumnarUtilsPerformanceMetrics>>>,
 }
 
 /// Recommend a Parquet page size given row group sizing and vector characteristics.
@@ -58,12 +53,11 @@ impl ColumnarUtilities {
     /// Create new columnar utilities
     pub fn new(
         filesystem: Arc<FilesystemFactory>,
-        hardware: Arc<HardwareCapabilities>,
+        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         config: ColumnarConfig,
     ) -> Self {
         Self {
             filesystem,
-            hardware,
             config,
             metrics_cache: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -102,7 +96,7 @@ impl ColumnarUtilities {
         // Check for undersized row groups
         for stats in &file_stats {
             if stats.avg_row_group_size < optimal_row_group_size / 2 {
-                recommendations.push(OptimizationRecommendation {
+                recommendations.push(ColumnarUtilsOptimizationRecommendation {
                     file_path: stats.file_path.clone(),
                     issue: "Undersized row groups".to_string(),
                     action: format!(
@@ -118,7 +112,7 @@ impl ColumnarUtilities {
         // Check for oversized files
         for stats in &file_stats {
             if stats.total_vectors > optimal_row_group_size * 20 {
-                recommendations.push(OptimizationRecommendation {
+                recommendations.push(ColumnarUtilsOptimizationRecommendation {
                     file_path: stats.file_path.clone(),
                     issue: "Oversized file".to_string(),
                     action: format!(
@@ -173,11 +167,8 @@ impl ColumnarUtilities {
         total_vectors: usize,
         total_size_bytes: usize,
     ) -> usize {
-        let avg_vector_size = if total_vectors > 0 {
-            total_size_bytes / total_vectors
-        } else {
-            3072 // Assume 768-dim float32 vector
-        };
+        // Fallback assumes a 768-dim fp32 vector when no live samples exist.
+        let avg_vector_size = total_size_bytes.checked_div(total_vectors).unwrap_or(3072);
 
         // Target 128MB row groups for optimal Parquet performance
         const TARGET_ROW_GROUP_SIZE_BYTES: usize = 128 * 1024 * 1024;
@@ -230,7 +221,7 @@ impl ColumnarUtilities {
             .iter()
             .map(|(col, count)| (col.clone(), *count))
             .collect();
-        hot_columns.sort_by(|a, b| b.1.cmp(&a.1));
+        hot_columns.sort_by_key(|c| std::cmp::Reverse(c.1));
         hot_columns.truncate(10); // Top 10 hot columns
 
         // Identify frequently used filters
@@ -238,7 +229,7 @@ impl ColumnarUtilities {
             .iter()
             .map(|(filter, count)| (filter.clone(), *count))
             .collect();
-        popular_filters.sort_by(|a, b| b.1.cmp(&a.1));
+        popular_filters.sort_by_key(|p| std::cmp::Reverse(p.1));
         popular_filters.truncate(10); // Top 10 filters
 
         // Identify hot row groups
@@ -246,7 +237,7 @@ impl ColumnarUtilities {
             .iter()
             .map(|(rg_id, count)| (*rg_id, *count))
             .collect();
-        hot_row_groups.sort_by(|a, b| b.1.cmp(&a.1));
+        hot_row_groups.sort_by_key(|h| std::cmp::Reverse(h.1));
         hot_row_groups.truncate(20); // Top 20 hot row groups
 
         Ok(QueryPatternAnalysis {
@@ -264,7 +255,7 @@ impl ColumnarUtilities {
     pub async fn recommend_compression(
         &self,
         file_metadata: &[ColumnarFileMetadata],
-    ) -> Result<CompressionRecommendation> {
+    ) -> Result<ColumnarUtilsCompressionRecommendation> {
         info!("Analyzing compression for {} files", file_metadata.len());
 
         let mut total_uncompressed = 0;
@@ -326,7 +317,7 @@ impl ColumnarUtilities {
             ));
         }
 
-        Ok(CompressionRecommendation {
+        Ok(ColumnarUtilsCompressionRecommendation {
             overall_compression_ratio: overall_ratio,
             total_uncompressed_bytes: total_uncompressed,
             total_compressed_bytes: total_compressed,
@@ -410,11 +401,11 @@ impl ColumnarUtilities {
     pub async fn record_operation_metrics(
         &self,
         operation: &str,
-        metrics: OperationMetrics,
+        metrics: ColumnarUtilsOperationMetrics,
     ) -> Result<()> {
         debug!("Recording metrics for operation: {}", operation);
 
-        let perf_metrics = PerformanceMetrics {
+        let perf_metrics = ColumnarUtilsPerformanceMetrics {
             operation: operation.to_string(),
             duration_ms: metrics.duration_ms,
             bytes_processed: metrics.bytes_processed,
@@ -442,7 +433,7 @@ impl ColumnarUtilities {
     pub async fn get_performance_stats(
         &self,
         operation: Option<&str>,
-    ) -> Result<Vec<PerformanceMetrics>> {
+    ) -> Result<Vec<ColumnarUtilsPerformanceMetrics>> {
         let cache = self.metrics_cache.read().await;
 
         if let Some(op) = operation {
@@ -473,7 +464,7 @@ pub struct FileLayoutOptimization {
     pub current_total_size_bytes: usize,
     pub optimal_row_group_size: usize,
     pub current_avg_row_group_size: usize,
-    pub recommendations: Vec<OptimizationRecommendation>,
+    pub recommendations: Vec<ColumnarUtilsOptimizationRecommendation>,
     pub file_statistics: Vec<FileStatistics>,
 }
 
@@ -489,9 +480,12 @@ pub struct FileStatistics {
     pub has_quantization: bool,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsOptimizationRecommendation`].
+pub type OptimizationRecommendation = ColumnarUtilsOptimizationRecommendation;
+
 /// Optimization recommendation
 #[derive(Debug)]
-pub struct OptimizationRecommendation {
+pub struct ColumnarUtilsOptimizationRecommendation {
     pub file_path: String,
     pub issue: String,
     pub action: String,
@@ -527,9 +521,12 @@ pub struct QueryPatternAnalysis {
     pub avg_row_groups_per_query: f64,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsCompressionRecommendation`].
+pub type CompressionRecommendation = ColumnarUtilsCompressionRecommendation;
+
 /// Compression recommendation
 #[derive(Debug)]
-pub struct CompressionRecommendation {
+pub struct ColumnarUtilsCompressionRecommendation {
     pub overall_compression_ratio: f64,
     pub total_uncompressed_bytes: u64,
     pub total_compressed_bytes: u64,
@@ -567,9 +564,12 @@ pub struct FileCorruption {
     pub error: String,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsOperationMetrics`].
+pub type OperationMetrics = ColumnarUtilsOperationMetrics;
+
 /// Operation metrics for recording
 #[derive(Debug)]
-pub struct OperationMetrics {
+pub struct ColumnarUtilsOperationMetrics {
     pub duration_ms: f64,
     pub bytes_processed: u64,
     pub vectors_processed: usize,
@@ -577,9 +577,12 @@ pub struct OperationMetrics {
     pub memory_usage_bytes: u64,
 }
 
+/// Backwards-compat alias for [`ColumnarUtilsPerformanceMetrics`].
+pub type PerformanceMetrics = ColumnarUtilsPerformanceMetrics;
+
 /// Performance metrics
 #[derive(Debug, Clone)]
-pub struct PerformanceMetrics {
+pub struct ColumnarUtilsPerformanceMetrics {
     pub operation: String,
     pub duration_ms: f64,
     pub bytes_processed: u64,
@@ -596,7 +599,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_columnar_utilities_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let filesystem = Arc::new(
             FilesystemFactory::create(FilesystemConfig::default())
@@ -609,7 +612,7 @@ mod tests {
         let utilities = ColumnarUtilities::new(filesystem, hardware, config);
 
         // Test metrics recording
-        let metrics = OperationMetrics {
+        let metrics = ColumnarUtilsOperationMetrics {
             duration_ms: 100.0,
             bytes_processed: 1024,
             vectors_processed: 10,
@@ -632,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_row_group_size_calculation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let filesystem = Arc::new(tokio::runtime::Runtime::new().unwrap().block_on(async {
             FilesystemFactory::create(FilesystemConfig::default())

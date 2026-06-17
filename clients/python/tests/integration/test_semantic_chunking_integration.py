@@ -3,7 +3,7 @@ Integration tests for enhanced semantic chunking with performance validation
 """
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -19,7 +19,6 @@ from proximadb_sdk.chunking import (
 
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
 # This test needs to be updated for the new architecture
-from proximadb_sdk.chunking_strategies import SemanticStrategy
 
 
 @pytest.mark.skip(
@@ -183,7 +182,7 @@ This guide covered the basics of using ProximaDB for vector operations. For more
         semantic_result = chunk_results["semantic_enhanced"]
         sliding_result = chunk_results["sliding_window"]
 
-        print(f"\nChunking Strategy Comparison:")
+        print("\nChunking Strategy Comparison:")
         for name, result in chunk_results.items():
             print(
                 f"{name}: {result['count']} chunks, avg length: {result['avg_length']:.0f}, coherence: {result['semantic_coherence']:.3f}"
@@ -262,7 +261,7 @@ French cuisine emphasizes technique and high-quality ingredients. Sauces are fun
         content_types = [chunk.metadata.get("content_type") for chunk in chunks]
         chunk_texts = [chunk.text[:100] + "..." for chunk in chunks]
 
-        print(f"\nTopic Boundary Detection Results:")
+        print("\nTopic Boundary Detection Results:")
         for i, (chunk, content_type) in enumerate(zip(chunk_texts, content_types)):
             print(f"Chunk {i+1} ({content_type}): {chunk}")
 
@@ -364,7 +363,7 @@ Each encounter taught her something valuable about life.
                 ),
             }
 
-        print(f"\nContent Type Analysis:")
+        print("\nContent Type Analysis:")
         for content_type, result in results.items():
             print(
                 f"{content_type}: {result['chunks']} chunks, coherence: {result['avg_coherence']:.3f}, has patterns: {result['has_patterns']}"
@@ -417,7 +416,7 @@ This is a comprehensive document designed to test caching performance.
         )
         time_cache_hit = time.time() - start_time
 
-        print(f"\nPerformance Comparison:")
+        print("\nPerformance Comparison:")
         print(f"No cache: {time_no_cache:.4f}s")
         print(f"Cache miss: {time_cache_miss:.4f}s")
         print(f"Cache hit: {time_cache_hit:.4f}s")
@@ -456,7 +455,7 @@ This is a comprehensive document designed to test caching performance.
         basic_metrics = self._calculate_chunk_metrics(basic_chunks)
         enhanced_metrics = self._calculate_chunk_metrics(enhanced_chunks)
 
-        print(f"\nChunk Quality Comparison:")
+        print("\nChunk Quality Comparison:")
         print(f"Basic chunks: {basic_metrics}")
         print(f"Enhanced chunks: {enhanced_metrics}")
 
@@ -479,7 +478,7 @@ This is a comprehensive document designed to test caching performance.
 
         assert enhanced_with_headers >= basic_with_headers
 
-    def _calculate_coherence_score(self, chunks: List[TextChunk]) -> float:
+    def _calculate_coherence_score(self, chunks: list[TextChunk]) -> float:
         """Calculate semantic coherence score for chunks"""
         if not chunks:
             return 0.0
@@ -510,7 +509,7 @@ This is a comprehensive document designed to test caching performance.
 
         return sum(coherence_scores) / len(coherence_scores)
 
-    def _calculate_chunk_metrics(self, chunks: List[TextChunk]) -> Dict[str, Any]:
+    def _calculate_chunk_metrics(self, chunks: list[TextChunk]) -> dict[str, Any]:
         """Calculate comprehensive chunk quality metrics"""
         if not chunks:
             return {
@@ -575,7 +574,7 @@ class TestSemanticChunkingPerformance:
         chars_per_second = len(large_doc) / duration
         chunks_per_second = len(chunks) / duration
 
-        print(f"\nLarge Document Performance:")
+        print("\nLarge Document Performance:")
         print(f"Document size: {len(large_doc):,} characters")
         print(f"Chunks created: {len(chunks)}")
         print(f"Processing time: {duration:.3f}s")
@@ -636,7 +635,7 @@ class TestSemanticChunkingPerformance:
             concurrent_results
         )
 
-        print(f"\nConcurrent Chunking Performance:")
+        print("\nConcurrent Chunking Performance:")
         print(f"Documents processed: {len(documents)}")
         print(f"Total chunks: {total_chunks}")
         print(f"Overall time: {overall_duration:.3f}s")

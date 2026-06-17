@@ -14,9 +14,10 @@ Licensed under the Apache License, Version 2.0
 """
 
 import logging
+from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, Iterator, List, Optional, Union
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -72,7 +73,6 @@ class FileInfo:
     @classmethod
     def from_flight_info(cls, info: "flight.FlightInfo") -> "FileInfo":
         """Parse FileInfo from Arrow Flight FlightInfo."""
-        import json
 
         # Parse metadata from FlightInfo
         metadata = {}
@@ -155,7 +155,7 @@ class ArrowExportClient:
         port: int = 5680,
         scheme: str = "grpc",
         tls: bool = False,
-        auth_token: Optional[str] = None,
+        auth_token: str | None = None,
     ):
         """
         Initialize Arrow Flight client.
@@ -184,7 +184,7 @@ class ArrowExportClient:
         self._uri = f"{scheme}://{host}:{port}"
 
         # Initialize connection (lazy)
-        self._client: Optional[flight.FlightClient] = None
+        self._client: flight.FlightClient | None = None
 
     @property
     def client(self) -> "flight.FlightClient":
@@ -218,9 +218,9 @@ class ArrowExportClient:
     def list_files(
         self,
         collection_id: str,
-        pattern: Optional[str] = None,
-        format_filter: Optional[FileFormat] = None,
-    ) -> List[FileInfo]:
+        pattern: str | None = None,
+        format_filter: FileFormat | None = None,
+    ) -> list[FileInfo]:
         """
         List available files in a collection.
 
@@ -323,7 +323,7 @@ class ArrowExportClient:
     def read_batches(
         self,
         path: str,
-        batch_size: Optional[int] = None,
+        batch_size: int | None = None,
     ) -> Iterator["pa.RecordBatch"]:
         """
         Stream file as record batches (memory-efficient).
@@ -355,7 +355,7 @@ class ArrowExportClient:
     def read_collection(
         self,
         collection_id: str,
-        format_filter: Optional[FileFormat] = None,
+        format_filter: FileFormat | None = None,
     ) -> "pa.Table":
         """
         Read all files from a collection into a single table.
@@ -500,7 +500,7 @@ class ArrowExportClient:
     # Collection Statistics
     # -------------------------------------------------------------------------
 
-    def collection_stats(self, collection_id: str) -> Dict:
+    def collection_stats(self, collection_id: str) -> dict:
         """
         Get statistics for a collection's exported files.
 

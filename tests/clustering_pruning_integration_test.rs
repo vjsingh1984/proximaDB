@@ -12,7 +12,7 @@ use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, SqlValue, StorageAssignment, StorageEngine, VectorRecord,
     sql_value,
 };
-use proximadb::storage::engines::impls::sst::SstEngine;
+use proximadb::storage::engines::sst::SstEngine;
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
 };

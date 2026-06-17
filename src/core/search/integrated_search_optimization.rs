@@ -17,25 +17,26 @@ use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::quantization::unified::UnifiedQuantizationLevel;
+use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel;
 
 // Re-export for public use
-pub use crate::compute::quantization::unified::UnifiedQuantizationLevel as UnifiedQuantizationLevelPublic;
+pub use crate::compute::quantization::quantization_engine::UnifiedQuantizationLevel as UnifiedQuantizationLevelPublic;
 use crate::core::search::{
     FilterExpression, SearchParams, metadata_filter_pushdown::MetadataFilterPushdown,
-    progressive_quantization::ProgressiveSearchConfig, query_preprocessing::QueryPreprocessor,
-    results::OptimizedSearchRecord, smart_execution_strategy::SmartExecutionStrategy,
-    unified_progressive_pipeline::UnifiedProgressiveSearchPipeline,
+    progressive_quantization::ProgressiveSearchConfig,
+    progressive_search_pipeline::UnifiedProgressiveSearchPipeline,
+    query_preprocessing::QueryPreprocessor, results::OptimizedSearchRecord,
+    smart_execution_strategy::SmartExecutionStrategy,
 };
 use crate::index::axis::management::manager::AxisManager;
 use crate::index::axis::storage::serialization::Index;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::cache::{
     MetadataStore, QueryCache,
     orchestrator::{CacheType, CrossCacheOrchestrator},
     specialized::query_cache::{CachedQueryResult, QueryKey},
 };
 use crate::storage::traits::StorageQueryContext;
+use proximadb_records::ProximaRecord;
 
 /// Integrated search optimizer with zero-copy and caching
 /// Merged features from IntegratedSearchOptimizer and IntegratedSearchOptimizer
@@ -95,12 +96,15 @@ pub struct AdvancedSearchOptimizer {
     hardware_profile: HardwareProfile,
 
     /// Configuration
-    config: OptimizationConfig,
+    config: IntegratedOptimizationConfig,
 }
+
+/// Backwards-compat alias for [`IntegratedOptimizationConfig`].
+pub type OptimizationConfig = IntegratedOptimizationConfig;
 
 /// Configuration for integrated optimizations
 #[derive(Debug, Clone)]
-pub struct OptimizationConfig {
+pub struct IntegratedOptimizationConfig {
     /// Enable result caching
     pub enable_result_cache: bool,
 
@@ -192,18 +196,22 @@ pub struct PerformanceTracker {
 /// Search cost estimator (from IntegratedSearchOptimizer)
 pub struct SearchCostEstimator {
     /// Average search times per index type
-    pub index_search_times: HashMap<Index, PerformanceStats>,
+    pub index_search_times: HashMap<Index, IntegratedSearchPerformanceStats>,
     /// Average search times per quantization level
-    pub progressive_search_times: HashMap<UnifiedQuantizationLevel, PerformanceStats>,
+    pub progressive_search_times:
+        HashMap<UnifiedQuantizationLevel, IntegratedSearchPerformanceStats>,
     /// Average search times by dataset size
-    pub direct_search_times: HashMap<usize, PerformanceStats>,
+    pub direct_search_times: HashMap<usize, IntegratedSearchPerformanceStats>,
     /// Detected hardware profile for SIMD/memory optimization
     pub hardware_profile: HardwareProfile,
 }
 
+/// Backwards-compat alias for [`IntegratedSearchPerformanceStats`].
+pub type PerformanceStats = IntegratedSearchPerformanceStats;
+
 /// Performance statistics for cost estimation
 #[derive(Debug, Clone)]
-pub struct PerformanceStats {
+pub struct IntegratedSearchPerformanceStats {
     /// Average execution time in milliseconds
     pub avg_time_ms: f32,
     /// Standard deviation of execution times
@@ -241,17 +249,15 @@ impl AdvancedSearchOptimizer {
         query_cache: Arc<QueryCache>,
         metadata_store: Arc<MetadataStore>,
         cache_orchestrator: Arc<CrossCacheOrchestrator>,
-        config: OptimizationConfig,
+        config: IntegratedOptimizationConfig,
     ) -> Self {
-        // Detect hardware capabilities
-        let caps = crate::core::hardware_capabilities::get_hardware_capabilities();
-
         // Detect available memory using platform-specific methods
         let available_memory_gb = Self::detect_available_memory();
+        let simd_level = proximadb_hardware::best_simd_level();
 
         let hardware_profile = HardwareProfile {
-            has_avx2: caps.cpu.features.avx2_support,
-            has_avx512: caps.cpu.features.avx512_support,
+            has_avx2: simd_level >= proximadb_hardware::SimdLevel::AVX2,
+            has_avx512: simd_level >= proximadb_hardware::SimdLevel::AVX512,
             cpu_cores: num_cpus::get(),
             available_memory_gb,
         };
@@ -312,10 +318,10 @@ impl AdvancedSearchOptimizer {
                 for line in contents.lines() {
                     if line.starts_with("MemTotal:") {
                         let parts: Vec<&str> = line.split_whitespace().collect();
-                        if parts.len() >= 2 {
-                            if let Ok(kb) = parts[1].parse::<u64>() {
-                                return (kb as f64 / 1024.0 / 1024.0) as f32; // Convert KB to GB
-                            }
+                        if parts.len() >= 2
+                            && let Ok(kb) = parts[1].parse::<u64>()
+                        {
+                            return (kb as f64 / 1024.0 / 1024.0) as f32; // Convert KB to GB
                         }
                     }
                 }
@@ -478,7 +484,7 @@ impl AdvancedSearchOptimizer {
         &self,
         collection_id: &str,
         search_params: &SearchParams,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> Result<Vec<OptimizedSearchRecord>> {
         let start = std::time::Instant::now();
 
@@ -722,7 +728,7 @@ impl AdvancedSearchOptimizer {
     /// Execute zero-copy search for large datasets
     async fn execute_zero_copy_search(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &DistanceMetric,
@@ -773,27 +779,29 @@ impl AdvancedSearchOptimizer {
     }
 
     /// Create zero-copy views of vector data
-    fn create_zero_copy_views(&self, records: &[VectorRecord]) -> Result<Vec<ZeroCopyVectorView>> {
+    fn create_zero_copy_views(&self, records: &[ProximaRecord]) -> Result<Vec<ZeroCopyVectorView>> {
         let mut views = Vec::with_capacity(records.len());
 
         for record in records {
-            // Check if we should use mmap for large vectors
-            let vector_bytes = record.vector.len() * std::mem::size_of::<f32>();
+            let embedding_values = record
+                .embeddings
+                .first()
+                .map(|e| e.values.to_fp32_owned())
+                .unwrap_or_default();
+            let dim = embedding_values.len();
+            let vector_bytes = dim * std::mem::size_of::<f32>();
 
             if self.config.enable_mmap && vector_bytes >= self.config.mmap_threshold_bytes {
-                // For large vectors, we would memory-map them
-                // For now, just use borrowed data
-                let data = VectorData::Owned(record.vector.clone());
+                let data = VectorData::Owned(embedding_values);
                 views.push(ZeroCopyVectorView {
                     data,
-                    dimension: record.vector.len(),
+                    dimension: dim,
                     count: 1,
                 });
             } else {
-                // Use owned data for small vectors
                 views.push(ZeroCopyVectorView {
-                    data: VectorData::Owned(record.vector.clone()),
-                    dimension: record.vector.len(),
+                    data: VectorData::Owned(embedding_values),
+                    dimension: dim,
                     count: 1,
                 });
             }
@@ -851,7 +859,7 @@ impl AdvancedSearchOptimizer {
     /// Execute search based on selected strategy
     async fn execute_strategy_search(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &DistanceMetric,
@@ -979,7 +987,7 @@ impl AdvancedSearchOptimizer {
     /// Execute direct FP32 search
     async fn execute_direct_search(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         query_vector: &[f32],
         top_k: usize,
         distance_metric: &DistanceMetric,
@@ -998,21 +1006,44 @@ impl AdvancedSearchOptimizer {
         let mut results = Vec::new();
 
         for record in filtered_records {
-            // Skip records with empty IDs for search results
-            if record.id.is_empty() {
+            if record.oid.is_empty() {
                 continue;
             }
 
-            let dist_result =
-                distance_compute.calculate_distance(query_vector, &record.vector, distance_metric);
+            let embedding_values = record
+                .embeddings
+                .first()
+                .map(|e| e.as_fp32_slice())
+                .unwrap_or(&[]);
+            let dist_result = distance_compute.calculate_distance(
+                query_vector,
+                embedding_values,
+                distance_metric,
+            );
 
-            // Use SqlValue metadata directly - no conversion needed!
+            use proximadb_data_model::ProximaValue;
+            use proximadb_records::ProximaTreeNode;
+            let metadata: std::collections::HashMap<String, ProximaValue> = record
+                .props
+                .iter()
+                .filter_map(|(k, node)| {
+                    if let ProximaTreeNode::Value(v) = node {
+                        Some((k.clone(), v.clone()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
             results.push(
-                OptimizedSearchRecord::new(record.id.clone(), dist_result.normalized_score)
+                OptimizedSearchRecord::new(record.oid.clone(), dist_result.normalized_score)
                     .with_similarity(dist_result.normalized_score)
-                    .add_vector(record.vector.clone())
-                    .with_metadata(record.metadata.clone())
-                    .with_version_info(record.version.unwrap_or(0), record.timestamp.unwrap_or(0)),
+                    .add_vector(embedding_values.to_vec())
+                    .with_proxima_metadata(metadata)
+                    .with_version_info(
+                        record.record_version as u32,
+                        record.created_at_ns / 1_000_000,
+                    ),
             );
         }
 
@@ -1045,7 +1076,7 @@ impl AdvancedSearchOptimizer {
         &self,
         _collection_id: &str,
         search_params: &SearchParams,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
     ) -> Result<StreamingSearchResults> {
         use futures::stream::{self, StreamExt};
 
@@ -1058,7 +1089,7 @@ impl AdvancedSearchOptimizer {
 
         // Create a stream that processes batches lazily
         // Convert records into owned chunks to avoid lifetime issues
-        let chunks: Vec<Vec<VectorRecord>> = records
+        let chunks: Vec<Vec<ProximaRecord>> = records
             .chunks(batch_size)
             .map(|chunk| chunk.to_vec())
             .collect();
@@ -1167,7 +1198,7 @@ impl BufferPool {
     }
 }
 
-impl Default for OptimizationConfig {
+impl Default for IntegratedOptimizationConfig {
     fn default() -> Self {
         Self {
             enable_result_cache: true,

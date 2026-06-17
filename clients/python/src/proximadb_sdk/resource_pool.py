@@ -17,26 +17,18 @@ Performance Benefits:
 - Reduced memory pressure and GC overhead
 """
 
-import asyncio
 import logging
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections import defaultdict
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
     Any,
-    Callable,
-    Dict,
     Generic,
-    List,
-    Optional,
-    Set,
-    Tuple,
     TypeVar,
-    Union,
 )
 
 logger = logging.getLogger(__name__)
@@ -137,7 +129,7 @@ class PooledResource(Generic[T]):
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
     health: ResourceHealth = ResourceHealth.UNKNOWN
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def touch(self):
         """Update last used time"""
@@ -183,15 +175,15 @@ class ResourcePool(Generic[T]):
         self.enable_health_checks = enable_health_checks
 
         # Resource storage
-        self._available: List[PooledResource[T]] = []
-        self._in_use: Set[int] = set()  # Track resource IDs in use
+        self._available: list[PooledResource[T]] = []
+        self._in_use: set[int] = set()  # Track resource IDs in use
         self._lock = threading.RLock()
         self._not_empty = threading.Condition(self._lock)
 
         # Metrics
         self.metrics = PoolMetrics() if enable_metrics else None
-        self._wait_times: List[float] = []
-        self._usage_times: Dict[int, float] = {}
+        self._wait_times: list[float] = []
+        self._usage_times: dict[int, float] = {}
 
         # Background tasks
         self._executor = ThreadPoolExecutor(max_workers=2)
@@ -204,7 +196,7 @@ class ResourcePool(Generic[T]):
         # Start maintenance tasks
         self._start_maintenance()
 
-    def acquire(self, timeout: Optional[float] = None, **kwargs) -> T:
+    def acquire(self, timeout: float | None = None, **kwargs) -> T:
         """
         Acquire resource from pool
 
@@ -502,7 +494,7 @@ class ResourcePool(Generic[T]):
         """Start background maintenance tasks"""
         self._executor.submit(self._maintenance_loop)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get comprehensive pool statistics"""
         stats = {
             "pool_size": self.metrics.current_size if self.metrics else 0,
@@ -590,8 +582,8 @@ class ObjectPool(ResourcePool[T]):
     @staticmethod
     def from_class(
         cls: type,
-        validate_func: Optional[Callable[[Any], bool]] = None,
-        reset_func: Optional[Callable[[Any], None]] = None,
+        validate_func: Callable[[Any], bool] | None = None,
+        reset_func: Callable[[Any], None] | None = None,
         **pool_kwargs,
     ) -> "ObjectPool":
         """
@@ -626,9 +618,9 @@ class ObjectPool(ResourcePool[T]):
     @staticmethod
     def from_factory(
         factory_func: Callable[..., T],
-        validate_func: Optional[Callable[[T], bool]] = None,
-        destroy_func: Optional[Callable[[T], None]] = None,
-        reset_func: Optional[Callable[[T], None]] = None,
+        validate_func: Callable[[T], bool] | None = None,
+        destroy_func: Callable[[T], None] | None = None,
+        reset_func: Callable[[T], None] | None = None,
         **pool_kwargs,
     ) -> "ObjectPool[T]":
         """

@@ -12,13 +12,16 @@ use async_trait::async_trait;
 use std::sync::Arc;
 
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
-use crate::core::{String, VectorId, VectorRecord};
+use crate::core::{String, VectorId};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 
 use super::{WALConfig, WALStats};
 use crate::storage::traits::FlushResult;
+use proximadb_records::{
+    EmbeddingCell, ProximaRecord, ProximaTreeNode, conversions::sql_value_to_proxima,
+};
 
 /// Modern batch-oriented Write Buffer strategy trait
 ///
@@ -45,7 +48,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     /// Set storage engine for delegated flush/compaction operations
     fn set_storage_engine(
         &self,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         collection_id: &str,
     );
 
@@ -146,10 +149,11 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 .await
                 .context("Failed to read batch from cloud storage")?;
 
-            let vector_records: Vec<VectorRecord> = bincode::deserialize(&batch_bytes)
-                .context("Failed to deserialize batch from cloud storage")?;
+            let vector_records: Vec<proximadb_records::ProximaRecord> =
+                bincode::deserialize(&batch_bytes)
+                    .context("Failed to deserialize batch from cloud storage")?;
 
-            // Extract collection_id from cloud URL filename since VectorRecord no longer stores it
+            // Extract collection_id from cloud URL filename since records no longer store it
             // Expected format: write_buffer_batch_{collection_id}_{timestamp}_{batch_uuid}.bin
             let _collection_id = {
                 if let Some(filename) = cloud_url.split('/').next_back() {
@@ -168,7 +172,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 }
             };
 
-            // Reconstruct WALVectorBatch from deserialized vector records with proper collection_id
+            // Reconstruct WALVectorBatch from deserialized canonical records.
             use super::BatchId;
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
@@ -219,7 +223,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             payload.len()
         );
 
-        // Step 1: Deserialize payload to common VectorRecord format
+        // Step 1: Deserialize payload to canonical ProximaRecord format.
         let vector_records = match payload_format {
             "avro" => {
                 use crate::storage::persistence::write_ahead_log::serialization::{
@@ -239,9 +243,9 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                     .deserialize_batch(payload)
                     .context("Failed to deserialize Proto payload")?
             }
-            "bincode" => bincode::deserialize::<Vec<VectorRecord>>(payload)
+            "bincode" => bincode::deserialize::<Vec<proximadb_records::ProximaRecord>>(payload)
                 .context("Failed to deserialize Bincode payload")?,
-            "json" => serde_json::from_slice::<Vec<VectorRecord>>(payload)
+            "json" => serde_json::from_slice::<Vec<proximadb_records::ProximaRecord>>(payload)
                 .context("Failed to deserialize JSON payload")?,
             _ => {
                 return Err(anyhow::anyhow!(
@@ -270,12 +274,14 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             .await?;
 
         // Step 3: Create WALOperation using strategy-specific serialization
-        let strategy_payload = self.serialize_vectors_for_disk(&batch.vector_records)?;
+        let strategy_payload = self.serialize_records_for_disk(batch.vector_records.as_ref())?;
         let wal_operation = super::WALOperation {
             operation_type: "upsert_batch".to_string(),
             payload_data: strategy_payload,
             payload_format: self.strategy_name().to_lowercase(),
             vector_count: batch.vector_records.len(),
+            // Vector-bearing path; the embedding drainer ignores these entries.
+            pending_embed: false,
         };
 
         // Step 4: Persist to disk (unified logic)
@@ -321,7 +327,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         &self,
         collection_id: &str,
         vector_id: &VectorId,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<proximadb_records::ProximaRecord>> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Check Write Buffer data (unflushed)
@@ -329,8 +335,8 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 // Check if not expired
                 let current_time = chrono::Utc::now().timestamp();
                 let is_expired = wal_record
-                    .expires_at
-                    .is_some_and(|expires| expires < current_time);
+                    .valid_to_ns
+                    .is_some_and(|expires| expires / 1_000_000_000 < current_time);
 
                 if !is_expired {
                     return Ok(Some(wal_record));
@@ -350,7 +356,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
         query_vector: &[f32],
         k: usize,
         distance_metric: Option<CoreDistanceMetric>,
-    ) -> Result<Vec<(VectorId, f32, VectorRecord)>> {
+    ) -> Result<Vec<(VectorId, f32, proximadb_records::ProximaRecord)>> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Convert CoreDistanceMetric to unified DistanceMetric (they're the same due to alias)
@@ -413,21 +419,47 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 .await?;
 
             // Convert SearchResult objects to the expected format
-            let converted_results: Vec<(VectorId, f32, VectorRecord)> = results
+            let converted_results: Vec<(VectorId, f32, ProximaRecord)> = results
                 .into_iter()
                 .map(|search_result| {
-                    // Create VectorRecord from SearchResult
-                    let vector_record = VectorRecord {
-                        id: search_result.id.clone(),
-                        vector: search_result.vector.clone(),
-                        metadata: search_result.metadata.clone(),
-                        timestamp: Some(search_result.timestamp.unwrap_or(0)),
-                        updated_at: None,
-                        expires_at: None,
-                        version: search_result.version,
-                        source: None,
+                    let timestamp_ns = search_result
+                        .timestamp
+                        .unwrap_or(0)
+                        .saturating_mul(1_000_000);
+                    let props = search_result
+                        .metadata
+                        .iter()
+                        .map(|(key, value)| {
+                            (
+                                key.clone(),
+                                ProximaTreeNode::Value(sql_value_to_proxima(value)),
+                            )
+                        })
+                        .collect();
+                    let embeddings = if search_result.vector.is_empty() {
+                        Vec::new()
+                    } else {
+                        vec![EmbeddingCell {
+                            model_id: "default".to_string(),
+                            modality: "dense_vector".to_string(),
+                            dim: search_result.vector.len() as u32,
+                            values: proximadb_records::EmbeddingValues::Fp32(search_result.vector),
+                            ..Default::default()
+                        }]
                     };
-                    (search_result.id, search_result.score as f32, vector_record)
+
+                    let record = ProximaRecord {
+                        oid: search_result.id.clone(),
+                        record_version: search_result.version.unwrap_or(0) as u64,
+                        created_at_ns: timestamp_ns,
+                        updated_at_ns: timestamp_ns,
+                        props,
+                        embeddings,
+                        method: Some("wal_search".to_string()),
+                        ..ProximaRecord::default()
+                    };
+
+                    (search_result.id, search_result.score as f32, record)
                 })
                 .collect();
 
@@ -440,7 +472,10 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
     // 🎯 COLLECTION MANAGEMENT
 
     /// Get all vector records for a collection (for flush operations)
-    async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    async fn get_collection_vectors(
+        &self,
+        collection_id: &str,
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         // Default implementation using get_wal_behavior
         if let Some(wal_behavior) = self.get_wal_behavior() {
             // Get all unflushed batches for the collection
@@ -623,24 +658,27 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
     // 🎯 STRATEGY-SPECIFIC SERIALIZATION (Only methods strategies need to implement)
 
-    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Serialize vectors in strategy format
-    /// - Bincode: bincode::serialize(vectors)
-    /// - Avro: serialize_avro_vector_batch(vectors)
-    /// - Proto: serialize_proto_vector_batch(vectors)
-    fn serialize_vectors_for_disk(&self, _vectors: &[VectorRecord]) -> Result<Vec<u8>> {
+    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Serialize canonical records in strategy format
+    fn serialize_records_for_disk(
+        &self,
+        _records: &[proximadb_records::ProximaRecord],
+    ) -> Result<Vec<u8>> {
         // Default implementation - strategies must override
         Err(anyhow::anyhow!(
-            "serialize_vectors_for_disk not implemented for {}",
+            "serialize_records_for_disk not implemented for {}",
             self.strategy_name()
         ))
     }
 
-    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Deserialize vectors from strategy format
+    /// ✅ ONLY METHOD EACH STRATEGY NEEDS: Deserialize canonical records from strategy format
     /// Used during recovery to load Write Buffer files back into memtable
-    fn deserialize_vectors_from_disk(&self, _data: &[u8]) -> Result<Vec<VectorRecord>> {
+    fn deserialize_records_from_disk(
+        &self,
+        _data: &[u8],
+    ) -> Result<Vec<proximadb_records::ProximaRecord>> {
         // Default implementation - strategies must override
         Err(anyhow::anyhow!(
-            "deserialize_vectors_from_disk not implemented for {}",
+            "deserialize_records_from_disk not implemented for {}",
             self.strategy_name()
         ))
     }
@@ -900,18 +938,14 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
 
     /// Delete vector by ID using batch operations
     async fn delete_vector(&self, collection_id: &str, vector_id: &VectorId) -> Result<u64> {
-        // Create a tombstone vector record for deletion
-        // Tombstone design: empty vector + expires_at in the past (epoch 0)
-        let tombstone = VectorRecord {
-            id: vector_id.clone(),
-            vector: vec![], // Empty vector = tombstone marker
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: Some(0), // Epoch time = always in past = tombstone marker
-            version: None,       // May be updated by MVCC later
-            // rank removed -  None,
-            source: None,
+        // Create a tombstone record for deletion.
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default();
+        let tombstone = proximadb_records::ProximaRecord {
+            oid: vector_id.clone(),
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_to_ns: Some(0),
+            ..Default::default()
         };
 
         // Create single-vector batch for deletion
@@ -921,7 +955,7 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
             batch_id,
             vector_records: Arc::new(vec![tombstone]),
             timestamp: std::time::SystemTime::now(),
-            total_size_bytes: std::mem::size_of::<VectorRecord>(),
+            total_size_bytes: std::mem::size_of::<proximadb_records::ProximaRecord>(),
             is_flushed: false,
             metadata_bloom_filter: None,
         };
@@ -1066,7 +1100,10 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 bytes_reclaimed: flush_cycle
                     .vector_records
                     .iter()
-                    .map(|v| (v.vector.len() * 4 + 256) as u64)
+                    .map(|v| {
+                        let dimension = v.embeddings.first().map(|e| e.values.len()).unwrap_or(0);
+                        (dimension * 4 + 256) as u64
+                    })
                     .sum(),
             })
         } else {
@@ -1077,7 +1114,10 @@ pub trait WALBatchStrategy: Send + Sync + std::fmt::Debug {
                 bytes_reclaimed: flush_cycle
                     .vector_records
                     .iter()
-                    .map(|v| (v.vector.len() * 4 + 256) as u64)
+                    .map(|v| {
+                        let dimension = v.embeddings.first().map(|e| e.values.len()).unwrap_or(0);
+                        (dimension * 4 + 256) as u64
+                    })
                     .sum(),
             })
         }

@@ -104,7 +104,7 @@ pub async fn get_schema(
     };
 
     let collection_response = state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -449,7 +449,7 @@ pub async fn update_schema(
     };
 
     let collection_response = state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -674,7 +674,7 @@ pub async fn update_schema(
     };
 
     state
-        .unified_handlers
+        .request_handlers
         .handle_collection_operation_for_tenant(update_request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to update collection schema: {}", e)))?;

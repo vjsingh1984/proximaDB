@@ -8,13 +8,11 @@ This script:
 3. Provides a summary of changes
 """
 
-import os
 import re
 from pathlib import Path
-from typing import List, Tuple
 
 
-def find_test_files_with_mocks(test_dir: Path) -> List[Path]:
+def find_test_files_with_mocks(test_dir: Path) -> list[Path]:
     """Find all test files that use mocks"""
     mock_patterns = [
         r"from unittest\.mock import",

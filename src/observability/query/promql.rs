@@ -23,8 +23,7 @@ impl PromQLParser {
         let query = query.trim();
 
         // Check for unary negation first
-        if query.starts_with('-') {
-            let rest = &query[1..];
+        if let Some(rest) = query.strip_prefix('-') {
             let expr = Self::parse(rest)?;
             return Ok(PromQLExpr::Unary {
                 op: UnaryOp::Neg,
@@ -41,21 +40,20 @@ impl PromQLParser {
                 let after_paren = &query[inner.len() + 2..];
                 if !after_paren.is_empty() {
                     // Handle offset @ modifier
-                    if let Some(offset_duration) = Self::parse_offset_modifier(after_paren)? {
-                        if let PromQLExpr::VectorSelector {
+                    if let Some(offset_duration) = Self::parse_offset_modifier(after_paren)?
+                        && let PromQLExpr::VectorSelector {
                             name,
                             matchers,
                             range,
                             ..
                         } = expr
-                        {
-                            return Ok(PromQLExpr::VectorSelector {
-                                name,
-                                matchers,
-                                range,
-                                offset: Some(offset_duration),
-                            });
-                        }
+                    {
+                        return Ok(PromQLExpr::VectorSelector {
+                            name,
+                            matchers,
+                            range,
+                            offset: Some(offset_duration),
+                        });
                     }
                 }
                 return Ok(PromQLExpr::Paren(Box::new(expr)));
@@ -84,21 +82,20 @@ impl PromQLParser {
 
         // Check for offset modifier @
         let remaining = &query[Self::get_selector_length_in(query, &selector)..];
-        if let Some(offset_duration) = Self::parse_offset_modifier(remaining)? {
-            if let PromQLExpr::VectorSelector {
+        if let Some(offset_duration) = Self::parse_offset_modifier(remaining)?
+            && let PromQLExpr::VectorSelector {
                 name,
                 matchers,
                 range,
                 ..
             } = selector
-            {
-                selector = PromQLExpr::VectorSelector {
-                    name,
-                    matchers,
-                    range,
-                    offset: Some(offset_duration),
-                };
-            }
+        {
+            selector = PromQLExpr::VectorSelector {
+                name,
+                matchers,
+                range,
+                offset: Some(offset_duration),
+            };
         }
 
         Ok(selector)
@@ -517,12 +514,11 @@ impl PromQLParser {
                 };
 
                 // If there's a range, find the closing bracket after the braces
-                if range.is_some() {
-                    if let Some(bracket_pos) = query[after_braces..].find('[') {
-                        if let Some(close_pos) = query[after_braces + bracket_pos..].find(']') {
-                            return after_braces + bracket_pos + close_pos + 1;
-                        }
-                    }
+                if range.is_some()
+                    && let Some(bracket_pos) = query[after_braces..].find('[')
+                    && let Some(close_pos) = query[after_braces + bracket_pos..].find(']')
+                {
+                    return after_braces + bracket_pos + close_pos + 1;
                 }
 
                 after_braces
@@ -1058,17 +1054,13 @@ impl PromQLExecutor {
                         } else {
                             match op {
                                 AggregationOp::Rate => (last.value - first.value) / time_diff_s,
-                                AggregationOp::Irate => {
+                                AggregationOp::Irate if ordered.len() >= 2 => {
                                     // Use last two samples
-                                    if ordered.len() >= 2 {
-                                        let prev = ordered[ordered.len() - 2];
-                                        let time_diff =
-                                            (last.timestamp_ns - prev.timestamp_ns) as f64 / 1e9;
-                                        if time_diff > 0.0 {
-                                            (last.value - prev.value) / time_diff
-                                        } else {
-                                            0.0
-                                        }
+                                    let prev = ordered[ordered.len() - 2];
+                                    let time_diff =
+                                        (last.timestamp_ns - prev.timestamp_ns) as f64 / 1e9;
+                                    if time_diff > 0.0 {
+                                        (last.value - prev.value) / time_diff
                                     } else {
                                         0.0
                                     }

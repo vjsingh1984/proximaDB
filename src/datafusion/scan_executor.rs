@@ -9,7 +9,6 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use async_trait::async_trait;
 use datafusion::arrow::array::RecordBatch;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::error::{DataFusionError, Result as DFResult};
@@ -35,6 +34,7 @@ pub struct PartitionInfo {
 }
 
 /// DataFusion ExecutionPlan for scanning ProximaDB collections.
+#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct ProximaDBScanExec {
     /// Collection name
     collection_name: String,

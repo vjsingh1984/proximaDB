@@ -27,13 +27,10 @@ Comparison databases (when available):
 import gc
 import os
 import random
-import shutil
-import sys
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -105,11 +102,11 @@ class BenchmarkResult:
 
     operation: str
     time_ms: float
-    throughput: Optional[float] = None  # ops/sec or items/sec
-    p50_ms: Optional[float] = None
-    p95_ms: Optional[float] = None
-    p99_ms: Optional[float] = None
-    error: Optional[str] = None
+    throughput: float | None = None  # ops/sec or items/sec
+    p50_ms: float | None = None
+    p95_ms: float | None = None
+    p99_ms: float | None = None
+    error: str | None = None
 
 
 # =============================================================================
@@ -117,7 +114,7 @@ class BenchmarkResult:
 # =============================================================================
 
 
-def generate_graph_data(config: GraphConfig) -> Tuple[List[Dict], List[Dict]]:
+def generate_graph_data(config: GraphConfig) -> tuple[list[dict], list[dict]]:
     """Generate random graph data with realistic properties.
 
     Node labels: ["Person", "Document", "Function", "Class", "Module"]
@@ -172,7 +169,7 @@ def generate_graph_data(config: GraphConfig) -> Tuple[List[Dict], List[Dict]]:
 
 def generate_vector_graph_data(
     config: GraphConfig, dimension: int = 128
-) -> Tuple[List[Dict], List[Dict], np.ndarray]:
+) -> tuple[list[dict], list[dict], np.ndarray]:
     """Generate graph data with associated vectors for hybrid workloads."""
     nodes, edges = generate_graph_data(config)
 
@@ -191,7 +188,7 @@ def generate_vector_graph_data(
 
 def benchmark_proximadb_graph(
     config: GraphConfig, temp_dir: str
-) -> Dict[str, BenchmarkResult]:
+) -> dict[str, BenchmarkResult]:
     """Benchmark ProximaDB embedded graph operations."""
     if not PROXIMADB_AVAILABLE:
         return {"error": BenchmarkResult("init", 0, error="ProximaDB not available")}
@@ -405,7 +402,7 @@ def benchmark_proximadb_graph(
 
 def benchmark_networkx(
     config: GraphConfig, temp_dir: str
-) -> Dict[str, BenchmarkResult]:
+) -> dict[str, BenchmarkResult]:
     """Benchmark NetworkX as reference implementation."""
     if not NETWORKX_AVAILABLE:
         return {"error": BenchmarkResult("init", 0, error="NetworkX not available")}
@@ -601,8 +598,8 @@ def benchmark_networkx(
 
 def render_comparison_table(
     config: GraphConfig,
-    proximadb_results: Dict[str, BenchmarkResult],
-    networkx_results: Dict[str, BenchmarkResult],
+    proximadb_results: dict[str, BenchmarkResult],
+    networkx_results: dict[str, BenchmarkResult],
 ) -> None:
     """Render comparison table between ProximaDB and NetworkX."""
 
@@ -707,7 +704,7 @@ def render_comparison_table(
 
 
 def render_throughput_summary(
-    all_results: Dict[str, Dict[str, Dict[str, BenchmarkResult]]],
+    all_results: dict[str, dict[str, dict[str, BenchmarkResult]]],
 ) -> None:
     """Render throughput summary across all configurations."""
     print("\n" + "=" * 90)
@@ -762,7 +759,7 @@ def render_throughput_summary(
 
 
 def write_markdown_report(
-    all_results: Dict[str, Dict[str, Dict[str, BenchmarkResult]]],
+    all_results: dict[str, dict[str, dict[str, BenchmarkResult]]],
 ) -> None:
     """Write benchmark results to markdown file."""
     target_dir = Path("target")
@@ -838,7 +835,7 @@ def write_markdown_report(
 # =============================================================================
 
 
-def run_benchmark(configs: List[GraphConfig] = None):
+def run_benchmark(configs: list[GraphConfig] = None):
     """Run the embedded graph database benchmark."""
 
     if configs is None:

@@ -198,8 +198,8 @@ pub struct SyncResult {
     pub last_sync_timestamp: u64,
 }
 
-/// gRPC service definition for distributed mode
-#[cfg(all(feature = "distributed", feature = "compile_protobuf"))]
+/// gRPC service definition for cluster (multi-node) mode
+#[cfg(all(feature = "cluster", feature = "compile_protobuf"))]
 pub mod grpc {
     use super::*;
 

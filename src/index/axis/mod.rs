@@ -79,6 +79,9 @@ pub mod integration;
 pub mod management; // Management and orchestration
 pub mod storage; // Storage and serialization // Integration with other systems
 
+// TD-064: Filterable metadata for predicate-aware HNSW
+pub mod filterable_metadata;
+
 // Shared utilities and types
 pub mod avro_analysis;
 /// Cluster manager for IVF-based index partitioning.
@@ -89,9 +92,14 @@ pub mod eventlog;
 pub mod flush_integration_simple;
 pub mod index_factory;
 pub mod pattern_analyzer;
+/// Graph-tunneling predicate gate (LLD §4, GateANN arXiv 2603.21466).
+pub mod tunnel;
 pub mod types;
 pub mod utils;
 pub mod zero_overhead_vector;
+
+// HMGI - Hierarchical Multi-modality Graph Indexing
+pub mod hmgi;
 
 // Test modules
 #[cfg(test)]
@@ -132,6 +140,8 @@ pub use management::{
     VectorQuery,
 };
 
+pub use proximadb_vector::{DisentangledVectorProjection, TransformProjectionSpec};
+
 pub use indexes::{
     AnnoyStats,
     // Annoy
@@ -144,10 +154,17 @@ pub use indexes::{
     AxisLshConfig,
     AxisLshIndex,
     CentroidConfig,
+    // IVF
+    ColdPathLoadPolicy,
+    IvfServingState,
     IvfStats,
     LshStats,
     PostingListConfig,
-    // IVF
+    SerializableIvfColdTier,
+    SerializableIvfConfig,
+    SerializableIvfState,
+    SerializableIvfStateV1,
+    SerializableIvfWarmTier,
     UnifiedIvfConfig,
     UnifiedIvfIndex,
     create_hnsw_index,
@@ -210,7 +227,18 @@ pub use clustering::{
 pub use index_factory::{AxisIndexCreationResult, AxisVectorIndex, IndexFactory, IndexStats};
 
 // Migration helpers and monitor exports
-pub use crate::query::unified_query_optimizer::IndexCapabilities;
+pub use crate::query::query_optimizer::IndexCapabilities;
 pub use management::migration_engine::{MigrationEngine, MigrationPhase, MigrationPlan};
 pub use management::monitor::{AxisMonitor, MonitoringMetrics};
 pub use management::strategy::{IndexStrategy, StrategyRecommendation, StrategySelector};
+
+// HMGI exports
+pub use hmgi::{
+    ClusterMembership, ClusterNode, ClusterNodeId, CollectionTransition, DetectionResult,
+    DistributedPartitionLocator, EnablementReason, HmgiMigrationEngine, HmgiMigrationPhase,
+    HmgiPartitionKey, HmgiQueryCoordinator, HmgiRegistry, HmgiRouteStats, HmgiRouter,
+    HmgiSearchRequest, HmgiTierPolicy, MigrationConfig, MigrationResult, MigrationState,
+    ModalityDetector, ModalityExtractor, NetworkService, NodeState, PartitionMetadata,
+    PartitionSet, ResultMerger, TierChangeReason, TierChangeRecommendation, TierChangeResult,
+    VectorRecordSample,
+};

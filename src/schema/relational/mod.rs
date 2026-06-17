@@ -22,7 +22,7 @@ pub struct TableDefinition {
     /// Table name
     pub name: String,
     /// Column definitions
-    pub columns: HashMap<String, ColumnDefinition>,
+    pub columns: HashMap<String, RelationalColumnDefinition>,
     /// Primary key columns
     pub primary_key: Vec<String>,
     /// Unique constraints
@@ -35,9 +35,12 @@ pub struct TableDefinition {
     pub description: Option<String>,
 }
 
+/// Backwards-compat alias for [`RelationalColumnDefinition`].
+pub type ColumnDefinition = RelationalColumnDefinition;
+
 /// Column definition in table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnDefinition {
+pub struct RelationalColumnDefinition {
     /// Column name
     pub name: String,
     /// Column data type
@@ -352,7 +355,7 @@ impl TableDefinition {
     }
 
     /// Add column to table
-    pub fn add_column(&mut self, column: ColumnDefinition) -> &mut Self {
+    pub fn add_column(&mut self, column: RelationalColumnDefinition) -> &mut Self {
         self.columns.insert(column.name.clone(), column);
         self
     }

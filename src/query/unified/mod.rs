@@ -64,11 +64,13 @@
 
 pub mod ast;
 pub mod decomposition;
+pub mod evolutionary;
 pub mod executor;
 pub mod fusion;
 pub mod learned_fusion;
 pub mod lower; // UQL to MultiModelPlan lowering (Issue #45, SB-15)
 pub mod optimizer;
+pub mod plan_execution_cache;
 pub mod reranking;
 pub mod uql;
 
@@ -85,18 +87,24 @@ pub use learned_fusion::{
     FeedbackSignal, FusionFeatures, FusionModelType, LearnedFusion, LearnedFusionConfig,
     TrainingMetrics, TrainingSample,
 };
+pub use proximadb_query::{
+    ComponentPlan, QueryMetrics, QueryPlanSummary, QueryResult, UnifiedRecord,
+    reorder_components_with_optimizer,
+};
 pub use reranking::{CrossModalReranker, QueryContext, QueryIntent, RerankConfig, RerankedResult};
 pub use uql::{UQLParser, UQLStatement};
 
+use crate::query::aql::{AqlQuery, AuditFrame, AuditOp, AuditOutcome, AuditTrail};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::DocumentService;
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Unified query engine for cross-model queries
 pub struct UnifiedQueryEngine {
     /// Vector/document storage engine (Phase 2: direct engine access)
     #[allow(dead_code)]
-    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    storage_engine: Arc<dyn UnifiedStorageFormat>,
     /// Vector operations service for vector searches (optional)
     vector_ops: Option<Arc<VectorOperationsService>>,
     /// Document service for JSON document queries
@@ -109,6 +117,12 @@ pub struct UnifiedQueryEngine {
     fuser: ResultFuser,
     /// Configuration
     config: UnifiedQueryConfig,
+    /// Optional query optimizer. When attached via [`with_optimizer`],
+    /// `execute` and `execute_with_fusion` reorder components according
+    /// to the optimizer's plan and feed the executor's wall-clock time
+    /// back into the optimizer's measured-fitness cache (TD-047 sub A).
+    /// When `None`, behavior is unchanged from pre-optimizer code paths.
+    optimizer: Option<Arc<optimizer::QueryOptimizer>>,
 }
 
 /// Configuration for unified query engine
@@ -141,7 +155,7 @@ impl Default for UnifiedQueryConfig {
 impl UnifiedQueryEngine {
     /// Create a new unified query engine with full vector search support
     pub fn new(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         vector_ops: Arc<VectorOperationsService>,
         document_service: Arc<DocumentService>,
         config: UnifiedQueryConfig,
@@ -154,6 +168,7 @@ impl UnifiedQueryEngine {
             executor: ParallelExecutor::new(config.max_parallel_queries),
             fuser: ResultFuser::new(config.default_fusion.clone()),
             config,
+            optimizer: None,
         }
     }
 
@@ -163,7 +178,7 @@ impl UnifiedQueryEngine {
     /// queries will return empty results. Use `new()` with VectorOperationsService for
     /// full functionality.
     pub fn without_vector_ops(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         document_service: Arc<DocumentService>,
         config: UnifiedQueryConfig,
     ) -> Self {
@@ -175,7 +190,37 @@ impl UnifiedQueryEngine {
             executor: ParallelExecutor::new(config.max_parallel_queries),
             fuser: ResultFuser::new(config.default_fusion.clone()),
             config,
+            optimizer: None,
         }
+    }
+
+    /// Attach a [`QueryOptimizer`](optimizer::QueryOptimizer) to this engine.
+    ///
+    /// When attached, [`execute`](Self::execute) and
+    /// [`execute_with_fusion`](Self::execute_with_fusion) will:
+    ///
+    /// 1. Ask the optimizer for an [`OptimizedPlan`](optimizer::OptimizedPlan).
+    /// 2. Reorder `query.components` by `plan.execution_order`.
+    /// 3. Wrap the executor call with
+    ///    [`time_and_record_if_ok`](optimizer::QueryOptimizer::time_and_record_if_ok)
+    ///    so successful runs feed wall-clock measurements back into the
+    ///    optimizer's [`PlanExecutionCache`](plan_execution_cache::PlanExecutionCache).
+    ///
+    /// When the optimizer is *not* attached, the engine behaves exactly as
+    /// before this method existed — this is the no-op default to keep
+    /// existing callers untouched.
+    ///
+    /// Builder style. Returns `self` so attachment can be chained on
+    /// construction.
+    pub fn with_optimizer(mut self, optimizer: Arc<optimizer::QueryOptimizer>) -> Self {
+        self.optimizer = Some(optimizer);
+        self
+    }
+
+    /// Borrow the attached optimizer, if any. Useful for inspecting the
+    /// measured-fitness cache from outside (telemetry, tests).
+    pub fn optimizer(&self) -> Option<&Arc<optimizer::QueryOptimizer>> {
+        self.optimizer.as_ref()
     }
 
     /// Execute a multi-model query
@@ -183,23 +228,22 @@ impl UnifiedQueryEngine {
         info!("Executing unified query: {}", query);
 
         // 1. Parse and decompose the query
-        let multi_model_query = self.decomposer.decompose(query)?;
+        let mut multi_model_query = self.decomposer.decompose(query)?;
         debug!(
             "Decomposed into {} components",
             multi_model_query.components.len()
         );
 
-        // 2. Execute sub-queries in parallel
+        // 2. Optionally reorder by the optimizer's plan (TD-047 sub A).
+        let execution_order = self.apply_optimizer_reorder(&mut multi_model_query).await?;
+
+        // 3. Execute sub-queries in parallel, optionally feeding the
+        //    optimizer's measured-fitness cache on success.
         let sub_results = self
-            .executor
-            .execute_parallel_with_services(
-                &multi_model_query,
-                self.vector_ops.clone(),
-                self.document_service.clone(),
-            )
+            .run_executor_with_optional_recording(&multi_model_query, execution_order.as_deref())
             .await?;
 
-        // 3. Fuse results based on strategy
+        // 4. Fuse results based on strategy
         let fused_result = self
             .fuser
             .fuse(sub_results, &multi_model_query.fusion_strategy)?;
@@ -216,143 +260,357 @@ impl UnifiedQueryEngine {
         let mut multi_model_query = self.decomposer.decompose(query)?;
         multi_model_query.fusion_strategy = fusion;
 
+        let execution_order = self.apply_optimizer_reorder(&mut multi_model_query).await?;
+
         let sub_results = self
-            .executor
-            .execute_parallel_with_services(
-                &multi_model_query,
-                self.vector_ops.clone(),
-                self.document_service.clone(),
-            )
+            .run_executor_with_optional_recording(&multi_model_query, execution_order.as_deref())
             .await?;
 
         self.fuser
             .fuse(sub_results, &multi_model_query.fusion_strategy)
     }
 
+    /// If an optimizer is attached, ask it for an `OptimizedPlan` and
+    /// reorder `query.components` accordingly. Returns the execution order
+    /// in *original-component* indices so callers can later record measured
+    /// runtime for that exact plan shape.
+    ///
+    /// Thin shim around [`reorder_components_with_optimizer`] -- the free
+    /// function is the testable seam, this method just plumbs `&self.optimizer`.
+    async fn apply_optimizer_reorder(
+        &self,
+        query: &mut MultiModelQuery,
+    ) -> Result<Option<Vec<usize>>> {
+        proximadb_query::reorder_components_with_optimizer(self.optimizer.as_ref(), query).await
+    }
+
+    /// Run the parallel executor. When an optimizer is attached and an
+    /// execution order was produced, wrap the run with
+    /// [`QueryOptimizer::time_and_record_if_ok`] so successful executions
+    /// feed the measured-fitness cache. Failed runs are deliberately not
+    /// recorded (failure-mode timing is unrepresentative).
+    async fn run_executor_with_optional_recording(
+        &self,
+        query: &MultiModelQuery,
+        execution_order: Option<&[usize]>,
+    ) -> Result<Vec<crate::query::unified::fusion::SubQueryResult>> {
+        let fut = self.executor.execute_parallel_with_services(
+            query,
+            self.vector_ops.clone(),
+            self.document_service.clone(),
+        );
+
+        match (self.optimizer.as_ref(), execution_order) {
+            (Some(optimizer), Some(order)) if !order.is_empty() => {
+                // Convert the executor's `Result<_, anyhow::Error>` into
+                // a Result the optimizer's helper accepts. The helper
+                // records on Ok(_) only.
+                optimizer
+                    .time_and_record_if_ok(&query.components, order, fut)
+                    .await
+            }
+            _ => fut.await,
+        }
+    }
+
     /// Explain the query execution plan
-    pub fn explain(&self, query: &str) -> Result<QueryPlan> {
+    pub fn explain(&self, query: &str) -> Result<QueryPlanSummary> {
         let multi_model_query = self.decomposer.decompose(query)?;
-
-        // Compute estimated cost before moving fusion_strategy
-        let estimated_total_cost = self.estimate_total_cost(&multi_model_query);
-
-        Ok(QueryPlan {
-            components: multi_model_query
-                .components
-                .iter()
-                .map(|c| ComponentPlan {
-                    model: c.model.clone(),
-                    estimated_cost: self.estimate_cost(c),
-                    parallelizable: c.is_parallelizable(),
-                })
-                .collect(),
-            fusion_strategy: multi_model_query.fusion_strategy,
-            estimated_total_cost,
-        })
+        Ok(proximadb_query::explain_query_plan(
+            &multi_model_query,
+            self.config.max_parallel_queries,
+        ))
     }
 
-    fn estimate_cost(&self, component: &QueryComponent) -> f64 {
-        // Simple cost estimation based on model type
-        match component.model {
-            DataModel::Vector => 1.0,   // Vector search is typically fast
-            DataModel::Document => 2.0, // Document queries vary
-            DataModel::Graph => 3.0,    // Graph traversal can be expensive
-            DataModel::Observability | DataModel::TimeSeries => 2.5,
-            DataModel::Relational => 1.5,
-            DataModel::Event => 2.0,
+    /// Explain the query with an auditable AQL plan (TD-050 Phase 3).
+    ///
+    /// Returns a complete AQL AST and a simulated audit trail showing
+    /// projected execution steps and compliance metadata.
+    pub fn explain_verbose(&self, query: &str) -> Result<(AqlQuery, AuditTrail)> {
+        let multi_model_query = self.decomposer.decompose(query)?;
+        let aql_plan = AqlQuery::from_multi_model(&multi_model_query);
+
+        let started_at_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as i64;
+
+        // Generate simulated audit frames for the project plan
+        let mut frames = Vec::new();
+        for (i, component) in multi_model_query.components.iter().enumerate() {
+            let op = match &component.operation {
+                crate::query::unified::ast::ModelOperation::VectorSearch(v) => {
+                    AuditOp::VectorSearch {
+                        collection: v.collection.clone(),
+                        top_k: v.top_k,
+                        metric: format!("{:?}", v.metric),
+                    }
+                }
+                crate::query::unified::ast::ModelOperation::GraphQuery(g) => {
+                    AuditOp::GraphTraversal {
+                        graph_id: g.graph_name.clone(),
+                        depth: g.max_depth,
+                        algorithm: "graph_subset".to_string(),
+                    }
+                }
+                crate::query::unified::ast::ModelOperation::GraphTraversal(g) => {
+                    AuditOp::GraphTraversal {
+                        graph_id: g.graph_name.clone(),
+                        depth: g.max_depth,
+                        algorithm: "BFS".to_string(),
+                    }
+                }
+                crate::query::unified::ast::ModelOperation::DocumentQuery(d) => {
+                    AuditOp::DocumentQuery {
+                        collection: d.collection.clone(),
+                    }
+                }
+                _ => AuditOp::Scan {
+                    source: "unknown".to_string(),
+                },
+            };
+
+            frames.push(AuditFrame {
+                frame_id: (i + 1) as u64,
+                source: component.model,
+                op,
+                filters_pushed: Vec::new(),
+                filters_post: Vec::new(),
+                records_scanned: 100, // Projected
+                records_returned: 10,
+                wall_time_us: (proximadb_query::estimate_component_cost(component) * 1000.0) as u64,
+                error: None,
+                redaction_count: 0,
+            });
         }
+
+        let trail = AuditTrail {
+            query_id: uuid::Uuid::new_v4(),
+            started_at_ms,
+            finished_at_ms: started_at_ms + 10, // Simulated overhead
+            plan: aql_plan.clone(),
+            frames,
+            outcome: AuditOutcome::Success,
+        };
+
+        Ok((aql_plan, trail))
     }
-
-    fn estimate_total_cost(&self, query: &MultiModelQuery) -> f64 {
-        // Parallel execution reduces total cost
-        let component_costs: Vec<f64> = query
-            .components
-            .iter()
-            .map(|c| self.estimate_cost(c))
-            .collect();
-
-        if query.components.len() <= self.config.max_parallel_queries {
-            // All can run in parallel - cost is the max
-            component_costs.iter().cloned().fold(0.0, f64::max)
-        } else {
-            // Some sequential execution needed
-            component_costs.iter().sum::<f64>() / self.config.max_parallel_queries as f64
-        }
-    }
-}
-
-/// Result of a unified query
-#[derive(Debug, Clone)]
-pub struct QueryResult {
-    /// Result records
-    pub records: Vec<UnifiedRecord>,
-    /// Total count (if available)
-    pub total_count: Option<u64>,
-    /// Execution metrics
-    pub metrics: QueryMetrics,
-}
-
-/// A unified record from any data model
-#[derive(Debug, Clone)]
-pub struct UnifiedRecord {
-    /// Record ID
-    pub id: String,
-    /// Source model
-    pub source_model: DataModel,
-    /// Record data as JSON
-    pub data: serde_json::Value,
-    /// Relevance score (if applicable)
-    pub score: Option<f64>,
-    /// Additional metadata
-    pub metadata: std::collections::HashMap<String, String>,
-}
-
-/// Query execution metrics
-#[derive(Debug, Clone, Default)]
-pub struct QueryMetrics {
-    /// Total execution time in microseconds
-    pub total_time_us: u64,
-    /// Time per sub-query
-    pub sub_query_times: Vec<(DataModel, u64)>,
-    /// Number of records scanned
-    pub records_scanned: u64,
-    /// Number of records returned
-    pub records_returned: u64,
-    /// Cache hit rate
-    pub cache_hit_rate: f64,
-}
-
-/// Query execution plan
-#[derive(Debug, Clone)]
-pub struct QueryPlan {
-    /// Component plans
-    pub components: Vec<ComponentPlan>,
-    /// Fusion strategy
-    pub fusion_strategy: FusionStrategy,
-    /// Estimated total cost
-    pub estimated_total_cost: f64,
-}
-
-/// Plan for a single query component
-#[derive(Debug, Clone)]
-pub struct ComponentPlan {
-    /// Data model
-    pub model: DataModel,
-    /// Estimated cost (relative units)
-    pub estimated_cost: f64,
-    /// Whether this can run in parallel
-    pub parallelizable: bool,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::query::unified::ast::{
+        ComponentDependency, DistanceMetric, DocumentQueryExpr, JoinType, ModelOperation,
+        QueryComponent, VectorSearchExpr, VectorSearchParams,
+    };
+    use crate::query::unified::optimizer::{OptimizerConfig, QueryOptimizer};
 
-    #[test]
-    fn test_default_config() {
+    #[tokio::test]
+    async fn test_default_config() {
         let config = UnifiedQueryConfig::default();
         assert_eq!(config.max_parallel_queries, 4);
         assert!(config.enable_cache);
+    }
+
+    // ============================================================
+    // TD-047 sub A wiring: reorder_components_with_optimizer
+    //
+    // These tests exercise the free function directly so we don't need
+    // to construct a full UnifiedQueryEngine (which requires a real
+    // storage engine + document service) to verify the wiring contract:
+    //
+    // - No optimizer attached  -> Ok(None), components unchanged.
+    // - Fewer than 2 components -> Ok(None), components unchanged.
+    // - Optimizer attached + multi-component query -> components are
+    //   reordered per the plan, execution_order returned.
+    // - Measured-fitness end-to-end: when the cache holds samples that
+    //   make order [1, 0] empirically faster, the reorder picks it.
+    // ============================================================
+
+    fn vector_component() -> QueryComponent {
+        QueryComponent {
+            model: DataModel::Vector,
+            operation: ModelOperation::VectorSearch(VectorSearchExpr {
+                collection: "vectors".to_string(),
+                query_vector: vec![0.1, 0.2],
+                top_k: 10,
+                threshold: Some(0.5),
+                metric: DistanceMetric::Cosine,
+                params: VectorSearchParams::default(),
+            }),
+            filters: vec![],
+            dependencies: vec![],
+        }
+    }
+
+    fn document_component() -> QueryComponent {
+        QueryComponent {
+            model: DataModel::Document,
+            operation: ModelOperation::DocumentQuery(DocumentQueryExpr {
+                collection: "docs".to_string(),
+                path_filters: vec![],
+                text_search: None,
+                projection: vec![],
+                sort: None,
+                limit: None,
+            }),
+            filters: vec![],
+            dependencies: vec![],
+        }
+    }
+
+    fn empty_query(components: Vec<QueryComponent>) -> MultiModelQuery {
+        MultiModelQuery {
+            components,
+            fusion_strategy: FusionStrategy::Intersection,
+            limit: None,
+            offset: None,
+            projection: vec![],
+            order_by: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn reorder_returns_none_without_optimizer() {
+        let mut q = empty_query(vec![vector_component(), document_component()]);
+        let original_models: Vec<_> = q.components.iter().map(|c| c.model.clone()).collect();
+
+        let none_opt: Option<&std::sync::Arc<dyn proximadb_query::QueryOptimizationService>> = None;
+        let result = reorder_components_with_optimizer(none_opt, &mut q)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        let after: Vec<_> = q.components.iter().map(|c| c.model.clone()).collect();
+        assert_eq!(after, original_models, "no optimizer -> no reorder");
+    }
+
+    #[tokio::test]
+    async fn reorder_returns_none_for_single_component_query() {
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        config.enable_measured_fitness = true;
+        let optimizer = Arc::new(QueryOptimizer::new(config));
+
+        let mut q = empty_query(vec![vector_component()]);
+        let result = reorder_components_with_optimizer(Some(&optimizer), &mut q)
+            .await
+            .unwrap();
+        assert!(result.is_none(), "single component -> no reorder");
+        assert_eq!(q.components.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn reorder_returns_none_for_empty_query() {
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        let optimizer = Arc::new(QueryOptimizer::new(config));
+
+        let mut q = empty_query(vec![]);
+        let result = reorder_components_with_optimizer(Some(&optimizer), &mut q)
+            .await
+            .unwrap();
+        assert!(result.is_none());
+        assert!(q.components.is_empty());
+    }
+
+    #[tokio::test]
+    async fn reorder_picks_measured_faster_order() {
+        // The strongest end-to-end check at this layer: seed the
+        // optimizer's measured-fitness cache so order [1, 0] is much
+        // faster than [0, 1], then confirm the reorder helper picks
+        // [1, 0]. This proves the wiring from
+        // reorder_components_with_optimizer -> optimizer.optimize ->
+        // evolutionary_optimize -> plan_execution_cache.
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        config.enable_measured_fitness = true;
+        config.evolutionary_population_size = 12;
+        config.evolutionary_generations = 8;
+        let optimizer = Arc::new(QueryOptimizer::new(config));
+
+        // 2-component independent query (either order is topologically
+        // valid; the search has a real choice).
+        let components = vec![vector_component(), document_component()];
+
+        // Seed the cache with measurements that strongly prefer [1, 0].
+        let shape = crate::query::unified::plan_execution_cache::shape_hash(&components);
+        let cache = optimizer.plan_execution_cache().unwrap();
+        cache.record(shape, &[0, 1], 100_000);
+        cache.record(shape, &[1, 0], 1_000);
+
+        let mut q = empty_query(components.clone());
+        let order = reorder_components_with_optimizer(Some(&optimizer), &mut q)
+            .await
+            .unwrap()
+            .expect("multi-component + optimizer -> reorder applied");
+
+        assert_eq!(
+            order,
+            vec![1, 0],
+            "measured-fitness should pick order [1, 0] given the seeded cache; got {:?}",
+            order
+        );
+        // Components must be physically reordered so the executor sees
+        // doc-then-vector.
+        assert_eq!(q.components[0].model, DataModel::Document);
+        assert_eq!(q.components[1].model, DataModel::Vector);
+    }
+
+    #[tokio::test]
+    async fn reorder_preserves_components_when_dependency_forces_topology() {
+        // If component 1 depends on component 0, the optimizer must
+        // produce [0, 1] regardless of fitness preferences. This pins
+        // the topological-validity contract that downstream callers
+        // rely on (e.g. the executor uses prior-component results to
+        // satisfy dependent components).
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        let optimizer = Arc::new(QueryOptimizer::new(config));
+
+        let mut c1 = document_component();
+        c1.dependencies = vec![ComponentDependency {
+            component_index: 0,
+            join_field: "id".to_string(),
+            join_type: JoinType::Inner,
+        }];
+        let mut q = empty_query(vec![vector_component(), c1]);
+
+        let order = reorder_components_with_optimizer(Some(&optimizer), &mut q)
+            .await
+            .unwrap();
+        let order = order.expect("multi-component -> reorder applied");
+        assert_eq!(
+            order,
+            vec![0, 1],
+            "dependency forces vector-before-document; got {:?}",
+            order
+        );
+    }
+
+    #[tokio::test]
+    async fn execution_order_indices_address_original_components() {
+        // The returned `Vec<usize>` must use the *original* component
+        // indices as keys so the optimizer's PlanExecutionCache stays
+        // coherent across runs of the same query shape (the cache is
+        // keyed on (shape_hash, plan_order_hash) -- if order indices
+        // shifted from "original index" to "post-reorder position",
+        // every reordered run would miss the cache).
+        let mut config = OptimizerConfig::default();
+        config.enable_evolutionary_optimizer = true;
+        let optimizer = Arc::new(QueryOptimizer::new(config));
+
+        let mut q = empty_query(vec![vector_component(), document_component()]);
+        let order = reorder_components_with_optimizer(Some(&optimizer), &mut q)
+            .await
+            .unwrap();
+        let order = order.unwrap();
+        // Whatever order the optimizer picks, every entry must be a
+        // valid index into the original 0..2 range, no duplicates.
+        assert_eq!(order.len(), 2);
+        let mut sorted = order.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, vec![0, 1]);
     }
 }
 

@@ -1,5 +1,3 @@
-import types
-
 from proximadb_sdk.protocols import rest_sync
 
 
@@ -18,7 +16,7 @@ def test_graph_shortest_path_headers(monkeypatch):
 
     def fake_make_request(method, endpoint, **kwargs):
         captured["headers"] = kwargs.get("headers", {})
-        assert endpoint == "/api/v1/graph/shortest_path"
+        assert endpoint == "/api/v2/graphs/default/shortest-path"
         return FakeResponse({"ok": True})
 
     monkeypatch.setattr(client, "_make_request", fake_make_request)
@@ -40,7 +38,7 @@ def test_graph_traverse_headers(monkeypatch):
 
     def fake_make_request(method, endpoint, **kwargs):
         captured["headers"] = kwargs.get("headers", {})
-        assert endpoint == "/api/v1/graph/traverse"
+        assert endpoint == "/api/v2/graphs/default/traverse"
         return FakeResponse({"ok": True})
 
     monkeypatch.setattr(client, "_make_request", fake_make_request)

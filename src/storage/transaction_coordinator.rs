@@ -15,10 +15,10 @@
 //! - **Cleanup**: Automatic cleanup of failed/orphaned operations
 //! - **Unified Interface**: Single API for all storage components
 
-use crate::utils::uuid::Uuid;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
+use proximadb_kernel::uuid::Uuid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -292,8 +292,11 @@ impl ActiveTransaction {
     }
 }
 
+/// Backwards-compat alias for [`UnifiedTransactionCoordinator`].
+pub type TransactionCoordinator = UnifiedTransactionCoordinator;
+
 /// Unified atomic operations coordinator with ACID support
-pub struct TransactionCoordinator {
+pub struct UnifiedTransactionCoordinator {
     /// Filesystem factory for multi-cloud support
     filesystem: Arc<FilesystemFactory>,
 
@@ -319,9 +322,9 @@ pub struct TransactionCoordinator {
     config: AtomicWriteConfig,
 }
 
-impl std::fmt::Debug for TransactionCoordinator {
+impl std::fmt::Debug for UnifiedTransactionCoordinator {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TransactionCoordinator")
+        f.debug_struct("UnifiedTransactionCoordinator")
             .field("filesystem", &self.filesystem)
             .field("active_operations_count", &self.active_operations.len())
             .field("config", &self.config)
@@ -329,7 +332,7 @@ impl std::fmt::Debug for TransactionCoordinator {
     }
 }
 
-impl TransactionCoordinator {
+impl UnifiedTransactionCoordinator {
     /// Create new unified atomic coordinator with ACID support
     pub async fn new(
         filesystem: Arc<FilesystemFactory>,
@@ -1204,7 +1207,7 @@ impl TransactionCoordinator {
 /// Handle for an active transaction
 pub struct TransactionHandle<'a> {
     id: String,
-    coordinator: &'a TransactionCoordinator,
+    coordinator: &'a UnifiedTransactionCoordinator,
     #[allow(dead_code)]
     transaction: Arc<RwLock<ActiveTransaction>>,
 }
@@ -1260,11 +1263,11 @@ pub fn generate_transaction_id(prefix: &str) -> String {
 
 /// Convenience wrapper for VIPER-specific atomic operations
 pub struct ViperTransactionalOperations {
-    coordinator: Arc<TransactionCoordinator>,
+    coordinator: Arc<UnifiedTransactionCoordinator>,
 }
 
 impl ViperTransactionalOperations {
-    pub fn new(coordinator: Arc<TransactionCoordinator>) -> Self {
+    pub fn new(coordinator: Arc<UnifiedTransactionCoordinator>) -> Self {
         Self { coordinator }
     }
 
@@ -1316,11 +1319,11 @@ impl ViperTransactionalOperations {
 
 /// Convenience wrapper for Write Buffer-specific atomic operations
 pub struct WalTransactionalOperations {
-    coordinator: Arc<TransactionCoordinator>,
+    coordinator: Arc<UnifiedTransactionCoordinator>,
 }
 
 impl WalTransactionalOperations {
-    pub fn new(coordinator: Arc<TransactionCoordinator>) -> Self {
+    pub fn new(coordinator: Arc<UnifiedTransactionCoordinator>) -> Self {
         Self { coordinator }
     }
 
@@ -1366,7 +1369,7 @@ mod tests {
     use crate::storage::persistence::filesystem::FilesystemConfig;
     use tempfile::TempDir;
 
-    async fn create_test_coordinator() -> (TransactionCoordinator, TempDir) {
+    async fn create_test_coordinator() -> (UnifiedTransactionCoordinator, TempDir) {
         let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_string_lossy().to_string();
 
@@ -1376,7 +1379,9 @@ mod tests {
         };
 
         let filesystem = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
-        let coordinator = TransactionCoordinator::new(filesystem, None).await.unwrap();
+        let coordinator = UnifiedTransactionCoordinator::new(filesystem, None)
+            .await
+            .unwrap();
 
         (coordinator, temp_dir)
     }

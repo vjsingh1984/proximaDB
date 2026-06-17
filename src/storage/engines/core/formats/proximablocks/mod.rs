@@ -240,6 +240,8 @@ pub mod index_structures;
 pub mod batch_operations;
 pub mod constants;
 pub mod header_metadata;
+// Embedding-precision rollout (PR 5 of EMBEDDING_PRECISION_LLD_2026_05_22).
+pub mod per_column_alignment;
 pub mod spatial_clustering; // PCA-based clustering and Z-Order spatial indexing
 pub mod spatial_encoding; // 512-bit spatial codes for high-dimensional embeddings
 pub mod spatial_pruning; // SpatialPruner for unified block selection
@@ -271,7 +273,14 @@ pub use spatial_clustering::{
     AdaCurve, IncrementalPCA, ZOrderEncoder, cluster_blocks_pca, cluster_blocks_pca_adacurves,
     cluster_blocks_pca_zorder,
 };
-pub use utilities::{MemoryEstimator, PathResolver, PerformanceProfiler, RowBasedUtilities};
+pub use utilities::{
+    BlockUtilsPerformanceProfiler, MemoryEstimator, PathResolver, RowBasedUtilities,
+};
+// Backwards-compat alias for the pre-rename name. The linter rename to
+// `BlockUtilsPerformanceProfiler` happened in utilities.rs but the
+// `pub use` here wasn't updated in lockstep; alias keeps downstream
+// `crate::storage::...::PerformanceProfiler` paths compiling.
+pub use utilities::BlockUtilsPerformanceProfiler as PerformanceProfiler;
 
 // NEW: Export shared SST reader components
 pub use sst_io_layer::{
@@ -286,7 +295,7 @@ pub use sst_metadata::{SstBlockHeader, SstGlobalHeader, SstMetadata, SstMetadata
 pub use arrow_reader::ProximaBlocksArrowReader;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 
 /// Common configuration for row-based storage engines
 #[derive(Debug, Clone)]
@@ -312,15 +321,18 @@ pub struct RowBasedConfig {
     pub quantization: crate::compute::quantization::storage_engine::StorageQuantizationConfig,
 
     /// Index configuration
-    pub indexing: IndexConfiguration,
+    pub indexing: BlockIndexConfiguration,
 
     /// Performance tuning
     pub performance: PerformanceConfiguration,
 }
 
+/// Backwards-compat alias for [`BlockIndexConfiguration`].
+pub type IndexConfiguration = BlockIndexConfiguration;
+
 /// Index configuration shared between SST and SWIFT
 #[derive(Debug, Clone)]
-pub struct IndexConfiguration {
+pub struct BlockIndexConfiguration {
     /// Bloom filter settings
     pub bloom_filter_enabled: bool,
     pub bloom_filter_false_positive_rate: f64,
@@ -387,7 +399,7 @@ pub enum RowBasedSearchMode {
     IndexFree {
         query: Vec<f32>,
         top_k: usize,
-        filter: Option<MetadataFilter>,
+        filter: Option<BlockMetadataFilter>,
     },
 
     /// Hybrid mode - combine AXIS with local refinement
@@ -399,9 +411,12 @@ pub enum RowBasedSearchMode {
     },
 }
 
+/// Backwards-compat alias for [`BlockMetadataFilter`].
+pub type MetadataFilter = BlockMetadataFilter;
+
 /// Metadata filter for queries
 #[derive(Debug, Clone)]
-pub struct MetadataFilter {
+pub struct BlockMetadataFilter {
     pub conditions: Vec<FilterCondition>,
     pub logic: FilterLogic,
 }
@@ -486,13 +501,13 @@ impl Default for RowBasedConfig {
             compression: RowBasedCompressionConfig::default(),
             quantization:
                 crate::compute::quantization::storage_engine::StorageQuantizationConfig::default(),
-            indexing: IndexConfiguration::default(),
+            indexing: BlockIndexConfiguration::default(),
             performance: PerformanceConfiguration::default(),
         }
     }
 }
 
-impl Default for IndexConfiguration {
+impl Default for BlockIndexConfiguration {
     fn default() -> Self {
         Self {
             bloom_filter_enabled: true,
@@ -713,7 +728,7 @@ mod tests {
 
     #[test]
     fn test_metadata_filter_creation() {
-        let filter = MetadataFilter {
+        let filter = BlockMetadataFilter {
             conditions: vec![
                 FilterCondition::Equals("category".to_string(), "electronics".into()),
                 FilterCondition::Range("price".to_string(), 100.0.into(), 1000.0.into()),

@@ -119,6 +119,7 @@ from .models import (
     CollectionStats,
     CompressionType,
     DistanceMetric,
+    EmbeddingPrecision,
     FilterableColumn,
     FilterableDataType,
     FilterDict,
@@ -260,10 +261,15 @@ try:
         ChunkingStrategy,
         TextChunk,
         TextChunker,
+        chunk_and_embed_records,
+        chunk_and_embed_text,
         chunk_by_paragraphs,
         chunk_by_sentences,
         chunk_sliding_window,
         create_chunker,
+        create_records,
+        create_vector_records,
+        prepare_records,
         prepare_vector_records,
     )
 
@@ -446,9 +452,14 @@ if _chunking_available:
             "ChunkingConfig",
             "TextChunk",
             "create_chunker",
+            "create_records",
+            "create_vector_records",
+            "chunk_and_embed_records",
+            "chunk_and_embed_text",
             "chunk_by_sentences",
             "chunk_by_paragraphs",
             "chunk_sliding_window",
+            "prepare_records",
             "prepare_vector_records",
         ]
     )
@@ -491,6 +502,7 @@ try:
         BatchStrategy,
         Pipeline,
         RequestBatcher,
+        batch_insert_records,
         batch_insert_vectors,
         create_vector_batcher,
     )
@@ -554,6 +566,7 @@ if _batching_available:
             "BatchMetrics",
             "Pipeline",
             "create_vector_batcher",
+            "batch_insert_records",
             "batch_insert_vectors",
         ]
     )
@@ -590,6 +603,10 @@ _OPTIONAL_EXPORTS = {
         ".integrations.victor",
         "ProximaDBEmbeddingProvider",
     ),
+    "ProximaDBGraphStore": (
+        ".integrations.victor_graph",
+        "ProximaDBGraphStore",
+    ),
     "ProximaDBKnowledgeSource": (
         ".integrations.crewai",
         "ProximaDBKnowledgeSource",
@@ -605,12 +622,12 @@ _OPTIONAL_EXPORTS = {
 
 _OPTIONAL_EXPORT_DEPENDENCIES = {
     "ProximaDBVectorStore": ("langchain_core",),
-    "ProximaDBEmbeddingProvider": ("victor",),
+    "ProximaDBEmbeddingProvider": ("victor", "victor_contracts"),
     "ProximaDBKnowledgeSource": ("crewai",),
     "ProximaDBSearchTool": ("crewai",),
     "create_langgraph_retriever": ("langchain_core",),
     "ProximaDBRM": ("dspy",),
-    "ProximaDBVectorDB": ("autogen_agentchat", "pyautogen"),
+    "ProximaDBVectorDB": (("autogen_agentchat", "pyautogen"),),
 }
 
 
@@ -622,14 +639,20 @@ def _optional_export_is_available(name: str) -> bool:
     if not dependencies:
         return True
     for dep in dependencies:
-        if importlib.util.find_spec(dep) is None:
-            continue
-        try:
-            importlib.import_module(dep)
-            return True
-        except Exception:
-            continue
-    return False
+        alternatives = dep if isinstance(dep, tuple) else (dep,)
+        found = False
+        for alternative in alternatives:
+            if importlib.util.find_spec(alternative) is None:
+                continue
+            try:
+                importlib.import_module(alternative)
+                found = True
+                break
+            except Exception:
+                continue
+        if not found:
+            return False
+    return True
 
 
 # Backwards compatibility aliases
@@ -643,7 +666,7 @@ __all__.extend(
     ]
 )
 __all__.extend(
-    name for name in _OPTIONAL_EXPORTS.keys() if _optional_export_is_available(name)
+    name for name in _OPTIONAL_EXPORTS if _optional_export_is_available(name)
 )
 
 

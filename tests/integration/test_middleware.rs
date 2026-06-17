@@ -20,7 +20,7 @@ use tracing::{debug, error, info, warn};
     bloom::BloomFilterConfig,
 };
 use proximadb::network::middleware::auth::UserInfo;
-use proximadb::network::middleware::{AuthConfig, RateLimitConfig};
+use proximadb::network::middleware::{MiddlewareAuthConfig, RateLimitConfig};
 use proximadb::ProximaDB;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -92,7 +92,7 @@ async fn test_authentication_middleware() {
     let mut db = ProximaDB::new(config).await.unwrap();
 
     // Enable authentication in the HTTP server
-    db.configure_auth(AuthConfig {
+    db.configure_auth(MiddlewareAuthConfig {
         enabled: true,
         api_keys: api_keys.clone(),
         require_auth_for_health: false,

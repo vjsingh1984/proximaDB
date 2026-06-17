@@ -1,16 +1,37 @@
 //! Enhanced authentication and authorization for multi-tenant enterprise
+//
+//! **DEPRECATION NOTICE (TD-AUTH-CONSOLIDATION)**:
+//! This module is being consolidated into `crate::security`.
+//! - SSO/OIDC/SAML → `crate::security::auth` + `crate::security::auth_service`
+//! - RBAC → `crate::security::rbac_service`
+//! - Network-layer auth (JWT, middleware) → `crate::network::auth`
+//!
+//! New code should import from `crate::security` directly.
+//! This module will become a thin re-export shim and be removed in a future release.
+//! See docs/10-quality/TECHNICAL_DEBT.adoc for tracking.
 
 pub mod federated_delegation_complete;
 pub mod rbac;
 pub mod sso;
 
+#[allow(deprecated)]
+#[deprecated(note = "Use `AuthenticationResult` from this module; this alias is temporary.")]
+pub use federated_delegation_complete::FederatedAuthenticationResult;
 pub use federated_delegation_complete::{
-    CompleteDelegationResult, CompleteFederatedIdentityDelegation,
+    AuthenticationResult, CompleteDelegationResult, CompleteFederatedIdentityDelegation,
 };
 pub use rbac::{EnhancedRBACManager, Permission, TenantRole};
 pub use sso::{EnterpriseUserContext, SSOIntegrationManager, SSOProvider, SSOToken};
 
+use crate::security::security_coordinator::{
+    AuthorizedContext as SecurityAuthorizedContext, SessionMetadata as SecuritySessionMetadata,
+};
 use anyhow::Result;
+#[deprecated(
+    note = "Canonical security result type now lives in crate::security::SecurityAuthenticationResult."
+)]
+pub type SecurityAuthenticationResult = crate::security::SecurityAuthenticationResult;
+use crate::security::rbac_service::{UnifiedAuthMethod, UnifiedPermission, UnifiedUserContext};
 
 /// Enterprise authentication coordinator
 pub struct EnterpriseAuthManager {
@@ -47,7 +68,7 @@ impl EnterpriseAuthManager {
         sso_token: &SSOToken,
         tenant_id: &str,
         operation: AuthorizedOperation,
-    ) -> Result<AuthorizedContext> {
+    ) -> Result<SecurityAuthorizedContext> {
         // Validate SSO token and resolve user context
         let enterprise_user = self
             .sso_manager
@@ -55,7 +76,8 @@ impl EnterpriseAuthManager {
             .await?;
 
         // Validate operation authorization with RBAC
-        let authorization_result = match operation {
+        let operation_permission = map_authorized_operation_permission(&operation);
+        let _authorization_result = match operation {
             AuthorizedOperation::CollectionAccess {
                 collection_id,
                 operation_type,
@@ -71,10 +93,14 @@ impl EnterpriseAuthManager {
             } // Additional operation types to be added
         };
 
-        Ok(AuthorizedContext {
-            enterprise_user,
-            authorization_result,
-            authenticated_at: chrono::Utc::now(),
+        Ok(SecurityAuthorizedContext {
+            user_context: enterprise_user_to_unified_user_context(enterprise_user),
+            granted_permission: operation_permission,
+            session_metadata: SecuritySessionMetadata {
+                authenticated_at: chrono::Utc::now(),
+                auth_method: map_sso_provider(&sso_token.provider),
+                requires_mfa: false,
+            },
         })
     }
 }
@@ -92,15 +118,83 @@ pub enum AuthorizedOperation {
     // Additional operations to be added
 }
 
-/// Authorized context for operations
-#[derive(Debug, Clone)]
-pub struct AuthorizedContext {
-    /// Resolved enterprise user from SSO token validation.
-    pub enterprise_user: EnterpriseUserContext,
-    /// RBAC validation result for the requested operation.
-    pub authorization_result: rbac::AccessValidationResult,
-    /// Timestamp when authentication was performed.
-    pub authenticated_at: chrono::DateTime<chrono::Utc>,
+#[deprecated(
+    note = "Moved to crate::security::security_coordinator::AuthorizedContext. \
+            Auth shim retained temporarily during consolidation."
+)]
+/// Temporary compatibility alias for phased auth/security migration.
+pub type AuthorizedContext = crate::security::security_coordinator::AuthorizedContext;
+
+fn map_authorized_operation_permission(operation: &AuthorizedOperation) -> UnifiedPermission {
+    match operation {
+        AuthorizedOperation::CollectionAccess {
+            collection_id,
+            operation_type,
+        } => match operation_type {
+            rbac::CollectionOperation::Read => {
+                UnifiedPermission::CollectionRead(collection_id.to_string())
+            }
+            rbac::CollectionOperation::Write => {
+                UnifiedPermission::CollectionWrite(collection_id.to_string())
+            }
+            rbac::CollectionOperation::Delete => {
+                UnifiedPermission::CollectionDelete(collection_id.to_string())
+            }
+            rbac::CollectionOperation::Admin => {
+                UnifiedPermission::CollectionAdmin(collection_id.to_string())
+            }
+        },
+    }
+}
+
+fn map_sso_provider(provider: &SSOProvider) -> UnifiedAuthMethod {
+    let provider_name = match provider {
+        SSOProvider::AWSIAM => "aws_iam",
+        SSOProvider::AzureAD => "azure_ad",
+        SSOProvider::GoogleCloud => "google_cloud",
+        SSOProvider::SAML => "saml",
+        SSOProvider::OIDC => "oidc",
+        SSOProvider::Okta => "okta",
+        SSOProvider::Generic => "generic",
+    };
+
+    UnifiedAuthMethod::SSO {
+        provider: provider_name.to_string(),
+    }
+}
+
+fn enterprise_user_to_unified_user_context(
+    enterprise_user: EnterpriseUserContext,
+) -> UnifiedUserContext {
+    use std::collections::{HashMap, HashSet};
+
+    UnifiedUserContext {
+        user_id: enterprise_user.user_id,
+        tenant_id: Some(enterprise_user.tenant_id),
+        roles: enterprise_user.roles,
+        effective_permissions: HashSet::new(),
+        auth_method: match &enterprise_user.provider_context {
+            sso::types::ProviderUserContext::AWS { .. } => map_sso_provider(&SSOProvider::AWSIAM),
+            sso::types::ProviderUserContext::Azure { .. } => {
+                map_sso_provider(&SSOProvider::AzureAD)
+            }
+            sso::types::ProviderUserContext::Generic { .. } => {
+                map_sso_provider(&SSOProvider::Generic)
+            }
+        },
+        session_id: enterprise_user.session_id,
+        expires_at: None,
+        created_at: enterprise_user.login_timestamp,
+        metadata: {
+            let mut metadata = HashMap::new();
+            metadata.insert("email".to_string(), enterprise_user.email.clone());
+            metadata.insert(
+                "organization_id".to_string(),
+                enterprise_user.organization_id.clone(),
+            );
+            metadata
+        },
+    }
 }
 
 // Conversion from EnterpriseUserContext to storage::tenant::UserContext

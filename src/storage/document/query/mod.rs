@@ -7,29 +7,35 @@
 // - Query planning and optimization
 
 pub mod filter;
-pub mod path_parser;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use jsonpath_rust::JsonPathQuery;
 use serde_json::Value as JsonValue;
 use tracing::debug;
 
-use crate::proto::proximadb_v1::{
-    DocFilterCondition, DocFilterOperator, SortField, SortOrder, SqlObject, SqlValue,
-    sql_value::Value as SqlValueVariant,
-};
+use proximadb_document::DocumentRecordKey;
+
+use proximadb_data_model::ProximaValue;
+use proximadb_records::ProximaTree;
+use proximadb_records::conversions::{json_to_proxima, sql_value_to_proxima};
+
+use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
+use crate::proto::proximadb_v1::{DocFilterCondition, DocFilterOperator, SortField, SortOrder};
 
 use self::filter::FilterEvaluator;
 use super::indexes::IndexManager;
 use super::{DocumentQueryParams, DocumentRecord};
 
+/// Backwards-compat alias for [`DocumentQueryExecutor`].
+pub type QueryExecutor = DocumentQueryExecutor;
+
 /// Query executor for document queries
-pub struct QueryExecutor {
+pub struct DocumentQueryExecutor {
     /// Filter evaluator
     filter_evaluator: FilterEvaluator,
 }
 
-impl QueryExecutor {
+impl DocumentQueryExecutor {
     /// Create a new query executor
     pub fn new() -> Self {
         Self {
@@ -132,7 +138,10 @@ impl QueryExecutor {
             DocFilterOperator::Eq => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Eq(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -141,7 +150,10 @@ impl QueryExecutor {
             DocFilterOperator::Gt => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Gt(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -150,7 +162,10 @@ impl QueryExecutor {
             DocFilterOperator::Gte => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Gte(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -159,7 +174,10 @@ impl QueryExecutor {
             DocFilterOperator::Lt => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Lt(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -168,7 +186,10 @@ impl QueryExecutor {
             DocFilterOperator::Lte => {
                 if let Some(ref value) = condition.value {
                     Some(super::indexes::PathQueryCondition::Lte(
-                        self.filter_evaluator.sql_value_to_index_value(value)?,
+                        IndexManager::proxima_value_to_index_value(&sql_value_to_proxima(value))
+                            .ok_or_else(|| {
+                                anyhow!("Cannot convert complex value to index value")
+                            })?,
                     ))
                 } else {
                     None
@@ -207,7 +228,7 @@ impl QueryExecutor {
             .filter(|doc| {
                 candidate_ids
                     .as_ref()
-                    .is_none_or(|ids| ids.contains(doc.id.as_str()))
+                    .is_none_or(|ids| Self::candidate_ids_match_document(ids, doc))
             })
             .cloned()
             .collect();
@@ -223,16 +244,34 @@ impl QueryExecutor {
         Ok(documents)
     }
 
+    /// Return true when a candidate set references the document by either the
+    /// legacy facade id or the canonical record oid.
+    ///
+    /// This keeps legacy document indexes and canonical record-backed
+    /// projection indexes query-compatible during the Phase 2 migration.
+    fn candidate_ids_match_document(
+        candidate_ids: &std::collections::HashSet<&str>,
+        document: &DocumentRecord,
+    ) -> bool {
+        if candidate_ids.contains(document.id.as_str()) {
+            return true;
+        }
+
+        let canonical_oid =
+            DocumentRecordKey::new(&document.collection_id, &document.id).canonical_oid();
+        candidate_ids.contains(canonical_oid.as_str())
+    }
+
     /// Sort documents by the given fields
     fn sort_documents(
         &self,
-        documents: &mut Vec<DocumentRecord>,
+        documents: &mut [DocumentRecord],
         sort_fields: &[SortField],
     ) -> Result<()> {
         documents.sort_by(|a, b| {
             for field in sort_fields {
                 let order = SortOrder::try_from(field.order).unwrap_or(SortOrder::Asc);
-                let cmp = self.compare_by_path(&a.document, &b.document, &field.path);
+                let cmp = self.compare_by_path(&a.props, &b.props, &field.path);
                 let cmp = match order {
                     SortOrder::Desc => cmp.reverse(),
                     _ => cmp,
@@ -247,8 +286,9 @@ impl QueryExecutor {
         Ok(())
     }
 
-    /// Compare two documents by a JSON path
-    fn compare_by_path(&self, a: &SqlObject, b: &SqlObject, path: &str) -> std::cmp::Ordering {
+    /// Compare two documents by a JSON path over their canonical `props` trees
+    /// (TD-106 Slice 7b).
+    fn compare_by_path(&self, a: &ProximaTree, b: &ProximaTree, path: &str) -> std::cmp::Ordering {
         let val_a = self.extract_value(a, path);
         let val_b = self.extract_value(b, path);
 
@@ -256,41 +296,32 @@ impl QueryExecutor {
             (None, None) => std::cmp::Ordering::Equal,
             (None, Some(_)) => std::cmp::Ordering::Less,
             (Some(_), None) => std::cmp::Ordering::Greater,
-            (Some(a), Some(b)) => self.compare_sql_values(&a, &b),
+            (Some(a), Some(b)) => self.compare_proxima_values(&a, &b),
         }
     }
 
-    fn compare_sql_values(&self, a: &SqlValue, b: &SqlValue) -> std::cmp::Ordering {
-        match (&a.value, &b.value) {
-            (Some(SqlValueVariant::NullValue(_)), Some(SqlValueVariant::NullValue(_))) => {
-                std::cmp::Ordering::Equal
-            }
-            (Some(SqlValueVariant::NullValue(_)), _) => std::cmp::Ordering::Less,
-            (_, Some(SqlValueVariant::NullValue(_))) => std::cmp::Ordering::Greater,
-            (Some(SqlValueVariant::BoolValue(va)), Some(SqlValueVariant::BoolValue(vb))) => {
-                va.cmp(vb)
-            }
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                va.cmp(vb)
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::NumberValue(vb))) => {
-                va.total_cmp(vb)
-            }
-            (Some(SqlValueVariant::Int64Value(va)), Some(SqlValueVariant::NumberValue(vb))) => {
-                (*va as f64).total_cmp(vb)
-            }
-            (Some(SqlValueVariant::NumberValue(va)), Some(SqlValueVariant::Int64Value(vb))) => {
-                va.total_cmp(&(*vb as f64))
-            }
-            (Some(SqlValueVariant::StringValue(va)), Some(SqlValueVariant::StringValue(vb))) => {
-                va.cmp(vb)
-            }
-            _ => std::cmp::Ordering::Equal,
+    /// Total-order comparison over canonical leaves (NaN-stable for sort).
+    fn compare_proxima_values(&self, a: &ProximaValue, b: &ProximaValue) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        match (a, b) {
+            (ProximaValue::Null, ProximaValue::Null) => Ordering::Equal,
+            (ProximaValue::Null, _) => Ordering::Less,
+            (_, ProximaValue::Null) => Ordering::Greater,
+            (ProximaValue::Boolean(va), ProximaValue::Boolean(vb)) => va.cmp(vb),
+            (ProximaValue::Int64(va), ProximaValue::Int64(vb)) => va.cmp(vb),
+            (ProximaValue::Float64(va), ProximaValue::Float64(vb)) => va.total_cmp(vb),
+            (ProximaValue::Int64(va), ProximaValue::Float64(vb)) => (*va as f64).total_cmp(vb),
+            (ProximaValue::Float64(va), ProximaValue::Int64(vb)) => va.total_cmp(&(*vb as f64)),
+            (ProximaValue::String(va), ProximaValue::String(vb)) => va.cmp(vb),
+            _ => Ordering::Equal,
         }
     }
 
-    fn extract_value(&self, doc: &SqlObject, path: &str) -> Option<SqlValue> {
-        let json_doc = self.sql_object_to_json(doc);
+    /// Extract a canonical value at a JSON path from a `props` tree. Renders the
+    /// tree via the shared `proxima_tree_to_json_map` bridge for jsonpath, then
+    /// lifts the result back with `json_to_proxima`.
+    fn extract_value(&self, doc: &ProximaTree, path: &str) -> Option<ProximaValue> {
+        let json_doc = JsonValue::Object(proxima_tree_to_json_map(doc).into_iter().collect());
         let normalized_path = self.normalize_path(path);
 
         match json_doc.path(&normalized_path) {
@@ -299,12 +330,12 @@ impl QueryExecutor {
                     if arr[0].is_null() {
                         None
                     } else {
-                        self.json_to_sql_value(&arr[0])
+                        Some(json_to_proxima(&arr[0]))
                     }
                 }
                 JsonValue::Array(arr) if arr.is_empty() => None,
                 JsonValue::Null => None,
-                _ => self.json_to_sql_value(&result),
+                _ => Some(json_to_proxima(&result)),
             },
             Err(_) => None,
         }
@@ -317,89 +348,9 @@ impl QueryExecutor {
             format!("$.{}", path)
         }
     }
-
-    fn sql_object_to_json(&self, obj: &SqlObject) -> JsonValue {
-        let mut map = serde_json::Map::new();
-        for (key, value) in &obj.fields {
-            if let Some(json_val) = self.sql_value_to_json(value) {
-                map.insert(key.clone(), json_val);
-            }
-        }
-        JsonValue::Object(map)
-    }
-
-    fn sql_value_to_json(&self, value: &SqlValue) -> Option<JsonValue> {
-        match &value.value {
-            Some(SqlValueVariant::NullValue(_)) => Some(JsonValue::Null),
-            Some(SqlValueVariant::BoolValue(b)) => Some(JsonValue::Bool(*b)),
-            Some(SqlValueVariant::Int64Value(i)) => Some(JsonValue::Number((*i).into())),
-            Some(SqlValueVariant::NumberValue(f)) => {
-                serde_json::Number::from_f64(*f).map(JsonValue::Number)
-            }
-            Some(SqlValueVariant::StringValue(s)) => Some(JsonValue::String(s.clone())),
-            Some(SqlValueVariant::BytesValue(bytes)) => {
-                let hex: String = bytes.iter().map(|byte| format!("{:02x}", byte)).collect();
-                Some(JsonValue::String(format!("0x{}", hex)))
-            }
-            Some(SqlValueVariant::ArrayValue(arr)) => Some(JsonValue::Array(
-                arr.values
-                    .iter()
-                    .filter_map(|value| self.sql_value_to_json(value))
-                    .collect(),
-            )),
-            Some(SqlValueVariant::ObjectValue(obj)) => Some(self.sql_object_to_json(obj)),
-            None => None,
-        }
-    }
-
-    fn json_to_sql_value(&self, value: &JsonValue) -> Option<SqlValue> {
-        match value {
-            JsonValue::Null => Some(SqlValue {
-                value: Some(SqlValueVariant::NullValue(0)),
-            }),
-            JsonValue::Bool(b) => Some(SqlValue {
-                value: Some(SqlValueVariant::BoolValue(*b)),
-            }),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    Some(SqlValue {
-                        value: Some(SqlValueVariant::Int64Value(i)),
-                    })
-                } else {
-                    n.as_f64().map(|f| SqlValue {
-                        value: Some(SqlValueVariant::NumberValue(f)),
-                    })
-                }
-            }
-            JsonValue::String(s) => Some(SqlValue {
-                value: Some(SqlValueVariant::StringValue(s.clone())),
-            }),
-            JsonValue::Array(arr) => Some(SqlValue {
-                value: Some(SqlValueVariant::ArrayValue(
-                    crate::proto::proximadb_v1::SqlArray {
-                        values: arr
-                            .iter()
-                            .filter_map(|item| self.json_to_sql_value(item))
-                            .collect(),
-                    },
-                )),
-            }),
-            JsonValue::Object(obj) => Some(SqlValue {
-                value: Some(SqlValueVariant::ObjectValue(SqlObject {
-                    fields: obj
-                        .iter()
-                        .filter_map(|(key, value)| {
-                            self.json_to_sql_value(value)
-                                .map(|value| (key.clone(), value))
-                        })
-                        .collect(),
-                })),
-            }),
-        }
-    }
 }
 
-impl Default for QueryExecutor {
+impl Default for DocumentQueryExecutor {
     fn default() -> Self {
         Self::new()
     }
@@ -415,35 +366,52 @@ mod tests {
 
     #[test]
     fn test_query_executor_new() {
-        let _executor = QueryExecutor::new();
+        let _executor = DocumentQueryExecutor::new();
         // Basic instantiation test
         assert!(true);
     }
 
     #[tokio::test]
     async fn test_execute_filters_and_sorts_in_memory_documents() {
-        let executor = QueryExecutor::new();
+        let executor = DocumentQueryExecutor::new();
         let index_manager = IndexManager::new();
 
+        let doc1 = SqlObject {
+            fields: HashMap::from([
+                (
+                    "status".to_string(),
+                    SqlValue {
+                        value: Some(Value::StringValue("inactive".to_string())),
+                    },
+                ),
+                (
+                    "age".to_string(),
+                    SqlValue {
+                        value: Some(Value::Int64Value(40)),
+                    },
+                ),
+            ]),
+        };
+        let doc2 = SqlObject {
+            fields: HashMap::from([
+                (
+                    "status".to_string(),
+                    SqlValue {
+                        value: Some(Value::StringValue("active".to_string())),
+                    },
+                ),
+                (
+                    "age".to_string(),
+                    SqlValue {
+                        value: Some(Value::Int64Value(20)),
+                    },
+                ),
+            ]),
+        };
         let documents = vec![
             DocumentRecord {
                 id: "doc1".to_string(),
-                document: SqlObject {
-                    fields: HashMap::from([
-                        (
-                            "status".to_string(),
-                            SqlValue {
-                                value: Some(Value::StringValue("inactive".to_string())),
-                            },
-                        ),
-                        (
-                            "age".to_string(),
-                            SqlValue {
-                                value: Some(Value::Int64Value(40)),
-                            },
-                        ),
-                    ]),
-                },
+                props: crate::storage::document::sql_object_to_proxima_tree(&doc1),
                 version: 1,
                 collection_id: "users".to_string(),
                 updated_at_ns: 0,
@@ -452,22 +420,7 @@ mod tests {
             },
             DocumentRecord {
                 id: "doc2".to_string(),
-                document: SqlObject {
-                    fields: HashMap::from([
-                        (
-                            "status".to_string(),
-                            SqlValue {
-                                value: Some(Value::StringValue("active".to_string())),
-                            },
-                        ),
-                        (
-                            "age".to_string(),
-                            SqlValue {
-                                value: Some(Value::Int64Value(20)),
-                            },
-                        ),
-                    ]),
-                },
+                props: crate::storage::document::sql_object_to_proxima_tree(&doc2),
                 version: 1,
                 collection_id: "users".to_string(),
                 updated_at_ns: 0,

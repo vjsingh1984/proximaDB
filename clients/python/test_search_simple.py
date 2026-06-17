@@ -14,8 +14,7 @@ import logging
 
 # Setup logging
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -30,10 +29,8 @@ collection_name = "recovery_test_collection"
 logger.info("1. Simplest search request:")
 search_data = {
     "collection_id": collection_name,
-    "queries": [{
-        "vector": [0.5] * 128
-    }],
-    "top_k": 10
+    "queries": [{"vector": [0.5] * 128}],
+    "top_k": 10,
 }
 
 response = requests.post(f"{base_url}/api/v1/vector/search", json=search_data)

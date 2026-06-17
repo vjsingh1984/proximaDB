@@ -14,12 +14,12 @@ response = requests.get(f"{base_url}/api/v1/collections")
 if response.status_code == 200:
     collections = response.json()
     print(f"   ✓ Found {len(collections['collections'])} collections")
-    for col in collections['collections']:
-        col_name = col.get('name', col.get('id', 'unknown'))
-        col_id = col.get('id', 'unknown')
-        vector_count = col.get('vector_count', col.get('count', 0))
+    for col in collections["collections"]:
+        col_name = col.get("name", col.get("id", "unknown"))
+        col_id = col.get("id", "unknown")
+        vector_count = col.get("vector_count", col.get("count", 0))
         print(f"     - {col_name} (id: {col_id}, vectors: {vector_count})")
-        if col_name == 'recovery_test_collection':
+        if col_name == "recovery_test_collection":
             print(f"       ^ RECOVERY TEST COLLECTION FOUND! ✓")
 else:
     print(f"   ✗ Error: {response.status_code}")
@@ -49,15 +49,19 @@ print("3. Testing vector operations on recovered collection:")
 
 # Insert a new vector
 vector_data = {
-    "vectors": [{
-        "id": "recovery_test_vector_1",
-        "vector": [0.1] * 128,
-        "metadata": {"test": "recovery", "timestamp": "after_restart"}
-    }]
+    "vectors": [
+        {
+            "id": "recovery_test_vector_1",
+            "vector": [0.1] * 128,
+            "metadata": {"test": "recovery", "timestamp": "after_restart"},
+        }
+    ]
 }
 
 print("   - Inserting new vector...")
-response = requests.post(f"{base_url}/api/v1/vectors/{collection_name}", json=vector_data)
+response = requests.post(
+    f"{base_url}/api/v1/vectors/{collection_name}", json=vector_data
+)
 if response.status_code == 200:
     print(f"     ✓ Vector inserted successfully")
 else:
@@ -69,7 +73,7 @@ response = requests.post(f"{base_url}/api/v1/vectors/{collection_name}/list", js
 if response.status_code == 200:
     vectors = response.json()
     print(f"     ✓ Found {len(vectors.get('vectors', []))} vectors")
-    for vec in vectors.get('vectors', [])[:3]:
+    for vec in vectors.get("vectors", [])[:3]:
         print(f"       - {vec['id']}: metadata={vec.get('metadata', {})}")
 else:
     print(f"     ✗ Error: {response.status_code}")

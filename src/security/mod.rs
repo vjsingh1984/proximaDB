@@ -5,25 +5,28 @@
 
 pub mod advanced_features;
 pub mod auth;
+pub mod auth_service;
 pub mod encryption;
 pub mod monitoring;
+pub mod rbac_service;
 pub mod rls;
 pub mod security_coordinator;
-pub mod unified_auth;
-pub mod unified_rbac;
 pub mod validation;
 
-pub use unified_rbac::{
+pub use rbac_service::{
     AuthMethod, AuthorizationResult, CollectionPermissionType, ConsolidatedRBACManager, RBACConfig,
-    TenantContext, UnifiedPermission, UnifiedRole, UnifiedUserContext,
+    TenantContext, UnifiedAuthMethod, UnifiedPermission, UnifiedRole, UnifiedUserContext,
 };
 
-pub use unified_auth::{
+pub use auth_service::{
     AuthenticationConfig, AuthenticationData, AuthenticationMethod, AuthenticationResult,
-    ClientIdentity, MtlsConfig, UnifiedAuthService,
+    ClientCertificateData, ClientIdentity, MtlsConfig, SecurityAuthenticationResult,
+    UnifiedAuthService,
 };
 
-pub use security_coordinator::{SecurityConfig, SecurityCoordinator, SecurityMode};
+pub use security_coordinator::{
+    AuthorizedContext, SecurityConfig, SecurityCoordinator, SecurityMode, SessionMetadata,
+};
 
 pub use advanced_features::{
     IPAccessConfig, IPAccessControlService, IPAccessResult, MFAChallenge, MFAConfig, MFAProvider,
@@ -40,10 +43,13 @@ pub use encryption::{
     KeyInfo, KeyStore, KeyStoreConfig, KeyStoreError,
 };
 
+#[allow(deprecated)]
+#[deprecated(note = "Use TypeValidationResult instead.")]
+pub use validation::ValidationResult;
 pub use validation::{
     BinaryValidator, CollectionNameValidator, DecimalValidator, FieldValidationConfig,
     JsonValidator, MetadataValidationConfig, MetadataValidator, TimestampValidator,
-    TypedValueValidator, UuidValidator, ValidationError, ValidationResult,
+    TypeValidationResult, TypedValueValidator, UuidValidator, ValidationError,
     contains_sql_injection_pattern, validate_collection_name, validate_record_metadata,
 };
 
@@ -55,8 +61,9 @@ pub use monitoring::{
 };
 
 /// Re-export common types for convenience
-pub use crate::audit::logger::{AuditConfig, AuditLogger, AuditStorageBackend};
+pub use crate::audit::logger::AuditLogger;
 pub use crate::network::auth::{AuthError, JwtConfig};
+pub use proximadb_security::{AuditConfig, AuditStorageBackend};
 
 use anyhow::Result;
 
@@ -77,7 +84,7 @@ pub async fn initialize_security(config: SecurityConfig) -> Result<SecurityCoord
     // Create unified auth service
     let auth_service = UnifiedAuthService::new(config.authentication.clone())?;
 
-    // Create audit logger - config.audit is now directly AuditConfig from audit::logger
+    // Create audit logger from the shared audit configuration contract.
     let audit_logger = AuditLogger::new(config.audit.clone()).await?;
 
     // Create security coordinator

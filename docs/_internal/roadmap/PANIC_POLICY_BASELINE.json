@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-04-06T19:19:00Z",
-  "mode": "no-regression",
+  "generated_at_utc": "2026-06-16T13:49:59Z",
+  "mode": "report",
   "modules": {
     "api_handlers": {
       "expect": 0,
@@ -9,53 +9,50 @@
       "unwrap": 0
     },
     "core": {
-      "expect": 6,
+      "expect": 1,
       "path": "src/core",
-      "total": 6,
-      "unwrap": 0
-    },
-    "graph": {
-      "expect": 3,
-      "path": "src/graph",
-      "total": 5,
+      "total": 3,
       "unwrap": 2
     },
-    "network_rest": {
+    "graph": {
       "expect": 0,
-      "path": "src/network/rest",
+      "path": "src/graph",
       "total": 0,
+      "unwrap": 0
+    },
+    "network_rest": {
+      "expect": 1,
+      "path": "src/network/rest",
+      "total": 1,
       "unwrap": 0
     },
     "query": {
-      "expect": 4,
-      "path": "src/query",
-      "total": 6,
-      "unwrap": 2
-    },
-    "services": {
       "expect": 0,
-      "path": "src/services",
+      "path": "src/query",
       "total": 0,
       "unwrap": 0
     },
-    "storage": {
+    "services": {
       "expect": 4,
+      "path": "src/services",
+      "total": 4,
+      "unwrap": 0
+    },
+    "storage": {
+      "expect": 5,
       "path": "src/storage",
-      "total": 7,
-      "unwrap": 3
+      "total": 39,
+      "unwrap": 34
     }
   },
-  "repo": "proximaDB",
+  "repo": "root-fix",
   "scan_scope": "src/**/*.rs excluding tests/legacy/test-benchmark-example files and #[cfg(test)] blocks; ignores parser-internal self.expect(...) calls",
   "source_root": "src",
   "status": "pass",
   "totals": {
-    "expect": 20,
-    "total": 38,
-    "unwrap": 18
+    "expect": 22,
+    "total": 64,
+    "unwrap": 42
   },
-  "violations": [],
-  "total_panic_calls": 38,
-  "unwrap_count": 18,
-  "expect_count": 20
+  "violations": []
 }

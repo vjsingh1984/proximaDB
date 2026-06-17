@@ -16,50 +16,29 @@ Design Patterns:
 """
 
 import asyncio
-import hashlib
 import logging
 import threading
 import time
-import weakref
 from abc import ABC, abstractmethod
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from queue import Empty, Queue
 from typing import (
     Any,
-    AsyncGenerator,
-    AsyncIterator,
-    Callable,
-    Dict,
-    Generator,
     Generic,
-    Iterator,
-    List,
-    Optional,
     Protocol,
-    Tuple,
     TypeVar,
-    Union,
 )
 
-from .base import ChunkingConfig, ChunkingStrategy, ChunkingStrategyInterface, TextChunk
+from .base import ChunkingConfig, ChunkingStrategy, TextChunk
 from .code import CodeChunkingConfig
-from .factory import ChunkingStrategyFactory, get_chunking_strategy
+from .factory import ChunkingStrategyFactory
 from .parser_utils import (
     ConfigValidator,
-    FallbackConfig,
-    FallbackStrategy,
-    MetricsCollector,
-    ParseError,
-    ParserCache,
-    ParserError,
     ParserMetrics,
-    ValidationResult,
     get_metrics_collector,
-    get_parser_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -76,11 +55,11 @@ ChunkType = TypeVar("ChunkType", bound=TextChunk)
 class EmbeddingProvider(Protocol):
     """Protocol for embedding providers"""
 
-    def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Embed multiple texts"""
         ...
 
-    async def embed_texts_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts_async(self, texts: list[str]) -> list[list[float]]:
         """Async version of embed_texts"""
         ...
 
@@ -93,16 +72,16 @@ class EmbeddingProvider(Protocol):
 class VectorStore(Protocol):
     """Protocol for vector stores"""
 
-    async def insert(self, records: List[Dict[str, Any]]) -> None:
+    async def insert(self, records: list[dict[str, Any]]) -> None:
         """Insert records into the store"""
         ...
 
     async def search(
         self,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filter: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        filter: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """Search for similar vectors"""
         ...
 
@@ -136,7 +115,7 @@ class PipelineConfig:
 
     # Chunking settings
     chunking_strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC
-    chunking_config: Optional[ChunkingConfig] = None
+    chunking_config: ChunkingConfig | None = None
 
     # Embedding settings
     embedding_batch_size: int = 32
@@ -156,7 +135,7 @@ class PipelineConfig:
 
     # Progress and metrics
     enable_metrics: bool = True
-    progress_callback: Optional[Callable[[int, int, str], None]] = None
+    progress_callback: Callable[[int, int, str], None] | None = None
 
     # Memory management
     max_memory_mb: int = 512
@@ -176,10 +155,10 @@ class PipelineResult:
     """Result of a pipeline operation"""
 
     success: bool
-    chunks: List[TextChunk] = field(default_factory=list)
-    embeddings: List[List[float]] = field(default_factory=list)
-    errors: List[Dict[str, Any]] = field(default_factory=list)
-    metrics: Dict[str, Any] = field(default_factory=dict)
+    chunks: list[TextChunk] = field(default_factory=list)
+    embeddings: list[list[float]] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
+    metrics: dict[str, Any] = field(default_factory=dict)
 
     @property
     def chunk_count(self) -> int:
@@ -189,7 +168,7 @@ class PipelineResult:
     def error_count(self) -> int:
         return len(self.errors)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "success": self.success,
             "chunk_count": self.chunk_count,
@@ -206,11 +185,11 @@ class BatchResult:
     total_items: int = 0
     processed_items: int = 0
     failed_items: int = 0
-    results: List[PipelineResult] = field(default_factory=list)
+    results: list[PipelineResult] = field(default_factory=list)
     total_chunks: int = 0
     total_embeddings: int = 0
     processing_time_sec: float = 0.0
-    errors: List[Dict[str, Any]] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def success_rate(self) -> float:
@@ -280,7 +259,7 @@ class EnrichmentStage(PipelineStage[TextChunk]):
     """Enriches chunks with additional metadata"""
 
     def __init__(
-        self, enrichment_funcs: Optional[List[Callable[[TextChunk], TextChunk]]] = None
+        self, enrichment_funcs: list[Callable[[TextChunk], TextChunk]] | None = None
     ):
         self.enrichment_funcs = enrichment_funcs or []
 
@@ -298,17 +277,17 @@ class EnrichmentStage(PipelineStage[TextChunk]):
         self.enrichment_funcs.append(func)
 
 
-class FilterStage(PipelineStage[List[TextChunk]]):
+class FilterStage(PipelineStage[list[TextChunk]]):
     """Filters chunks based on criteria"""
 
-    def __init__(self, predicates: Optional[List[Callable[[TextChunk], bool]]] = None):
+    def __init__(self, predicates: list[Callable[[TextChunk], bool]] | None = None):
         self.predicates = predicates or []
 
     @property
     def name(self) -> str:
         return "filter"
 
-    def process(self, chunks: List[TextChunk]) -> List[TextChunk]:
+    def process(self, chunks: list[TextChunk]) -> list[TextChunk]:
         if not self.predicates:
             return chunks
 
@@ -346,7 +325,7 @@ class BatchEmbedder:
         self._request_count = 0
         self._total_tokens = 0
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Embed texts in batches with retries"""
         all_embeddings = []
 
@@ -357,7 +336,7 @@ class BatchEmbedder:
 
         return all_embeddings
 
-    async def embed_batch_async(self, texts: List[str]) -> List[List[float]]:
+    async def embed_batch_async(self, texts: list[str]) -> list[list[float]]:
         """Async version of batch embedding"""
         all_embeddings = []
 
@@ -368,7 +347,7 @@ class BatchEmbedder:
 
         return all_embeddings
 
-    def _embed_with_retry(self, texts: List[str]) -> List[List[float]]:
+    def _embed_with_retry(self, texts: list[str]) -> list[list[float]]:
         """Embed with retries on failure"""
         last_error = None
 
@@ -391,7 +370,7 @@ class BatchEmbedder:
             f"Embedding failed after {self.max_retries} attempts: {last_error}"
         )
 
-    async def _embed_with_retry_async(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_with_retry_async(self, texts: list[str]) -> list[list[float]]:
         """Async embed with retries"""
         last_error = None
 
@@ -422,7 +401,7 @@ class BatchEmbedder:
         )
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         return {
             "request_count": self._request_count,
             "total_tokens": self._total_tokens,
@@ -438,13 +417,13 @@ class BatchEmbedder:
 class ProgressTracker:
     """Tracks progress of pipeline operations"""
 
-    def __init__(self, callback: Optional[Callable[[int, int, str], None]] = None):
+    def __init__(self, callback: Callable[[int, int, str], None] | None = None):
         self.callback = callback
         self._current = 0
         self._total = 0
         self._status = "idle"
         self._lock = threading.Lock()
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
 
     def start(self, total: int, status: str = "processing") -> None:
         """Start tracking progress"""
@@ -455,7 +434,7 @@ class ProgressTracker:
             self._start_time = time.time()
         self._notify()
 
-    def update(self, increment: int = 1, status: Optional[str] = None) -> None:
+    def update(self, increment: int = 1, status: str | None = None) -> None:
         """Update progress"""
         with self._lock:
             self._current += increment
@@ -524,9 +503,9 @@ class ChunkingPipeline:
 
     def __init__(
         self,
-        config: Optional[PipelineConfig] = None,
-        embedding_provider: Optional[EmbeddingProvider] = None,
-        vector_store: Optional[VectorStore] = None,
+        config: PipelineConfig | None = None,
+        embedding_provider: EmbeddingProvider | None = None,
+        vector_store: VectorStore | None = None,
     ):
         self.config = config or PipelineConfig()
         self.embedding_provider = embedding_provider
@@ -540,7 +519,7 @@ class ChunkingPipeline:
         # State
         self._metrics_collector = get_metrics_collector()
         self._progress = ProgressTracker(self.config.progress_callback)
-        self._errors: List[Dict[str, Any]] = []
+        self._errors: list[dict[str, Any]] = []
         self._lock = threading.Lock()
 
     def _init_chunker(self) -> None:
@@ -638,7 +617,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     def process_text(
-        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> PipelineResult:
         """
         Process text synchronously.
@@ -722,7 +701,7 @@ class ChunkingPipeline:
             )
 
     async def process_text_async(
-        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> PipelineResult:
         """
         Process text asynchronously.
@@ -808,7 +787,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     def process_stream(
-        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> Generator[TextChunk, None, None]:
         """
         Process text as a stream, yielding chunks as they're ready.
@@ -834,7 +813,7 @@ class ChunkingPipeline:
                 raise
 
     async def process_stream_async(
-        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> AsyncGenerator[TextChunk, None]:
         """
         Async version of stream processing.
@@ -864,7 +843,7 @@ class ChunkingPipeline:
     # Batch Processing
     # -------------------------------------------------------------------------
 
-    def process_batch(self, items: List[Dict[str, Any]]) -> BatchResult:
+    def process_batch(self, items: list[dict[str, Any]]) -> BatchResult:
         """
         Process multiple items in batch.
 
@@ -925,7 +904,7 @@ class ChunkingPipeline:
         )
 
     async def process_batch_async(
-        self, items: List[Dict[str, Any]], concurrent_limit: Optional[int] = None
+        self, items: list[dict[str, Any]], concurrent_limit: int | None = None
     ) -> BatchResult:
         """
         Process multiple items concurrently.
@@ -946,8 +925,8 @@ class ChunkingPipeline:
         semaphore = asyncio.Semaphore(concurrent_limit)
 
         async def process_item(
-            item: Dict[str, Any], index: int
-        ) -> Tuple[int, PipelineResult]:
+            item: dict[str, Any], index: int
+        ) -> tuple[int, PipelineResult]:
             async with semaphore:
                 text = item.get("text", "")
                 source_id = item.get("source_id", f"batch_{index}")
@@ -999,7 +978,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     def process_file(
-        self, file_path: Union[str, Path], encoding: str = "utf-8"
+        self, file_path: str | Path, encoding: str = "utf-8"
     ) -> PipelineResult:
         """
         Process a file.
@@ -1035,7 +1014,7 @@ class ChunkingPipeline:
             )
 
     async def process_file_async(
-        self, file_path: Union[str, Path], encoding: str = "utf-8"
+        self, file_path: str | Path, encoding: str = "utf-8"
     ) -> PipelineResult:
         """Async version of process_file"""
         file_path = Path(file_path)
@@ -1066,7 +1045,7 @@ class ChunkingPipeline:
             )
 
     def process_directory(
-        self, directory: Union[str, Path], pattern: str = "**/*", recursive: bool = True
+        self, directory: str | Path, pattern: str = "**/*", recursive: bool = True
     ) -> BatchResult:
         """
         Process all matching files in a directory.
@@ -1130,10 +1109,10 @@ class ChunkingPipeline:
 
     async def process_directory_async(
         self,
-        directory: Union[str, Path],
+        directory: str | Path,
         pattern: str = "**/*",
         recursive: bool = True,
-        concurrent_limit: Optional[int] = None,
+        concurrent_limit: int | None = None,
     ) -> BatchResult:
         """Async version of process_directory"""
         directory = Path(directory)
@@ -1198,7 +1177,7 @@ class ChunkingPipeline:
     # -------------------------------------------------------------------------
 
     async def process_and_store(
-        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
+        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> PipelineResult:
         """
         Process text and store results in vector store.
@@ -1246,7 +1225,7 @@ class ChunkingPipeline:
     # Metrics and Monitoring
     # -------------------------------------------------------------------------
 
-    def _record_metrics(self, metrics: Dict[str, Any]) -> None:
+    def _record_metrics(self, metrics: dict[str, Any]) -> None:
         """Record metrics to the collector"""
         if not self.config.enable_metrics:
             return
@@ -1260,7 +1239,7 @@ class ChunkingPipeline:
         )
         collector.record(parser_metrics)
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get current pipeline metrics"""
         collector = get_metrics_collector()
         summary = collector.get_summary()
@@ -1288,8 +1267,8 @@ class ChunkingPipeline:
 
 def create_pipeline(
     strategy: ChunkingStrategy = ChunkingStrategy.SEMANTIC,
-    embedding_provider: Optional[EmbeddingProvider] = None,
-    vector_store: Optional[VectorStore] = None,
+    embedding_provider: EmbeddingProvider | None = None,
+    vector_store: VectorStore | None = None,
     **kwargs,
 ) -> ChunkingPipeline:
     """
@@ -1319,7 +1298,7 @@ def create_pipeline(
 
 
 def create_code_pipeline(
-    embedding_provider: Optional[EmbeddingProvider] = None, **kwargs
+    embedding_provider: EmbeddingProvider | None = None, **kwargs
 ) -> ChunkingPipeline:
     """Create a pipeline optimized for code processing"""
     return create_pipeline(
@@ -1332,7 +1311,7 @@ def create_code_pipeline(
 
 
 def create_document_pipeline(
-    embedding_provider: Optional[EmbeddingProvider] = None, **kwargs
+    embedding_provider: EmbeddingProvider | None = None, **kwargs
 ) -> ChunkingPipeline:
     """Create a pipeline optimized for document processing"""
     return create_pipeline(

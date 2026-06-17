@@ -1,32 +1,32 @@
 """Search utilities for ProximaDB Python SDK."""
 
 import logging
-from typing import Any, Dict, Optional, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 def build_search_optimization_rest(
-    top_k: Optional[int] = None,
-    filters: Optional[Dict[str, Any]] = None,
-    accuracy_threshold: Optional[float] = None,
-    include_expired: Optional[bool] = None,
-    timeout_ms: Optional[int] = None,
-    enable_two_stage: Optional[bool] = None,
-    quantization_hint: Optional[Union[str, Dict[str, Any]]] = None,
-    enable_clustering_hint: Optional[bool] = None,
-    enable_metadata_filtering_hint: Optional[bool] = None,
-    custom_hints: Optional[Dict[str, Any]] = None,
+    top_k: int | None = None,
+    filters: dict[str, Any] | None = None,
+    accuracy_threshold: float | None = None,
+    include_expired: bool | None = None,
+    timeout_ms: int | None = None,
+    enable_two_stage: bool | None = None,
+    quantization_hint: str | dict[str, Any] | None = None,
+    enable_clustering_hint: bool | None = None,
+    enable_metadata_filtering_hint: bool | None = None,
+    custom_hints: dict[str, Any] | None = None,
     # Additional parameters from DirectVectorService
-    distance_metric: Optional[str] = None,
-    requires_ordering: Optional[bool] = None,
-    candidate_multiplier: Optional[float] = None,
+    distance_metric: str | None = None,
+    requires_ordering: bool | None = None,
+    candidate_multiplier: float | None = None,
     # Streaming search config
-    streaming_buffer_size: Optional[int] = None,
-    streaming_concurrent_search: Optional[bool] = None,
-    streaming_max_concurrent_tasks: Optional[int] = None,
-    streaming_batch_size: Optional[int] = None,
-) -> Dict[str, Any]:
+    streaming_buffer_size: int | None = None,
+    streaming_concurrent_search: bool | None = None,
+    streaming_max_concurrent_tasks: int | None = None,
+    streaming_batch_size: int | None = None,
+) -> dict[str, Any]:
     """Build search optimization parameters for REST API.
 
     Returns dict compatible with REST API SearchOptimization structure.
@@ -124,25 +124,25 @@ def build_search_optimization_rest(
 
 
 def build_search_params_grpc(
-    top_k: Optional[int] = None,
-    filters: Optional[Dict[str, Any]] = None,
-    accuracy_threshold: Optional[float] = None,
-    include_expired: Optional[bool] = None,
-    timeout_ms: Optional[int] = None,
-    enable_two_stage: Optional[bool] = None,
-    quantization_hint: Optional[Union[str, Dict[str, Any]]] = None,
-    enable_clustering_hint: Optional[bool] = None,
-    enable_metadata_filtering_hint: Optional[bool] = None,
-    custom_hints: Optional[Dict[str, Any]] = None,
+    top_k: int | None = None,
+    filters: dict[str, Any] | None = None,
+    accuracy_threshold: float | None = None,
+    include_expired: bool | None = None,
+    timeout_ms: int | None = None,
+    enable_two_stage: bool | None = None,
+    quantization_hint: str | dict[str, Any] | None = None,
+    enable_clustering_hint: bool | None = None,
+    enable_metadata_filtering_hint: bool | None = None,
+    custom_hints: dict[str, Any] | None = None,
     # Additional parameters from DirectVectorService
-    distance_metric: Optional[str] = None,
-    requires_ordering: Optional[bool] = None,
-    candidate_multiplier: Optional[float] = None,
+    distance_metric: str | None = None,
+    requires_ordering: bool | None = None,
+    candidate_multiplier: float | None = None,
     # Streaming search config
-    streaming_buffer_size: Optional[int] = None,
-    streaming_concurrent_search: Optional[bool] = None,
-    streaming_max_concurrent_tasks: Optional[int] = None,
-    streaming_batch_size: Optional[int] = None,
+    streaming_buffer_size: int | None = None,
+    streaming_concurrent_search: bool | None = None,
+    streaming_max_concurrent_tasks: int | None = None,
+    streaming_batch_size: int | None = None,
 ) -> Any:
     """Build search params for gRPC API (v1 proto).
 
@@ -235,7 +235,7 @@ def build_search_params_grpc(
 
 
 def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
-    """Convert Python value to SqlValue proto.
+    """Convert Python value to SqlValue proto without flattening rich values.
 
     Args:
         value: Python value
@@ -244,39 +244,31 @@ def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
     Returns:
         SqlValue instance
     """
-    sql_value = types_pb2.SqlValue()
+    from google.protobuf.struct_pb2 import NullValue
 
-    if isinstance(value, bool):
+    sql_value = types_pb2.SqlValue()
+    if value is None:
+        sql_value.null_value = NullValue.NULL_VALUE
+    elif isinstance(value, bool):
         sql_value.bool_value = value
-    elif isinstance(value, int):
+    elif isinstance(value, int) and not isinstance(value, bool):
         sql_value.int64_value = value
     elif isinstance(value, float):
         sql_value.number_value = value
     elif isinstance(value, str):
         sql_value.string_value = value
-    elif isinstance(value, bytes):
-        sql_value.bytes_value = value
-    elif value is None:
-        # For None, use NullValue from google.protobuf
-        from google.protobuf import struct_pb2
-
-        sql_value.null_value = struct_pb2.NULL_VALUE
-    elif isinstance(value, list):
-        # Convert to SqlArray
-        array_value = types_pb2.SqlArray()
-        for item in value:
-            item_value = _python_value_to_sql_value(item, types_pb2)
-            array_value.values.append(item_value)
-        sql_value.array_value.CopyFrom(array_value)
+    elif isinstance(value, (bytes, bytearray, memoryview)):
+        sql_value.bytes_value = bytes(value)
+    elif isinstance(value, (list, tuple)):
+        sql_value.array_value.values.extend(
+            _python_value_to_sql_value(item, types_pb2) for item in value
+        )
     elif isinstance(value, dict):
-        # Convert to SqlObject
-        object_value = types_pb2.SqlObject()
-        for k, v in value.items():
-            item_value = _python_value_to_sql_value(v, types_pb2)
-            object_value.fields[k].CopyFrom(item_value)
-        sql_value.object_value.CopyFrom(object_value)
+        for key, item in value.items():
+            sql_value.object_value.fields[str(key)].CopyFrom(
+                _python_value_to_sql_value(item, types_pb2)
+            )
     else:
-        # Fallback to string representation
         sql_value.string_value = str(value)
 
     return sql_value
@@ -284,18 +276,18 @@ def _python_value_to_sql_value(value: Any, types_pb2: Any) -> Any:
 
 def build_search_hints(
     protocol: str,
-    top_k: Optional[int] = None,
-    filters: Optional[Dict[str, Any]] = None,
-    accuracy_threshold: Optional[float] = None,
-    include_expired: Optional[bool] = None,
-    timeout_ms: Optional[int] = None,
-    enable_two_stage: Optional[bool] = None,
-    quantization_hint: Optional[Union[str, Dict[str, Any]]] = None,
-    enable_clustering_hint: Optional[bool] = None,
-    enable_metadata_filtering_hint: Optional[bool] = None,
-    custom_hints: Optional[Dict[str, Any]] = None,
+    top_k: int | None = None,
+    filters: dict[str, Any] | None = None,
+    accuracy_threshold: float | None = None,
+    include_expired: bool | None = None,
+    timeout_ms: int | None = None,
+    enable_two_stage: bool | None = None,
+    quantization_hint: str | dict[str, Any] | None = None,
+    enable_clustering_hint: bool | None = None,
+    enable_metadata_filtering_hint: bool | None = None,
+    custom_hints: dict[str, Any] | None = None,
     **kwargs,  # Accept additional parameters
-) -> Union[Dict[str, Any], Any]:
+) -> dict[str, Any] | Any:
     """Build search hints based on protocol type.
 
     Args:

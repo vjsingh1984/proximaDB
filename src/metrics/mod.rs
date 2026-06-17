@@ -178,15 +178,48 @@
 //! - CloudWatch (metric filters)
 //! - Custom web UI at `/dashboard`
 
+/// AXIS ANN advisor observability — captures (predicted_recall,
+/// observed_recall, observed_latency) residuals per search to
+/// validate the advisor's closed-form formulas against real
+/// workloads (P4 of the recall-aware AXIS stack).
+pub mod advisor_observations_metrics;
 pub mod aggregator;
 pub mod cache;
+/// Collection pin-registry observability — currently-pinned gauge per
+/// target tier + pin/unpin operation counters.
+pub mod collection_pin_metrics;
 pub mod collectors;
 pub mod compression;
+/// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.
+pub mod dr_metrics;
 pub mod exporters;
+/// Primary-pod write-router observability — counters for the
+/// gateway gate's allow/misroute decisions per tenant.
+pub mod primary_pod_metrics;
 pub mod query_service;
+/// AXIS HNSW recall-target drift observability — one-hot status
+/// gauge + observation / hot-swap counters for /route-health +
+/// /recall-tune.
+pub mod recall_drift_metrics;
+pub mod saas_billing_metrics;
 pub mod schema;
 pub mod store;
+/// TD-064 predicate-aware vector search shortfall counters.
+pub mod td064_metrics;
+/// TD-066 canonical-WAL-authority recovery observability (Option E from
+/// `docs/12-design/TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc`).
+pub mod td066_metrics;
+/// Tier-migration pipeline observability — counters + bytes + duration
+/// histogram + in-flight gauge for `TierMigrationExecutor` operations.
+pub mod tier_migration_metrics;
+/// TurboQuant scoring-kernel metrics (P8.A — ADR-021). Counts blocks
+/// skipped by the in-kernel allowlist mask. Gated by feature flag.
+#[cfg(feature = "experimental-turboquant")]
+pub mod turboquant_metrics;
 pub mod updater;
+/// TD-099(3d) WAL scan-index observability — distinct-indexed-oid gauge per
+/// collection, for sizing the per-collection scan-index memory.
+pub mod wal_scan_metrics;
 
 #[cfg(test)]
 mod tests;
@@ -209,100 +242,5 @@ pub use updater::{
 
 // Re-export common types for compatibility
 pub use self::schema::Alert;
-pub use exporters::{MetricsSnapshot, SystemMetrics};
-
-use anyhow::Result;
-
-/// Configuration for the metrics system
-#[derive(Debug, Clone)]
-pub struct MetricsConfig {
-    /// Enable or disable the entire metrics system
-    pub enabled: bool,
-
-    /// Number of partitions for collection-based metrics storage
-    pub collection_partitions: usize,
-
-    /// Base path for metrics storage (e.g., "s3://bucket/metrics" or "file:///data/metrics")
-    pub storage_path: String,
-
-    /// Flush interval for metrics updates in seconds
-    pub flush_interval_seconds: u64,
-
-    /// Retention period in days (max: 30, default: 7)
-    pub retention_days: u32,
-
-    /// Threshold for parallel scan optimization (number of files)
-    pub parallel_scan_threshold: usize,
-
-    /// Sparsity threshold for compression decisions (% of zero/null values)
-    pub sparsity_threshold: f32,
-
-    /// Size threshold for quantization recommendations (bytes)
-    pub quantization_size_threshold: u64,
-
-    /// Snapshot interval for metrics aggregation in seconds
-    pub snapshot_interval_seconds: u64,
-
-    /// Maximum memory usage in MB for metrics cache
-    pub max_memory_mb: usize,
-}
-
-impl Default for MetricsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            collection_partitions: 16,
-            storage_path: "file:///data/proximadb/metrics".to_string(),
-            flush_interval_seconds: 30, // 30 seconds
-            retention_days: 7,
-            parallel_scan_threshold: 10, // Suggest parallel scan if >10 files
-            sparsity_threshold: 0.3,     // Consider sparse if >30% zeros
-            quantization_size_threshold: 100 * 1024 * 1024, // 100MB
-            snapshot_interval_seconds: 60, // 1 minute snapshots
-            max_memory_mb: 512,          // 512MB max memory for metrics cache
-        }
-    }
-}
-
-impl MetricsConfig {
-    /// Validate and adjust configuration to safe bounds
-    pub fn validate(&mut self) -> Result<()> {
-        // Enforce minimum flush interval
-        if self.flush_interval_seconds < 10 {
-            tracing::warn!(
-                "Flush interval {} too low, setting to minimum 10 seconds",
-                self.flush_interval_seconds
-            );
-            self.flush_interval_seconds = 10;
-        }
-
-        // Enforce maximum retention
-        if self.retention_days > 30 {
-            tracing::warn!(
-                "Retention period {} days too high, setting to maximum 30 days",
-                self.retention_days
-            );
-            self.retention_days = 30;
-        }
-
-        // Enforce minimum partitions
-        if self.collection_partitions < 1 {
-            tracing::warn!(
-                "Collection partitions {} too low, setting to minimum 1",
-                self.collection_partitions
-            );
-            self.collection_partitions = 1;
-        }
-
-        // Enforce maximum partitions
-        if self.collection_partitions > 256 {
-            tracing::warn!(
-                "Collection partitions {} too high, setting to maximum 256",
-                self.collection_partitions
-            );
-            self.collection_partitions = 256;
-        }
-
-        Ok(())
-    }
-}
+pub use exporters::{MetricsExportSnapshot, SystemMetrics};
+pub use proximadb_config::MetricsConfig;

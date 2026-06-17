@@ -65,6 +65,9 @@ pub enum AuthMethod {
     ClientCertificate,
 }
 
+/// Network-layer transport auth method marker for callers that need a boundary-safe name.
+pub type NetworkAuthMethod = AuthMethod;
+
 /// Permissions for different operations
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum Permission {
@@ -222,7 +225,7 @@ impl AuthService {
             tenant_id: claims.tenant_id,
             roles,
             permissions,
-            auth_method: AuthMethod::JwtToken,
+            auth_method: NetworkAuthMethod::JwtToken,
             token_expires_at: Some(
                 chrono::DateTime::from_timestamp(claims.exp, 0).unwrap_or_default(),
             ),
@@ -245,7 +248,7 @@ impl AuthService {
             tenant_id: api_key_info.tenant_id.clone(),
             roles,
             permissions,
-            auth_method: AuthMethod::ApiKey,
+            auth_method: NetworkAuthMethod::ApiKey,
             token_expires_at: None, // API keys don't expire
         })
     }
@@ -280,7 +283,7 @@ mod tests {
             tenant_id: None,
             roles: vec!["reader".to_string()],
             permissions: vec![Permission::ReadVectors, Permission::SearchVectors],
-            auth_method: AuthMethod::ApiKey,
+            auth_method: NetworkAuthMethod::ApiKey,
             token_expires_at: None,
         };
 

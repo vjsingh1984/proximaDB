@@ -5,7 +5,6 @@ Provides query instruction support for retrieval-optimized models.
 """
 
 import logging
-from typing import List
 
 import numpy as np
 
@@ -102,7 +101,7 @@ class InstructionMixin:
         embeddings = self.embed([instructed_query])
         return embeddings[0]
 
-    def embed_queries(self, queries: List[str]) -> np.ndarray:
+    def embed_queries(self, queries: list[str]) -> np.ndarray:
         """
         Embed multiple queries with automatic instructions
 
@@ -122,7 +121,7 @@ class InstructionMixin:
         instructed_queries = [self.apply_instruction(q, is_query=True) for q in queries]
         return self.embed(instructed_queries)
 
-    def embed_passages(self, passages: List[str]) -> np.ndarray:
+    def embed_passages(self, passages: list[str]) -> np.ndarray:
         """
         Embed passages without instructions
 
@@ -142,7 +141,7 @@ class InstructionMixin:
         # Passages don't get instructions
         return self.embed(passages)
 
-    def embed_documents(self, documents: List[dict]) -> np.ndarray:
+    def embed_documents(self, documents: list[dict]) -> np.ndarray:
         """
         Embed documents (extracts text field)
 

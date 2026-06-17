@@ -13,7 +13,7 @@ Top E5 Models (Open Source):
 """
 
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 
@@ -91,7 +91,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
     QUERY_PREFIX = "query: "
     PASSAGE_PREFIX = "passage: "
 
-    def __init__(self, config: Optional[EmbeddingConfig] = None):
+    def __init__(self, config: EmbeddingConfig | None = None):
         """Initialize E5 provider with optional config"""
         self.config = config if config is not None else self._get_default_config()
         self._available = None
@@ -150,7 +150,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
             self._available = False
             logger.error(f"Failed to initialize E5 model: {e}")
 
-    def _apply_prefix(self, texts: List[str], prefix: str) -> List[str]:
+    def _apply_prefix(self, texts: list[str], prefix: str) -> list[str]:
         """
         Apply E5 prefix to texts
 
@@ -177,7 +177,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
         """
         return self.embed_texts([text], is_query=is_query)[0]
 
-    def embed_texts(self, texts: List[str], is_query: bool = None) -> np.ndarray:
+    def embed_texts(self, texts: list[str], is_query: bool = None) -> np.ndarray:
         """
         Generate embeddings for multiple texts
 
@@ -222,7 +222,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
         return embeddings
 
     def embed_documents(
-        self, documents: List[Dict[str, Any]], text_field: str = "text"
+        self, documents: list[dict[str, Any]], text_field: str = "text"
     ) -> np.ndarray:
         """
         Generate embeddings for documents (passages)
@@ -254,7 +254,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
         """
         return self.embed_text(query, is_query=True)
 
-    def embed_queries(self, queries: List[str]) -> np.ndarray:
+    def embed_queries(self, queries: list[str]) -> np.ndarray:
         """
         Generate embeddings for multiple search queries
 
@@ -268,7 +268,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
         """
         return self.embed_texts(queries, is_query=True)
 
-    def embed_passages(self, passages: List[str]) -> np.ndarray:
+    def embed_passages(self, passages: list[str]) -> np.ndarray:
         """
         Generate embeddings for passages/documents
 
@@ -286,7 +286,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
         """Get embedding dimension"""
         return self.config.dimension
 
-    def get_model_info(self) -> Dict[str, Any]:
+    def get_model_info(self) -> dict[str, Any]:
         """Get model information"""
         info = {
             "model_name": self.config.model_name,
@@ -318,7 +318,7 @@ class E5EmbeddingProvider(EmbeddingProvider):
         return self._available
 
     @classmethod
-    def list_available_models(cls) -> Dict[str, Dict[str, Any]]:
+    def list_available_models(cls) -> dict[str, dict[str, Any]]:
         """List available E5 models with their specifications"""
         return cls.E5_MODELS.copy()
 

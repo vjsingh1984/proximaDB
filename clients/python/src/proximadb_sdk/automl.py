@@ -11,7 +11,7 @@ Licensed under the Apache License, Version 2.0
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 
 class WorkloadType(str, Enum):
@@ -56,11 +56,11 @@ class WorkloadCharacteristics:
     hot_data_ratio: float = 0.2  # ratio of frequently accessed data
 
     # Performance requirements
-    target_latency_ms: Optional[float] = None
-    target_throughput: Optional[int] = None
-    memory_budget_mb: Optional[int] = None
+    target_latency_ms: float | None = None
+    target_throughput: int | None = None
+    memory_budget_mb: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "read_ratio": self.read_ratio,
             "write_ratio": self.write_ratio,
@@ -87,9 +87,9 @@ class EngineRecommendation:
     estimated_latency_ms: float
     estimated_throughput: int
     estimated_memory_mb: int
-    config_overrides: Dict[str, Any] = field(default_factory=dict)
+    config_overrides: dict[str, Any] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "engine": self.engine,
             "confidence": self.confidence,
@@ -107,20 +107,20 @@ class HyperparameterConfig:
 
     name: str
     current_value: Any
-    min_value: Optional[Any] = None
-    max_value: Optional[Any] = None
-    step: Optional[Any] = None
-    allowed_values: Optional[List[Any]] = None
+    min_value: Any | None = None
+    max_value: Any | None = None
+    step: Any | None = None
+    allowed_values: list[Any] | None = None
 
 
 @dataclass
 class OptimizationResult:
     """Result of hyperparameter optimization"""
 
-    best_config: Dict[str, Any]
+    best_config: dict[str, Any]
     best_score: float
     iterations: int
-    search_history: List[Dict[str, Any]] = field(default_factory=list)
+    search_history: list[dict[str, Any]] = field(default_factory=list)
     improvement_ratio: float = 0
 
 
@@ -137,15 +137,15 @@ class WorkloadPredictor:
 
     def __init__(self, window_size: int = 1000):
         self._window_size = window_size
-        self._operations: List[Dict[str, Any]] = []
-        self._operation_counts: Dict[str, int] = {}
+        self._operations: list[dict[str, Any]] = []
+        self._operation_counts: dict[str, int] = {}
 
     def observe_operation(
         self,
         operation: str,
         latency_ms: float,
         vector_count: int = 1,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """
         Observe an operation for workload prediction.
@@ -346,7 +346,7 @@ class EngineSelector:
         Returns:
             EngineRecommendation with engine choice and configuration
         """
-        scores: List[Tuple[str, float, Dict[str, Any]]] = []
+        scores: list[tuple[str, float, dict[str, Any]]] = []
 
         for engine, profile in self.ENGINE_PROFILES.items():
             # Skip SWIFT for large datasets
@@ -392,7 +392,7 @@ class EngineSelector:
     def _calculate_score(
         self,
         engine: str,
-        profile: Dict[str, Any],
+        profile: dict[str, Any],
         characteristics: WorkloadCharacteristics,
         goal: OptimizationGoal,
     ) -> float:
@@ -449,9 +449,9 @@ class EngineSelector:
     def _generate_config(
         self,
         engine: str,
-        profile: Dict[str, Any],
+        profile: dict[str, Any],
         characteristics: WorkloadCharacteristics,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate optimized configuration for an engine"""
         config = {}
 
@@ -538,7 +538,7 @@ class EngineSelector:
     def compare_engines(
         self,
         characteristics: WorkloadCharacteristics,
-    ) -> List[EngineRecommendation]:
+    ) -> list[EngineRecommendation]:
         """
         Compare all engines for the given characteristics.
 
@@ -563,7 +563,7 @@ class EngineSelector:
         self,
         engine: str,
         characteristics: WorkloadCharacteristics,
-    ) -> Optional[EngineRecommendation]:
+    ) -> EngineRecommendation | None:
         """Get recommendation for a specific engine"""
         profile = self.ENGINE_PROFILES.get(engine)
         if not profile:
@@ -632,7 +632,7 @@ class HyperparameterOptimizer:
         collection: str,
         goal: OptimizationGoal = OptimizationGoal.LATENCY,
         max_iterations: int = 20,
-        test_queries: Optional[List[List[float]]] = None,
+        test_queries: list[list[float]] | None = None,
     ) -> OptimizationResult:
         """
         Optimize hyperparameters for a collection.
@@ -687,7 +687,7 @@ class HyperparameterOptimizer:
             improvement_ratio=improvement,
         )
 
-    def _get_searchable_params(self) -> List[HyperparameterConfig]:
+    def _get_searchable_params(self) -> list[HyperparameterConfig]:
         """Get list of searchable hyperparameters"""
         return [
             HyperparameterConfig(
@@ -726,10 +726,10 @@ class HyperparameterOptimizer:
 
     def _generate_candidate(
         self,
-        params: List[HyperparameterConfig],
+        params: list[HyperparameterConfig],
         iteration: int,
         max_iterations: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Generate a candidate configuration"""
         import random
 
@@ -762,9 +762,9 @@ class HyperparameterOptimizer:
     def _evaluate_config(
         self,
         collection: str,
-        config: Dict[str, Any],
+        config: dict[str, Any],
         goal: OptimizationGoal,
-        test_queries: Optional[List[List[float]]],
+        test_queries: list[list[float]] | None,
     ) -> float:
         """Evaluate a configuration"""
         # Without a client, use heuristic scoring
@@ -790,7 +790,7 @@ class HyperparameterOptimizer:
         else:
             return 1000 / (avg_latency + 1)
 
-    def _heuristic_score(self, config: Dict[str, Any], goal: OptimizationGoal) -> float:
+    def _heuristic_score(self, config: dict[str, Any], goal: OptimizationGoal) -> float:
         """Heuristic scoring without actual evaluation"""
         score = 0.5
 
@@ -860,10 +860,10 @@ class AutoML:
         vector_count: int = 0,
         vector_dimension: int = 0,
         read_ratio: float = 0.5,
-        write_ratio: Optional[float] = None,
-        target_latency_ms: Optional[float] = None,
-        target_throughput: Optional[int] = None,
-        memory_budget_mb: Optional[int] = None,
+        write_ratio: float | None = None,
+        target_latency_ms: float | None = None,
+        target_throughput: int | None = None,
+        memory_budget_mb: int | None = None,
         goal: OptimizationGoal = OptimizationGoal.BALANCED,
     ) -> EngineRecommendation:
         """
@@ -902,7 +902,7 @@ class AutoML:
         collection: str,
         goal: OptimizationGoal = OptimizationGoal.LATENCY,
         max_iterations: int = 20,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Automatically configure a collection for optimal performance.
 

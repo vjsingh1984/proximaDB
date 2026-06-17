@@ -4,9 +4,7 @@ Unit tests for proto conversion utilities (v1 proto)
 Tests filter conversion and SearchParams conversion with v1 proto structure.
 """
 
-import pytest
-
-from proximadb_sdk.filters import FilterBuilder, FilterOp, LogicalOp
+from proximadb_sdk.filters import FilterBuilder, FilterOp
 from proximadb_sdk.search_utils import (
     _python_value_to_sql_value,
     build_search_params_grpc,
@@ -62,7 +60,6 @@ class TestFilterProtoConversion:
 
     def test_or_filter(self):
         """Test OR filter"""
-        from proximadb_sdk.v1 import entity_pb2
 
         filter_builder = (
             FilterBuilder().or_().equals("brand", "Apple").equals("brand", "Samsung")
@@ -98,7 +95,6 @@ class TestFilterProtoConversion:
 
     def test_value_type_conversion(self):
         """Test different value types in filters"""
-        from proximadb_sdk.v1 import entity_pb2
 
         # Test string value
         f1 = FilterBuilder().equals("name", "test")
@@ -133,7 +129,6 @@ class TestFilterProtoConversion:
 
     def test_nested_filter_flattening(self):
         """Test nested filter groups get flattened"""
-        from proximadb_sdk.v1 import entity_pb2
 
         # Create nested filter
         inner_filter = FilterBuilder().equals("brand", "Apple")
@@ -176,7 +171,6 @@ class TestSearchParamsProtoConversion:
 
     def test_all_scalar_fields(self):
         """Test all scalar optional fields"""
-        from proximadb_sdk.v1 import vector_types_pb2
 
         params = build_search_params_grpc(
             top_k=10,

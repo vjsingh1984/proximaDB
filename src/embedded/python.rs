@@ -33,18 +33,20 @@
 
 use pyo3::exceptions::{PyRuntimeError, PyUserWarning, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyAny, PyDict, PyList, PyModule};
+use pyo3::types::{PyAny, PyDict, PyList, PyModule, PyTuple};
 use pyo3::{Bound, IntoPyObject, PyErr};
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 // Zero-copy numpy support
-use numpy::{PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 
-use super::{AccessMode, EmbeddedConfig, EmbeddedProximaDB, StorageLocationConfig};
+use super::{
+    AccessMode, EmbeddedConfig, EmbeddedProximaDB, EmbeddedSqlQueryResult, StorageLocationConfig,
+    json_to_proxima_value, proxima_value_to_json,
+};
 use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
-use crate::core::proto_metadata_helper::sqlvalue_metadata_to_json;
 
 /// Python wrapper for disk configuration
 #[pyclass(name = "DiskConfig")]
@@ -973,7 +975,22 @@ impl PyStorageStats {
 ///     ```
 #[pyclass(name = "ProximaDB")]
 pub struct PyProximaDB {
-    inner: Arc<EmbeddedProximaDB>,
+    inner: Mutex<Option<Arc<EmbeddedProximaDB>>>,
+}
+
+impl PyProximaDB {
+    fn db(&self) -> PyResult<Arc<EmbeddedProximaDB>> {
+        self.inner
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Database mutex poisoned"))?
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| PyRuntimeError::new_err("Database has been closed"))
+    }
+
+    fn db_opt(&self) -> Option<Arc<EmbeddedProximaDB>> {
+        self.inner.lock().ok()?.as_ref().cloned()
+    }
 }
 
 fn set_approx_defaults(mode_str: &str) -> (String, f32, usize, usize) {
@@ -1146,7 +1163,7 @@ impl PyProximaDB {
                     config.block_prune_max_keep = max_k;
                 }
                 PruneModeConfig::Advanced(adv) => {
-                    let (mode, def_ratio, def_min_k, def_max_k) = set_approx_defaults(&adv.r#type);
+                    let (_mode, def_ratio, def_min_k, def_max_k) = set_approx_defaults(&adv.r#type);
                     config.block_prune_mode = adv.r#type;
                     config.block_prune_ratio = adv.ratio.unwrap_or(def_ratio);
                     config.block_prune_min_keep = adv.min_keep.unwrap_or(def_min_k);
@@ -1162,7 +1179,7 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create database: {}", e)))?;
 
         Ok(PyProximaDB {
-            inner: Arc::new(db),
+            inner: Mutex::new(Some(Arc::new(db))),
         })
     }
 
@@ -1181,7 +1198,7 @@ impl PyProximaDB {
     ///     RuntimeError: If collection creation fails
     #[pyo3(signature = (name, dimension, engine=None))]
     fn create_collection(&self, name: &str, dimension: u32, engine: Option<&str>) -> PyResult<()> {
-        self.inner
+        self.db()?
             .create_collection(name, dimension, engine)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create collection: {}", e)))
     }
@@ -1194,7 +1211,7 @@ impl PyProximaDB {
     /// Raises:
     ///     RuntimeError: If collection deletion fails
     fn delete_collection(&self, name: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .delete_collection(name)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete collection: {}", e)))
     }
@@ -1207,7 +1224,7 @@ impl PyProximaDB {
     /// Returns:
     ///     CollectionInfo or None if collection doesn't exist
     fn get_collection(&self, name: &str) -> PyResult<Option<PyCollectionInfo>> {
-        self.inner
+        self.db()?
             .get_collection(name)
             .map(|opt| {
                 opt.map(|info| PyCollectionInfo {
@@ -1226,7 +1243,7 @@ impl PyProximaDB {
     /// Returns:
     ///     List of CollectionInfo
     fn list_collections(&self) -> PyResult<Vec<PyCollectionInfo>> {
-        self.inner
+        self.db()?
             .list_collections()
             .map(|collections| {
                 collections
@@ -1241,6 +1258,60 @@ impl PyProximaDB {
                     .collect()
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list collections: {}", e)))
+    }
+
+    #[pyo3(signature = (collection, requested_partitions=1))]
+    fn plan_partitions(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        requested_partitions: u32,
+    ) -> PyResult<PyObject> {
+        let requested = requested_partitions.max(1);
+        let partitions = self
+            .db()?
+            .plan_partitions(collection, requested)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to plan partitions: {}", e)))?;
+
+        let partition_items = PyList::empty(py);
+        for partition in &partitions {
+            let partition_dict = PyDict::new(py);
+            partition_dict.set_item("partition_id", partition.partition_id)?;
+            partition_dict.set_item("preferred_locations", &partition.preferred_locations)?;
+            partition_dict.set_item("estimated_rows", partition.estimated_rows)?;
+            partition_dict.set_item("estimated_bytes", partition.estimated_bytes)?;
+
+            let splits = PyList::empty(py);
+            for split in &partition.splits {
+                let split_dict = PyDict::new(py);
+                split_dict.set_item("split_id", &split.split_id)?;
+                split_dict.set_item("file_path", &split.file_path)?;
+                split_dict.set_item("offset", split.offset)?;
+                split_dict.set_item("length", split.length)?;
+                split_dict.set_item("estimated_rows", split.statistics.row_count)?;
+                split_dict.set_item("estimated_bytes", split.statistics.byte_size)?;
+                splits.append(split_dict)?;
+            }
+            partition_dict.set_item("splits", splits)?;
+            partition_items.append(partition_dict)?;
+        }
+
+        let dict = PyDict::new(py);
+        dict.set_item("collection", collection)?;
+        dict.set_item("requested_partitions", requested)?;
+        dict.set_item("planned_partitions", partitions.len())?;
+        dict.set_item("effective_read_partitions", partitions.len())?;
+        dict.set_item("planner", "whole_collection_fallback")?;
+        dict.set_item("execution_scope", "local_process")?;
+        dict.set_item("safe_parallelism", partitions.len())?;
+        dict.set_item("partitions", partition_items)?;
+        if requested as usize > partitions.len() {
+            dict.set_item(
+                "rejected_parallelism_reason",
+                "split-bound readers are not wired yet; returning more collection:// partitions would duplicate scans",
+            )?;
+        }
+        Ok(dict.into_any().unbind())
     }
 
     /// Insert vectors into a collection
@@ -1265,6 +1336,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn insert(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: &Bound<'_, PyAny>,
@@ -1298,8 +1370,8 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .insert(collection, ids, rust_vectors, rust_metadata)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
 
@@ -1337,6 +1409,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, query, top_k=10, filter=None, search_mode=None))]
     fn search(
         &self,
+        py: Python<'_>,
         collection: &str,
         query: &Bound<'_, PyAny>,
         top_k: usize,
@@ -1350,19 +1423,21 @@ impl PyProximaDB {
             query.extract()?
         };
 
-        self.inner
-            .search_with_mode(collection, query_vec, top_k, filter, search_mode)
-            .map(|results| {
-                results
-                    .into_iter()
-                    .map(|r| PySearchResult {
-                        id: r.id,
-                        score: r.score,
-                        metadata_map: r.metadata,
-                    })
-                    .collect()
-            })
-            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+        let inner = self.db()?;
+        py.allow_threads(move || {
+            inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
+        })
+        .map(|results| {
+            results
+                .into_iter()
+                .map(|r| PySearchResult {
+                    id: r.id,
+                    score: r.score,
+                    metadata_map: r.metadata,
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
     }
 
     /// Insert vectors from a NumPy array with ZERO-COPY transfer
@@ -1392,6 +1467,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn insert_numpy(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: PyReadonlyArray2<f32>,
@@ -1401,7 +1477,6 @@ impl PyProximaDB {
         let array = vectors.as_array();
         let shape = array.shape();
         let n_vectors = shape[0];
-        let dimension = shape[1];
 
         // Validate dimensions
         if ids.len() != n_vectors {
@@ -1414,8 +1489,15 @@ impl PyProximaDB {
 
         // Convert to Vec<Vec<f32>> - we still need this format for the internal API
         // but at least we avoided the Python .tolist() overhead
-        let rust_vectors: Vec<Vec<f32>> =
-            array.rows().into_iter().map(|row| row.to_vec()).collect();
+        let rust_vectors: Vec<Vec<f32>> = if let Some(slice) = array.as_slice() {
+            let dimension = shape[1];
+            slice
+                .chunks(dimension)
+                .map(|chunk| chunk.to_vec())
+                .collect()
+        } else {
+            array.rows().into_iter().map(|row| row.to_vec()).collect()
+        };
 
         // Convert metadata (same as before)
         let rust_metadata: Option<Vec<HashMap<String, serde_json::Value>>> =
@@ -1436,9 +1518,200 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .insert(collection, ids, rust_vectors, rust_metadata)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
+    }
+
+    /// Insert canonical ProximaRecord payloads without lowering through the
+    /// legacy ids/vectors/metadata Python transport.
+    #[pyo3(signature = (collection, records))]
+    fn _insert_proxima_records_native(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        records: &Bound<'_, PyAny>,
+    ) -> PyResult<usize> {
+        let record_list = records.downcast::<PyList>()?;
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let rust_records = record_list
+            .iter()
+            .map(|record| python_to_proxima_record(&record, now_ns))
+            .collect::<PyResult<Vec<_>>>()?;
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.insert_proxima_records(collection, rust_records))
+            .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))
+    }
+
+    /// Insert canonical ProximaRecord payloads from a columnar Python batch:
+    /// ids + dense embedding matrix + props. This preserves the canonical
+    /// record/storage boundary while avoiding per-record vector extraction.
+    #[pyo3(signature = (collection, ids, vectors, props=None))]
+    fn _insert_proxima_record_batch_native(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ids: Vec<String>,
+        vectors: PyReadonlyArray2<f32>,
+        props: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<usize> {
+        let array = vectors.as_array();
+        let shape = array.shape();
+        let n_records = shape[0];
+        if ids.len() != n_records {
+            return Err(PyValueError::new_err(format!(
+                "Number of IDs ({}) doesn't match number of records ({})",
+                ids.len(),
+                n_records
+            )));
+        }
+        if let Some(prop_list) = props
+            && prop_list.len() != n_records
+        {
+            return Err(PyValueError::new_err(format!(
+                "Number of props ({}) doesn't match number of records ({})",
+                prop_list.len(),
+                n_records
+            )));
+        }
+
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let dimension = shape[1];
+        let mut records = Vec::with_capacity(n_records);
+
+        if let Some(slice) = array.as_slice() {
+            for (index, values) in slice.chunks(dimension).enumerate() {
+                let props = python_props_list_item(props, index)?;
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    values.to_vec(),
+                    props,
+                    now_ns,
+                ));
+            }
+        } else {
+            for (index, row) in array.rows().into_iter().enumerate() {
+                let props = python_props_list_item(props, index)?;
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    row.to_vec(),
+                    props,
+                    now_ns,
+                ));
+            }
+        }
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.insert_proxima_records(collection, records))
+            .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))
+    }
+
+    /// Profiled variant of `_insert_proxima_record_batch_native` used by the
+    /// benchmark harness to locate native-side hot spots.
+    #[pyo3(signature = (collection, ids, vectors, props=None))]
+    fn _insert_proxima_record_batch_native_profiled(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ids: Vec<String>,
+        vectors: PyReadonlyArray2<f32>,
+        props: Option<&Bound<'_, PyList>>,
+    ) -> PyResult<(usize, PyObject)> {
+        let total_started = std::time::Instant::now();
+        let array = vectors.as_array();
+        let shape = array.shape();
+        let n_records = shape[0];
+        if ids.len() != n_records {
+            return Err(PyValueError::new_err(format!(
+                "Number of IDs ({}) doesn't match number of records ({})",
+                ids.len(),
+                n_records
+            )));
+        }
+        if let Some(prop_list) = props
+            && prop_list.len() != n_records
+        {
+            return Err(PyValueError::new_err(format!(
+                "Number of props ({}) doesn't match number of records ({})",
+                prop_list.len(),
+                n_records
+            )));
+        }
+
+        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+        let dimension = shape[1];
+        let mut records = Vec::with_capacity(n_records);
+        let mut props_conversion = std::time::Duration::ZERO;
+        let mut vector_copy = std::time::Duration::ZERO;
+        let mut record_assembly = std::time::Duration::ZERO;
+
+        if let Some(slice) = array.as_slice() {
+            for (index, values) in slice.chunks(dimension).enumerate() {
+                let props_started = std::time::Instant::now();
+                let props = python_props_list_item(props, index)?;
+                props_conversion += props_started.elapsed();
+
+                let vector_started = std::time::Instant::now();
+                let values = values.to_vec();
+                vector_copy += vector_started.elapsed();
+
+                let record_started = std::time::Instant::now();
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    values,
+                    props,
+                    now_ns,
+                ));
+                record_assembly += record_started.elapsed();
+            }
+        } else {
+            for (index, row) in array.rows().into_iter().enumerate() {
+                let props_started = std::time::Instant::now();
+                let props = python_props_list_item(props, index)?;
+                props_conversion += props_started.elapsed();
+
+                let vector_started = std::time::Instant::now();
+                let values = row.to_vec();
+                vector_copy += vector_started.elapsed();
+
+                let record_started = std::time::Instant::now();
+                records.push(proxima_record_from_batch_parts(
+                    ids[index].clone(),
+                    values,
+                    props,
+                    now_ns,
+                ));
+                record_assembly += record_started.elapsed();
+            }
+        }
+
+        let build_elapsed = total_started.elapsed();
+        let inner = self.db()?;
+        let insert_started = std::time::Instant::now();
+        let result = py
+            .allow_threads(move || inner.insert_proxima_records(collection, records))
+            .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))?;
+        let insert_elapsed = insert_started.elapsed();
+        let total_elapsed = total_started.elapsed();
+
+        let profile = PyDict::new(py);
+        profile.set_item(
+            "native_props_conversion_seconds",
+            props_conversion.as_secs_f64(),
+        )?;
+        profile.set_item("native_vector_copy_seconds", vector_copy.as_secs_f64())?;
+        profile.set_item(
+            "native_record_assembly_seconds",
+            record_assembly.as_secs_f64(),
+        )?;
+        profile.set_item("native_build_records_seconds", build_elapsed.as_secs_f64())?;
+        profile.set_item(
+            "native_storage_insert_seconds",
+            insert_elapsed.as_secs_f64(),
+        )?;
+        profile.set_item("native_total_seconds", total_elapsed.as_secs_f64())?;
+        Ok((result, profile.into()))
     }
 
     /// Search with a NumPy query vector (zero-copy)
@@ -1459,6 +1732,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, query, top_k=10, filter=None, search_mode=None))]
     fn search_numpy(
         &self,
+        py: Python<'_>,
         collection: &str,
         query: PyReadonlyArray1<f32>,
         top_k: usize,
@@ -1466,21 +1740,81 @@ impl PyProximaDB {
         search_mode: Option<&str>,
     ) -> PyResult<Vec<PySearchResult>> {
         // Zero-copy access to query vector
-        let query_vec: Vec<f32> = query.as_array().to_vec();
+        let query_vec: Vec<f32> = query
+            .as_slice()
+            .map(|slice| slice.to_vec())
+            .unwrap_or_else(|_| query.as_array().to_vec());
 
-        self.inner
-            .search_with_mode(collection, query_vec, top_k, filter, search_mode)
-            .map(|results| {
-                results
-                    .into_iter()
-                    .map(|r| PySearchResult {
-                        id: r.id,
-                        score: r.score,
-                        metadata_map: r.metadata,
-                    })
-                    .collect()
+        let inner = self.db()?;
+        py.allow_threads(move || {
+            inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
+        })
+        .map(|results| {
+            results
+                .into_iter()
+                .map(|r| PySearchResult {
+                    id: r.id,
+                    score: r.score,
+                    metadata_map: r.metadata,
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+    }
+
+    /// Profiled variant of `search_numpy` used by the benchmark harness to
+    /// locate Python/native search boundary hot spots.
+    #[pyo3(signature = (collection, query, top_k=10, filter=None, search_mode=None))]
+    fn _search_numpy_profiled(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        query: PyReadonlyArray1<f32>,
+        top_k: usize,
+        filter: Option<&str>,
+        search_mode: Option<&str>,
+    ) -> PyResult<(Vec<PySearchResult>, PyObject)> {
+        let total_started = std::time::Instant::now();
+        let copy_started = std::time::Instant::now();
+        let query_vec: Vec<f32> = query
+            .as_slice()
+            .map(|slice| slice.to_vec())
+            .unwrap_or_else(|_| query.as_array().to_vec());
+        let query_vector_copy = copy_started.elapsed();
+
+        let inner = self.db()?;
+        let search_started = std::time::Instant::now();
+        let results = py
+            .allow_threads(move || {
+                inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
             })
-            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
+        let native_search = search_started.elapsed();
+
+        let conversion_started = std::time::Instant::now();
+        let py_results = results
+            .into_iter()
+            .map(|r| PySearchResult {
+                id: r.id,
+                score: r.score,
+                metadata_map: r.metadata,
+            })
+            .collect();
+        let result_conversion = conversion_started.elapsed();
+        let total_elapsed = total_started.elapsed();
+
+        let profile = PyDict::new(py);
+        profile.set_item(
+            "native_query_vector_copy_seconds",
+            query_vector_copy.as_secs_f64(),
+        )?;
+        profile.set_item("native_search_seconds", native_search.as_secs_f64())?;
+        profile.set_item(
+            "native_search_result_conversion_seconds",
+            result_conversion.as_secs_f64(),
+        )?;
+        profile.set_item("native_search_total_seconds", total_elapsed.as_secs_f64())?;
+        Ok((py_results, profile.into()))
     }
 
     /// Batch search with multiple query vectors (zero-copy)
@@ -1510,7 +1844,7 @@ impl PyProximaDB {
         for row in array.rows() {
             let query_vec: Vec<f32> = row.to_vec();
             let results = self
-                .inner
+                .db()?
                 .search_with_mode(collection, query_vec, top_k, None, search_mode)
                 .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
 
@@ -1585,7 +1919,7 @@ impl PyProximaDB {
 
         // Create the streaming iterator
         let iterator = self
-            .inner
+            .db()?
             .search_streaming_with_config(collection, query_vec, top_k, config)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
@@ -1639,7 +1973,7 @@ impl PyProximaDB {
 
         // Create the streaming iterator
         let iterator = self
-            .inner
+            .db()?
             .search_streaming_with_config(collection, query_vec, top_k, config)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create streaming search: {}", e))
@@ -1677,26 +2011,28 @@ impl PyProximaDB {
         collection: &str,
         vector_id: &str,
     ) -> PyResult<Option<PyObject>> {
-        match self.inner.get_vector(collection, vector_id) {
+        match self.db()?.get_vector(collection, vector_id) {
             Ok(Some(record)) => {
                 let dict = PyDict::new(py);
-                dict.set_item("id", &record.id)?;
-                dict.set_item("vector", record.vector.clone())?;
+                dict.set_item("id", &record.oid)?;
+                let vector = record
+                    .embeddings
+                    .first()
+                    .map(|embedding| embedding.values.to_fp32_owned())
+                    .unwrap_or_default();
+                dict.set_item("vector", vector)?;
 
-                // Convert metadata HashMap<String, SqlValue> to Python dict
-                // First convert SqlValue to serde_json::Value, then to Python
-                let metadata_dict = PyDict::new(py);
-                let json_metadata = sqlvalue_metadata_to_json(&record.metadata);
-                for (key, value) in &json_metadata {
-                    let py_value = json_to_python(py, value)?;
-                    metadata_dict.set_item(key, py_value)?;
+                let props_dict = PyDict::new(py);
+                for (key, node) in &record.props {
+                    let value = proxima_tree_node_to_json(node);
+                    let py_value = json_to_python(py, &value)?;
+                    props_dict.set_item(key, py_value)?;
                 }
-                dict.set_item("metadata", metadata_dict)?;
+                dict.set_item("props", &props_dict)?;
+                dict.set_item("metadata", &props_dict)?;
 
-                // Include timestamp if available
-                if let Some(ts) = record.timestamp {
-                    dict.set_item("timestamp", ts)?;
-                }
+                dict.set_item("timestamp", record.created_at_ns / 1_000_000)?;
+                dict.set_item("updated_at", record.updated_at_ns / 1_000_000)?;
 
                 Ok(Some(dict.into()))
             }
@@ -1727,7 +2063,7 @@ impl PyProximaDB {
     ///         print("Vector not found")
     ///     ```
     fn vector_exists(&self, collection: &str, vector_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .vector_exists(collection, vector_id)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to check vector existence: {}", e))
@@ -1754,7 +2090,7 @@ impl PyProximaDB {
     ///         print("Vector marked for deletion")
     ///     ```
     fn delete_vector(&self, collection: &str, vector_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .delete_vector(collection, vector_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete vector: {}", e)))
     }
@@ -1777,7 +2113,7 @@ impl PyProximaDB {
     ///     print(f"Marked {count} vectors for deletion")
     ///     ```
     fn delete_vectors(&self, collection: &str, vector_ids: Vec<String>) -> PyResult<usize> {
-        self.inner
+        self.db()?
             .delete_vectors(collection, vector_ids)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete vectors: {}", e)))
     }
@@ -1810,6 +2146,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn upsert(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: &Bound<'_, PyAny>,
@@ -1843,8 +2180,8 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .upsert(collection, ids, rust_vectors, rust_metadata)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
 
@@ -1871,6 +2208,7 @@ impl PyProximaDB {
     #[pyo3(signature = (collection, ids, vectors, metadata=None))]
     fn upsert_numpy(
         &self,
+        py: Python<'_>,
         collection: &str,
         ids: Vec<String>,
         vectors: PyReadonlyArray2<f32>,
@@ -1878,8 +2216,15 @@ impl PyProximaDB {
     ) -> PyResult<(usize, usize)> {
         // Zero-copy access to numpy buffer
         let array = vectors.as_array();
-        let rust_vectors: Vec<Vec<f32>> =
-            array.rows().into_iter().map(|row| row.to_vec()).collect();
+        let rust_vectors: Vec<Vec<f32>> = if let Some(slice) = array.as_slice() {
+            let dimension = array.shape()[1];
+            slice
+                .chunks(dimension)
+                .map(|chunk| chunk.to_vec())
+                .collect()
+        } else {
+            array.rows().into_iter().map(|row| row.to_vec()).collect()
+        };
 
         // Convert metadata (same pattern as insert_numpy)
         let rust_metadata: Option<Vec<HashMap<String, serde_json::Value>>> =
@@ -1900,8 +2245,8 @@ impl PyProximaDB {
                 None
             };
 
-        self.inner
-            .upsert(collection, ids, rust_vectors, rust_metadata)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
 
@@ -1910,9 +2255,12 @@ impl PyProximaDB {
     /// This ensures all data is persisted to disk. Called automatically
     /// when the database is closed via close() or context manager exit.
     fn flush(&self) -> PyResult<()> {
-        self.inner
-            .flush()
-            .map_err(|e| PyRuntimeError::new_err(format!("Flush failed: {}", e)))
+        if let Some(db) = self.db_opt() {
+            db.flush()
+                .map_err(|e| PyRuntimeError::new_err(format!("Flush failed: {}", e)))
+        } else {
+            Ok(())
+        }
     }
 
     /// Close the database, flushing all pending writes to disk
@@ -1928,7 +2276,35 @@ impl PyProximaDB {
     ///     db.insert("collection", vectors, ids)
     ///     db.close()  # Flushes and closes gracefully
     fn close(&self) -> PyResult<()> {
-        self.flush()
+        // Take the Arc out of the Option, dropping our reference.
+        // If this was the last Arc clone (all allow_threads closures have returned),
+        // EmbeddedProximaDB is dropped here → Tokio runtime shuts down → file handles closed.
+        let arc = self
+            .inner
+            .lock()
+            .map_err(|_| PyRuntimeError::new_err("Database mutex poisoned"))?
+            .take();
+        if let Some(arc) = arc {
+            let flush_result = arc
+                .flush()
+                .map_err(|e| PyRuntimeError::new_err(format!("Flush failed: {}", e)));
+            arc.close();
+            drop(arc);
+            flush_result
+        } else {
+            Ok(()) // already closed — idempotent
+        }
+    }
+
+    fn __del__(&self) {
+        // Best-effort cleanup when Python GC collects this object without an explicit close().
+        if let Ok(mut guard) = self.inner.lock() {
+            if let Some(arc) = guard.take() {
+                let _ = arc.flush();
+                arc.close();
+                drop(arc);
+            }
+        }
     }
 
     // ========================================================================
@@ -1948,7 +2324,7 @@ impl PyProximaDB {
     ///         print("Read-only mode")
     ///     ```
     fn can_write(&self) -> bool {
-        self.inner.can_write()
+        self.db_opt().map(|db| db.can_write()).unwrap_or(false)
     }
 
     /// Get the current access mode
@@ -1956,7 +2332,9 @@ impl PyProximaDB {
     /// Returns:
     ///     Access mode string: "exclusive", "shared_read", or "leader_follower"
     fn access_mode(&self) -> String {
-        format!("{}", self.inner.access_mode())
+        self.db_opt()
+            .map(|db| format!("{}", db.access_mode()))
+            .unwrap_or_default()
     }
 
     /// Check if this node is the leader (only relevant in leader/follower mode)
@@ -1971,7 +2349,7 @@ impl PyProximaDB {
     ///         print("This process is the leader")
     ///     ```
     fn is_leader(&self) -> bool {
-        self.inner.is_leader()
+        self.db_opt().map(|db| db.is_leader()).unwrap_or(false)
     }
 
     /// Get the current leader ID (only relevant in leader/follower mode)
@@ -1979,7 +2357,7 @@ impl PyProximaDB {
     /// Returns:
     ///     Leader node ID or None if not in leader/follower mode
     fn leader_id(&self) -> Option<String> {
-        self.inner.leader_id()
+        self.db_opt().and_then(|db| db.leader_id())
     }
 
     /// Get storage statistics
@@ -1987,7 +2365,7 @@ impl PyProximaDB {
     /// Returns:
     ///     StorageStats with information about disk usage, vector counts, etc.
     fn stats(&self) -> PyResult<PyStorageStats> {
-        self.inner
+        self.db()?
             .stats()
             .map(|s| PyStorageStats {
                 total_vectors: s.total_vectors,
@@ -2025,7 +2403,7 @@ impl PyProximaDB {
     ///     db.restore_checkpoint("before_experiment")
     ///     ```
     fn checkpoint(&self, name: &str) -> PyResult<PyCheckpointInfo> {
-        self.inner
+        self.db()?
             .checkpoint(name)
             .map(PyCheckpointInfo::from)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create checkpoint: {}", e)))
@@ -2049,7 +2427,7 @@ impl PyProximaDB {
     ///     db.restore_checkpoint("backup")  # Restore - new data is discarded
     ///     ```
     fn restore_checkpoint(&self, name: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .restore_checkpoint(name)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to restore checkpoint: {}", e)))
     }
@@ -2076,7 +2454,7 @@ impl PyProximaDB {
     ///     print(f"Delta saved: {delta.entry_count} entries, {delta.size_bytes} bytes")
     ///     ```
     fn save_delta(&self, path: &str) -> PyResult<PyDeltaInfo> {
-        self.inner
+        self.db()?
             .save_delta(path)
             .map(PyDeltaInfo::from)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to save delta: {}", e)))
@@ -2097,7 +2475,7 @@ impl PyProximaDB {
     ///     db.load_delta("/backup/delta_001.delta")
     ///     ```
     fn load_delta(&self, path: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .load_delta(path)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to load delta: {}", e)))
     }
@@ -2117,7 +2495,7 @@ impl PyProximaDB {
     ///         print(f"{cp.name}: {len(cp.collections)} collections at LSN {cp.checkpoint_lsn}")
     ///     ```
     fn list_checkpoints(&self) -> PyResult<Vec<PyCheckpointInfo>> {
-        self.inner
+        self.db()?
             .list_checkpoints()
             .map(|cps| cps.into_iter().map(PyCheckpointInfo::from).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to list checkpoints: {}", e)))
@@ -2128,14 +2506,14 @@ impl PyProximaDB {
         slf
     }
 
-    /// Context manager exit - ensures flush on exit
+    /// Context manager exit - flushes and closes the database
     fn __exit__(
         &self,
         _exc_type: Option<&Bound<'_, PyAny>>,
         _exc_val: Option<&Bound<'_, PyAny>>,
         _exc_tb: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<bool> {
-        self.flush()?;
+        self.close()?;
         Ok(false) // Don't suppress exceptions
     }
 
@@ -2163,7 +2541,7 @@ impl PyProximaDB {
     ///
     /// Args:
     ///     graph_id: Unique identifier for the graph
-    ///     engine: Graph engine type ("orion", "pulsar", "quasar") (optional)
+    ///     engine: Graph engine type ("orion") (optional)
     ///
     /// Example:
     ///     ```python
@@ -2172,7 +2550,7 @@ impl PyProximaDB {
     ///     ```
     #[pyo3(signature = (graph_id, engine=None))]
     fn create_graph(&self, graph_id: &str, engine: Option<&str>) -> PyResult<()> {
-        self.inner
+        self.db()?
             .create_graph(graph_id, engine)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create graph: {}", e)))
     }
@@ -2207,7 +2585,7 @@ impl PyProximaDB {
     ///     ```
     fn create_nodes(&self, graph_id: &str, nodes: Vec<PyGraphNode>) -> PyResult<usize> {
         let rust_nodes: Vec<super::GraphNode> = nodes.into_iter().map(|n| n.into()).collect();
-        self.inner
+        self.db()?
             .create_nodes(graph_id, rust_nodes)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create nodes: {}", e)))
     }
@@ -2231,9 +2609,64 @@ impl PyProximaDB {
     ///     ```
     fn create_edges(&self, graph_id: &str, edges: Vec<PyGraphEdge>) -> PyResult<usize> {
         let rust_edges: Vec<super::GraphEdge> = edges.into_iter().map(|e| e.into()).collect();
-        self.inner
+        self.db()?
             .create_edges(graph_id, rust_edges)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create edges: {}", e)))
+    }
+
+    #[pyo3(signature = (graph_id, node_id, labels=None, properties=None))]
+    fn create_node(
+        &self,
+        graph_id: &str,
+        node_id: &str,
+        labels: Option<Vec<String>>,
+        properties: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<PyGraphNode> {
+        let mut property_map = HashMap::new();
+        if let Some(dict) = properties {
+            for (k, v) in dict.iter() {
+                let key: String = k.extract()?;
+                property_map.insert(key, v.str()?.to_string());
+            }
+        }
+
+        self.db()?
+            .create_node(graph_id, node_id, labels.unwrap_or_default(), property_map)
+            .map(PyGraphNode::from)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create node: {}", e)))
+    }
+
+    #[pyo3(signature = (graph_id, from_node_id, to_node_id, edge_type, id=None, weight=None, properties=None))]
+    fn create_edge(
+        &self,
+        graph_id: &str,
+        from_node_id: &str,
+        to_node_id: &str,
+        edge_type: &str,
+        id: Option<&str>,
+        weight: Option<f64>,
+        properties: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<PyGraphEdge> {
+        let mut property_map = HashMap::new();
+        if let Some(dict) = properties {
+            for (k, v) in dict.iter() {
+                let key: String = k.extract()?;
+                property_map.insert(key, v.str()?.to_string());
+            }
+        }
+
+        self.db()?
+            .create_edge(
+                graph_id,
+                id,
+                from_node_id,
+                to_node_id,
+                edge_type,
+                weight,
+                property_map,
+            )
+            .map(PyGraphEdge::from)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create edge: {}", e)))
     }
 
     /// Get a node by its ID
@@ -2245,7 +2678,7 @@ impl PyProximaDB {
     /// Returns:
     ///     GraphNode if found, None otherwise
     fn get_node(&self, graph_id: &str, node_id: &str) -> PyResult<Option<PyGraphNode>> {
-        self.inner
+        self.db()?
             .get_node(graph_id, node_id)
             .map(|opt| opt.map(|n| n.into()))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get node: {}", e)))
@@ -2273,9 +2706,42 @@ impl PyProximaDB {
         graph_id: &str,
         labels: Vec<String>,
     ) -> PyResult<Vec<PyGraphNode>> {
-        self.inner
+        self.db()?
             .query_nodes_by_labels(graph_id, labels)
             .map(|nodes| nodes.into_iter().map(|n| n.into()).collect())
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query nodes: {}", e)))
+    }
+
+    #[pyo3(signature = (graph_id, labels=None, properties=None, limit=None, offset=None))]
+    fn query_nodes(
+        &self,
+        graph_id: &str,
+        labels: Option<Vec<String>>,
+        properties: Option<&Bound<'_, PyDict>>,
+        limit: Option<u32>,
+        offset: Option<u32>,
+    ) -> PyResult<Vec<PyGraphNode>> {
+        let mut property_map = HashMap::new();
+        if let Some(dict) = properties {
+            for (k, v) in dict.iter() {
+                let key: String = k.extract()?;
+                property_map.insert(key, v.str()?.to_string());
+            }
+        }
+
+        self.db()?
+            .query_nodes(
+                graph_id,
+                labels,
+                if property_map.is_empty() {
+                    None
+                } else {
+                    Some(property_map)
+                },
+                limit,
+                offset,
+            )
+            .map(|nodes| nodes.into_iter().map(PyGraphNode::from).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to query nodes: {}", e)))
     }
 
@@ -2295,7 +2761,7 @@ impl PyProximaDB {
         node_id: &str,
         edge_types: Option<Vec<String>>,
     ) -> PyResult<Vec<PyGraphEdge>> {
-        self.inner
+        self.db()?
             .get_outgoing_edges(graph_id, node_id, edge_types)
             .map(|edges| edges.into_iter().map(|e| e.into()).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get outgoing edges: {}", e)))
@@ -2317,7 +2783,7 @@ impl PyProximaDB {
         node_id: &str,
         edge_types: Option<Vec<String>>,
     ) -> PyResult<Vec<PyGraphEdge>> {
-        self.inner
+        self.db()?
             .get_incoming_edges(graph_id, node_id, edge_types)
             .map(|edges| edges.into_iter().map(|e| e.into()).collect())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get incoming edges: {}", e)))
@@ -2332,7 +2798,7 @@ impl PyProximaDB {
     /// Returns:
     ///     True if node was deleted, False if not found
     fn delete_node(&self, graph_id: &str, node_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .delete_node(graph_id, node_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete node: {}", e)))
     }
@@ -2345,10 +2811,64 @@ impl PyProximaDB {
     /// Returns:
     ///     GraphStats with total_nodes and total_edges
     fn graph_stats(&self, graph_id: &str) -> PyResult<PyGraphStats> {
-        self.inner
+        self.db()?
             .graph_stats(graph_id)
             .map(|s| s.into())
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to get graph stats: {}", e)))
+    }
+
+    #[pyo3(signature = (graph_id, start_node_id, max_depth=3, edge_types=None, limit=None))]
+    fn traverse_graph(
+        &self,
+        py: Python<'_>,
+        graph_id: &str,
+        start_node_id: &str,
+        max_depth: u32,
+        edge_types: Option<Vec<String>>,
+        limit: Option<u32>,
+    ) -> PyResult<PyObject> {
+        let result = self
+            .db()?
+            .traverse_graph(graph_id, start_node_id, max_depth, edge_types, limit)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to traverse graph: {}", e)))?;
+
+        let dict = PyDict::new(py);
+        let nodes: Vec<PyGraphNode> = result.nodes.into_iter().map(PyGraphNode::from).collect();
+        let edges: Vec<PyGraphEdge> = result.edges.into_iter().map(PyGraphEdge::from).collect();
+        dict.set_item("nodes", nodes)?;
+        dict.set_item("edges", edges)?;
+        dict.set_item("paths", result.paths)?;
+
+        let stats = PyDict::new(py);
+        if let Some(stat_values) = result.stats {
+            stats.set_item("nodes_visited", stat_values.nodes_visited)?;
+            stats.set_item("edges_traversed", stat_values.edges_traversed)?;
+            stats.set_item("max_depth_reached", stat_values.max_depth_reached)?;
+            stats.set_item(
+                "execution_time_microseconds",
+                stat_values.execution_time_microseconds,
+            )?;
+        }
+        dict.set_item("stats", stats)?;
+
+        Ok(dict.into())
+    }
+
+    /// Execute a read-only Cypher query through the embedded GRAPH_QUERY SQL
+    /// extension. The durable authority remains the shared graph/query stack.
+    #[pyo3(signature = (cypher, graph_id=None))]
+    fn execute_cypher(
+        &self,
+        py: Python<'_>,
+        cypher: &str,
+        graph_id: Option<&str>,
+    ) -> PyResult<PyObject> {
+        let cypher = inject_graph_target_into_cypher(graph_id, cypher);
+        let sql = format!(
+            "SELECT * FROM GRAPH_QUERY('{}')",
+            cypher.replace('\'', "''")
+        );
+        self.execute_sql(py, &sql, None, None)
     }
 
     /// Delete entire graph
@@ -2358,7 +2878,7 @@ impl PyProximaDB {
     /// Args:
     ///     graph_id: Graph identifier
     fn delete_graph(&self, graph_id: &str) -> PyResult<()> {
-        self.inner
+        self.db()?
             .delete_graph(graph_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete graph: {}", e)))
     }
@@ -2383,7 +2903,7 @@ impl PyProximaDB {
         name: &str,
         indexed_paths: Option<Vec<String>>,
     ) -> PyResult<()> {
-        self.inner
+        self.db()?
             .create_document_collection(name, indexed_paths)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create document collection: {}", e))
@@ -2418,7 +2938,7 @@ impl PyProximaDB {
         // Convert Python dict to serde_json::Value
         let json_doc = python_to_json(document.as_any())?;
 
-        self.inner
+        self.db()?
             .insert_document(collection, doc_id, json_doc)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert document: {}", e)))
     }
@@ -2444,7 +2964,7 @@ impl PyProximaDB {
         collection: &str,
         doc_id: &str,
     ) -> PyResult<Option<PyObject>> {
-        match self.inner.get_document(collection, doc_id) {
+        match self.db()?.get_document(collection, doc_id) {
             Ok(Some(doc)) => json_to_python(py, &doc).map(Some),
             Ok(None) => Ok(None),
             Err(e) => Err(PyRuntimeError::new_err(format!(
@@ -2478,7 +2998,7 @@ impl PyProximaDB {
         filter: Option<&str>,
         limit: u32,
     ) -> PyResult<Vec<(String, PyObject)>> {
-        self.inner
+        self.db()?
             .query_documents(collection, filter, limit)
             .map(|results| {
                 results
@@ -2491,6 +3011,24 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to query documents: {}", e)))
     }
 
+    fn update_document(
+        &self,
+        collection: &str,
+        doc_id: &str,
+        updates: &Bound<'_, PyDict>,
+    ) -> PyResult<()> {
+        let mut rust_updates = HashMap::new();
+        for (k, v) in updates.iter() {
+            let key: String = k.extract()?;
+            let value = python_to_json(&v)?;
+            rust_updates.insert(key, value);
+        }
+
+        self.db()?
+            .update_document(collection, doc_id, rust_updates)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to update document: {}", e)))
+    }
+
     /// Delete a document by ID
     ///
     /// Args:
@@ -2500,7 +3038,7 @@ impl PyProximaDB {
     /// Returns:
     ///     True if deleted, False if not found
     fn delete_document(&self, collection: &str, doc_id: &str) -> PyResult<bool> {
-        self.inner
+        self.db()?
             .delete_document(collection, doc_id)
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to delete document: {}", e)))
     }
@@ -2510,8 +3048,14 @@ impl PyProximaDB {
     /// Returns:
     ///     List of collection names
     fn list_document_collections(&self) -> PyResult<Vec<String>> {
-        self.inner.list_document_collections().map_err(|e| {
+        self.db()?.list_document_collections().map_err(|e| {
             PyRuntimeError::new_err(format!("Failed to list document collections: {}", e))
+        })
+    }
+
+    fn delete_document_collection(&self, name: &str) -> PyResult<bool> {
+        self.db()?.delete_document_collection(name).map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to delete document collection: {}", e))
         })
     }
 
@@ -2537,7 +3081,7 @@ impl PyProximaDB {
     ) -> PyResult<()> {
         // Convert retention_days to retention_hours for the inner API
         let retention_hours = retention_days.map(|d| d as u64 * 24);
-        self.inner
+        self.db()?
             .create_observability_namespace(name, retention_hours)
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to create observability namespace: {}", e))
@@ -2561,7 +3105,12 @@ impl PyProximaDB {
     ///     ]
     ///     count = db.ingest_logs("production", logs)
     ///     ```
-    fn ingest_logs(&self, namespace: &str, logs: &Bound<'_, PyList>) -> PyResult<u64> {
+    fn ingest_logs(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        logs: &Bound<'_, PyList>,
+    ) -> PyResult<u64> {
         use super::EmbeddedLogEntry;
 
         let mut rust_logs = Vec::with_capacity(logs.len());
@@ -2610,8 +3159,8 @@ impl PyProximaDB {
             });
         }
 
-        self.inner
-            .ingest_logs(namespace, rust_logs)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.ingest_logs(namespace, rust_logs))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest logs: {}", e)))
     }
 
@@ -2644,41 +3193,43 @@ impl PyProximaDB {
         query: Option<&str>,
         limit: u32,
     ) -> PyResult<Vec<PyObject>> {
-        self.inner
-            .query_logs(namespace, start_time_ns, end_time_ns, query, limit)
-            .map(|logs| {
-                logs.into_iter()
-                    .map(|log| {
-                        let dict = PyDict::new(py);
-                        dict.set_item("timestamp_ns", log.timestamp_ns).ok();
-                        dict.set_item("severity", &log.severity).ok();
-                        dict.set_item("message", &log.message).ok();
-                        // Handle Option<String> for source and service
-                        if let Some(ref source) = log.source {
-                            dict.set_item("source", source).ok();
-                        } else {
-                            dict.set_item("source", py.None()).ok();
-                        }
-                        if let Some(ref service) = log.service {
-                            dict.set_item("service", service).ok();
-                        } else {
-                            dict.set_item("service", py.None()).ok();
-                        }
+        let inner = self.db()?;
+        py.allow_threads(move || {
+            inner.query_logs(namespace, start_time_ns, end_time_ns, query, limit)
+        })
+        .map(|logs| {
+            logs.into_iter()
+                .map(|log| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("timestamp_ns", log.timestamp_ns).ok();
+                    dict.set_item("severity", &log.severity).ok();
+                    dict.set_item("message", &log.message).ok();
+                    // Handle Option<String> for source and service
+                    if let Some(ref source) = log.source {
+                        dict.set_item("source", source).ok();
+                    } else {
+                        dict.set_item("source", py.None()).ok();
+                    }
+                    if let Some(ref service) = log.service {
+                        dict.set_item("service", service).ok();
+                    } else {
+                        dict.set_item("service", py.None()).ok();
+                    }
 
-                        let fields_dict = PyDict::new(py);
-                        for (k, v) in &log.fields {
-                            // Convert serde_json::Value to Python
-                            if let Ok(py_val) = json_to_python(py, v) {
-                                fields_dict.set_item(k, py_val).ok();
-                            }
+                    let fields_dict = PyDict::new(py);
+                    for (k, v) in &log.fields {
+                        // Convert serde_json::Value to Python
+                        if let Ok(py_val) = json_to_python(py, v) {
+                            fields_dict.set_item(k, py_val).ok();
                         }
-                        dict.set_item("fields", fields_dict).ok();
+                    }
+                    dict.set_item("fields", fields_dict).ok();
 
-                        dict.into()
-                    })
-                    .collect()
-            })
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
+                    dict.into()
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
     }
 
     /// Ingest metric samples
@@ -2698,7 +3249,12 @@ impl PyProximaDB {
     ///     ]
     ///     count = db.ingest_metrics("production", samples)
     ///     ```
-    fn ingest_metrics(&self, namespace: &str, samples: &Bound<'_, PyList>) -> PyResult<u64> {
+    fn ingest_metrics(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        samples: &Bound<'_, PyList>,
+    ) -> PyResult<u64> {
         use super::EmbeddedMetricSample;
 
         let mut rust_samples = Vec::with_capacity(samples.len());
@@ -2739,14 +3295,324 @@ impl PyProximaDB {
             });
         }
 
-        self.inner
-            .ingest_metrics(namespace, rust_samples)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.ingest_metrics(namespace, rust_samples))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest metrics: {}", e)))
+    }
+
+    #[pyo3(signature = (namespace, metric_name, aggregation="avg", start_time=None, end_time=None, step_seconds=60))]
+    fn aggregate_metrics(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        metric_name: &str,
+        aggregation: &str,
+        start_time: Option<&str>,
+        end_time: Option<&str>,
+        step_seconds: u32,
+    ) -> PyResult<Vec<PyObject>> {
+        let inner = self.db()?;
+        py.allow_threads(move || {
+            inner.aggregate_metrics(
+                namespace,
+                metric_name,
+                aggregation,
+                start_time,
+                end_time,
+                step_seconds,
+            )
+        })
+        .and_then(|points| {
+            points
+                .into_iter()
+                .map(|point| {
+                    let dict = PyDict::new(py);
+                    dict.set_item("timestamp_ns", point.timestamp_ns)?;
+                    dict.set_item("value", point.value)?;
+                    Ok(dict.into())
+                })
+                .collect()
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to aggregate metrics: {}", e)))
+    }
+
+    fn ingest_traces(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        traces: &Bound<'_, PyList>,
+    ) -> PyResult<u64> {
+        use super::EmbeddedTraceSpan;
+
+        let mut rust_traces = Vec::with_capacity(traces.len());
+        for item in traces.iter() {
+            let dict = item.downcast::<PyDict>()?;
+            let trace_id: String = dict
+                .get_item("trace_id")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'trace_id'"))?
+                .extract()?;
+            let span_id: String = dict
+                .get_item("span_id")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'span_id'"))?
+                .extract()?;
+            let name: String = dict
+                .get_item("name")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'name'"))?
+                .extract()?;
+            let kind: String = dict
+                .get_item("kind")?
+                .and_then(|v| v.extract::<String>().ok())
+                .unwrap_or_else(|| "INTERNAL".to_string());
+            let start_time_ns: i64 = dict
+                .get_item("start_time_ns")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'start_time_ns'"))?
+                .extract()?;
+            let end_time_ns: i64 = dict
+                .get_item("end_time_ns")?
+                .ok_or_else(|| PyValueError::new_err("Trace span missing 'end_time_ns'"))?
+                .extract()?;
+            let parent_span_id = dict
+                .get_item("parent_span_id")?
+                .and_then(|v| v.extract::<String>().ok());
+            let service = dict
+                .get_item("service")?
+                .and_then(|v| v.extract::<String>().ok());
+            let status_code = dict
+                .get_item("status_code")?
+                .and_then(|v| v.extract::<String>().ok())
+                .unwrap_or_else(|| "UNSET".to_string());
+            let status_message = dict
+                .get_item("status_message")?
+                .and_then(|v| v.extract::<String>().ok());
+
+            let mut attributes = HashMap::new();
+            if let Some(attr_dict) = dict.get_item("attributes")?
+                && let Ok(py_dict) = attr_dict.downcast::<PyDict>()
+            {
+                for (k, v) in py_dict.iter() {
+                    let key: String = k.extract()?;
+                    attributes.insert(key, python_to_json(&v)?);
+                }
+            }
+
+            rust_traces.push(EmbeddedTraceSpan {
+                trace_id,
+                span_id,
+                parent_span_id,
+                name,
+                kind,
+                start_time_ns,
+                end_time_ns,
+                service,
+                status_code,
+                status_message,
+                attributes,
+            });
+        }
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.ingest_traces(namespace, rust_traces))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest traces: {}", e)))
+    }
+
+    #[pyo3(signature = (namespace, start_time_ns, end_time_ns, trace_id=None, service=None, operation=None, min_duration_ns=None, status=None, limit=100))]
+    fn query_traces(
+        &self,
+        py: Python<'_>,
+        namespace: &str,
+        start_time_ns: i64,
+        end_time_ns: i64,
+        trace_id: Option<&str>,
+        service: Option<&str>,
+        operation: Option<&str>,
+        min_duration_ns: Option<i64>,
+        status: Option<&str>,
+        limit: u32,
+    ) -> PyResult<Vec<PyObject>> {
+        let inner = self.db()?;
+        py.allow_threads(move || {
+            inner.query_traces(
+                namespace,
+                start_time_ns,
+                end_time_ns,
+                trace_id,
+                service,
+                operation,
+                min_duration_ns,
+                status,
+                limit,
+            )
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to query traces: {}", e)))
+        .and_then(|spans| {
+            spans
+                .into_iter()
+                .map(|span| trace_span_to_python(py, span))
+                .collect::<PyResult<Vec<_>>>()
+        })
+    }
+
+    fn get_trace(&self, py: Python<'_>, namespace: &str, trace_id: &str) -> PyResult<PyObject> {
+        let inner = self.db()?;
+        py.allow_threads(move || inner.get_trace(namespace, trace_id))
+            .and_then(|trace| {
+                let dict = PyDict::new(py);
+                let spans: Vec<PyObject> = trace
+                    .spans
+                    .into_iter()
+                    .map(|span| trace_span_to_python(py, span))
+                    .collect::<PyResult<_>>()?;
+                dict.set_item("spans", spans)?;
+                dict.set_item("complete", trace.complete)?;
+                Ok(dict.into())
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to get trace: {}", e)))
     }
 
     // ============================================
     // Unified Multi-Model Query API
     // ============================================
+
+    #[pyo3(signature = (query, parameters=None, collection=None))]
+    fn execute_sql(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        parameters: Option<&Bound<'_, PyAny>>,
+        collection: Option<&str>,
+    ) -> PyResult<PyObject> {
+        let rust_params = if let Some(params) = parameters {
+            let json_value = python_to_json(params)?;
+            Some(match json_value {
+                serde_json::Value::Array(values) => values,
+                other => vec![other],
+            })
+        } else {
+            None
+        };
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.execute_sql(query, rust_params, collection))
+            .and_then(|result| {
+                let dict = PyDict::new(py);
+                let rows = PyList::empty(py);
+                for row in result.rows {
+                    rows.append(json_to_python(py, &row)?)?;
+                }
+                dict.set_item("rows", rows)?;
+                dict.set_item("columns", result.columns)?;
+                dict.set_item("column_types", result.column_types)?;
+                dict.set_item("row_count", result.row_count)?;
+                dict.set_item("rows_scanned", result.rows_scanned)?;
+                dict.set_item("execution_time_ms", result.execution_time_ms)?;
+                Ok(dict.into())
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute SQL: {}", e)))
+    }
+
+    #[pyo3(signature = (query, parameters=None, collection=None))]
+    fn execute_sql_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        parameters: Option<&Bound<'_, PyAny>>,
+        collection: Option<&str>,
+    ) -> PyResult<Vec<u8>> {
+        let rust_params = if let Some(params) = parameters {
+            let json_value = python_to_json(params)?;
+            Some(match json_value {
+                serde_json::Value::Array(values) => values,
+                other => vec![other],
+            })
+        } else {
+            None
+        };
+
+        let inner = self.db()?;
+        py.allow_threads(move || inner.execute_sql(query, rust_params, collection))
+            .and_then(|result| sql_result_to_arrow_ipc(&result))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute SQL as Arrow: {}", e)))
+    }
+
+    fn explain_notebook_plan(&self, py: Python<'_>, plan: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+        let plan_json = python_to_json(plan)?;
+        let explanation = notebook_plan_explain(self.db()?.as_ref(), &plan_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid notebook plan: {}", e)))?;
+        json_to_python(py, &explanation)
+    }
+
+    fn execute_notebook_plan_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        plan: &Bound<'_, PyAny>,
+    ) -> PyResult<Vec<u8>> {
+        let plan_json = python_to_json(plan)?;
+        let sql = compile_notebook_plan_sql(&plan_json)
+            .map_err(|e| PyValueError::new_err(format!("Invalid notebook plan: {}", e)))?;
+        let inner = self.db()?;
+        py.allow_threads(move || inner.execute_sql(&sql, None, None))
+            .and_then(|result| sql_result_to_arrow_ipc(&result))
+            .map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to execute notebook plan as Arrow: {}", e))
+            })
+    }
+
+    /// Create a DataFusion session for distributed execution (Proxima-Spark)
+    #[cfg(feature = "datafusion-integration")]
+    fn dataframe_session(
+        &self,
+    ) -> PyResult<crate::embedded::python_dataframe::PyDataFusionSession> {
+        use crate::datafusion::create_session_context;
+
+        let ctx = create_session_context().map_err(|e| {
+            PyRuntimeError::new_err(format!("Failed to create DataFusion context: {}", e))
+        })?;
+
+        Ok(crate::embedded::python_dataframe::PyDataFusionSession::new(
+            ctx,
+            self.db()?,
+        ))
+    }
+
+    #[pyo3(signature = (collection, ipc_stream, mode="insert", tenant_id=None))]
+    fn insert_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ipc_stream: Vec<u8>,
+        mode: &str,
+        tenant_id: Option<&str>,
+    ) -> PyResult<u64> {
+        let insert_only = match mode.to_ascii_lowercase().as_str() {
+            "insert" | "bulk_insert" | "batch_insert" => true,
+            "upsert" | "bulk_upsert" | "batch_upsert" => false,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid Arrow write mode '{}'. Use 'insert' or 'upsert'",
+                    other
+                )));
+            }
+        };
+
+        let inner = self.db()?;
+        py.allow_threads(move || {
+            inner.insert_arrow_ipc(collection, &ipc_stream, insert_only, tenant_id)
+        })
+        .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert Arrow batch: {}", e)))
+    }
+
+    #[pyo3(signature = (collection, ipc_stream, tenant_id=None))]
+    fn upsert_arrow_ipc(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        ipc_stream: Vec<u8>,
+        tenant_id: Option<&str>,
+    ) -> PyResult<u64> {
+        let inner = self.db()?;
+        py.allow_threads(move || inner.insert_arrow_ipc(collection, &ipc_stream, false, tenant_id))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert Arrow batch: {}", e)))
+    }
 
     /// Execute a unified multi-model query
     ///
@@ -2780,8 +3646,8 @@ impl PyProximaDB {
         query_vector: Option<Vec<f32>>,
         fusion_strategy: Option<&str>,
     ) -> PyResult<Vec<PyObject>> {
-        self.inner
-            .execute_unified_query(query, query_vector, fusion_strategy)
+        let inner = self.db()?;
+        py.allow_threads(move || inner.execute_unified_query(query, query_vector, fusion_strategy))
             .map(|records| {
                 records
                     .into_iter()
@@ -2836,7 +3702,7 @@ impl PyProximaDB {
     ///         print(f"  {comp['model']}: cost={comp['estimated_cost']}")
     ///     ```
     fn explain_unified_query(&self, py: Python<'_>, query: &str) -> PyResult<PyObject> {
-        self.inner
+        self.db()?
             .explain_unified_query(query)
             .map(|plan| {
                 let dict = PyDict::new(py);
@@ -2903,7 +3769,7 @@ impl PyProximaDB {
             }
         };
 
-        Ok(self.inner.metrics(rolling_window).into())
+        Ok(self.db()?.metrics(rolling_window).into())
     }
 
     /// Reset all metrics to zero
@@ -2919,7 +3785,9 @@ impl PyProximaDB {
     ///     print(f"Benchmark results: {metrics}")
     ///     ```
     fn reset_metrics(&self) {
-        self.inner.reset_metrics();
+        if let Some(db) = self.db_opt() {
+            db.reset_metrics();
+        }
     }
 
     /// Export metrics in Prometheus text format
@@ -2942,7 +3810,9 @@ impl PyProximaDB {
     ///     print(prometheus_text)
     ///     ```
     fn export_prometheus(&self) -> String {
-        self.inner.export_prometheus()
+        self.db_opt()
+            .map(|db| db.export_prometheus())
+            .unwrap_or_default()
     }
 }
 
@@ -2984,7 +3854,227 @@ fn python_to_json(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
     }
 }
 
+fn python_to_json_record_value(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
+    if value.is_none() {
+        Ok(serde_json::Value::Null)
+    } else if let Ok(b) = value.extract::<bool>() {
+        Ok(serde_json::Value::Bool(b))
+    } else if let Ok(i) = value.extract::<i64>() {
+        Ok(serde_json::Value::Number(i.into()))
+    } else if let Ok(f) = value.extract::<f64>() {
+        Ok(serde_json::json!(f))
+    } else if let Ok(s) = value.extract::<String>() {
+        Ok(serde_json::Value::String(s))
+    } else if let Ok(list) = value.downcast::<PyList>() {
+        let arr: Vec<serde_json::Value> = list
+            .iter()
+            .map(|item| python_to_json_record_value(&item))
+            .collect::<PyResult<_>>()?;
+        Ok(serde_json::Value::Array(arr))
+    } else if let Ok(tuple) = value.downcast::<PyTuple>() {
+        let arr: Vec<serde_json::Value> = tuple
+            .iter()
+            .map(|item| python_to_json_record_value(&item))
+            .collect::<PyResult<_>>()?;
+        Ok(serde_json::Value::Array(arr))
+    } else if let Ok(dict) = value.downcast::<PyDict>() {
+        let mut map = serde_json::Map::new();
+        for (k, v) in dict.iter() {
+            let key: String = k.extract()?;
+            map.insert(key, python_to_json_record_value(&v)?);
+        }
+        Ok(serde_json::Value::Object(map))
+    } else if value.hasattr("to_dict")? {
+        let converted = value.call_method0("to_dict")?;
+        python_to_json_record_value(&converted)
+    } else {
+        Ok(serde_json::Value::String(value.str()?.to_string()))
+    }
+}
+
+fn python_record_field<'py>(
+    record: &Bound<'py, PyAny>,
+    name: &str,
+) -> PyResult<Option<Bound<'py, PyAny>>> {
+    if let Ok(dict) = record.downcast::<PyDict>() {
+        dict.get_item(name)
+    } else if record.hasattr(name)? {
+        Ok(Some(record.getattr(name)?))
+    } else {
+        Ok(None)
+    }
+}
+
+fn required_python_record_field<'py>(
+    record: &Bound<'py, PyAny>,
+    name: &str,
+) -> PyResult<Bound<'py, PyAny>> {
+    python_record_field(record, name)?
+        .ok_or_else(|| PyValueError::new_err(format!("ProximaRecord is missing {name:?}")))
+}
+
+fn python_record_vector(value: &Bound<'_, PyAny>) -> PyResult<Vec<f32>> {
+    if value.hasattr("tolist")? {
+        value.call_method0("tolist")?.extract()
+    } else {
+        value.extract()
+    }
+}
+
+fn python_record_props(record: &Bound<'_, PyAny>) -> PyResult<proximadb_records::ProximaTree> {
+    let mut props = proximadb_records::ProximaTree::new();
+    if let Some(props_value) = python_record_field(record, "props")?
+        && !props_value.is_none()
+    {
+        let props_dict = props_value.downcast::<PyDict>()?;
+        for (key, value) in props_dict.iter() {
+            let key: String = key.extract()?;
+            props.insert(
+                key,
+                proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                    python_to_json_record_value(&value)?,
+                )),
+            );
+        }
+    }
+
+    for (field_name, prop_name) in [
+        ("text_fields", "_text_fields"),
+        ("source", "_source"),
+        ("schema_id", "_schema_id"),
+    ] {
+        if let Some(value) = python_record_field(record, field_name)?
+            && !value.is_none()
+        {
+            props.insert(
+                prop_name.to_string(),
+                proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                    python_to_json_record_value(&value)?,
+                )),
+            );
+        }
+    }
+
+    Ok(props)
+}
+
+fn python_dict_to_proxima_tree(
+    dict: &Bound<'_, PyDict>,
+) -> PyResult<proximadb_records::ProximaTree> {
+    let mut props = proximadb_records::ProximaTree::new();
+    for (key, value) in dict.iter() {
+        let key: String = key.extract()?;
+        props.insert(
+            key,
+            proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                python_to_json_record_value(&value)?,
+            )),
+        );
+    }
+    Ok(props)
+}
+
+fn python_props_list_item(
+    props: Option<&Bound<'_, PyList>>,
+    index: usize,
+) -> PyResult<proximadb_records::ProximaTree> {
+    if let Some(prop_list) = props {
+        let item = prop_list.get_item(index)?;
+        let dict = item.downcast::<PyDict>()?;
+        python_dict_to_proxima_tree(dict)
+    } else {
+        Ok(proximadb_records::ProximaTree::new())
+    }
+}
+
+fn proxima_record_modality(props: &proximadb_records::ProximaTree) -> String {
+    props
+        .get("_modality")
+        .and_then(|node| match node {
+            proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(value),
+            ) => Some(value.clone()),
+            _ => None,
+        })
+        .unwrap_or_else(|| "vector".to_string())
+}
+
+fn proxima_record_from_batch_parts(
+    oid: String,
+    values: Vec<f32>,
+    props: proximadb_records::ProximaTree,
+    now_ns: i64,
+) -> proximadb_records::ProximaRecord {
+    let dim = values.len() as u32;
+    let modality = proxima_record_modality(&props);
+    proximadb_records::ProximaRecord {
+        oid,
+        embeddings: vec![proximadb_records::EmbeddingCell {
+            model_id: "default".to_string(),
+            modality,
+            dim,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            ..Default::default()
+        }],
+        props,
+        created_at_ns: now_ns,
+        updated_at_ns: now_ns,
+        record_version: 1,
+        ..Default::default()
+    }
+}
+
+fn python_to_proxima_record(
+    record: &Bound<'_, PyAny>,
+    now_ns: i64,
+) -> PyResult<proximadb_records::ProximaRecord> {
+    let oid_value = python_record_field(record, "id")?
+        .or_else(|| python_record_field(record, "oid").ok().flatten())
+        .ok_or_else(|| PyValueError::new_err("ProximaRecord is missing 'id'"))?;
+    let oid: String = oid_value.extract()?;
+    let vector_value = required_python_record_field(record, "vector")?;
+    let values = python_record_vector(&vector_value)?;
+    if values.is_empty() {
+        return Err(PyValueError::new_err(
+            "ProximaRecord vector must not be empty",
+        ));
+    }
+
+    let props = python_record_props(record)?;
+    let modality = python_record_field(record, "modality")?
+        .and_then(|value| value.extract::<String>().ok())
+        .unwrap_or_else(|| proxima_record_modality(&props));
+    let dim = values.len() as u32;
+
+    Ok(proximadb_records::ProximaRecord {
+        oid,
+        embeddings: vec![proximadb_records::EmbeddingCell {
+            model_id: "default".to_string(),
+            modality,
+            dim,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            ..Default::default()
+        }],
+        props,
+        created_at_ns: now_ns,
+        updated_at_ns: now_ns,
+        record_version: 1,
+        ..Default::default()
+    })
+}
+
 /// Convert serde_json::Value to Python object
+fn proxima_tree_node_to_json(node: &proximadb_records::ProximaTreeNode) -> serde_json::Value {
+    match node {
+        proximadb_records::ProximaTreeNode::Value(value) => proxima_value_to_json(value.clone()),
+        proximadb_records::ProximaTreeNode::Object(tree) => serde_json::Value::Object(
+            tree.iter()
+                .map(|(key, value)| (key.clone(), proxima_tree_node_to_json(value)))
+                .collect(),
+        ),
+    }
+}
+
 fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
@@ -3013,6 +4103,512 @@ fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObjec
             }
             Ok(dict.into_any().unbind())
         }
+    }
+}
+
+fn sql_result_to_arrow_ipc(
+    result: &EmbeddedSqlQueryResult,
+) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
+    use arrow::array::{ArrayRef, BooleanBuilder, Float64Builder, Int64Builder, StringBuilder};
+    use arrow::datatypes::{DataType, Field, Schema};
+    use arrow::ipc::writer::StreamWriter;
+    use arrow::record_batch::RecordBatch;
+
+    let fields = result
+        .columns
+        .iter()
+        .enumerate()
+        .map(|(idx, column)| {
+            Field::new(
+                column.clone(),
+                sql_column_arrow_type(result.column_types.get(idx).map(String::as_str)),
+                true,
+            )
+        })
+        .collect::<Vec<_>>();
+    let schema = Arc::new(Schema::new(fields));
+    let mut arrays = Vec::with_capacity(result.columns.len());
+
+    for (idx, column) in result.columns.iter().enumerate() {
+        let data_type = schema.field(idx).data_type().clone();
+        match data_type {
+            DataType::Boolean => {
+                let mut builder = BooleanBuilder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column).and_then(json_bool_value) {
+                        Some(value) => builder.append_value(value),
+                        None => builder.append_null(),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Int64 => {
+                let mut builder = Int64Builder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column).and_then(json_i64_value) {
+                        Some(value) => builder.append_value(value),
+                        None => builder.append_null(),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            DataType::Float64 => {
+                let mut builder = Float64Builder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column).and_then(json_f64_value) {
+                        Some(value) => builder.append_value(value),
+                        None => builder.append_null(),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+            _ => {
+                let mut builder = StringBuilder::new();
+                for row in &result.rows {
+                    match sql_row_value(row, column) {
+                        Some(serde_json::Value::String(value)) => builder.append_value(value),
+                        Some(serde_json::Value::Null) | None => builder.append_null(),
+                        Some(value) => builder.append_value(value.to_string()),
+                    }
+                }
+                arrays.push(Arc::new(builder.finish()) as ArrayRef);
+            }
+        }
+    }
+
+    let batch = RecordBatch::try_new(schema.clone(), arrays)?;
+    let mut bytes = Vec::new();
+    {
+        let mut writer = StreamWriter::try_new(&mut bytes, &schema)?;
+        writer.write(&batch)?;
+        writer.finish()?;
+    }
+    Ok(bytes)
+}
+
+fn notebook_plan_explain(
+    db: &EmbeddedProximaDB,
+    plan: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    let sql = compile_notebook_plan_sql(plan).ok();
+    let source_kind = notebook_plan_source_kind(plan)?;
+    let source = notebook_plan_source(plan)?;
+    let workers = notebook_plan_workers(plan);
+    let partition_plan = if source_kind == "table" {
+        match db.plan_partitions(source, workers.max(1)) {
+            Ok(partitions) => notebook_partitions_to_json(source, workers, &partitions),
+            Err(error) => notebook_fallback_partition_plan(
+                source,
+                workers,
+                &format!(
+                    "native partition planning rejected this source; using one safe logical partition: {error}"
+                ),
+            ),
+        }
+    } else {
+        serde_json::json!({
+            "requested_partitions": workers.max(1),
+            "planned_partitions": 1,
+            "effective_read_partitions": 1,
+            "planner": "sql_source_fallback",
+            "execution_scope": "local_process"
+        })
+    };
+    let effective_parallelism = partition_plan
+        .get("effective_read_partitions")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1);
+
+    Ok(serde_json::json!({
+        "source_surface": "python_notebook",
+        "execution_scope": "local_process",
+        "master": notebook_plan_master(plan),
+        "workers": workers,
+        "memory_limit": notebook_plan_session_value(plan, "memory_limit").cloned().unwrap_or(serde_json::Value::Null),
+        "batch_size": notebook_plan_session_value(plan, "batch_size").and_then(serde_json::Value::as_u64).unwrap_or(10_000),
+        "authority_mode": "ProximaAuthoritative",
+        "policy_boundary": "engine-enforced",
+        "compute_route": if sql.is_some() { "DataFusionLocal" } else { "Native" },
+        "status": "phase1_rust_plan_boundary",
+        "compiled_sql": sql,
+        "partition_plan": partition_plan,
+        "effective_parallelism": effective_parallelism,
+        "unsupported_operations": notebook_plan_unsupported_operations(plan),
+        "plan": plan.get("plan").cloned().unwrap_or_else(|| plan.clone()),
+    }))
+}
+
+fn compile_notebook_plan_sql(plan: &serde_json::Value) -> Result<String, String> {
+    let source_kind = notebook_plan_source_kind(plan)?;
+    let source = notebook_plan_source(plan)?;
+    let operations = notebook_plan_operations(plan)?;
+
+    if source_kind == "sql" {
+        if !operations.is_empty() {
+            return Err("operations on raw SQL frames are not supported yet".to_string());
+        }
+        return Ok(source.trim().to_string());
+    }
+    if source_kind != "table" {
+        return Err(format!("unsupported source kind {source_kind:?}"));
+    }
+
+    let mut select_columns: Option<Vec<String>> = None;
+    let mut predicates = Vec::new();
+    let mut limit_count: Option<u64> = None;
+    let mut group_columns: Option<Vec<String>> = None;
+    let mut aggregate_count = false;
+
+    for op in operations {
+        let op_type = op
+            .get("type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "operation is missing string field 'type'".to_string())?;
+        match op_type {
+            "select" => {
+                select_columns = Some(notebook_string_array(op, "columns")?);
+            }
+            "where" => {
+                let predicate = op
+                    .get("predicate")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        "where operation is missing string field 'predicate'".to_string()
+                    })?;
+                predicates.push(predicate.to_string());
+            }
+            "limit" => {
+                limit_count = Some(
+                    op.get("count")
+                        .and_then(serde_json::Value::as_u64)
+                        .ok_or_else(|| {
+                            "limit operation is missing numeric field 'count'".to_string()
+                        })?,
+                );
+            }
+            "group_count" => {
+                group_columns = Some(notebook_string_array(op, "columns")?);
+                aggregate_count = true;
+            }
+            other => return Err(format!("{other} is not SQL-backed in phase 1")),
+        }
+    }
+
+    let (select_clause, group_clause) = if aggregate_count {
+        let group_columns =
+            group_columns.ok_or_else(|| "group_count operation is missing columns".to_string())?;
+        let projection = group_columns
+            .iter()
+            .map(|column| notebook_quote_ident(column))
+            .collect::<Vec<_>>()
+            .join(", ");
+        (
+            format!("{projection}, COUNT(*) AS count"),
+            format!(" GROUP BY {projection}"),
+        )
+    } else {
+        let select_clause = match select_columns {
+            Some(columns) if !columns.is_empty() => columns
+                .iter()
+                .map(|column| notebook_quote_ident(column))
+                .collect::<Vec<_>>()
+                .join(", "),
+            _ => "*".to_string(),
+        };
+        (select_clause, String::new())
+    };
+
+    let mut sql = format!(
+        "SELECT {select_clause} FROM {}",
+        notebook_table_ident(source)?
+    );
+    if !predicates.is_empty() {
+        sql.push_str(" WHERE ");
+        sql.push_str(
+            &predicates
+                .iter()
+                .map(|predicate| format!("({predicate})"))
+                .collect::<Vec<_>>()
+                .join(" AND "),
+        );
+    }
+    sql.push_str(&group_clause);
+    if let Some(limit_count) = limit_count {
+        sql.push_str(&format!(" LIMIT {limit_count}"));
+    }
+    Ok(sql)
+}
+
+fn notebook_plan_root(plan: &serde_json::Value) -> &serde_json::Value {
+    plan.get("plan").unwrap_or(plan)
+}
+
+fn notebook_plan_source_kind(plan: &serde_json::Value) -> Result<&str, String> {
+    notebook_plan_root(plan)
+        .get("source_kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "plan is missing string field 'source_kind'".to_string())
+}
+
+fn notebook_plan_source(plan: &serde_json::Value) -> Result<&str, String> {
+    notebook_plan_root(plan)
+        .get("source")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "plan is missing string field 'source'".to_string())
+}
+
+fn notebook_plan_operations(plan: &serde_json::Value) -> Result<&[serde_json::Value], String> {
+    match notebook_plan_root(plan).get("operations") {
+        Some(serde_json::Value::Array(values)) => Ok(values),
+        None => Ok(&[]),
+        _ => Err("plan field 'operations' must be an array".to_string()),
+    }
+}
+
+fn notebook_plan_session_value<'a>(
+    plan: &'a serde_json::Value,
+    key: &str,
+) -> Option<&'a serde_json::Value> {
+    plan.get("session").and_then(|session| session.get(key))
+}
+
+fn notebook_plan_workers(plan: &serde_json::Value) -> u32 {
+    notebook_plan_session_value(plan, "workers")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(1)
+}
+
+fn notebook_plan_master(plan: &serde_json::Value) -> serde_json::Value {
+    notebook_plan_session_value(plan, "master")
+        .cloned()
+        .unwrap_or_else(|| serde_json::Value::String("proxima-local[1]".to_string()))
+}
+
+fn notebook_plan_unsupported_operations(plan: &serde_json::Value) -> Vec<serde_json::Value> {
+    notebook_plan_operations(plan)
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|op| op.get("type").and_then(serde_json::Value::as_str))
+        .filter(|op_type| !matches!(*op_type, "select" | "where" | "limit" | "group_count"))
+        .map(|op_type| serde_json::Value::String(op_type.to_string()))
+        .collect()
+}
+
+fn notebook_string_array(value: &serde_json::Value, field: &str) -> Result<Vec<String>, String> {
+    let values = value
+        .get(field)
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| format!("operation is missing array field '{field}'"))?;
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(ToString::to_string)
+                .ok_or_else(|| format!("field '{field}' must contain only strings"))
+        })
+        .collect()
+}
+
+fn notebook_quote_ident(name: &str) -> String {
+    format!("\"{}\"", name.replace('"', "\"\""))
+}
+
+fn notebook_table_ident(name: &str) -> Result<String, String> {
+    if name.is_empty() {
+        return Err("table name must not be empty".to_string());
+    }
+    let parts = name.split('.').collect::<Vec<_>>();
+    if parts.iter().any(|part| part.is_empty()) {
+        return Err("table name contains an empty identifier segment".to_string());
+    }
+    Ok(parts
+        .iter()
+        .map(|part| {
+            if notebook_is_simple_ident(part) {
+                (*part).to_string()
+            } else {
+                notebook_quote_ident(part)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("."))
+}
+
+fn notebook_is_simple_ident(value: &str) -> bool {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) if first == '_' || first.is_ascii_alphabetic() => {}
+        _ => return false,
+    }
+    chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+fn notebook_partitions_to_json(
+    collection: &str,
+    requested: u32,
+    partitions: &[crate::connectors::spark::SparkInputPartition],
+) -> serde_json::Value {
+    serde_json::json!({
+        "collection": collection,
+        "requested_partitions": requested.max(1),
+        "planned_partitions": partitions.len(),
+        "effective_read_partitions": partitions.len(),
+        "planner": "whole_collection_fallback",
+        "execution_scope": "local_process",
+        "safe_parallelism": partitions.len(),
+        "rejected_parallelism_reason": if requested as usize > partitions.len() {
+            Some("split-bound readers are not wired yet; returning more collection:// partitions would duplicate scans")
+        } else {
+            None
+        },
+        "partitions": partitions.iter().map(notebook_partition_to_json).collect::<Vec<_>>(),
+    })
+}
+
+fn notebook_partition_to_json(
+    partition: &crate::connectors::spark::SparkInputPartition,
+) -> serde_json::Value {
+    serde_json::json!({
+        "partition_id": partition.partition_id,
+        "preferred_locations": &partition.preferred_locations,
+        "estimated_rows": partition.estimated_rows,
+        "estimated_bytes": partition.estimated_bytes,
+        "splits": partition.splits.iter().map(notebook_split_to_json).collect::<Vec<_>>(),
+    })
+}
+
+fn notebook_split_to_json(split: &crate::storage::formats::FileSplit) -> serde_json::Value {
+    serde_json::json!({
+        "split_id": &split.split_id,
+        "file_path": &split.file_path,
+        "offset": split.offset,
+        "length": split.length,
+        "estimated_rows": split.statistics.row_count,
+        "estimated_bytes": split.statistics.byte_size,
+    })
+}
+
+fn notebook_fallback_partition_plan(
+    collection: &str,
+    requested: u32,
+    reason: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "collection": collection,
+        "requested_partitions": requested.max(1),
+        "planned_partitions": 1,
+        "effective_read_partitions": 1,
+        "planner": "whole_collection_fallback",
+        "execution_scope": "local_process",
+        "safe_parallelism": 1,
+        "rejected_parallelism_reason": reason,
+        "partitions": [{
+            "partition_id": 0,
+            "preferred_locations": [],
+            "estimated_rows": null,
+            "estimated_bytes": null,
+            "splits": [{
+                "split_id": format!("collection:{collection}:whole"),
+                "file_path": format!("collection://{collection}"),
+                "offset": 0,
+                "length": 0,
+                "estimated_rows": null,
+                "estimated_bytes": null,
+            }],
+        }],
+    })
+}
+
+fn sql_column_arrow_type(column_type: Option<&str>) -> arrow::datatypes::DataType {
+    match column_type
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "bool" | "boolean" => arrow::datatypes::DataType::Boolean,
+        "int2" | "int4" | "int8" | "integer" | "bigint" | "smallint" => {
+            arrow::datatypes::DataType::Int64
+        }
+        "float4" | "float8" | "float" | "double" | "real" | "decimal" | "numeric" => {
+            arrow::datatypes::DataType::Float64
+        }
+        _ => arrow::datatypes::DataType::Utf8,
+    }
+}
+
+fn sql_row_value<'a>(row: &'a serde_json::Value, column: &str) -> Option<&'a serde_json::Value> {
+    row.as_object().and_then(|object| object.get(column))
+}
+
+fn json_bool_value(value: &serde_json::Value) -> Option<bool> {
+    match value {
+        serde_json::Value::Bool(value) => Some(*value),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+fn json_i64_value(value: &serde_json::Value) -> Option<i64> {
+    match value {
+        serde_json::Value::Number(value) => value.as_i64(),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+fn json_f64_value(value: &serde_json::Value) -> Option<f64> {
+    match value {
+        serde_json::Value::Number(value) => value.as_f64(),
+        serde_json::Value::String(value) => value.parse().ok(),
+        _ => None,
+    }
+}
+
+fn trace_span_to_python(py: Python<'_>, span: super::EmbeddedTraceSpan) -> PyResult<PyObject> {
+    let dict = PyDict::new(py);
+    dict.set_item("trace_id", span.trace_id)?;
+    dict.set_item("span_id", span.span_id)?;
+    dict.set_item("parent_span_id", span.parent_span_id)?;
+    dict.set_item("name", span.name)?;
+    dict.set_item("kind", span.kind)?;
+    dict.set_item("start_time_ns", span.start_time_ns)?;
+    dict.set_item("end_time_ns", span.end_time_ns)?;
+    dict.set_item("service", span.service)?;
+    dict.set_item("status_code", span.status_code)?;
+    dict.set_item("status_message", span.status_message)?;
+
+    let attributes = PyDict::new(py);
+    for (key, value) in span.attributes {
+        attributes.set_item(key, json_to_python(py, &value)?)?;
+    }
+    dict.set_item("attributes", attributes)?;
+
+    Ok(dict.into_any().unbind())
+}
+
+fn inject_graph_target_into_cypher(graph_id: Option<&str>, cypher: &str) -> String {
+    let cypher = cypher.trim().trim_end_matches(';').trim();
+    let Some(graph_id) = graph_id.map(str::trim).filter(|value| !value.is_empty()) else {
+        return cypher.to_string();
+    };
+
+    let upper = cypher.to_ascii_uppercase();
+    if upper.contains(" FROM ") {
+        return cypher.to_string();
+    }
+
+    if let Some(return_index) = upper.find(" RETURN ") {
+        format!(
+            "{} FROM {}{}",
+            &cypher[..return_index],
+            graph_id,
+            &cypher[return_index..]
+        )
+    } else {
+        format!("{cypher} FROM {graph_id}")
     }
 }
 
@@ -3065,10 +4661,7 @@ fn init_logging(level: &str) -> PyResult<()> {
     Ok(())
 }
 
-/// Python module definition
-/// This exports as "proximadb" which is the module name used by benchmarks
-#[pymodule]
-fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn register_python_module(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Core classes
     m.add_class::<PyProximaDB>()?;
     m.add_class::<PyDiskConfig>()?;
@@ -3095,5 +4688,22 @@ fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Add version info
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
 
+    // DataFusion DataFrame API (Proxima-Spark)
+    #[cfg(feature = "datafusion-integration")]
+    crate::embedded::python_dataframe::register_dataframe_module(m)?;
+
     Ok(())
+}
+
+/// Python module definition
+/// This exports as "proximadb" which is the module name used by benchmarks
+#[pymodule]
+fn proximadb(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_python_module(m)
+}
+
+/// Packaged embedded wheel entry point.
+#[pymodule(name = "_proximadb_embedded")]
+fn proximadb_embedded_module(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+    register_python_module(m)
 }

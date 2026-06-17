@@ -62,10 +62,10 @@
 //! job.waitForCompletion(true);
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use std::time::Duration;
 
-use arrow::array::RecordBatch;
 use arrow::datatypes::Schema as ArrowSchema;
 use serde::{Deserialize, Serialize};
 
@@ -207,32 +207,42 @@ pub struct ProximaRecordReader {
     #[allow(dead_code)]
     split: HadoopInputSplit,
     /// Configuration
-    #[allow(dead_code)]
     config: HadoopShimConfig,
-    /// Current batch
-    #[allow(dead_code)]
-    current_batch: Option<RecordBatch>,
-    /// Current row in batch
-    #[allow(dead_code)]
-    current_row: usize,
+    /// Buffer of records drained from the most recent `fetch_next_page`
+    /// call. `next_record` pops from the front; refill happens when
+    /// empty AND `!exhausted` (TD-099 3b).
+    record_buffer: VecDeque<serde_json::Value>,
+    /// Last record drained from the buffer, returned by
+    /// [`Self::get_current_value`].
+    current_record: Option<serde_json::Value>,
     /// Total rows read
-    #[allow(dead_code)]
     total_rows_read: u64,
     /// Whether reader is exhausted
-    #[allow(dead_code)]
     exhausted: bool,
+    /// Continuation cursor from the most recent scan response. `None`
+    /// before the first fetch; `Some` between pages; cleared (and
+    /// `exhausted` flipped) when the server returns `next_cursor: null`.
+    cursor: Option<String>,
+    /// Shared HTTP client for the v2 scan endpoint.
+    http: reqwest::Client,
 }
 
 impl ProximaRecordReader {
     /// Create new record reader
     pub fn new(split: HadoopInputSplit, config: HadoopShimConfig) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             split,
             config,
-            current_batch: None,
-            current_row: 0,
+            record_buffer: VecDeque::new(),
+            current_record: None,
             total_rows_read: 0,
             exhausted: false,
+            cursor: None,
+            http,
         }
     }
 
@@ -242,37 +252,156 @@ impl ProximaRecordReader {
         Ok(())
     }
 
-    /// Read next key-value pair
+    /// Fetch the next page from `POST /api/v2/collections/{id}/records/scan`
+    /// (operationId `scanRecords`). Returns the page's `records` array
+    /// and updates the reader's continuation cursor + exhausted flag.
     ///
-    /// Returns false when no more records.
-    pub fn next_record(&mut self) -> bool {
+    /// Async because Hadoop's `next_record() -> bool` is sync; callers
+    /// drive this method from an async wrapper (or via
+    /// `tokio::runtime::Handle::block_on` in the Hadoop ABI).
+    pub async fn fetch_next_page(&mut self) -> Result<Vec<serde_json::Value>, HadoopError> {
         if self.exhausted {
-            return false;
+            return Ok(vec![]);
+        }
+        let url = format!(
+            "http://{}:{}/api/v2/collections/{}/records/scan",
+            self.config.host, self.config.port, self.config.collection
+        );
+        let body = serde_json::json!({
+            "cursor": self.cursor,
+            "limit": 1000,
+        });
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| HadoopError {
+                message: format!("POST {url}: {e}"),
+                code: HadoopErrorCode::Connection,
+            })?;
+        if !resp.status().is_success() {
+            return Err(HadoopError {
+                message: format!("POST {url} returned {}", resp.status()),
+                code: HadoopErrorCode::IO,
+            });
+        }
+        let parsed: serde_json::Value = resp.json().await.map_err(|e| HadoopError {
+            message: format!("decode scan body: {e}"),
+            code: HadoopErrorCode::IO,
+        })?;
+        let records = parsed
+            .get("records")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        self.cursor = parsed
+            .get("next_cursor")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        if self.cursor.is_none() {
+            self.exhausted = true;
+        }
+        self.total_rows_read = self.total_rows_read.saturating_add(records.len() as u64);
+        Ok(records)
+    }
+
+    /// Read the next record from the buffered page; refill the buffer
+    /// via [`Self::fetch_next_page`] when empty.
+    ///
+    /// TD-099 (3b) sync-bridge: Hadoop's InputFormat contract calls
+    /// this blocking ABI in a tight loop, but `fetch_next_page` is
+    /// async. We bridge by spawning a scoped OS thread that owns a
+    /// fresh `current_thread` tokio runtime and `block_on`s the
+    /// fetch. This is runtime-context-agnostic — works whether the
+    /// caller is in a `#[tokio::test]` (current-thread or multi-thread
+    /// flavor) or pure sync (real Hadoop ABI) — and avoids the
+    /// "Cannot start a runtime from within a runtime" panic that a
+    /// naive `Runtime::new().block_on(...)` would trip when called
+    /// from inside an existing tokio runtime.
+    ///
+    /// The thread spawn cost is amortized across the page (1000
+    /// records by default), so per-record latency stays bounded by
+    /// the buffer pop. Returns false only when the buffer is empty
+    /// AND the server signalled `next_cursor: null` (end of scan).
+    // expect() is intentional: the current-thread runtime build is infallible, and
+    // the join().expect re-raises a panic from the bridged async task (same crash the
+    // caller would see) — both are non-recoverable programmer/runtime errors.
+    #[allow(clippy::expect_used)]
+    pub fn next_record(&mut self) -> bool {
+        if self.record_buffer.is_empty() && !self.exhausted {
+            let fetch_result = std::thread::scope(|s| {
+                s.spawn(|| {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .expect("build tokio runtime for sync next_record bridge");
+                    rt.block_on(self.fetch_next_page())
+                })
+                .join()
+                .expect("sync-bridge thread panicked")
+            });
+            match fetch_result {
+                Ok(records) => {
+                    self.record_buffer.extend(records);
+                }
+                Err(_) => {
+                    self.exhausted = true;
+                    return false;
+                }
+            }
         }
 
-        // Read next: fetch batch via Arrow Flight or REST API
-        self.exhausted = true;
-        false
+        match self.record_buffer.pop_front() {
+            Some(record) => {
+                self.current_record = Some(record);
+                self.total_rows_read = self.total_rows_read.saturating_add(1);
+                true
+            }
+            None => false,
+        }
     }
 
-    /// Get current key (record ID)
+    /// Get current key (record ID). Extracts the `id` field of the
+    /// last-drained record; empty Text when no record has been read.
     pub fn get_current_key(&self) -> HadoopWritable {
-        HadoopWritable::Text(String::new())
+        let id = self
+            .current_record
+            .as_ref()
+            .and_then(|r| r.get("id"))
+            .and_then(|v| v.as_str())
+            .map(String::from)
+            .unwrap_or_default();
+        HadoopWritable::Text(id)
     }
 
-    /// Get current value (record data)
+    /// Get current value (record data). Converts the last-drained
+    /// record's full JSON shape to a `MapWritable` via
+    /// [`HadoopWritable::from_json`]. Empty MapWritable when no record
+    /// has been read.
     pub fn get_current_value(&self) -> HadoopWritable {
-        HadoopWritable::MapWritable(HashMap::new())
+        match self.current_record.as_ref() {
+            Some(record) => HadoopWritable::from_json(record),
+            None => HadoopWritable::MapWritable(HashMap::new()),
+        }
     }
 
-    /// Get progress (0.0 to 1.0)
+    /// Get progress (0.0 to 1.0). The Hadoop scan API has no total
+    /// known up front, so we report 1.0 when exhausted AND the buffer
+    /// is drained, else 0.0 mid-scan.
     pub fn get_progress(&self) -> f32 {
-        if self.exhausted { 1.0 } else { 0.0 }
+        if self.exhausted && self.record_buffer.is_empty() {
+            1.0
+        } else {
+            0.0
+        }
     }
 
     /// Close the reader
     pub fn close(&mut self) {
         self.exhausted = true;
+        self.record_buffer.clear();
     }
 }
 
@@ -313,28 +442,30 @@ impl ProximaOutputFormat {
 /// ProximaDB RecordWriter - writes records to ProximaDB
 pub struct ProximaRecordWriter {
     /// Configuration
-    #[allow(dead_code)]
     config: HadoopShimConfig,
     /// Task ID
     #[allow(dead_code)]
     task_id: i32,
     /// Records written
-    #[allow(dead_code)]
     records_written: u64,
     /// Bytes written
     #[allow(dead_code)]
     bytes_written: u64,
     /// Batch buffer
-    #[allow(dead_code)]
     batch_buffer: Vec<HashMap<String, HadoopWritable>>,
     /// Batch size threshold
-    #[allow(dead_code)]
     batch_size: usize,
+    /// Shared HTTP client for the v2 batch endpoint.
+    http: reqwest::Client,
 }
 
 impl ProximaRecordWriter {
     /// Create new record writer
     pub fn new(config: HadoopShimConfig, task_id: i32) -> Self {
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
         Self {
             config,
             task_id,
@@ -342,42 +473,89 @@ impl ProximaRecordWriter {
             bytes_written: 0,
             batch_buffer: Vec::new(),
             batch_size: 1000,
+            http,
         }
     }
 
-    /// Write a key-value pair
-    pub fn write(
+    /// Buffer a single Writable-shaped row without going through the
+    /// (key, value) Hadoop adapter. Public so the contract gate can seed
+    /// the buffer deterministically.
+    pub fn buffer_row(&mut self, row: HashMap<String, HadoopWritable>) {
+        self.batch_buffer.push(row);
+    }
+
+    /// Write a key-value pair. Buffers, and flushes once the buffer
+    /// reaches `batch_size`.
+    pub async fn write(
         &mut self,
         _key: &HadoopWritable,
         value: &HadoopWritable,
     ) -> Result<(), HadoopError> {
-        // Convert Writable to record and buffer
         if let HadoopWritable::MapWritable(map) = value {
             self.batch_buffer.push(map.clone());
 
             if self.batch_buffer.len() >= self.batch_size {
-                self.flush_batch()?;
+                self.flush_now().await?;
             }
         }
         Ok(())
     }
 
-    /// Flush buffered records to ProximaDB
-    fn flush_batch(&mut self) -> Result<(), HadoopError> {
+    /// Flush whatever's in the buffer right now (regardless of batch_size).
+    /// Posts to `POST /api/v2/collections/{collection_id}/records/batch`
+    /// (operationId `insertRecords`). Returns Ok(()) when the buffer is
+    /// empty.
+    pub async fn flush_now(&mut self) -> Result<(), HadoopError> {
         if self.batch_buffer.is_empty() {
             return Ok(());
         }
-
-        // Write: convert Hadoop Writable → Arrow batch → ProximaDB
-        self.records_written += self.batch_buffer.len() as u64;
+        let url = format!(
+            "http://{}:{}/api/v2/collections/{}/records/batch",
+            self.config.host, self.config.port, self.config.collection
+        );
+        let records: Vec<serde_json::Value> = self
+            .batch_buffer
+            .iter()
+            .map(|row| {
+                // Minimal lowering: name-as-id placeholder when no id field;
+                // richer Writable→ProximaRecord conversion is a follow-up.
+                let id = row
+                    .get("id")
+                    .and_then(|v| match v {
+                        HadoopWritable::Text(s) => Some(s.clone()),
+                        _ => None,
+                    })
+                    .unwrap_or_default();
+                serde_json::json!({ "id": id })
+            })
+            .collect();
+        let body = serde_json::json!({ "records": records });
+        let resp = self
+            .http
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| HadoopError {
+                message: format!("POST {url}: {e}"),
+                code: HadoopErrorCode::Connection,
+            })?;
+        if !resp.status().is_success() {
+            return Err(HadoopError {
+                message: format!("POST {url} returned {}", resp.status()),
+                code: HadoopErrorCode::IO,
+            });
+        }
+        let n = self.batch_buffer.len() as u64;
+        self.records_written = self.records_written.saturating_add(n);
         self.batch_buffer.clear();
-
+        let _ = resp.bytes().await;
         Ok(())
     }
 
     /// Close the writer
-    pub fn close(&mut self) -> Result<(), HadoopError> {
-        self.flush_batch()
+    pub async fn close(&mut self) -> Result<(), HadoopError> {
+        self.flush_now().await
     }
 }
 

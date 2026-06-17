@@ -60,9 +60,9 @@ use tracing::{debug, info, warn};
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
 // DEPRECATED: refined_integrated_cache replaced by zero_copy_io_system
-use crate::core::error::{ProximaDBError, StorageError};
 use crate::core::search::FilterExpression;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystem;
+use proximadb_kernel::error::{ProximaDBError, StorageError};
 
 const FOOTER_MAX_SIZE: usize = 8 * 1024 * 1024; // 8MB max footer size
 #[allow(dead_code)]
@@ -158,8 +158,11 @@ pub struct ParquetFooterCache {
     pub last_access: Instant,
 }
 
+/// Backwards-compat alias for [`ParquetIoRowGroupMetadata`].
+pub type RowGroupMetadata = ParquetIoRowGroupMetadata;
+
 #[derive(Clone, Debug)]
-pub struct RowGroupMetadata {
+pub struct ParquetIoRowGroupMetadata {
     pub index: usize,
     pub offset: u64,
     pub size: u64,
@@ -548,9 +551,10 @@ impl LocalDiskCache {
             // Remove all matching files using internal glob implementation
             if let Some(parent_dir) = pattern.parent()
                 && let Some(pattern_name) = pattern.file_name().and_then(|n| n.to_str())
-                && let Ok(glob_pattern) = crate::utils::glob::GlobPattern::new(pattern_name)
+                && let Ok(glob_pattern) =
+                    proximadb_storage_common::glob::GlobPattern::new(pattern_name)
             {
-                let matcher = crate::utils::glob::GlobMatcher::new(&glob_pattern);
+                let matcher = proximadb_storage_common::glob::GlobMatcher::new(&glob_pattern);
                 if let Ok(entries) = std::fs::read_dir(parent_dir) {
                     for entry in entries.flatten() {
                         if let Some(file_name) = entry.file_name().to_str()

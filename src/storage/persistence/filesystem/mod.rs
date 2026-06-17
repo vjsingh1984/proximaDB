@@ -174,35 +174,40 @@ use tracing::{debug, error, info, trace};
 use url::Url;
 
 pub mod atomic_strategy;
-pub mod auth;
 // intelligent_filesystem removed - using UnifiedCachingFilesystem instead
 pub mod local;
-pub mod manager;
+// Cloud object-store backends, built on the official SDKs (which handle signing,
+// custom endpoints, and path-style — incl. MinIO/Azurite/fake-gcs emulators) and
+// gated behind their features. These replace the deleted legacy s3.rs/azure.rs/
+// gcs.rs/auth.rs/manager.rs, which were dead, incomplete, hand-rolled clients.
+#[cfg(feature = "aws")]
+pub mod aws_s3;
+#[cfg(feature = "azure")]
+pub mod azure_blob;
+#[cfg(feature = "gcp")]
+pub mod gcs_store;
 pub mod scheme_validation;
 pub mod write_strategy;
 // zero_copy_filesystem removed - functionality integrated into UnifiedCachingFilesystem
 
 // Unified filesystem modules
 pub mod access_tracker;
+pub mod cache_config;
 pub mod cache_metrics;
+pub mod caching_filesystem;
 pub mod disk_cache;
+pub mod metadata_cache;
 pub mod metadata_traits;
 pub mod orchestrator_integration;
 pub mod prefetch_engine;
 pub mod range_optimizer;
 pub mod smart_io;
-pub mod unified;
-pub mod unified_cache;
-pub mod unified_config;
-
-#[cfg(test)]
-pub mod tests;
 
 // Filesystem implementations
 pub use local::LocalFileSystem;
 
 // Unified caching filesystem
-pub use unified::UnifiedCachingFilesystem;
+pub use caching_filesystem::UnifiedCachingFilesystem;
 
 // Re-export centralized scheme validation functions
 pub use scheme_validation::{
@@ -249,9 +254,12 @@ pub enum FilesystemError {
     InvalidOperation(String),
 }
 
+/// Backwards-compat alias for [`FsFileMetadata`].
+pub type FileMetadata = FsFileMetadata;
+
 /// File metadata information
 #[derive(Debug, Clone, Default)]
-pub struct FileMetadata {
+pub struct FsFileMetadata {
     pub path: String,
     pub size: u64,
     pub created: Option<chrono::DateTime<chrono::Utc>>,
@@ -267,7 +275,7 @@ pub struct FileMetadata {
 pub struct DirEntry {
     pub name: String,
     pub url: String, // Full URL instead of relative path
-    pub metadata: FileMetadata,
+    pub metadata: FsFileMetadata,
 }
 
 /// Temporary directory strategy for atomic operations
@@ -309,7 +317,7 @@ pub struct FileOptions {
 
 /// Authentication configuration for cloud providers
 #[derive(Debug, Clone)]
-pub struct AuthConfig {
+pub struct FilesystemAuthConfig {
     /// AWS authentication method
     pub aws_auth: Option<AwsAuthMethod>,
 
@@ -368,9 +376,12 @@ pub enum GcsAuthMethod {
     Environment,
 }
 
+/// Backwards-compat alias for [`FsRetryConfig`].
+pub type RetryConfig = FsRetryConfig;
+
 /// Retry configuration for operations
 #[derive(Debug, Clone)]
-pub struct RetryConfig {
+pub struct FsRetryConfig {
     /// Maximum number of retries
     pub max_retries: u32,
     /// Initial delay between retries (ms)
@@ -449,9 +460,12 @@ impl FileStorageTier {
     }
 }
 
+/// Backwards-compat alias for [`FsTierConfig`].
+pub type TierConfig = FsTierConfig;
+
 /// Tier-specific storage configuration
 #[derive(Debug, Clone)]
-pub struct TierConfig {
+pub struct FsTierConfig {
     /// Storage tier type
     pub tier: FileStorageTier,
 
@@ -487,7 +501,7 @@ pub struct FilesystemPerformanceConfig {
     pub compression: bool,
 
     /// Retry configuration
-    pub retry_config: RetryConfig,
+    pub retry_config: FsRetryConfig,
 
     /// Buffer size for operations (bytes)
     pub buffer_size: usize,
@@ -499,7 +513,7 @@ pub struct FilesystemPerformanceConfig {
     pub max_concurrent_ops: usize,
 
     /// Tier-specific configurations
-    pub tier_configs: Vec<TierConfig>,
+    pub tier_configs: Vec<FsTierConfig>,
 }
 
 /// File handle trait for streaming operations on large files
@@ -605,7 +619,7 @@ pub trait FileSystem: Send + Sync + std::fmt::Debug {
     async fn exists(&self, path: &str) -> FsResult<bool>;
 
     /// Get file metadata
-    async fn metadata(&self, path: &str) -> FsResult<FileMetadata>;
+    async fn metadata(&self, path: &str) -> FsResult<FsFileMetadata>;
 
     /// List directory contents
     async fn list(&self, path: &str) -> FsResult<Vec<DirEntry>>;
@@ -778,7 +792,7 @@ pub struct FilesystemConfig {
     pub global_options: FileOptions,
 
     /// Authentication configuration
-    pub auth_config: Option<AuthConfig>,
+    pub auth_config: Option<FilesystemAuthConfig>,
 
     /// Performance optimization settings
     pub performance_config: FilesystemPerformanceConfig,
@@ -794,7 +808,7 @@ impl Default for FilesystemPerformanceConfig {
             enable_keep_alive: true,
             request_timeout_seconds: 30,
             compression: true,
-            retry_config: RetryConfig {
+            retry_config: FsRetryConfig {
                 max_retries: 3,
                 initial_delay_ms: 100,
                 max_delay_ms: 5000,
@@ -881,8 +895,7 @@ impl FilesystemFactory {
         since = "0.1.5",
         note = "Use `create_default()` instead - this creates a broken factory"
     )]
-    #[expect(clippy::default_trait_access)] // Kept for backward compatibility despite creating broken factory
-    #[expect(clippy::should_implement_trait)] // Method is deprecated, trait implementation not appropriate
+    #[allow(clippy::should_implement_trait)]
     pub fn default() -> Self {
         Self {
             config: FilesystemConfig::default(),
@@ -971,7 +984,104 @@ impl FilesystemFactory {
             );
         }
 
+        // Cloud object-store backends (real official-SDK FileSystem impls). Each
+        // is registered by scheme when its feature is compiled in; config comes
+        // from env (standard cloud env vars + PROXIMADB_* overrides for custom
+        // endpoints like MinIO/Azurite/fake-gcs). Registration is best-effort —
+        // a misconfigured cloud backend logs a warning and is skipped rather than
+        // failing factory init. The default build (no cloud feature) registers
+        // only "file". `get_filesystem(url)` then dispatches s3://, gs://, adls://
+        // to these without further changes.
+        #[cfg(feature = "aws")]
+        match aws_s3::AwsS3FileSystem::new(Self::aws_s3_config_from_env()).await {
+            Ok(backend) => {
+                let fs =
+                    self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                self.filesystems.insert("s3".to_string(), fs);
+            }
+            Err(e) => tracing::warn!("S3 FileSystem not registered: {e}"),
+        }
+        #[cfg(feature = "azure")]
+        match azure_blob::AzureBlobFileSystem::new(Self::azure_config_from_env()).await {
+            Ok(backend) => {
+                let fs =
+                    self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                for scheme in ["adls", "abfs", "az", "azure"] {
+                    self.filesystems.insert(scheme.to_string(), fs.clone());
+                }
+            }
+            Err(e) => tracing::warn!("Azure FileSystem not registered: {e}"),
+        }
+        #[cfg(feature = "gcp")]
+        match gcs_store::GcsFileSystem::new(Self::gcs_config_from_env()).await {
+            Ok(backend) => {
+                let fs =
+                    self.maybe_wrap_with_encryption(Arc::new(backend) as Arc<dyn FileSystem>)?;
+                for scheme in ["gcs", "gs"] {
+                    self.filesystems.insert(scheme.to_string(), fs.clone());
+                }
+            }
+            Err(e) => tracing::warn!("GCS FileSystem not registered: {e}"),
+        }
+
         Ok(())
+    }
+
+    /// Build the S3 backend config from env (`AWS_*` + `PROXIMADB_S3_*` overrides
+    /// for custom endpoints / path-style, e.g. MinIO).
+    #[cfg(feature = "aws")]
+    fn aws_s3_config_from_env() -> aws_s3::AwsS3Config {
+        aws_s3::AwsS3Config {
+            region: std::env::var("PROXIMADB_S3_REGION")
+                .or_else(|_| std::env::var("AWS_REGION"))
+                .or_else(|_| std::env::var("AWS_DEFAULT_REGION"))
+                .unwrap_or_else(|_| "us-east-1".to_string()),
+            endpoint_url: std::env::var("PROXIMADB_S3_ENDPOINT").ok(),
+            force_path_style: std::env::var("PROXIMADB_S3_FORCE_PATH_STYLE")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false),
+            access_key_id: std::env::var("AWS_ACCESS_KEY_ID").ok(),
+            secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").ok(),
+            session_token: std::env::var("AWS_SESSION_TOKEN").ok(),
+        }
+    }
+
+    /// Build the Azure backend config from env (`AZURE_STORAGE_*`;
+    /// `PROXIMADB_AZURE_EMULATOR=1` for Azurite).
+    #[cfg(feature = "azure")]
+    fn azure_config_from_env() -> azure_blob::AzureBlobConfig {
+        azure_blob::AzureBlobConfig {
+            account: std::env::var("AZURE_STORAGE_ACCOUNT")
+                .unwrap_or_else(|_| "devstoreaccount1".to_string()),
+            access_key: std::env::var("AZURE_STORAGE_KEY").ok(),
+            use_emulator: std::env::var("PROXIMADB_AZURE_EMULATOR")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false),
+            endpoint: std::env::var("AZURE_STORAGE_ENDPOINT").ok(),
+            // Secret-less auth: the AKS workload-identity webhook projects these
+            // three env vars into the pod, so an MVP deployment with a federated
+            // identity authenticates to ADLS with no storage key in config.
+            // `AZURE_CLIENT_ID` alone (no tenant/token) selects a user-assigned
+            // Managed Identity; absent entirely, the system-assigned MI is used.
+            client_id: std::env::var("AZURE_CLIENT_ID").ok(),
+            tenant_id: std::env::var("AZURE_TENANT_ID").ok(),
+            federated_token_file: std::env::var("AZURE_FEDERATED_TOKEN_FILE").ok(),
+        }
+    }
+
+    /// Build the GCS backend config from env (`PROXIMADB_GCS_*`;
+    /// `PROXIMADB_GCS_ANONYMOUS=1` + endpoint for fake-gcs-server).
+    #[cfg(feature = "gcp")]
+    fn gcs_config_from_env() -> gcs_store::GcsConfig {
+        gcs_store::GcsConfig {
+            endpoint_url: std::env::var("PROXIMADB_GCS_ENDPOINT").ok(),
+            anonymous: std::env::var("PROXIMADB_GCS_ANONYMOUS")
+                .map(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+                .unwrap_or(false),
+            project_id: std::env::var("GCP_PROJECT")
+                .or_else(|_| std::env::var("GOOGLE_CLOUD_PROJECT"))
+                .ok(),
+        }
     }
 
     /// Get filesystem instance for URL scheme (cached instances)
@@ -1053,12 +1163,12 @@ impl FilesystemFactory {
         // Get the metadata serializer for this engine type
         let metadata_serializer: Arc<dyn crate::storage::persistence::filesystem::metadata_traits::EngineMetadataSerializer> =
             match engine_type.as_str() {
-                "sst" => Arc::new(crate::storage::engines::impls::sst::unified_metadata_serializer::SstUnifiedMetadataSerializer::new()),
-                "viper" => Arc::new(crate::storage::engines::impls::viper::unified_metadata_serializer::ViperMetadataSerializer::new()),
-                "raptor" => Arc::new(crate::storage::engines::impls::raptor::unified_metadata_serializer::RaptorUnifiedMetadataSerializer::new()),
-                "nova" => Arc::new(crate::storage::engines::impls::nova::unified_metadata_serializer::NovaUnifiedMetadataSerializer::new()),
-                "swift" => Arc::new(crate::storage::engines::impls::swift::unified_metadata_serializer::SwiftUnifiedMetadataSerializer::new()),
-                "helix" => Arc::new(crate::storage::engines::impls::helix::unified_metadata_serializer::HelixUnifiedMetadataSerializer::new()),
+                "sst" => Arc::new(crate::storage::engines::core::sst_format_serializer::SstUnifiedMetadataSerializer::new()),
+                "viper" => Arc::new(crate::storage::engines::core::parquet_format_serializer::ViperMetadataSerializer::new()),
+                "raptor" => Arc::new(crate::storage::engines::core::matrix_trinity_serializer::RaptorUnifiedMetadataSerializer::new()),
+                "nova" => Arc::new(crate::storage::engines::core::columnar_format_serializer::NovaUnifiedMetadataSerializer::new()),
+                "swift" => Arc::new(crate::storage::engines::core::proximablocks_compact_serializer::SwiftUnifiedMetadataSerializer::new()),
+                "helix" => Arc::new(crate::storage::engines::core::proximablocks_format_serializer::HelixUnifiedMetadataSerializer::new()),
                 _ => {
                     // Default serializer for other engines
                     #[derive(Debug)]
@@ -1081,7 +1191,7 @@ impl FilesystemFactory {
             };
 
         // Wrap it with UnifiedCachingFilesystem for caching
-        let unified_fs = crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::with_serializer(
+        let unified_fs = crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::with_serializer(
             fs,
             collection_id.to_string(),
             engine_type.to_string(),
@@ -1287,13 +1397,13 @@ impl FilesystemFactory {
         info!("    normalized_url: {}", normalized_url);
 
         // Handle file:// URLs specially to avoid URL parsing issues
-        if normalized_url.starts_with("file://") {
+        if let Some(after_file) = normalized_url.strip_prefix("file://") {
             let path = if let Some(after_slashes) = normalized_url.strip_prefix("file:///") {
                 // Absolute path
                 format!("/{}", after_slashes)
             } else {
                 // Relative or other path
-                normalized_url.strip_prefix("file://").unwrap().to_string()
+                after_file.to_string()
             };
             info!("    scheme: file, returning path: {}", path);
             return Ok(path);
@@ -1383,12 +1493,12 @@ impl FilesystemFactory {
         }
 
         // Case 2: Handle file:// URLs specially to avoid URL parsing issues
-        if url.starts_with("file://") {
+        if let Some(after_file) = url.strip_prefix("file://") {
             // CRITICAL: Avoid URL parsing for file:// to prevent international domain name errors
             // The URL parser can fail on paths that look like domain names
             if url.starts_with("file://./") {
                 // Explicit relative path: file://./path/to/file
-                let relative_path = url.strip_prefix("file://").unwrap(); // Keep the "./"
+                let relative_path = after_file; // Keep the "./"
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Explicit relative path: '{}'",
                     relative_path
@@ -1404,12 +1514,11 @@ impl FilesystemFactory {
                 Ok(format!("/{}", absolute_path))
             } else {
                 // Implicit relative path: file://relative/path (treat as relative)
-                let relative_path = url.strip_prefix("file://").unwrap_or(url); // Remove "file://" prefix
                 trace!(
                     "🔍 [FILESYSTEM] resolve_path: Implicit relative path: '{}'",
-                    relative_path
+                    after_file
                 );
-                Ok(relative_path.to_string())
+                Ok(after_file.to_string())
             }
         } else {
             // Case 3: Non-file schemes still need URL parsing (s3://, azure://, etc.)
@@ -1632,7 +1741,7 @@ impl FilesystemFactory {
         result
     }
 
-    pub async fn metadata(&self, url: &str) -> FsResult<FileMetadata> {
+    pub async fn metadata(&self, url: &str) -> FsResult<FsFileMetadata> {
         let fs = self.get_filesystem(url)?;
         let path = Self::resolve_path(url)?;
         fs.metadata(&path).await

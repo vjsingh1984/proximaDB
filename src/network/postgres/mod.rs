@@ -7,8 +7,14 @@
 //
 // Protocol: PostgreSQL Protocol v3.0
 
+/// Pure pgvector helpers: WHERE metadata-filter extraction (TD-100) and
+/// extended-protocol parameter inference + result-column description (TD-102).
+pub mod pgvector_params;
 /// PostgreSQL Protocol v3.0 message parsing and encoding
 pub mod protocol;
+/// Bridge to the new relational pipeline (algebra → planner →
+/// executor → engine). Opt-in via PROXIMADB_NEW_RELATIONAL_PIPELINE.
+pub mod relational_pipeline;
 /// Session management for PostgreSQL client connections
 pub mod session;
 /// SQL-to-ProximaDB query translator (pgvector compatibility)
@@ -21,17 +27,41 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
 
 use self::protocol::PostgresProtocol;
 use self::session::SessionManager;
+use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::observability::ObservabilityService;
-use crate::services::CollectionService;
+use crate::services::TableWalAppender;
 use crate::services::VectorOperationsService;
-use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
+use proximadb_records::RecordStorage;
+
+/// Optional canonical write dependencies for PostgreSQL wire DML.
+///
+/// When present, catalog-routed relational tables can write through
+/// `DmlService::with_direct_record_storage`; legacy vector-specialized tables
+/// continue to use the compatibility route selected by xCatalog.
+#[derive(Clone)]
+pub struct DirectPgwireWriteServices {
+    record_storage: Arc<dyn RecordStorage>,
+    wal_appender: Arc<dyn TableWalAppender>,
+}
+
+impl DirectPgwireWriteServices {
+    /// Build direct pgwire write dependencies.
+    pub fn new(
+        record_storage: Arc<dyn RecordStorage>,
+        wal_appender: Arc<dyn TableWalAppender>,
+    ) -> Self {
+        Self {
+            record_storage,
+            wal_appender,
+        }
+    }
+}
 
 /// PostgreSQL-compatible server
 pub struct PostgresServer {
@@ -39,29 +69,61 @@ pub struct PostgresServer {
     bind_address: SocketAddr,
     /// Session manager
     session_manager: Arc<SessionManager>,
-    /// Storage engine reference
-    storage: Arc<RwLock<StorageEngine>>,
-    /// Collection service reference
-    collection_service: Arc<CollectionService>,
+    /// Collection port reference (Phase 9 / Task #76)
+    collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
     /// Vector operations service for search
     vector_ops: Arc<VectorOperationsService>,
+    /// Shared xCatalog manager for SQL DDL/DML and metadata introspection
+    catalog_manager: Arc<CatalogManager>,
     /// Document service for JSON document collections
     document_service: Option<Arc<DocumentService>>,
     /// Graph service for graph collections
     graph_service: Option<Arc<GraphService>>,
     /// Observability service for logs/metrics/traces
     observability_service: Option<Arc<ObservabilityService>>,
+    /// Optional canonical record/WAL writer for relational pgwire DML.
+    direct_write_services: Option<DirectPgwireWriteServices>,
+    /// Optional rank-pipeline singleton + durable catalog (R-7c.3
+    /// production wiring). When `Some`, every per-connection DDL service
+    /// is built with `with_rank_profile_store` + `with_rank_services` so
+    /// SQL `CREATE RANK PROFILE` / `DROP RANK PROFILE` reach the same
+    /// `RankServices` instance the REST / gRPC / Arrow Flight paths share.
+    rank_pipeline: Option<PgwireRankPipeline>,
+    /// Slice 6.3: when both are set, every per-connection
+    /// `PostgresProtocol` is built with `with_primary_pod_gate` so
+    /// pgwire INSERT/UPDATE/DELETE consults the same registry the REST
+    /// and gRPC v2 paths consult. Held as a pair so `handle_connection`
+    /// can decide once whether to wire the gate.
+    primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
+    self_pod_id: Option<String>,
+    /// Object-store root URL the warehouse materializer publishes Parquet snapshots
+    /// under (the same URL the OLAP reader reopens the store from). When `Some`,
+    /// every per-connection `DdlService` is wired with a `DmlTableMaterializer` so
+    /// `ALTER TABLE … MATERIALIZE` works; when `None` the trigger returns a clean
+    /// "requires a configured warehouse object store" error.
+    warehouse_root_url: Option<String>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Bundle of the rank-pipeline + function-catalog handles pgwire threads into
+/// every `DdlService` it constructs. Cloning is cheap (three `Arc`s).
+#[derive(Clone)]
+pub struct PgwireRankPipeline {
+    pub services: Arc<crate::network::rest::v1::rank::RankServices>,
+    pub store: Arc<dyn crate::services::RankProfileStore>,
+    /// Durable SQL user-function catalog (UDF F5) so `CREATE FUNCTION` over
+    /// pgwire persists into the same store boot recovery replays.
+    pub function_store: Arc<dyn crate::services::FunctionStore>,
 }
 
 impl PostgresServer {
     /// Create a new PostgreSQL server
     pub fn new(
         bind_address: SocketAddr,
-        storage: Arc<RwLock<StorageEngine>>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
+        catalog_manager: Arc<CatalogManager>,
         document_service: Option<Arc<DocumentService>>,
         graph_service: Option<Arc<GraphService>>,
         observability_service: Option<Arc<ObservabilityService>>,
@@ -69,14 +131,79 @@ impl PostgresServer {
         Self {
             bind_address,
             session_manager: Arc::new(SessionManager::new()),
-            storage,
-            collection_service,
+            collection_port,
             vector_ops,
+            catalog_manager,
             document_service,
             graph_service,
             observability_service,
+            direct_write_services: None,
+            rank_pipeline: None,
+            primary_pod_registry: None,
+            self_pod_id: None,
+            warehouse_root_url: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// Slice 6.3: attach the primary-pod write router so each
+    /// connection's `PostgresProtocol` consults the gate on DML.
+    /// Passing both as a pair makes "partially wired" unrepresentable
+    /// — `handle_connection` only applies the gate when BOTH are set.
+    pub fn with_primary_pod_gate(
+        mut self,
+        registry: Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>,
+        self_pod_id: String,
+    ) -> Self {
+        self.primary_pod_registry = Some(registry);
+        self.self_pod_id = Some(self_pod_id);
+        self
+    }
+
+    /// Attach the process-wide rank-pipeline so each per-connection
+    /// `DdlService` is built with the rank-profile catalog + live
+    /// registry wired in. Production callers pass
+    /// `SharedServices.rank_services` + `SharedServices.rank_profile_store`.
+    pub fn with_rank_pipeline(
+        mut self,
+        services: Arc<crate::network::rest::v1::rank::RankServices>,
+        store: Arc<dyn crate::services::RankProfileStore>,
+        function_store: Arc<dyn crate::services::FunctionStore>,
+    ) -> Self {
+        self.rank_pipeline = Some(PgwireRankPipeline {
+            services,
+            store,
+            function_store,
+        });
+        self
+    }
+
+    /// Attach the warehouse object-store root URL so each per-connection
+    /// `DdlService` is built with a `DmlTableMaterializer`, enabling
+    /// `ALTER TABLE … MATERIALIZE` to publish Parquet snapshots there. Production
+    /// callers pass the configured object-store/storage root; without it the
+    /// trigger returns a clean "requires a configured warehouse object store" error.
+    pub fn with_warehouse_materialization(mut self, warehouse_root_url: String) -> Self {
+        self.warehouse_root_url = Some(warehouse_root_url);
+        self
+    }
+
+    /// Enable direct canonical record/WAL writes for catalog-routed relational
+    /// pgwire DML while preserving legacy vector compatibility routing.
+    pub fn with_direct_record_writes(
+        mut self,
+        record_storage: Arc<dyn RecordStorage>,
+        wal_appender: Arc<dyn TableWalAppender>,
+    ) -> Self {
+        self.direct_write_services =
+            Some(DirectPgwireWriteServices::new(record_storage, wal_appender));
+        self
+    }
+
+    /// Enable direct canonical record/WAL writes with prebuilt dependencies.
+    pub fn with_direct_write_services(mut self, services: DirectPgwireWriteServices) -> Self {
+        self.direct_write_services = Some(services);
+        self
     }
 
     /// Start the PostgreSQL server
@@ -92,24 +219,38 @@ impl PostgresServer {
                 Ok((stream, addr)) => {
                     info!("New PostgreSQL connection from {}", addr);
                     let session_manager = self.session_manager.clone();
-                    let storage = self.storage.clone();
-                    let collection_service = self.collection_service.clone();
+                    let collection_port = self.collection_port.clone();
                     let vector_ops = self.vector_ops.clone();
+                    let catalog_manager = self.catalog_manager.clone();
                     let document_service = self.document_service.clone();
                     let graph_service = self.graph_service.clone();
                     let observability_service = self.observability_service.clone();
+                    let direct_write_services = self.direct_write_services.clone();
+                    let rank_pipeline = self.rank_pipeline.clone();
+                    // Slice 6.3 capture: same `Arc<PrimaryPodRegistry>`
+                    // + pod-id pair the REST / gRPC v2 / Arrow Flight
+                    // surfaces hold, so pgwire DML sees the identical
+                    // routing decisions.
+                    let primary_pod_registry = self.primary_pod_registry.clone();
+                    let self_pod_id = self.self_pod_id.clone();
+                    let warehouse_root_url = self.warehouse_root_url.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
                             stream,
                             addr,
                             session_manager,
-                            storage,
-                            collection_service,
+                            collection_port,
                             vector_ops,
+                            catalog_manager,
                             document_service,
                             graph_service,
                             observability_service,
+                            direct_write_services,
+                            rank_pipeline,
+                            primary_pod_registry,
+                            self_pod_id,
+                            warehouse_root_url,
                         )
                         .await
                         {
@@ -138,28 +279,59 @@ impl PostgresServer {
         stream: TcpStream,
         addr: SocketAddr,
         session_manager: Arc<SessionManager>,
-        storage: Arc<RwLock<StorageEngine>>,
-        collection_service: Arc<CollectionService>,
+        collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
+        catalog_manager: Arc<CatalogManager>,
         document_service: Option<Arc<DocumentService>>,
         graph_service: Option<Arc<GraphService>>,
         observability_service: Option<Arc<ObservabilityService>>,
+        direct_write_services: Option<DirectPgwireWriteServices>,
+        rank_pipeline: Option<PgwireRankPipeline>,
+        primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
+        self_pod_id: Option<String>,
+        warehouse_root_url: Option<String>,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
         let session_id = session.id.clone();
 
         // Create protocol handler
-        let mut protocol = PostgresProtocol::new(
+        let protocol = PostgresProtocol::new(
             stream,
             session,
-            storage,
-            collection_service,
+            collection_port,
             vector_ops,
             document_service,
             graph_service,
             observability_service,
         );
+        let mut protocol = if let Some(direct_write_services) = direct_write_services {
+            protocol.with_direct_catalog_manager(
+                catalog_manager,
+                direct_write_services.record_storage,
+                direct_write_services.wal_appender,
+            )
+        } else {
+            protocol.with_catalog_manager(catalog_manager)
+        };
+        if let Some(pipeline) = rank_pipeline {
+            protocol = protocol.with_rank_pipeline(
+                pipeline.services,
+                pipeline.store,
+                pipeline.function_store,
+            );
+        }
+        // Wire the warehouse materializer LAST so it augments the fully-assembled
+        // (catalog + rank) DdlService rather than being clobbered by a later rebuild.
+        if let Some(warehouse_root_url) = warehouse_root_url {
+            protocol = protocol.with_materializer(warehouse_root_url);
+        }
+        // Slice 6.3: pair-wise wiring — only apply the gate when both
+        // sides are present so a partial wiring fails closed (no
+        // gate, legacy behavior) rather than silently misconfigured.
+        if let (Some(registry), Some(pod_id)) = (primary_pod_registry, self_pod_id) {
+            protocol = protocol.with_primary_pod_gate(registry, pod_id);
+        }
 
         // Run protocol loop
         match protocol.run().await {

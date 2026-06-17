@@ -39,36 +39,25 @@ import asyncio
 import logging
 import threading
 import time
+from collections.abc import AsyncGenerator, Callable, Generator
 from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import (
     Any,
-    AsyncGenerator,
-    Callable,
-    Dict,
-    Generator,
-    List,
-    Optional,
     Protocol,
-    Tuple,
-    Union,
 )
 
 from .document_processor import (
     DocumentProcessor,
-    DocumentProcessorRegistry,
     DocumentType,
-    EmbeddingProviderAdapter,
-    PlaceholderEmbeddingProvider,
     ProcessedChunk,
     ProcessingResult,
     ProcessorConfig,
     VectorRecord,
     create_embedding_adapter,
     create_processor,
-    detect_document_type,
     get_processor_registry,
 )
 
@@ -104,7 +93,7 @@ class PipelineConfig:
     mode: PipelineMode = PipelineMode.EMBED
 
     # Processor settings
-    processor_config: Optional[ProcessorConfig] = None
+    processor_config: ProcessorConfig | None = None
     auto_detect_type: bool = True
     default_processor: str = "text"
 
@@ -123,7 +112,7 @@ class PipelineConfig:
 
     # Progress and metrics
     enable_metrics: bool = True
-    progress_callback: Optional[Callable[[int, int, str], None]] = None
+    progress_callback: Callable[[int, int, str], None] | None = None
 
     def __post_init__(self):
         if self.processor_config is None:
@@ -142,7 +131,7 @@ class PipelineMetrics:
     total_processing_time_sec: float = 0.0
     embedding_time_sec: float = 0.0
     storage_time_sec: float = 0.0
-    errors: List[Dict[str, Any]] = field(default_factory=list)
+    errors: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def success_rate(self) -> float:
@@ -150,7 +139,7 @@ class PipelineMetrics:
             return 0.0
         return self.processed_documents / self.total_documents
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "total_documents": self.total_documents,
             "processed_documents": self.processed_documents,
@@ -169,7 +158,7 @@ class PipelineMetrics:
 class BatchResult:
     """Result of batch processing"""
 
-    results: List[ProcessingResult] = field(default_factory=list)
+    results: list[ProcessingResult] = field(default_factory=list)
     metrics: PipelineMetrics = field(default_factory=PipelineMetrics)
 
     @property
@@ -180,7 +169,7 @@ class BatchResult:
     def failure_count(self) -> int:
         return sum(1 for r in self.results if not r.success)
 
-    def get_vectors(self) -> List[VectorRecord]:
+    def get_vectors(self) -> list[VectorRecord]:
         """Get all vectors from successful results"""
         vectors = []
         for result in self.results:
@@ -197,7 +186,7 @@ class BatchResult:
 class VectorStoreProtocol(Protocol):
     """Protocol for vector stores"""
 
-    async def insert(self, records: List[Dict[str, Any]]) -> None:
+    async def insert(self, records: list[dict[str, Any]]) -> None:
         """Insert records into the store"""
         ...
 
@@ -210,13 +199,13 @@ class VectorStoreProtocol(Protocol):
 class ProgressTracker:
     """Tracks and reports pipeline progress"""
 
-    def __init__(self, callback: Optional[Callable[[int, int, str], None]] = None):
+    def __init__(self, callback: Callable[[int, int, str], None] | None = None):
         self.callback = callback
         self._current = 0
         self._total = 0
         self._status = "idle"
         self._lock = threading.Lock()
-        self._start_time: Optional[float] = None
+        self._start_time: float | None = None
 
     def start(self, total: int, status: str = "processing") -> None:
         with self._lock:
@@ -226,7 +215,7 @@ class ProgressTracker:
             self._start_time = time.time()
         self._notify()
 
-    def update(self, increment: int = 1, status: Optional[str] = None) -> None:
+    def update(self, increment: int = 1, status: str | None = None) -> None:
         with self._lock:
             self._current += increment
             if status:
@@ -286,9 +275,9 @@ class DocumentPipeline:
 
     def __init__(
         self,
-        embedding_provider: Optional[Any] = None,
-        vector_store: Optional[VectorStoreProtocol] = None,
-        config: Optional[PipelineConfig] = None,
+        embedding_provider: Any | None = None,
+        vector_store: VectorStoreProtocol | None = None,
+        config: PipelineConfig | None = None,
     ):
         self.config = config or PipelineConfig()
         self.vector_store = vector_store
@@ -349,9 +338,9 @@ class DocumentPipeline:
         self,
         content: str,
         source_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
-        document_type: Optional[DocumentType] = None,
-        processor_name: Optional[str] = None,
+        metadata: dict[str, Any] | None = None,
+        document_type: DocumentType | None = None,
+        processor_name: str | None = None,
     ) -> ProcessingResult:
         """
         Process a single document.
@@ -419,7 +408,7 @@ class DocumentPipeline:
         self,
         content: str,
         source_id: str,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
         **kwargs,
     ) -> ProcessingResult:
         """
@@ -468,7 +457,7 @@ class DocumentPipeline:
     # -------------------------------------------------------------------------
 
     async def process_batch(
-        self, documents: List[Dict[str, Any]], concurrent_limit: Optional[int] = None
+        self, documents: list[dict[str, Any]], concurrent_limit: int | None = None
     ) -> BatchResult:
         """
         Process multiple documents concurrently.
@@ -491,7 +480,7 @@ class DocumentPipeline:
 
         self._progress.start(len(documents), "batch_processing")
 
-        async def process_one(doc: Dict[str, Any]) -> ProcessingResult:
+        async def process_one(doc: dict[str, Any]) -> ProcessingResult:
             async with semaphore:
                 result = await self.process(
                     content=doc.get("content", ""),
@@ -527,7 +516,7 @@ class DocumentPipeline:
         return BatchResult(results=processed_results, metrics=self._metrics)
 
     async def process_batch_and_store(
-        self, documents: List[Dict[str, Any]], concurrent_limit: Optional[int] = None
+        self, documents: list[dict[str, Any]], concurrent_limit: int | None = None
     ) -> BatchResult:
         """
         Process and store multiple documents.
@@ -562,7 +551,7 @@ class DocumentPipeline:
     # -------------------------------------------------------------------------
 
     async def process_file(
-        self, file_path: Union[str, Path], encoding: str = "utf-8"
+        self, file_path: str | Path, encoding: str = "utf-8"
     ) -> ProcessingResult:
         """
         Process a single file.
@@ -607,10 +596,10 @@ class DocumentPipeline:
 
     async def process_directory(
         self,
-        directory: Union[str, Path],
+        directory: str | Path,
         pattern: str = "**/*",
         recursive: bool = True,
-        extensions: Optional[List[str]] = None,
+        extensions: list[str] | None = None,
     ) -> BatchResult:
         """
         Process all matching files in a directory.
@@ -665,7 +654,7 @@ class DocumentPipeline:
     # -------------------------------------------------------------------------
 
     async def process_stream(
-        self, content: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
+        self, content: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> AsyncGenerator[ProcessedChunk, None]:
         """
         Process document as a stream, yielding chunks as they're ready.
@@ -697,8 +686,8 @@ class DocumentPipeline:
         self,
         content: str,
         source_id: str,
-        document_type: Optional[DocumentType] = None,
-        processor_name: Optional[str] = None,
+        document_type: DocumentType | None = None,
+        processor_name: str | None = None,
     ) -> DocumentProcessor:
         """Get appropriate processor for content"""
         if processor_name:
@@ -722,7 +711,7 @@ class DocumentPipeline:
     # Metrics and Monitoring
     # -------------------------------------------------------------------------
 
-    def get_metrics(self) -> Dict[str, Any]:
+    def get_metrics(self) -> dict[str, Any]:
         """Get current pipeline metrics"""
         return self._metrics.to_dict()
 
@@ -738,8 +727,8 @@ class DocumentPipeline:
 
 
 def create_document_pipeline(
-    embedding_provider: Optional[Any] = None,
-    vector_store: Optional[VectorStoreProtocol] = None,
+    embedding_provider: Any | None = None,
+    vector_store: VectorStoreProtocol | None = None,
     mode: PipelineMode = PipelineMode.EMBED,
     **kwargs,
 ) -> DocumentPipeline:
@@ -770,7 +759,7 @@ def create_document_pipeline(
 
 
 def create_code_pipeline(
-    embedding_provider: Optional[Any] = None, **kwargs
+    embedding_provider: Any | None = None, **kwargs
 ) -> DocumentPipeline:
     """
     Create a pipeline optimized for code processing.
@@ -806,7 +795,7 @@ def create_code_pipeline(
 
 @contextmanager
 def pipeline_context(
-    embedding_provider: Optional[Any] = None, **kwargs
+    embedding_provider: Any | None = None, **kwargs
 ) -> Generator[DocumentPipeline, None, None]:
     """
     Sync context manager for pipeline usage.
@@ -825,7 +814,7 @@ def pipeline_context(
 
 @asynccontextmanager
 async def async_pipeline_context(
-    embedding_provider: Optional[Any] = None, **kwargs
+    embedding_provider: Any | None = None, **kwargs
 ) -> AsyncGenerator[DocumentPipeline, None]:
     """
     Async context manager for pipeline usage.

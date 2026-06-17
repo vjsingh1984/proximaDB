@@ -7,7 +7,7 @@ to enable embedding-aware semantic chunking and other features.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 import numpy as np
 
@@ -22,9 +22,9 @@ class EmbeddingConfig:
     normalize: bool = True
     cache_embeddings: bool = True
     timeout_seconds: float = 30.0
-    api_key: Optional[str] = None
-    api_url: Optional[str] = None
-    extra_params: Dict[str, Any] = None
+    api_key: str | None = None
+    api_url: str | None = None
+    extra_params: dict[str, Any] = None
 
     # NEW: Ultra-efficient enum tracking for 75% storage savings
     track_model_usage: bool = True
@@ -41,7 +41,7 @@ class EmbeddingProvider(ABC):
         self.config = config
 
     @abstractmethod
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for a list of texts
 
@@ -54,8 +54,8 @@ class EmbeddingProvider(ABC):
         pass
 
     def embed_texts_with_metadata(
-        self, texts: List[str]
-    ) -> tuple[np.ndarray, Dict[str, Any]]:
+        self, texts: list[str]
+    ) -> tuple[np.ndarray, dict[str, Any]]:
         """
         Generate embeddings with processing metadata for ultra-efficient storage
 
@@ -119,7 +119,7 @@ class EmbeddingProvider(ABC):
         return f"{self.__class__.__name__.lower().replace('embeddingprovider', '')}_{self.model_name}"
 
     def batch_embed_texts(
-        self, texts: List[str], batch_size: Optional[int] = None
+        self, texts: list[str], batch_size: int | None = None
     ) -> np.ndarray:
         """
         Embed texts in batches for efficiency
@@ -148,7 +148,7 @@ class BERTEmbeddingProvider(EmbeddingProvider):
     def __init__(self, config: EmbeddingConfig = None):
         """Initialize BERT embedding provider"""
         config = config or EmbeddingConfig(
-            model_name="all-MiniLM-L6-v2", dimension=384, batch_size=32
+            model_name="BAAI/bge-small-en-v1.5", dimension=384, batch_size=32
         )
         super().__init__(config)
 
@@ -169,7 +169,7 @@ class BERTEmbeddingProvider(EmbeddingProvider):
             self._available = False
             print(f"Failed to initialize BERT model: {e}")
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings for multiple texts"""
         if not self.is_available():
             raise RuntimeError("BERT embedding provider is not available")
@@ -213,7 +213,7 @@ class SimulatedEmbeddingProvider(EmbeddingProvider):
         )
         super().__init__(config)
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """Generate simulated embeddings based on text characteristics"""
         embeddings = []
 
@@ -278,7 +278,7 @@ class CohereEmbeddingProvider(EmbeddingProvider):
         except:
             return False
 
-    def embed_texts(self, texts: List[str]) -> np.ndarray:
+    def embed_texts(self, texts: list[str]) -> np.ndarray:
         """Generate embeddings using Cohere API"""
         if not self.is_available():
             raise RuntimeError("Cohere embedding provider is not available")
@@ -312,6 +312,7 @@ class EmbeddingProviderFactory:
     _providers = {
         "bert": BERTEmbeddingProvider,
         "sentence-transformers": BERTEmbeddingProvider,
+        "BAAI/bge-small-en-v1.5": BERTEmbeddingProvider,
         "all-MiniLM-L6-v2": BERTEmbeddingProvider,
         "all-mpnet-base-v2": BERTEmbeddingProvider,
         "simulated": SimulatedEmbeddingProvider,
@@ -320,7 +321,7 @@ class EmbeddingProviderFactory:
 
     @classmethod
     def create_provider(
-        cls, provider_type: str = "bert", config: Optional[EmbeddingConfig] = None
+        cls, provider_type: str = "bert", config: EmbeddingConfig | None = None
     ) -> EmbeddingProvider:
         """
         Create embedding provider instance
@@ -333,7 +334,11 @@ class EmbeddingProviderFactory:
             EmbeddingProvider instance
         """
         # Handle model names as provider types
-        if provider_type in ["all-MiniLM-L6-v2", "all-mpnet-base-v2"]:
+        if provider_type in [
+            "BAAI/bge-small-en-v1.5",
+            "all-MiniLM-L6-v2",
+            "all-mpnet-base-v2",
+        ]:
             config = config or EmbeddingConfig(model_name=provider_type, dimension=384)
             provider_type = "bert"
 
@@ -360,7 +365,7 @@ class EmbeddingProviderFactory:
         cls._providers[name.lower()] = provider_class
 
     @classmethod
-    def list_providers(cls) -> List[str]:
+    def list_providers(cls) -> list[str]:
         """List available provider types"""
         return list(cls._providers.keys())
 
@@ -368,8 +373,8 @@ class EmbeddingProviderFactory:
 # Convenience functions
 def create_embedding_provider(
     provider_type: str = "bert",
-    model_name: Optional[str] = None,
-    dimension: Optional[int] = None,
+    model_name: str | None = None,
+    dimension: int | None = None,
     **kwargs,
 ) -> EmbeddingProvider:
     """
@@ -390,7 +395,7 @@ def create_embedding_provider(
     if kwargs and not (model_name and dimension):
         # Get default config for the provider type
         provider_defaults = {
-            "bert": {"model_name": "all-MiniLM-L6-v2", "dimension": 384},
+            "bert": {"model_name": "BAAI/bge-small-en-v1.5", "dimension": 384},
             "simulated": {"model_name": "simulated", "dimension": 384},
             "cohere": {"model_name": "embed-english-v2.0", "dimension": 4096},
         }

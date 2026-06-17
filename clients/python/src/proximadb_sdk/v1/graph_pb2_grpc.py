@@ -6,7 +6,7 @@ import grpc
 
 from proximadb_sdk.v1 import graph_pb2 as proximadb_dot_v1_dot_graph__pb2
 
-GRPC_GENERATED_VERSION = '1.76.0'
+GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -86,6 +86,11 @@ class GraphServiceStub(object):
                 request_serializer=proximadb_dot_v1_dot_graph__pb2.EdgeQuery.SerializeToString,
                 response_deserializer=proximadb_dot_v1_dot_graph__pb2.BatchResponse.FromString,
                 _registered_method=True)
+        self.ExecuteQuery = channel.unary_unary(
+                '/proximadb.v1.GraphService/ExecuteQuery',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.GraphQueryRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.GraphQueryResponse.FromString,
+                _registered_method=True)
         self.GetNeighbors = channel.unary_unary(
                 '/proximadb.v1.GraphService/GetNeighbors',
                 request_serializer=proximadb_dot_v1_dot_graph__pb2.GetNeighborsRequest.SerializeToString,
@@ -145,6 +150,41 @@ class GraphServiceStub(object):
                 '/proximadb.v1.GraphService/ExecuteHybridQuery',
                 request_serializer=proximadb_dot_v1_dot_graph__pb2.HybridSearchRequest.SerializeToString,
                 response_deserializer=proximadb_dot_v1_dot_graph__pb2.HybridSearchResponse.FromString,
+                _registered_method=True)
+        self.CreateGraphWithEngine = channel.unary_unary(
+                '/proximadb.v1.GraphService/CreateGraphWithEngine',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.CreateGraphWithEngineRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.CreateGraphWithEngineResponse.FromString,
+                _registered_method=True)
+        self.GetPulsarStats = channel.unary_unary(
+                '/proximadb.v1.GraphService/GetPulsarStats',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.GetStatsRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.PulsarGraphStats.FromString,
+                _registered_method=True)
+        self.CrossShardQuery = channel.unary_unary(
+                '/proximadb.v1.GraphService/CrossShardQuery',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.CrossShardQueryRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.CrossShardQueryResponse.FromString,
+                _registered_method=True)
+        self.RebalanceShards = channel.unary_unary(
+                '/proximadb.v1.GraphService/RebalanceShards',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.RebalanceShardsRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.RebalanceShardsResponse.FromString,
+                _registered_method=True)
+        self.GetQuasarStats = channel.unary_unary(
+                '/proximadb.v1.GraphService/GetQuasarStats',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.GetStatsRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.QuasarGraphStats.FromString,
+                _registered_method=True)
+        self.GetTierStats = channel.unary_unary(
+                '/proximadb.v1.GraphService/GetTierStats',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.GetTierStatsRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.GetTierStatsResponse.FromString,
+                _registered_method=True)
+        self.TriggerMigration = channel.unary_unary(
+                '/proximadb.v1.GraphService/TriggerMigration',
+                request_serializer=proximadb_dot_v1_dot_graph__pb2.TriggerMigrationRequest.SerializeToString,
+                response_deserializer=proximadb_dot_v1_dot_graph__pb2.TriggerMigrationResponse.FromString,
                 _registered_method=True)
 
 
@@ -211,6 +251,13 @@ class GraphServiceServicer(object):
 
     def QueryEdges(self, request, context):
         """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def ExecuteQuery(self, request, context):
+        """Declarative query language support
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -294,6 +341,59 @@ class GraphServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def CreateGraphWithEngine(self, request, context):
+        """===== PULSAR Distributed Graph Operations =====
+
+        Create graph with specific engine type
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetPulsarStats(self, request, context):
+        """Get PULSAR distributed statistics
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def CrossShardQuery(self, request, context):
+        """Execute cross-shard query (PULSAR only)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def RebalanceShards(self, request, context):
+        """Rebalance shards (PULSAR only)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetQuasarStats(self, request, context):
+        """===== QUASAR Tiered Storage Operations =====
+
+        Get QUASAR tiering statistics
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetTierStats(self, request, context):
+        """Get detailed tier statistics (QUASAR only)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TriggerMigration(self, request, context):
+        """Trigger manual tier migration (QUASAR only)
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_GraphServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -346,6 +446,11 @@ def add_GraphServiceServicer_to_server(servicer, server):
                     servicer.QueryEdges,
                     request_deserializer=proximadb_dot_v1_dot_graph__pb2.EdgeQuery.FromString,
                     response_serializer=proximadb_dot_v1_dot_graph__pb2.BatchResponse.SerializeToString,
+            ),
+            'ExecuteQuery': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExecuteQuery,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.GraphQueryRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.GraphQueryResponse.SerializeToString,
             ),
             'GetNeighbors': grpc.unary_unary_rpc_method_handler(
                     servicer.GetNeighbors,
@@ -406,6 +511,41 @@ def add_GraphServiceServicer_to_server(servicer, server):
                     servicer.ExecuteHybridQuery,
                     request_deserializer=proximadb_dot_v1_dot_graph__pb2.HybridSearchRequest.FromString,
                     response_serializer=proximadb_dot_v1_dot_graph__pb2.HybridSearchResponse.SerializeToString,
+            ),
+            'CreateGraphWithEngine': grpc.unary_unary_rpc_method_handler(
+                    servicer.CreateGraphWithEngine,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.CreateGraphWithEngineRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.CreateGraphWithEngineResponse.SerializeToString,
+            ),
+            'GetPulsarStats': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetPulsarStats,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.GetStatsRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.PulsarGraphStats.SerializeToString,
+            ),
+            'CrossShardQuery': grpc.unary_unary_rpc_method_handler(
+                    servicer.CrossShardQuery,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.CrossShardQueryRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.CrossShardQueryResponse.SerializeToString,
+            ),
+            'RebalanceShards': grpc.unary_unary_rpc_method_handler(
+                    servicer.RebalanceShards,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.RebalanceShardsRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.RebalanceShardsResponse.SerializeToString,
+            ),
+            'GetQuasarStats': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetQuasarStats,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.GetStatsRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.QuasarGraphStats.SerializeToString,
+            ),
+            'GetTierStats': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetTierStats,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.GetTierStatsRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.GetTierStatsResponse.SerializeToString,
+            ),
+            'TriggerMigration': grpc.unary_unary_rpc_method_handler(
+                    servicer.TriggerMigration,
+                    request_deserializer=proximadb_dot_v1_dot_graph__pb2.TriggerMigrationRequest.FromString,
+                    response_serializer=proximadb_dot_v1_dot_graph__pb2.TriggerMigrationResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -679,6 +819,33 @@ class GraphService(object):
             '/proximadb.v1.GraphService/QueryEdges',
             proximadb_dot_v1_dot_graph__pb2.EdgeQuery.SerializeToString,
             proximadb_dot_v1_dot_graph__pb2.BatchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ExecuteQuery(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/ExecuteQuery',
+            proximadb_dot_v1_dot_graph__pb2.GraphQueryRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.GraphQueryResponse.FromString,
             options,
             channel_credentials,
             insecure,
@@ -1003,6 +1170,195 @@ class GraphService(object):
             '/proximadb.v1.GraphService/ExecuteHybridQuery',
             proximadb_dot_v1_dot_graph__pb2.HybridSearchRequest.SerializeToString,
             proximadb_dot_v1_dot_graph__pb2.HybridSearchResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CreateGraphWithEngine(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/CreateGraphWithEngine',
+            proximadb_dot_v1_dot_graph__pb2.CreateGraphWithEngineRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.CreateGraphWithEngineResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetPulsarStats(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/GetPulsarStats',
+            proximadb_dot_v1_dot_graph__pb2.GetStatsRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.PulsarGraphStats.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def CrossShardQuery(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/CrossShardQuery',
+            proximadb_dot_v1_dot_graph__pb2.CrossShardQueryRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.CrossShardQueryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def RebalanceShards(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/RebalanceShards',
+            proximadb_dot_v1_dot_graph__pb2.RebalanceShardsRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.RebalanceShardsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetQuasarStats(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/GetQuasarStats',
+            proximadb_dot_v1_dot_graph__pb2.GetStatsRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.QuasarGraphStats.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetTierStats(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/GetTierStats',
+            proximadb_dot_v1_dot_graph__pb2.GetTierStatsRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.GetTierStatsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TriggerMigration(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/proximadb.v1.GraphService/TriggerMigration',
+            proximadb_dot_v1_dot_graph__pb2.TriggerMigrationRequest.SerializeToString,
+            proximadb_dot_v1_dot_graph__pb2.TriggerMigrationResponse.FromString,
             options,
             channel_credentials,
             insecure,

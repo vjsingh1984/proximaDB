@@ -56,7 +56,8 @@ use std::sync::Arc;
 use tracing::{debug, trace, warn};
 
 use super::block_structures::ProximaDataBlock;
-use crate::storage::engines::impls::sst::{SstableHeader, SstableIndex};
+use crate::storage::engines::sst::{SstableHeader, SstableIndex};
+use proximadb_records::ProximaRecord;
 
 /// Arrow reader for ProximaBlocks (.sst) files
 ///
@@ -350,8 +351,12 @@ impl ProximaBlocksArrowReader {
         // Determine dimension from first record if not set
         let dimension = if self.dimension > 0 {
             self.dimension
-        } else if !block.records.is_empty() && !block.records[0].vector.is_empty() {
-            block.records[0].vector.len()
+        } else if let Some(embedding) = block
+            .records
+            .first()
+            .and_then(|record| record.embeddings.first())
+        {
+            embedding.values.len()
         } else {
             0
         };
@@ -359,7 +364,7 @@ impl ProximaBlocksArrowReader {
         // Build ID column
         let mut id_builder = StringBuilder::new();
         for record in &block.records {
-            id_builder.append_value(&record.id);
+            id_builder.append_value(&record.oid);
         }
         let id_array: ArrayRef = Arc::new(id_builder.finish());
 
@@ -372,22 +377,14 @@ impl ProximaBlocksArrowReader {
         // Build timestamp column
         let mut timestamp_builder = Int64Builder::new();
         for record in &block.records {
-            if let Some(ts) = record.timestamp {
-                timestamp_builder.append_value(ts);
-            } else {
-                timestamp_builder.append_null();
-            }
+            timestamp_builder.append_value(record.created_at_ns);
         }
         let timestamp_array: ArrayRef = Arc::new(timestamp_builder.finish());
 
         // Build version column
         let mut version_builder = Int64Builder::new();
         for record in &block.records {
-            if let Some(v) = record.version {
-                version_builder.append_value(v as i64);
-            } else {
-                version_builder.append_null();
-            }
+            version_builder.append_value(record.record_version as i64);
         }
         let version_array: ArrayRef = Arc::new(version_builder.finish());
 
@@ -412,11 +409,7 @@ impl ProximaBlocksArrowReader {
     }
 
     /// Build the vector array from records
-    fn build_vector_array(
-        &self,
-        records: &[crate::proto::proximadb_v1::VectorRecord],
-        dimension: usize,
-    ) -> Result<ArrayRef> {
+    fn build_vector_array(&self, records: &[ProximaRecord], dimension: usize) -> Result<ArrayRef> {
         if dimension == 0 {
             // Return empty list array
             return Ok(Arc::new(arrow_array::new_empty_array(&DataType::List(
@@ -429,17 +422,21 @@ impl ProximaBlocksArrowReader {
         let mut values_builder = Float32Builder::with_capacity(total_elements);
 
         for record in records {
-            if record.vector.len() != dimension {
+            let vector = record
+                .embeddings
+                .first()
+                .map_or(&[][..], |embedding| embedding.as_fp32_slice());
+            if vector.len() != dimension {
                 // Pad or truncate to match expected dimension
                 for i in 0..dimension {
-                    if i < record.vector.len() {
-                        values_builder.append_value(record.vector[i]);
+                    if i < vector.len() {
+                        values_builder.append_value(vector[i]);
                     } else {
                         values_builder.append_value(0.0);
                     }
                 }
             } else {
-                for &v in &record.vector {
+                for &v in vector {
                     values_builder.append_value(v);
                 }
             }
@@ -460,10 +457,7 @@ impl ProximaBlocksArrowReader {
     }
 
     /// Build the metadata map array from records
-    fn build_metadata_array(
-        &self,
-        records: &[crate::proto::proximadb_v1::VectorRecord],
-    ) -> Result<ArrayRef> {
+    fn build_metadata_array(&self, records: &[ProximaRecord]) -> Result<ArrayRef> {
         // Create map builder with string key and string value
         let key_builder = StringBuilder::new();
         let value_builder = StringBuilder::new();
@@ -476,21 +470,8 @@ impl ProximaBlocksArrowReader {
 
             // For each metadata entry
             let mut has_entries = false;
-            for (key, sql_value) in &record.metadata {
-                // Convert SqlValue to string
-                let value_str = match &sql_value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                        n.to_string()
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                        b.to_string()
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                        i.to_string()
-                    }
-                    _ => String::new(),
-                };
+            for (key, value) in &record.props {
+                let value_str = serde_json::to_string(value).unwrap_or_default();
 
                 if !has_entries {
                     // Replace the placeholder entry
@@ -555,7 +536,10 @@ impl<'a> Iterator for ProximaBlocksBatchIterator<'a> {
                 Ok(block) => {
                     // Update dimension if not detected
                     if !self.dimension_detected && !block.records.is_empty() {
-                        let dim = block.records[0].vector.len();
+                        let dim = block.records[0]
+                            .embeddings
+                            .first()
+                            .map_or(0, |embedding| embedding.values.len());
                         if dim > 0 {
                             self.reader.dimension = dim;
                             self.reader.schema = ProximaBlocksArrowReader::create_schema(dim);
@@ -588,37 +572,40 @@ impl<'a> Iterator for ProximaBlocksBatchIterator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value::Value as SqlVal};
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
     use std::collections::HashMap;
     use tempfile::tempdir;
 
-    /// Helper to create test VectorRecords
-    fn create_test_records(count: usize, dimension: usize) -> Vec<VectorRecord> {
+    /// Helper to create test ProximaRecords
+    fn create_test_records(count: usize, dimension: usize) -> Vec<ProximaRecord> {
         (0..count)
             .map(|i| {
-                let mut metadata = HashMap::new();
-                metadata.insert(
+                let mut props = HashMap::new();
+                props.insert(
                     "category".to_string(),
-                    SqlValue {
-                        value: Some(SqlVal::StringValue(format!("cat_{}", i % 3))),
-                    },
+                    ProximaTreeNode::Value(ProximaValue::String(format!("cat_{}", i % 3))),
                 );
-                metadata.insert(
+                props.insert(
                     "score".to_string(),
-                    SqlValue {
-                        value: Some(SqlVal::NumberValue(i as f64 * 0.1)),
-                    },
+                    ProximaTreeNode::Value(ProximaValue::Float64(i as f64 * 0.1)),
                 );
 
-                VectorRecord {
-                    id: format!("vec_{i}"),
-                    vector: (0..dimension).map(|d| (i + d) as f32 * 0.01).collect(),
-                    metadata,
-                    timestamp: Some(1700000000 + i as i64),
-                    version: Some(1),
-                    updated_at: None,
-                    expires_at: None,
-                    source: None,
+                ProximaRecord {
+                    oid: format!("vec_{i}"),
+                    props,
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test-model".to_string(),
+                        modality: "text".to_string(),
+                        values: proximadb_records::EmbeddingValues::Fp32(
+                            (0..dimension).map(|d| (i + d) as f32 * 0.01).collect(),
+                        ),
+                        dim: dimension as u32,
+                        ..Default::default()
+                    }],
+                    created_at_ns: 1_700_000_000_000_000_000 + i as i64,
+                    record_version: 1,
+                    ..Default::default()
                 }
             })
             .collect()
@@ -664,9 +651,9 @@ mod tests {
         // We can't directly test build_vector_array without a reader instance,
         // but we can verify the records are properly formatted
         assert_eq!(records.len(), 3);
-        assert_eq!(records[0].vector.len(), 4);
-        assert_eq!(records[1].vector.len(), 4);
-        assert_eq!(records[2].vector.len(), 4);
+        assert_eq!(records[0].embeddings[0].values.len(), 4);
+        assert_eq!(records[1].embeddings[0].values.len(), 4);
+        assert_eq!(records[2].embeddings[0].values.len(), 4);
     }
 
     #[test]
@@ -734,11 +721,11 @@ mod tests {
         assert_eq!(records.len(), 10);
 
         for (i, record) in records.iter().enumerate() {
-            assert_eq!(record.id, format!("vec_{i}"));
-            assert_eq!(record.vector.len(), 64);
-            assert!(record.metadata.contains_key("category"));
-            assert!(record.metadata.contains_key("score"));
-            assert_eq!(record.timestamp, Some(1700000000 + i as i64));
+            assert_eq!(record.oid, format!("vec_{i}"));
+            assert_eq!(record.embeddings[0].values.len(), 64);
+            assert!(record.props.contains_key("category"));
+            assert!(record.props.contains_key("score"));
+            assert_eq!(record.created_at_ns, 1_700_000_000_000_000_000 + i as i64);
         }
     }
 }

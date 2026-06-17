@@ -6,7 +6,7 @@ Full end-to-end batching tests would require a live server and are better suited
 for E2E test suites.
 """
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -37,7 +37,9 @@ class TestRestBatchingConfiguration:
 
     def test_client_initialization_with_batching(self, config, batch_config):
         """Test client initialization with batching enabled"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(
                 config=config, enable_batching=True, batch_config=batch_config
             )
@@ -54,7 +56,9 @@ class TestRestBatchingConfiguration:
 
     def test_client_initialization_without_batching(self, config):
         """Test client initialization without batching"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(config=config)
 
             assert client.enable_batching is False
@@ -64,7 +68,9 @@ class TestRestBatchingConfiguration:
 
     def test_batching_disabled_error(self, config):
         """Test error when trying to use batching when disabled"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(config=config)  # Batching disabled
 
             try:
@@ -81,7 +87,9 @@ class TestRestBatchingConfiguration:
 
     def test_batch_metrics_structure(self, config, batch_config):
         """Test batch metrics structure and accessibility"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
 
             client = ProximaDBClient(
                 config=config, enable_batching=True, batch_config=batch_config
@@ -109,7 +117,9 @@ class TestRestBatchingConfiguration:
 
     def test_validation_errors(self, config, batch_config):
         """Test validation errors in batched operations"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
 
             client = ProximaDBClient(
                 config=config, enable_batching=True, batch_config=batch_config
@@ -143,7 +153,9 @@ class TestRestBatchingConfiguration:
 
     def test_context_manager_with_batching(self, config, batch_config):
         """Test client as context manager with batching"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
 
             with ProximaDBClient(
                 config=config, enable_batching=True, batch_config=batch_config
@@ -167,7 +179,7 @@ class TestRestBatchingConfiguration:
             batch_config = BatchConfig(max_batch_size=5, strategy=strategy)
 
             with patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
             ):
 
                 client = ProximaDBClient(
@@ -187,7 +199,7 @@ class TestRestBatchingConfiguration:
 
         for batch_size in test_sizes:
             with patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
             ):
 
                 batch_config = BatchConfig(max_batch_size=batch_size)
@@ -206,7 +218,7 @@ class TestRestBatchingConfiguration:
 
         for wait_time in test_wait_times:
             with patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
             ):
 
                 batch_config = BatchConfig(max_wait_time_ms=wait_time)
@@ -221,7 +233,9 @@ class TestRestBatchingConfiguration:
 
     def test_batch_processor_lifecycle(self, config, batch_config):
         """Test batch processor starts and stops correctly"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
 
             client = ProximaDBClient(
                 config=config, enable_batching=True, batch_config=batch_config

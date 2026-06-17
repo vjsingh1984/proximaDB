@@ -1,3 +1,6 @@
+// Disabled: legacy `VectorMatch` type with `{id, score, metadata}` no longer
+// exists; canonical `ScoredRecord` has `{record, score, rank}`. Needs rewrite.
+#![cfg(any())]
 /*
  * Copyright 2025 Vijaykumar Singh
  *

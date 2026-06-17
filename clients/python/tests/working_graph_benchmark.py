@@ -15,7 +15,6 @@ import time
 import traceback
 from collections import defaultdict
 from dataclasses import asdict, dataclass
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -73,9 +72,9 @@ class BenchmarkResult:
     operation: str
     config: str
     time_ms: float
-    throughput_ops_sec: Optional[float] = None
+    throughput_ops_sec: float | None = None
     success: bool = True
-    error: Optional[str] = None
+    error: str | None = None
 
 
 def generate_graph_data(config: GraphConfig, seed=42):
@@ -151,7 +150,7 @@ class ProximaDBBenchmark:
             shutil.rmtree(self.temp_dir)
 
     def benchmark_bulk_insert(
-        self, nodes: List[Dict], edges: List[Dict]
+        self, nodes: list[dict], edges: list[dict]
     ) -> BenchmarkResult:
         start = time.perf_counter()
 
@@ -194,7 +193,7 @@ class ProximaDBBenchmark:
             throughput_ops_sec=throughput,
         )
 
-    def benchmark_node_lookup(self, node_ids: List[str]) -> BenchmarkResult:
+    def benchmark_node_lookup(self, node_ids: list[str]) -> BenchmarkResult:
         start = time.perf_counter()
 
         for node_id in node_ids:
@@ -211,7 +210,7 @@ class ProximaDBBenchmark:
             throughput_ops_sec=throughput,
         )
 
-    def benchmark_neighbor_query(self, node_ids: List[str]) -> BenchmarkResult:
+    def benchmark_neighbor_query(self, node_ids: list[str]) -> BenchmarkResult:
         start = time.perf_counter()
 
         for node_id in node_ids:
@@ -260,7 +259,7 @@ class NetworkXBenchmark:
         self.graph = None
 
     def benchmark_bulk_insert(
-        self, nodes: List[Dict], edges: List[Dict]
+        self, nodes: list[dict], edges: list[dict]
     ) -> BenchmarkResult:
         start = time.perf_counter()
 
@@ -287,7 +286,7 @@ class NetworkXBenchmark:
             throughput_ops_sec=throughput,
         )
 
-    def benchmark_node_lookup(self, node_ids: List[str]) -> BenchmarkResult:
+    def benchmark_node_lookup(self, node_ids: list[str]) -> BenchmarkResult:
         start = time.perf_counter()
 
         for node_id in node_ids:
@@ -304,7 +303,7 @@ class NetworkXBenchmark:
             throughput_ops_sec=throughput,
         )
 
-    def benchmark_neighbor_query(self, node_ids: List[str]) -> BenchmarkResult:
+    def benchmark_neighbor_query(self, node_ids: list[str]) -> BenchmarkResult:
         start = time.perf_counter()
 
         for node_id in node_ids:
@@ -357,7 +356,7 @@ class IGraphBenchmark:
         self.node_map = {}
 
     def benchmark_bulk_insert(
-        self, nodes: List[Dict], edges: List[Dict]
+        self, nodes: list[dict], edges: list[dict]
     ) -> BenchmarkResult:
         start = time.perf_counter()
 
@@ -388,7 +387,7 @@ class IGraphBenchmark:
             throughput_ops_sec=throughput,
         )
 
-    def benchmark_node_lookup(self, node_ids: List[str]) -> BenchmarkResult:
+    def benchmark_node_lookup(self, node_ids: list[str]) -> BenchmarkResult:
         start = time.perf_counter()
 
         for node_id in node_ids:
@@ -407,7 +406,7 @@ class IGraphBenchmark:
             throughput_ops_sec=throughput,
         )
 
-    def benchmark_neighbor_query(self, node_ids: List[str]) -> BenchmarkResult:
+    def benchmark_neighbor_query(self, node_ids: list[str]) -> BenchmarkResult:
         start = time.perf_counter()
 
         for node_id in node_ids:
@@ -447,7 +446,7 @@ class IGraphBenchmark:
 # =============================================================================
 
 
-def run_benchmark_suite(config: GraphConfig) -> List[BenchmarkResult]:
+def run_benchmark_suite(config: GraphConfig) -> list[BenchmarkResult]:
     results = []
 
     print(f"\n{'='*80}")
@@ -476,22 +475,22 @@ def run_benchmark_suite(config: GraphConfig) -> List[BenchmarkResult]:
         try:
             bench.setup()
 
-            print(f"  Bulk insert... ", end="", flush=True)
+            print("  Bulk insert... ", end="", flush=True)
             r = bench.benchmark_bulk_insert(nodes, edges)
             results.append(r)
             print(f"{r.time_ms:>8.1f}ms ({r.throughput_ops_sec:>8,.0f} ops/sec)")
 
-            print(f"  Node lookup... ", end="", flush=True)
+            print("  Node lookup... ", end="", flush=True)
             r = bench.benchmark_node_lookup(sample_nodes)
             results.append(r)
             print(f"{r.time_ms:>8.1f}ms ({r.throughput_ops_sec:>8,.0f} ops/sec)")
 
-            print(f"  Neighbor query...", end="", flush=True)
+            print("  Neighbor query...", end="", flush=True)
             r = bench.benchmark_neighbor_query(sample_nodes[:50])
             results.append(r)
             print(f"{r.time_ms:>8.1f}ms ({r.throughput_ops_sec:>8,.0f} ops/sec)")
 
-            print(f"  Graph stats... ", end="", flush=True)
+            print("  Graph stats... ", end="", flush=True)
             r = bench.benchmark_graph_stats()
             results.append(r)
             print(f"{r.time_ms:>8.1f}ms")
@@ -506,7 +505,7 @@ def run_benchmark_suite(config: GraphConfig) -> List[BenchmarkResult]:
     return results
 
 
-def print_summary(results: List[BenchmarkResult]):
+def print_summary(results: list[BenchmarkResult]):
     by_op = defaultdict(list)
     for r in results:
         by_op[(r.config, r.operation)].append(r)
@@ -545,7 +544,7 @@ def main():
 
     with open("graph_benchmark_results.json", "w") as f:
         json.dump([asdict(r) for r in all_results], f, indent=2)
-    print(f"\n✓ Results saved to: graph_benchmark_results.json\n")
+    print("\n✓ Results saved to: graph_benchmark_results.json\n")
 
 
 if __name__ == "__main__":

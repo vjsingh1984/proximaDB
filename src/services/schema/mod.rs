@@ -16,57 +16,34 @@
 
 //! Schema management services
 //!
-//! This module provides services for managing ProximaRecord schemas, including:
+//! This module provides services for managing cataloged `ProximaRecord` schemas, including:
 //!
-//! - Schema inference from existing VectorRecord metadata
-//! - Type detection and pattern recognition
-//! - TEXT column identification
+//! - Schema evolution checks
+//! - Compatibility validation
+//! - Migration estimates for cataloged schema changes
 //!
-//! ## Schema Inference
+//! ## Schema Evolution
 //!
-//! The `SchemaInferenceService` analyzes existing VectorRecord metadata to infer
-//! appropriate column types for ProximaRecord. This includes:
-//!
-//! - Basic type inference (string, integer, float, boolean)
-//! - Temporal pattern detection (timestamps, dates)
-//! - UUID pattern detection
-//! - Decimal/financial value detection
-//! - TEXT column identification based on content length
+//! Schema inference from legacy vector metadata has been removed as an internal
+//! service. Protocol handlers and SDKs must lower input through xCatalog and
+//! `ProximaRecord`/`ProximaValue`; schema-on-write and schema-on-read behavior
+//! belongs in catalog/type validation rather than a `VectorRecord` adapter.
 //!
 //! ## Usage Example
 //!
 //! ```rust,ignore
-//! use proximadb::services::schema::{SchemaInferenceService, InferenceConfig};
+//! use proximadb::services::schema::{SchemaEvolutionService, EvolutionConfig};
 //!
-//! let config = InferenceConfig {
-//!     sample_size: 1000,
-//!     confidence_threshold: 0.8,
-//!     detect_text_columns: true,
-//!     text_length_threshold: 256,
-//! };
+//! let service = SchemaEvolutionService::new(EvolutionConfig::default());
+//! let result = service.analyze_change(&current_schema, &proposed_change)?;
 //!
-//! let service = SchemaInferenceService::new(config);
-//! let schema = service.infer_schema(&vector_records);
-//!
-//! println!("Inferred {} columns with {:.1}% confidence",
-//!     schema.columns.len(),
-//!     schema.confidence * 100.0
-//! );
-//!
-//! for col in schema.recommended_text_columns() {
-//!     println!("Recommend TEXT storage for: {}", col);
-//! }
+//! println!("Compatible: {}", result.compatible);
 //! ```
 
 pub mod evolution;
-pub mod inference;
 
 pub use evolution::{
     CompatibilityIssue, CompatibilityLevel, CompatibilityResult, EvolutionConfig, EvolutionResult,
     IssueSeverity, MigrationEstimate, SchemaChange, SchemaEvolutionService, SchemaVersion,
     column_type_to_filterable,
-};
-pub use inference::{
-    InferenceConfig, InferredColumn, InferredSchema, SchemaInferenceService, detect_boolean,
-    detect_numeric_type, detect_timestamp, detect_uuid,
 };

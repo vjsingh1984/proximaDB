@@ -17,6 +17,9 @@ use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
 use super::rollup_persistence::{RollupPersistence, RollupPoint};
+use proximadb_observability::metric_sample_to_proxima_record;
+use proximadb_records::ProximaRecord;
+
 use crate::proto::proximadb_v1::MetricSample;
 
 /// Nanoseconds per second
@@ -33,6 +36,8 @@ pub struct MetricStorage {
     /// Base path for storage
     #[allow(dead_code)]
     base_path: String,
+    /// Observability namespace used as the canonical tenant id.
+    namespace: String,
     /// Metrics by series key (metric name + labels)
     series: RwLock<HashMap<String, MetricSeries>>,
     /// Series count
@@ -188,13 +193,28 @@ impl AggregatedPoint {
 impl MetricStorage {
     /// Create a new metric storage with default tiering policy
     pub fn new(base_path: &str) -> Result<Self> {
-        Self::with_policy(base_path, MetricTieringPolicy::default())
+        Self::new_for_namespace(base_path, "default")
+    }
+
+    /// Create metric storage for a specific observability namespace.
+    pub fn new_for_namespace(base_path: &str, namespace: &str) -> Result<Self> {
+        Self::with_policy_for_namespace(base_path, namespace, MetricTieringPolicy::default())
     }
 
     /// Create a new metric storage with custom tiering policy
     pub fn with_policy(base_path: &str, policy: MetricTieringPolicy) -> Result<Self> {
+        Self::with_policy_for_namespace(base_path, "default", policy)
+    }
+
+    /// Create metric storage with a custom tiering policy and namespace.
+    pub fn with_policy_for_namespace(
+        base_path: &str,
+        namespace: &str,
+        policy: MetricTieringPolicy,
+    ) -> Result<Self> {
         Ok(Self {
             base_path: base_path.to_string(),
+            namespace: namespace.to_string(),
             series: RwLock::new(HashMap::new()),
             series_count: AtomicU64::new(0),
             total_bytes: AtomicU64::new(0),
@@ -209,8 +229,19 @@ impl MetricStorage {
         policy: MetricTieringPolicy,
         persistence: Arc<dyn RollupPersistence>,
     ) -> Result<Self> {
+        Self::with_persistence_for_namespace(base_path, "default", policy, persistence)
+    }
+
+    /// Create metric storage with rollup persistence for a specific namespace.
+    pub fn with_persistence_for_namespace(
+        base_path: &str,
+        namespace: &str,
+        policy: MetricTieringPolicy,
+        persistence: Arc<dyn RollupPersistence>,
+    ) -> Result<Self> {
         Ok(Self {
             base_path: base_path.to_string(),
+            namespace: namespace.to_string(),
             series: RwLock::new(HashMap::new()),
             series_count: AtomicU64::new(0),
             total_bytes: AtomicU64::new(0),
@@ -227,6 +258,14 @@ impl MetricStorage {
     /// Get the tiering policy
     pub fn tiering_policy(&self) -> &MetricTieringPolicy {
         &self.tiering_policy
+    }
+
+    /// Project a metric sample onto the canonical observability record shape.
+    ///
+    /// The projection remains rebuildable from the observability WAL and shares
+    /// the modality crate mapping used by future PAX/record-store replay.
+    pub fn sample_projection_record(&self, sample: &MetricSample) -> ProximaRecord {
+        metric_sample_to_proxima_record(&self.namespace, sample)
     }
 
     /// Generate series key from name and labels
@@ -324,7 +363,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }
@@ -355,7 +394,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }
@@ -395,7 +434,7 @@ impl MetricStorage {
 
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }
@@ -582,7 +621,7 @@ impl MetricStorage {
         let series = self.series.read().await;
         let mut results = Vec::new();
 
-        for (_key, s) in series.iter() {
+        for s in series.values() {
             if s.name != name {
                 continue;
             }
@@ -706,9 +745,9 @@ impl MetricStorage {
     }
 
     /// Get tiering statistics for all series
-    pub async fn tiering_stats(&self) -> TieringStats {
+    pub async fn tiering_stats(&self) -> ObservabilityTieringStats {
         let series = self.series.read().await;
-        let mut stats = TieringStats::default();
+        let mut stats = ObservabilityTieringStats::default();
 
         for s in series.values() {
             let points = s.points.read().await;
@@ -1062,10 +1101,13 @@ impl TieringResult {
 
 /// Statistics about tiering storage
 ///
+/// Backwards-compat alias for [`ObservabilityTieringStats`].
+pub type TieringStats = ObservabilityTieringStats;
+
 /// Provides statistics about metric storage across all resolution tiers.
 /// Used to monitor storage usage and compression ratios.
 #[derive(Debug, Default)]
-pub struct TieringStats {
+pub struct ObservabilityTieringStats {
     /// Number of series
     pub series_count: usize,
     /// Total raw data points
@@ -1078,7 +1120,7 @@ pub struct TieringStats {
     pub hour_points: usize,
 }
 
-impl TieringStats {
+impl ObservabilityTieringStats {
     /// Total points across all tiers
     #[must_use]
     pub fn total_points(&self) -> usize {
@@ -1165,6 +1207,7 @@ pub struct AggregatedMetric {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_observability::METRIC_LABEL;
 
     fn make_sample(name: &str, timestamp_ns: i64, value: f64) -> MetricSample {
         MetricSample {
@@ -1173,6 +1216,25 @@ mod tests {
             value,
             labels: HashMap::new(),
         }
+    }
+
+    #[test]
+    fn projection_record_uses_observability_canonical_shape() {
+        let storage = MetricStorage::new_for_namespace("/tmp/test_metric_projection", "tenant-a")
+            .expect("Failed to create MetricStorage");
+        let mut sample = make_sample("cpu", 42, 0.5);
+        sample
+            .labels
+            .insert("host".to_string(), "api-1".to_string());
+
+        let record = storage.sample_projection_record(&sample);
+
+        assert_eq!(record.oid, "obs://tenant-a/metric/cpu:42:host=api-1");
+        assert_eq!(record.tenant_id, "tenant-a");
+        assert!(record.labels.iter().any(|label| label == METRIC_LABEL));
+        assert!(record.props.contains_key("labels"));
+        assert_eq!(record.created_at_ns, 42);
+        assert_eq!(record.updated_at_ns, 42);
     }
 
     #[tokio::test]
@@ -1435,8 +1497,33 @@ mod tests {
     }
 
     #[test]
+    fn sample_projection_record_uses_observability_canonical_shape() {
+        let storage = MetricStorage::new_for_namespace("/tmp/test_metric_projection", "tenant-a")
+            .expect("Failed to create namespaced MetricStorage");
+        let mut labels = HashMap::new();
+        labels.insert("host".to_string(), "api-1".to_string());
+        let sample = MetricSample {
+            name: "cpu_usage".to_string(),
+            timestamp_ns: 42,
+            value: 0.75,
+            labels,
+        };
+
+        let record = storage.sample_projection_record(&sample);
+
+        assert_eq!(record.tenant_id, "tenant-a");
+        assert!(record.oid.starts_with("obs://tenant-a/metric/cpu_usage:42"));
+        assert!(
+            record
+                .labels
+                .contains(proximadb_observability::METRIC_LABEL)
+        );
+        assert!(record.props.contains_key("labels"));
+    }
+
+    #[test]
     fn test_tiering_stats_compression_ratio() {
-        let stats = TieringStats {
+        let stats = ObservabilityTieringStats {
             series_count: 1,
             raw_points: 1000,
             minute_points: 100,

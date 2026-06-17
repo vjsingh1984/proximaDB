@@ -13,6 +13,7 @@
 
 use anyhow::Result;
 use moka::future::Cache;
+use proximadb_runtime_common::cache::CacheStats;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -134,18 +135,35 @@ impl Default for FooterCacheConfig {
     }
 }
 
-/// Cache statistics for monitoring
-#[derive(Debug, Clone, Serialize)]
-pub struct CacheStats {
-    pub hit_count: u64,
-    pub miss_count: u64,
+/// Cache statistics for monitoring.
+///
+/// Embeds the canonical `proximadb_runtime_common::cache::CacheStats` for
+/// universal counters (hits, misses, evictions, size). Engine-specific
+/// fields kept on the wrapper: prefetch count, latency tracking, byte-
+/// granularity total cache size, oldest-entry age.
+///
+/// Note: `total_requests` and `hit_rate` are now derived from canonical
+/// (`inner.gets` and `inner.hit_ratio()` respectively); they remain in
+/// the struct as `pub` fields so existing snapshot consumers continue
+/// to see the same shape after `get_stats()` recomputes them.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct FooterCacheStats {
+    /// Canonical cache counters (hits, misses, evictions, gets, puts, ...).
+    #[serde(flatten)]
+    pub inner: CacheStats,
+    /// Derived: gets / total accesses (kept for snapshot shape).
     pub total_requests: u64,
+    /// Derived: inner.hits / total_requests (kept for snapshot shape).
     pub hit_rate: f64,
+    /// Derived: inner.size as u64 (kept for snapshot shape; same value).
     pub cache_size: u64,
-    pub eviction_count: u64,
+    /// Engine-specific: prefetch hits.
     pub prefetch_count: u64,
+    /// Engine-specific: rolling average access latency.
     pub average_access_time_ns: u64,
+    /// Engine-specific: byte-granularity total size (canonical tracks entries).
     pub total_cache_size_bytes: u64,
+    /// Engine-specific: oldest entry age for staleness reporting.
     pub oldest_entry_age_secs: u64,
 }
 
@@ -158,7 +176,7 @@ pub struct ParquetFooterCache {
     config: FooterCacheConfig,
 
     /// Cache statistics
-    stats: Arc<RwLock<CacheStats>>,
+    stats: Arc<RwLock<FooterCacheStats>>,
 
     /// Prefetch candidates (files that should be pre-cached)
     prefetch_queue: Arc<RwLock<Vec<String>>>,
@@ -191,18 +209,7 @@ impl ParquetFooterCache {
             .time_to_idle(config.time_to_idle)
             .build();
 
-        let stats = Arc::new(RwLock::new(CacheStats {
-            hit_count: 0,
-            miss_count: 0,
-            total_requests: 0,
-            hit_rate: 0.0,
-            cache_size: 0,
-            eviction_count: 0,
-            prefetch_count: 0,
-            average_access_time_ns: 0,
-            total_cache_size_bytes: 0,
-            oldest_entry_age_secs: 0,
-        }));
+        let stats = Arc::new(RwLock::new(FooterCacheStats::default()));
 
         let mut cache_instance = Self {
             cache,
@@ -228,7 +235,11 @@ impl ParquetFooterCache {
     /// Get footer from cache or load if needed
     pub async fn get_footer(&self, file_path: &str) -> Result<CachedFooter> {
         let start_time = Instant::now();
-        self.update_stats(|s| s.total_requests += 1).await;
+        self.update_stats(|s| {
+            s.inner.gets += 1;
+            s.total_requests += 1;
+        })
+        .await;
 
         // Try cache first
         let key = file_path.to_string();
@@ -240,7 +251,7 @@ impl ParquetFooterCache {
                     self.cache
                         .insert(file_path.to_string(), footer.clone())
                         .await;
-                    self.update_stats(|s| s.hit_count += 1).await;
+                    self.update_stats(|s| s.inner.hits += 1).await;
                     self.record_access_time(start_time).await;
 
                     trace!("Cache HIT for {}", file_path);
@@ -254,7 +265,7 @@ impl ParquetFooterCache {
 
         // Cache miss - load footer
         trace!("Cache MISS for {}, loading footer", file_path);
-        self.update_stats(|s| s.miss_count += 1).await;
+        self.update_stats(|s| s.inner.misses += 1).await;
 
         let footer = self.load_footer_from_storage(file_path).await?;
 
@@ -329,24 +340,21 @@ impl ParquetFooterCache {
         let mut size_cache = self.file_size_cache.write().await;
         size_cache.clear();
 
-        self.update_stats(|s| s.eviction_count += s.cache_size)
+        self.update_stats(|s| s.inner.evictions += s.cache_size)
             .await;
         self.update_stats(|s| s.cache_size = 0).await;
     }
 
     /// Get cache statistics
-    pub async fn get_stats(&self) -> CacheStats {
+    pub async fn get_stats(&self) -> FooterCacheStats {
         let stats = self.stats.read().await;
         let mut result = stats.clone();
 
         // Update dynamic stats
         result.cache_size = self.cache.entry_count();
-        // hit_rate_percent field removed, use hit_rate instead
-        result.hit_rate = if result.total_requests > 0 {
-            result.hit_count as f64 / result.total_requests as f64
-        } else {
-            0.0
-        };
+        result.inner.size = self.cache.entry_count() as usize;
+        // Canonical CacheStats::hit_ratio() returns 0–100 (percent); divide for ratio.
+        result.hit_rate = result.inner.hit_ratio() / 100.0;
 
         result
     }
@@ -463,7 +471,7 @@ impl ParquetFooterCache {
     /// Update statistics
     async fn update_stats<F>(&self, update_fn: F)
     where
-        F: FnOnce(&mut CacheStats),
+        F: FnOnce(&mut FooterCacheStats),
     {
         let mut stats = self.stats.write().await;
         update_fn(&mut stats);

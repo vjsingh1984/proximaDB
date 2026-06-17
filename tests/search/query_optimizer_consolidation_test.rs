@@ -1,6 +1,6 @@
 //! Integration tests validating the consolidated query optimizer
 //! 
-//! Demonstrates that the unified system:
+//! Demonstrates that the multi-model optimizer:
 //! 1. Eliminates code duplication
 //! 2. Provides better performance
 //! 3. Enables new cross-system optimizations
@@ -9,8 +9,9 @@
 mod consolidation_tests {
     use std::sync::Arc;
     use std::time::Instant;
-    use proximadb::query::unified_query_optimizer::*;
+    use proximadb::core::search::{ComparisonOperator, FilterExpression};
     use proximadb::proto::proximadb_v1::Collection;
+    use proximadb::query::query_optimizer::*;
     use proximadb::core::search::SearchParams;
     
     /// Test that consolidated optimizer produces better plans than separate systems
@@ -313,20 +314,11 @@ mod consolidation_tests {
     /// Test migration compatibility
     #[tokio::test]
     async fn test_migration_helpers() {
-        use proximadb::query::unified_query_optimizer;
-        
-        // Create old-style filter
-        let old_filter = unified_query_optimizer::UniversalMetadataFilter {
-            conditions: vec![
-                unified_query_optimizer::UniversalFilterCondition::Equals {
-                    column: "test".to_string(),
-                    value: serde_json::json!(123),
-                    case_sensitive: false,
-                },
-            ],
-            logic: unified_query_optimizer::UniversalFilterLogic::And,
-            optimization_hints: Default::default(),
-            engine_optimizations: Default::default(),
+        // Create API-level filter expression.
+        let old_filter = FilterExpression::Comparison {
+            field: "test".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: serde_json::json!(123),
         };
         
         // Migrate to new format

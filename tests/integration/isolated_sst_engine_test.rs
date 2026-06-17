@@ -19,7 +19,7 @@ use common::integration_test_helpers::{
 };
 use proximadb::compute::distance_computation::DistanceMetric;
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
-use proximadb::proto::proximadb_v1::{StorageEngine, VectorRecord};
+use proximadb::proto::proximadb_v1::StorageEngine;
 use proximadb::storage::traits::{FlushParameters, StorageQueryContext, UnifiedStorageEngine};
 use std::sync::Arc;
 
@@ -169,7 +169,7 @@ async fn test_isolated_sst_metadata_based_filtering() -> Result<()> {
     let vectors = env.create_test_vectors(15);
     eprintln!("DEBUG TEST: Created {} vectors", vectors.len());
     if let Some(first) = vectors.first() {
-        eprintln!("DEBUG TEST: First vector metadata: {:?}", first.metadata);
+        eprintln!("DEBUG TEST: First vector props: {:?}", first.props);
     }
     let flush_params = operations::build_flush_params(&env, vectors, StorageEngine::Sst).await?;
 
@@ -314,20 +314,27 @@ async fn test_isolated_sst_multi_batch_flush_compaction() -> Result<()> {
 
     // Flush each batch separately to create multiple SST files
     for batch in 0..num_batches {
-        let vectors = (0..batch_size)
+        let vectors: Vec<proximadb_records::ProximaRecord> = (0..batch_size)
             .map(|i| {
                 let global_id = batch * batch_size + i;
-                env.create_test_vector_record(
-                    format!("{}_{}", env.collection_id(), global_id),
-                    vec![
-                        global_id as f32,
-                        (global_id + 1) as f32,
-                        (global_id + 2) as f32,
-                    ],
-                    (1000 + global_id) as i64,
-                    None,
-                    std::collections::HashMap::new(),
-                )
+                proximadb_records::ProximaRecord {
+                    oid: format!("{}_{}", env.collection_id(), global_id),
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim: 3,
+                        values: proximadb_records::EmbeddingValues::Fp32(vec![
+                            global_id as f32,
+                            (global_id + 1) as f32,
+                            (global_id + 2) as f32,
+                        ]),
+                        ..Default::default()
+                    }],
+                    record_version: 1,
+                    created_at_ns: (1000 + global_id) as i64 * 1_000_000_000,
+                    updated_at_ns: (1000 + global_id) as i64 * 1_000_000_000,
+                    ..Default::default()
+                }
             })
             .collect();
 
@@ -520,27 +527,34 @@ async fn test_isolated_sst_concurrent_read_operations() -> Result<()> {
 
     // STEP 1: Flush all vectors in a SINGLE batch (correct production behavior)
     let num_vectors = 15;
-    let vectors: Vec<VectorRecord> = (0..num_vectors)
-        .map(|i| VectorRecord {
-            id: format!("{}_vec_{}", env.collection_id(), i),
-            vector: vec![(i * 2) as f32, (i * 2 + 1) as f32, (i * 2 + 2) as f32],
-            metadata: {
-                let mut metadata = std::collections::HashMap::new();
-                metadata.insert(
-                    "index".to_string(),
-                    proximadb::proto::proximadb_v1::SqlValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(i as f64),
-                        ),
-                    },
-                );
-                metadata
-            },
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    let vectors: Vec<proximadb_records::ProximaRecord> = (0..num_vectors)
+        .map(|i| {
+            let mut props = proximadb_records::ProximaTree::new();
+            props.insert(
+                "index".to_string(),
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::Float64(i as f64),
+                ),
+            );
+            proximadb_records::ProximaRecord {
+                oid: format!("{}_vec_{}", env.collection_id(), i),
+                embeddings: vec![proximadb_records::EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    dim: 3,
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![
+                        (i * 2) as f32,
+                        (i * 2 + 1) as f32,
+                        (i * 2 + 2) as f32,
+                    ]),
+                    ..Default::default()
+                }],
+                props,
+                record_version: 1,
+                created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                ..Default::default()
+            }
         })
         .collect();
 
@@ -680,7 +694,7 @@ async fn test_isolated_sst_data_persistence_across_restarts() -> Result<()> {
         );
 
         // Verify vector IDs match original data
-        let original_ids: HashSet<_> = original_vectors.iter().map(|v| v.id.as_str()).collect();
+        let original_ids: HashSet<_> = original_vectors.iter().map(|v| v.oid.as_str()).collect();
 
         let found_ids: HashSet<_> = results.iter().map(|r| r.id.as_str()).collect();
 
@@ -852,37 +866,33 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
     let engine = env.create_sst_engine().await?;
 
     // Create vectors with known relationships for distance testing
+    let make_vec = |oid: String, values: Vec<f32>| proximadb_records::ProximaRecord {
+        oid,
+        embeddings: vec![proximadb_records::EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            dim: values.len() as u32,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            ..Default::default()
+        }],
+        record_version: 1,
+        created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+        ..Default::default()
+    };
     let vectors = vec![
-        VectorRecord {
-            id: format!("{}_identical", env.collection_id()),
-            vector: vec![1.0, 0.0, 0.0], // Identical to query
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: None,
-            expires_at: None,
-            source: None,
-            version: None,
-        },
-        VectorRecord {
-            id: format!("{}_orthogonal", env.collection_id()),
-            vector: vec![0.0, 1.0, 0.0], // Orthogonal to query
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: None,
-            expires_at: None,
-            source: None,
-            version: None,
-        },
-        VectorRecord {
-            id: format!("{}_opposite", env.collection_id()),
-            vector: vec![-1.0, 0.0, 0.0], // Opposite to query
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: None,
-            expires_at: None,
-            source: None,
-            version: None,
-        },
+        make_vec(
+            format!("{}_identical", env.collection_id()),
+            vec![1.0, 0.0, 0.0],
+        ),
+        make_vec(
+            format!("{}_orthogonal", env.collection_id()),
+            vec![0.0, 1.0, 0.0],
+        ),
+        make_vec(
+            format!("{}_opposite", env.collection_id()),
+            vec![-1.0, 0.0, 0.0],
+        ),
     ];
 
     let collection_config = env.create_test_collection();
@@ -947,8 +957,14 @@ async fn test_isolated_sst_multiple_distance_metrics() -> Result<()> {
                 "Euclidean score should be > 0 for identical vectors"
             ),
             DistanceMetric::DotProduct => assert!(
-                score > 0.99,
-                "Dot product score should be ~1 for identical vectors"
+                // Soft-sign normalization (commit 3bf384e37) maps the raw
+                // inner product `v` to `0.5 + 0.5*v/(1+|v|)` to preserve
+                // magnitude for unnormalized vectors. Identical unit vectors
+                // here have dot product 1.0 → 0.5 + 0.5*0.5 = 0.75, well above
+                // the orthogonal anchor of 0.5. (The old `((v+1)/2).clamp`
+                // formula returned ~1.0 but collapsed all v>1 to 1.0.)
+                score > 0.7,
+                "Dot product score should be > 0.7 (soft-sign) for identical vectors, got {score}"
             ),
             _ => {} // Other metrics not tested in this specific test
         }
@@ -981,45 +997,40 @@ async fn test_isolated_sst_large_dataset_performance() -> Result<()> {
 
     for batch in 0..num_batches {
         let start_id = batch * batch_size;
-        let vectors: Vec<VectorRecord> = (0..batch_size)
+        let vectors: Vec<proximadb_records::ProximaRecord> = (0..batch_size)
             .map(|i| {
                 let global_id = start_id + i;
-                VectorRecord {
-                    id: format!("{}_{:03}", env.collection_id(), global_id),
-                    vector: vec![
-                        (global_id as f32) / 100.0,
-                        ((global_id + 1) as f32) / 100.0,
-                        ((global_id + 2) as f32) / 100.0,
-                    ],
-                    metadata: {
-                        let mut metadata = std::collections::HashMap::new();
-                        metadata.insert(
-                            "batch".to_string(),
-                            proximadb::proto::proximadb_v1::SqlValue {
-                                value: Some(
-                                    proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                        batch as f64,
-                                    ),
-                                ),
-                            },
-                        );
-                        metadata.insert(
-                            "id_mod_10".to_string(),
-                            proximadb::proto::proximadb_v1::SqlValue {
-                                value: Some(
-                                    proximadb::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                        (global_id % 10) as f64,
-                                    ),
-                                ),
-                            },
-                        );
-                        metadata
-                    },
-                    timestamp: Some(chrono::Utc::now().timestamp()),
-                    updated_at: Some(chrono::Utc::now().timestamp()),
-                    expires_at: None,
-                    version: Some(1),
-                    source: None,
+                let mut props = proximadb_records::ProximaTree::new();
+                props.insert(
+                    "batch".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::Float64(batch as f64),
+                    ),
+                );
+                props.insert(
+                    "id_mod_10".to_string(),
+                    proximadb_records::ProximaTreeNode::Value(
+                        proximadb_data_model::ProximaValue::Float64((global_id % 10) as f64),
+                    ),
+                );
+                proximadb_records::ProximaRecord {
+                    oid: format!("{}_{:03}", env.collection_id(), global_id),
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim: 3,
+                        values: proximadb_records::EmbeddingValues::Fp32(vec![
+                            (global_id as f32) / 100.0,
+                            ((global_id + 1) as f32) / 100.0,
+                            ((global_id + 2) as f32) / 100.0,
+                        ]),
+                        ..Default::default()
+                    }],
+                    props,
+                    record_version: 1,
+                    created_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                    updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+                    ..Default::default()
                 }
             })
             .collect();

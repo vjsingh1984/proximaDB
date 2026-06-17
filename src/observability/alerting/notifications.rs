@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use super::Alert;
+use super::ObservabilityAlert as Alert;
 
 /// Notification manager
 pub struct NotificationManager {
@@ -461,7 +461,7 @@ mod tests {
     #[tokio::test]
     #[ignore] // Run manually with: cargo test --lib -- --ignored test_smtp_notification
     async fn test_smtp_notification() {
-        use crate::observability::alerting::{Alert, AlertSeverity};
+        use crate::observability::alerting::{AlertSeverity, ObservabilityAlert as Alert};
         use std::collections::HashMap;
 
         // This test sends a real email to singhvjd@gmail.com

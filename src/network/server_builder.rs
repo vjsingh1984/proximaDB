@@ -692,6 +692,10 @@ impl MultiServerBuilder {
             self.grpc_builder = self
                 .grpc_builder
                 .grpc_compression(api_config.grpc_compression);
+            // TD-104: propagate the gRPC enable toggle from [api] config. Without
+            // this, `api.enable_grpc` was a dead field (gRPC always started),
+            // making the multi-port + gRPC-disabled mode unreachable via config.
+            self.grpc_builder = self.grpc_builder.enable_grpc(api_config.enable_grpc);
         }
 
         let http_config = self

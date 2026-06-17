@@ -90,6 +90,75 @@ impl IndexType {
     }
 }
 
+/// Canonical embedding precision for a collection.
+///
+/// Mirrors the server's proto `EmbeddingPrecision` enum and the
+/// SQL DDL `WITH (canonical_embedding_precision = '...')` syntax.
+/// Set once at collection-create time via
+/// [`CollectionBuilder::precision`]; controls the on-disk + in-memory
+/// scalar type for the embedding column. See
+/// `docs/05-concepts/embedding-precision.adoc` for the operator guide.
+///
+/// `Fp32` is the default and matches pre-precision-rollout behavior —
+/// existing SDK callers that never touch `.precision()` see no change
+/// in the wire payload or server-side semantics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum EmbeddingPrecision {
+    /// 32-bit float (legacy default, byte-identical with pre-rollout
+    /// SDK requests).
+    #[default]
+    Fp32,
+    /// 16-bit float (IEEE 754 half). ~50% storage vs fp32.
+    Fp16,
+    /// Brain float 16 (fp32 dynamic range with fp16 width).
+    Bf16,
+    /// Signed 8-bit scalar quantization (~25% of fp32).
+    Int8,
+    /// Unsigned 8-bit scalar quantization with zero-point.
+    Uint8,
+}
+
+impl EmbeddingPrecision {
+    /// String form matching the server's `apply_proto_enum_workarounds`
+    /// and SQL DDL parser. Lowercase, no prefix.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            EmbeddingPrecision::Fp32 => "fp32",
+            EmbeddingPrecision::Fp16 => "fp16",
+            EmbeddingPrecision::Bf16 => "bf16",
+            EmbeddingPrecision::Int8 => "int8",
+            EmbeddingPrecision::Uint8 => "uint8",
+        }
+    }
+}
+
+impl std::str::FromStr for EmbeddingPrecision {
+    type Err = ProximaError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        // Normalize: lowercase, strip the proto SCREAMING prefix if present.
+        let normalised = s.trim().to_ascii_lowercase();
+        let stripped = normalised
+            .strip_prefix("embedding_precision_")
+            .unwrap_or(&normalised);
+        match stripped {
+            "fp32" | "f32" | "float32" => Ok(EmbeddingPrecision::Fp32),
+            "fp16" | "f16" | "half" | "float16" => Ok(EmbeddingPrecision::Fp16),
+            "bf16" | "bfloat16" => Ok(EmbeddingPrecision::Bf16),
+            "int8" | "i8" | "int8_scalar" => Ok(EmbeddingPrecision::Int8),
+            "uint8" | "u8" | "uint8_scalar" => Ok(EmbeddingPrecision::Uint8),
+            _ => Err(ProximaError::Collection(CollectionError::InvalidConfig {
+                reason: format!(
+                    "unrecognised canonical_embedding_precision '{}'; \
+                     accepted: fp32, fp16, bf16, int8, uint8 (case-insensitive)",
+                    s
+                ),
+            })),
+        }
+    }
+}
+
 /// Distance metric for similarity search
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -128,6 +197,7 @@ pub struct CollectionBuilder<'a> {
     engine: StorageEngine,
     index: IndexType,
     metric: DistanceMetric,
+    pub(crate) precision: EmbeddingPrecision,
 }
 
 impl<'a> CollectionBuilder<'a> {
@@ -143,6 +213,7 @@ impl<'a> CollectionBuilder<'a> {
             engine: StorageEngine::default(),
             index: IndexType::default(),
             metric: DistanceMetric::default(),
+            precision: EmbeddingPrecision::default(),
         }
     }
 
@@ -158,6 +229,7 @@ impl<'a> CollectionBuilder<'a> {
             engine: StorageEngine::default(),
             index: IndexType::default(),
             metric: DistanceMetric::default(),
+            precision: EmbeddingPrecision::default(),
         }
     }
 
@@ -191,6 +263,29 @@ impl<'a> CollectionBuilder<'a> {
         self
     }
 
+    /// Set the canonical embedding precision (default
+    /// [`EmbeddingPrecision::Fp32`]).
+    ///
+    /// Non-fp32 values trade a small recall delta for ~50% storage
+    /// reduction (`Fp16` / `Bf16`) or up to ~75% (`Int8` / `Uint8`).
+    /// Immutable after collection creation — set at build time.
+    pub fn precision(mut self, precision: EmbeddingPrecision) -> Self {
+        self.precision = precision;
+        self
+    }
+
+    /// Set the canonical embedding precision from a string (mirrors
+    /// [`Self::engine_str`]).
+    ///
+    /// Accepts the canonical labels (`"fp32"`, `"fp16"`, `"bf16"`,
+    /// `"int8"`, `"uint8"`), case-insensitive variants, the proto
+    /// SCREAMING form (`"EMBEDDING_PRECISION_FP16"`), and common
+    /// aliases (`"half"`, `"float16"`, `"bfloat16"`, etc.).
+    pub fn precision_str(mut self, precision: &str) -> Result<Self> {
+        self.precision = precision.parse()?;
+        Ok(self)
+    }
+
     /// Execute the collection creation (async, client mode)
     #[cfg(feature = "client")]
     pub async fn execute(self) -> Result<()> {
@@ -204,14 +299,25 @@ impl<'a> CollectionBuilder<'a> {
             })
         })?;
 
+        // Omit canonical_embedding_precision when fp32 (default) so the
+        // wire payload is byte-identical with pre-precision-rollout SDK
+        // requests. Servers that don't yet know the field stay happy;
+        // newer servers see the field for non-fp32 callers and persist
+        // it on the catalog row.
+        let precision_payload = match self.precision {
+            EmbeddingPrecision::Fp32 => None,
+            other => Some(other.as_str().to_string()),
+        };
+
         let request = CreateCollectionRequest {
             name: self.name,
             dimension,
             engine: Some(self.engine.as_str().to_string()),
             index_type: Some(self.index.as_str().to_string()),
+            canonical_embedding_precision: precision_payload,
         };
 
-        let url = format!("{}/api/v1/collections", client.url());
+        let url = format!("{}/api/v2/collections", client.url());
         let _response: CreateCollectionResponse = client.post(&url, &request).await?;
         Ok(())
     }
@@ -313,7 +419,7 @@ impl<'a> CollectionHandle<'a> {
     #[cfg(feature = "client")]
     pub async fn info(&self) -> Result<CollectionInfo> {
         let client = self.client.expect("Client reference required");
-        let url = format!("{}/api/v1/collections/{}", client.url(), self.name);
+        let url = format!("{}/api/v2/collections/{}", client.url(), self.name);
         client.get(&url).await
     }
 
@@ -321,7 +427,10 @@ impl<'a> CollectionHandle<'a> {
     #[cfg(feature = "client")]
     pub async fn count(&self) -> Result<u64> {
         let info = self.info().await?;
-        Ok(info.vector_count)
+        Ok(info
+            .stats
+            .as_ref()
+            .map_or(info.vector_count, |stats| stats.record_count))
     }
 
     /// Delete the collection
@@ -356,7 +465,7 @@ impl<'a> CollectionHandle<'a> {
     pub async fn delete_vector(&self, id: &str) -> Result<()> {
         let client = self.client.expect("Client reference required");
         let url = format!(
-            "{}/api/v1/collections/{}/vectors/{}",
+            "{}/api/v2/collections/{}/records/{}",
             client.url(),
             self.name,
             id
@@ -368,26 +477,21 @@ impl<'a> CollectionHandle<'a> {
     /// Delete multiple vectors by IDs
     #[cfg(feature = "client")]
     pub async fn delete_vectors(&self, ids: Vec<String>) -> Result<usize> {
-        let client = self.client.expect("Client reference required");
-        let request = DeleteVectorsRequest {
-            collection: self.name.clone(),
-            ids,
-        };
-        let url = format!(
-            "{}/api/v1/collections/{}/vectors/delete",
-            client.url(),
-            self.name
-        );
-        let response: DeleteVectorsResponse = client.post(&url, &request).await?;
-        Ok(response.deleted_count)
+        let mut deleted = 0usize;
+        for id in ids {
+            self.delete_vector(&id).await?;
+            deleted += 1;
+        }
+        Ok(deleted)
     }
 
     /// Get a vector by ID
     #[cfg(feature = "client")]
+    #[allow(deprecated)]
     pub async fn get_vector(&self, id: &str) -> Result<Option<VectorRecord>> {
         let client = self.client.expect("Client reference required");
         let url = format!(
-            "{}/api/v1/collections/{}/vectors/{}",
+            "{}/api/v2/collections/{}/records/{}",
             client.url(),
             self.name,
             id
@@ -502,24 +606,24 @@ impl<'a> UpdateBuilder<'a> {
             .client
             .ok_or_else(|| ProximaError::Internal("No client reference".to_string()))?;
 
-        let request = UpdateVectorRequest {
-            collection: self.collection.clone(),
-            id: self.id,
-            vector: self.vector,
-            metadata: if self.metadata.is_empty() {
-                None
-            } else {
-                Some(self.metadata)
-            },
-            replace_metadata: self.replace_metadata,
+        let request = ProximaRecordBatchRequest {
+            records: vec![ProximaRecord {
+                id: self.id,
+                vector: self.vector.unwrap_or_default(),
+                props: self.metadata,
+                text_fields: Vec::new(),
+                source: None,
+            }],
+            validate_schema: true,
+            upsert: true,
         };
 
         let url = format!(
-            "{}/api/v1/collections/{}/vectors/update",
+            "{}/api/v2/collections/{}/records/batch",
             client.url(),
             self.collection
         );
-        let _response: UpdateVectorResponse = client.post(&url, &request).await?;
+        let _response: InsertResponse = client.post(&url, &request).await?;
         Ok(())
     }
 
@@ -543,12 +647,15 @@ impl<'a> UpdateBuilder<'a> {
 /// Collection information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CollectionInfo {
+    /// Collection ID
+    #[serde(default)]
+    pub collection_id: Option<String>,
     /// Collection name
     pub name: String,
     /// Vector dimension
     pub dimension: u32,
     /// Number of vectors
-    #[serde(default)]
+    #[serde(default, alias = "record_count")]
     pub vector_count: u64,
     /// Storage engine
     #[serde(default)]
@@ -556,6 +663,20 @@ pub struct CollectionInfo {
     /// Disk usage in bytes
     #[serde(default)]
     pub disk_usage_bytes: Option<u64>,
+    /// Nested v2 collection statistics.
+    #[serde(default)]
+    pub stats: Option<CollectionStats>,
+}
+
+/// v2 collection statistics.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionStats {
+    /// Total number of records.
+    #[serde(default)]
+    pub record_count: u64,
+    /// Total storage size in bytes.
+    #[serde(default)]
+    pub storage_size_bytes: u64,
 }
 
 /// Builder for insert operations
@@ -585,6 +706,31 @@ struct InsertRecord {
     id: String,
     vector: Vec<f32>,
     metadata: HashMap<String, serde_json::Value>,
+    text_fields: Vec<TextFieldInput>,
+}
+
+/// TEXT field payload mirroring the v2 REST `TextFieldInput` shape at
+/// `src/network/rest/v2/records.rs`. Each entry attaches a named TEXT
+/// payload to the record alongside the vector — used by full-text-search
+/// indexing (BM25) and rerank features. Public so the SDK builder API
+/// can take typed values instead of stringly-typed JSON. TD-083 closure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextFieldInput {
+    /// Field name. Must match a TEXT column declared on the collection schema.
+    pub name: String,
+    /// Field content. v0.2 supports plain UTF-8 strings; richer encodings
+    /// (chunks, language hints) are tracked post-v0.2.
+    pub content: String,
+}
+
+impl TextFieldInput {
+    /// Construct a new TEXT field input.
+    pub fn new(name: impl Into<String>, content: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            content: content.into(),
+        }
+    }
 }
 
 impl<'a> InsertBuilder<'a> {
@@ -619,6 +765,7 @@ impl<'a> InsertBuilder<'a> {
             id: id.into(),
             vector: None,
             metadata: HashMap::new(),
+            text_fields: Vec::new(),
         }
     }
 
@@ -635,11 +782,12 @@ impl<'a> InsertBuilder<'a> {
             }));
         }
 
-        for (id, vector) in ids.into_iter().zip(vectors.into_iter()) {
+        for (id, vector) in ids.into_iter().zip(vectors) {
             self.records.push(InsertRecord {
                 id,
                 vector,
                 metadata: HashMap::new(),
+                text_fields: Vec::new(),
             });
         }
 
@@ -657,20 +805,22 @@ impl<'a> InsertBuilder<'a> {
             return Ok(InsertResponse { inserted_count: 0 });
         }
 
-        let request = InsertRequest {
-            collection: self.collection,
-            vectors: self
+        let collection = self.collection;
+        let request = ProximaRecordBatchRequest {
+            records: self
                 .records
                 .into_iter()
-                .map(|r| VectorRecord {
-                    id: r.id,
-                    vector: r.vector,
-                    metadata: r.metadata,
-                })
+                .map(ProximaRecord::from_insert_record)
                 .collect(),
+            validate_schema: true,
+            upsert: false,
         };
 
-        let url = format!("{}/api/v1/vectors/insert", client.url());
+        let url = format!(
+            "{}/api/v2/collections/{}/records/batch",
+            client.url(),
+            collection
+        );
         client.post(&url, &request).await
     }
 }
@@ -681,6 +831,7 @@ pub struct InsertBuilderWithId<'a> {
     id: String,
     vector: Option<Vec<f32>>,
     metadata: HashMap<String, serde_json::Value>,
+    text_fields: Vec<TextFieldInput>,
 }
 
 impl<'a> InsertBuilderWithId<'a> {
@@ -706,6 +857,21 @@ impl<'a> InsertBuilderWithId<'a> {
         self
     }
 
+    /// Attach a single TEXT field to the record. v2 ProximaRecord supports
+    /// multiple named TEXT fields per record alongside the vector and props
+    /// (the REST shape lives in `src/network/rest/v2/records.rs::TextFieldInput`).
+    /// TD-083 closure — was previously inaccessible from the Rust SDK.
+    pub fn text_field(mut self, name: impl Into<String>, content: impl Into<String>) -> Self {
+        self.text_fields.push(TextFieldInput::new(name, content));
+        self
+    }
+
+    /// Replace any previously-set TEXT fields with `text_fields`.
+    pub fn text_fields(mut self, text_fields: Vec<TextFieldInput>) -> Self {
+        self.text_fields = text_fields;
+        self
+    }
+
     /// Execute the insert (async, client mode)
     #[cfg(feature = "client")]
     pub async fn execute(mut self) -> Result<()> {
@@ -719,6 +885,7 @@ impl<'a> InsertBuilderWithId<'a> {
             id: self.id,
             vector,
             metadata: self.metadata,
+            text_fields: self.text_fields,
         });
 
         self.builder.execute_internal().await?;
@@ -761,7 +928,7 @@ impl<'a> InsertBuilderBatch<'a> {
             }));
         }
 
-        for (record, meta) in self.builder.records.iter_mut().zip(metadata.into_iter()) {
+        for (record, meta) in self.builder.records.iter_mut().zip(metadata) {
             record.metadata = meta;
         }
 
@@ -811,69 +978,77 @@ struct CreateCollectionRequest {
     engine: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     index_type: Option<String>,
+    /// `None` for the legacy fp32 default — omitted from the wire
+    /// payload to keep requests byte-identical with pre-precision-
+    /// rollout SDKs. `Some("fp16")` etc. when the caller asks for a
+    /// non-fp32 collection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    canonical_embedding_precision: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct CreateCollectionResponse {
     #[allow(dead_code)]
+    #[serde(default)]
     success: bool,
 }
 
 #[derive(Debug, Serialize)]
-struct InsertRequest {
-    collection: String,
-    vectors: Vec<VectorRecord>,
+struct ProximaRecordBatchRequest {
+    records: Vec<ProximaRecord>,
+    validate_schema: bool,
+    #[serde(default)]
+    upsert: bool,
 }
 
-/// A vector record with ID, vector data, and metadata
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VectorRecord {
-    /// Vector ID
+/// Canonical record payload with optional vector embedding and rich properties.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ProximaRecord {
+    /// Record ID
     pub id: String,
-    /// Vector data
+    /// Dense vector embedding
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vector: Vec<f32>,
-    /// Associated metadata
-    #[serde(default)]
-    pub metadata: HashMap<String, serde_json::Value>,
+    /// Rich record properties
+    #[serde(default, alias = "metadata", skip_serializing_if = "HashMap::is_empty")]
+    pub props: HashMap<String, serde_json::Value>,
+    /// TEXT field payloads attached to the record (BM25 indexing / rerank
+    /// inputs). v0.2 supports plain UTF-8 strings; richer encodings tracked
+    /// post-v0.2. See `src/network/rest/v2/records.rs::TextFieldInput`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub text_fields: Vec<TextFieldInput>,
+    /// Original source text or external reference
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
+
+impl ProximaRecord {
+    fn from_insert_record(record: InsertRecord) -> Self {
+        Self {
+            id: record.id,
+            vector: record.vector,
+            props: record.metadata,
+            text_fields: record.text_fields,
+            source: None,
+        }
+    }
+}
+
+/// Deprecated compatibility alias for vector-shaped SDK callers.
+#[deprecated(note = "use ProximaRecord; VectorRecord is a compatibility alias")]
+pub type VectorRecord = ProximaRecord;
 
 #[derive(Debug, Deserialize)]
 struct InsertResponse {
+    #[serde(default, alias = "success_count")]
     inserted_count: usize,
-}
-
-#[derive(Debug, Serialize)]
-struct UpdateVectorRequest {
-    collection: String,
-    id: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    vector: Option<Vec<f32>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    metadata: Option<HashMap<String, serde_json::Value>>,
-    #[serde(default)]
-    replace_metadata: bool,
-}
-
-#[derive(Debug, Deserialize)]
-struct UpdateVectorResponse {
-    #[allow(dead_code)]
-    success: bool,
-}
-
-#[derive(Debug, Serialize)]
-struct DeleteVectorsRequest {
-    collection: String,
-    ids: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct DeleteVectorsResponse {
-    deleted_count: usize,
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::client::ProximaClient;
+    use serde_json::json;
 
     #[test]
     fn test_storage_engine_parse() {
@@ -891,5 +1066,444 @@ mod tests {
         assert_eq!(StorageEngine::Sst.as_str(), "sst");
         assert_eq!(StorageEngine::Helix.as_str(), "helix");
         assert_eq!(StorageEngine::Tst.as_str(), "tst");
+    }
+
+    #[test]
+    fn all_storage_engines_parse_case_insensitively_and_serialize_lowercase() {
+        let cases = [
+            (StorageEngine::Sst, "sst"),
+            (StorageEngine::Helix, "helix"),
+            (StorageEngine::Viper, "viper"),
+            (StorageEngine::Swift, "swift"),
+            (StorageEngine::Nova, "nova"),
+            (StorageEngine::Raptor, "raptor"),
+            (StorageEngine::Tst, "tst"),
+        ];
+
+        for (engine, name) in cases {
+            assert_eq!(engine.as_str(), name);
+            assert_eq!(
+                name.to_uppercase().parse::<StorageEngine>().unwrap(),
+                engine
+            );
+            assert_eq!(serde_json::to_value(engine).unwrap(), json!(name));
+        }
+    }
+
+    #[test]
+    fn index_types_and_metrics_serialize_as_api_names() {
+        assert_eq!(IndexType::Hnsw.as_str(), "hnsw");
+        assert_eq!(IndexType::Ivf.as_str(), "ivf");
+        assert_eq!(IndexType::Lsh.as_str(), "lsh");
+        assert_eq!(IndexType::Flat.as_str(), "flat");
+
+        assert_eq!(
+            serde_json::to_value(IndexType::Flat).unwrap(),
+            json!("flat")
+        );
+        assert_eq!(
+            serde_json::to_value(DistanceMetric::Cosine).unwrap(),
+            json!("cosine")
+        );
+    }
+
+    #[test]
+    fn collection_builder_records_fluent_configuration_before_execute() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items")
+            .dimension(384)
+            .engine_str("viper")
+            .unwrap()
+            .index(IndexType::Flat)
+            .metric(DistanceMetric::DotProduct);
+
+        assert_eq!(builder.name, "items");
+        assert_eq!(builder.dimension, Some(384));
+        assert_eq!(builder.engine, StorageEngine::Viper);
+        assert_eq!(builder.index, IndexType::Flat);
+        assert_eq!(builder.metric, DistanceMetric::DotProduct);
+    }
+
+    #[tokio::test]
+    async fn collection_builder_validates_dimension_before_network_call() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let result = CollectionBuilder::new(&client, "items").execute().await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            ProximaError::Collection(CollectionError::InvalidConfig { reason })
+                if reason == "dimension is required"
+        ));
+    }
+
+    #[test]
+    fn collection_handle_exposes_name_and_creates_child_builders() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let handle = CollectionHandle::new(&client, "items");
+
+        assert_eq!(handle.name(), "items");
+        let _search = handle.search();
+        assert_eq!(handle.insert().collection, "items");
+        assert_eq!(handle.update("vec_1").collection, "items");
+    }
+
+    #[test]
+    fn insert_batch_rejects_mismatched_ids_and_vectors() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let result = InsertBuilder::new_client(&client, "items")
+            .batch(vec!["a".to_string(), "b".to_string()], vec![vec![1.0]]);
+
+        match result {
+            Err(ProximaError::Vector(VectorError::BatchSizeMismatch { ids: 2, vectors: 1 })) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("mismatched batch should fail"),
+        }
+    }
+
+    #[test]
+    fn insert_batch_attaches_per_record_metadata() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let batch = InsertBuilder::new_client(&client, "items")
+            .batch(
+                vec!["a".to_string(), "b".to_string()],
+                vec![vec![1.0], vec![2.0]],
+            )
+            .unwrap()
+            .with_metadata(vec![
+                HashMap::from([("category".to_string(), json!("alpha"))]),
+                HashMap::from([("category".to_string(), json!("beta"))]),
+            ])
+            .unwrap();
+
+        assert_eq!(batch.builder.records.len(), 2);
+        assert_eq!(
+            batch.builder.records[0].metadata["category"],
+            json!("alpha")
+        );
+        assert_eq!(batch.builder.records[1].metadata["category"], json!("beta"));
+    }
+
+    #[test]
+    fn insert_batch_rejects_mismatched_metadata_count() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let batch = InsertBuilder::new_client(&client, "items")
+            .batch(vec!["a".to_string()], vec![vec![1.0]])
+            .unwrap();
+
+        match batch.with_metadata(Vec::new()) {
+            Err(ProximaError::Vector(VectorError::BatchSizeMismatch { ids: 1, vectors: 0 })) => {}
+            Err(other) => panic!("unexpected error: {other:?}"),
+            Ok(_) => panic!("mismatched metadata count should fail"),
+        }
+    }
+
+    #[tokio::test]
+    async fn insert_single_record_validates_vector_before_network_call() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let result = InsertBuilder::new_client(&client, "items")
+            .id("vec_1")
+            .execute()
+            .await;
+
+        assert!(matches!(
+            result.unwrap_err(),
+            ProximaError::Vector(VectorError::InvalidFormat { reason })
+                if reason == "vector is required"
+        ));
+    }
+
+    #[tokio::test]
+    async fn empty_insert_builder_returns_zero_without_network_call() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let response = InsertBuilder::new_client(&client, "items")
+            .execute_internal()
+            .await
+            .unwrap();
+
+        assert_eq!(response.inserted_count, 0);
+    }
+
+    #[test]
+    fn update_builder_merges_object_metadata_and_tracks_replace_flag() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = UpdateBuilder::new_client(&client, "items", "vec_1")
+            .vector(&[1.0, 2.0])
+            .metadata(json!({"category": "tech"}))
+            .metadata(json!("ignored"))
+            .meta("source", "sdk")
+            .replace_metadata(true);
+
+        assert_eq!(builder.collection, "items");
+        assert_eq!(builder.id, "vec_1");
+        assert_eq!(builder.vector, Some(vec![1.0, 2.0]));
+        assert_eq!(builder.metadata["category"], json!("tech"));
+        assert_eq!(builder.metadata["source"], json!("sdk"));
+        assert!(builder.replace_metadata);
+    }
+
+    #[test]
+    fn proxima_record_uses_props_alias_and_skips_empty_optional_fields() {
+        let record: ProximaRecord = serde_json::from_value(json!({
+            "id": "vec_1",
+            "vector": [1.0, 2.0],
+            "metadata": {"category": "tech"},
+            "source": "doc"
+        }))
+        .unwrap();
+
+        assert_eq!(record.id, "vec_1");
+        assert_eq!(record.vector, vec![1.0, 2.0]);
+        assert_eq!(record.props["category"], json!("tech"));
+        assert_eq!(record.source.as_deref(), Some("doc"));
+
+        let serialized = serde_json::to_value(ProximaRecord {
+            id: "vec_2".to_string(),
+            vector: Vec::new(),
+            props: HashMap::new(),
+            source: None,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(serialized, json!({"id": "vec_2"}));
+    }
+
+    /// TD-083: the Rust SDK now exposes v2 TEXT field payloads. Asserts the
+    /// JSON shape lines up with the server-side `TextFieldInput` at
+    /// `src/network/rest/v2/records.rs` so a regression in either direction
+    /// shows up on the SDK side too.
+    #[test]
+    fn proxima_record_serializes_text_fields_in_v2_shape() {
+        let record = ProximaRecord {
+            id: "rec_1".to_string(),
+            vector: Vec::new(),
+            props: HashMap::new(),
+            text_fields: vec![
+                TextFieldInput::new("title", "ProximaDB"),
+                TextFieldInput::new("body", "Vector + relational storage."),
+            ],
+            source: None,
+        };
+        let serialized = serde_json::to_value(&record).unwrap();
+        assert_eq!(
+            serialized,
+            json!({
+                "id": "rec_1",
+                "text_fields": [
+                    {"name": "title", "content": "ProximaDB"},
+                    {"name": "body", "content": "Vector + relational storage."}
+                ]
+            })
+        );
+    }
+
+    /// TD-083: chained text_field builder calls accumulate. Matches the
+    /// behaviour of `meta(k, v)` for relational props.
+    #[test]
+    fn insert_builder_chains_text_fields() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let with_id = InsertBuilder::new_client(&client, "items")
+            .id("rec_1")
+            .vector(&[0.0])
+            .text_field("title", "ProximaDB")
+            .text_field("body", "Vector + relational storage.");
+        assert_eq!(with_id.text_fields.len(), 2);
+        assert_eq!(with_id.text_fields[0].name, "title");
+        assert_eq!(
+            with_id.text_fields[1].content,
+            "Vector + relational storage."
+        );
+    }
+
+    #[test]
+    fn request_and_response_dtos_use_expected_api_field_names() {
+        let create = CreateCollectionRequest {
+            name: "items".to_string(),
+            dimension: 384,
+            engine: Some("sst".to_string()),
+            index_type: Some("hnsw".to_string()),
+            canonical_embedding_precision: None,
+        };
+        assert_eq!(
+            serde_json::to_value(create).unwrap(),
+            json!({
+                "name": "items",
+                "dimension": 384,
+                "engine": "sst",
+                "index_type": "hnsw"
+            })
+        );
+
+        let response: InsertResponse = serde_json::from_value(json!({"success_count": 7})).unwrap();
+        assert_eq!(response.inserted_count, 7);
+
+        let info: CollectionInfo = serde_json::from_value(json!({
+            "collection_id": "uuid-1",
+            "name": "items",
+            "dimension": 384,
+            "record_count": 9,
+            "engine": "sst",
+            "disk_usage_bytes": 2048,
+            "stats": {"record_count": 11, "storage_size_bytes": 4096}
+        }))
+        .unwrap();
+        assert_eq!(info.collection_id.as_deref(), Some("uuid-1"));
+        assert_eq!(info.vector_count, 9);
+        assert_eq!(info.stats.as_ref().unwrap().record_count, 11);
+    }
+
+    // ── EmbeddingPrecision (mirrors proto EmbeddingPrecision) ────────────────
+    //
+    // The SDK accepts the same string-or-int shape the server's
+    // `apply_proto_enum_workarounds` accepts. Set on a collection at
+    // create time; immutable after creation; controls the on-disk +
+    // in-memory scalar type for the embedding column. See
+    // `docs/05-concepts/embedding-precision.adoc` for the operator
+    // guide.
+
+    #[test]
+    fn embedding_precision_as_str_matches_proto_screaming_label() {
+        assert_eq!(EmbeddingPrecision::Fp32.as_str(), "fp32");
+        assert_eq!(EmbeddingPrecision::Fp16.as_str(), "fp16");
+        assert_eq!(EmbeddingPrecision::Bf16.as_str(), "bf16");
+        assert_eq!(EmbeddingPrecision::Int8.as_str(), "int8");
+        assert_eq!(EmbeddingPrecision::Uint8.as_str(), "uint8");
+    }
+
+    #[test]
+    fn embedding_precision_parses_canonical_lowercase() {
+        assert_eq!(
+            "fp16".parse::<EmbeddingPrecision>().unwrap(),
+            EmbeddingPrecision::Fp16
+        );
+        assert_eq!(
+            "FP16".parse::<EmbeddingPrecision>().unwrap(),
+            EmbeddingPrecision::Fp16
+        );
+        assert_eq!(
+            "EMBEDDING_PRECISION_FP16"
+                .parse::<EmbeddingPrecision>()
+                .unwrap(),
+            EmbeddingPrecision::Fp16
+        );
+    }
+
+    #[test]
+    fn embedding_precision_accepts_common_aliases() {
+        // Same alias set the server's apply_proto_enum_workarounds takes
+        // so SDK round-trip matches what curl/manual requests look like.
+        for fp16_alias in ["fp16", "f16", "half", "float16"] {
+            assert_eq!(
+                fp16_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Fp16
+            );
+        }
+        for bf16_alias in ["bf16", "bfloat16"] {
+            assert_eq!(
+                bf16_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Bf16
+            );
+        }
+        for int8_alias in ["int8", "i8", "int8_scalar"] {
+            assert_eq!(
+                int8_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Int8
+            );
+        }
+        for uint8_alias in ["uint8", "u8", "uint8_scalar"] {
+            assert_eq!(
+                uint8_alias.parse::<EmbeddingPrecision>().unwrap(),
+                EmbeddingPrecision::Uint8
+            );
+        }
+    }
+
+    #[test]
+    fn embedding_precision_unknown_label_errors_with_recognisable_message() {
+        let err = "definitely_not_a_precision"
+            .parse::<EmbeddingPrecision>()
+            .unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.to_lowercase().contains("precision"),
+            "error message should mention 'precision' so SDK users \
+             know what field they typo'd; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn embedding_precision_serializes_as_lowercase_string() {
+        // Matches what the server's REST workaround accepts so a
+        // ProximaRecord-style direct JSON build (without the SDK)
+        // sees the same wire format.
+        assert_eq!(
+            serde_json::to_value(EmbeddingPrecision::Fp16).unwrap(),
+            json!("fp16")
+        );
+    }
+
+    #[test]
+    fn collection_builder_default_precision_is_fp32() {
+        // Backward compatibility: existing callers that never touch
+        // .precision() must continue to land fp32 collections.
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items").dimension(8);
+        assert_eq!(builder.precision, EmbeddingPrecision::Fp32);
+    }
+
+    #[test]
+    fn collection_builder_precision_setter_records_target() {
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items")
+            .dimension(8)
+            .precision(EmbeddingPrecision::Fp16);
+        assert_eq!(builder.precision, EmbeddingPrecision::Fp16);
+    }
+
+    #[test]
+    fn collection_builder_precision_str_setter_accepts_aliases() {
+        // Mirrors `engine_str` — lets callers spec the precision from
+        // a string without importing the enum (handy for CLI / config-
+        // driven builds).
+        let client = ProximaClient::for_tests("http://localhost:5678");
+        let builder = CollectionBuilder::new(&client, "items")
+            .dimension(8)
+            .precision_str("fp16")
+            .unwrap();
+        assert_eq!(builder.precision, EmbeddingPrecision::Fp16);
+    }
+
+    #[test]
+    fn create_collection_request_includes_precision_when_non_fp32() {
+        // The REST POST body must carry canonical_embedding_precision
+        // when set, so the server's create-handler path materializes
+        // the right catalog row. Fp32 (default) is omitted from the
+        // payload to keep the wire shape byte-identical with
+        // pre-precision-rollout SDK requests.
+        let req = CreateCollectionRequest {
+            name: "rust_sdk_fp16".to_string(),
+            dimension: 384,
+            engine: None,
+            index_type: None,
+            canonical_embedding_precision: Some("fp16".to_string()),
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert_eq!(body["canonical_embedding_precision"], json!("fp16"));
+    }
+
+    #[test]
+    fn create_collection_request_omits_precision_when_fp32_default() {
+        let req = CreateCollectionRequest {
+            name: "rust_sdk_fp32".to_string(),
+            dimension: 384,
+            engine: None,
+            index_type: None,
+            canonical_embedding_precision: None,
+        };
+        let body = serde_json::to_value(&req).unwrap();
+        assert!(
+            body.get("canonical_embedding_precision").is_none(),
+            "fp32 default must not appear in the wire payload — \
+             keeps requests byte-identical with pre-rollout SDKs. Got: {body}"
+        );
     }
 }

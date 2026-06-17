@@ -221,7 +221,7 @@ async fn ensure_required_directories(config: &proximadb::core::Config) -> anyhow
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+async fn main() -> anyhow::Result<()> {
     // Initialize tracing with rolling file appender
     use tracing_appender::rolling::{RollingFileAppender, Rotation};
     use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
@@ -257,7 +257,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = Args::parse();
 
     // Load configuration first to get log level from TOML
-    let mut config = ConfigLoader::load_with_defaults(args.config.to_string_lossy().as_ref())?;
+    let mut config = ConfigLoader::load_with_defaults(args.config.to_string_lossy().as_ref())
+        .map_err(|e| anyhow::anyhow!("Failed to load config: {}", e))?;
 
     // Initialize subscriber with both console and file output - fully configurable
     // Priority: Environment variable > CLI args > TOML config > Default (INFO)
@@ -326,10 +327,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut db = ProximaDB::new(config).await?;
 
     // Start the database engine
-    if let Err(e) = db.start().await {
-        error!("Failed to start ProximaDB: {}", e);
-        return Err(e);
-    }
+    db.start().await?;
 
     info!("ProximaDB server started successfully");
 
@@ -338,7 +336,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     info!("Received shutdown signal, stopping server...");
 
     // Graceful shutdown
-    if let Err(e) = db.stop().await {
+    if let Err(e) = db.shutdown().await {
         error!("Error during shutdown: {}", e);
     }
 

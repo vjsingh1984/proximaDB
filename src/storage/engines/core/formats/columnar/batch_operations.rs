@@ -8,19 +8,14 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use super::{ColumnarConfig, ParquetLocation, UnifiedParquetReader};
-use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::memory::pool::VectorMemoryPool;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
+use proximadb_runtime_common::pool::VectorMemoryPool;
 
 /// Batch operations for columnar storage
 pub struct ColumnarBatchOperations {
     /// Unified Parquet reader
     #[allow(dead_code)]
     parquet_reader: Arc<UnifiedParquetReader>,
-
-    /// Hardware capabilities
-    #[allow(dead_code)]
-    hardware: Arc<HardwareCapabilities>,
 
     /// Vector memory pool for efficient buffer reuse
     memory_pool: Arc<VectorMemoryPool>,
@@ -37,13 +32,12 @@ impl ColumnarBatchOperations {
     /// Create new batch operations handler
     pub fn new(
         parquet_reader: Arc<UnifiedParquetReader>,
-        hardware: Arc<HardwareCapabilities>,
+        _hardware: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
         memory_pool: Arc<VectorMemoryPool>,
         config: ColumnarConfig,
     ) -> Self {
         Self {
             parquet_reader,
-            hardware,
             memory_pool,
             config,
             operation_cache: Arc::new(RwLock::new(HashMap::new())),
@@ -56,7 +50,7 @@ impl ColumnarBatchOperations {
         &self,
         _file_paths: &[String],
         _ids: &[String],
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         // Deferred: Re-implement when batch_id_lookup API is available
         Err(anyhow::anyhow!(
             "BatchOperations temporarily disabled due to API changes"
@@ -66,7 +60,7 @@ impl ColumnarBatchOperations {
     /// Batch write vectors to columnar format
     pub async fn batch_write_vectors(
         &self,
-        vectors: &[VectorRecord],
+        vectors: &[ProximaRecord],
         target_file: &str,
         compression_config: Option<&super::QuantizationConfig>,
     ) -> Result<BatchWriteResult> {
@@ -211,7 +205,7 @@ impl ColumnarBatchOperations {
     }
 
     /// Organize vectors into optimal batches for writing
-    fn organize_into_batches(&self, vectors: &[VectorRecord]) -> Result<Vec<Vec<VectorRecord>>> {
+    fn organize_into_batches(&self, vectors: &[ProximaRecord]) -> Result<Vec<Vec<ProximaRecord>>> {
         const OPTIMAL_BATCH_SIZE: usize = 10000; // Optimal for Parquet row groups
 
         let mut batches = Vec::new();
@@ -241,7 +235,7 @@ impl ColumnarBatchOperations {
     /// Write a single batch with memory pool optimization
     async fn write_batch_optimized(
         &self,
-        batch: &[VectorRecord],
+        batch: &[ProximaRecord],
         target_file: &str,
         batch_idx: usize,
         _compression_config: Option<&super::QuantizationConfig>,
@@ -349,7 +343,7 @@ impl ColumnarBatchOperations {
 
     /// Cache operation result
     #[allow(dead_code)]
-    async fn cache_result(&self, cache_key: String, records: &[VectorRecord]) {
+    async fn cache_result(&self, cache_key: String, records: &[ProximaRecord]) {
         let cached = CachedBatchResult {
             records: records.to_vec(),
             timestamp: chrono::Utc::now(),
@@ -446,7 +440,7 @@ pub struct FailedDelete {
 /// Cached batch operation result
 #[derive(Debug, Clone)]
 struct CachedBatchResult {
-    pub records: Vec<VectorRecord>,
+    pub records: Vec<ProximaRecord>,
     pub timestamp: chrono::DateTime<chrono::Utc>,
     #[allow(dead_code)]
     pub ttl_seconds: i64,
@@ -472,12 +466,13 @@ pub struct BatchCacheStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::memory::pool::VectorMemoryPool;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    use proximadb_records::EmbeddingCell;
+    use proximadb_runtime_common::pool::VectorMemoryPool;
 
     #[tokio::test]
     async fn test_batch_operations_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let filesystem_factory = Arc::new(
             FilesystemFactory::create(FilesystemConfig::default())
@@ -490,7 +485,7 @@ mod tests {
             .get_filesystem("file:///tmp/test")
             .unwrap();
         let cached_filesystem = Arc::new(
-            crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+            crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                 base_fs,
                 "test_collection".to_string(),
                 "test".to_string(),
@@ -525,16 +520,22 @@ mod tests {
         let batch_ops = create_test_batch_ops();
 
         // Create test vectors
-        let vectors: Vec<VectorRecord> = (0..25000)
-            .map(|i| VectorRecord {
-                id: format!("test_{i}"),
-                vector: vec![i as f32; 768],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: Some("test".to_string()),
+        let vectors: Vec<ProximaRecord> = (0..25000)
+            .map(|i| {
+                let values = vec![i as f32; 768];
+                let dim = values.len() as u32;
+                let mut record = ProximaRecord {
+                    oid: format!("test_{i}"),
+                    ..Default::default()
+                };
+                record.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(values),
+                    dim,
+                    ..Default::default()
+                });
+                record
             })
             .collect();
 
@@ -549,7 +550,7 @@ mod tests {
 
     fn create_test_batch_ops() -> ColumnarBatchOperations {
         tokio::runtime::Runtime::new().unwrap().block_on(async {
-            let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
+            let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
             let filesystem_factory = Arc::new(
                 FilesystemFactory::create(FilesystemConfig::default())
@@ -562,7 +563,7 @@ mod tests {
                 .get_filesystem("file:///tmp/test")
                 .unwrap();
             let cached_filesystem = Arc::new(
-                crate::storage::persistence::filesystem::unified::UnifiedCachingFilesystem::new(
+                crate::storage::persistence::filesystem::caching_filesystem::UnifiedCachingFilesystem::new(
                     base_fs,
                     "test_collection".to_string(),
                     "test".to_string(),

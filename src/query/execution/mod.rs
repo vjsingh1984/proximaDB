@@ -7,14 +7,28 @@
 
 pub mod datafusion_bridge;
 pub mod executor;
+pub mod low_latency_executor;
+pub mod plan_cache;
 pub mod planner;
+pub mod set_operations;
 pub mod window_executor;
 
-use crate::core::search::FilterExpression;
-use crate::graph::GraphOperationsService;
+// Re-export low-latency execution types
+pub use low_latency_executor::{
+    LowLatencyConfig, LowLatencyExecutor, LowLatencyMetrics, StreamedQueryResult,
+};
+pub use plan_cache::{
+    CachedPlan, ExecutionPlanCacheStats, PlanCacheConfig as QueryPlanCacheConfig, PlanKey,
+    QueryPlanCache,
+};
+
+// Re-export set_operations
+pub use set_operations::*;
+
 use crate::query::ast::Query;
 use crate::services::operations::vectors::VectorOperationsService;
 use anyhow::{Result, anyhow};
+use proximadb_graph_query::service::GraphExecutionService;
 use std::sync::Arc;
 
 /// Unified query engine with AST-based execution
@@ -24,8 +38,6 @@ use std::sync::Arc;
 pub struct QueryEngine {
     #[allow(dead_code)]
     vector_service: Arc<VectorOperationsService>,
-    #[allow(dead_code)]
-    graph_service: Arc<GraphOperationsService>,
     planner: crate::query::execution::planner::ExecutionPlanner,
     executor: crate::query::execution::executor::QueryExecutor,
 }
@@ -34,7 +46,7 @@ impl QueryEngine {
     /// Create new unified query engine
     pub fn new(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphOperationsService>,
+        graph_service: Arc<dyn GraphExecutionService>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::new(
             vector_service.clone(),
@@ -43,12 +55,11 @@ impl QueryEngine {
 
         let executor = crate::query::execution::executor::QueryExecutor::new(
             Some(vector_service.clone()),
-            graph_service.clone(),
+            graph_service,
         );
 
         Self {
             vector_service,
-            graph_service,
             planner,
             executor,
         }
@@ -57,7 +68,7 @@ impl QueryEngine {
     /// Create query engine with planner parameters (e.g., bound SQL params)
     pub fn new_with_params(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphOperationsService>,
+        graph_service: Arc<dyn GraphExecutionService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
     ) -> Self {
         let planner = crate::query::execution::planner::ExecutionPlanner::with_params(
@@ -67,11 +78,10 @@ impl QueryEngine {
         );
         let executor = crate::query::execution::executor::QueryExecutor::new(
             Some(vector_service.clone()),
-            graph_service.clone(),
+            graph_service,
         );
         Self {
             vector_service,
-            graph_service,
             planner,
             executor,
         }
@@ -80,7 +90,7 @@ impl QueryEngine {
     /// Create query engine with planner params and seeding strategy for hybrid queries
     pub fn new_with_options(
         vector_service: Arc<VectorOperationsService>,
-        graph_service: Arc<GraphOperationsService>,
+        graph_service: Arc<dyn GraphExecutionService>,
         params: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         seeding_strategy: SeedingStrategy,
         fusion_weights: Option<Vec<f64>>,
@@ -94,11 +104,10 @@ impl QueryEngine {
         planner.set_fusion_weights(fusion_weights);
         let executor = crate::query::execution::executor::QueryExecutor::new(
             Some(vector_service.clone()),
-            graph_service.clone(),
+            graph_service,
         );
         Self {
             vector_service,
-            graph_service,
             planner,
             executor,
         }
@@ -107,7 +116,7 @@ impl QueryEngine {
     /// Execute query from internal AST (post-lowering from sql_frontend)
     ///
     /// This is the main entry point, providing superior performance through HashMap metadata filtering.
-    pub async fn execute_frontend(&self, query: Query) -> Result<QueryResult> {
+    pub async fn execute_frontend(&self, query: Query) -> Result<ExecutionQueryResult> {
         // 1. Generate optimized execution plan from AST
         let plan = self.planner.create_plan(&query)?;
 
@@ -140,18 +149,18 @@ impl QueryEngine {
         // Add hybrid configuration hints
         hints.push(format!("Seeding: {:?}", plan.seeding_strategy));
         let has_vector = plan
-            .operations
+            .execution_steps
             .iter()
-            .any(|op| matches!(op, ExecutionOperation::VectorSearch { .. }));
+            .any(|op| matches!(op, ExecutionOperation::VectorQuery { .. }));
         let has_graph = plan
-            .operations
+            .execution_steps
             .iter()
             .any(|op| matches!(op, ExecutionOperation::GraphTraversal { .. }));
         if has_vector && has_graph {
             hints.push("Hybrid: parallel execution + seed handoff available".to_string());
         }
         // Extract fusion weights for explain
-        for op in &plan.operations {
+        for op in &plan.execution_steps {
             if let ExecutionOperation::Fusion { weights, .. } = op {
                 hints.push(format!("Fusion weights: {:?}", weights));
             }
@@ -160,307 +169,29 @@ impl QueryEngine {
         Ok(ExplainResult {
             query_type: plan.execution_strategy.clone(),
             estimated_cost: plan.estimated_cost,
-            operations: plan.operations.iter().map(|op| op.describe()).collect(),
+            operations: plan
+                .execution_steps
+                .iter()
+                .map(|op| op.describe())
+                .collect(),
             optimizations: plan.optimizations.clone(),
             performance_hints: hints,
         })
     }
 }
 
-/// Execution strategy determined by query analysis
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-pub enum ExecutionStrategy {
-    /// Vector-only queries (similarity search, metadata filtering)
-    VectorOnly,
-    /// Graph-only queries (traversal, pathfinding)
-    GraphOnly,
-    /// Hybrid queries (vector + graph with fusion)
-    Hybrid,
-    /// Traditional relational queries
-    Relational,
-}
+pub use crate::query::query_optimizer::{
+    AggregateFunc, AggregateSpec, ExecutionStep as ExecutionOperation, ExecutionStrategy,
+    FusionStrategy, JoinKind, ProjectionTransform, SeedingStrategy,
+    UnifiedExecutionPlan as ExecutionPlan,
+};
 
-/// Query execution plan generated from internal AST
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct ExecutionPlan {
-    /// Strategy for executing this query
-    pub execution_strategy: ExecutionStrategy,
-    /// Ordered list of execution operations
-    pub operations: Vec<ExecutionOperation>,
-    /// Estimated total cost of the plan
-    pub estimated_cost: f64,
-    /// Optimizations applied to the plan
-    pub optimizations: Vec<String>,
-    /// Performance hints for the executor
-    pub performance_hints: Vec<String>,
-    /// Seeding strategy for hybrid graph-vector queries
-    pub seeding_strategy: SeedingStrategy,
-    /// Optional result limit
-    pub limit: Option<usize>,
-    /// Optional result offset
-    pub offset: Option<usize>,
-}
-
-/// Individual operation in the execution plan
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum ExecutionOperation {
-    /// Vector search operation with HashMap metadata filtering
-    VectorSearch {
-        /// Collection to search
-        collection_id: String,
-        /// Query vector for similarity search
-        query_vector: Option<Vec<f32>>,
-        /// Optional metadata filter expression
-        filters: Option<FilterExpression>,
-        /// Number of nearest neighbors to return
-        top_k: usize,
-        /// Distance metric to use (e.g., "cosine", "l2")
-        distance_metric: String,
-    },
-    /// Graph traversal operation
-    GraphTraversal {
-        /// Graph identifier
-        graph_id: String,
-        /// Starting node IDs for traversal
-        start_nodes: Vec<String>,
-        /// Edge types to traverse
-        edge_types: Vec<String>,
-        /// Maximum traversal depth
-        max_depth: u32,
-        /// Optional filter expression for traversal
-        filters: Option<FilterExpression>,
-        /// Optional vector target collection for seeded SIMILAR after traversal
-        vector_target_collection: Option<String>,
-    },
-    /// Fusion operation for hybrid results
-    Fusion {
-        /// Fusion strategy to use
-        strategy: FusionStrategy,
-        /// Weights for each input source
-        weights: Vec<f64>,
-    },
-    /// Projection and result formatting
-    Project {
-        /// Column names to project
-        columns: Vec<String>,
-        /// Transformations to apply to projected columns
-        transformations: Vec<ProjectionTransform>,
-    },
-    /// Aggregate + Having for GROUP BY
-    Aggregate {
-        /// Columns to group by
-        group_keys: Vec<String>,
-        /// Aggregate specifications
-        aggs: Vec<AggregateSpec>,
-        /// Optional HAVING filter
-        having: Option<FilterExpression>,
-    },
-    /// Join scaffolding (implemented)
-    Join {
-        /// Type of join
-        kind: JoinKind,
-        /// Left join key columns
-        left_keys: Vec<String>,
-        /// Right join key columns
-        right_keys: Vec<String>,
-        /// Left table alias
-        left_alias: String,
-        /// Right table alias
-        right_alias: String,
-    },
-    /// UNION operation for combining results
-    Union {
-        /// Whether to include all rows (UNION ALL)
-        all: bool,
-    },
-    /// Set UNION operation with explicit left/right references
-    SetUnion {
-        /// Left result set reference
-        left_results: String,
-        /// Right result set reference
-        right_results: String,
-        /// Whether to deduplicate results
-        distinct: bool,
-    },
-    /// Set INTERSECT operation
-    SetIntersect {
-        /// Left result set reference
-        left_results: String,
-        /// Right result set reference
-        right_results: String,
-        /// Whether to deduplicate results
-        distinct: bool,
-    },
-    /// Set EXCEPT operation
-    SetExcept {
-        /// Left result set reference
-        left_results: String,
-        /// Right result set reference
-        right_results: String,
-        /// Whether to deduplicate results
-        distinct: bool,
-    },
-    /// CTE Materialization operation
-    CteMaterialization {
-        /// Name of the CTE to materialize
-        cte_name: String,
-        /// Execution plan for the CTE
-        query_plan: Box<ExecutionPlan>,
-    },
-}
-
-impl ExecutionOperation {
-    /// Describe operation for EXPLAIN output
-    pub fn describe(&self) -> String {
-        match self {
-            ExecutionOperation::VectorSearch {
-                collection_id,
-                top_k,
-                ..
-            } => {
-                format!(
-                    "Vector Search on collection {} (top_k: {})",
-                    collection_id, top_k
-                )
-            }
-            ExecutionOperation::GraphTraversal {
-                graph_id,
-                max_depth,
-                edge_types,
-                ..
-            } => {
-                format!(
-                    "Graph Traversal on {} (depth: {}, edges: {:?})",
-                    graph_id, max_depth, edge_types
-                )
-            }
-            ExecutionOperation::Fusion { strategy, .. } => {
-                format!("Hybrid Fusion ({:?})", strategy)
-            }
-            ExecutionOperation::Project { columns, .. } => {
-                format!("Project (columns: {})", columns.len())
-            }
-            ExecutionOperation::Aggregate {
-                group_keys, aggs, ..
-            } => {
-                format!(
-                    "Aggregate (groups: {}, aggs: {})",
-                    group_keys.len(),
-                    aggs.len()
-                )
-            }
-            ExecutionOperation::Join {
-                kind, left_keys, ..
-            } => {
-                format!("Join ({:?}) keys:{}", kind, left_keys.len())
-            }
-            ExecutionOperation::Union { all } => {
-                format!("Union ({})", if *all { "ALL" } else { "DISTINCT" })
-            }
-            ExecutionOperation::SetUnion { distinct, .. } => {
-                format!("Set Union ({})", if *distinct { "DISTINCT" } else { "ALL" })
-            }
-            ExecutionOperation::SetIntersect { distinct, .. } => {
-                format!(
-                    "Set Intersect ({})",
-                    if *distinct { "DISTINCT" } else { "ALL" }
-                )
-            }
-            ExecutionOperation::SetExcept { distinct, .. } => {
-                format!(
-                    "Set Except ({})",
-                    if *distinct { "DISTINCT" } else { "ALL" }
-                )
-            }
-            ExecutionOperation::CteMaterialization { cte_name, .. } => {
-                format!("CTE Materialization ({})", cte_name)
-            }
-        }
-    }
-}
-
-/// Seeding strategy for hybrid graph→vector path
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum SeedingStrategy {
-    /// Average seed embeddings into a single query vector
-    Average,
-    /// Run per-seed vector queries and fuse
-    PerSeed,
-    /// Disable graph→vector seeding
-    None,
-}
-
-/// Fusion strategies for hybrid queries
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum FusionStrategy {
-    /// Simple additive score combination
-    Additive,
-    /// Multiplicative score combination
-    Multiplicative,
-    /// Reciprocal Rank Fusion (research-grade)
-    ReciprocalRankFusion {
-        /// RRF constant k parameter
-        k: f64,
-    },
-    /// Adaptive Semantic Fusion with learning
-    AdaptiveSemanticFusion {
-        /// Learning rate for adaptive weight adjustment
-        learning_rate: f64,
-    },
-}
-
-/// Projection transformations for result formatting
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum ProjectionTransform {
-    /// Extract metadata field with HashMap optimization
-    ExtractMetadata {
-        /// Metadata field name to extract
-        field: String,
-    },
-    /// Calculate similarity score
-    SimilarityScore,
-    /// Format timestamp
-    FormatTimestamp,
-}
-
-/// Aggregate specification
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct AggregateSpec {
-    /// Output alias for this aggregate
-    pub alias: String,
-    /// Aggregate function to apply
-    pub func: AggregateFunc,
-    /// Field to aggregate
-    pub field: String,
-}
-
-/// Aggregate function type
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum AggregateFunc {
-    /// Count of rows
-    Count,
-    /// Sum of values
-    Sum,
-    /// Average of values
-    Avg,
-    /// Minimum value
-    Min,
-    /// Maximum value
-    Max,
-}
-
-/// Type of join operation
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub enum JoinKind {
-    /// Inner join
-    Inner,
-    /// Left outer join
-    Left,
-}
+/// Backwards-compat alias for [`ExecutionQueryResult`].
+pub type QueryResult = ExecutionQueryResult;
 
 /// Query execution result
-#[derive(Debug, Clone)]
-pub struct QueryResult {
+#[derive(Debug, Clone, Default)]
+pub struct ExecutionQueryResult {
     /// Result rows
     pub rows: Vec<QueryRow>,
     /// Total number of matching results
@@ -476,7 +207,7 @@ pub struct QueryResult {
 }
 
 /// Individual result row
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct QueryRow {
     /// Field values by column name
     pub fields: std::collections::HashMap<String, serde_json::Value>,
@@ -543,10 +274,10 @@ mod execution_tests {
         // Vector-only query
         let vector_query = create_test_vector_query();
         let vector_plan = engine.planner.create_plan(&vector_query).unwrap();
-        // The query has SksSimilar, which should trigger Hybrid strategy
+        // The query has only SksSimilar (no graph ops), so strategy is VectorOnly
         assert!(matches!(
             vector_plan.execution_strategy,
-            ExecutionStrategy::Hybrid
+            ExecutionStrategy::VectorOnly
         ));
 
         // Deferred: Test graph-only and hybrid strategies
@@ -557,7 +288,7 @@ mod execution_tests {
         use crate::index::AxisManager;
         use crate::services::collection::manager::CollectionService;
         use crate::services::operations::vectors::VectorOperationsService;
-        use crate::storage::engines::impls::sst::SstEngine;
+        use crate::storage::engines::sst::SstEngine;
         use crate::storage::persistence::write_ahead_log::WriteAheadLogManager;
         use std::sync::Arc;
 
@@ -642,7 +373,7 @@ mod execution_tests {
             storage_engine,
             wal_manager,
             axis_manager,
-            collection_service,
+            collection_service as Arc<dyn proximadb_runtime::CollectionPort>,
         ));
 
         // Create graph service

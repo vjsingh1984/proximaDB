@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::{ProximaDataBlock, RowBasedConfig};
 use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::proto::v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Row-based utilities collection
 pub struct RowBasedUtilities;
@@ -25,9 +25,12 @@ impl RowBasedUtilities {
 
             // Calculate vector data size
             for record in &block.records {
-                total_vector_bytes += record.vector.len() * 4; // 4 bytes per f32
-                if !record.metadata.is_empty() {
-                    total_metadata_bytes += record.metadata.len() * 32; // Rough estimate per metadata item
+                total_vector_bytes += record
+                    .embeddings
+                    .first()
+                    .map_or(0, |embedding| embedding.values.len() * 4);
+                if !record.props.is_empty() {
+                    total_metadata_bytes += record.props.len() * 32; // Rough estimate per metadata item
                 }
             }
 
@@ -111,34 +114,40 @@ impl RowBasedUtilities {
     }
 
     /// Validate record integrity
-    pub fn validate_records(records: &[VectorRecord]) -> ValidationReport {
+    pub fn validate_records(records: &[ProximaRecord]) -> ValidationReport {
         let mut report = ValidationReport::default();
 
         for (idx, record) in records.iter().enumerate() {
             let mut record_issues = Vec::new();
 
             // Check ID
-            if record.id.is_empty() {
+            if record.oid.is_empty() {
                 record_issues.push("Missing or empty ID".to_string());
             }
 
             // Check vector
-            if record.vector.is_empty() {
+            let vector = record
+                .embeddings
+                .first()
+                .map(|embedding| embedding.as_fp32_slice());
+            if vector.is_none_or(|values| values.is_empty()) {
                 record_issues.push("Empty vector".to_string());
             }
 
             // Check for NaN or infinite values
-            for (i, &value) in record.vector.iter().enumerate() {
-                if value.is_nan() {
-                    record_issues.push(format!("NaN value at position {i}"));
-                }
-                if value.is_infinite() {
-                    record_issues.push(format!("Infinite value at position {i}"));
+            if let Some(vector) = vector {
+                for (i, &value) in vector.iter().enumerate() {
+                    if value.is_nan() {
+                        record_issues.push(format!("NaN value at position {i}"));
+                    }
+                    if value.is_infinite() {
+                        record_issues.push(format!("Infinite value at position {i}"));
+                    }
                 }
             }
 
             // Check timestamp
-            if record.timestamp.unwrap_or(0) < 0 {
+            if record.created_at_ns < 0 {
                 record_issues.push("Invalid timestamp".to_string());
             }
 
@@ -148,7 +157,7 @@ impl RowBasedUtilities {
                 report.invalid_records += 1;
                 report.validation_errors.push(RecordValidationError {
                     record_index: idx,
-                    record_id: Some(record.id.clone()),
+                    record_id: Some(record.oid.clone()),
                     issues: record_issues,
                 });
             }
@@ -303,14 +312,14 @@ impl RowBasedUtilities {
     fn recommend_access_optimizations(
         temporal_gaps: &[i64],
         spatial_distances: &[u64],
-    ) -> Vec<OptimizationRecommendation> {
+    ) -> Vec<BlockUtilsOptimizationRecommendation> {
         let mut recommendations = Vec::new();
 
         let temporal_locality = Self::calculate_temporal_locality(temporal_gaps);
         let spatial_locality = Self::calculate_spatial_locality(spatial_distances);
 
         if temporal_locality > 0.7 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(BlockUtilsOptimizationRecommendation {
                 optimization_type: "enable_prefetching".to_string(),
                 description: "High temporal locality detected - enable prefetching".to_string(),
                 expected_improvement: 15.0,
@@ -319,7 +328,7 @@ impl RowBasedUtilities {
         }
 
         if spatial_locality > 0.8 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(BlockUtilsOptimizationRecommendation {
                 optimization_type: "sequential_layout".to_string(),
                 description: "High spatial locality - optimize for sequential access".to_string(),
                 expected_improvement: 25.0,
@@ -328,7 +337,7 @@ impl RowBasedUtilities {
         }
 
         if temporal_locality < 0.3 && spatial_locality < 0.3 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(BlockUtilsOptimizationRecommendation {
                 optimization_type: "random_access_optimization".to_string(),
                 description: "Random access pattern - optimize index structures".to_string(),
                 expected_improvement: 20.0,
@@ -423,12 +432,12 @@ impl MemoryEstimator {
 }
 
 /// Performance profiler for operations
-pub struct PerformanceProfiler {
+pub struct BlockUtilsPerformanceProfiler {
     start_time: std::time::Instant,
     checkpoints: Vec<PerformanceCheckpoint>,
 }
 
-impl PerformanceProfiler {
+impl BlockUtilsPerformanceProfiler {
     pub fn new() -> Self {
         Self {
             start_time: std::time::Instant::now(),
@@ -445,11 +454,11 @@ impl PerformanceProfiler {
         });
     }
 
-    pub fn finish(self) -> PerformanceProfile {
+    pub fn finish(self) -> BlockUtilsPerformanceProfile {
         let total_time = self.start_time.elapsed();
         let peak_memory = self.checkpoints.iter().map(|cp| cp.memory_usage).max();
 
-        PerformanceProfile {
+        BlockUtilsPerformanceProfile {
             total_time_ms: total_time.as_millis() as u64,
             checkpoints: self.checkpoints,
             peak_memory_bytes: peak_memory.unwrap_or(0),
@@ -462,7 +471,7 @@ impl PerformanceProfiler {
     }
 }
 
-impl Default for PerformanceProfiler {
+impl Default for BlockUtilsPerformanceProfiler {
     fn default() -> Self {
         Self::new()
     }
@@ -553,11 +562,14 @@ pub struct AccessPatternAnalysis {
     pub temporal_locality: f64,
     pub spatial_locality: f64,
     pub operation_distribution: HashMap<String, u64>,
-    pub recommended_optimizations: Vec<OptimizationRecommendation>,
+    pub recommended_optimizations: Vec<BlockUtilsOptimizationRecommendation>,
 }
 
+/// Backwards-compat alias for [`BlockUtilsOptimizationRecommendation`].
+pub type OptimizationRecommendation = BlockUtilsOptimizationRecommendation;
+
 #[derive(Debug, Clone)]
-pub struct OptimizationRecommendation {
+pub struct BlockUtilsOptimizationRecommendation {
     pub optimization_type: String,
     pub description: String,
     pub expected_improvement: f64, // Percentage
@@ -581,8 +593,11 @@ pub struct PerformanceCheckpoint {
     pub memory_usage: usize,
 }
 
+/// Backwards-compat alias for [`BlockUtilsPerformanceProfile`].
+pub type PerformanceProfile = BlockUtilsPerformanceProfile;
+
 #[derive(Debug, Clone)]
-pub struct PerformanceProfile {
+pub struct BlockUtilsPerformanceProfile {
     pub total_time_ms: u64,
     pub checkpoints: Vec<PerformanceCheckpoint>,
     pub peak_memory_bytes: usize,
@@ -676,23 +691,32 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::common::FilenameCodec;
     use crate::storage::engines::core::formats::proximablocks::block_structures::BlockStatistics;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
+
+    fn test_record(oid: &str, values: Vec<f32>, timestamp_ms: i64) -> ProximaRecord {
+        let mut record = ProximaRecord {
+            oid: oid.to_string(),
+            created_at_ns: timestamp_ms * 1_000_000,
+            updated_at_ns: timestamp_ms * 1_000_000,
+            ..Default::default()
+        };
+        record.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            dim: values.len() as u32,
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            ..Default::default()
+        });
+        record
+    }
 
     #[test]
     fn test_memory_usage_calculation() {
         let records = vec![
-            VectorRecord {
-                id: "test1".to_string(),
-                vector: vec![1.0, 2.0, 3.0],
-                ..Default::default()
-            },
-            VectorRecord {
-                id: "test2".to_string(),
-                vector: vec![4.0, 5.0, 6.0],
-                ..Default::default()
-            },
+            test_record("test1", vec![1.0, 2.0, 3.0], 1000),
+            test_record("test2", vec![4.0, 5.0, 6.0], 1001),
         ];
 
         // Deferred: Update to use proper data structure
@@ -710,7 +734,7 @@ mod tests {
             quantized_section: None,
             metadata: crate::storage::engines::core::formats::proximablocks::block_structures::ProximaBlockMetadata::default(),
             compression_config: crate::storage::engines::core::formats::proximablocks::block_structures::BlockCompressionConfig::default(),
-            compression_algorithm: crate::core::compression::CompressionAlgorithm::None,
+            compression_algorithm: proximadb_compression::CompressionAlgorithm::None,
             uncompressed_size: 0,
             bloom_filter: None,
             block_bloom_filter: None,
@@ -740,24 +764,9 @@ mod tests {
     #[test]
     fn test_record_validation() {
         let records = vec![
-            VectorRecord {
-                id: "valid".to_string(),
-                vector: vec![1.0, 2.0, 3.0],
-                timestamp: Some(1000),
-                ..Default::default()
-            },
-            VectorRecord {
-                id: "".to_string(), // Invalid - no ID
-                vector: vec![4.0, 5.0, 6.0],
-                timestamp: Some(2000),
-                ..Default::default()
-            },
-            VectorRecord {
-                id: "invalid_vector".to_string(),
-                vector: vec![f32::NAN, 2.0, f32::INFINITY], // Invalid - NaN and Infinity
-                timestamp: Some(3000),
-                ..Default::default()
-            },
+            test_record("valid", vec![1.0, 2.0, 3.0], 1000),
+            test_record("", vec![4.0, 5.0, 6.0], 2000),
+            test_record("invalid_vector", vec![f32::NAN, 2.0, f32::INFINITY], 3000),
         ];
 
         let report = RowBasedUtilities::validate_records(&records);
@@ -806,7 +815,7 @@ mod tests {
 
     #[test]
     fn test_performance_profiler() {
-        let mut profiler = PerformanceProfiler::new();
+        let mut profiler = BlockUtilsPerformanceProfiler::new();
 
         profiler.checkpoint("start".to_string());
         std::thread::sleep(std::time::Duration::from_millis(1));

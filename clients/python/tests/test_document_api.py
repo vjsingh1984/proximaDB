@@ -16,7 +16,6 @@ import pytest
 # Add the src directory to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
-from proximadb_sdk import ProximaDBClient
 from proximadb_sdk.document import (
     DocIndexType,
     DocumentCollectionConfig,
@@ -27,9 +26,9 @@ from proximadb_sdk.document import (
 
 
 @pytest.fixture
-def client():
+def client(embedded_rest_client):
     """Create a ProximaDB client for testing."""
-    return ProximaDBClient(url="http://localhost:5678")
+    return embedded_rest_client
 
 
 @pytest.fixture

@@ -81,14 +81,14 @@ func main() {
 	}
 	fmt.Printf("Created collection: %s (dimension: %d)\n\n", collection.Name, collection.Dimension)
 
-	// Generate and insert sample vectors
-	fmt.Println("Inserting vectors...")
+	// Generate and insert sample records with embeddings
+	fmt.Println("Inserting records...")
 	records := generateSampleRecords(100, 128)
-	err = client.Insert(ctx, collectionName, records)
+	err = client.InsertRecords(ctx, collectionName, records)
 	if err != nil {
-		log.Fatalf("Failed to insert vectors: %v", err)
+		log.Fatalf("Failed to insert records: %v", err)
 	}
-	fmt.Printf("Inserted %d vectors\n\n", len(records))
+	fmt.Printf("Inserted %d records\n\n", len(records))
 
 	// Perform a vector search
 	fmt.Println("Performing vector search...")
@@ -187,16 +187,16 @@ func main() {
 	fmt.Printf("  Average Latency: %v\n", metrics.AverageLatency())
 }
 
-// generateSampleRecords generates sample vector records.
-func generateSampleRecords(count, dimension int) []*proximadb.VectorRecord {
+// generateSampleRecords generates sample records with embeddings.
+func generateSampleRecords(count, dimension int) []*proximadb.ProximaRecord {
 	categories := []string{"A", "B", "C", "D"}
-	records := make([]*proximadb.VectorRecord, count)
+	records := make([]*proximadb.ProximaRecord, count)
 
 	for i := 0; i < count; i++ {
-		records[i] = &proximadb.VectorRecord{
+		records[i] = &proximadb.ProximaRecord{
 			ID:     fmt.Sprintf("vec_%d", i),
 			Vector: generateRandomVector(dimension),
-			Metadata: map[string]interface{}{
+			Props: map[string]interface{}{
 				"category": categories[i%len(categories)],
 				"index":    i,
 				"created":  time.Now().Format(time.RFC3339),

@@ -112,22 +112,22 @@ pub struct MetadataMemoryIndexes {
 
     /// Prefix index for name prefix searches - O(log n) for prefix queries
     /// Supports queries like "find collections starting with 'user_'"
-    name_prefix_index: Arc<RwLock<BTreeMap<String, Vec<String>>>>,
-
-    /// Tag index for metadata filtering - O(1) lookup by tag
-    /// Supports tag-based collection discovery
-    tag_to_uuids: Arc<RwLock<HashMap<String, Vec<String>>>>,
-
-    /// Size-based index for capacity planning - O(log n) range queries
-    /// Supports queries like "find collections > 1GB"
-    size_index: Arc<RwLock<BTreeMap<i64, Vec<String>>>>,
-
-    /// Creation time index for lifecycle queries - O(log n) range queries
-    /// Supports queries like "find collections created in last 30 days"
-    created_time_index: Arc<RwLock<BTreeMap<i64, Vec<String>>>>,
+    secondary_indexes: Arc<RwLock<SecondaryIndexes>>,
 
     /// Statistics for monitoring and optimization
     stats: Arc<RwLock<IndexStatistics>>,
+}
+
+#[derive(Debug, Default)]
+struct SecondaryIndexes {
+    /// Prefix index for name prefix searches - O(log n) for prefix queries
+    name_prefix_index: BTreeMap<String, Vec<String>>,
+    /// Tag index for metadata filtering - O(1) lookup by tag
+    tag_to_uuids: HashMap<String, Vec<String>>,
+    /// Size-based index for capacity planning - O(log n) range queries
+    size_index: BTreeMap<i64, Vec<String>>,
+    /// Creation time index for lifecycle queries - O(log n) range queries
+    created_time_index: BTreeMap<i64, Vec<String>>,
 }
 
 impl MetadataMemoryIndexes {
@@ -136,10 +136,7 @@ impl MetadataMemoryIndexes {
         Self {
             uuid_to_record: DashMap::new(),
             name_to_uuid: DashMap::new(),
-            name_prefix_index: Arc::new(RwLock::new(BTreeMap::new())),
-            tag_to_uuids: Arc::new(RwLock::new(HashMap::new())),
-            size_index: Arc::new(RwLock::new(BTreeMap::new())),
-            created_time_index: Arc::new(RwLock::new(BTreeMap::new())),
+            secondary_indexes: Arc::new(RwLock::new(SecondaryIndexes::default())),
             stats: Arc::new(RwLock::new(IndexStatistics {
                 total_collections: 0,
                 memory_usage_bytes: 0,
@@ -262,10 +259,10 @@ impl MetadataMemoryIndexes {
         let start_time = std::time::Instant::now();
         let mut results = Vec::new();
 
-        let prefix_index = self.name_prefix_index.read().await;
+        let secondary = self.secondary_indexes.read().await;
 
         // Use BTreeMap range to efficiently find all names with prefix
-        for (name, uuids) in prefix_index.range(prefix.to_string()..) {
+        for (name, uuids) in secondary.name_prefix_index.range(prefix.to_string()..) {
             if !name.starts_with(prefix) {
                 break; // BTreeMap is sorted, so we can break early
             }
@@ -292,8 +289,8 @@ impl MetadataMemoryIndexes {
         let start_time = std::time::Instant::now();
         let mut results = Vec::new();
 
-        let tag_index = self.tag_to_uuids.read().await;
-        if let Some(uuids) = tag_index.get(tag) {
+        let secondary = self.secondary_indexes.read().await;
+        if let Some(uuids) = secondary.tag_to_uuids.get(tag) {
             for uuid in uuids {
                 if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
@@ -319,8 +316,8 @@ impl MetadataMemoryIndexes {
     ) -> Vec<CollectionLookupResult> {
         let mut results = Vec::new();
 
-        let size_index = self.size_index.read().await;
-        for (_size, uuids) in size_index.range(min_size..=max_size) {
+        let secondary = self.secondary_indexes.read().await;
+        for (_size, uuids) in secondary.size_index.range(min_size..=max_size) {
             for uuid in uuids {
                 if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
@@ -339,8 +336,8 @@ impl MetadataMemoryIndexes {
     ) -> Vec<CollectionLookupResult> {
         let mut results = Vec::new();
 
-        let time_index = self.created_time_index.read().await;
-        for (_time, uuids) in time_index.range(start_time..=end_time) {
+        let secondary = self.secondary_indexes.read().await;
+        for (_time, uuids) in secondary.created_time_index.range(start_time..=end_time) {
             for uuid in uuids {
                 if let Some(record) = self.uuid_to_record.get(uuid) {
                     results.push(CollectionLookupResult::from(record.value().as_ref()));
@@ -368,10 +365,7 @@ impl MetadataMemoryIndexes {
     pub async fn clear(&self) {
         self.uuid_to_record.clear();
         self.name_to_uuid.clear();
-        self.name_prefix_index.write().await.clear();
-        self.tag_to_uuids.write().await.clear();
-        self.size_index.write().await.clear();
-        self.created_time_index.write().await.clear();
+        *self.secondary_indexes.write().await = SecondaryIndexes::default();
 
         let mut stats = self.stats.write().await;
         *stats = IndexStatistics {
@@ -401,102 +395,92 @@ impl MetadataMemoryIndexes {
 
     /// Insert into secondary indexes
     async fn insert_into_secondary_indexes(&self, record: &Collection) {
+        let mut secondary = self.secondary_indexes.write().await;
+        Self::insert_into_secondary_indexes_locked(&mut secondary, record);
+    }
+
+    fn insert_into_secondary_indexes_locked(secondary: &mut SecondaryIndexes, record: &Collection) {
         // Name prefix index - Store full names only
-        {
-            let mut prefix_index = self.name_prefix_index.write().await;
-            if let Some(config) = record.config.as_ref() {
-                prefix_index
-                    .entry(config.name.clone())
-                    .or_default()
-                    .push(record.id.clone());
-            }
+        if let Some(config) = record.config.as_ref() {
+            secondary
+                .name_prefix_index
+                .entry(config.name.clone())
+                .or_default()
+                .push(record.id.clone());
         }
 
         // Tag index
-        {
-            let mut tag_index = self.tag_to_uuids.write().await;
-            if let Some(config) = &record.config {
-                for tag in &config.tags {
-                    tag_index
-                        .entry(tag.clone())
-                        .or_default()
-                        .push(record.id.clone());
-                }
+        if let Some(config) = &record.config {
+            for tag in &config.tags {
+                secondary
+                    .tag_to_uuids
+                    .entry(tag.clone())
+                    .or_default()
+                    .push(record.id.clone());
             }
         }
 
         // Size index
-        {
-            let mut size_index = self.size_index.write().await;
-            if let Some(stats) = &record.stats {
-                size_index
-                    .entry(stats.data_size_bytes)
-                    .or_default()
-                    .push(record.id.clone());
-            }
-        }
-
-        // Time index
-        {
-            let mut time_index = self.created_time_index.write().await;
-            time_index
-                .entry(record.created_at)
+        if let Some(stats) = &record.stats {
+            secondary
+                .size_index
+                .entry(stats.data_size_bytes)
                 .or_default()
                 .push(record.id.clone());
         }
+
+        // Time index
+        secondary
+            .created_time_index
+            .entry(record.created_at)
+            .or_default()
+            .push(record.id.clone());
     }
 
     /// Remove from secondary indexes
     async fn remove_from_secondary_indexes(&self, record: &Collection) {
+        let mut secondary = self.secondary_indexes.write().await;
+        Self::remove_from_secondary_indexes_locked(&mut secondary, record);
+    }
+
+    fn remove_from_secondary_indexes_locked(secondary: &mut SecondaryIndexes, record: &Collection) {
         // Name prefix index - Remove full name only
+        if let Some(config) = record.config.as_ref()
+            && let Some(uuids) = secondary.name_prefix_index.get_mut(&config.name)
         {
-            let mut prefix_index = self.name_prefix_index.write().await;
-            if let Some(config) = record.config.as_ref()
-                && let Some(uuids) = prefix_index.get_mut(&config.name)
-            {
-                uuids.retain(|uuid| uuid != &record.id);
-                if uuids.is_empty() {
-                    prefix_index.remove(&config.name);
-                }
+            uuids.retain(|uuid| uuid != &record.id);
+            if uuids.is_empty() {
+                secondary.name_prefix_index.remove(&config.name);
             }
         }
 
         // Tag index
-        {
-            let mut tag_index = self.tag_to_uuids.write().await;
-            if let Some(config) = &record.config {
-                for tag in &config.tags {
-                    if let Some(uuids) = tag_index.get_mut(tag) {
-                        uuids.retain(|uuid| uuid != &record.id);
-                        if uuids.is_empty() {
-                            tag_index.remove(tag);
-                        }
+        if let Some(config) = &record.config {
+            for tag in &config.tags {
+                if let Some(uuids) = secondary.tag_to_uuids.get_mut(tag) {
+                    uuids.retain(|uuid| uuid != &record.id);
+                    if uuids.is_empty() {
+                        secondary.tag_to_uuids.remove(tag);
                     }
                 }
             }
         }
 
         // Size index
+        if let Some(stats) = &record.stats
+            && let Some(uuids) = secondary.size_index.get_mut(&stats.data_size_bytes)
         {
-            let mut size_index = self.size_index.write().await;
-            if let Some(stats) = &record.stats
-                && let Some(uuids) = size_index.get_mut(&stats.data_size_bytes)
-            {
-                uuids.retain(|uuid| uuid != &record.id);
-                if uuids.is_empty() {
-                    size_index.remove(&stats.data_size_bytes);
-                }
+            uuids.retain(|uuid| uuid != &record.id);
+            if uuids.is_empty() {
+                secondary.size_index.remove(&stats.data_size_bytes);
             }
         }
 
         // Time index
-        {
-            let mut time_index = self.created_time_index.write().await;
-            if let Some(uuids) = time_index.get_mut(&record.created_at) {
-                uuids.retain(|uuid| uuid != &record.id);
-                if uuids.is_empty() {
-                    time_index.remove(&record.created_at);
-                }
+        if let Some(uuids) = secondary.created_time_index.get_mut(&record.created_at) {
+            uuids.retain(|uuid| uuid != &record.id);
+            if uuids.is_empty() {
+                secondary.created_time_index.remove(&record.created_at);
             }
         }
     }
@@ -547,6 +531,8 @@ mod tests {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(CollectionStats {
                 vector_count: 100,

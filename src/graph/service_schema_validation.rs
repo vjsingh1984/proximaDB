@@ -9,8 +9,8 @@
 //! - Enforce edge source/target label compatibility
 
 use super::Result;
-use crate::core::error::ProximaDBError;
 use crate::graph::{Edge, Node};
+use proximadb_kernel::error::ProximaDBError;
 
 impl super::GraphOperationsService {
     /// Enforce schema constraints for a node if schema is defined

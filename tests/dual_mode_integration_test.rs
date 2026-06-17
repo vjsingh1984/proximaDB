@@ -10,13 +10,14 @@ use proximadb::{
         StorageEngine, VectorRecord, sql_value,
     },
     storage::{
-        engines::impls::sst::SstEngine,
-        engines::impls::viper::engine::ViperEngine,
+        engines::sst::SstEngine,
+        engines::viper::ViperEngine,
         traits::{
             FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
         },
     },
 };
+use proximadb_records::ProximaRecord;
 use std::sync::Arc;
 use tempfile::tempdir;
 
@@ -137,7 +138,11 @@ mod tests {
             synchronous: true,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
-            vector_records: fixture.test_vectors.clone(),
+            vector_records: fixture
+                .test_vectors
+                .iter()
+                .map(|v: &VectorRecord| v.into())
+                .collect::<Vec<ProximaRecord>>(),
             trigger_compaction: false,
             batch_ids: vec![],
             collection_config: Some(collection),
@@ -192,7 +197,11 @@ mod tests {
             synchronous: true,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
-            vector_records: fixture.test_vectors.clone(),
+            vector_records: fixture
+                .test_vectors
+                .iter()
+                .map(|v: &VectorRecord| v.into())
+                .collect::<Vec<ProximaRecord>>(),
             trigger_compaction: false,
             batch_ids: vec![],
             collection_config: Some(collection),
@@ -266,7 +275,11 @@ mod tests {
             synchronous: true,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
-            vector_records: fixture.test_vectors.clone(),
+            vector_records: fixture
+                .test_vectors
+                .iter()
+                .map(|v: &VectorRecord| v.into())
+                .collect::<Vec<ProximaRecord>>(),
             trigger_compaction: false,
             batch_ids: vec![],
             collection_config: Some(sst_collection),
@@ -279,7 +292,11 @@ mod tests {
             synchronous: true,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
-            vector_records: fixture.test_vectors.clone(),
+            vector_records: fixture
+                .test_vectors
+                .iter()
+                .map(|v: &VectorRecord| v.into())
+                .collect::<Vec<ProximaRecord>>(),
             trigger_compaction: false,
             batch_ids: vec![],
             collection_config: Some(viper_collection),
@@ -333,7 +350,11 @@ mod tests {
             synchronous: true,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
-            vector_records: fixture.test_vectors.clone(),
+            vector_records: fixture
+                .test_vectors
+                .iter()
+                .map(|v: &VectorRecord| v.into())
+                .collect::<Vec<ProximaRecord>>(),
             trigger_compaction: false,
             batch_ids: vec![],
             collection_config: Some(collection.clone()),
@@ -441,7 +462,11 @@ mod tests {
             synchronous: true,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
-            vector_records: fixture.test_vectors.clone(),
+            vector_records: fixture
+                .test_vectors
+                .iter()
+                .map(|v: &VectorRecord| v.into())
+                .collect::<Vec<ProximaRecord>>(),
             trigger_compaction: false,
             batch_ids: vec![],
             collection_config: Some(sst_collection.clone()),
@@ -454,7 +479,11 @@ mod tests {
             synchronous: true,
             hints: std::collections::HashMap::new(),
             timeout_ms: None,
-            vector_records: fixture.test_vectors.clone(),
+            vector_records: fixture
+                .test_vectors
+                .iter()
+                .map(|v: &VectorRecord| v.into())
+                .collect::<Vec<ProximaRecord>>(),
             trigger_compaction: false,
             batch_ids: vec![],
             collection_config: Some(viper_collection.clone()),

@@ -33,7 +33,6 @@ Licensed under the Apache License, Version 2.0
 import hashlib
 import json
 import logging
-import os
 import re
 import subprocess
 from abc import ABC, abstractmethod
@@ -41,20 +40,9 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum, auto
-from functools import lru_cache
 from pathlib import Path
 from typing import (
     Any,
-    Callable,
-    Dict,
-    Iterator,
-    List,
-    Optional,
-    Protocol,
-    Set,
-    Tuple,
-    TypeVar,
-    Union,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,15 +113,15 @@ class Commit:
     hash: str
     short_hash: str
     author: Author
-    committer: Optional[Author]
+    committer: Author | None
     timestamp: datetime
     message: str
-    parent_hashes: List[str] = field(default_factory=list)
+    parent_hashes: list[str] = field(default_factory=list)
 
     # Optional detailed info (populated on demand)
-    files_changed: Optional[int] = None
-    insertions: Optional[int] = None
-    deletions: Optional[int] = None
+    files_changed: int | None = None
+    insertions: int | None = None
+    deletions: int | None = None
 
     @property
     def is_merge(self) -> bool:
@@ -149,7 +137,7 @@ class Branch:
     commit_hash: str
     is_current: bool = False
     is_remote: bool = False
-    upstream: Optional[str] = None
+    upstream: str | None = None
     branch_type: BranchType = BranchType.OTHER
 
     @classmethod
@@ -176,9 +164,9 @@ class Tag:
     name: str
     commit_hash: str
     is_annotated: bool = False
-    tagger: Optional[Author] = None
-    message: Optional[str] = None
-    timestamp: Optional[datetime] = None
+    tagger: Author | None = None
+    message: str | None = None
+    timestamp: datetime | None = None
 
 
 @dataclass
@@ -187,12 +175,12 @@ class FileChange:
 
     path: str
     change_type: ChangeType
-    old_path: Optional[str] = None  # For renames/copies
+    old_path: str | None = None  # For renames/copies
     additions: int = 0
     deletions: int = 0
 
     # Blame information (populated on demand)
-    authors: List[Author] = field(default_factory=list)
+    authors: list[Author] = field(default_factory=list)
 
     @property
     def is_code_file(self) -> bool:
@@ -254,9 +242,9 @@ class FileDiff:
     """Detailed diff for a single file"""
 
     path: str
-    old_path: Optional[str]
+    old_path: str | None
     change_type: ChangeType
-    hunks: List[DiffHunk] = field(default_factory=list)
+    hunks: list[DiffHunk] = field(default_factory=list)
     is_binary: bool = False
 
     @property
@@ -294,17 +282,17 @@ class RepositoryInfo:
 
     root_path: Path
     vcs_type: VCSType
-    remote_url: Optional[str] = None
-    current_branch: Optional[str] = None
-    current_commit: Optional[str] = None
+    remote_url: str | None = None
+    current_branch: str | None = None
+    current_commit: str | None = None
     is_dirty: bool = False
 
     # Repository stats
-    total_commits: Optional[int] = None
-    total_branches: Optional[int] = None
-    total_tags: Optional[int] = None
+    total_commits: int | None = None
+    total_branches: int | None = None
+    total_tags: int | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization"""
         return {
             "root_path": str(self.root_path),
@@ -324,12 +312,12 @@ class IndexState:
     """Tracks the state of the index for a repository"""
 
     repository_id: str
-    last_indexed_commit: Optional[str] = None
-    last_indexed_time: Optional[datetime] = None
-    indexed_files: Dict[str, str] = field(default_factory=dict)  # path -> hash
-    branch_states: Dict[str, str] = field(default_factory=dict)  # branch -> commit
+    last_indexed_commit: str | None = None
+    last_indexed_time: datetime | None = None
+    indexed_files: dict[str, str] = field(default_factory=dict)  # path -> hash
+    branch_states: dict[str, str] = field(default_factory=dict)  # branch -> commit
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "repository_id": self.repository_id,
             "last_indexed_commit": self.last_indexed_commit,
@@ -341,7 +329,7 @@ class IndexState:
         }
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "IndexState":
+    def from_dict(cls, data: dict[str, Any]) -> "IndexState":
         return cls(
             repository_id=data["repository_id"],
             last_indexed_commit=data.get("last_indexed_commit"),
@@ -375,48 +363,48 @@ class VCSBackend(ABC):
         pass
 
     @abstractmethod
-    def get_current_commit(self) -> Optional[Commit]:
+    def get_current_commit(self) -> Commit | None:
         """Get current HEAD commit"""
         pass
 
     @abstractmethod
-    def get_current_branch(self) -> Optional[str]:
+    def get_current_branch(self) -> str | None:
         """Get current branch name"""
         pass
 
     @abstractmethod
-    def get_branches(self, include_remote: bool = False) -> List[Branch]:
+    def get_branches(self, include_remote: bool = False) -> list[Branch]:
         """Get list of branches"""
         pass
 
     @abstractmethod
-    def get_tags(self) -> List[Tag]:
+    def get_tags(self) -> list[Tag]:
         """Get list of tags"""
         pass
 
     @abstractmethod
-    def get_commit(self, ref: str) -> Optional[Commit]:
+    def get_commit(self, ref: str) -> Commit | None:
         """Get commit by reference (hash, branch, tag)"""
         pass
 
     @abstractmethod
     def get_commits(
         self,
-        since: Optional[str] = None,
-        until: Optional[str] = None,
-        path: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> List[Commit]:
+        since: str | None = None,
+        until: str | None = None,
+        path: str | None = None,
+        limit: int | None = None,
+    ) -> list[Commit]:
         """Get list of commits with optional filtering"""
         pass
 
     @abstractmethod
     def get_changed_files(
         self,
-        from_ref: Optional[str] = None,
+        from_ref: str | None = None,
         to_ref: str = "HEAD",
         include_untracked: bool = True,
-    ) -> List[FileChange]:
+    ) -> list[FileChange]:
         """Get list of changed files between refs"""
         pass
 
@@ -424,9 +412,9 @@ class VCSBackend(ABC):
     def get_file_diff(
         self,
         path: str,
-        from_ref: Optional[str] = None,
+        from_ref: str | None = None,
         to_ref: str = "HEAD",
-    ) -> Optional[FileDiff]:
+    ) -> FileDiff | None:
         """Get detailed diff for a file"""
         pass
 
@@ -435,7 +423,7 @@ class VCSBackend(ABC):
         self,
         path: str,
         ref: str = "HEAD",
-    ) -> Optional[str]:
+    ) -> str | None:
         """Get file content at specific ref"""
         pass
 
@@ -444,7 +432,7 @@ class VCSBackend(ABC):
         self,
         path: str,
         ref: str = "HEAD",
-    ) -> List[BlameEntry]:
+    ) -> list[BlameEntry]:
         """Get blame information for a file"""
         pass
 
@@ -454,7 +442,7 @@ class VCSBackend(ABC):
         pass
 
     @abstractmethod
-    def get_remote_url(self) -> Optional[str]:
+    def get_remote_url(self) -> str | None:
         """Get primary remote URL"""
         pass
 
@@ -467,16 +455,16 @@ class VCSBackend(ABC):
 class GitRepository(VCSBackend):
     """Git repository implementation"""
 
-    def __init__(self, path: Union[str, Path]):
+    def __init__(self, path: str | Path):
         self._path = Path(path).resolve()
         self._root = self._find_root()
         if not self._root:
             raise ValueError(f"Not a git repository: {path}")
 
         # Cache for expensive operations
-        self._commit_cache: Dict[str, Commit] = {}
+        self._commit_cache: dict[str, Commit] = {}
 
-    def _find_root(self) -> Optional[Path]:
+    def _find_root(self) -> Path | None:
         """Find git repository root"""
         current = self._path
         while current != current.parent:
@@ -530,7 +518,7 @@ class GitRepository(VCSBackend):
             parent_hashes=parent_hashes,
         )
 
-    def _parse_author(self, line: str) -> Tuple[str, str]:
+    def _parse_author(self, line: str) -> tuple[str, str]:
         """Parse author line 'Name <email>'"""
         match = re.match(r"^(.+?)\s*<(.+?)>$", line.strip())
         if match:
@@ -544,7 +532,7 @@ class GitRepository(VCSBackend):
     def get_root(self) -> Path:
         return self._root
 
-    def get_current_commit(self) -> Optional[Commit]:
+    def get_current_commit(self) -> Commit | None:
         try:
             result = self._run_git(
                 "log",
@@ -555,7 +543,7 @@ class GitRepository(VCSBackend):
         except subprocess.CalledProcessError:
             return None
 
-    def get_current_branch(self) -> Optional[str]:
+    def get_current_branch(self) -> str | None:
         try:
             result = self._run_git("rev-parse", "--abbrev-ref", "HEAD")
             branch = result.stdout.strip()
@@ -563,7 +551,7 @@ class GitRepository(VCSBackend):
         except subprocess.CalledProcessError:
             return None
 
-    def get_branches(self, include_remote: bool = False) -> List[Branch]:
+    def get_branches(self, include_remote: bool = False) -> list[Branch]:
         branches = []
 
         # Get local branches
@@ -624,7 +612,7 @@ class GitRepository(VCSBackend):
 
         return branches
 
-    def get_tags(self) -> List[Tag]:
+    def get_tags(self) -> list[Tag]:
         tags = []
         try:
             result = self._run_git(
@@ -662,7 +650,7 @@ class GitRepository(VCSBackend):
 
         return tags
 
-    def get_commit(self, ref: str) -> Optional[Commit]:
+    def get_commit(self, ref: str) -> Commit | None:
         if ref in self._commit_cache:
             return self._commit_cache[ref]
 
@@ -681,11 +669,11 @@ class GitRepository(VCSBackend):
 
     def get_commits(
         self,
-        since: Optional[str] = None,
-        until: Optional[str] = None,
-        path: Optional[str] = None,
-        limit: Optional[int] = None,
-    ) -> List[Commit]:
+        since: str | None = None,
+        until: str | None = None,
+        path: str | None = None,
+        limit: int | None = None,
+    ) -> list[Commit]:
         commits = []
         args = ["log", "--format=%H%n%P%n%an <%ae>%n%cn <%ce>%n%ct%n%B%x00"]
 
@@ -719,10 +707,10 @@ class GitRepository(VCSBackend):
 
     def get_changed_files(
         self,
-        from_ref: Optional[str] = None,
+        from_ref: str | None = None,
         to_ref: str = "HEAD",
         include_untracked: bool = True,
-    ) -> List[FileChange]:
+    ) -> list[FileChange]:
         changes = []
 
         if from_ref:
@@ -766,7 +754,7 @@ class GitRepository(VCSBackend):
 
         return changes
 
-    def _parse_diff_name_status(self, output: str) -> List[FileChange]:
+    def _parse_diff_name_status(self, output: str) -> list[FileChange]:
         """Parse git diff --name-status output"""
         changes = []
         for line in output.strip().split("\n"):
@@ -799,9 +787,9 @@ class GitRepository(VCSBackend):
     def get_file_diff(
         self,
         path: str,
-        from_ref: Optional[str] = None,
+        from_ref: str | None = None,
         to_ref: str = "HEAD",
-    ) -> Optional[FileDiff]:
+    ) -> FileDiff | None:
         try:
             if from_ref:
                 result = self._run_git("diff", f"{from_ref}..{to_ref}", "--", path)
@@ -887,7 +875,7 @@ class GitRepository(VCSBackend):
         self,
         path: str,
         ref: str = "HEAD",
-    ) -> Optional[str]:
+    ) -> str | None:
         try:
             result = self._run_git("show", f"{ref}:{path}")
             return result.stdout
@@ -898,7 +886,7 @@ class GitRepository(VCSBackend):
         self,
         path: str,
         ref: str = "HEAD",
-    ) -> List[BlameEntry]:
+    ) -> list[BlameEntry]:
         entries = []
         try:
             result = self._run_git("blame", "-p", ref, "--", path)
@@ -907,7 +895,7 @@ class GitRepository(VCSBackend):
             pass
         return entries
 
-    def _parse_blame_porcelain(self, output: str) -> List[BlameEntry]:
+    def _parse_blame_porcelain(self, output: str) -> list[BlameEntry]:
         """Parse git blame -p (porcelain) output"""
         entries = []
         lines = output.split("\n")
@@ -968,7 +956,7 @@ class GitRepository(VCSBackend):
         except subprocess.CalledProcessError:
             return False
 
-    def get_remote_url(self) -> Optional[str]:
+    def get_remote_url(self) -> str | None:
         try:
             result = self._run_git("remote", "get-url", "origin")
             return result.stdout.strip()
@@ -980,12 +968,12 @@ class GitRepository(VCSBackend):
     def get_file_history(
         self,
         path: str,
-        limit: Optional[int] = None,
-    ) -> List[Commit]:
+        limit: int | None = None,
+    ) -> list[Commit]:
         """Get commit history for a specific file"""
         return self.get_commits(path=path, limit=limit)
 
-    def get_contributors(self) -> List[Author]:
+    def get_contributors(self) -> list[Author]:
         """Get list of contributors"""
         authors = set()
         try:
@@ -999,7 +987,7 @@ class GitRepository(VCSBackend):
             pass
         return list(authors)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get repository statistics"""
         stats = {
             "total_commits": 0,
@@ -1040,7 +1028,7 @@ class RepositoryManager:
     def __init__(
         self,
         backend: VCSBackend,
-        index_state: Optional[IndexState] = None,
+        index_state: IndexState | None = None,
     ):
         self._backend = backend
         self._index_state = index_state or IndexState(
@@ -1056,8 +1044,8 @@ class RepositoryManager:
     @classmethod
     def from_path(
         cls,
-        path: Union[str, Path],
-        index_state: Optional[IndexState] = None,
+        path: str | Path,
+        index_state: IndexState | None = None,
     ) -> "RepositoryManager":
         """
         Create RepositoryManager from path with auto-detection.
@@ -1087,7 +1075,7 @@ class RepositoryManager:
         raise ValueError(f"No supported VCS detected at: {path}")
 
     @classmethod
-    def detect_vcs(cls, path: Union[str, Path]) -> VCSType:
+    def detect_vcs(cls, path: str | Path) -> VCSType:
         """Detect VCS type at path without creating manager"""
         path = Path(path).resolve()
 
@@ -1138,7 +1126,7 @@ class RepositoryManager:
     def get_changes_since_last_index(
         self,
         include_untracked: bool = True,
-    ) -> List[FileChange]:
+    ) -> list[FileChange]:
         """
         Get files that changed since last indexing.
 
@@ -1155,7 +1143,7 @@ class RepositoryManager:
             # First index - return all tracked files
             return self._get_all_tracked_files()
 
-    def _get_all_tracked_files(self) -> List[FileChange]:
+    def _get_all_tracked_files(self) -> list[FileChange]:
         """Get all tracked files as 'added' changes"""
         changes = []
         if isinstance(self._backend, GitRepository):
@@ -1176,8 +1164,8 @@ class RepositoryManager:
     def get_files_to_reindex(
         self,
         filter_code_files: bool = True,
-        extensions: Optional[Set[str]] = None,
-    ) -> List[FileChange]:
+        extensions: set[str] | None = None,
+    ) -> list[FileChange]:
         """
         Get files that need reindexing.
 
@@ -1199,15 +1187,15 @@ class RepositoryManager:
         # Filter out deleted files (they need different handling)
         return [c for c in changes if c.change_type != ChangeType.DELETED]
 
-    def get_deleted_files(self) -> List[FileChange]:
+    def get_deleted_files(self) -> list[FileChange]:
         """Get files that were deleted since last index"""
         changes = self.get_changes_since_last_index(include_untracked=False)
         return [c for c in changes if c.change_type == ChangeType.DELETED]
 
     def update_index_state(
         self,
-        commit_hash: Optional[str] = None,
-        indexed_files: Optional[Dict[str, str]] = None,
+        commit_hash: str | None = None,
+        indexed_files: dict[str, str] | None = None,
     ) -> None:
         """
         Update index state after successful indexing.
@@ -1235,7 +1223,7 @@ class RepositoryManager:
         self,
         path: str,
         ref: str = "HEAD",
-    ) -> Optional[str]:
+    ) -> str | None:
         """Get file content at specific ref"""
         return self._backend.get_file_content(path, ref)
 
@@ -1243,7 +1231,7 @@ class RepositoryManager:
         self,
         path: str,
         ref: str = "HEAD",
-    ) -> List[BlameEntry]:
+    ) -> list[BlameEntry]:
         """Get blame information for a file"""
         return self._backend.get_blame(path, ref)
 
@@ -1251,26 +1239,26 @@ class RepositoryManager:
         self,
         path: str,
         ref: str = "HEAD",
-    ) -> List[Author]:
+    ) -> list[Author]:
         """Get unique authors for a file"""
         blame = self.get_file_blame(path, ref)
         return list({entry.author for entry in blame})
 
-    def get_commit_info(self, ref: str = "HEAD") -> Optional[Commit]:
+    def get_commit_info(self, ref: str = "HEAD") -> Commit | None:
         """Get commit information"""
         return self._backend.get_commit(ref)
 
-    def get_recent_commits(self, limit: int = 10) -> List[Commit]:
+    def get_recent_commits(self, limit: int = 10) -> list[Commit]:
         """Get recent commits"""
         return self._backend.get_commits(limit=limit)
 
-    def save_state(self, path: Union[str, Path]) -> None:
+    def save_state(self, path: str | Path) -> None:
         """Save index state to file"""
         path = Path(path)
         path.write_text(json.dumps(self._index_state.to_dict(), indent=2))
 
     @classmethod
-    def load_state(cls, state_path: Union[str, Path]) -> Optional[IndexState]:
+    def load_state(cls, state_path: str | Path) -> IndexState | None:
         """Load index state from file"""
         path = Path(state_path)
         if path.exists():
@@ -1287,12 +1275,12 @@ class RepositoryManager:
 # =============================================================================
 
 
-def is_git_repository(path: Union[str, Path]) -> bool:
+def is_git_repository(path: str | Path) -> bool:
     """Check if path is inside a git repository"""
     return RepositoryManager.detect_vcs(path) == VCSType.GIT
 
 
-def get_repository_root(path: Union[str, Path]) -> Optional[Path]:
+def get_repository_root(path: str | Path) -> Path | None:
     """Get repository root for a path"""
     try:
         repo = RepositoryManager.from_path(path)
@@ -1301,7 +1289,7 @@ def get_repository_root(path: Union[str, Path]) -> Optional[Path]:
         return None
 
 
-def get_current_commit_hash(path: Union[str, Path]) -> Optional[str]:
+def get_current_commit_hash(path: str | Path) -> str | None:
     """Get current commit hash for a repository"""
     try:
         repo = RepositoryManager.from_path(path)
@@ -1312,8 +1300,8 @@ def get_current_commit_hash(path: Union[str, Path]) -> Optional[str]:
 
 
 def get_file_git_info(
-    file_path: Union[str, Path],
-) -> Optional[Dict[str, Any]]:
+    file_path: str | Path,
+) -> dict[str, Any] | None:
     """
     Get git information for a file.
 
@@ -1352,8 +1340,8 @@ def get_file_git_info(
 
 @contextmanager
 def repository_context(
-    path: Union[str, Path],
-    state_file: Optional[Union[str, Path]] = None,
+    path: str | Path,
+    state_file: str | Path | None = None,
 ):
     """
     Context manager for repository operations with automatic state management.

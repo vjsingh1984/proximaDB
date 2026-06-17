@@ -13,7 +13,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::RwLock;
 
 use crate::llm::config::SemanticCacheConfig;
@@ -50,7 +50,12 @@ struct CacheEntry {
     valid: bool,
 }
 
-/// Semantic cache statistics
+/// Semantic cache statistics.
+///
+/// Note: part of the external API surface (appears in REST/gRPC responses
+/// for semantic-search observability). Do NOT consolidate with
+/// `proximadb_runtime_common::cache::CacheStats` without bumping the
+/// public API version — clients may depend on the exact field names.
 #[derive(Debug, Clone, Default)]
 pub struct SemanticCacheStats {
     /// Total cache lookups
@@ -86,7 +91,7 @@ pub struct SemanticCache {
     hits: AtomicU64,
     /// Miss counter
     misses: AtomicU64,
-    initialized: Arc<RwLock<bool>>,
+    initialized: AtomicBool,
 }
 
 impl SemanticCache {
@@ -98,20 +103,22 @@ impl SemanticCache {
             stats: Arc::new(RwLock::new(SemanticCacheStats::default())),
             hits: AtomicU64::new(0),
             misses: AtomicU64::new(0),
-            initialized: Arc::new(RwLock::new(false)),
+            initialized: AtomicBool::new(false),
         })
     }
 
     /// Initialize the semantic cache
     pub async fn initialize(&self) -> Result<()> {
-        let mut initialized = self.initialized.write().await;
-        if *initialized {
+        if self
+            .initialized
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
             return Ok(());
         }
 
         if !self.config.enabled {
             tracing::info!("Semantic cache disabled");
-            *initialized = true;
             return Ok(());
         }
 
@@ -122,7 +129,6 @@ impl SemanticCache {
             "Initializing semantic cache"
         );
 
-        *initialized = true;
         tracing::info!("Semantic cache initialized");
         Ok(())
     }

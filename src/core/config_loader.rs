@@ -116,13 +116,40 @@ impl ConfigLoader {
         // Recursively merge user values into base
         Self::merge_toml_values(&mut base_toml, user_toml);
 
+        // Resolve ${VAR} placeholders before deserializing into typed config.
+        Self::expand_env_placeholders(&mut base_toml)?;
+
         // Deserialize merged TOML back to Config struct
         let mut merged_config: Config = base_toml.try_into()?;
 
         // Resolve all relative paths to absolute paths
         Self::resolve_config_paths(&mut merged_config)?;
+        Self::validate_config(&merged_config)?;
 
         Ok(merged_config)
+    }
+
+    fn validate_config(config: &Config) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        if let Some(query_config) = &config.query {
+            query_config.validate().map_err(|err| {
+                let message = format!("Invalid query configuration: {err}");
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    message,
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+        }
+        if let Some(hybrid_config) = &config.hybrid {
+            hybrid_config.validate().map_err(|err| {
+                let message = format!("Invalid hybrid configuration: {err}");
+                Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    message,
+                )) as Box<dyn std::error::Error + Send + Sync>
+            })?;
+        }
+
+        Ok(())
     }
 
     /// Recursively merge TOML values
@@ -145,6 +172,63 @@ impl ConfigLoader {
                 *base_val = user_value;
             }
         }
+    }
+
+    fn expand_env_placeholders(
+        value: &mut toml::Value,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        match value {
+            toml::Value::String(s) => {
+                *s = Self::expand_env_string(s)?;
+            }
+            toml::Value::Array(items) => {
+                for item in items {
+                    Self::expand_env_placeholders(item)?;
+                }
+            }
+            toml::Value::Table(table) => {
+                let keys: Vec<String> = table.keys().cloned().collect();
+                for key in keys {
+                    if let Some(item) = table.get_mut(&key) {
+                        Self::expand_env_placeholders(item)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
+    }
+
+    fn expand_env_string(input: &str) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+        let mut output = String::with_capacity(input.len());
+        let mut remaining = input;
+
+        while let Some(start) = remaining.find("${") {
+            output.push_str(&remaining[..start]);
+            let after_start = &remaining[start + 2..];
+            let Some(end) = after_start.find('}') else {
+                output.push_str(&remaining[start..]);
+                return Ok(output);
+            };
+
+            let name = &after_start[..end];
+            if name.is_empty() {
+                output.push_str("${}");
+            } else {
+                let value = std::env::var(name).map_err(|_| {
+                    let message =
+                        format!("Environment variable {name} referenced in config but not set");
+                    std::io::Error::new(std::io::ErrorKind::NotFound, message)
+                })?;
+                output.push_str(&value);
+            }
+
+            remaining = &after_start[end + 1..];
+        }
+
+        output.push_str(remaining);
+        Ok(output)
     }
 
     /// Resolve all relative paths in config to absolute paths

@@ -14,28 +14,22 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 use crate::audit::logger::AuditLogger;
-use crate::audit::types::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 use crate::core::search::FilterExpression;
 use crate::core::service_types::{AuditLevel, CollectionSecurityConfig};
-use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
 use crate::security::encryption::{EncryptedField, FieldEncryption};
+use crate::security::rbac_service::UnifiedUserContext;
 use crate::security::rls::{CollectionRLS, Operation as RLSOperation, RLSFilterResult};
-use crate::security::unified_rbac::UnifiedUserContext;
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTreeNode};
+use proximadb_security::{AuditEvent, AuditEventType, AuditResource, AuditResult};
 
-/// Helper to create a SqlValue from a string
-fn string_to_sql_value(s: &str) -> SqlValue {
-    SqlValue {
-        value: Some(sql_value::Value::StringValue(s.to_string())),
-    }
-}
-
-/// Helper to extract string from SqlValue
-fn sql_value_to_string(v: &SqlValue) -> Option<String> {
-    match &v.value {
-        Some(sql_value::Value::StringValue(s)) => Some(s.clone()),
-        Some(sql_value::Value::NumberValue(n)) => Some(n.to_string()),
-        Some(sql_value::Value::Int64Value(i)) => Some(i.to_string()),
-        Some(sql_value::Value::BoolValue(b)) => Some(b.to_string()),
+/// Helper to extract string from a ProximaTreeNode value
+fn proxima_node_to_string(node: &ProximaTreeNode) -> Option<String> {
+    match node {
+        ProximaTreeNode::Value(ProximaValue::String(s)) => Some(s.clone()),
+        ProximaTreeNode::Value(ProximaValue::Float64(n)) => Some(n.to_string()),
+        ProximaTreeNode::Value(ProximaValue::Int64(i)) => Some(i.to_string()),
+        ProximaTreeNode::Value(ProximaValue::Boolean(b)) => Some(b.to_string()),
         _ => None,
     }
 }
@@ -115,30 +109,23 @@ impl SecureVectorOperations {
     pub async fn apply_insert_security(
         &self,
         collection: &str,
-        records: &mut Vec<VectorRecord>,
+        records: &mut Vec<ProximaRecord>,
         user_context: &UnifiedUserContext,
         security_config: &CollectionSecurityConfig,
     ) -> Result<()> {
         // Add ownership metadata for RLS
         if security_config.rls_enabled {
             for record in records.iter_mut() {
-                // Add owner_id to metadata
-                record.metadata.insert(
+                record.props.insert(
                     "owner_id".to_string(),
-                    string_to_sql_value(&user_context.user_id),
+                    ProximaTreeNode::Value(ProximaValue::String(user_context.user_id.clone())),
                 );
-
-                // Add created_by metadata
-                record.metadata.insert(
+                record.props.insert(
                     "created_by".to_string(),
-                    string_to_sql_value(&user_context.user_id),
+                    ProximaTreeNode::Value(ProximaValue::String(user_context.user_id.clone())),
                 );
-
-                // Add tenant_id if present
                 if let Some(ref tenant) = user_context.tenant_id {
-                    record
-                        .metadata
-                        .insert("tenant_id".to_string(), string_to_sql_value(tenant));
+                    record.tenant_id = tenant.clone();
                 }
             }
         }
@@ -168,7 +155,7 @@ impl SecureVectorOperations {
     /// Decrypt fields in search results
     pub async fn decrypt_search_results(
         &self,
-        records: &mut [VectorRecord],
+        records: &mut [ProximaRecord],
         security_config: &CollectionSecurityConfig,
     ) -> Result<()> {
         if !security_config.field_encryption_enabled {
@@ -249,11 +236,10 @@ impl SecureVectorOperations {
     /// Encrypt configured fields in a record
     async fn encrypt_record_fields(
         &self,
-        record: &mut VectorRecord,
+        record: &mut ProximaRecord,
         encryption: &FieldEncryption,
         security_config: &CollectionSecurityConfig,
     ) -> Result<()> {
-        // Get fields to encrypt from config
         let fields_to_encrypt: Vec<String> = security_config
             .encryption_config
             .field_settings
@@ -264,37 +250,35 @@ impl SecureVectorOperations {
         let mut encrypted_fields: HashMap<String, EncryptedField> = HashMap::new();
 
         for field_name in &fields_to_encrypt {
-            if let Some(sql_value) = record.metadata.get(field_name) {
-                // Convert SqlValue to serde_json::Value for encryption
-                if let Some(value_str) = sql_value_to_string(sql_value) {
-                    let value: serde_json::Value = serde_json::from_str(&value_str)
-                        .unwrap_or_else(|_| serde_json::json!(value_str));
+            if let Some(node) = record.props.get(field_name)
+                && let Some(value_str) = proxima_node_to_string(node)
+            {
+                let value: serde_json::Value = serde_json::from_str(&value_str)
+                    .unwrap_or_else(|_| serde_json::json!(value_str));
 
-                    match encryption.encrypt_field(field_name, &value) {
-                        Ok(encrypted) => {
-                            encrypted_fields.insert(field_name.clone(), encrypted);
-                        }
-                        Err(e) => {
-                            warn!("Failed to encrypt field {}: {}", field_name, e);
-                        }
+                match encryption.encrypt_field(field_name, &value) {
+                    Ok(encrypted) => {
+                        encrypted_fields.insert(field_name.clone(), encrypted);
+                    }
+                    Err(e) => {
+                        warn!("Failed to encrypt field {}: {}", field_name, e);
                     }
                 }
             }
         }
 
-        // Replace original values with encrypted versions
         for (field_name, encrypted) in encrypted_fields {
-            // Store encrypted field as JSON in metadata
             let encrypted_json = serde_json::to_string(&encrypted)?;
-            record
-                .metadata
-                .insert(field_name, string_to_sql_value(&encrypted_json));
+            record.props.insert(
+                field_name,
+                ProximaTreeNode::Value(ProximaValue::String(encrypted_json)),
+            );
         }
 
-        // Mark record as encrypted
-        record
-            .metadata
-            .insert("__encrypted".to_string(), string_to_sql_value("true"));
+        record.props.insert(
+            "__encrypted".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Boolean(true)),
+        );
 
         Ok(())
     }
@@ -302,22 +286,19 @@ impl SecureVectorOperations {
     /// Decrypt configured fields in a record
     async fn decrypt_record_fields(
         &self,
-        record: &mut VectorRecord,
+        record: &mut ProximaRecord,
         encryption: &FieldEncryption,
         security_config: &CollectionSecurityConfig,
     ) -> Result<()> {
-        // Check if record is encrypted
-        let is_encrypted = record
-            .metadata
-            .get("__encrypted")
-            .and_then(sql_value_to_string)
-            .is_some_and(|s| s == "true");
+        let is_encrypted = matches!(
+            record.props.get("__encrypted"),
+            Some(ProximaTreeNode::Value(ProximaValue::Boolean(true)))
+        );
 
         if !is_encrypted {
             return Ok(());
         }
 
-        // Get fields to decrypt from config
         let fields_to_decrypt: Vec<String> = security_config
             .encryption_config
             .field_settings
@@ -326,33 +307,30 @@ impl SecureVectorOperations {
             .collect();
 
         for field_name in &fields_to_decrypt {
-            if let Some(sql_value) = record.metadata.get(field_name) {
-                // Extract string from SqlValue
-                if let Some(encrypted_json) = sql_value_to_string(sql_value) {
-                    // Parse the encrypted field
-                    let encrypted: EncryptedField = match serde_json::from_str(&encrypted_json) {
-                        Ok(e) => e,
-                        Err(_) => continue, // Skip if not properly encrypted
-                    };
+            if let Some(node) = record.props.get(field_name)
+                && let Some(encrypted_json) = proxima_node_to_string(node)
+            {
+                let encrypted: EncryptedField = match serde_json::from_str(&encrypted_json) {
+                    Ok(e) => e,
+                    Err(_) => continue,
+                };
 
-                    match encryption.decrypt_field(&encrypted) {
-                        Ok(decrypted) => {
-                            // Store decrypted value back
-                            let decrypted_str = serde_json::to_string(&decrypted)?;
-                            record
-                                .metadata
-                                .insert(field_name.clone(), string_to_sql_value(&decrypted_str));
-                        }
-                        Err(e) => {
-                            warn!("Failed to decrypt field {}: {}", field_name, e);
-                        }
+                match encryption.decrypt_field(&encrypted) {
+                    Ok(decrypted) => {
+                        let decrypted_str = serde_json::to_string(&decrypted)?;
+                        record.props.insert(
+                            field_name.clone(),
+                            ProximaTreeNode::Value(ProximaValue::String(decrypted_str)),
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to decrypt field {}: {}", field_name, e);
                     }
                 }
             }
         }
 
-        // Remove encryption marker
-        record.metadata.remove("__encrypted");
+        record.props.remove("__encrypted");
 
         Ok(())
     }
@@ -445,11 +423,11 @@ pub fn combine_filters(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::audit::logger::AuditConfig;
     use crate::core::search::ComparisonOperator;
+    use crate::security::rbac_service::UnifiedAuthMethod;
     use crate::security::rls::RLSConfig;
-    use crate::security::unified_rbac::AuthMethod;
     use chrono::Utc;
+    use proximadb_security::AuditConfig;
     use std::collections::HashSet;
 
     fn create_test_user_context() -> UnifiedUserContext {
@@ -458,7 +436,7 @@ mod tests {
             tenant_id: None,
             roles: vec!["user".to_string()],
             effective_permissions: HashSet::new(),
-            auth_method: AuthMethod::Internal,
+            auth_method: UnifiedAuthMethod::Internal,
             session_id: "test_session".to_string(),
             expires_at: None,
             created_at: Utc::now(),
@@ -508,10 +486,8 @@ mod tests {
         let mut security_config = CollectionSecurityConfig::default();
         security_config.rls_enabled = true;
 
-        let mut records = vec![VectorRecord {
-            id: "rec1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: HashMap::new(),
+        let mut records = vec![ProximaRecord {
+            oid: "rec1".to_string(),
             ..Default::default()
         }];
 
@@ -525,8 +501,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(records[0].metadata.contains_key("owner_id"));
-        assert!(records[0].metadata.contains_key("created_by"));
+        assert!(records[0].props.contains_key("owner_id"));
+        assert!(records[0].props.contains_key("created_by"));
     }
 
     #[test]

@@ -14,9 +14,9 @@ mod tests {
     use crate::storage::metadata::atomic::{
         IsolationLevel, MetadataTransaction, TransactionId, TransactionState,
     };
-    use crate::utils::uuid::Uuid;
     use async_trait::async_trait;
     use chrono::Utc;
+    use proximadb_kernel::uuid::Uuid;
     use std::collections::HashMap;
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -73,6 +73,8 @@ mod tests {
                 enable_proxima_record: None,
                 text_columns: vec![],
                 text_storage_configs: vec![],
+                enable_dual_use_embeddings: None,
+                canonical_embedding_precision: None,
             }),
             stats: Some(proximadb_v1::CollectionStats {
                 vector_count: 0,
@@ -277,6 +279,8 @@ mod tests {
                         description: versioned.description.clone(),
                         filterable_columns: vec![],
                         index_configs: vec![],
+                        enable_dual_use_embeddings: None,
+                        canonical_embedding_precision: None,
                         quantization: None,
                         storage_config: None,
                         primary_index: Some("default".to_string()),
@@ -340,6 +344,8 @@ mod tests {
                         description: versioned.description.clone(),
                         filterable_columns: vec![],
                         index_configs: vec![],
+                        enable_dual_use_embeddings: None,
+                        canonical_embedding_precision: None,
                         quantization: None,
                         storage_config: None,
                         primary_index: Some("default".to_string()),

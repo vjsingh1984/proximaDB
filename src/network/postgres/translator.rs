@@ -95,9 +95,8 @@ impl QueryTranslator {
     }
 
     /// Handle catalog queries
-    fn handle_catalog_query(&self, _query: &str) -> String {
-        // Return empty result for catalog queries
-        "SELECT 1 WHERE false".to_string()
+    fn handle_catalog_query(&self, query: &str) -> String {
+        query.to_string()
     }
 
     /// Translate SQL query
@@ -108,6 +107,9 @@ impl QueryTranslator {
         if self.pgvector_compat {
             translated = self.translate_pgvector(&translated)?;
         }
+
+        // Translate PostgreSQL JSON/JSONB syntax into ProximaDB JSON helpers.
+        translated = self.translate_jsonb(&translated)?;
 
         // Translate PostgreSQL-specific functions
         translated = self.translate_functions(&translated);
@@ -145,14 +147,54 @@ impl QueryTranslator {
         Ok(result)
     }
 
+    /// Translate PostgreSQL JSONB operators to portable JSON helper functions.
+    fn translate_jsonb(&self, query: &str) -> Result<String> {
+        let mut result = query.to_string();
+
+        let re_text_extract = regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*->>\s*'([^']+)'"#)?;
+        result = re_text_extract
+            .replace_all(&result, "JSON_EXTRACT_TEXT($1, '$2')")
+            .to_string();
+
+        let re_json_extract = regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*->\s*'([^']+)'"#)?;
+        result = re_json_extract
+            .replace_all(&result, "JSON_EXTRACT($1, '$2')")
+            .to_string();
+
+        let re_contains =
+            regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*@>\s*('[^']+'(?:::jsonb)?)"#)?;
+        result = re_contains
+            .replace_all(&result, "JSON_CONTAINS($1, $2)")
+            .to_string();
+
+        let re_exists = regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*\?\s*'([^']+)'"#)?;
+        result = re_exists
+            .replace_all(&result, "JSON_EXISTS($1, '$2')")
+            .to_string();
+
+        let re_path_exists =
+            regex::Regex::new(r#"jsonb_path_exists\s*\(\s*([^,]+)\s*,\s*('[^']+')\s*\)"#)?;
+        result = re_path_exists
+            .replace_all(&result, "JSON_PATH_EXISTS($1, $2)")
+            .to_string();
+
+        Ok(result)
+    }
+
     /// Translate distance operator to function call
     fn translate_distance_operator(&self, query: &str, op: &str, metric: &str) -> String {
-        // Simplified translation - full implementation would parse SQL properly
-        // Example: embedding <-> '[1,2,3]' ORDER BY 1 LIMIT 10
-        // Becomes: VECTOR_DISTANCE(embedding, [1,2,3], 'l2') ORDER BY 1 LIMIT 10
+        // Keep this pgwire compatibility layer intentionally conservative:
+        // full SQL expression normalization belongs in the SQL frontend.
+        let escaped_op = regex::escape(op);
+        let Ok(re) = regex::Regex::new(&format!(
+            r"([A-Za-z_][A-Za-z0-9_\.]*)\s*{}\s*(\[[^\]]+\]|\$\d+|[A-Za-z_][A-Za-z0-9_\.]*)",
+            escaped_op
+        )) else {
+            return query.to_string();
+        };
 
-        // For now, just mark it for later processing
-        query.replace(op, &format!(" /* {} distance */ {} ", metric, op))
+        re.replace_all(query, format!("VECTOR_DISTANCE($1, $2, '{}')", metric))
+            .to_string()
     }
 
     /// Translate PostgreSQL-specific functions
@@ -185,6 +227,8 @@ impl QueryTranslator {
         result = result.replace("::boolean", "");
         result = result.replace("::timestamp", "");
         result = result.replace("::date", "");
+        result = result.replace("::jsonb", "");
+        result = result.replace("::json", "");
 
         result
     }
@@ -315,5 +359,63 @@ mod tests {
         let translator = QueryTranslator::new();
         let result = translator.translate_functions("SELECT NOW(), id FROM foo");
         assert!(result.contains("CURRENT_TIMESTAMP"));
+    }
+
+    #[test]
+    fn test_translate_pgvector_distance_operators_to_functions() {
+        let translator = QueryTranslator::new();
+
+        let l2 = translator
+            .translate("SELECT id FROM docs ORDER BY embedding <-> '[0.1, 0.2]'::vector LIMIT 5")
+            .unwrap();
+        assert!(l2.contains("ORDER BY VECTOR_DISTANCE(embedding, [0.1, 0.2], 'l2') LIMIT 5"));
+        assert!(!l2.contains("<->"));
+
+        let cosine = translator
+            .translate("SELECT id, vec <=> $1 AS distance FROM docs")
+            .unwrap();
+        assert!(cosine.contains("VECTOR_DISTANCE(vec, $1, 'cosine') AS distance"));
+        assert!(!cosine.contains("<=>"));
+
+        let inner_product = translator
+            .translate("SELECT id FROM docs ORDER BY doc.embedding <#> query.embedding")
+            .unwrap();
+        assert!(
+            inner_product
+                .contains("ORDER BY VECTOR_DISTANCE(doc.embedding, query.embedding, 'ip')")
+        );
+        assert!(!inner_product.contains("<#>"));
+    }
+
+    #[test]
+    fn test_translate_pgwire_jsonb_vector_and_cypher_extensions() {
+        let translator = QueryTranslator::new();
+        let result = translator
+            .translate(
+                "SELECT id FROM docs \
+                 WHERE metadata->>'tenant' = 'acme' \
+                   AND metadata @> '{\"role\":\"planner\"}'::jsonb \
+                   AND metadata ? 'skills' \
+                   AND jsonb_path_exists(metadata, '$.skills[*]') \
+                 ORDER BY embedding <-> '[0.1, 0.2, 0.3]'::vector \
+                 LIMIT 10",
+            )
+            .unwrap();
+
+        assert!(result.contains("JSON_EXTRACT_TEXT(metadata, 'tenant')"));
+        assert!(result.contains("JSON_CONTAINS(metadata, '{\"role\":\"planner\"}')"));
+        assert!(result.contains("JSON_EXISTS(metadata, 'skills')"));
+        assert!(result.contains("JSON_PATH_EXISTS(metadata, '$.skills[*]')"));
+        assert!(result.contains("[0.1, 0.2, 0.3]"));
+        assert!(result.contains("VECTOR_DISTANCE(embedding, [0.1, 0.2, 0.3], 'l2')"));
+        assert!(!result.contains("::jsonb"));
+        assert!(!result.contains("::vector"));
+        assert!(!result.contains("<->"));
+
+        let cypher = translator
+            .translate("SELECT * FROM GRAPH_QUERY('MATCH (n)-[:CALLS]->(m) RETURN m')")
+            .unwrap();
+        assert!(cypher.contains("GRAPH_QUERY"));
+        assert!(cypher.contains("MATCH (n)-[:CALLS]->(m) RETURN m"));
     }
 }

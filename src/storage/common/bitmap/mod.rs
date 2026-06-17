@@ -3,8 +3,8 @@
 //! This module provides shared bitmap infrastructure that can be used across
 //! all storage engines, cache layers, and query optimization components.
 
-// Use internal bitmap implementation instead of duplicate
-pub use crate::utils::bitmap::{BitmapError, RoaringBitmap};
+// Keep storage-common as the canonical owner while preserving root compatibility.
+pub use proximadb_storage_common::bitmap::{BitmapError, RoaringBitmap};
 
 /// Statistics for bitmap index usage and performance
 ///

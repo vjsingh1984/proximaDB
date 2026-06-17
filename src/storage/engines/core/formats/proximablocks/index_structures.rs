@@ -33,7 +33,7 @@ pub struct RowBasedIdIndex {
 
     /// Configuration
     #[allow(dead_code)]
-    config: IndexConfiguration,
+    config: IndexStructuresConfiguration,
 }
 
 /// Index type selection
@@ -166,16 +166,19 @@ pub struct LevelStatistics {
     pub bloom_false_positive_rate: f64,
 }
 
+/// Backwards-compat alias for [`IndexStructuresConfiguration`].
+pub type IndexConfiguration = IndexStructuresConfiguration;
+
 /// Index configuration
 #[derive(Debug, Clone)]
-pub struct IndexConfiguration {
+pub struct IndexStructuresConfiguration {
     /// Basic settings
     pub index_type: Index,
     pub compression: bool,
     pub enable_caching: bool,
 
     /// Bloom filter settings
-    pub bloom_config: BloomFilterConfig,
+    pub bloom_config: BlockBloomFilterConfig,
 
     /// Performance settings
     pub max_memory_usage: usize,
@@ -188,9 +191,12 @@ pub struct IndexConfiguration {
     pub rebalancing_enabled: bool,
 }
 
+/// Backwards-compat alias for [`BlockBloomFilterConfig`].
+pub type BloomFilterConfig = BlockBloomFilterConfig;
+
 /// Bloom filter configuration for row-based engines
 #[derive(Debug, Clone)]
-pub struct BloomFilterConfig {
+pub struct BlockBloomFilterConfig {
     pub enabled: bool,
     pub false_positive_rate: f64,
     pub max_items_per_filter: u64,
@@ -269,11 +275,14 @@ pub struct MultiLevelIndex {
 
     /// Index selection statistics
     #[allow(dead_code)]
-    access_patterns: HashMap<String, AccessPattern>,
+    access_patterns: HashMap<String, IndexStructuresAccessPattern>,
 }
 
+/// Backwards-compat alias for [`IndexStructuresAccessPattern`].
+pub type AccessPattern = IndexStructuresAccessPattern;
+
 #[derive(Debug, Clone)]
-pub struct AccessPattern {
+pub struct IndexStructuresAccessPattern {
     pub pattern_type: AccessType,
     pub frequency: u64,
     pub last_access: i64,
@@ -290,7 +299,7 @@ pub enum AccessType {
 
 impl RowBasedIdIndex {
     /// Create a new ID index with specified type
-    pub fn new(index_type: Index, config: IndexConfiguration) -> Self {
+    pub fn new(index_type: Index, config: IndexStructuresConfiguration) -> Self {
         // Create bloom filter builders
         let mut bloom_filter_builders = Vec::new();
         if config.bloom_config.enabled {
@@ -647,13 +656,13 @@ impl Default for LevelStatistics {
     }
 }
 
-impl Default for IndexConfiguration {
+impl Default for IndexStructuresConfiguration {
     fn default() -> Self {
         Self {
             index_type: Index::Hybrid,
             compression: true,
             enable_caching: true,
-            bloom_config: BloomFilterConfig::default(),
+            bloom_config: BlockBloomFilterConfig::default(),
             max_memory_usage: 256 * 1024 * 1024, // 256MB
             concurrent_access_limit: 16,
             maintenance_interval_ms: 60000, // 1 minute
@@ -664,7 +673,7 @@ impl Default for IndexConfiguration {
     }
 }
 
-impl Default for BloomFilterConfig {
+impl Default for BlockBloomFilterConfig {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -683,7 +692,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_btree_index_operations() {
-        let config = IndexConfiguration::default();
+        let config = IndexStructuresConfiguration::default();
         let mut index = RowBasedIdIndex::new(Index::BTree, config);
 
         let location = BlockLocation {
@@ -713,7 +722,7 @@ mod tests {
             enable_sparse_regions: true,
         };
 
-        let config = IndexConfiguration {
+        let config = IndexStructuresConfiguration {
             index_type: Index::Dense(dense_config),
             ..Default::default()
         };
@@ -747,7 +756,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_index_operations() {
-        let config = IndexConfiguration::default();
+        let config = IndexStructuresConfiguration::default();
         let mut index = RowBasedIdIndex::new(Index::Hybrid, config);
 
         let location = BlockLocation {

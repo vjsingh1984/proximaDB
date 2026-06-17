@@ -22,7 +22,6 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
-use proximadb::proto::proximadb_v1::VectorRecord;
 use proximadb::streaming::kafka::{
     CommitStrategy, DeserializationFormat, DlqConfig, KafkaConsumerConfig, MessageDeserializer,
 };
@@ -33,17 +32,24 @@ use proximadb::streaming::{
     BackpressureLevel, RingBuffer, SessionConfig, SessionState, StreamConfig, StreamCoordinator,
     StreamId, Watermarks,
 };
+use proximadb_records::{EmbeddingCell, EmbeddingValues, ProximaRecord};
 
 // =============================================================================
 // Helper Functions
 // =============================================================================
 
-fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<VectorRecord> {
+fn create_test_vectors(count: usize, start_id: usize, dimension: usize) -> Vec<ProximaRecord> {
+    let dim = dimension as u32;
     (0..count)
-        .map(|i| VectorRecord {
-            id: format!("vec_{}", start_id + i),
-            vector: vec![0.1 * (i as f32); dimension],
-            metadata: Default::default(),
+        .map(|i| ProximaRecord {
+            oid: format!("vec_{}", start_id + i),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                values: EmbeddingValues::Fp32(vec![0.1 * (i as f32); dimension]),
+                dim,
+                ..Default::default()
+            }],
             ..Default::default()
         })
         .collect()
@@ -332,8 +338,8 @@ async fn test_coordinator_push_and_drain() {
     // Drain vectors
     let drained = coordinator.drain_records(&session_id, 50).unwrap();
     assert_eq!(drained.len(), 50);
-    assert_eq!(drained[0].id, "vec_0");
-    assert_eq!(drained[49].id, "vec_49");
+    assert_eq!(drained[0].oid, "vec_0");
+    assert_eq!(drained[49].oid, "vec_49");
 
     // Check remaining
     let info = coordinator.get_session_info(&session_id).unwrap();

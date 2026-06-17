@@ -209,9 +209,9 @@
 
 ```bash
 # Upgrade Helm chart
-helm upgrade proximadb infrastructure/helm/proximadb \
+helm upgrade proximadb deploy/infrastructure/helm/proximadb \
   --namespace proximadb \
-  --values infrastructure/terraform/environments/dev/helm-values.yaml \
+  --values deploy/infrastructure/terraform/environments/dev/helm-values.yaml \
   --set image.tag=0.3.0 \
   --wait \
   --timeout 10m

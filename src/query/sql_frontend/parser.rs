@@ -2,13 +2,16 @@
 
 use anyhow::{Result, anyhow};
 use sqlparser::ast::{
-    BinaryOperator, Cte as SqlCte, Expr as SqlExpr, FunctionArg, FunctionArgExpr, Join as SqlJoin,
-    JoinConstraint, JoinOperator, OrderByExpr as SqlOrderByExpr, Query as SqlQuery,
-    Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator, Statement,
+    BinaryOperator, ConflictTarget, CreateTableOptions, Cte as SqlCte, Expr as SqlExpr,
+    FunctionArg, FunctionArgExpr, GroupByExpr, Join as SqlJoin, JoinConstraint, JoinOperator,
+    OnConflictAction, OnInsert, OrderByExpr as SqlOrderByExpr, Query as SqlQuery,
+    Select as SqlSelect, SelectItem, SetExpr, SetOperator as SqlSetOperator, SqlOption, Statement,
     TableFactor, TableWithJoins, UnaryOperator, Value, With as SqlWith,
 };
+use sqlparser::ast::{CreateIndex, IndexOption};
 use sqlparser::dialect::GenericDialect;
 use sqlparser::parser::Parser;
+use std::collections::HashMap;
 
 // DML types for INSERT/UPDATE/DELETE
 use crate::services::dml::{
@@ -16,10 +19,48 @@ use crate::services::dml::{
     SqlValueLiteral, WhereClause,
 };
 
+use crate::query::table_write_plan::{
+    ConflictPolicy, CopyIntoPlan, DistributionMode, LogicalTableRef, ReadSource, SnapshotRef,
+    WriteMode,
+};
+
 use crate::query::ast::{
     BinaryOp, Cte, Expr, Join, JoinType, Literal, OrderByExpr, ProjectionItem, Query, Select,
     SetOp, TableRef, UnaryOp,
 };
+
+/// Detect an `EXPLAIN [ANALYZE] <inner>` wrapper.
+///
+/// Returns `Some((is_analyze, inner))` when `query` begins with `EXPLAIN`,
+/// where `inner` is the wrapped statement text with the `EXPLAIN [ANALYZE]`
+/// (or `EXPLAIN (… ANALYZE …)`) prefix stripped, and `is_analyze` is true when
+/// the EXPLAIN requested ANALYZE. Returns `None` when `query` is not an EXPLAIN.
+///
+/// This is the single source of truth for EXPLAIN-prefix parsing shared by the
+/// ROOT handler and the `QueryFacadeAdapter` SQL path (TD-104 / seam S1).
+pub fn parse_explain_kind(query: &str) -> Option<(bool, &str)> {
+    let upper = query.to_ascii_uppercase();
+    if !upper.starts_with("EXPLAIN") {
+        return None;
+    }
+    let after_explain = query["EXPLAIN".len()..].trim_start();
+    let after_upper = after_explain.to_ascii_uppercase();
+
+    if after_upper.starts_with("ANALYZE") {
+        let inner = after_explain["ANALYZE".len()..].trim_start();
+        return Some((true, inner));
+    }
+
+    if after_explain.starts_with('(') {
+        let close = after_explain.find(')')?;
+        let options = &after_explain[1..close];
+        let is_analyze = options.to_ascii_uppercase().contains("ANALYZE");
+        let rest = after_explain[close + 1..].trim_start();
+        return Some((is_analyze, rest));
+    }
+
+    Some((false, after_explain))
+}
 
 /// SQL frontend parser that converts SQL text into internal AST nodes
 pub struct SqlFrontendParser {
@@ -977,6 +1018,37 @@ impl SqlFrontendParser {
         self.try_convert_dml(statement)
     }
 
+    /// Parse a `SELECT` statement and return its `WHERE` clause as the same
+    /// faithful boolean [`WhereClause`] IR that UPDATE/DELETE use — so the
+    /// pgwire relational SELECT path can push OR / mixed-AND-OR / grouped
+    /// predicates into the record scan instead of degrading to a full scan.
+    ///
+    /// Returns `Ok(None)` when the statement is a well-formed SELECT with no
+    /// `WHERE`. Returns `Err` when the text is not a single SELECT, fails to
+    /// parse, or its `WHERE` contains an expression the DML converter rejects;
+    /// the caller treats `Err` as "fall back to the legacy string-predicate
+    /// path" (over-inclusive full scan), NOT as a query error.
+    pub fn parse_select_where_clause(&self, sql: &str) -> Result<Option<WhereClause>> {
+        let statements = Parser::parse_sql(&self.dialect, sql)
+            .map_err(|e| anyhow!("SQL parsing failed: {}", e))?;
+        let [statement] = statements.as_slice() else {
+            return Err(anyhow!(
+                "expected exactly one statement, found {}",
+                statements.len()
+            ));
+        };
+        let Statement::Query(query) = statement else {
+            return Err(anyhow!("statement is not a SELECT query"));
+        };
+        let SetExpr::Select(select) = &*query.body else {
+            return Err(anyhow!("query body is not a simple SELECT"));
+        };
+        match &select.selection {
+            None => Ok(None),
+            Some(expr) => Ok(Some(self.convert_where_clause_dml(expr)?)),
+        }
+    }
+
     /// Try to convert a statement to DML, returning None for SELECT queries
     fn try_convert_dml(&self, statement: &Statement) -> Result<Option<DmlStatement>> {
         match statement {
@@ -996,26 +1068,62 @@ impl SqlFrontendParser {
     /// Convert INSERT statement to DmlStatement
     fn convert_insert(&self, insert: &sqlparser::ast::Insert) -> Result<DmlStatement> {
         // Get table name
-        let table_name = insert.table.to_string();
+        let table_name = unquote_object_name(&insert.table.to_string());
 
         // Get column names
-        let columns: Vec<String> = insert.columns.iter().map(|c| c.value.clone()).collect();
+        let columns: Vec<String> = insert
+            .columns
+            .iter()
+            .map(|c| unquote_identifier_text(&c.to_string()))
+            .collect();
 
-        // Get values from source
-        let values = match &insert.source {
-            Some(source) => self.extract_values_from_source(source)?,
-            None => return Err(anyhow!("INSERT requires VALUES clause")),
+        let Some(source) = &insert.source else {
+            return Err(anyhow!("INSERT requires VALUES or SELECT source"));
         };
 
-        // Check for ON CONFLICT (UPSERT) - simplified, return basic insert for now
-        if insert.on.is_some() {
-            // For now, treat ON CONFLICT as upsert with empty conflict handling
+        if !matches!(&*source.body, SetExpr::Values(_)) {
+            if insert.on.is_some() {
+                return Err(anyhow!(
+                    "INSERT ... SELECT with ON CONFLICT is not supported yet"
+                ));
+            }
+            let target = LogicalTableRef::new(table_name.clone());
+            let source = self
+                .simple_catalog_table_source(source)
+                .unwrap_or_else(|| ReadSource::QuerySql(source.to_string()));
+            let plan = CopyIntoPlan {
+                source,
+                target,
+                write_mode: if insert.overwrite {
+                    WriteMode::OverwriteTable
+                } else {
+                    WriteMode::Append
+                },
+                conflict_policy: if insert.overwrite {
+                    ConflictPolicy::Upsert
+                } else {
+                    ConflictPolicy::Error
+                },
+                distribution: DistributionMode::Auto,
+            };
+            return if insert.overwrite {
+                Ok(DmlStatement::InsertOverwrite { plan, columns })
+            } else {
+                Ok(DmlStatement::InsertSelect { plan, columns })
+            };
+        }
+
+        let values = self.extract_values_from_source(source)?;
+
+        if let Some(on_insert) = &insert.on {
+            let (conflict_columns, update_assignments) =
+                self.convert_insert_conflict_clause(on_insert)?;
             return Ok(DmlStatement::Upsert {
                 table_name,
                 columns,
                 values,
-                conflict_columns: Vec::new(),
-                update_assignments: Vec::new(),
+                conflict_columns,
+                update_assignments,
             });
         }
 
@@ -1042,6 +1150,139 @@ impl SqlFrontendParser {
                 })
                 .collect(),
             _ => Err(anyhow!("INSERT source must be VALUES clause")),
+        }
+    }
+
+    fn simple_catalog_table_source(&self, source: &SqlQuery) -> Option<ReadSource> {
+        if source.with.is_some()
+            || source.order_by.is_some()
+            || source.limit_clause.is_some()
+            || source.fetch.is_some()
+            || !source.locks.is_empty()
+            || source.for_clause.is_some()
+            || source.settings.is_some()
+            || source.format_clause.is_some()
+            || !source.pipe_operators.is_empty()
+        {
+            return None;
+        }
+
+        let SetExpr::Select(select) = &*source.body else {
+            return None;
+        };
+        if select.distinct.is_some()
+            || select.top.is_some()
+            || select.into.is_some()
+            || select.prewhere.is_some()
+            || select.selection.is_some()
+            || select.having.is_some()
+            || select.qualify.is_some()
+            || select.connect_by.is_some()
+            || !select.lateral_views.is_empty()
+            || !select.cluster_by.is_empty()
+            || !select.distribute_by.is_empty()
+            || !select.sort_by.is_empty()
+            || !select.named_window.is_empty()
+            || select.value_table_mode.is_some()
+        {
+            return None;
+        }
+        if !matches!(&select.group_by, GroupByExpr::Expressions(exprs, modifiers) if exprs.is_empty() && modifiers.is_empty())
+        {
+            return None;
+        }
+        if !matches!(select.projection.as_slice(), [SelectItem::Wildcard(_)]) {
+            return None;
+        }
+
+        let [from] = select.from.as_slice() else {
+            return None;
+        };
+        if !from.joins.is_empty() {
+            return None;
+        }
+        let TableFactor::Table {
+            name,
+            alias: None,
+            args: None,
+            with_hints,
+            version: None,
+            with_ordinality: false,
+            partitions,
+            json_path: None,
+            sample: None,
+            index_hints,
+        } = &from.relation
+        else {
+            return None;
+        };
+        if !with_hints.is_empty() || !partitions.is_empty() || !index_hints.is_empty() {
+            return None;
+        }
+
+        let mut parts = unquote_object_name(&name.to_string())
+            .split('.')
+            .map(|part| part.to_string())
+            .collect::<Vec<_>>();
+        let table_name = parts.pop()?;
+        Some(ReadSource::CatalogTable {
+            table: LogicalTableRef {
+                namespace: parts,
+                name: table_name,
+            },
+            snapshot: SnapshotRef::Latest,
+        })
+    }
+
+    fn convert_insert_conflict_clause(
+        &self,
+        on_insert: &OnInsert,
+    ) -> Result<(Vec<String>, Vec<(String, SqlValueLiteral)>)> {
+        match on_insert {
+            OnInsert::OnConflict(on_conflict) => {
+                let conflict_columns = match &on_conflict.conflict_target {
+                    Some(ConflictTarget::Columns(columns)) => columns
+                        .iter()
+                        .map(|column| unquote_identifier_text(&column.to_string()))
+                        .collect(),
+                    Some(ConflictTarget::OnConstraint(name)) => {
+                        vec![unquote_object_name(&name.to_string())]
+                    }
+                    None => Vec::new(),
+                };
+
+                let update_assignments = match &on_conflict.action {
+                    OnConflictAction::DoNothing => Vec::new(),
+                    OnConflictAction::DoUpdate(update) => update
+                        .assignments
+                        .iter()
+                        .map(|assignment| {
+                            Ok((
+                                self.assignment_target_to_string(&assignment.target)?,
+                                self.convert_expr_to_dml_literal(&assignment.value)?,
+                            ))
+                        })
+                        .collect::<Result<Vec<_>>>()?,
+                };
+
+                Ok((conflict_columns, update_assignments))
+            }
+            OnInsert::DuplicateKeyUpdate(assignments) => {
+                let update_assignments = assignments
+                    .iter()
+                    .map(|assignment| {
+                        Ok((
+                            self.assignment_target_to_string(&assignment.target)?,
+                            self.convert_expr_to_dml_literal(&assignment.value)?,
+                        ))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok((Vec::new(), update_assignments))
+            }
+            _ => Err(anyhow!(
+                "Unsupported INSERT conflict clause: {:?}",
+                on_insert
+            )),
         }
     }
 
@@ -1077,6 +1318,7 @@ impl SqlFrontendParser {
                 let args = self.extract_function_args_dml(&func.args)?;
                 Ok(SqlValueLiteral::Function { name, args })
             }
+            SqlExpr::Cast { expr, .. } => self.convert_expr_to_dml_literal(expr),
             SqlExpr::Identifier(ident) => {
                 // Could be DEFAULT or a column reference
                 if ident.value.eq_ignore_ascii_case("DEFAULT") {
@@ -1085,6 +1327,13 @@ impl SqlFrontendParser {
                     Ok(SqlValueLiteral::Column(ident.value.clone()))
                 }
             }
+            SqlExpr::CompoundIdentifier(parts) => Ok(SqlValueLiteral::Column(
+                parts
+                    .iter()
+                    .map(|part| unquote_identifier_text(&part.to_string()))
+                    .collect::<Vec<_>>()
+                    .join("."),
+            )),
             _ => Err(anyhow!("Unsupported expression in VALUES: {:?}", expr)),
         }
     }
@@ -1160,7 +1409,7 @@ impl SqlFrontendParser {
     ) -> Result<DmlStatement> {
         // Get table name
         let table_name = match &table.relation {
-            TableFactor::Table { name, .. } => name.to_string(),
+            TableFactor::Table { name, .. } => unquote_object_name(&name.to_string()),
             _ => return Err(anyhow!("UPDATE requires a table name")),
         };
 
@@ -1198,7 +1447,7 @@ impl SqlFrontendParser {
                 Ok(names
                     .0
                     .iter()
-                    .map(|n| n.to_string())
+                    .map(|n| unquote_identifier_text(&n.to_string()))
                     .collect::<Vec<_>>()
                     .join("."))
             }
@@ -1222,7 +1471,7 @@ impl SqlFrontendParser {
             FromTable::WithFromKeyword(tables) => {
                 if let Some(first) = tables.first() {
                     match &first.relation {
-                        TableFactor::Table { name, .. } => name.to_string(),
+                        TableFactor::Table { name, .. } => unquote_object_name(&name.to_string()),
                         _ => return Err(anyhow!("DELETE requires a table name")),
                     }
                 } else {
@@ -1232,7 +1481,7 @@ impl SqlFrontendParser {
             FromTable::WithoutKeyword(tables) => {
                 if let Some(first) = tables.first() {
                     match &first.relation {
-                        TableFactor::Table { name, .. } => name.to_string(),
+                        TableFactor::Table { name, .. } => unquote_object_name(&name.to_string()),
                         _ => return Err(anyhow!("DELETE requires a table name")),
                     }
                 } else {
@@ -1256,44 +1505,65 @@ impl SqlFrontendParser {
 
     /// Convert WHERE clause expression to WhereClause (for DML)
     fn convert_where_clause_dml(&self, expr: &SqlExpr) -> Result<WhereClause> {
-        let conditions = self.extract_conditions_dml(expr)?;
         let operator = self.determine_logical_operator_dml(expr);
-
+        let conditions = self.flatten_conditions_for_op(expr, operator)?;
         Ok(WhereClause {
             conditions,
             operator,
         })
     }
 
-    /// Extract conditions from a WHERE expression (for DML)
-    fn extract_conditions_dml(&self, expr: &SqlExpr) -> Result<Vec<Condition>> {
+    /// Flatten a boolean WHERE expression into the operands of `target_op`,
+    /// preserving any differently-combined subtree as a single
+    /// `Condition::Nested`. This keeps the boolean tree faithful — e.g.
+    /// `A OR (B AND C)` → `[A, Nested{And,[B,C]}]` — instead of flattening every
+    /// AND/OR into one list (which silently mis-evaluated mixed clauses).
+    fn flatten_conditions_for_op(
+        &self,
+        expr: &SqlExpr,
+        target_op: LogicalOperator,
+    ) -> Result<Vec<Condition>> {
         match expr {
+            SqlExpr::Nested(inner) => self.flatten_conditions_for_op(inner, target_op),
+            SqlExpr::BinaryOp { left, op, right }
+                if Self::binary_op_matches_logical(op, target_op) =>
+            {
+                let mut conditions = self.flatten_conditions_for_op(left, target_op)?;
+                conditions.extend(self.flatten_conditions_for_op(right, target_op)?);
+                Ok(conditions)
+            }
+            _ => Ok(vec![self.expr_to_condition_dml(expr)?]),
+        }
+    }
+
+    /// Convert one `SqlExpr` into a single `Condition` — a `Nested` node for an
+    /// AND/OR subtree, a leaf otherwise.
+    fn expr_to_condition_dml(&self, expr: &SqlExpr) -> Result<Condition> {
+        match expr {
+            SqlExpr::Nested(inner) => self.expr_to_condition_dml(inner),
+            SqlExpr::BinaryOp {
+                op: BinaryOperator::And,
+                ..
+            } => Ok(Condition::Nested {
+                conditions: self.flatten_conditions_for_op(expr, LogicalOperator::And)?,
+                operator: LogicalOperator::And,
+            }),
+            SqlExpr::BinaryOp {
+                op: BinaryOperator::Or,
+                ..
+            } => Ok(Condition::Nested {
+                conditions: self.flatten_conditions_for_op(expr, LogicalOperator::Or)?,
+                operator: LogicalOperator::Or,
+            }),
             SqlExpr::BinaryOp { left, op, right } => {
-                match op {
-                    BinaryOperator::And | BinaryOperator::Or => {
-                        // Recursively extract conditions from both sides
-                        let mut conditions = self.extract_conditions_dml(left)?;
-                        conditions.extend(self.extract_conditions_dml(right)?);
-                        Ok(conditions)
-                    }
-                    BinaryOperator::Eq
-                    | BinaryOperator::NotEq
-                    | BinaryOperator::Lt
-                    | BinaryOperator::LtEq
-                    | BinaryOperator::Gt
-                    | BinaryOperator::GtEq => {
-                        // Simple comparison condition
-                        let column = self.expr_to_column_name_dml(left)?;
-                        let operator = self.convert_comparison_op_dml(op)?;
-                        let value = self.convert_expr_to_dml_literal(right)?;
-                        Ok(vec![Condition::Comparison {
-                            column,
-                            operator,
-                            value,
-                        }])
-                    }
-                    _ => Err(anyhow!("Unsupported operator in WHERE: {:?}", op)),
-                }
+                let column = self.expr_to_column_name_dml(left)?;
+                let operator = self.convert_comparison_op_dml(op)?;
+                let value = self.convert_expr_to_dml_literal(right)?;
+                Ok(Condition::Comparison {
+                    column,
+                    operator,
+                    value,
+                })
             }
             SqlExpr::InList {
                 expr,
@@ -1301,15 +1571,15 @@ impl SqlFrontendParser {
                 negated,
             } => {
                 let column = self.expr_to_column_name_dml(expr)?;
-                let values: Result<Vec<SqlValueLiteral>> = list
+                let values = list
                     .iter()
                     .map(|e| self.convert_expr_to_dml_literal(e))
-                    .collect();
-                Ok(vec![Condition::In {
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(Condition::In {
                     column,
-                    values: values?,
+                    values,
                     negated: *negated,
-                }])
+                })
             }
             SqlExpr::Between {
                 expr,
@@ -1318,46 +1588,40 @@ impl SqlFrontendParser {
                 high,
             } => {
                 let column = self.expr_to_column_name_dml(expr)?;
-                let low_val = self.convert_expr_to_dml_literal(low)?;
-                let high_val = self.convert_expr_to_dml_literal(high)?;
-                Ok(vec![Condition::Between {
+                Ok(Condition::Between {
                     column,
-                    low: low_val,
-                    high: high_val,
+                    low: self.convert_expr_to_dml_literal(low)?,
+                    high: self.convert_expr_to_dml_literal(high)?,
                     negated: *negated,
-                }])
+                })
             }
-            SqlExpr::IsNull(expr) => {
-                let column = self.expr_to_column_name_dml(expr)?;
-                Ok(vec![Condition::IsNull {
-                    column,
-                    negated: false,
-                }])
-            }
-            SqlExpr::IsNotNull(expr) => {
-                let column = self.expr_to_column_name_dml(expr)?;
-                Ok(vec![Condition::IsNull {
-                    column,
-                    negated: true,
-                }])
-            }
+            SqlExpr::IsNull(inner) => Ok(Condition::IsNull {
+                column: self.expr_to_column_name_dml(inner)?,
+                negated: false,
+            }),
+            SqlExpr::IsNotNull(inner) => Ok(Condition::IsNull {
+                column: self.expr_to_column_name_dml(inner)?,
+                negated: true,
+            }),
             SqlExpr::Like {
                 expr,
                 pattern,
                 negated,
                 ..
-            } => {
-                let column = self.expr_to_column_name_dml(expr)?;
-                let pattern_str = self.extract_like_pattern(pattern)?;
-                Ok(vec![Condition::Like {
-                    column,
-                    pattern: pattern_str,
-                    negated: *negated,
-                }])
-            }
-            SqlExpr::Nested(inner) => self.extract_conditions_dml(inner),
+            } => Ok(Condition::Like {
+                column: self.expr_to_column_name_dml(expr)?,
+                pattern: self.extract_like_pattern(pattern)?,
+                negated: *negated,
+            }),
             _ => Err(anyhow!("Unsupported WHERE expression: {:?}", expr)),
         }
+    }
+
+    fn binary_op_matches_logical(op: &BinaryOperator, logical: LogicalOperator) -> bool {
+        matches!(
+            (op, logical),
+            (BinaryOperator::And, LogicalOperator::And) | (BinaryOperator::Or, LogicalOperator::Or)
+        )
     }
 
     /// Extract LIKE pattern string
@@ -1416,17 +1680,911 @@ impl Default for SqlFrontendParser {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_ddl_alter_table_set_data_type_supports_jsonb() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("ALTER TABLE demo ALTER COLUMN payload SET DATA TYPE JSONB;")
+            .expect("expected ddl parse to succeed")
+            .expect("expected alter table ddl");
+
+        if let DdlStatement::AlterTable {
+            table_name,
+            changes,
+            ..
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert_eq!(changes.len(), 1);
+
+            match &changes[0] {
+                AlterTableChange::ChangeType {
+                    column_name,
+                    new_type,
+                } => {
+                    assert_eq!(column_name, "payload");
+                    assert!(matches!(new_type, SqlDataType::Jsonb));
+                }
+                _ => panic!("expected change type for JSONB"),
+            }
+        } else {
+            panic!("expected alter table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_table_supports_jsonb() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("CREATE TABLE demo (payload JSONB);")
+            .expect("expected ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        if let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            ..
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert_eq!(columns.len(), 1);
+            assert_eq!(columns[0].name, "payload");
+            assert!(matches!(columns[0].data_type, SqlDataType::Jsonb));
+        } else {
+            panic!("expected create table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_table_supports_jsonb_with_additional_columns() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("CREATE TABLE demo (id INT, payload JSONB);")
+            .expect("expected ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        if let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            ..
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert_eq!(columns.len(), 2);
+            assert_eq!(columns[0].name, "id");
+            assert_eq!(columns[1].name, "payload");
+            assert!(matches!(columns[1].data_type, SqlDataType::Jsonb));
+        } else {
+            panic!("expected create table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_table_lowers_catalog_options_and_table_primary_key() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl(
+                "CREATE TABLE IF NOT EXISTS \"agent_store\" (
+                    \"record_id\" TEXT NOT NULL,
+                    \"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+                    \"embedding\" VECTOR(384),
+                    PRIMARY KEY (\"record_id\")
+                ) WITH (
+                    storage_engine = 'VIPER',
+                    layout = 'columnar',
+                    xcatalog_namespace = 'agentic.demo',
+                    schema_kind = 'agentic_mixed'
+                );",
+            )
+            .expect("expected ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        if let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            if_not_exists,
+            properties,
+            ..
+        } = statement
+        {
+            assert_eq!(table_name, "agent_store");
+            assert!(if_not_exists);
+            assert_eq!(
+                properties.get("storage_engine").map(String::as_str),
+                Some("VIPER")
+            );
+            assert_eq!(
+                properties.get("layout").map(String::as_str),
+                Some("columnar")
+            );
+            assert_eq!(
+                properties.get("xcatalog_namespace").map(String::as_str),
+                Some("agentic.demo")
+            );
+            let record_id = columns
+                .iter()
+                .find(|column| column.name == "record_id")
+                .expect("record_id column should parse");
+            assert!(record_id.primary_key);
+            assert!(!record_id.nullable);
+            assert!(matches!(
+                columns
+                    .iter()
+                    .find(|column| column.name == "payload")
+                    .expect("payload column")
+                    .data_type,
+                SqlDataType::Jsonb
+            ));
+            assert!(matches!(
+                columns
+                    .iter()
+                    .find(|column| column.name == "embedding")
+                    .expect("embedding column")
+                    .data_type,
+                SqlDataType::Vector { dimension: 384 }
+            ));
+        } else {
+            panic!("expected create table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_table_supports_tpcc_constraints() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl(
+                "CREATE TABLE customer (
+                    c_w_id int NOT NULL,
+                    c_d_id int NOT NULL,
+                    c_id int NOT NULL,
+                    c_credit char(2) NOT NULL,
+                    c_since timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    FOREIGN KEY (c_w_id, c_d_id) REFERENCES district (d_w_id, d_id) ON DELETE CASCADE,
+                    PRIMARY KEY (c_w_id, c_d_id, c_id),
+                    UNIQUE (c_w_id, c_d_id, c_id)
+                );",
+            )
+            .expect("expected tpcc ddl parse to succeed")
+            .expect("expected create table ddl");
+
+        let DdlStatement::CreateTable {
+            table_name,
+            columns,
+            constraints,
+            ..
+        } = statement
+        else {
+            panic!("expected create table statement");
+        };
+
+        assert_eq!(table_name, "customer");
+        assert!(matches!(
+            columns
+                .iter()
+                .find(|column| column.name == "c_credit")
+                .expect("char column")
+                .data_type,
+            SqlDataType::Varchar {
+                max_length: Some(2)
+            }
+        ));
+        assert_eq!(
+            columns
+                .iter()
+                .filter(|column| column.primary_key)
+                .map(|column| column.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["c_w_id", "c_d_id", "c_id"]
+        );
+        assert!(constraints.iter().any(|constraint| matches!(
+            constraint,
+            TableConstraint::ForeignKey {
+                columns,
+                references_table,
+                references_columns,
+                ..
+            } if columns == &vec!["c_w_id".to_string(), "c_d_id".to_string()]
+                && references_table == "district"
+                && references_columns == &vec!["d_w_id".to_string(), "d_id".to_string()]
+        )));
+        assert!(constraints.iter().any(|constraint| matches!(
+            constraint,
+            TableConstraint::Unique { columns }
+                if columns == &vec![
+                    "c_w_id".to_string(),
+                    "c_d_id".to_string(),
+                    "c_id".to_string()
+                ]
+        )));
+    }
+
+    #[test]
+    fn parse_dml_insert_supports_jsonb_cast_default_and_vector_literal() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO \"agent_store\" (\"record_id\", payload, embedding)
+                 VALUES ('r1', '{}'::jsonb, '[0.1, 0.2]'::vector(2)),
+                        ('r2', DEFAULT, '[0.3, 0.4]'::vector);",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected insert dml");
+
+        match statement {
+            DmlStatement::Insert {
+                table_name,
+                columns,
+                values,
+            } => {
+                assert_eq!(table_name, "agent_store");
+                assert_eq!(columns, vec!["record_id", "payload", "embedding"]);
+                assert_eq!(values.len(), 2);
+                assert!(matches!(values[0][1], SqlValueLiteral::String(_)));
+                assert!(matches!(values[1][1], SqlValueLiteral::Default));
+                assert!(matches!(values[0][2], SqlValueLiteral::String(_)));
+            }
+            other => panic!("expected insert statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_upsert_preserves_conflict_columns_and_update_assignments() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO \"agent_store\" (\"record_id\", payload, embedding)
+                 VALUES ('r1', '{\"kind\":\"memory\"}'::jsonb, '[0.1, 0.2]'::vector(2))
+                 ON CONFLICT (\"record_id\") DO UPDATE
+                 SET \"payload\" = excluded.payload,
+                     \"embedding\" = excluded.embedding;",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected upsert dml");
+
+        match statement {
+            DmlStatement::Upsert {
+                table_name,
+                columns,
+                conflict_columns,
+                update_assignments,
+                ..
+            } => {
+                assert_eq!(table_name, "agent_store");
+                assert_eq!(columns, vec!["record_id", "payload", "embedding"]);
+                assert_eq!(conflict_columns, vec!["record_id"]);
+                assert_eq!(update_assignments.len(), 2);
+                assert_eq!(update_assignments[0].0, "payload");
+                assert!(matches!(
+                    &update_assignments[0].1,
+                    SqlValueLiteral::Column(column) if column == "excluded.payload"
+                ));
+                assert_eq!(update_assignments[1].0, "embedding");
+                assert!(matches!(
+                    &update_assignments[1].1,
+                    SqlValueLiteral::Column(column) if column == "excluded.embedding"
+                ));
+            }
+            other => panic!("expected upsert statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_upsert_do_nothing_preserves_conflict_columns() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO agent_store (record_id, payload)
+                 VALUES ('r1', DEFAULT)
+                 ON CONFLICT (record_id) DO NOTHING;",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected upsert dml");
+
+        match statement {
+            DmlStatement::Upsert {
+                conflict_columns,
+                update_assignments,
+                ..
+            } => {
+                assert_eq!(conflict_columns, vec!["record_id"]);
+                assert!(update_assignments.is_empty());
+            }
+            other => panic!("expected upsert statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_insert_select_lowers_to_copy_plan() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "INSERT INTO facts (id, payload)
+                 SELECT id, payload FROM staging WHERE tenant_id = 'acme';",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected insert-select dml");
+
+        match statement {
+            DmlStatement::InsertSelect { plan, columns } => {
+                assert_eq!(columns, vec!["id", "payload"]);
+                assert_eq!(plan.target.name, "facts");
+                assert!(matches!(
+                    plan.write_mode,
+                    crate::query::table_write_plan::WriteMode::Append
+                ));
+                match plan.source {
+                    crate::query::table_write_plan::ReadSource::QuerySql(sql) => {
+                        assert!(sql.contains("SELECT id, payload FROM staging"));
+                    }
+                    other => panic!("expected query source, got {other:?}"),
+                }
+            }
+            other => panic!("expected insert-select statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_simple_insert_select_star_lowers_to_catalog_table_source() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("INSERT INTO facts SELECT * FROM staging;")
+            .expect("expected dml parse to succeed")
+            .expect("expected insert-select dml");
+
+        match statement {
+            DmlStatement::InsertSelect { plan, columns } => {
+                assert!(columns.is_empty());
+                assert_eq!(plan.target.name, "facts");
+                match plan.source {
+                    crate::query::table_write_plan::ReadSource::CatalogTable {
+                        table,
+                        snapshot,
+                    } => {
+                        assert_eq!(table.name, "staging");
+                        assert!(table.namespace.is_empty());
+                        assert!(matches!(
+                            snapshot,
+                            crate::query::table_write_plan::SnapshotRef::Latest
+                        ));
+                    }
+                    other => panic!("expected catalog-table source, got {other:?}"),
+                }
+            }
+            other => panic!("expected insert-select statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_insert_overwrite_select_lowers_to_overwrite_plan() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("INSERT OVERWRITE facts SELECT * FROM staging;")
+            .expect("expected dml parse to succeed")
+            .expect("expected insert-overwrite dml");
+
+        match statement {
+            DmlStatement::InsertOverwrite { plan, columns } => {
+                assert!(columns.is_empty());
+                assert_eq!(plan.target.name, "facts");
+                assert!(matches!(
+                    plan.write_mode,
+                    crate::query::table_write_plan::WriteMode::OverwriteTable
+                ));
+            }
+            other => panic!("expected insert-overwrite statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_update_supports_quoted_catalog_names_jsonb_and_vector_literal() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml(
+                "UPDATE \"agent_store\"
+                 SET \"payload\" = '{\"kind\":\"updated\"}'::jsonb,
+                     \"embedding\" = '[0.1, 0.2]'::vector(2)
+                 WHERE \"record_id\" = 'r1';",
+            )
+            .expect("expected dml parse to succeed")
+            .expect("expected update dml");
+
+        match statement {
+            DmlStatement::Update {
+                table_name,
+                assignments,
+                where_clause: Some(where_clause),
+            } => {
+                assert_eq!(table_name, "agent_store");
+                assert_eq!(assignments.len(), 2);
+                assert_eq!(assignments[0].0, "payload");
+                assert!(matches!(assignments[0].1, SqlValueLiteral::String(_)));
+                assert_eq!(assignments[1].0, "embedding");
+                assert!(matches!(assignments[1].1, SqlValueLiteral::String(_)));
+                match &where_clause.conditions[0] {
+                    Condition::Comparison { column, value, .. } => {
+                        assert_eq!(column, "record_id");
+                        assert!(matches!(value, SqlValueLiteral::String(id) if id == "r1"));
+                    }
+                    other => panic!("expected comparison condition, got {other:?}"),
+                }
+            }
+            other => panic!("expected update statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_delete_preserves_catalog_primary_key_column() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("DELETE FROM agent_store WHERE record_id IN ('r1', 'r2');")
+            .expect("expected dml parse to succeed")
+            .expect("expected delete dml");
+
+        match statement {
+            DmlStatement::Delete {
+                table_name,
+                where_clause: Some(where_clause),
+            } => {
+                assert_eq!(table_name, "agent_store");
+                match &where_clause.conditions[0] {
+                    Condition::In {
+                        column,
+                        values,
+                        negated,
+                    } => {
+                        assert_eq!(column, "record_id");
+                        assert_eq!(values.len(), 2);
+                        assert!(!negated);
+                    }
+                    other => panic!("expected IN condition, got {other:?}"),
+                }
+            }
+            other => panic!("expected delete statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_dml_delete_unquotes_catalog_table_name() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_dml("DELETE FROM \"agent_store\" WHERE record_id = 'r1';")
+            .expect("expected dml parse to succeed")
+            .expect("expected delete dml");
+
+        match statement {
+            DmlStatement::Delete { table_name, .. } => {
+                assert_eq!(table_name, "agent_store");
+            }
+            other => panic!("expected delete statement, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_select_where_clause_preserves_or_and_nested_grouping() {
+        let parser = SqlFrontendParser::new();
+
+        // Flat OR: faithful top-level Or operator + two conditions.
+        let wc = parser
+            .parse_select_where_clause("SELECT id FROM inv WHERE a = 1 OR b = 2")
+            .expect("parse")
+            .expect("has WHERE");
+        assert!(matches!(wc.operator, LogicalOperator::Or));
+        assert_eq!(wc.conditions.len(), 2);
+
+        // Mixed AND/OR must NOT flatten: `a AND (b OR c)` →
+        // top-level And of [Comparison(a), Nested{Or,[b,c]}].
+        let wc = parser
+            .parse_select_where_clause("SELECT id FROM inv WHERE a = 1 AND (b = 2 OR c = 3)")
+            .expect("parse")
+            .expect("has WHERE");
+        assert!(matches!(wc.operator, LogicalOperator::And));
+        assert_eq!(wc.conditions.len(), 2);
+        assert!(matches!(wc.conditions[0], Condition::Comparison { .. }));
+        match &wc.conditions[1] {
+            Condition::Nested {
+                conditions,
+                operator,
+            } => {
+                assert!(matches!(operator, LogicalOperator::Or));
+                assert_eq!(conditions.len(), 2);
+            }
+            other => panic!("expected nested OR subtree, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_select_where_clause_handles_no_where_and_non_select() {
+        let parser = SqlFrontendParser::new();
+
+        // Well-formed SELECT with no WHERE → Ok(None) (scan all).
+        assert!(
+            parser
+                .parse_select_where_clause("SELECT id FROM inv")
+                .expect("parse")
+                .is_none()
+        );
+
+        // Non-SELECT statement → Err so the caller falls back to the legacy
+        // string-predicate path rather than treating it as a query error.
+        assert!(
+            parser
+                .parse_select_where_clause("UPDATE inv SET status = 'x' WHERE id = '1'")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn parse_ddl_create_index_supports_default_btree() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("CREATE INDEX demo_payload_idx ON demo (payload);")
+            .expect("expected ddl parse to succeed")
+            .expect("expected create index ddl");
+
+        if let DdlStatement::CreateIndex {
+            index_name,
+            table_name,
+            columns,
+            index_type,
+            if_not_exists,
+            ..
+        } = statement
+        {
+            assert_eq!(index_name, "demo_payload_idx");
+            assert_eq!(table_name, "demo");
+            assert_eq!(columns, vec!["payload".to_string()]);
+            assert!(matches!(index_type, IndexType::BTree));
+            assert!(!if_not_exists);
+        } else {
+            panic!("expected create index statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_create_index_supports_gin_and_hnsw() {
+        let parser = SqlFrontendParser::new();
+
+        let gin = parser
+            .parse_ddl("CREATE INDEX idx_payload ON agent_store USING GIN (payload);")
+            .expect("gin parse should succeed")
+            .expect("expected create index");
+        let hnsw = parser
+            .parse_ddl("CREATE INDEX idx_embedding ON agent_store USING HNSW (embedding);")
+            .expect("hnsw parse should succeed")
+            .expect("expected create index");
+
+        assert!(matches!(
+            gin,
+            DdlStatement::CreateIndex {
+                index_type: IndexType::Gin,
+                ..
+            }
+        ));
+        assert!(matches!(
+            hnsw,
+            DdlStatement::CreateIndex {
+                index_type: IndexType::Hnsw { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_ddl_drop_table_supports_table_name() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("DROP TABLE demo;")
+            .expect("expected ddl parse to succeed")
+            .expect("expected drop table ddl");
+
+        if let DdlStatement::DropTable {
+            table_name,
+            if_exists,
+            purge,
+        } = statement
+        {
+            assert_eq!(table_name, "demo");
+            assert!(!if_exists);
+            assert!(!purge);
+        } else {
+            panic!("expected drop table statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_alter_table_materialize_routes_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+
+        for sql in [
+            "ALTER TABLE inv MATERIALIZE",
+            "alter table \"inv\" materialize;",
+        ] {
+            let statement = parser
+                .parse_ddl(sql)
+                .expect("expected ddl parse to succeed")
+                .expect("expected materialize ddl");
+            match statement {
+                DdlStatement::MaterializeTable { name } => assert_eq!(name, "inv"),
+                other => panic!("expected MaterializeTable, got {:?}", other),
+            }
+        }
+
+        // Not a MATERIALIZE statement → the pre-parser declines (sqlparser handles it).
+        assert!(matches!(
+            parser.parse_ddl("DROP TABLE inv;"),
+            Ok(Some(DdlStatement::DropTable { .. }))
+        ));
+        // Malformed MATERIALIZE (extra tokens) → pre-parser declines, sqlparser then errors.
+        assert!(parser.parse_ddl("ALTER TABLE inv MATERIALIZE NOW").is_err());
+    }
+
+    #[test]
+    fn parse_ddl_drop_index_supports_drop_index() {
+        let parser = SqlFrontendParser::new();
+
+        let statement = parser
+            .parse_ddl("DROP INDEX demo_payload_idx ON demo;")
+            .expect("expected ddl parse to succeed")
+            .expect("expected drop index ddl");
+
+        if let DdlStatement::DropIndex {
+            index_name,
+            table_name,
+            if_exists,
+        } = statement
+        {
+            assert_eq!(index_name, "demo_payload_idx");
+            assert_eq!(table_name, "demo");
+            assert!(!if_exists);
+        } else {
+            panic!("expected drop index statement");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_unsupported_statements_still_fail_fast() {
+        let parser = SqlFrontendParser::new();
+        let unsupported = [
+            (
+                "CREATE TABLE demo AS SELECT * FROM events;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            ("DROP TABLE;", "sql parser error", false),
+            (
+                "CREATE TABLE demo LIKE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            (
+                "CREATE TABLE demo CLONE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            ("DROP TABLESPACE sample_space;", "sql parser error", false),
+            ("DROP VIEW demo;", "Unsupported DROP object type", false),
+            (
+                "DROP INDEX demo_payload_idx;",
+                "DROP INDEX requires a table name",
+                true,
+            ),
+        ];
+
+        for (sql, expected, exact) in unsupported {
+            let err = parser
+                .parse_ddl(sql)
+                .expect_err("expected unsupported ddl to be rejected");
+            let err_msg = err.to_string();
+            if exact {
+                assert_eq!(err_msg, expected, "unexpected parse error for `{sql}`");
+            } else {
+                assert!(
+                    err_msg.contains(expected),
+                    "unexpected parse error for `{sql}`: {err_msg}"
+                );
+            }
+        }
+
+        let non_ddl = ["INSERT INTO users (id) VALUES (1);", "SELECT * FROM users;"];
+
+        for sql in non_ddl {
+            assert!(
+                parser.parse_ddl(sql).is_ok_and(|s| s.is_none()),
+                "expected `{sql}` to parse as non-DDL (`None`)"
+            );
+        }
+    }
+
+    #[test]
+    fn parse_ddl_promote_props_key_basic_types() {
+        let parser = SqlFrontendParser::new();
+
+        let cases: &[(&str, &str, &str)] = &[
+            (
+                "ALTER TABLE events PROMOTE PROPS KEY user_id TYPE BIGINT",
+                "user_id",
+                "BigInt",
+            ),
+            (
+                "ALTER TABLE events PROMOTE PROPS KEY label TYPE TEXT;",
+                "label",
+                "Text",
+            ),
+            (
+                "ALTER TABLE logs PROMOTE PROPS KEY score TYPE FLOAT",
+                "score",
+                "Float",
+            ),
+            (
+                "ALTER TABLE docs PROMOTE PROPS KEY meta TYPE JSONB",
+                "meta",
+                "Jsonb",
+            ),
+        ];
+
+        for (sql, expected_key, expected_type_fragment) in cases {
+            let result = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"));
+
+            let stmt = result.expect("expected DdlStatement");
+            match stmt {
+                crate::services::ddl::DdlStatement::AlterTable {
+                    table_name: _,
+                    changes,
+                } => {
+                    assert_eq!(changes.len(), 1, "expected exactly one change");
+                    match &changes[0] {
+                        crate::services::ddl::AlterTableChange::PromotePropsKey {
+                            key,
+                            column_type,
+                            comment,
+                        } => {
+                            assert_eq!(key, expected_key, "key mismatch for `{sql}`");
+                            assert!(
+                                format!("{:?}", column_type).contains(expected_type_fragment),
+                                "type mismatch for `{sql}`: got {:?}",
+                                column_type
+                            );
+                            assert!(comment.is_none());
+                        }
+                        other => panic!("expected PromotePropsKey, got {:?}", other),
+                    }
+                }
+                other => panic!("expected AlterTable, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_set_table_option_props_auto_promotion() {
+        let parser = SqlFrontendParser::new();
+
+        let cases = [
+            (
+                "ALTER TABLE events SET (props_auto_promotion = 'enabled')",
+                "events",
+                "props_auto_promotion",
+                "enabled",
+            ),
+            (
+                "ALTER TABLE logs SET (props_auto_promotion = 'disabled');",
+                "logs",
+                "props_auto_promotion",
+                "disabled",
+            ),
+        ];
+
+        for (sql, expected_table, expected_key, expected_value) in cases {
+            let stmt = parser
+                .parse_ddl(sql)
+                .unwrap_or_else(|e| panic!("parse failed for `{sql}`: {e}"))
+                .expect("expected DdlStatement");
+
+            match stmt {
+                crate::services::ddl::DdlStatement::AlterTable {
+                    table_name,
+                    changes,
+                } => {
+                    assert_eq!(table_name, expected_table, "table mismatch for `{sql}`");
+                    assert_eq!(changes.len(), 1, "expected one change for `{sql}`");
+                    match &changes[0] {
+                        crate::services::ddl::AlterTableChange::SetTableOption { key, value } => {
+                            assert_eq!(key, expected_key, "key mismatch for `{sql}`");
+                            assert_eq!(value, expected_value, "value mismatch for `{sql}`");
+                        }
+                        other => panic!("expected SetTableOption, got {:?}", other),
+                    }
+                }
+                other => panic!("expected AlterTable, got {:?}", other),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_ddl_promote_props_key_varchar() {
+        let parser = SqlFrontendParser::new();
+        let sql = "ALTER TABLE users PROMOTE PROPS KEY email TYPE VARCHAR(255);";
+        let stmt = parser.parse_ddl(sql).unwrap().unwrap();
+        match stmt {
+            crate::services::ddl::DdlStatement::AlterTable { changes, .. } => match &changes[0] {
+                crate::services::ddl::AlterTableChange::PromotePropsKey {
+                    key,
+                    column_type,
+                    ..
+                } => {
+                    assert_eq!(key, "email");
+                    assert!(
+                        matches!(
+                            column_type,
+                            crate::services::ddl::SqlDataType::Varchar { .. }
+                        ),
+                        "expected Varchar, got {:?}",
+                        column_type
+                    );
+                }
+                other => panic!("expected PromotePropsKey, got {:?}", other),
+            },
+            other => panic!("expected AlterTable, got {:?}", other),
+        }
+    }
+}
+
 // ========================
 // DDL Statement Parsing
 // ========================
 
 use crate::services::ddl::{
-    AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement, SqlDataType, TableConstraint,
+    AlterTableChange, ColumnDefinition, ColumnPosition, DdlStatement, IndexType, SqlDataType,
+    TableConstraint,
 };
+use proximadb_data_model::ProximaType;
 
 impl SqlFrontendParser {
     /// Parse SQL text and return a DDL statement if it's CREATE/ALTER/DROP
     pub fn parse_ddl(&self, sql: &str) -> Result<Option<DdlStatement>> {
+        // Pre-parse: intercept ProximaDB-specific DDL that sqlparser does not understand.
+        // Pattern: ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type>[;]
+        if let Some(result) = self.try_parse_promote_props_key(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: CREATE RANK PROFILE [IF NOT EXISTS] <ident> AS '<toml>'
+        if let Some(result) = try_parse_create_rank_profile(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: DROP RANK PROFILE [IF EXISTS] <ident>
+        if let Some(result) = try_parse_drop_rank_profile(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: CREATE [OR REPLACE] FUNCTION <name>(params) RETURNS <ty> AS '<body>' (F5)
+        if let Some(result) = try_parse_create_function(sql)? {
+            return Ok(Some(result));
+        }
+        // Pattern: ALTER TABLE <name> MATERIALIZE (warehouse publish → Parquet-backed)
+        if let Some(result) = self.try_parse_materialize_table(sql)? {
+            return Ok(Some(result));
+        }
+
         let statements = Parser::parse_sql(&self.dialect, sql)
             .map_err(|e| anyhow!("SQL parsing failed: {}", e))?;
 
@@ -1445,9 +2603,107 @@ impl SqlFrontendParser {
         self.try_convert_ddl(statement)
     }
 
+    /// Intercept `ALTER TABLE <name> MATERIALIZE` before sqlparser (MATERIALIZE is a
+    /// ProximaDB extension sqlparser does not understand). Publishes the table's
+    /// current rows as a Parquet snapshot and marks it Parquet-backed for the OLAP
+    /// route. Returns `Ok(Some(..))` on match, `Ok(None)` otherwise.
+    fn try_parse_materialize_table(&self, sql: &str) -> Result<Option<DdlStatement>> {
+        let normalised = sql.trim().trim_end_matches(';').trim();
+        let upper = normalised.to_uppercase();
+
+        // Fast path: skip anything that is not a MATERIALIZE statement.
+        if !upper.contains("MATERIALIZE") {
+            return Ok(None);
+        }
+
+        // Expected exactly: ALTER TABLE <name> MATERIALIZE
+        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+        if tokens.len() != 4 {
+            return Ok(None);
+        }
+        let t = |i: usize| tokens.get(i).map(|s| s.to_uppercase());
+        if t(0).as_deref() != Some("ALTER")
+            || t(1).as_deref() != Some("TABLE")
+            || t(3).as_deref() != Some("MATERIALIZE")
+        {
+            return Ok(None);
+        }
+
+        let name = tokens[2].trim_matches('"').to_string();
+        if name.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(DdlStatement::MaterializeTable { name }))
+    }
+
+    /// Intercept `ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type>` before sqlparser.
+    /// Returns `Ok(Some(...))` when the pattern matches, `Ok(None)` when it does not.
+    fn try_parse_promote_props_key(&self, sql: &str) -> Result<Option<DdlStatement>> {
+        // Normalise: collapse whitespace, strip trailing semicolon.
+        let normalised = sql.trim().trim_end_matches(';').trim();
+        let upper = normalised.to_uppercase();
+
+        // Fast path: skip anything that is not an ALTER TABLE … PROMOTE … statement.
+        if !upper.contains("PROMOTE") {
+            return Ok(None);
+        }
+
+        // Tokenise by whitespace for a simple hand-rolled parse.
+        // Expected token sequence (case-insensitive):
+        //   ALTER TABLE <name> PROMOTE PROPS KEY <key> TYPE <type…>
+        let tokens: Vec<&str> = normalised.split_whitespace().collect();
+
+        // Need at least 9 tokens: ALTER TABLE name PROMOTE PROPS KEY key TYPE type
+        if tokens.len() < 9 {
+            return Ok(None);
+        }
+
+        let t = |i: usize| tokens.get(i).map(|s| s.to_uppercase());
+
+        if t(0).as_deref() != Some("ALTER")
+            || t(1).as_deref() != Some("TABLE")
+            || t(3).as_deref() != Some("PROMOTE")
+            || t(4).as_deref() != Some("PROPS")
+            || t(5).as_deref() != Some("KEY")
+            || t(7).as_deref() != Some("TYPE")
+        {
+            return Ok(None);
+        }
+
+        let table_name = unquote_object_name(tokens[2]);
+        let key = tokens[6].to_string();
+        // Remaining tokens after TYPE form the type string (e.g. "VARCHAR(255)").
+        let type_str = tokens[8..].join(" ");
+
+        // Parse the type via a dummy CREATE TABLE so we reuse convert_data_type.
+        let dummy_sql = format!("CREATE TABLE _proxima_dummy (x {type_str});");
+        let dummy_stmts = Parser::parse_sql(&self.dialect, &dummy_sql)
+            .map_err(|e| anyhow!("Invalid type '{}' in PROMOTE PROPS KEY: {}", type_str, e))?;
+
+        let column_type = match dummy_stmts.first() {
+            Some(Statement::CreateTable(ct)) => {
+                let col = ct
+                    .columns
+                    .first()
+                    .ok_or_else(|| anyhow!("Internal: dummy table has no columns"))?;
+                self.convert_data_type(&col.data_type)?
+            }
+            _ => return Err(anyhow!("Internal: dummy CREATE TABLE parse failed")),
+        };
+
+        Ok(Some(DdlStatement::AlterTable {
+            table_name,
+            changes: vec![AlterTableChange::PromotePropsKey {
+                key,
+                column_type,
+                comment: None,
+            }],
+        }))
+    }
+
     /// Try to convert a statement to DDL, returning None for non-DDL statements
     fn try_convert_ddl(&self, statement: &Statement) -> Result<Option<DdlStatement>> {
-        use sqlparser::ast::{AlterTableOperation, ColumnOption};
+        use sqlparser::ast::{AlterTableOperation, ColumnOption, ObjectType as SqlObjectType};
 
         match statement {
             Statement::AlterTable {
@@ -1547,6 +2803,8 @@ impl SqlFrontendParser {
                                     columns,
                                     foreign_table,
                                     referred_columns,
+                                    on_delete,
+                                    on_update,
                                     ..
                                 } => {
                                     let cols: Vec<String> =
@@ -1559,6 +2817,8 @@ impl SqlFrontendParser {
                                             columns: cols,
                                             references_table: foreign_table.to_string(),
                                             references_columns: ref_cols,
+                                            on_delete: on_delete.map(map_referential_action),
+                                            on_update: on_update.map(map_referential_action),
                                         },
                                     });
                                 }
@@ -1605,6 +2865,28 @@ impl SqlFrontendParser {
                                 }
                             }
                         }
+                        AlterTableOperation::SetOptionsParens { options } => {
+                            // ALTER TABLE <name> SET (key = 'value', ...)
+                            use sqlparser::ast::SqlOption as SqlOpt;
+                            for opt in options {
+                                if let SqlOpt::KeyValue { key, value } = opt {
+                                    let value_str = match value {
+                                        sqlparser::ast::Expr::Value(v) => match &v.value {
+                                            sqlparser::ast::Value::SingleQuotedString(s)
+                                            | sqlparser::ast::Value::DoubleQuotedString(s) => {
+                                                s.clone()
+                                            }
+                                            other => format!("{other}"),
+                                        },
+                                        other => format!("{other}"),
+                                    };
+                                    changes.push(AlterTableChange::SetTableOption {
+                                        key: key.to_string(),
+                                        value: value_str,
+                                    });
+                                }
+                            }
+                        }
                         _ => {
                             return Err(anyhow!("Unsupported ALTER TABLE operation: {:?}", op));
                         }
@@ -1616,23 +2898,147 @@ impl SqlFrontendParser {
                     changes,
                 }))
             }
-            Statement::CreateTable(_) | Statement::CreateIndex(_) | Statement::Drop { .. } => {
-                // These can be added later if needed
-                Err(anyhow!(
-                    "CREATE/DROP DDL statements should use the DDL service directly"
-                ))
+            Statement::CreateTable(create_table) => {
+                if create_table.query.is_some()
+                    || create_table.like.is_some()
+                    || create_table.clone.is_some()
+                {
+                    return Err(anyhow!(
+                        "CREATE TABLE with query/LIKE/CLONE clauses is not supported"
+                    ));
+                }
+
+                let table_name = unquote_object_name(&create_table.name.to_string());
+                let if_not_exists = create_table.if_not_exists;
+                let mut columns = create_table
+                    .columns
+                    .iter()
+                    .map(|col| self.convert_column_def(col))
+                    .collect::<Result<Vec<_>>>()?;
+                let constraints = apply_table_constraints(&mut columns, &create_table.constraints)?;
+                let properties = table_options_to_properties(&create_table.table_options);
+
+                Ok(Some(DdlStatement::CreateTable {
+                    table_name,
+                    columns,
+                    constraints,
+                    if_not_exists,
+                    properties,
+                }))
             }
+            Statement::CreateIndex(create_index) => {
+                let index_name = create_index
+                    .name
+                    .as_ref()
+                    .map(|name| name.to_string())
+                    .ok_or_else(|| anyhow!("CREATE INDEX requires an index name"))?;
+                let table_name = unquote_object_name(&create_index.table_name.to_string());
+                let columns = create_index
+                    .columns
+                    .iter()
+                    .map(|col| unquote_identifier_text(&col.column.to_string()))
+                    .collect::<Vec<_>>();
+                let index_type = self.parse_index_type(create_index)?;
+                let if_not_exists = create_index.if_not_exists;
+
+                Ok(Some(DdlStatement::CreateIndex {
+                    index_name,
+                    table_name,
+                    columns,
+                    index_type,
+                    if_not_exists,
+                }))
+            }
+            Statement::Drop {
+                object_type,
+                if_exists,
+                names,
+                purge,
+                table,
+                ..
+            } => match object_type {
+                SqlObjectType::Table => {
+                    let table_name = names
+                        .first()
+                        .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
+                        .to_string();
+                    Ok(Some(DdlStatement::DropTable {
+                        table_name,
+                        if_exists: *if_exists,
+                        purge: *purge,
+                    }))
+                }
+                SqlObjectType::Index => {
+                    let index_name = names
+                        .first()
+                        .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
+                        .to_string();
+                    let table_name = table
+                        .as_ref()
+                        .map(|table_name| table_name.to_string())
+                        .ok_or_else(|| anyhow!("DROP INDEX requires a table name"))?;
+
+                    Ok(Some(DdlStatement::DropIndex {
+                        index_name,
+                        table_name,
+                        if_exists: *if_exists,
+                    }))
+                }
+                _ => Err(anyhow!("Unsupported DROP object type: {:?}", object_type)),
+            },
             Statement::Query(_) => Ok(None), // SELECT query, not DDL
             Statement::Insert(_) | Statement::Update { .. } | Statement::Delete(_) => Ok(None), // DML
             _ => Ok(None),
         }
     }
 
+    fn parse_index_type(&self, create_index: &CreateIndex) -> Result<IndexType> {
+        let explicit_using = create_index.using.as_ref().cloned().or_else(|| {
+            create_index.index_options.iter().find_map(|opt| {
+                if let IndexOption::Using(index_type) = opt {
+                    Some(index_type.clone())
+                } else {
+                    None
+                }
+            })
+        });
+
+        let index_type = explicit_using.unwrap_or(sqlparser::ast::IndexType::BTree);
+        let index_type = match index_type {
+            sqlparser::ast::IndexType::BTree => IndexType::BTree,
+            sqlparser::ast::IndexType::Hash => IndexType::Hash,
+            sqlparser::ast::IndexType::GIN => IndexType::Gin,
+            sqlparser::ast::IndexType::Custom(name)
+                if name.value.eq_ignore_ascii_case("fulltext") =>
+            {
+                IndexType::FullText
+            }
+            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("gin") => {
+                IndexType::Gin
+            }
+            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("hnsw") => {
+                IndexType::Hnsw {
+                    m: None,
+                    ef_construction: None,
+                }
+            }
+            sqlparser::ast::IndexType::Custom(name) if name.value.eq_ignore_ascii_case("ivf") => {
+                IndexType::Ivf { nlist: None }
+            }
+            sqlparser::ast::IndexType::Custom(name) => {
+                return Err(anyhow!("Unsupported CREATE INDEX USING {}", name.value));
+            }
+            other => return Err(anyhow!("Unsupported CREATE INDEX USING {}", other)),
+        };
+
+        Ok(index_type)
+    }
+
     /// Convert sqlparser column definition to DDL ColumnDefinition
     fn convert_column_def(&self, col_def: &sqlparser::ast::ColumnDef) -> Result<ColumnDefinition> {
         use sqlparser::ast::ColumnOption;
 
-        let name = col_def.name.to_string();
+        let name = col_def.name.value.clone();
         let data_type = self.convert_data_type(&col_def.data_type)?;
         let mut nullable = true;
         let mut default_value = None;
@@ -1653,11 +3059,11 @@ impl SqlFrontendParser {
                 ColumnOption::Comment(c) => {
                     comment = Some(c.clone());
                 }
-                ColumnOption::Unique { is_primary, .. } => {
-                    if *is_primary {
-                        primary_key = true;
-                        nullable = false;
-                    }
+                ColumnOption::Unique {
+                    is_primary: true, ..
+                } => {
+                    primary_key = true;
+                    nullable = false;
                 }
                 _ => {}
             }
@@ -1702,7 +3108,10 @@ impl SqlFrontendParser {
                     }),
                 }
             }
-            SqlDt::Varchar(info) | SqlDt::CharVarying(info) => {
+            SqlDt::Varchar(info)
+            | SqlDt::CharVarying(info)
+            | SqlDt::Char(info)
+            | SqlDt::Character(info) => {
                 use sqlparser::ast::CharacterLength;
                 let max_length = match info {
                     Some(CharacterLength::IntegerLength { length, .. }) => Some(*length as u32),
@@ -1723,7 +3132,8 @@ impl SqlFrontendParser {
                 }
             }
             SqlDt::Uuid => Ok(SqlDataType::Uuid),
-            SqlDt::JSON | SqlDt::JSONB => Ok(SqlDataType::Json),
+            SqlDt::JSON => Ok(SqlDataType::Json),
+            SqlDt::JSONB => Ok(SqlDataType::Jsonb),
             SqlDt::Custom(name, modifiers) => {
                 let type_name = name.to_string().to_uppercase();
                 match type_name.as_str() {
@@ -1754,5 +3164,683 @@ impl SqlFrontendParser {
             }
             _ => Err(anyhow!("Unsupported data type: {:?}", dt)),
         }
+    }
+}
+
+/// Map sqlparser's referential action onto the catalog's, so parsed
+/// `ON DELETE`/`ON UPDATE` actions survive into the table constraint (TD-110).
+fn map_referential_action(
+    action: sqlparser::ast::ReferentialAction,
+) -> proximadb_catalog::ReferentialAction {
+    use proximadb_catalog::ReferentialAction as Cat;
+    use sqlparser::ast::ReferentialAction as Sql;
+    match action {
+        Sql::Restrict => Cat::Restrict,
+        Sql::Cascade => Cat::Cascade,
+        Sql::SetNull => Cat::SetNull,
+        Sql::NoAction => Cat::NoAction,
+        Sql::SetDefault => Cat::SetDefault,
+    }
+}
+
+fn apply_table_constraints(
+    columns: &mut [ColumnDefinition],
+    constraints: &[sqlparser::ast::TableConstraint],
+) -> Result<Vec<TableConstraint>> {
+    use sqlparser::ast::TableConstraint as SqlConstraint;
+
+    let mut table_constraints = Vec::new();
+
+    for constraint in constraints {
+        match constraint {
+            SqlConstraint::PrimaryKey { columns: pk, .. } => {
+                for ident in pk {
+                    let name = unquote_identifier_text(&ident.to_string());
+                    if let Some(column) = columns.iter_mut().find(|column| column.name == name) {
+                        column.primary_key = true;
+                        column.nullable = false;
+                    } else {
+                        return Err(anyhow!("PRIMARY KEY references unknown column {}", name));
+                    }
+                }
+            }
+            SqlConstraint::Unique {
+                columns: unique, ..
+            } => {
+                let unique_columns = unique
+                    .iter()
+                    .map(|ident| {
+                        let name = unquote_identifier_text(&ident.to_string());
+                        if columns.iter().any(|column| column.name == name) {
+                            Ok(name)
+                        } else {
+                            Err(anyhow!("UNIQUE references unknown column {}", name))
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                table_constraints.push(TableConstraint::Unique {
+                    columns: unique_columns,
+                });
+            }
+            SqlConstraint::Check { expr, .. } => {
+                table_constraints.push(TableConstraint::Check {
+                    expression: format!("{}", expr),
+                });
+            }
+            SqlConstraint::ForeignKey {
+                columns: fk,
+                foreign_table,
+                referred_columns,
+                on_delete,
+                on_update,
+                ..
+            } => {
+                let fk_columns = fk
+                    .iter()
+                    .map(|ident| {
+                        let name = unquote_identifier_text(&ident.to_string());
+                        if columns.iter().any(|column| column.name == name) {
+                            Ok(name)
+                        } else {
+                            Err(anyhow!("FOREIGN KEY references unknown column {}", name))
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let references_columns = referred_columns
+                    .iter()
+                    .map(|ident| unquote_identifier_text(&ident.to_string()))
+                    .collect::<Vec<_>>();
+
+                table_constraints.push(TableConstraint::ForeignKey {
+                    columns: fk_columns,
+                    references_table: unquote_object_name(&foreign_table.to_string()),
+                    references_columns,
+                    on_delete: on_delete.map(map_referential_action),
+                    on_update: on_update.map(map_referential_action),
+                });
+            }
+            _ => {}
+        }
+    }
+
+    Ok(table_constraints)
+}
+
+fn table_options_to_properties(options: &CreateTableOptions) -> HashMap<String, String> {
+    let mut properties = HashMap::new();
+    let options = match options {
+        CreateTableOptions::With(options)
+        | CreateTableOptions::Options(options)
+        | CreateTableOptions::Plain(options)
+        | CreateTableOptions::TableProperties(options) => options,
+        CreateTableOptions::None => return properties,
+    };
+
+    for option in options {
+        match option {
+            SqlOption::KeyValue { key, value } => {
+                properties.insert(
+                    key.value.to_ascii_lowercase(),
+                    sql_option_value_to_string(value),
+                );
+            }
+            SqlOption::Ident(ident) => {
+                properties.insert(ident.value.to_ascii_lowercase(), "true".to_string());
+            }
+            SqlOption::Comment(comment) => {
+                properties.insert("comment".to_string(), comment.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    properties
+}
+
+fn sql_option_value_to_string(value: &SqlExpr) -> String {
+    match value {
+        SqlExpr::Value(value) => match &value.value {
+            Value::SingleQuotedString(value) | Value::DoubleQuotedString(value) => value.clone(),
+            Value::Boolean(value) => value.to_string(),
+            Value::Number(value, _) => value.clone(),
+            _ => value.value.to_string(),
+        },
+        SqlExpr::Identifier(ident) => ident.value.clone(),
+        _ => value.to_string().trim_matches('\'').to_string(),
+    }
+}
+
+pub fn unquote_object_name(value: &str) -> String {
+    value
+        .split('.')
+        .map(unquote_identifier_text)
+        .collect::<Vec<_>>()
+        .join(".")
+}
+
+pub fn unquote_identifier_text(value: &str) -> String {
+    let trimmed = value.trim();
+    if trimmed.len() >= 2 && trimmed.starts_with('"') && trimmed.ends_with('"') {
+        trimmed[1..trimmed.len() - 1].replace("\"\"", "\"")
+    } else {
+        trimmed.to_string()
+    }
+}
+
+// =========================================================================
+// CREATE / DROP RANK PROFILE (commit 4/5 of R-7c production wiring)
+// =========================================================================
+
+/// Match `CREATE RANK PROFILE [IF NOT EXISTS] <ident> AS '<toml-body>'`. The
+/// body is a SQL string literal (single-quoted, with `''` as an escaped single
+/// quote). Returns `Ok(None)` when the prefix doesn't match so the caller can
+/// fall through to sqlparser-rs.
+pub(crate) fn try_parse_create_rank_profile(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let upper = normalised.to_ascii_uppercase();
+    if !upper.starts_with("CREATE RANK PROFILE") {
+        return Ok(None);
+    }
+    let after_prefix = normalised["CREATE RANK PROFILE".len()..].trim_start();
+
+    let (if_not_exists, after_optional) = strip_if_not_exists(after_prefix);
+    let (name, after_name) = extract_identifier(after_optional)?;
+
+    let after_name = after_name.trim_start();
+    let after_as = match after_name
+        .get(..2)
+        .map(|s| s.eq_ignore_ascii_case("AS"))
+        .unwrap_or(false)
+        && after_name
+            .chars()
+            .nth(2)
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        true => after_name[2..].trim_start(),
+        false => {
+            return Err(anyhow!(
+                "CREATE RANK PROFILE '{}': expected 'AS' before TOML body",
+                name
+            ));
+        }
+    };
+
+    let spec_toml = extract_single_quoted_literal(after_as).map_err(|e| {
+        anyhow!(
+            "CREATE RANK PROFILE '{}': expected single-quoted TOML body after AS: {}",
+            name,
+            e
+        )
+    })?;
+
+    Ok(Some(DdlStatement::CreateRankProfile {
+        name,
+        spec_toml,
+        if_not_exists,
+    }))
+}
+
+/// Match `DROP RANK PROFILE [IF EXISTS] <ident>`. Returns `Ok(None)` when the
+/// prefix doesn't match so the caller can fall through to sqlparser-rs.
+pub(crate) fn try_parse_drop_rank_profile(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let upper = normalised.to_ascii_uppercase();
+    if !upper.starts_with("DROP RANK PROFILE") {
+        return Ok(None);
+    }
+    let after_prefix = normalised["DROP RANK PROFILE".len()..].trim_start();
+    let (if_exists, after_optional) = strip_if_exists(after_prefix);
+    let (name, rest) = extract_identifier(after_optional)?;
+
+    if !rest.trim().is_empty() {
+        return Err(anyhow!(
+            "DROP RANK PROFILE '{}': unexpected trailing text: '{}'",
+            name,
+            rest.trim()
+        ));
+    }
+    Ok(Some(DdlStatement::DropRankProfile { name, if_exists }))
+}
+
+/// Map a SQL type name (as written in a `CREATE FUNCTION` signature) to a [`ProximaType`].
+/// Covers the common scalar types; `DOUBLE PRECISION` and other multi-word names arrive joined.
+fn parse_function_param_type(s: &str) -> Result<ProximaType> {
+    Ok(match s.trim().to_ascii_uppercase().as_str() {
+        "BOOLEAN" | "BOOL" => ProximaType::Boolean,
+        "TINYINT" | "INT1" => ProximaType::Int8,
+        "SMALLINT" | "INT2" => ProximaType::Int16,
+        "INT" | "INTEGER" | "INT4" => ProximaType::Int32,
+        "BIGINT" | "INT8" => ProximaType::Int64,
+        "REAL" | "FLOAT4" => ProximaType::Float32,
+        "DOUBLE" | "DOUBLE PRECISION" | "FLOAT" | "FLOAT8" => ProximaType::Float64,
+        "TEXT" | "VARCHAR" | "CHAR" | "STRING" => ProximaType::String,
+        "JSON" | "JSONB" => ProximaType::Json,
+        other => return Err(anyhow!("unsupported function type '{}'", other)),
+    })
+}
+
+/// Match `CREATE [OR REPLACE] FUNCTION <name>(p1 t1, p2 t2, ...) RETURNS <ty> AS '<expr>'` (F5).
+/// The body is a SQL string literal (a scalar expression over the parameters). Returns `Ok(None)`
+/// when the prefix doesn't match so the caller falls through to sqlparser. Parameterized types
+/// (e.g. `VARCHAR(255)`) are not supported in this first cut.
+pub(crate) fn try_parse_create_function(sql: &str) -> Result<Option<DdlStatement>> {
+    let normalised = sql.trim().trim_end_matches(';').trim();
+    let upper = normalised.to_ascii_uppercase();
+    let (or_replace, after_create) = if upper.starts_with("CREATE OR REPLACE FUNCTION") {
+        (true, &normalised["CREATE OR REPLACE FUNCTION".len()..])
+    } else if upper.starts_with("CREATE FUNCTION") {
+        (false, &normalised["CREATE FUNCTION".len()..])
+    } else {
+        return Ok(None);
+    };
+
+    let after = after_create.trim_start();
+
+    // Parameter list: name ( p1 t1, p2 t2, ... ) — simple types only (no inner parens). The
+    // name is the text up to '(' (which may abut the name with no space).
+    let open = after
+        .find('(')
+        .ok_or_else(|| anyhow!("CREATE FUNCTION: expected '(' before the parameter list"))?;
+    let name = after[..open].trim().to_string();
+    if name.is_empty() {
+        return Err(anyhow!("CREATE FUNCTION: missing function name"));
+    }
+    let close_rel = after[open..]
+        .find(')')
+        .ok_or_else(|| anyhow!("CREATE FUNCTION '{}': expected ')' after parameters", name))?;
+    let close = open + close_rel;
+    let mut params: Vec<(String, ProximaType)> = Vec::new();
+    for part in after[open + 1..close].split(',') {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let mut it = part.splitn(2, char::is_whitespace);
+        let pname = it.next().unwrap_or("").trim().to_string();
+        let ptype = it.next().ok_or_else(|| {
+            anyhow!(
+                "CREATE FUNCTION '{}': parameter '{}' is missing a type",
+                name,
+                pname
+            )
+        })?;
+        params.push((pname, parse_function_param_type(ptype)?));
+    }
+
+    // RETURNS <ty> AS '<body>'
+    let rest = after[close + 1..].trim_start();
+    if !rest.to_ascii_uppercase().starts_with("RETURNS") {
+        return Err(anyhow!(
+            "CREATE FUNCTION '{}': expected RETURNS <type>",
+            name
+        ));
+    }
+    let after_returns = rest["RETURNS".len()..].trim_start();
+    let as_pos = after_returns
+        .to_ascii_uppercase()
+        .find(" AS ")
+        .ok_or_else(|| anyhow!("CREATE FUNCTION '{}': expected AS '<body>'", name))?;
+    let return_ty = parse_function_param_type(after_returns[..as_pos].trim())?;
+    let body =
+        extract_single_quoted_literal(after_returns[as_pos + 4..].trim_start()).map_err(|e| {
+            anyhow!(
+                "CREATE FUNCTION '{}': expected single-quoted body after AS: {}",
+                name,
+                e
+            )
+        })?;
+
+    Ok(Some(DdlStatement::CreateFunction {
+        name,
+        params,
+        return_ty,
+        body,
+        or_replace,
+    }))
+}
+
+fn strip_if_not_exists(input: &str) -> (bool, &str) {
+    let upper = input.to_ascii_uppercase();
+    if upper.starts_with("IF NOT EXISTS")
+        && input
+            .chars()
+            .nth("IF NOT EXISTS".len())
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        (true, input["IF NOT EXISTS".len()..].trim_start())
+    } else {
+        (false, input)
+    }
+}
+
+fn strip_if_exists(input: &str) -> (bool, &str) {
+    let upper = input.to_ascii_uppercase();
+    if upper.starts_with("IF EXISTS")
+        && input
+            .chars()
+            .nth("IF EXISTS".len())
+            .map(|c| c.is_whitespace())
+            .unwrap_or(false)
+    {
+        (true, input["IF EXISTS".len()..].trim_start())
+    } else {
+        (false, input)
+    }
+}
+
+/// Extract a SQL identifier (`name` or `"name"`) from the head of `input` and
+/// return it alongside the remainder. The unquoted identifier is returned with
+/// `"` escapes unescaped (`""` → `"`).
+fn extract_identifier(input: &str) -> Result<(String, &str)> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return Err(anyhow!("expected identifier"));
+    }
+    if let Some(rest) = input.strip_prefix('"') {
+        let end = rest
+            .find('"')
+            .ok_or_else(|| anyhow!("unterminated quoted identifier"))?;
+        let name = rest[..end].replace("\"\"", "\"");
+        Ok((name, &rest[end + 1..]))
+    } else {
+        let end = input
+            .find(|c: char| c.is_whitespace())
+            .unwrap_or(input.len());
+        let name = input[..end].to_string();
+        if name.is_empty() {
+            return Err(anyhow!("expected identifier"));
+        }
+        Ok((name, &input[end..]))
+    }
+}
+
+/// Extract a single-quoted SQL string literal from the head of `input`.
+/// `''` inside the literal escapes a single quote.
+fn extract_single_quoted_literal(input: &str) -> Result<String> {
+    let input = input.trim_start();
+    if !input.starts_with('\'') {
+        return Err(anyhow!("missing opening quote"));
+    }
+    let bytes = input.as_bytes();
+    let mut i = 1; // skip opening quote
+    let mut out = String::new();
+    while i < bytes.len() {
+        let c = bytes[i] as char;
+        if c == '\'' {
+            // Check for escaped single quote
+            if i + 1 < bytes.len() && bytes[i + 1] as char == '\'' {
+                out.push('\'');
+                i += 2;
+                continue;
+            }
+            // End of literal — anything after the closing quote (besides
+            // optional whitespace + trailing semicolon) is an error.
+            let trailing = input[i + 1..].trim();
+            if !trailing.is_empty() {
+                return Err(anyhow!(
+                    "unexpected text after string literal: '{}'",
+                    trailing
+                ));
+            }
+            return Ok(out);
+        }
+        out.push(c);
+        i += 1;
+    }
+    Err(anyhow!("unterminated string literal"))
+}
+
+#[cfg(test)]
+mod rank_profile_ddl_tests {
+    use super::*;
+
+    fn assert_create_profile(sql: &str, expected_name: &str, expected_toml: &str, ine: bool) {
+        let stmt = try_parse_create_rank_profile(sql).unwrap().unwrap();
+        match stmt {
+            DdlStatement::CreateRankProfile {
+                name,
+                spec_toml,
+                if_not_exists,
+            } => {
+                assert_eq!(name, expected_name);
+                assert_eq!(spec_toml, expected_toml);
+                assert_eq!(if_not_exists, ine);
+            }
+            other => panic!("expected CreateRankProfile, got {:?}", other),
+        }
+    }
+
+    fn assert_drop_profile(sql: &str, expected_name: &str, ie: bool) {
+        let stmt = try_parse_drop_rank_profile(sql).unwrap().unwrap();
+        match stmt {
+            DdlStatement::DropRankProfile { name, if_exists } => {
+                assert_eq!(name, expected_name);
+                assert_eq!(if_exists, ie);
+            }
+            other => panic!("expected DropRankProfile, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn create_rank_profile_minimal_form() {
+        assert_create_profile(
+            "CREATE RANK PROFILE basic AS '[first_phase]\nexpression = \"1.0\"'",
+            "basic",
+            "[first_phase]\nexpression = \"1.0\"",
+            false,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_with_if_not_exists() {
+        assert_create_profile(
+            "CREATE RANK PROFILE IF NOT EXISTS basic AS '[first_phase]\nexpression = \"1.0\"'",
+            "basic",
+            "[first_phase]\nexpression = \"1.0\"",
+            true,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_handles_trailing_semicolon() {
+        assert_create_profile(
+            "CREATE RANK PROFILE basic AS '[first_phase]\nexpression = \"1.0\"';",
+            "basic",
+            "[first_phase]\nexpression = \"1.0\"",
+            false,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_escapes_single_quotes_in_body() {
+        let sql = "CREATE RANK PROFILE x AS 'don''t'";
+        let stmt = try_parse_create_rank_profile(sql).unwrap().unwrap();
+        match stmt {
+            DdlStatement::CreateRankProfile { spec_toml, .. } => {
+                assert_eq!(spec_toml, "don't");
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn create_rank_profile_accepts_quoted_identifier() {
+        assert_create_profile(
+            "CREATE RANK PROFILE \"My Profile\" AS 'body'",
+            "My Profile",
+            "body",
+            false,
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_returns_none_for_unrelated_sql() {
+        assert!(
+            try_parse_create_rank_profile("SELECT * FROM docs")
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            try_parse_create_rank_profile("CREATE TABLE t (id INT)")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn create_rank_profile_rejects_missing_as() {
+        let err = try_parse_create_rank_profile("CREATE RANK PROFILE basic 'body'").unwrap_err();
+        assert!(err.to_string().contains("expected 'AS'"));
+    }
+
+    #[test]
+    fn create_rank_profile_rejects_unterminated_string() {
+        let err = try_parse_create_rank_profile("CREATE RANK PROFILE basic AS 'no closing quote")
+            .unwrap_err();
+        assert!(err.to_string().contains("unterminated"));
+    }
+
+    #[test]
+    fn drop_rank_profile_minimal_form() {
+        assert_drop_profile("DROP RANK PROFILE basic", "basic", false);
+    }
+
+    #[test]
+    fn drop_rank_profile_with_if_exists() {
+        assert_drop_profile("DROP RANK PROFILE IF EXISTS basic", "basic", true);
+    }
+
+    #[test]
+    fn drop_rank_profile_handles_trailing_semicolon() {
+        assert_drop_profile("DROP RANK PROFILE basic;", "basic", false);
+    }
+
+    #[test]
+    fn drop_rank_profile_rejects_trailing_garbage() {
+        let err = try_parse_drop_rank_profile("DROP RANK PROFILE basic EXTRA").unwrap_err();
+        assert!(err.to_string().contains("unexpected trailing text"));
+    }
+
+    #[test]
+    fn drop_rank_profile_returns_none_for_unrelated_sql() {
+        assert!(
+            try_parse_drop_rank_profile("DROP TABLE t")
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn parse_ddl_routes_create_rank_profile_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+        let stmt = parser
+            .parse_ddl("CREATE RANK PROFILE basic AS '[first_phase]\nexpression = \"1.0\"'")
+            .unwrap()
+            .expect("parse should succeed");
+        assert!(matches!(stmt, DdlStatement::CreateRankProfile { .. }));
+    }
+
+    #[test]
+    fn parse_ddl_routes_drop_rank_profile_through_pre_parser() {
+        let parser = SqlFrontendParser::new();
+        let stmt = parser
+            .parse_ddl("DROP RANK PROFILE basic")
+            .unwrap()
+            .expect("parse should succeed");
+        assert!(matches!(stmt, DdlStatement::DropRankProfile { .. }));
+    }
+
+    #[test]
+    fn parse_create_function_lowers_signature_and_body() {
+        // F5 slice 4: CREATE FUNCTION text → DdlStatement::CreateFunction.
+        let stmt =
+            try_parse_create_function("CREATE FUNCTION double(x BIGINT) RETURNS BIGINT AS 'x * 2'")
+                .unwrap()
+                .unwrap();
+        match stmt {
+            DdlStatement::CreateFunction {
+                name,
+                params,
+                return_ty,
+                body,
+                or_replace,
+            } => {
+                assert_eq!(name, "double");
+                assert_eq!(params, vec![("x".to_string(), ProximaType::Int64)]);
+                assert_eq!(return_ty, ProximaType::Int64);
+                assert_eq!(body, "x * 2");
+                assert!(!or_replace);
+            }
+            other => panic!("expected CreateFunction, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_create_or_replace_function_multi_param() {
+        let stmt = try_parse_create_function(
+            "CREATE OR REPLACE FUNCTION wsum(a DOUBLE, b DOUBLE) RETURNS DOUBLE AS 'a * 2 + b'",
+        )
+        .unwrap()
+        .unwrap();
+        let DdlStatement::CreateFunction {
+            params,
+            or_replace,
+            body,
+            ..
+        } = stmt
+        else {
+            panic!("expected CreateFunction");
+        };
+        assert!(or_replace);
+        assert_eq!(params.len(), 2);
+        assert_eq!(params[1], ("b".to_string(), ProximaType::Float64));
+        assert_eq!(body, "a * 2 + b");
+    }
+
+    #[test]
+    fn parse_create_function_falls_through_for_non_function() {
+        assert!(try_parse_create_function("SELECT 1").unwrap().is_none());
+        assert!(
+            try_parse_create_function("CREATE TABLE t (id INT)")
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod parse_explain_kind_tests {
+    use super::parse_explain_kind;
+
+    #[test]
+    fn parse_explain_kind_detects_bare_analyze() {
+        let (is_analyze, inner) =
+            parse_explain_kind("EXPLAIN ANALYZE INSERT INTO t SELECT * FROM s;").unwrap();
+        assert!(is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_detects_parenthesized_analyze() {
+        let (is_analyze, inner) =
+            parse_explain_kind("EXPLAIN (ANALYZE, VERBOSE) INSERT INTO t SELECT * FROM s;")
+                .unwrap();
+        assert!(is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_plain_explain_returns_false() {
+        let (is_analyze, inner) =
+            parse_explain_kind("EXPLAIN INSERT INTO t SELECT * FROM s;").unwrap();
+        assert!(!is_analyze);
+        assert_eq!(inner, "INSERT INTO t SELECT * FROM s;");
+    }
+
+    #[test]
+    fn parse_explain_kind_non_explain_returns_none() {
+        assert!(parse_explain_kind("SELECT * FROM t").is_none());
     }
 }

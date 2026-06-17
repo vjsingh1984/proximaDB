@@ -41,7 +41,7 @@
 //! - < 0.1% CPU overhead in production
 
 use super::{MetricsCollector, MetricsSample};
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::{Arc, Weak};
@@ -60,7 +60,7 @@ use tracing::debug;
 pub struct EngineMetricsCollector {
     /// Weak references to engines to avoid circular dependencies
     /// Key: engine name (e.g., "sst_collection1", "viper_analytics")
-    engines: Arc<RwLock<HashMap<String, Weak<dyn UnifiedStorageEngine>>>>,
+    engines: Arc<RwLock<HashMap<String, Weak<dyn UnifiedStorageFormat>>>>,
 
     /// Last collection time for rate calculations
     /// Used to compute rates (ops/sec, bytes/sec) from counters
@@ -107,7 +107,7 @@ impl EngineMetricsCollector {
     }
 
     /// Register an engine for monitoring (uses weak reference to avoid cycles)
-    pub async fn register_engine(&self, name: String, engine: Weak<dyn UnifiedStorageEngine>) {
+    pub async fn register_engine(&self, name: String, engine: Weak<dyn UnifiedStorageFormat>) {
         debug!("Registering engine '{}' for metrics collection", name);
         self.engines.write().await.insert(name, engine);
     }

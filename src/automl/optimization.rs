@@ -62,7 +62,7 @@ impl Default for ObjectiveWeights {
 #[derive(Debug, Clone)]
 pub struct ConfigurationSpace {
     /// Index configurations
-    pub index_configs: Vec<IndexConfiguration>,
+    pub index_configs: Vec<AutomlIndexConfiguration>,
     /// Quantization configurations
     pub quantization_configs: Vec<QuantizationConfiguration>,
     /// Engine configurations
@@ -71,9 +71,12 @@ pub struct ConfigurationSpace {
     pub cache_configs: Vec<CacheConfiguration>,
 }
 
+/// Backwards-compat alias for [`AutomlIndexConfiguration`].
+pub type IndexConfiguration = AutomlIndexConfiguration;
+
 /// Index configuration options
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct IndexConfiguration {
+pub struct AutomlIndexConfiguration {
     /// Index algorithm name (e.g. `"HNSW"`, `"IVF"`, `"LSH"`)
     pub algorithm: String,
     /// Algorithm-specific tuning parameters (e.g. `M`, `ef_construction`, `nlist`)
@@ -132,7 +135,7 @@ pub struct OptimizationPipeline {
 #[derive(Debug, Clone)]
 pub struct Configuration {
     /// Index algorithm and parameter settings
-    pub index: IndexConfiguration,
+    pub index: AutomlIndexConfiguration,
     /// Vector quantization settings
     pub quantization: QuantizationConfiguration,
     /// Storage engine settings
@@ -306,7 +309,7 @@ impl OptimizationPipeline {
     fn generate_config_space(&self, workload: &WorkloadPattern) -> Result<ConfigurationSpace> {
         let index_configs = match workload {
             WorkloadPattern::ReadHeavy => vec![
-                IndexConfiguration {
+                AutomlIndexConfiguration {
                     algorithm: "HNSW".to_string(),
                     parameters: [
                         ("M".to_string(), 16.0),
@@ -315,14 +318,14 @@ impl OptimizationPipeline {
                     .into_iter()
                     .collect(),
                 },
-                IndexConfiguration {
+                AutomlIndexConfiguration {
                     algorithm: "IVF".to_string(),
                     parameters: [("nlist".to_string(), 100.0), ("nprobe".to_string(), 10.0)]
                         .into_iter()
                         .collect(),
                 },
             ],
-            WorkloadPattern::WriteHeavy => vec![IndexConfiguration {
+            WorkloadPattern::WriteHeavy => vec![AutomlIndexConfiguration {
                 algorithm: "LSH".to_string(),
                 parameters: [
                     ("n_tables".to_string(), 8.0),
@@ -331,7 +334,7 @@ impl OptimizationPipeline {
                 .into_iter()
                 .collect(),
             }],
-            _ => vec![IndexConfiguration {
+            _ => vec![AutomlIndexConfiguration {
                 algorithm: "HNSW".to_string(),
                 parameters: [
                     ("M".to_string(), 12.0),
@@ -815,7 +818,7 @@ mod tests {
             .expect("Failed to start optimization pipeline");
 
         let config_space = ConfigurationSpace {
-            index_configs: vec![IndexConfiguration {
+            index_configs: vec![AutomlIndexConfiguration {
                 algorithm: "HNSW".to_string(),
                 parameters: HashMap::new(),
             }],

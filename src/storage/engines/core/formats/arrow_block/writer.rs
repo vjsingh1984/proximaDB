@@ -1,6 +1,6 @@
 //! Arrow Block Writer
 //!
-//! Writes VectorRecords to Arrow IPC format with B+ tree indexing.
+//! Writes ProximaRecords to Arrow IPC format with B+ tree indexing.
 
 use std::fs::File;
 use std::io::{BufWriter, Write};
@@ -10,11 +10,11 @@ use std::sync::Arc;
 use arrow_array::RecordBatch;
 use arrow_ipc::writer::{FileWriter, IpcWriteOptions};
 use arrow_schema::Schema as ArrowSchema;
+use proximadb_records::ProximaRecord;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::VectorRecord;
+use crate::storage::schema::proxima_record_bridge::DefaultProximaRecordBridge;
 use crate::storage::schema::proxima_schema::ProximaSchema;
-use crate::storage::schema::vector_record_bridge::{DefaultVectorRecordBridge, VectorRecordBridge};
 
 use super::config::{ArrowBlockConfig, ArrowBlockMetadata};
 use super::index::{ArrowBlockIndex, ArrowIndexEntry};
@@ -31,8 +31,8 @@ pub struct ArrowBlockWriter {
     /// Configuration
     config: ArrowBlockConfig,
 
-    /// VectorRecord to Arrow bridge
-    bridge: DefaultVectorRecordBridge,
+    /// ProximaRecord to Arrow bridge
+    bridge: DefaultProximaRecordBridge,
 
     /// Block index
     index: ArrowBlockIndex,
@@ -41,7 +41,7 @@ pub struct ArrowBlockWriter {
     current_block: u32,
 
     /// Accumulated records for current block
-    pending_records: Vec<VectorRecord>,
+    pending_records: Vec<ProximaRecord>,
 
     /// File offset tracker
     current_offset: u64,
@@ -73,7 +73,7 @@ impl ArrowBlockWriter {
         let writer = BufWriter::new(file);
 
         let schema = ProximaSchema::vector_record_schema(config.dimension);
-        let bridge = DefaultVectorRecordBridge::new(schema);
+        let bridge = DefaultProximaRecordBridge::new(schema);
 
         Ok(Self {
             inner: writer,
@@ -94,7 +94,7 @@ impl ArrowBlockWriter {
     }
 
     /// Add a single record
-    pub fn add_record(&mut self, record: VectorRecord) -> ArrowBlockResult<()> {
+    pub fn add_record(&mut self, record: ProximaRecord) -> ArrowBlockResult<()> {
         // Update global ranges
         self.update_global_ranges(&record);
 
@@ -109,7 +109,7 @@ impl ArrowBlockWriter {
     }
 
     /// Add multiple records
-    pub fn add_records(&mut self, records: &[VectorRecord]) -> ArrowBlockResult<()> {
+    pub fn add_records(&mut self, records: &[ProximaRecord]) -> ArrowBlockResult<()> {
         for record in records {
             self.add_record(record.clone())?;
         }
@@ -117,7 +117,7 @@ impl ArrowBlockWriter {
     }
 
     /// Write a complete block of records
-    pub fn write_block(&mut self, records: &[VectorRecord]) -> ArrowBlockResult<()> {
+    pub fn write_block(&mut self, records: &[ProximaRecord]) -> ArrowBlockResult<()> {
         if records.is_empty() {
             return Ok(());
         }
@@ -128,7 +128,7 @@ impl ArrowBlockWriter {
         }
 
         // Convert to Arrow RecordBatch
-        let batch = self.bridge.records_to_batch(records)?;
+        let batch = self.bridge.proxima_records_to_batch(records)?;
 
         // Initialize Arrow writer on first write
         if self.arrow_writer.is_none() {
@@ -278,21 +278,22 @@ impl ArrowBlockWriter {
     }
 
     /// Update global ID and timestamp ranges
-    fn update_global_ranges(&mut self, record: &VectorRecord) {
+    fn update_global_ranges(&mut self, record: &ProximaRecord) {
         // Update ID range
         match &self.global_min_id {
-            None => self.global_min_id = Some(record.id.clone()),
-            Some(min_id) if record.id < *min_id => self.global_min_id = Some(record.id.clone()),
+            None => self.global_min_id = Some(record.oid.clone()),
+            Some(min_id) if record.oid < *min_id => self.global_min_id = Some(record.oid.clone()),
             _ => {}
         }
         match &self.global_max_id {
-            None => self.global_max_id = Some(record.id.clone()),
-            Some(max_id) if record.id > *max_id => self.global_max_id = Some(record.id.clone()),
+            None => self.global_max_id = Some(record.oid.clone()),
+            Some(max_id) if record.oid > *max_id => self.global_max_id = Some(record.oid.clone()),
             _ => {}
         }
 
         // Update timestamp range
-        if let Some(ts) = record.timestamp {
+        let ts = record.created_at_ns / 1_000_000;
+        if ts > 0 {
             match self.global_min_timestamp {
                 None => self.global_min_timestamp = Some(ts),
                 Some(min_ts) if ts < min_ts => self.global_min_timestamp = Some(ts),
@@ -307,8 +308,8 @@ impl ArrowBlockWriter {
     }
 
     /// Get ID range from records
-    fn get_id_range(&self, records: &[VectorRecord]) -> ArrowBlockResult<(String, String)> {
-        let mut ids: Vec<_> = records.iter().map(|r| r.id.as_str()).collect();
+    fn get_id_range(&self, records: &[ProximaRecord]) -> ArrowBlockResult<(String, String)> {
+        let mut ids: Vec<_> = records.iter().map(|r| r.oid.as_str()).collect();
         ids.sort();
         let min = ids.first().copied().ok_or_else(|| {
             ArrowBlockError::ConversionError("No IDs found in records".to_string())
@@ -320,8 +321,12 @@ impl ArrowBlockWriter {
     }
 
     /// Get timestamp range from records
-    fn get_timestamp_range(&self, records: &[VectorRecord]) -> ArrowBlockResult<(i64, i64)> {
-        let timestamps: Vec<i64> = records.iter().filter_map(|r| r.timestamp).collect();
+    fn get_timestamp_range(&self, records: &[ProximaRecord]) -> ArrowBlockResult<(i64, i64)> {
+        let timestamps: Vec<i64> = records
+            .iter()
+            .map(|r| r.created_at_ns / 1_000_000)
+            .filter(|ts| *ts > 0)
+            .collect();
         let min = timestamps.iter().min().copied().ok_or_else(|| {
             ArrowBlockError::ConversionError("No timestamps found in records".to_string())
         })?;
@@ -350,17 +355,28 @@ impl ArrowBlockWriter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
+    use proximadb_records::EmbeddingCell;
     use tempfile::tempdir;
 
-    fn create_test_record(id: &str, dim: usize) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: (0..dim).map(|i| i as f32 * 0.1).collect(),
-            metadata: HashMap::new(),
-            timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            version: Some(1),
-            ..Default::default()
+    fn create_test_record(id: &str, dim: usize) -> ProximaRecord {
+        let timestamp_ns = chrono::Utc::now()
+            .timestamp_millis()
+            .saturating_mul(1_000_000);
+        ProximaRecord {
+            oid: id.to_string(),
+            created_at_ns: timestamp_ns,
+            updated_at_ns: timestamp_ns,
+            record_version: 1,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: dim as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(
+                    (0..dim).map(|i| i as f32 * 0.1).collect(),
+                ),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
         }
     }
 
@@ -409,6 +425,212 @@ mod tests {
 
         assert_eq!(metadata.num_blocks, 4);
         assert_eq!(metadata.total_records, 200);
+    }
+
+    /// INT-3-followup-c: fp16 records survive an end-to-end SST-equivalent
+    /// flush cycle (write to disk via ArrowBlockWriter, read back via
+    /// ArrowBlockReader) bit-exact. This validates the engine flush path
+    /// "just works" with the typed bridge from INT-3-followup-a — no
+    /// engine-layer coercion needed when the records already match the
+    /// collection's canonical precision.
+    #[test]
+    fn fp16_records_survive_write_read_cycle_bit_exact() {
+        use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
+
+        let dir = tempdir().expect("Failed to create tempdir");
+        let path = dir.path().join("fp16_e2e.arrow");
+
+        let dimension = 16;
+        let config = ArrowBlockConfig::new(dimension as u32);
+        let mut writer =
+            ArrowBlockWriter::new(&path, config).expect("Failed to create ArrowBlockWriter");
+
+        // Spread input across fp16 dynamic range to catch any silent
+        // downconversion through the file format layer.
+        let sources: Vec<Vec<f32>> = (0..50)
+            .map(|i| {
+                (0..dimension)
+                    .map(|j| ((i as f32) * 1.5 - 8.0) + (j as f32) * 0.125)
+                    .collect()
+            })
+            .collect();
+        let records: Vec<ProximaRecord> = sources
+            .iter()
+            .enumerate()
+            .map(|(i, src)| {
+                let f16s: Vec<half::f16> = src.iter().map(|&x| half::f16::from_f32(x)).collect();
+                ProximaRecord {
+                    oid: format!("fp16_{:05}", i),
+                    created_at_ns: chrono::Utc::now()
+                        .timestamp_millis()
+                        .saturating_mul(1_000_000),
+                    record_version: 1,
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp16(f16s),
+                        precision: proximadb_records::EmbeddingScalarType::Fp16,
+                        ..Default::default()
+                    }],
+                    ..ProximaRecord::default()
+                }
+            })
+            .collect();
+
+        writer
+            .write_block(&records)
+            .expect("write_block must accept fp16 records");
+        let metadata = writer.finalize().expect("Failed to finalize writer");
+        assert_eq!(metadata.total_records, 50);
+
+        // Read back and verify the column dtype stayed fp16 + values are bit-exact.
+        let reader = ArrowBlockReader::open(&path).expect("open reader");
+        let read_records = reader.read_all().expect("read_all");
+        assert_eq!(read_records.len(), 50);
+
+        for (orig, got) in records.iter().zip(read_records.iter()) {
+            let orig_f16 = match &orig.embeddings[0].values {
+                proximadb_records::EmbeddingValues::Fp16(v) => v.clone(),
+                other => panic!("orig should be Fp16, got {:?}", other.scalar_type()),
+            };
+            let got_f16 = match &got.embeddings[0].values {
+                proximadb_records::EmbeddingValues::Fp16(v) => v.clone(),
+                other => panic!(
+                    "recovered must be Fp16 (file-format layer must not downconvert), got {:?}",
+                    other.scalar_type()
+                ),
+            };
+            assert_eq!(
+                orig_f16, got_f16,
+                "fp16 bit-exact round-trip through SST file"
+            );
+            assert_eq!(
+                got.embeddings[0].precision,
+                proximadb_records::EmbeddingScalarType::Fp16,
+                "EmbeddingCell.precision must be stamped from the recovered column dtype"
+            );
+        }
+    }
+
+    /// INT-4-full: the demonstrable fp16 storage payoff. Writes the same
+    /// content as both fp32 and fp16 to two real Arrow files, then asserts
+    /// the fp16 file's vector-column bytes are ~half the fp32 file's.
+    ///
+    /// Why a tolerance band (45-55%) instead of exact 50%: the file
+    /// includes the schema header, B+ tree index, metadata footer, and
+    /// other fixed per-file overhead that doesn't shrink with the vector
+    /// column. With a large enough vector payload (records × dim × bytes)
+    /// the fixed overhead is amortized below the noise floor and the ratio
+    /// approaches 0.5; we pick a deliberately wide band that still rejects
+    /// any silent downconversion (which would make the ratio ~1.0).
+    ///
+    /// This is the file-format-level proof. The metric-endpoint flavor
+    /// (`/metrics/prometheus` `proximadb_embedding_precision_canonical_bytes`)
+    /// needs a running server and is the next layer up.
+    #[test]
+    fn fp16_file_is_approximately_half_the_fp32_size() {
+        use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
+
+        let dir = tempdir().expect("Failed to create tempdir");
+        let dimension: usize = 256;
+        let num_records: usize = 500;
+
+        // Generate the same source content twice — once as fp32, once as fp16.
+        // Same input bytes means the only delta in output bytes is the column
+        // encoding, which is the signal we're measuring.
+        let make_src = |i: usize| -> Vec<f32> {
+            (0..dimension)
+                .map(|j| ((i as f32) * 0.001) + ((j as f32) * 0.0001))
+                .collect()
+        };
+
+        // ---- fp32 file ----
+        let fp32_path = dir.path().join("baseline_fp32.arrow");
+        let mut writer_fp32 =
+            ArrowBlockWriter::new(&fp32_path, ArrowBlockConfig::new(dimension as u32))
+                .expect("fp32 writer");
+        let fp32_records: Vec<ProximaRecord> = (0..num_records)
+            .map(|i| {
+                let src = make_src(i);
+                ProximaRecord {
+                    oid: format!("fp32_{:06}", i),
+                    record_version: 1,
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp32(src),
+                        ..Default::default()
+                    }],
+                    ..ProximaRecord::default()
+                }
+            })
+            .collect();
+        writer_fp32
+            .write_block(&fp32_records)
+            .expect("fp32 write_block");
+        writer_fp32.finalize().expect("fp32 finalize");
+
+        // ---- fp16 file ----
+        let fp16_path = dir.path().join("native_fp16.arrow");
+        let mut writer_fp16 =
+            ArrowBlockWriter::new(&fp16_path, ArrowBlockConfig::new(dimension as u32))
+                .expect("fp16 writer");
+        let fp16_records: Vec<ProximaRecord> = (0..num_records)
+            .map(|i| {
+                let src = make_src(i);
+                let f16s: Vec<half::f16> = src.iter().map(|&x| half::f16::from_f32(x)).collect();
+                ProximaRecord {
+                    oid: format!("fp16_{:06}", i),
+                    record_version: 1,
+                    embeddings: vec![EmbeddingCell {
+                        model_id: "test".to_string(),
+                        modality: "dense_vector".to_string(),
+                        dim: dimension as u32,
+                        values: proximadb_records::EmbeddingValues::Fp16(f16s),
+                        precision: proximadb_records::EmbeddingScalarType::Fp16,
+                        ..Default::default()
+                    }],
+                    ..ProximaRecord::default()
+                }
+            })
+            .collect();
+        writer_fp16
+            .write_block(&fp16_records)
+            .expect("fp16 write_block");
+        writer_fp16.finalize().expect("fp16 finalize");
+
+        // ---- measure + assert ----
+        let fp32_size = std::fs::metadata(&fp32_path).expect("fp32 metadata").len();
+        let fp16_size = std::fs::metadata(&fp16_path).expect("fp16 metadata").len();
+        let ratio = fp16_size as f64 / fp32_size as f64;
+        assert!(
+            (0.45..=0.55).contains(&ratio),
+            "fp16 file should be 45-55% of the fp32 file (vector column \
+             is the dominant payload at {dimension} dims × {num_records} records). \
+             Got fp32={fp32_size}B, fp16={fp16_size}B, ratio={ratio:.4}. \
+             A ratio near 1.0 indicates the fp16 column was silently \
+             downconverted to fp32 somewhere in the bridge / Arrow IPC stack."
+        );
+
+        // Sanity check the contents are recoverable + still fp16 / fp32 typed —
+        // size-only assertion could pass for a malformed file; we want both.
+        let reader_fp16 = ArrowBlockReader::open(&fp16_path).expect("open fp16 reader");
+        let read_fp16 = reader_fp16.read_all().expect("read fp16");
+        assert_eq!(read_fp16.len(), num_records);
+        assert!(matches!(
+            read_fp16[0].embeddings[0].values,
+            proximadb_records::EmbeddingValues::Fp16(_)
+        ));
+
+        let reader_fp32 = ArrowBlockReader::open(&fp32_path).expect("open fp32 reader");
+        let read_fp32 = reader_fp32.read_all().expect("read fp32");
+        assert_eq!(read_fp32.len(), num_records);
+        assert!(matches!(
+            read_fp32[0].embeddings[0].values,
+            proximadb_records::EmbeddingValues::Fp32(_)
+        ));
     }
 
     #[test]

@@ -75,7 +75,7 @@ def main():
     NUM_QUERIES = 20
     BATCH_SIZE = 10000
 
-    print(f"\nConfiguration:")
+    print("\nConfiguration:")
     print(f"  Vectors: {VECTOR_COUNT}")
     print(f"  Dimension: {DIMENSION}")
     print(f"  Top-K: {TOP_K}")
@@ -115,7 +115,7 @@ def main():
         ) as db:
 
             collection_name = "test_sst"
-            print(f"\nCreating SST collection...")
+            print("\nCreating SST collection...")
             db.create_collection(collection_name, DIMENSION, "sst")
             print("  Collection created")
 

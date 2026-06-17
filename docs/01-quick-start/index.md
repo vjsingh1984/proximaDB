@@ -42,29 +42,32 @@ sleep 5
 curl http://localhost:5678/health
 # {"status":"healthy","version":"0.2.0"}
 
-# 4. Create a collection and insert vectors
-curl -X POST http://localhost:5678/api/v1/collections \
+# 4. Create a canonical record collection
+curl -X POST http://localhost:5678/api/v2/collections \
   -H "Content-Type: application/json" \
   -d '{
     "name": "demo",
-    "dimension": 128,
-    "metric": "cosine"
+    "dimension": 3,
+    "distance_metric": "cosine",
+    "enable_proxima_record": true
   }'
 
-# 5. Insert some vectors
-curl -X POST http://localhost:5678/api/v1/collections/demo/vectors \
+# 5. Insert ProximaRecords with embeddings
+curl -X POST http://localhost:5678/api/v2/collections/demo/records/batch \
   -H "Content-Type: application/json" \
   -d '{
-    "vectors": [[0.1, 0.2, ...], [0.3, 0.4, ...]],
-    "ids": [1, 2]
+    "records": [
+      {"id": "1", "vector": [0.1, 0.2, 0.3], "props": {"category": "A"}},
+      {"id": "2", "vector": [0.3, 0.4, 0.5], "props": {"category": "B"}}
+    ]
   }'
 
 # 6. Search
-curl -X POST http://localhost:5678/api/v1/collections/demo/vectors/search \
+curl -X POST http://localhost:5678/api/v2/collections/demo/search \
   -H "Content-Type: application/json" \
   -d '{
-    "vector": [0.1, 0.2, ...],
-    "k": 5
+    "vector": [0.1, 0.2, 0.3],
+    "top_k": 5
   }'
 ```
 
@@ -73,30 +76,26 @@ curl -X POST http://localhost:5678/api/v1/collections/demo/vectors/search \
 ## Python SDK
 
 ```python
-from proximadb import ProximaDB
+from proximadb_sdk import ProximaDBClient, ProximaRecord
 
 # Connect
-client = ProximaDB("http://localhost:5678")
+client = ProximaDBClient(url="http://localhost:5678")
 
 # Create collection
-collection = client.create_collection(
+client.create_collection(
     name="demo",
-    dimension=128,
-    metric="cosine"
+    dimension=3,
+    distance_metric="cosine"
 )
 
-# Insert vectors
-collection.insert(
-    vectors=[[0.1, 0.2, ...], [0.3, 0.4, ...]],
-    ids=[1, 2],
-    metadata={"category": ["A", "B"]}
-)
+# Insert records with embeddings
+client.insert_records("demo", [
+    ProximaRecord(id="1", vector=[0.1, 0.2, 0.3]).set_flexible("category", "A"),
+    ProximaRecord(id="2", vector=[0.3, 0.4, 0.5]).set_flexible("category", "B"),
+])
 
 # Search
-results = collection.search(
-    query_vector=[0.1, 0.2, ...],
-    k=5
-)
+results = client.search("demo", vector=[0.1, 0.2, 0.3], top_k=5)
 
 for result in results:
     print(f"ID: {result.id}, Score: {result.score}")

@@ -8,12 +8,19 @@ Features:
 - Thread-safe concurrent operations
 """
 
+import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from ..exceptions import ProximaDBError
-from ..models import SearchResult, VectorOperationResponse
+from ..models import (
+    BatchResult,
+    OperationMetrics,
+    SearchResult,
+    VectorOperationResponse,
+)
+from ..models_v2 import ProximaRecord
 from .connection_pools import GrpcChannelContext, GrpcConnectionPool
 
 
@@ -25,8 +32,8 @@ class HealthCheckResponse:
     latency_ms: float
     status: str
     server_address: str
-    details: Optional[str] = None
-    version: Optional[str] = None
+    details: str | None = None
+    version: str | None = None
 
 
 @dataclass
@@ -104,7 +111,7 @@ class SearchResultsWrapper:
     - Direct list access via indexing, iteration, len()
     """
 
-    def __init__(self, results_list: List[Any]):
+    def __init__(self, results_list: list[Any]):
         """Initialize wrapper with a list of SearchResult objects"""
         self.results = results_list
 
@@ -132,7 +139,7 @@ class VectorWrapper:
     to an object with attribute access: obj.id, obj.vector, obj.metadata
     """
 
-    def __init__(self, vector_dict: Dict[str, Any]):
+    def __init__(self, vector_dict: dict[str, Any]):
         """Initialize wrapper with a vector dictionary"""
         self._dict = vector_dict
         # Set attributes from dict
@@ -158,7 +165,7 @@ class DictWrapper:
     Used for operation results like delete, update, etc.
     """
 
-    def __init__(self, data_dict: Dict[str, Any]):
+    def __init__(self, data_dict: dict[str, Any]):
         """Initialize wrapper with a dictionary"""
         self._dict = data_dict
         # Set attributes from dict
@@ -198,9 +205,17 @@ try:
     except Exception:  # pragma: no cover - optional
         v1_graph_pb2_grpc = None
         v1_graph_pb2 = None
+    try:
+        from proximadb.v2 import record_pb2 as v2_record_pb2  # type: ignore
+        from proximadb.v2 import record_pb2_grpc as v2_record_pb2_grpc  # type: ignore
+    except Exception:  # pragma: no cover - broken generated-stub install
+        v2_record_pb2 = None
+        v2_record_pb2_grpc = None
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
+    v2_record_pb2 = None
+    v2_record_pb2_grpc = None
 
 logger = logging.getLogger(__name__)
 
@@ -248,6 +263,58 @@ class ProximaDBSyncGrpcClient:
 
         # Alias for backward compatibility with tests
         self._pool = self._connection_pool
+
+    def _python_to_sql_value(self, value: Any):
+        """Encode Python values into v1 SqlValue without losing nested shape."""
+        from google.protobuf.struct_pb2 import NullValue
+
+        sv = v1_types_pb2.SqlValue()
+        if value is None:
+            sv.null_value = NullValue.NULL_VALUE
+        elif isinstance(value, bool):
+            sv.bool_value = value
+        elif isinstance(value, int) and not isinstance(value, bool):
+            sv.int64_value = value
+        elif isinstance(value, float):
+            sv.number_value = value
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            sv.bytes_value = bytes(value)
+        elif isinstance(value, (list, tuple)):
+            sv.array_value.values.extend(
+                self._python_to_sql_value(item) for item in value
+            )
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                sv.object_value.fields[str(key)].CopyFrom(
+                    self._python_to_sql_value(item)
+                )
+        else:
+            sv.string_value = str(value)
+        return sv
+
+    def _sql_value_to_python(self, value) -> Any:
+        """Decode v1 SqlValue rows into native Python values recursively."""
+        kind = value.WhichOneof("value")
+        if kind == "string_value":
+            return value.string_value
+        if kind == "number_value":
+            return value.number_value
+        if kind == "bool_value":
+            return value.bool_value
+        if kind == "int64_value":
+            return value.int64_value
+        if kind == "bytes_value":
+            return bytes(value.bytes_value)
+        if kind == "array_value":
+            return [
+                self._sql_value_to_python(item) for item in value.array_value.values
+            ]
+        if kind == "object_value":
+            return {
+                key: self._sql_value_to_python(item)
+                for key, item in value.object_value.fields.items()
+            }
+        return None
 
     def _init_connection_pool(self):
         """Initialize gRPC connection pool for optimal performance"""
@@ -325,6 +392,28 @@ class ProximaDBSyncGrpcClient:
                 stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
 
                 # Execute the operation with timeout
+                return operation_func(stub)
+
+        except grpc.RpcError as e:
+            logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
+            details = e.details() or str(e)
+            if e.code() == grpc.StatusCode.UNAVAILABLE or "connect" in details.lower():
+                raise ProximaDBError(f"{operation_name} connection failed: {details}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {details}")
+        except Exception as e:
+            logger.error(f"gRPC {operation_name} failed: {e}")
+            raise ProximaDBError(f"{operation_name} failed: {e}")
+
+    def _execute_record_with_pool(self, operation_name: str, operation_func):
+        """Execute record operation using the v2 ProximaRecordService."""
+        if not GRPC_AVAILABLE or v2_record_pb2_grpc is None:
+            raise ProximaDBError(
+                "v2 record gRPC stubs not available. Regenerate Python protobuf stubs."
+            )
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                stub = v2_record_pb2_grpc.ProximaRecordServiceStub(channel)
                 return operation_func(stub)
 
         except grpc.RpcError as e:
@@ -423,13 +512,13 @@ class ProximaDBSyncGrpcClient:
         self,
         start_node_id: str,
         target_node_id: str,
-        max_depth: Optional[int] = None,
-        edge_types: Optional[List[str]] = None,
+        max_depth: int | None = None,
+        edge_types: list[str] | None = None,
         algorithm: str = "DIJKSTRA",
-        k: Optional[int] = None,
-        enable_prefetch: Optional[bool] = None,
-        prefetch_budget: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        k: int | None = None,
+        enable_prefetch: bool | None = None,
+        prefetch_budget: int | None = None,
+    ) -> dict[str, Any]:
         """Compute shortest path via GraphService.ShortestPath with per-call prefetch overrides.
 
         Per-call overrides are passed as gRPC metadata headers:
@@ -481,17 +570,17 @@ class ProximaDBSyncGrpcClient:
     def execute_sql(
         self,
         query: str,
-        parameters: Optional[list] = None,
-        collection: Optional[str] = None,
+        parameters: list | None = None,
+        collection: str | None = None,
     ):
-        """Execute SQL via proximadb.v1.SqlService.ExecuteSql
+        """Execute SQL via proximadb.v1.QueryService.ExecuteQuery
 
         Args:
             query: SQL text
-            parameters: Optional list of simple values (str|float|bool)
+            parameters: Optional list of rich values (scalars, bytes, lists, dicts)
             collection: Optional default collection context
         Returns:
-            ExecuteSqlResponse as dict-like (via proto object fields)
+            ExecuteQueryResponse as dict-like (via proto object fields)
         """
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
@@ -500,34 +589,20 @@ class ProximaDBSyncGrpcClient:
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
-                stub = v1_sql_pb2_grpc.SqlServiceStub(channel)
-                # Build ExecuteSqlRequest using v1 messages
+                stub = v1_sql_pb2_grpc.QueryServiceStub(channel)
+                # Build ExecuteQueryRequest using v1 messages
                 from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
 
-                req = v1_types_pb2.ExecuteSqlRequest(query=query)
+                req = v1_types_pb2.ExecuteQueryRequest(query=query)
                 if parameters:
                     for p in parameters:
-                        sv = v1_types_pb2.SqlValue()
-                        if isinstance(p, bool):
-                            sv.bool_value = p
-                        elif isinstance(p, (int, float)):
-                            sv.number_value = float(p)
-                        else:
-                            sv.string_value = str(p)
-                        req.parameters.append(sv)
+                        req.parameters.append(self._python_to_sql_value(p))
                 if collection:
                     req.collection = collection
-                resp = stub.ExecuteSql(req, timeout=self.timeout)
+                resp = stub.ExecuteQuery(req, timeout=self.timeout)
                 # Return as a simple dict for convenience
                 rows = [
-                    {
-                        f.key: (
-                            f.value.string_value
-                            or f.value.number_value
-                            or f.value.bool_value
-                        )
-                        for f in row.fields
-                    }
+                    {f.key: self._sql_value_to_python(f.value) for f in row.fields}
                     for row in resp.rows
                 ]
                 return {
@@ -553,8 +628,8 @@ class ProximaDBSyncGrpcClient:
         dimension: int,
         distance_metric: int,
         storage_engine: int,
-        tags: Optional[list] = None,
-        description: Optional[str] = None,
+        tags: list | None = None,
+        description: str | None = None,
     ):
         def _op(channel):
             stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
@@ -582,9 +657,9 @@ class ProximaDBSyncGrpcClient:
 
     def list_collections_v1(
         self,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-        include_stats: Optional[bool] = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        include_stats: bool | None = None,
     ):
         def _op(channel):
             stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
@@ -616,9 +691,10 @@ class ProximaDBSyncGrpcClient:
         indexing_algorithm: int = None,
         storage_engine: int = None,
         engine: int = None,  # Alias for storage_engine (backward compatibility)
-        filterable_columns: List[Any] = None,
-        index_configs: List[Any] = None,
+        filterable_columns: list[Any] = None,
+        index_configs: list[Any] = None,
         quantization_config: Any = None,
+        canonical_embedding_precision: int | None = None,
     ) -> Any:
         """Create collection with unified interface
 
@@ -686,6 +762,8 @@ class ProximaDBSyncGrpcClient:
             if quantization_config:
                 # Field name in proto is `quantization`
                 config.quantization.CopyFrom(quantization_config)
+            if canonical_embedding_precision is not None:
+                config.canonical_embedding_precision = canonical_embedding_precision
 
             # Use CollectionService.CreateCollection method from v1 API
             # CreateCollection expects CollectionConfig directly, not wrapped in a request
@@ -712,7 +790,7 @@ class ProximaDBSyncGrpcClient:
             "get_collection", _get_collection_operation
         )
 
-    def list_collections(self) -> List[Any]:
+    def list_collections(self) -> list[Any]:
         """List all collections"""
 
         def _list_collections_operation(stub):
@@ -747,11 +825,341 @@ class ProximaDBSyncGrpcClient:
             "delete_collection", _delete_collection_operation
         )
 
-    # Vector Operations - Unified Interface
+    # Record Operations - Unified Interface
+    def _python_to_v2_typed_value(self, value: Any):
+        """Encode Python values into v2 ProximaValue/TypedValue protobufs."""
+        if v2_record_pb2 is None:
+            raise ProximaDBError("v2 record protobuf stubs not available")
+
+        type_hint = None
+        if isinstance(value, dict) and set(value.keys()) == {"type", "value"}:
+            type_hint = str(value["type"]).lower()
+            value = value["value"]
+
+        tv = v2_record_pb2.TypedValue()
+        if value is None:
+            tv.declared_type = v2_record_pb2.COLUMN_TYPE_UNSPECIFIED
+            tv.is_null = True
+        elif isinstance(value, bool):
+            tv.declared_type = v2_record_pb2.BOOLEAN
+            tv.boolean_value = value
+        elif isinstance(value, int) and not isinstance(value, bool):
+            tv.declared_type = v2_record_pb2.INTEGER
+            tv.integer_value = value
+        elif isinstance(value, float):
+            tv.declared_type = (
+                v2_record_pb2.FLOAT32 if type_hint == "float32" else v2_record_pb2.FLOAT
+            )
+            if type_hint == "float32":
+                tv.float32_value = value
+            else:
+                tv.float_value = value
+        elif isinstance(value, (bytes, bytearray, memoryview)):
+            tv.declared_type = v2_record_pb2.BINARY
+            tv.binary_value = bytes(value)
+        elif isinstance(value, str):
+            tv.declared_type = (
+                v2_record_pb2.SYMBOL if type_hint == "symbol" else v2_record_pb2.TEXT
+            )
+            if type_hint == "symbol":
+                tv.symbol_value = value
+            else:
+                tv.text_value = value
+        elif isinstance(value, (list, tuple)):
+            tv.declared_type = v2_record_pb2.ARRAY_ANY
+            tv.array_value.values.extend(
+                self._python_to_v2_typed_value(item) for item in value
+            )
+        elif isinstance(value, dict):
+            tv.declared_type = v2_record_pb2.JSONB
+            tv.jsonb_value = json.dumps(value, separators=(",", ":")).encode("utf-8")
+        else:
+            tv.declared_type = v2_record_pb2.TEXT
+            tv.text_value = str(value)
+        return tv
+
+    def _v2_typed_value_to_python(self, value: Any) -> Any:
+        """Decode v2 TypedValue protobufs into Python values."""
+        which = value.WhichOneof("value")
+        if which in (None, "is_null"):
+            return None
+        if which == "text_value":
+            return value.text_value
+        if which == "integer_value":
+            return value.integer_value
+        if which == "float_value":
+            return value.float_value
+        if which == "boolean_value":
+            return value.boolean_value
+        if which == "timestamp_value":
+            return value.timestamp_value
+        if which == "date_value":
+            return value.date_value
+        if which == "time_value":
+            return value.time_value
+        if which == "duration_value":
+            return value.duration_value
+        if which == "uuid_value":
+            return bytes(value.uuid_value).hex()
+        if which == "binary_value":
+            return bytes(value.binary_value)
+        if which == "json_value":
+            try:
+                return json.loads(value.json_value)
+            except json.JSONDecodeError:
+                return value.json_value
+        if which == "jsonb_value":
+            try:
+                return json.loads(bytes(value.jsonb_value).decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                return bytes(value.jsonb_value)
+        if which == "array_value":
+            return [
+                self._v2_typed_value_to_python(item)
+                for item in value.array_value.values
+            ]
+        if which == "map_value":
+            return {
+                key: self._v2_typed_value_to_python(item)
+                for key, item in value.map_value.entries.items()
+            }
+        if which == "struct_value":
+            return {
+                key: self._v2_typed_value_to_python(item)
+                for key, item in value.struct_value.entries.items()
+            }
+        if which == "float32_value":
+            return value.float32_value
+        if which.endswith("_array"):
+            return list(getattr(value, which).values)
+        return getattr(value, which)
+
+    def _normalize_vector_alias_records(
+        self, vectors: list[dict[str, Any] | Any]
+    ) -> list[dict[str, Any]]:
+        """Normalize legacy vector alias inputs to v2 ProximaRecord payloads."""
+        records: list[dict[str, Any]] = []
+        for index, vector_data in enumerate(vectors):
+            if hasattr(vector_data, "model_dump"):
+                vector_dict = vector_data.model_dump(exclude_none=True)
+            elif hasattr(vector_data, "dict"):
+                vector_dict = vector_data.dict(exclude_none=True)
+            elif hasattr(vector_data, "__dict__") and not isinstance(vector_data, dict):
+                vector_dict = {
+                    key: value
+                    for key, value in vector_data.__dict__.items()
+                    if not key.startswith("_")
+                }
+            else:
+                vector_dict = vector_data
+
+            if not isinstance(vector_dict, dict):
+                vector_dict = {"id": f"record_{index}", "vector": vector_dict}
+
+            props = (
+                vector_dict.get("props")
+                or vector_dict.get("metadata")
+                or vector_dict.get("typed_fields")
+                or {}
+            )
+            record = {
+                "id": vector_dict.get("id")
+                or vector_dict.get("oid")
+                or f"record_{index}",
+                "vector": vector_dict.get("vector"),
+                "props": props,
+            }
+            for field in (
+                "timestamp_ms",
+                "timestamp",
+                "updated_at_ms",
+                "updated_at",
+                "expires_at_ms",
+                "expires_at",
+                "version",
+                "source",
+            ):
+                if vector_dict.get(field) is not None:
+                    record[field] = vector_dict[field]
+            records.append(record)
+        return records
+
+    def _record_proto_for_grpc(
+        self, record: ProximaRecord | dict[str, Any], index: int = 0
+    ):
+        if v2_record_pb2 is None:
+            raise ProximaDBError("v2 record protobuf stubs not available")
+
+        if hasattr(record, "model_dump"):
+            record = record.model_dump(exclude_none=True)
+        elif hasattr(record, "dict"):
+            record = record.dict(exclude_none=True)
+        if not isinstance(record, dict):
+            raise TypeError(f"Unsupported record input: {type(record)!r}")
+
+        vector = record.get("vector")
+        if vector is None and record.get("embeddings"):
+            first_embedding = record["embeddings"][0]
+            vector = (
+                first_embedding.get("values")
+                if isinstance(first_embedding, dict)
+                else first_embedding
+            )
+        if vector is None:
+            raise ValueError("record is missing vector")
+
+        proto = v2_record_pb2.ProximaRecord()
+        proto.id = str(record.get("id") or record.get("oid") or f"record_{index}")
+        proto.vector.extend(float(v) for v in vector)
+        if record.get("vector_dimension") is not None:
+            proto.vector_dimension = int(record["vector_dimension"])
+
+        for source in ("props", "metadata", "flexible_fields"):
+            values = record.get(source)
+            if isinstance(values, dict):
+                for key, value in values.items():
+                    proto.props[str(key)].CopyFrom(
+                        self._python_to_v2_typed_value(value)
+                    )
+
+        typed_fields = record.get("typed_fields")
+        if isinstance(typed_fields, dict):
+            for key, value in typed_fields.items():
+                if hasattr(value, "model_dump"):
+                    value = value.model_dump(exclude_none=True)
+                if isinstance(value, dict) and "value" in value:
+                    value = {
+                        "type": value.get("value_type") or value.get("type"),
+                        "value": value["value"],
+                    }
+                proto.props[str(key)].CopyFrom(self._python_to_v2_typed_value(value))
+
+        for text_field in record.get("text_fields") or []:
+            if hasattr(text_field, "model_dump"):
+                text_field = text_field.model_dump(exclude_none=True)
+            if isinstance(text_field, dict):
+                proto.text_fields.add(
+                    name=str(text_field.get("name") or ""),
+                    content=str(text_field.get("content") or ""),
+                    storage_hint=str(text_field.get("storage_hint") or ""),
+                    chunk_count=int(text_field.get("chunk_count") or 0),
+                    chunk_reference=str(text_field.get("chunk_reference") or ""),
+                )
+
+        if record.get("timestamp_ms") is not None:
+            proto.timestamp_ms = int(record["timestamp_ms"])
+        for field in (
+            "updated_at_ms",
+            "expires_at_ms",
+            "version",
+            "source",
+            "source_type",
+            "schema_id",
+            "partition_key",
+            "created_by",
+            "updated_by",
+        ):
+            if record.get(field) is not None:
+                setattr(proto, field, record[field])
+        if isinstance(record.get("partition_values"), dict):
+            proto.partition_values.update(
+                {str(k): str(v) for k, v in record["partition_values"].items()}
+            )
+        if isinstance(record.get("custom_metadata"), dict):
+            proto.custom_metadata.update(
+                {str(k): str(v) for k, v in record["custom_metadata"].items()}
+            )
+        return proto
+
+    def _v2_record_batch_result(self, response) -> BatchResult:
+        errors = [
+            f"{error.record_id or error.record_index}: {error.error_message}"
+            for error in response.errors
+        ]
+        return BatchResult(
+            total=int(response.total_processed),
+            success=int(response.success_count),
+            failed=int(response.failed_count),
+            errors=errors,
+            metrics=OperationMetrics(
+                total_processed=int(response.total_processed),
+                successful_count=int(response.success_count),
+                failed_count=int(response.failed_count),
+                processing_time_us=int(response.processing_time_us),
+            ),
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord | dict[str, Any]],
+        **kwargs,
+    ) -> BatchResult:
+        upsert = bool(kwargs.pop("upsert", False))
+        if upsert:
+            return self.upsert_records(collection_id, records, **kwargs)
+
+        if v2_record_pb2 is None or v2_record_pb2_grpc is None:
+            raise ProximaDBError("v2 ProximaRecord gRPC stubs are required")
+
+        request = v2_record_pb2.ProximaRecordBatch(
+            collection_id=collection_id,
+            write_mode=v2_record_pb2.INSERT,
+            validate_schema=bool(kwargs.get("validate_schema", True)),
+            return_ids=bool(kwargs.get("return_ids", True)),
+            return_errors=bool(kwargs.get("return_errors", True)),
+        )
+        request.records.extend(
+            self._record_proto_for_grpc(record, index)
+            for index, record in enumerate(records)
+        )
+        if kwargs.get("schema_id"):
+            request.schema_id = str(kwargs["schema_id"])
+
+        def _insert_records_operation(stub):
+            return stub.InsertRecords(request, timeout=self.timeout)
+
+        return self._v2_record_batch_result(
+            self._execute_record_with_pool("insert_records", _insert_records_operation)
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord | dict[str, Any]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads."""
+        kwargs.pop("upsert", None)
+        if v2_record_pb2 is None or v2_record_pb2_grpc is None:
+            raise ProximaDBError("v2 ProximaRecord gRPC stubs are required")
+
+        request = v2_record_pb2.ProximaRecordBatch(
+            collection_id=collection_id,
+            write_mode=v2_record_pb2.UPSERT,
+            validate_schema=bool(kwargs.get("validate_schema", True)),
+            return_ids=bool(kwargs.get("return_ids", True)),
+            return_errors=bool(kwargs.get("return_errors", True)),
+        )
+        request.records.extend(
+            self._record_proto_for_grpc(record, index)
+            for index, record in enumerate(records)
+        )
+        if kwargs.get("schema_id"):
+            request.schema_id = str(kwargs["schema_id"])
+
+        def _upsert_records_operation(stub):
+            return stub.UpsertRecords(request, timeout=self.timeout)
+
+        return self._v2_record_batch_result(
+            self._execute_record_with_pool("upsert_records", _upsert_records_operation)
+        )
+
+    # Vector Compatibility Aliases
     def insert_vectors(
-        self, collection_id: str, vectors: List[Dict[str, Any]], upsert: bool = False
+        self, collection_id: str, vectors: list[dict[str, Any]], upsert: bool = False
     ) -> VectorOperationResponse:
-        """Insert vectors with unified interface
+        """Insert vectors through the v2 ProximaRecord gRPC surface.
 
         Args:
             collection_id: Target collection ID
@@ -762,141 +1170,34 @@ class ProximaDBSyncGrpcClient:
         Returns:
             VectorOperationResponse with operation details
         """
-
-        def _insert_vectors_operation(stub):
-            # Convert vectors to proto format using v1 VectorRecord
-            proto_vectors = []
-            for vector_data in vectors:
-                # Handle both VectorRecord objects and dictionaries
-                if hasattr(vector_data, "model_dump"):
-                    # Pydantic BaseModel (VectorRecord) - convert to dict
-                    vector_dict = vector_data.model_dump(exclude_none=False)
-                elif hasattr(vector_data, "__dict__"):
-                    # Regular object with __dict__
-                    vector_dict = vector_data.__dict__
-                else:
-                    # Already a dictionary
-                    vector_dict = vector_data
-
-                vector_record = v1_vector_types_pb2.VectorRecord()
-
-                if "id" in vector_dict and vector_dict["id"]:
-                    vector_record.id = vector_dict["id"]
-                if "vector" in vector_dict and vector_dict["vector"]:
-                    vector_record.vector.extend(vector_dict["vector"])
-                if "metadata" in vector_dict and vector_dict["metadata"]:
-                    # Convert metadata to map<string, SqlValue> format
-                    for key, value in vector_dict["metadata"].items():
-                        sql_value = v1_types_pb2.SqlValue()
-                        if isinstance(value, bool):
-                            # Check bool before int since bool is a subclass of int
-                            sql_value.bool_value = value
-                        elif isinstance(value, int):
-                            sql_value.int64_value = value
-                        elif isinstance(value, float):
-                            sql_value.number_value = value
-                        elif isinstance(value, str):
-                            sql_value.string_value = value
-                        else:
-                            # Fallback to string representation
-                            sql_value.string_value = str(value)
-                        # Assign SqlValue directly to the map
-                        vector_record.metadata[key].CopyFrom(sql_value)
-
-                # Add timestamp field (accept both 'timestamp' and 'timestamp_ms')
-                if "timestamp" in vector_dict and vector_dict["timestamp"] is not None:
-                    vector_record.timestamp = int(vector_dict["timestamp"])
-                elif (
-                    "timestamp_ms" in vector_dict
-                    and vector_dict["timestamp_ms"] is not None
-                ):
-                    vector_record.timestamp = int(vector_dict["timestamp_ms"])
-
-                # Add updated_at field (accept both forms)
-                if (
-                    "updated_at" in vector_dict
-                    and vector_dict["updated_at"] is not None
-                ):
-                    vector_record.updated_at = int(vector_dict["updated_at"])
-                elif (
-                    "updated_at_ms" in vector_dict
-                    and vector_dict["updated_at_ms"] is not None
-                ):
-                    vector_record.updated_at = int(vector_dict["updated_at_ms"])
-
-                # Add expires_at field (accept both forms)
-                if (
-                    "expires_at" in vector_dict
-                    and vector_dict["expires_at"] is not None
-                ):
-                    vector_record.expires_at = int(vector_dict["expires_at"])
-                elif (
-                    "expires_at_ms" in vector_dict
-                    and vector_dict["expires_at_ms"] is not None
-                ):
-                    vector_record.expires_at = int(vector_dict["expires_at_ms"])
-
-                # Add version field
-                if "version" in vector_dict and vector_dict["version"] is not None:
-                    vector_record.version = int(vector_dict["version"])
-
-                # Add source field (original content that generated this vector)
-                if "source" in vector_dict and vector_dict["source"] is not None:
-                    vector_record.source = str(vector_dict["source"])
-
-                proto_vectors.append(vector_record)
-
-            # Use VectorBatch endpoint for inserts (v1)
-            request = v1_vector_types_pb2.VectorBatchRequest(
-                collection_id=collection_id, vectors=proto_vectors
-            )
-            response = stub.VectorBatch(request, timeout=self.timeout)
-
-            # Return VectorOperationResponse
-            from ..models import OperationMetrics
-
-            return VectorOperationResponse(
-                success=response.success,
-                operation="INSERT",
-                metrics=OperationMetrics(
-                    successful_count=(
-                        getattr(response.metrics, "successful_count", len(vectors))
-                        if hasattr(response, "metrics")
-                        else len(vectors)
-                    ),
-                    failed_count=(
-                        getattr(response.metrics, "failed_count", 0)
-                        if hasattr(response, "metrics")
-                        else 0
-                    ),
-                    duration_ms=(
-                        getattr(response.metrics, "processing_time_us", 0) / 1000
-                        if hasattr(response, "metrics")
-                        else 0
-                    ),
-                    total_count=len(vectors),
-                ),
-                error_message=(
-                    getattr(response, "error_message", None)
-                    if not response.success
-                    else None
-                ),
-            )
-
-        return self._execute_with_pool("insert_vectors", _insert_vectors_operation)
+        records = self._normalize_vector_alias_records(vectors)
+        batch_result = (
+            self.upsert_records(collection_id, records)
+            if upsert
+            else self.insert_records(collection_id, records)
+        )
+        return VectorOperationResponse(
+            success=batch_result.failed == 0,
+            operation="UPSERT" if upsert else "INSERT",
+            metrics=batch_result.metrics,
+            vector_ids=[record["id"] for record in records],
+            error_message=(
+                "; ".join(batch_result.errors) if batch_result.errors else None
+            ),
+        )
 
     def search_vectors(
         self,
         collection_id: str,
-        query_vectors: List[List[float]] = None,
-        query_vector: List[float] = None,
+        query_vectors: list[list[float]] = None,
+        query_vector: list[float] = None,
         top_k: int = 10,
-        metadata_filters: Optional[Dict[str, Any]] = None,
+        metadata_filters: dict[str, Any] | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        search_hints: Optional[Dict[str, Any]] = None,
+        search_hints: dict[str, Any] | None = None,
     ) -> SearchResult:
-        """Search vectors with unified interface
+        """Search vectors through the v2 ProximaRecord gRPC surface.
 
         Args:
             collection_id: Target collection ID
@@ -916,161 +1217,80 @@ class ProximaDBSyncGrpcClient:
             raise ValueError("Either query_vector or query_vectors must be provided")
 
         def _search_vectors_operation(stub):
-            # Build search queries using v1 protos
-            search_queries = []
-            for qv in query_vectors:
-                query = v1_vector_types_pb2.SearchQuery()
-                query.vector.extend(qv)
-
-                # Add metadata filters if provided
-                if metadata_filters:
-                    # Convert to simple filters dict (v1 SearchQuery supports this)
-                    for key, value in metadata_filters.items():
-                        sql_value = v1_types_pb2.SqlValue()
-                        if isinstance(value, bool):
-                            # Check bool before int since bool is subclass of int
-                            sql_value.bool_value = value
-                        elif isinstance(value, int):
-                            sql_value.int64_value = value
-                        elif isinstance(value, float):
-                            sql_value.number_value = value
-                        elif isinstance(value, str):
-                            sql_value.string_value = value
-                        query.filters[key].CopyFrom(sql_value)
-
-                search_queries.append(query)
-
-            # Build include fields
-            include_fields = v1_vector_types_pb2.IncludeFields(
-                vector=include_vectors, metadata=include_metadata, score=True, rank=True
-            )
-
-            # Build search request with v1 proto
-            request = v1_vector_types_pb2.VectorSearchRequest(
-                collection_id=collection_id,
-                queries=search_queries,
-                top_k=top_k,
-                include_fields=include_fields,
-            )
-
-            response = stub.VectorSearch(request, timeout=self.timeout)
-
-            # VectorSearch returns VectorOperationResponse which wraps SearchResult
-            # Extract the SearchResult from the response
-            if not response.success:
-                error_msg = (
-                    response.error_message
-                    if response.error_message
-                    else "Search failed"
-                )
-                raise ProximaDBError(f"VectorSearch failed: {error_msg}")
-
-            # Access response.results which is a SearchResult message
-            search_result_msg = response.results
-            if not search_result_msg or not search_result_msg.results:
-                return []
-
-            # Convert v1 SearchResult.results (repeated SearchVectorRecord) to list
-            results = []
-            for result in search_result_msg.results:
-                vector_result = {
-                    "id": result.id,
-                    "score": result.score,
-                }
-                if include_vectors and result.vector:
-                    vector_result["vector"] = list(result.vector)
-                if include_metadata and result.metadata:
-                    # Convert v1 metadata (map of SqlValue) to dict
-                    metadata_dict = {}
-                    for item in result.metadata:
-                        sql_value = result.metadata[item]
-                        if sql_value.HasField("string_value"):
-                            metadata_dict[item] = sql_value.string_value
-                        elif sql_value.HasField("int64_value"):
-                            metadata_dict[item] = sql_value.int64_value
-                        elif sql_value.HasField("number_value"):
-                            metadata_dict[item] = sql_value.number_value
-                        elif sql_value.HasField("bool_value"):
-                            metadata_dict[item] = sql_value.bool_value
-                    vector_result["metadata"] = metadata_dict
-
-                # Add timestamp fields (use _ms suffix for SDK consistency)
-                if result.HasField("timestamp"):
-                    vector_result["timestamp_ms"] = result.timestamp
-                    vector_result["timestamp"] = result.timestamp
-
-                # Add version field (proto field 5)
-                if result.HasField("version"):
-                    vector_result["version"] = result.version
-
-                # Add similarity field (proto field 6)
-                if result.HasField("similarity"):
-                    vector_result["similarity"] = result.similarity
-
-                # Add source field (proto field 8 - original content for RAG)
-                if result.HasField("source"):
-                    vector_result["source"] = result.source
-
-                # Add expanded_context field (proto field 9)
-                if result.expanded_context:
-                    vector_result["expanded_context"] = list(result.expanded_context)
-
-                # Add semantic_similarity field (proto field 10)
-                if result.HasField("semantic_similarity"):
-                    vector_result["semantic_similarity"] = result.semantic_similarity
-
-                # Add quantization_info field (proto field 11)
-                if result.HasField("quantization_info"):
-                    vector_result["quantization_info"] = result.quantization_info
-
-                # Add engine_stats field (proto field 12)
-                if result.engine_stats:
-                    vector_result["engine_stats"] = dict(result.engine_stats)
-
-                # Add index_path field (proto field 13)
-                if result.HasField("index_path"):
-                    vector_result["index_path"] = result.index_path
-
-                results.append(vector_result)
-
-            # Return list of SearchResult dataclass objects
             search_results = []
-            for result in results:
-                search_result = SearchResult(
-                    id=result["id"],
-                    score=result["score"],
-                    metadata=result.get("metadata", {}),
-                    vector=result.get("vector", None),
-                    # Add all SearchVectorRecord fields
-                    timestamp=result.get("timestamp"),
-                    version=result.get("version"),
-                    similarity=result.get("similarity"),
-                    source=result.get("source"),
-                    expanded_context=result.get("expanded_context"),
-                    semantic_similarity=result.get("semantic_similarity"),
-                    quantization_info=result.get("quantization_info"),
-                    engine_stats=result.get("engine_stats"),
-                    index_path=result.get("index_path"),
+            for qv in query_vectors:
+                request = v2_record_pb2.TypedSearchRequest(
+                    collection_id=collection_id,
+                    top_k=top_k,
+                    include_vector=include_vectors,
+                    include_text_fields=False,
                 )
-                search_results.append(search_result)
+                request.query_vector.extend(float(value) for value in qv)
+                request.filter_logic = v2_record_pb2.AND
+                if metadata_filters:
+                    for key, value in metadata_filters.items():
+                        filter_condition = request.filters.add()
+                        filter_condition.field_name = str(key)
+                        filter_condition.operator = v2_record_pb2.EQ
+                        filter_condition.value.CopyFrom(
+                            self._python_to_v2_typed_value(value)
+                        )
+                if search_hints:
+                    request.search_hints.update(
+                        {str(key): str(value) for key, value in search_hints.items()}
+                    )
 
-            # Wrap results to provide .results attribute for backward compatibility
+                response = stub.Search(request, timeout=self.timeout)
+                for rank, result in enumerate(response.results):
+                    metadata = None
+                    if include_metadata:
+                        metadata = {
+                            key: self._v2_typed_value_to_python(value)
+                            for key, value in result.props.items()
+                        }
+                    search_results.append(
+                        SearchResult(
+                            id=result.id,
+                            score=result.score,
+                            rank=rank,
+                            vector=(
+                                list(result.vector)
+                                if include_vectors and result.vector
+                                else None
+                            ),
+                            metadata=metadata,
+                            timestamp=(
+                                result.timestamp_ms
+                                if result.HasField("timestamp_ms")
+                                else None
+                            ),
+                            version=(
+                                result.version if result.HasField("version") else None
+                            ),
+                            source=(
+                                result.source if result.HasField("source") else None
+                            ),
+                        )
+                    )
+
             return SearchResultsWrapper(search_results)
 
-        return self._execute_with_pool("search_vectors", _search_vectors_operation)
+        return self._execute_record_with_pool(
+            "search_vectors", _search_vectors_operation
+        )
 
     def search(
         self,
         collection_id: str = None,  # Can be positional or keyword
-        query_vector: List[float] = None,  # Can be positional
-        query_vectors: List[List[float]] = None,
+        query_vector: list[float] = None,  # Can be positional
+        query_vectors: list[list[float]] = None,
         top_k: int = None,
         k: int = None,  # Backward compatibility alias for top_k
         collection_name: str = None,  # Backward compatibility alias
-        metadata_filters: Optional[Dict[str, Any]] = None,
+        metadata_filters: dict[str, Any] | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
-        search_hints: Optional[Dict[str, Any]] = None,
+        search_hints: dict[str, Any] | None = None,
     ) -> SearchResult:
         """
         Alias for search_vectors() for backward compatibility and convenience
@@ -1120,7 +1340,7 @@ class ProximaDBSyncGrpcClient:
         vector_id: str,
         include_vector: bool = True,
         include_metadata: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Get single vector by ID"""
 
         def _get_vector_operation(stub):
@@ -1186,11 +1406,11 @@ class ProximaDBSyncGrpcClient:
         self,
         collection_id: str,
         vector_id: str,
-        vector: Optional[List[float]] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        vector: list[float] | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Update vector data and/or metadata"""
-        # For now, treat update as upsert using VectorBatch
+        # Treat vector update as an upsert over the v2 ProximaRecord contract.
         vector_data = {"id": vector_id}
         if vector is not None:
             vector_data["vector"] = vector
@@ -1208,64 +1428,62 @@ class ProximaDBSyncGrpcClient:
             "success": result.success,
         }
 
-    def delete_vector(self, collection_id: str, vector_id: str) -> Dict[str, Any]:
-        """Delete single vector - using vector batch with empty vector (mark for deletion)"""
+    def delete_vector(self, collection_id: str, vector_id: str) -> dict[str, Any]:
+        """Delete a vector through the v2 ProximaRecord gRPC surface."""
 
         def _delete_vector_operation(stub):
-            # Create a vector record with just ID for deletion (v1)
-            vector_record = v1_vector_types_pb2.VectorRecord()
-            vector_record.id = vector_id
-            # Empty vector indicates deletion (this may need to be adjusted based on actual API)
-
-            request = v1_vector_types_pb2.VectorBatchRequest(
-                collection_id=collection_id, vectors=[vector_record]
+            record = v2_record_pb2.ProximaRecord(id=vector_id)
+            request = v2_record_pb2.ProximaRecordBatch(
+                collection_id=collection_id,
+                write_mode=v2_record_pb2.DELETE,
+                return_ids=True,
+                return_errors=True,
             )
-            response = stub.VectorBatch(request, timeout=self.timeout)
-            # If we got a response without error, the delete succeeded
-            # The status field should reflect success regardless of response.success value
+            request.records.append(record)
+            response = stub.DeleteRecords(request, timeout=self.timeout)
             return DictWrapper(
-                {"status": "deleted", "vector_id": vector_id, "success": True}
+                {
+                    "status": "deleted" if response.failed_count == 0 else "failed",
+                    "vector_id": vector_id,
+                    "success": response.failed_count == 0,
+                }
             )
 
-        return self._execute_with_pool("delete_vector", _delete_vector_operation)
+        return self._execute_record_with_pool("delete_vector", _delete_vector_operation)
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str]
-    ) -> Dict[str, Any]:
-        """Delete multiple vectors"""
+        self, collection_id: str, vector_ids: list[str]
+    ) -> dict[str, Any]:
+        """Delete multiple vectors through the v2 ProximaRecord gRPC surface."""
 
         def _delete_vectors_operation(stub):
-            deleted_count = 0
-            failed_count = 0
-
+            request = v2_record_pb2.ProximaRecordBatch(
+                collection_id=collection_id,
+                write_mode=v2_record_pb2.DELETE,
+                return_ids=True,
+                return_errors=True,
+            )
             for vector_id in vector_ids:
-                try:
-                    request = v1_vector_types_pb2.DeleteVectorRequest(
-                        collection_id=collection_id, vector_id=vector_id
-                    )
-                    response = stub.DeleteVector(request, timeout=self.timeout)
-                    if response.success:
-                        deleted_count += 1
-                    else:
-                        failed_count += 1
-                except Exception:
-                    failed_count += 1
+                request.records.append(v2_record_pb2.ProximaRecord(id=vector_id))
+            response = stub.DeleteRecords(request, timeout=self.timeout)
 
             return {
                 "status": "completed",
-                "deleted_count": deleted_count,
-                "failed_count": failed_count,
+                "deleted_count": int(response.success_count),
+                "failed_count": int(response.failed_count),
                 "total_requested": len(vector_ids),
             }
 
-        return self._execute_with_pool("delete_vectors", _delete_vectors_operation)
+        return self._execute_record_with_pool(
+            "delete_vectors", _delete_vectors_operation
+        )
 
     def insert_vector(
         self,
         collection_id: str,
         vector_id: str,
-        vector: List[float],
-        metadata: Optional[Dict[str, Any]] = None,
+        vector: list[float],
+        metadata: dict[str, Any] | None = None,
         upsert: bool = False,
     ) -> VectorOperationResponse:
         """Insert a single vector - alias for batch insert with one vector
@@ -1348,7 +1566,7 @@ class ProximaDBSyncGrpcClient:
         else:
             return None
 
-    def _convert_node_from_proto(self, node) -> Dict[str, Any]:
+    def _convert_node_from_proto(self, node) -> dict[str, Any]:
         """Convert Node proto to dictionary"""
         from datetime import datetime, timezone
 
@@ -1375,7 +1593,7 @@ class ProximaDBSyncGrpcClient:
             ),
         }
 
-    def _convert_edge_from_proto(self, edge) -> Dict[str, Any]:
+    def _convert_edge_from_proto(self, edge) -> dict[str, Any]:
         """Convert Edge proto to dictionary"""
         from datetime import datetime, timezone
 
@@ -1405,7 +1623,7 @@ class ProximaDBSyncGrpcClient:
             ),
         }
 
-    def _convert_path_from_proto(self, path) -> List[str]:
+    def _convert_path_from_proto(self, path) -> list[str]:
         """Convert GraphPath proto to list of node IDs"""
         if hasattr(path, "node_ids"):
             return list(path.node_ids)
@@ -1415,11 +1633,11 @@ class ProximaDBSyncGrpcClient:
     def create_node(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph node via gRPC
 
         Args:
@@ -1473,10 +1691,10 @@ class ProximaDBSyncGrpcClient:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None,
+        properties: dict[str, Any] | None = None,
+        weight: float | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Create a graph edge via gRPC
 
         Args:
@@ -1537,12 +1755,12 @@ class ProximaDBSyncGrpcClient:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
+        limit: int | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Traverse graph from a starting node via gRPC
 
         Args:
@@ -1636,12 +1854,12 @@ class ProximaDBSyncGrpcClient:
 
     def query_nodes(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
         graph_id: str = "default",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Query nodes by labels and properties via gRPC
 
         Args:
@@ -1704,6 +1922,177 @@ class ProximaDBSyncGrpcClient:
         except Exception as e:
             logger.error(f"gRPC query_nodes failed: {e}")
             raise ProximaDBError(f"query_nodes failed: {e}")
+
+    def query_edges(
+        self,
+        edge_type: str = "",
+        from_node_id: str | None = None,
+        to_node_id: str | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Query edges by endpoints, type, and properties via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+
+            filters = []
+            if properties:
+                for key, value in properties.items():
+                    filters.append(
+                        v1_graph_pb2.PropertyFilter(
+                            key=key,
+                            operator=v1_graph_pb2.PROPERTY_FILTER_OPERATOR_EQUALS,
+                            value=self._convert_to_property_value(value),
+                        )
+                    )
+
+            request = v1_graph_pb2.EdgeQuery(
+                graph_id=graph_id,
+                edge_types=[edge_type] if edge_type else [],
+                filters=filters,
+            )
+
+            if from_node_id is not None:
+                request.from_node_id = from_node_id
+            if to_node_id is not None:
+                request.to_node_id = to_node_id
+            if limit is not None:
+                request.limit = limit
+            if offset is not None:
+                request.offset = offset
+
+            response = stub.QueryEdges(request, timeout=self.timeout)
+            return {
+                "success": response.success if hasattr(response, "success") else True,
+                "edges": [
+                    self._convert_edge_from_proto(edge) for edge in response.edges
+                ],
+                "total_count": len(response.edges),
+                "next_token": (
+                    response.next_token if hasattr(response, "next_token") else None
+                ),
+            }
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC query_edges RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"query_edges RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC query_edges failed: {e}")
+            raise ProximaDBError(f"query_edges failed: {e}")
+
+    def get_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> dict[str, Any] | None:
+        """Get a graph node by ID via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            request = v1_graph_pb2.GetNodeRequest(graph_id=graph_id, node_id=node_id)
+            response = stub.GetNode(request, timeout=self.timeout)
+            return self._convert_node_from_proto(response)
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC get_node RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"get_node RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC get_node failed: {e}")
+            raise ProximaDBError(f"get_node failed: {e}")
+
+    def get_outgoing_edges(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+        graph_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """Get outgoing graph edges for a node via gRPC."""
+        edge_types = edge_types or [""]
+        edges: list[dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                from_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def get_incoming_edges(
+        self,
+        node_id: str,
+        edge_types: list[str] | None = None,
+        graph_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """Get incoming graph edges for a node via gRPC."""
+        edge_types = edge_types or [""]
+        edges: list[dict[str, Any]] = []
+        for edge_type in edge_types:
+            result = self.query_edges(
+                edge_type=edge_type,
+                to_node_id=node_id,
+                graph_id=graph_id,
+                limit=10000,
+            )
+            edges.extend(result.get("edges", []))
+        return edges
+
+    def delete_node(
+        self,
+        node_id: str,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Delete a graph node by ID via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+            raise ProximaDBError(
+                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            request = v1_graph_pb2.DeleteNodeRequest(graph_id=graph_id, node_id=node_id)
+            response = stub.DeleteNode(request, timeout=self.timeout)
+            return self._convert_node_from_proto(response)
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC delete_node RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"delete_node RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC delete_node failed: {e}")
+            raise ProximaDBError(f"delete_node failed: {e}")
 
 
 # Alias for consistency

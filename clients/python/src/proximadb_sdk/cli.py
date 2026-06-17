@@ -12,11 +12,9 @@ Usage:
 
 import json
 import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import click
-from rich import print as rprint
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
@@ -25,9 +23,19 @@ from rich.table import Table
 # Local imports
 from proximadb_sdk.config import ProximaDBConfig
 from proximadb_sdk.models import SearchFilter
-from proximadb_sdk.unified_client import UnifiedProximaDBClient
+from proximadb_sdk.unified_client import ProximaDBClient as UnifiedProximaDBClient
 
 console = Console()
+
+
+def _record_payload(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    """Normalize legacy CLI vector JSON into the SDK record write shape."""
+    payload = dict(record)
+    if "props" not in payload and "metadata" in payload:
+        payload["props"] = payload.pop("metadata")
+    return payload
 
 
 def get_client(
@@ -151,7 +159,7 @@ def create_collection(
     name: str,
     dimension: int,
     engine: str,
-    description: Optional[str],
+    description: str | None,
 ) -> None:
     """Create a new collection."""
     try:
@@ -270,10 +278,10 @@ def vectors() -> None:
 def insert_vectors(
     ctx: click.Context,
     collection: str,
-    file: Optional[str],
-    vector: Optional[str],
-    vector_id: Optional[str],
-    metadata: Optional[str],
+    file: str | None,
+    vector: str | None,
+    vector_id: str | None,
+    metadata: str | None,
 ) -> None:
     """Insert vectors into a collection.
 
@@ -294,7 +302,7 @@ def insert_vectors(
             ctx.obj["timeout"],
         )
 
-        vectors_data: List[Dict[str, Any]] = []
+        vectors_data: list[dict[str, Any]] = []
 
         if file:
             with open(file) as f:
@@ -309,7 +317,8 @@ def insert_vectors(
             console.print("[red]Either --file or --vector is required.[/red]")
             sys.exit(1)
 
-        result = client.insert_vectors(collection, vectors_data)
+        records_data = [_record_payload(record) for record in vectors_data]
+        result = client.insert_records(collection, records_data)
 
         if ctx.obj["json_output"]:
             click.echo(json.dumps(result, indent=2))
@@ -419,7 +428,7 @@ def search(
     collection: str,
     query: str,
     top_k: int,
-    filter_expr: Optional[str],
+    filter_expr: str | None,
     metric: str,
 ) -> None:
     """Perform similarity search.
@@ -523,7 +532,7 @@ def server_info(ctx: click.Context) -> None:
     import httpx
 
     try:
-        url = f"http://{ctx.obj['host']}:{ctx.obj['rest_port']}/api/v1/info"
+        url = f"http://{ctx.obj['host']}:{ctx.obj['rest_port']}/api/v2/info"
         response = httpx.get(url, timeout=ctx.obj["timeout"])
 
         if ctx.obj["json_output"]:
@@ -595,7 +604,8 @@ def benchmark(
             )
 
         start = time.time()
-        client.insert_vectors(collection, vectors)
+        records = [_record_payload(record) for record in vectors]
+        client.insert_records(collection, records)
         insert_time = time.time() - start
 
         # Search

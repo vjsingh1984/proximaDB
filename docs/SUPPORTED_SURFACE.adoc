@@ -2,17 +2,18 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: March 2026
+:last-updated: 2026-05-28
 
 [.lead]
-Current support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
+Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
 
 [IMPORTANT]
 ====
-This matrix is the support contract.
+This matrix is the product support contract.
 
-* Use link:./TECHNICAL_DEBT.md[Technical Debt Register] for the active backlog.
+* Use link:./10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] for the active backlog.
 * Use link:./_internal/roadmap/STRATEGIC_ROADMAP.adoc[Strategic Roadmap] for sequencing and investment direction.
+* Use link:./12-design/SUPPORTED_SURFACES.adoc[Supported Surfaces: API vs. Physical Projection Status] for the technical API/projection companion matrix.
 * Do not infer support level from code presence alone.
 ====
 
@@ -45,8 +46,8 @@ This matrix is the support contract.
 
 | Vector CRUD and search
 | Supported
-| REST and gRPC vector batch/search/get flows, tenant-aware routing, filters, and streaming search on the canonical single-node path.
-| Keep hybrid retrieval and distributed search claims separate from the supported vector surface.
+| Canonical REST v2 record batch/search/get/scan flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST/gRPC v1 vector-shaped flows remain compatibility adapters for existing clients and must lower into canonical records. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership.
+| Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients should not target v1 `VectorRecord`/`SqlValue` payloads.
 
 | Federated SQL over function-backed sources
 | Beta
@@ -55,18 +56,18 @@ This matrix is the support contract.
 
 | Document CRUD, query, and aggregation
 | Beta
-| WAL-backed collections, CRUD, aggregation, change events, and in-memory query execution are implemented.
-| Path-filter depth, geo indexes, and deeper block-level pruning/compression are incomplete.
+| WAL-backed collections, CRUD, aggregation, change events, and in-memory query execution are implemented. Canonical `ProximaRecord` storage exists as the convergence path.
+| Canonical record storage is not yet the default durable authority across all server wiring. Path-filter depth, geo indexes, and deeper block-level pruning/compression are incomplete.
 
 | ORION graph operations
 | Beta
-| Node/edge CRUD, traversal, neighbors, and shortest-path APIs are usable.
-| Declarative graph query execution is still incomplete on the canonical gRPC path.
+| Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable.
+| Declarative graph query execution is still incomplete on the canonical gRPC path. ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
 
 | Observability ingestion and query
 | Beta
-| Logs, metrics, and traces ingestion exist alongside full-text log search and PromQL execution.
-| Alerting, operator workflow depth, and some gRPC query mappings remain incomplete.
+| Logs, metrics, and traces ingestion exist alongside full-text log search, PromQL execution, CHRONO integration, and canonical observability record mapping.
+| Canonical observability replay into shared record storage is not yet the default. Alerting, operator workflow depth, and some gRPC query mappings remain incomplete.
 
 | Security runtime
 | Beta
@@ -75,13 +76,13 @@ This matrix is the support contract.
 
 | Hybrid retrieval
 | Beta
-| tantivy BM25 integration, RRF/weighted fusion, `/api/v1/hybrid/search` API (TD-008 resolved).
-| Backend integration improved; gRPC path parity still in progress.
+| tantivy BM25 integration, RRF/weighted fusion, and compatibility REST `/api/v1/hybrid/search` facade (TD-008 resolved). Request `filters` are enforced on both fusion legs: the vector candidates are filtered server-side, and the text (BM25) candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
+| Backend integration improved; REST v1 remains a deprecated compatibility surface and gRPC path parity is still in progress. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
 
-| PULSAR and QUASAR graph engines
-| Experimental
-| Distributed and hybrid graph foundations exist in code.
-| They are not the canonical product graph path and are not fully wired end-to-end.
+| PULSAR and QUASAR graph engine names
+| Retired / Not supported
+| Separate PULSAR and QUASAR engine code, feature flags, REST routes, and dedicated tests have been removed.
+| Use ORION. Former distributed-graph behavior belongs to the relational distributed substrate; former tiered-graph behavior belongs to xCatalog/storage projection policy.
 
 | Distributed cluster execution
 | Experimental
@@ -93,6 +94,75 @@ This matrix is the support contract.
 | TST engine complete (ASOF joins, downsampling, OHLC; TD-009). Event sourcing engine complete (append-only WAL, temporal queries; TD-010).
 | Product packaging, API parity, and production validation at scale still in progress.
 |===
+
+== Not Supported in v0.2
+
+The v0.2 release ships **single-node**, **CRUD-only** writes, and **per-request** freshness/route
+controls. The items below are out of scope for v0.2; do not document, demo, or release-note them as
+supported. The live source of truth for write contract is the
+`WriteContractHealth` block in route-health (`src/network/rest/v2/collections.rs:869-880`,
+GET `/api/v2/_diagnostics/collections/{collection_id}/route-health`):
+
+|===
+| Surface | Status in v0.2 | Live signal
+
+| Optimistic versioning (compare-and-set on insert/upsert)
+| Not supported
+| No `version` / `if_match` / `if_none_match` field on `InsertRecordsRequest` or
+  `UpsertRecordsRequest`. `WriteContractHealth.conditional_write = false`.
+
+| Conditional writes (predicate-gated insert/upsert/delete)
+| Not supported
+| `WriteContractHealth.conditional_write = false`.
+
+| Update-by-filter / delete-by-filter
+| Not supported
+| `WriteContractHealth.filter_write = false`. Delete is single-record / batch-of-ids only.
+
+| Patch / partial-record update
+| Not supported
+| `WriteContractHealth.patch = false`. Full-record upsert is the only mutation shape.
+
+| Collection-default freshness mode
+| Not supported (per-request only)
+| `FreshnessHealth.collection_level_modes_wired = false`
+  (`src/network/rest/v2/collections.rs:1114-1126`). Per-request `freshness_mode`
+  (`Strong`/`BoundedStale{max_staleness_ms}`/`StaleOk`) is honored;
+  collection-default is not catalog-persisted in v0.2. See TD-074.
+
+| Filtered ANN per-collection policy
+| Not supported (default policy only)
+| `AnnFilteringPolicy` runs from the default in v0.2; per-collection catalog
+  policy plumbing tracked in TD-073. A deterministic recall-band harness exists
+  at `tests/filtered_ann_recall_bands.rs`, but it is intentionally ignored
+  while ADR-011 remains Beta; no recall SLA is claimed.
+
+| `RecallProbeGate` enforced route selection
+| Not supported (diagnostic only)
+| Gate state is readable via route-health and EXPLAIN; route selection in
+  `AxisManager` does not consult the gate. Quantized-route enforcement
+  tracked in TD-075.
+|===
+
+If a release note or SDK doc implies any of the above works, file a doc fix before the cut.
+
+== Experimental in v0.2 (do not market as implemented)
+
+These surfaces have code foundations but are not part of the v0.2 product story. Release collateral
+must not list them under "supported", "production", or "ready":
+
+* Distributed cluster execution (Raft transport / remote execution placeholders).
+* PULSAR and QUASAR graph engines (retired; use ORION).
+* Full SQL parity (ADR-018 Phase 2/3 — Postgres parity).
+* PostgreSQL-style OLTP/HTAP parity: full MVCC transactions, FK/PK/unique/check enforcement,
+  native row/delta indexes, DataFusion snapshot-plus-delta reads, and distributed consistency gates
+  are tracked in TD-110 and are not part of v0.2.
+* External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
+* Arrow Flight / gRPC service multiplexing as a customer-facing transport.
+* Trino / Spark compute adapters — _scaffolded_ (Spark JNI bridge per TD-097; Trino Flight per TD-098). Structural contract gates land in 2026-05-30 connector sprint (`tests/connectors_flight_contract.rs`); end-to-end wire impl deferred.
+* Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side blocked on the records-scan endpoint gap tracked under TD-099.
+* DuckDB connector — _Rust-side wire-true for bind / search / insert_ (`src/connectors/duckdb.rs`); DuckDB extension binary compilation + scan-via-Flight are separate follow-ups.
+* All "Not Supported in v0.2" items above.
 
 == Positioning Guidance
 
@@ -107,5 +177,6 @@ ProximaDB should currently be positioned as a developer-first context database:
 The next maturity step is to move from "broad but uneven" to "narrow but reliable":
 
 * One canonical execution path for vector, hybrid, graph, document, and observability queries.
+* Canonical `ProximaRecord`/xCatalog/WAL authority is default for document, graph, and observability writes; modality engines are cataloged projections.
 * No roadmap or README claims that exceed the supported surface defined here.
 * Distributed claims backed by real transport and failover verification.

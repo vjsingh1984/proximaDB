@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_catalog::CatalogTableSchema;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -15,7 +16,6 @@ use super::{
     TableConstraint,
 };
 use crate::catalog::TableIdentifier;
-use crate::catalog::types::CatalogTableSchema;
 
 /// Internal schema registry for multi-model objects
 pub struct InternalSchemaRegistry {
@@ -104,9 +104,10 @@ impl InternalSchemaRegistry {
 
         let object_schema = ObjectSchema::from_table_schema(&schema);
 
-        let object =
+        let mut object =
             CatalogObject::new(catalog, namespace, &identifier.name, ObjectType::RdbmsTable)
                 .with_schema(object_schema, SchemaEnforcementMode::Strict);
+        object.properties = schema.properties.clone();
 
         self.register(object).await
     }
@@ -118,14 +119,50 @@ impl InternalSchemaRegistry {
         dimension: u32,
         distance_metric: &str,
     ) -> Result<Arc<CatalogObject>> {
+        // Default to the vector-required path (the legacy contract). Collections
+        // that opt into native server-side embedding should use
+        // [`create_vector_collection_with_embedding`] which relaxes the
+        // vector-column nullability requirement.
+        self.create_vector_collection_with_embedding(
+            name,
+            dimension,
+            distance_metric,
+            /* native_embedding = */ false,
+        )
+        .await
+    }
+
+    /// Variant of `create_vector_collection` that accepts a `native_embedding`
+    /// flag. When true, the `vector` catalog column is marked nullable so the
+    /// Arrow Flight DoPut text-only schema variant can write rows without a
+    /// vector populated; the embedding drainer fills the column asynchronously
+    /// (see `proximadb-embedding::EmbeddingService`).
+    pub async fn create_vector_collection_with_embedding(
+        &self,
+        name: &str,
+        dimension: u32,
+        distance_metric: &str,
+        native_embedding: bool,
+    ) -> Result<Arc<CatalogObject>> {
         use super::{ModelProperties, VectorProperties};
-        use crate::catalog::types::{CatalogColumn, CatalogDataType};
+        use proximadb_catalog::CatalogColumn;
+        use proximadb_data_model::ProximaType;
+
+        let vector_column = CatalogColumn::new(
+            2,
+            "vector",
+            ProximaType::DenseVector {
+                element: proximadb_data_model::VectorElement::Float32,
+                dim: 0,
+            },
+        )
+        .nullable(native_embedding);
 
         let object_schema = ObjectSchema {
             columns: vec![
-                CatalogColumn::new(1, "id", CatalogDataType::String).nullable(false),
-                CatalogColumn::new(2, "vector", CatalogDataType::Vector).nullable(false),
-                CatalogColumn::new(3, "metadata", CatalogDataType::Json),
+                CatalogColumn::new(1, "id", ProximaType::String).nullable(false),
+                vector_column,
+                CatalogColumn::new(3, "metadata", ProximaType::Json),
             ],
             primary_key: vec!["id".to_string()],
             constraints: vec![],
@@ -135,6 +172,7 @@ impl InternalSchemaRegistry {
                 distance_metric: distance_metric.to_string(),
                 ..Default::default()
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(
@@ -155,14 +193,23 @@ impl InternalSchemaRegistry {
         json_schema: Option<&str>,
     ) -> Result<Arc<CatalogObject>> {
         use super::{DocumentProperties, ModelProperties};
-        use crate::catalog::types::{CatalogColumn, CatalogDataType};
+        use proximadb_catalog::CatalogColumn;
+        use proximadb_data_model::ProximaType;
 
         let object_schema = ObjectSchema {
             columns: vec![
-                CatalogColumn::new(1, "_id", CatalogDataType::String).nullable(false),
-                CatalogColumn::new(2, "document", CatalogDataType::Json).nullable(false),
-                CatalogColumn::new(3, "_created_at", CatalogDataType::TimestampTz),
-                CatalogColumn::new(4, "_updated_at", CatalogDataType::TimestampTz),
+                CatalogColumn::new(1, "_id", ProximaType::String).nullable(false),
+                CatalogColumn::new(2, "document", ProximaType::Json).nullable(false),
+                CatalogColumn::new(
+                    3,
+                    "_created_at",
+                    ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
+                ),
+                CatalogColumn::new(
+                    4,
+                    "_updated_at",
+                    ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
+                ),
             ],
             primary_key: vec!["_id".to_string()],
             constraints: vec![],
@@ -173,6 +220,7 @@ impl InternalSchemaRegistry {
                 enable_full_text: false,
                 indexed_paths: vec![],
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(
@@ -206,6 +254,7 @@ impl InternalSchemaRegistry {
                 node_labels: vec![],
                 edge_types: vec![],
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(
@@ -226,16 +275,22 @@ impl InternalSchemaRegistry {
         retention_seconds: u64,
     ) -> Result<Arc<CatalogObject>> {
         use super::{ModelProperties, ObservabilityProperties};
-        use crate::catalog::types::{CatalogColumn, CatalogDataType};
+        use proximadb_catalog::CatalogColumn;
+        use proximadb_data_model::ProximaType;
 
         let object_schema = ObjectSchema {
             columns: vec![
-                CatalogColumn::new(1, "timestamp", CatalogDataType::TimestampTz).nullable(false),
-                CatalogColumn::new(2, "level", CatalogDataType::String),
-                CatalogColumn::new(3, "message", CatalogDataType::String),
-                CatalogColumn::new(4, "labels", CatalogDataType::Json),
-                CatalogColumn::new(5, "trace_id", CatalogDataType::String),
-                CatalogColumn::new(6, "span_id", CatalogDataType::String),
+                CatalogColumn::new(
+                    1,
+                    "timestamp",
+                    ProximaType::TimestampTz(proximadb_data_model::TimeUnit::Nanosecond),
+                )
+                .nullable(false),
+                CatalogColumn::new(2, "level", ProximaType::String),
+                CatalogColumn::new(3, "message", ProximaType::String),
+                CatalogColumn::new(4, "labels", ProximaType::Json),
+                CatalogColumn::new(5, "trace_id", ProximaType::String),
+                CatalogColumn::new(6, "span_id", ProximaType::String),
             ],
             primary_key: vec!["timestamp".to_string()],
             constraints: vec![],
@@ -246,6 +301,7 @@ impl InternalSchemaRegistry {
                 rollup_intervals: vec![],
                 cardinality_limits: HashMap::new(),
             }),
+            ..Default::default()
         };
 
         let object = CatalogObject::new(
@@ -503,7 +559,8 @@ impl Default for InternalSchemaRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::types::{CatalogColumn, CatalogDataType};
+    use proximadb_catalog::CatalogColumn;
+    use proximadb_data_model::ProximaType;
 
     #[tokio::test]
     async fn test_registry_creation() {
@@ -516,8 +573,8 @@ mod tests {
         let registry = InternalSchemaRegistry::new();
 
         let schema = CatalogTableSchema::new("users")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false))
-            .with_column(CatalogColumn::new(2, "name", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
             .with_primary_key(vec!["id".to_string()]);
 
         let identifier = TableIdentifier::new(vec![], "users".to_string());
@@ -634,7 +691,7 @@ mod tests {
         let registry = InternalSchemaRegistry::new();
 
         let schema = CatalogTableSchema::new("evolving")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64))
             .with_primary_key(vec!["id".to_string()]);
 
         let identifier = TableIdentifier::new(vec![], "evolving".to_string());
@@ -646,8 +703,8 @@ mod tests {
         // Update schema
         let new_schema = ObjectSchema {
             columns: vec![
-                CatalogColumn::new(1, "id", CatalogDataType::Int64),
-                CatalogColumn::new(2, "name", CatalogDataType::String),
+                CatalogColumn::new(1, "id", ProximaType::Int64),
+                CatalogColumn::new(2, "name", ProximaType::String),
             ],
             primary_key: vec!["id".to_string()],
             ..Default::default()
@@ -676,8 +733,8 @@ mod tests {
         let registry = InternalSchemaRegistry::new();
 
         let schema = CatalogTableSchema::new("constrained")
-            .with_column(CatalogColumn::new(1, "id", CatalogDataType::Int64))
-            .with_column(CatalogColumn::new(2, "email", CatalogDataType::String))
+            .with_column(CatalogColumn::new(1, "id", ProximaType::Int64))
+            .with_column(CatalogColumn::new(2, "email", ProximaType::String))
             .with_primary_key(vec!["id".to_string()]);
 
         let identifier = TableIdentifier::new(vec![], "constrained".to_string());

@@ -1,7 +1,6 @@
 import os
 import uuid
 
-import numpy as np
 import pytest
 
 from proximadb_sdk.models import VectorRecord

@@ -21,7 +21,7 @@ import os
 import shutil
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import numpy as np
 
@@ -95,8 +95,8 @@ def benchmark_proximadb_with_compression(
     temp_dir: str,
     engine: str,
     compression_name: str,
-    compression_config: Optional[Dict[str, Any]],
-) -> Dict[str, Any]:
+    compression_config: dict[str, Any] | None,
+) -> dict[str, Any]:
     """Benchmark ProximaDB with specific engine and compression configuration."""
     if not PROXIMADB_AVAILABLE:
         return {"error": "ProximaDB not available"}
@@ -171,7 +171,7 @@ def benchmark_proximadb_with_compression(
             pass
 
 
-def run_comprehensive_benchmark(batch_sizes: List[int]):
+def run_comprehensive_benchmark(batch_sizes: list[int]):
     """Run comprehensive benchmark across all engines, compressions, and batch sizes."""
     if not PROXIMADB_AVAILABLE:
         print("❌ ProximaDB not available. Cannot run benchmark.")

@@ -18,20 +18,22 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::{CompressionAlgorithm, StandardCompression};
-use crate::core::hardware_capabilities::HardwareCapabilities;
-use crate::core::memory::pool::VectorMemoryPool;
 use crate::storage::persistence::filesystem::{FileStorageTier, FilesystemFactory};
+use proximadb_compression::{CompressionAlgorithm, StandardCompression};
+use proximadb_runtime_common::pool::VectorMemoryPool;
+
+/// Backwards-compat alias for [`GlobalMemoryPoolConfig`].
+pub type MemoryPoolConfig = GlobalMemoryPoolConfig;
 
 /// Global memory pool configuration
-pub struct MemoryPoolConfig {
+pub struct GlobalMemoryPoolConfig {
     /// Memory pool size in MB (default: 10% of available memory)
     pub pool_size_mb: Option<usize>,
     /// Whether to use smart defaults based on system memory
     pub use_smart_defaults: bool,
 }
 
-impl Default for MemoryPoolConfig {
+impl Default for GlobalMemoryPoolConfig {
     fn default() -> Self {
         Self {
             pool_size_mb: None,
@@ -41,18 +43,18 @@ impl Default for MemoryPoolConfig {
 }
 
 /// Global configuration for the shared memory pool
-static MEMORY_POOL_CONFIG: Lazy<MemoryPoolConfig> = Lazy::new(|| {
+static MEMORY_POOL_CONFIG: Lazy<GlobalMemoryPoolConfig> = Lazy::new(|| {
     // Try to read from environment or config
     if let Ok(size_str) = std::env::var("PROXIMADB_MEMORY_POOL_SIZE_MB")
         && let Ok(size) = size_str.parse::<usize>()
     {
         tracing::info!("Using memory pool size from environment: {}MB", size);
-        return MemoryPoolConfig {
+        return GlobalMemoryPoolConfig {
             pool_size_mb: Some(size),
             use_smart_defaults: false,
         };
     }
-    MemoryPoolConfig::default()
+    GlobalMemoryPoolConfig::default()
 });
 
 /// Calculate smart default pool size based on available system memory
@@ -64,20 +66,20 @@ fn calculate_smart_pool_size() -> usize {
             // Parse MemAvailable or MemTotal from /proc/meminfo
             for line in meminfo.lines() {
                 if line.starts_with("MemAvailable:") || line.starts_with("MemTotal:") {
-                    if let Some(kb_str) = line.split_whitespace().nth(1) {
-                        if let Ok(kb) = kb_str.parse::<usize>() {
-                            let mb = kb / 1024;
-                            // Use 10-15% of available memory for the pool
-                            let pool_size = (mb as f64 * 0.12) as usize;
-                            // Cap between 512MB and 8GB
-                            let capped_size = pool_size.max(512).min(8192);
-                            tracing::info!(
-                                "Smart memory pool sizing: System memory {}MB, pool size {}MB (12% of available)",
-                                mb,
-                                capped_size
-                            );
-                            return capped_size;
-                        }
+                    if let Some(kb_str) = line.split_whitespace().nth(1)
+                        && let Ok(kb) = kb_str.parse::<usize>()
+                    {
+                        let mb = kb / 1024;
+                        // Use 10-15% of available memory for the pool
+                        let pool_size = (mb as f64 * 0.12) as usize;
+                        // Cap between 512MB and 8GB
+                        let capped_size = pool_size.clamp(512, 8192);
+                        tracing::info!(
+                            "Smart memory pool sizing: System memory {}MB, pool size {}MB (12% of available)",
+                            mb,
+                            capped_size
+                        );
+                        return capped_size;
                     }
                     break;
                 }
@@ -113,23 +115,10 @@ static SHARED_MEMORY_POOL: Lazy<Arc<VectorMemoryPool>> = Lazy::new(|| {
     Arc::new(VectorMemoryPool::new())
 });
 
-/// Global shared hardware capabilities for all storage engines
-/// This singleton ensures hardware detection is done only once
-static SHARED_HARDWARE_CAPABILITIES: Lazy<Arc<HardwareCapabilities>> = Lazy::new(|| {
-    tracing::info!("Detecting hardware capabilities for universal optimizer");
-    crate::core::hardware_capabilities::get_hardware_capabilities()
-});
-
 /// Get the global shared memory pool instance
 /// All storage engines should use this instead of creating their own pools
 pub fn get_shared_memory_pool() -> Arc<VectorMemoryPool> {
     SHARED_MEMORY_POOL.clone()
-}
-
-/// Get the global shared hardware capabilities instance
-/// All storage engines should use this instead of detecting hardware multiple times
-pub fn get_shared_hardware_capabilities() -> Arc<HardwareCapabilities> {
-    SHARED_HARDWARE_CAPABILITIES.clone()
 }
 
 /// Configure the memory pool size from server config
@@ -219,12 +208,15 @@ pub struct UniversalPerformanceOptimizer {
     compression_provider: StandardCompression,
 
     /// Access pattern tracking for optimization
-    access_patterns: Arc<RwLock<HashMap<String, AccessStats>>>,
+    access_patterns: Arc<RwLock<HashMap<String, PerfOptAccessStats>>>,
 }
+
+/// Backwards-compat alias for [`PerfOptAccessStats`].
+pub type AccessStats = PerfOptAccessStats;
 
 /// Access statistics for optimization decisions
 #[derive(Debug, Clone)]
-pub struct AccessStats {
+pub struct PerfOptAccessStats {
     pub access_count: u64,
     pub last_access: chrono::DateTime<chrono::Utc>,
     pub total_bytes_read: u64,
@@ -516,7 +508,7 @@ impl UniversalPerformanceOptimizer {
 
     /// Tier-aware compression optimization
     pub async fn compress_for_tier(&self, data: &[u8], tier: FileStorageTier) -> Result<Vec<u8>> {
-        use crate::core::compression::{CompressionContext, CompressionProvider};
+        use proximadb_compression::{CompressionContext, CompressionProvider};
 
         let (algorithm, level) = match tier {
             FileStorageTier::Memory | FileStorageTier::NVMe => {
@@ -645,7 +637,7 @@ impl UniversalPerformanceOptimizer {
                 .map(|(k, v)| (k.clone(), v.last_access))
                 .collect();
 
-            entries.sort_by(|a, b| a.1.cmp(&b.1));
+            entries.sort_by_key(|e| e.1);
 
             for (key, _) in entries.into_iter().take(evict_count) {
                 cache.remove(&key);
@@ -674,7 +666,7 @@ impl UniversalPerformanceOptimizer {
     ) -> Result<Vec<f32>> {
         let mut distances = Vec::new();
 
-        if get_shared_hardware_capabilities().cpu.features.avx2_support {
+        if proximadb_hardware::best_simd_level() >= proximadb_hardware::SimdLevel::AVX2 {
             // Use SIMD acceleration
             for candidate in candidates {
                 let distance = match metric {
@@ -730,7 +722,7 @@ impl UniversalPerformanceOptimizer {
         let mut patterns = self.access_patterns.write().await;
         let entry = patterns
             .entry(key.to_string())
-            .or_insert_with(|| AccessStats {
+            .or_insert_with(|| PerfOptAccessStats {
                 access_count: 0,
                 last_access: chrono::Utc::now(),
                 total_bytes_read: 0,
@@ -800,11 +792,10 @@ pub trait UniversallyOptimized {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::hardware_capabilities;
 
     #[tokio::test]
     async fn test_universal_optimizer_creation() {
-        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let optimizer =
             UniversalPerformanceOptimizer::with_strategy(UniversalOptimizationStrategy::Balanced)
@@ -820,7 +811,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_storage_tier_optimization() {
-        let _ = hardware_capabilities::initialize_hardware_capabilities_default();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
         let optimizer = UniversalPerformanceOptimizer::with_strategy(
             UniversalOptimizationStrategy::CostOptimized,

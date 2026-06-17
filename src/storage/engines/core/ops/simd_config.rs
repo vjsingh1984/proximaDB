@@ -23,7 +23,7 @@ pub struct SIMDConfiguration {
     pub encoding_threads: usize,
 
     /// Memory pool configuration
-    pub memory_pool: MemoryPoolConfig,
+    pub memory_pool: SimdMemoryPoolConfig,
 
     /// Engine-specific settings
     pub engine_settings: EngineSettings,
@@ -32,12 +32,15 @@ pub struct SIMDConfiguration {
     pub encoding_preferences: EncodingPreferences,
 
     /// Performance monitoring
-    pub monitoring: MonitoringConfig,
+    pub monitoring: SimdMonitoringConfig,
 }
+
+/// Backwards-compat alias for [`SimdMemoryPoolConfig`].
+pub type MemoryPoolConfig = SimdMemoryPoolConfig;
 
 /// Memory pool configuration for SIMD operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MemoryPoolConfig {
+pub struct SimdMemoryPoolConfig {
     /// Enable memory pooling
     pub enabled: bool,
 
@@ -145,7 +148,7 @@ pub struct EncodingPreferences {
 
 /// Performance monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitoringConfig {
+pub struct SimdMonitoringConfig {
     /// Enable performance tracking
     pub enabled: bool,
 
@@ -170,15 +173,15 @@ impl Default for SIMDConfiguration {
             min_dimension_for_transpose: 64,
             parallel_encoding: true,
             encoding_threads: num_cpus::get(),
-            memory_pool: MemoryPoolConfig::default(),
+            memory_pool: SimdMemoryPoolConfig::default(),
             engine_settings: EngineSettings::default(),
             encoding_preferences: EncodingPreferences::default(),
-            monitoring: MonitoringConfig::default(),
+            monitoring: SimdMonitoringConfig::default(),
         }
     }
 }
 
-impl Default for MemoryPoolConfig {
+impl Default for SimdMemoryPoolConfig {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -238,7 +241,7 @@ impl Default for EncodingPreferences {
     }
 }
 
-impl Default for MonitoringConfig {
+impl Default for SimdMonitoringConfig {
     fn default() -> Self {
         Self {
             enabled: cfg!(debug_assertions), // Enable in debug builds

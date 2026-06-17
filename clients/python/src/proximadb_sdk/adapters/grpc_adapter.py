@@ -9,9 +9,10 @@ Licensed under the Apache License, Version 2.0
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from ..models import (
+    BatchResult,
     Collection,
     CollectionConfig,
     FilterDict,
@@ -23,6 +24,7 @@ from ..models import (
     VectorOperationResponse,
     VectorRecord,
 )
+from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
 from .base import BaseProtocolAdapter
 
@@ -132,7 +134,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     # ==========================================================================
 
     def create_collection(
-        self, name: str, config: Optional[CollectionConfig] = None, **kwargs
+        self, name: str, config: CollectionConfig | None = None, **kwargs
     ) -> Collection:
         """Create a new vector collection."""
         # Extract parameters from config or kwargs
@@ -143,23 +145,47 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         storage_engine = ProtoConverter.storage_engine_to_int(
             config.storage_engine if config else kwargs.get("storage_engine")
         )
+        # Map EmbeddingPrecision (str-Enum) → proto int discriminant.
+        # Mirrors proto: Unspecified=0, Fp32=1, Fp16=2, Bf16=3, Int8=4, Uint8=5.
+        precision_int: int | None = None
+        precision_raw = (
+            config.canonical_embedding_precision
+            if config is not None
+            else kwargs.get("canonical_embedding_precision")
+        )
+        if precision_raw is not None:
+            precision_label = getattr(precision_raw, "value", precision_raw)
+            precision_int = {
+                "fp32": 1,
+                "fp16": 2,
+                "bf16": 3,
+                "int8": 4,
+                "uint8": 5,
+            }.get(str(precision_label).lower())
 
         result = self._client.create_collection(
             name=name,
             dimension=dimension,
             distance_metric=distance_metric,
             storage_engine=storage_engine,
+            canonical_embedding_precision=precision_int,
             **{
                 k: v
                 for k, v in kwargs.items()
-                if k not in ["dimension", "distance_metric", "storage_engine"]
+                if k
+                not in [
+                    "dimension",
+                    "distance_metric",
+                    "storage_engine",
+                    "canonical_embedding_precision",
+                ]
             },
         )
 
         # Convert CollectionWrapper or proto to Collection
         return self._to_collection(result, name, dimension)
 
-    def get_collection(self, collection_id: str) -> Optional[Collection]:
+    def get_collection(self, collection_id: str) -> Collection | None:
         """Get collection metadata by ID or name."""
         try:
             result = self._client.get_collection(collection_id)
@@ -172,7 +198,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             logger.debug(f"Collection not found: {collection_id} - {e}")
             return None
 
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> list[Collection]:
         """List all collections."""
         results = self._client.list_collections()
 
@@ -205,6 +231,15 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
             return result
 
         if isinstance(result, dict):
+            # Collection requires `config`; supply a minimal one when the
+            # raw dict only carries id/name/dimension (the path taken when
+            # gRPC returns the new typed Collection wrapper).
+            if "config" not in result:
+                cfg_payload = {
+                    "name": result.get("name", fallback_name or ""),
+                    "dimension": result.get("dimension", fallback_dimension or 0),
+                }
+                result = {**result, "config": cfg_payload}
             return Collection(**result)
 
         # Handle CollectionWrapper or protobuf objects
@@ -214,68 +249,122 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
         return Collection(
             id=coll_id,
-            name=name,
-            dimension=dimension,
+            config=CollectionConfig(name=name or coll_id, dimension=dimension or 0),
         )
 
     # ==========================================================================
-    # Vector Operations
+    # Record Operations
+    # ==========================================================================
+
+    @staticmethod
+    def _record_payloads(records: list[ProximaRecord] | list[dict[str, Any]]):
+        payloads = []
+        for record in records:
+            if isinstance(record, dict):
+                payloads.append(record)
+            elif hasattr(record, "model_dump"):
+                payloads.append(record.model_dump(exclude_none=True))
+            else:
+                payloads.append(ProtoConverter.vector_record_to_dict(record))
+        return payloads
+
+    @staticmethod
+    def _batch_to_vector_response(
+        result: BatchResult, operation: str
+    ) -> VectorOperationResponse:
+        return VectorOperationResponse(
+            success=result.success,
+            operation=operation,
+            metrics=result.metrics,
+            error_message="; ".join(result.errors) if result.errors else None,
+        )
+
+    def insert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord] | list[dict[str, Any]],
+        **kwargs,
+    ) -> BatchResult:
+        """Insert ProximaRecord-shaped payloads into a collection."""
+        payloads = self._record_payloads(records)
+        if hasattr(self._client, "insert_records"):
+            result = self._client.insert_records(
+                collection_id=collection_id, records=payloads, **kwargs
+            )
+        else:
+            result = self._client.insert_vectors(
+                collection_id=collection_id, vectors=payloads, **kwargs
+            )
+        response = self._to_vector_operation_response(result, "INSERT", len(records))
+        return BatchResult(
+            total=len(records),
+            success=response.metrics.successful_count,
+            failed=response.metrics.failed_count,
+            errors=[response.error_message] if response.error_message else [],
+            metrics=response.metrics,
+        )
+
+    def upsert_records(
+        self,
+        collection_id: str,
+        records: list[ProximaRecord] | list[dict[str, Any]],
+        **kwargs,
+    ) -> BatchResult:
+        """Upsert ProximaRecord-shaped payloads into a collection."""
+        payloads = self._record_payloads(records)
+        if hasattr(self._client, "upsert_records"):
+            result = self._client.upsert_records(
+                collection_id=collection_id, records=payloads, **kwargs
+            )
+        else:
+            result = self._client.insert_vectors(
+                collection_id=collection_id,
+                vectors=payloads,
+                upsert=True,
+                **kwargs,
+            )
+        response = self._to_vector_operation_response(result, "UPSERT", len(records))
+        return BatchResult(
+            total=len(records),
+            success=response.metrics.successful_count,
+            failed=response.metrics.failed_count,
+            errors=[response.error_message] if response.error_message else [],
+            metrics=response.metrics,
+        )
+
+    # ==========================================================================
+    # Vector Compatibility Aliases
     # ==========================================================================
 
     def insert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Insert vectors into a collection."""
-        # Convert VectorRecord objects to dicts
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        result = self._client.insert_vectors(
-            collection_id=collection_id, vectors=vector_dicts, **kwargs
+        """Compatibility alias for record-native inserts."""
+        return self._batch_to_vector_response(
+            self.insert_records(collection_id, vectors, **kwargs), "INSERT"
         )
-
-        return self._to_vector_operation_response(result, "INSERT", len(vectors))
 
     def upsert_vectors(
         self,
         collection_id: str,
-        vectors: Union[List[VectorRecord], List[Dict[str, Any]]],
+        vectors: list[VectorRecord] | list[dict[str, Any]],
         **kwargs,
     ) -> VectorOperationResponse:
-        """Upsert (insert or update) vectors in a collection."""
-        # Convert VectorRecord objects to dicts
-        vector_dicts = []
-        for v in vectors:
-            if isinstance(v, dict):
-                vector_dicts.append(v)
-            elif hasattr(v, "model_dump"):
-                vector_dicts.append(v.model_dump(exclude_none=True))
-            else:
-                vector_dicts.append(ProtoConverter.vector_record_to_dict(v))
-
-        # gRPC insert with upsert flag
-        result = self._client.insert_vectors(
-            collection_id=collection_id, vectors=vector_dicts, upsert=True, **kwargs
+        """Compatibility alias for record-native upserts."""
+        return self._batch_to_vector_response(
+            self.upsert_records(collection_id, vectors, **kwargs), "UPSERT"
         )
-
-        return self._to_vector_operation_response(result, "UPSERT", len(vectors))
 
     def get_vectors(
         self,
         collection_id: str,
-        vector_ids: List[str],
+        vector_ids: list[str],
         include_vectors: bool = True,
         **kwargs,
-    ) -> List[VectorRecord]:
+    ) -> list[VectorRecord]:
         """Get vectors by IDs."""
         if hasattr(self._client, "get_vectors"):
             results = self._client.get_vectors(
@@ -305,7 +394,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         return records
 
     def delete_vectors(
-        self, collection_id: str, vector_ids: List[str], **kwargs
+        self, collection_id: str, vector_ids: list[str], **kwargs
     ) -> VectorOperationResponse:
         """Delete vectors by IDs."""
         if hasattr(self._client, "delete_vectors"):
@@ -393,11 +482,11 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
         collection_id: str,
         query_vector: VectorArray,
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Search for similar vectors."""
         # Normalize query vector
         if hasattr(query_vector, "tolist"):
@@ -418,13 +507,13 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
     def batch_search(
         self,
         collection_id: str,
-        query_vectors: List[VectorArray],
+        query_vectors: list[VectorArray],
         top_k: int = 10,
-        filter: Optional[FilterDict] = None,
+        filter: FilterDict | None = None,
         include_vectors: bool = False,
         include_metadata: bool = True,
         **kwargs,
-    ) -> List[List[SearchResult]]:
+    ) -> list[list[SearchResult]]:
         """Batch search for similar vectors."""
         # Normalize query vectors
         normalized_queries = []
@@ -463,7 +552,7 @@ class GrpcProtocolAdapter(BaseProtocolAdapter):
 
     def _to_search_results(
         self, results: Any, include_vectors: bool, include_metadata: bool
-    ) -> List[SearchResult]:
+    ) -> list[SearchResult]:
         """Convert various result types to SearchResult list."""
         if results is None:
             return []

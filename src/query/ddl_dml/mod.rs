@@ -175,9 +175,12 @@ pub enum ConstraintType {
 // DDL/DML Execution Result
 // ============================================================================
 
+/// Backwards-compat alias for [`DdlDmlExecutionResult`].
+pub type ExecutionResult = DdlDmlExecutionResult;
+
 /// Result of DDL/DML execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExecutionResult {
+pub struct DdlDmlExecutionResult {
     /// Number of rows affected (for DML)
     pub rows_affected: u64,
     /// Status message
@@ -188,7 +191,7 @@ pub struct ExecutionResult {
     pub warnings: Vec<String>,
 }
 
-impl ExecutionResult {
+impl DdlDmlExecutionResult {
     pub fn ok(message: impl Into<String>) -> Self {
         Self {
             rows_affected: 0,
@@ -241,7 +244,7 @@ impl DdlDmlExecutor {
     }
 
     /// Execute a DDL statement
-    pub async fn execute_ddl(&self, statement: DdlStatement) -> Result<ExecutionResult> {
+    pub async fn execute_ddl(&self, statement: DdlStatement) -> Result<DdlDmlExecutionResult> {
         let start = std::time::Instant::now();
 
         let result = match statement {
@@ -250,18 +253,18 @@ impl DdlDmlExecutor {
                 if_not_exists,
             } => {
                 if if_not_exists && self.table_ops.table_exists(&table.name).await? {
-                    ExecutionResult::ok(format!("Table '{}' already exists", table.name))
+                    DdlDmlExecutionResult::ok(format!("Table '{}' already exists", table.name))
                 } else {
                     self.table_ops.create_table(&table).await?;
                     info!("Created table: {}", table.name);
-                    ExecutionResult::ok(format!("CREATE TABLE {}", table.name))
+                    DdlDmlExecutionResult::ok(format!("CREATE TABLE {}", table.name))
                 }
             }
 
             DdlStatement::DropTable { name, if_exists } => {
                 self.table_ops.drop_table(&name, if_exists).await?;
                 info!("Dropped table: {}", name);
-                ExecutionResult::ok(format!("DROP TABLE {}", name))
+                DdlDmlExecutionResult::ok(format!("DROP TABLE {}", name))
             }
 
             DdlStatement::AlterTable { name, alterations } => {
@@ -269,7 +272,7 @@ impl DdlDmlExecutor {
                     .alter_table(&name, alterations.clone())
                     .await?;
                 info!("Altered table: {} ({} changes)", name, alterations.len());
-                ExecutionResult::ok(format!("ALTER TABLE {}", name))
+                DdlDmlExecutionResult::ok(format!("ALTER TABLE {}", name))
             }
 
             DdlStatement::CreateIndex {
@@ -277,18 +280,18 @@ impl DdlDmlExecutor {
                 if_not_exists,
             } => {
                 if if_not_exists && self.index_ops.index_exists(&index.name).await? {
-                    ExecutionResult::ok(format!("Index '{}' already exists", index.name))
+                    DdlDmlExecutionResult::ok(format!("Index '{}' already exists", index.name))
                 } else {
                     self.index_ops.create_index(&index).await?;
                     info!("Created index: {} on {}", index.name, index.table);
-                    ExecutionResult::ok(format!("CREATE INDEX {}", index.name))
+                    DdlDmlExecutionResult::ok(format!("CREATE INDEX {}", index.name))
                 }
             }
 
             DdlStatement::DropIndex { name, if_exists } => {
                 self.index_ops.drop_index(&name, if_exists).await?;
                 info!("Dropped index: {}", name);
-                ExecutionResult::ok(format!("DROP INDEX {}", name))
+                DdlDmlExecutionResult::ok(format!("DROP INDEX {}", name))
             }
         };
 
@@ -298,7 +301,7 @@ impl DdlDmlExecutor {
     }
 
     /// Execute a DML statement
-    pub async fn execute_dml(&self, statement: DmlStatement) -> Result<ExecutionResult> {
+    pub async fn execute_dml(&self, statement: DmlStatement) -> Result<DdlDmlExecutionResult> {
         let start = std::time::Instant::now();
 
         let result = match statement {
@@ -309,7 +312,7 @@ impl DdlDmlExecutor {
             } => {
                 let rows = self.dml_ops.insert(&table, &columns, values).await?;
                 debug!("Inserted {} rows into {}", rows, table);
-                ExecutionResult::rows(rows, format!("INSERT {} rows", rows))
+                DdlDmlExecutionResult::rows(rows, format!("INSERT {} rows", rows))
             }
 
             DmlStatement::Update {
@@ -319,7 +322,7 @@ impl DdlDmlExecutor {
             } => {
                 let rows = self.dml_ops.update(&table, updates, where_clause).await?;
                 debug!("Updated {} rows in {}", rows, table);
-                ExecutionResult::rows(rows, format!("UPDATE {} rows", rows))
+                DdlDmlExecutionResult::rows(rows, format!("UPDATE {} rows", rows))
             }
 
             DmlStatement::Delete {
@@ -328,7 +331,7 @@ impl DdlDmlExecutor {
             } => {
                 let rows = self.dml_ops.delete(&table, where_clause).await?;
                 debug!("Deleted {} rows from {}", rows, table);
-                ExecutionResult::rows(rows, format!("DELETE {} rows", rows))
+                DdlDmlExecutionResult::rows(rows, format!("DELETE {} rows", rows))
             }
         };
 
@@ -391,6 +394,11 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
     use sqlparser::dialect::GenericDialect;
     use sqlparser::parser::Parser;
 
+    let normalized = sql.trim().trim_end_matches(';').trim();
+    if normalized.eq_ignore_ascii_case("DROP TABLE") {
+        return Err(anyhow!("DROP TABLE requires a table name"));
+    }
+
     let dialect = GenericDialect {};
     let statements = Parser::parse_sql(&dialect, sql)?;
 
@@ -402,6 +410,12 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
 
     match stmt {
         sqlparser::ast::Statement::CreateTable(create) => {
+            if create.query.is_some() || create.like.is_some() || create.clone.is_some() {
+                return Err(anyhow!(
+                    "CREATE TABLE with query/LIKE/CLONE clauses is not supported"
+                ));
+            }
+
             let mut columns = HashMap::new();
             let mut primary_key = Vec::new();
 
@@ -472,24 +486,46 @@ pub fn parse_ddl(sql: &str) -> Result<DdlStatement> {
             object_type,
             names,
             if_exists,
+            table,
             ..
-        } => {
-            let name = names.first().map(|n| n.to_string()).unwrap_or_default();
-
-            match object_type {
-                sqlparser::ast::ObjectType::Table => Ok(DdlStatement::DropTable {
-                    name,
+        } => match object_type {
+            sqlparser::ast::ObjectType::Table => Ok(DdlStatement::DropTable {
+                name: names
+                    .first()
+                    .ok_or_else(|| anyhow!("DROP TABLE requires a table name"))?
+                    .to_string(),
+                if_exists: *if_exists,
+            }),
+            sqlparser::ast::ObjectType::Index => {
+                if table.is_none() {
+                    return Err(anyhow!("DROP INDEX requires a table name"));
+                }
+                Ok(DdlStatement::DropIndex {
+                    name: names
+                        .first()
+                        .ok_or_else(|| anyhow!("DROP INDEX requires an index name"))?
+                        .to_string(),
                     if_exists: *if_exists,
-                }),
-                sqlparser::ast::ObjectType::Index => Ok(DdlStatement::DropIndex {
-                    name,
-                    if_exists: *if_exists,
-                }),
-                _ => Err(anyhow!("Unsupported DROP object type: {:?}", object_type)),
+                })
             }
-        }
+            _ => Err(anyhow!("Unsupported DROP object type: {:?}", object_type)),
+        },
 
         sqlparser::ast::Statement::CreateIndex(create_index) => {
+            use sqlparser::ast::{IndexOption, IndexType as SqlIndexType};
+
+            if let Some(index_type) = create_index.using.as_ref().cloned().or_else(|| {
+                create_index.index_options.iter().find_map(|opt| match opt {
+                    IndexOption::Using(index_type) => Some(index_type.clone()),
+                    _ => None,
+                })
+            }) {
+                match index_type {
+                    SqlIndexType::BTree => {}
+                    other => return Err(anyhow!("Unsupported CREATE INDEX USING {}", other)),
+                }
+            }
+
             // CreateIndex.name (not index_name) is the index name
             let index_name = create_index
                 .name
@@ -680,6 +716,7 @@ fn convert_sql_type(data_type: &sqlparser::ast::DataType) -> SqlDataType {
         sqlparser::ast::DataType::Uuid => SqlDataType::Uuid,
         sqlparser::ast::DataType::Bytea => SqlDataType::Bytea,
         sqlparser::ast::DataType::JSON => SqlDataType::Json,
+        sqlparser::ast::DataType::JSONB => SqlDataType::Jsonb,
         sqlparser::ast::DataType::Custom(name, tokens) => {
             // Handle vector type - use to_string() for ObjectName
             let type_name = name.to_string().to_uppercase();
@@ -755,6 +792,7 @@ fn extract_value(expr: &sqlparser::ast::Expr) -> Result<SqlValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[test]
     fn test_parse_create_table() {
@@ -771,6 +809,182 @@ mod tests {
         } else {
             panic!("Expected CreateTable");
         }
+    }
+
+    #[test]
+    fn test_parse_create_table_supports_jsonb() {
+        let sql = "CREATE TABLE users (id INTEGER, payload JSONB)";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::CreateTable { table, .. } = result {
+            assert_eq!(table.name, "users");
+            let payload = table
+                .columns
+                .get("payload")
+                .expect("expected payload column");
+            assert!(matches!(payload.data_type, SqlDataType::Jsonb));
+        } else {
+            panic!("Expected CreateTable");
+        }
+    }
+
+    #[test]
+    fn test_parse_agentic_relational_jsonb_vector_table() {
+        let sql = "CREATE TABLE IF NOT EXISTS agent_store (
+            \"record_id\" TEXT NOT NULL,
+            \"tenant_id\" TEXT NOT NULL,
+            \"thread_id\" TEXT NOT NULL,
+            \"namespace\" TEXT NOT NULL,
+            \"key\" TEXT NOT NULL,
+            \"payload\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+            \"metadata\" JSONB NOT NULL DEFAULT '{}'::jsonb,
+            \"embedding\" VECTOR(384),
+            PRIMARY KEY (\"record_id\")
+        )";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::CreateTable {
+            table,
+            if_not_exists,
+        } = result
+        {
+            assert!(if_not_exists);
+            assert_eq!(table.name, "agent_store");
+            assert!(matches!(
+                table.columns.get("payload").unwrap().data_type,
+                SqlDataType::Jsonb
+            ));
+            assert!(matches!(
+                table.columns.get("metadata").unwrap().data_type,
+                SqlDataType::Jsonb
+            ));
+            assert!(matches!(
+                table.columns.get("embedding").unwrap().data_type,
+                SqlDataType::Vector(384)
+            ));
+            assert_eq!(table.primary_key, vec!["\"record_id\""]);
+        } else {
+            panic!("Expected CreateTable");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_execute_agentic_relational_jsonb_vector_table() {
+        #[derive(Default)]
+        struct MockTableOps {
+            created: Mutex<Vec<TableDefinition>>,
+        }
+
+        #[async_trait]
+        impl TableOperations for MockTableOps {
+            async fn create_table(&self, table: &TableDefinition) -> Result<()> {
+                self.created.lock().unwrap().push(table.clone());
+                Ok(())
+            }
+
+            async fn drop_table(&self, _table_name: &str, _if_exists: bool) -> Result<()> {
+                Ok(())
+            }
+
+            async fn alter_table(
+                &self,
+                _table_name: &str,
+                _alterations: Vec<TableAlteration>,
+            ) -> Result<()> {
+                Ok(())
+            }
+
+            async fn table_exists(&self, _table_name: &str) -> Result<bool> {
+                Ok(false)
+            }
+
+            async fn get_table(&self, _table_name: &str) -> Result<Option<TableDefinition>> {
+                Ok(None)
+            }
+
+            async fn list_tables(&self) -> Result<Vec<String>> {
+                Ok(vec![])
+            }
+        }
+
+        struct MockIndexOps;
+
+        #[async_trait]
+        impl IndexOperations for MockIndexOps {
+            async fn create_index(&self, _index: &IndexDefinition) -> Result<()> {
+                Ok(())
+            }
+
+            async fn drop_index(&self, _index_name: &str, _if_exists: bool) -> Result<()> {
+                Ok(())
+            }
+
+            async fn index_exists(&self, _index_name: &str) -> Result<bool> {
+                Ok(false)
+            }
+
+            async fn list_indexes(&self, _table_name: &str) -> Result<Vec<IndexDefinition>> {
+                Ok(vec![])
+            }
+        }
+
+        struct MockDmlOps;
+
+        #[async_trait]
+        impl DmlOperations for MockDmlOps {
+            async fn insert(
+                &self,
+                _table: &str,
+                _columns: &[String],
+                _rows: Vec<Vec<SqlValue>>,
+            ) -> Result<u64> {
+                Ok(0)
+            }
+
+            async fn update(
+                &self,
+                _table: &str,
+                _updates: Vec<(String, SqlValue)>,
+                _where_clause: Option<String>,
+            ) -> Result<u64> {
+                Ok(0)
+            }
+
+            async fn delete(&self, _table: &str, _where_clause: Option<String>) -> Result<u64> {
+                Ok(0)
+            }
+        }
+
+        let table_ops = Arc::new(MockTableOps::default());
+        let executor = DdlDmlExecutor::new(
+            table_ops.clone(),
+            Arc::new(MockIndexOps),
+            Arc::new(MockDmlOps),
+        );
+        let statement = parse_ddl(
+            "CREATE TABLE IF NOT EXISTS agent_store (
+                record_id TEXT NOT NULL,
+                tenant_id TEXT NOT NULL,
+                payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                embedding VECTOR(384),
+                PRIMARY KEY (record_id)
+            )",
+        )
+        .unwrap();
+
+        let result = executor.execute_ddl(statement).await.unwrap();
+
+        assert_eq!(result.message, "CREATE TABLE agent_store");
+        let created = table_ops.created.lock().unwrap();
+        assert_eq!(created.len(), 1);
+        assert!(matches!(
+            created[0].columns.get("payload").unwrap().data_type,
+            SqlDataType::Jsonb
+        ));
+        assert!(matches!(
+            created[0].columns.get("embedding").unwrap().data_type,
+            SqlDataType::Vector(384)
+        ));
     }
 
     #[test]
@@ -802,6 +1016,39 @@ mod tests {
             assert_eq!(values.len(), 2);
         } else {
             panic!("Expected Insert");
+        }
+    }
+
+    #[test]
+    fn test_parse_create_index() {
+        let sql = "CREATE INDEX users_name_idx ON users (name)";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::CreateIndex {
+            index,
+            if_not_exists,
+        } = result
+        {
+            assert_eq!(index.name, "users_name_idx");
+            assert_eq!(index.table, "users");
+            assert_eq!(index.columns, vec!["name".to_string()]);
+            assert!(matches!(index.index_type, IndexType::BTree));
+            assert!(!if_not_exists);
+        } else {
+            panic!("Expected CreateIndex");
+        }
+    }
+
+    #[test]
+    fn test_parse_drop_index() {
+        let sql = "DROP INDEX users_name_idx ON users";
+        let result = parse_ddl(sql).unwrap();
+
+        if let DdlStatement::DropIndex { name, if_exists } = result {
+            assert_eq!(name, "users_name_idx");
+            assert!(!if_exists);
+        } else {
+            panic!("Expected DropIndex");
         }
     }
 
@@ -838,6 +1085,58 @@ mod tests {
             assert!(where_clause.is_some());
         } else {
             panic!("Expected Delete");
+        }
+    }
+
+    #[test]
+    fn parse_ddl_unsupported_statements_still_fail_fast() {
+        let unsupported = [
+            (
+                "CREATE TABLE demo AS SELECT * FROM events;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            (
+                "CREATE TABLE demo LIKE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            (
+                "CREATE TABLE demo CLONE users;",
+                "CREATE TABLE with query/LIKE/CLONE clauses is not supported",
+                true,
+            ),
+            ("DROP TABLE;", "DROP TABLE requires a table name", true),
+            (
+                "CREATE INDEX demo_payload_idx ON demo USING GIN (payload);",
+                "Unsupported CREATE INDEX USING",
+                false,
+            ),
+            ("DROP VIEW users;", "Unsupported DROP object type", false),
+            (
+                "DROP INDEX demo_payload_idx;",
+                "DROP INDEX requires a table name",
+                true,
+            ),
+            (
+                "INSERT INTO users (id) VALUES (1);",
+                "Unsupported DDL statement",
+                false,
+            ),
+            ("SELECT * FROM users;", "Unsupported DDL statement", false),
+        ];
+
+        for (sql, expected, exact) in unsupported {
+            let err = parse_ddl(sql).expect_err("expected unsupported ddl to be rejected");
+            let err_msg = err.to_string();
+            if exact {
+                assert_eq!(err_msg, expected, "unexpected parse error for `{sql}`");
+            } else {
+                assert!(
+                    err_msg.contains(expected),
+                    "unexpected parse error for `{sql}`: {err_msg}"
+                );
+            }
         }
     }
 }

@@ -5,15 +5,16 @@ This client uses the v1 proto messages that align with the server's unified hand
 """
 
 import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 from urllib.parse import urljoin, urlparse
 
 import grpc
 import requests
 
-from .exceptions import AuthenticationError, NetworkError, ProximaDBError
+from .exceptions import NetworkError, ProximaDBError
 from .models import (
     Collection,
+    CollectionConfig,
     DistanceMetric,
     SearchResult,
     StorageEngine,
@@ -26,10 +27,15 @@ from .v1 import (
     graph_pb2_grpc,
     sql_pb2_grpc,
     types_pb2,
-    vector_pb2,
     vector_pb2_grpc,
     vector_types_pb2,
 )
+
+try:
+    from .v2 import record_pb2, record_pb2_grpc
+except Exception:  # pragma: no cover - generated v2 stubs may be absent in old installs
+    record_pb2 = None
+    record_pb2_grpc = None
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +67,14 @@ class ProximaDBClientV1:
             grpc_url = url.replace("http://", "").replace("https://", "")
             self.channel = grpc.insecure_channel(grpc_url)
             self.vector_stub = vector_pb2_grpc.VectorServiceStub(self.channel)
+            if record_pb2_grpc is not None:
+                self.record_stub = record_pb2_grpc.ProximaRecordServiceStub(
+                    self.channel
+                )
             self.collection_stub = collection_pb2_grpc.CollectionServiceStub(
                 self.channel
             )
-            self.sql_stub = sql_pb2_grpc.SqlServiceStub(self.channel)
+            self.sql_stub = sql_pb2_grpc.QueryServiceStub(self.channel)
             self.graph_stub = graph_pb2_grpc.GraphServiceStub(self.channel)
 
         logger.info(
@@ -81,8 +91,8 @@ class ProximaDBClientV1:
         self,
         name: str,
         dimension: int,
-        distance_metric: Union[str, DistanceMetric] = DistanceMetric.COSINE,
-        storage_engine: Union[str, StorageEngine] = StorageEngine.SST,
+        distance_metric: str | DistanceMetric = DistanceMetric.COSINE,
+        storage_engine: str | StorageEngine = StorageEngine.SST,
         **kwargs,
     ) -> Collection:
         """Create a new collection"""
@@ -198,33 +208,38 @@ class ProximaDBClientV1:
         payload = {
             "name": name,
             "dimension": dimension,
-            "distance_metric": distance_metric.upper(),
-            "storage_engine": storage_engine.upper(),
+            "distance_metric": distance_metric.lower(),
+            "engine": storage_engine.lower(),
+            "enable_proxima_record": True,
         }
 
-        url = urljoin(self.base_url, "/api/v1/collections")
+        url = urljoin(self.base_url, "/api/v2/collections")
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
             return Collection(
-                id=data.get("id", ""),
-                name=data["name"],
-                dimension=data["dimension"],
-                distance_metric=DistanceMetric(data["distance_metric"].lower()),
-                storage_engine=StorageEngine(data["storage_engine"].lower()),
+                id=data.get("collection_id", data.get("id", name)),
+                config=CollectionConfig(
+                    name=data.get("name", name),
+                    dimension=data.get("dimension", dimension),
+                    distance_metric=DistanceMetric(distance_metric.lower()),
+                    storage_engine=StorageEngine(
+                        data.get("engine", storage_engine).lower()
+                    ),
+                ),
             )
         except requests.RequestException as e:
             raise NetworkError(f"REST request failed: {e}")
 
-    def get_collection(self, name: str) -> Optional[Collection]:
+    def get_collection(self, name: str) -> Collection | None:
         """Get collection by name"""
         if self.protocol == "grpc":
             return self._get_collection_grpc(name)
         else:
             return self._get_collection_rest(name)
 
-    def _get_collection_grpc(self, name: str) -> Optional[Collection]:
+    def _get_collection_grpc(self, name: str) -> Collection | None:
         """Get collection via gRPC"""
         request = collection_types_pb2.GetCollectionRequest(collection_id=name)
 
@@ -242,9 +257,9 @@ class ProximaDBClientV1:
                 return None
             raise ProximaDBError(f"gRPC error: {e.details()}")
 
-    def _get_collection_rest(self, name: str) -> Optional[Collection]:
+    def _get_collection_rest(self, name: str) -> Collection | None:
         """Get collection via REST"""
-        url = urljoin(self.base_url, f"/api/v1/collections/{name}")
+        url = urljoin(self.base_url, f"/api/v2/collections/{name}")
         try:
             response = requests.get(url, timeout=self.timeout)
             if response.status_code == 404:
@@ -252,23 +267,25 @@ class ProximaDBClientV1:
             response.raise_for_status()
             data = response.json()
             return Collection(
-                id=data.get("id", ""),
-                name=data["name"],
-                dimension=data["dimension"],
-                distance_metric=DistanceMetric(data["distance_metric"].lower()),
-                storage_engine=StorageEngine(data["storage_engine"].lower()),
+                id=data.get("collection_id", data.get("id", name)),
+                config=CollectionConfig(
+                    name=data.get("name", name),
+                    dimension=data["dimension"],
+                    distance_metric=DistanceMetric(data["distance_metric"].lower()),
+                    storage_engine=StorageEngine(data["engine"].lower()),
+                ),
             )
         except requests.RequestException as e:
             raise NetworkError(f"REST request failed: {e}")
 
-    def list_collections(self) -> List[Collection]:
+    def list_collections(self) -> list[Collection]:
         """List all collections"""
         if self.protocol == "grpc":
             return self._list_collections_grpc()
         else:
             return self._list_collections_rest()
 
-    def _list_collections_grpc(self) -> List[Collection]:
+    def _list_collections_grpc(self) -> list[Collection]:
         """List collections via gRPC"""
         request = collection_types_pb2.ListCollectionsRequest()
 
@@ -289,20 +306,24 @@ class ProximaDBClientV1:
         except grpc.RpcError as e:
             raise ProximaDBError(f"gRPC error: {e.details()}")
 
-    def _list_collections_rest(self) -> List[Collection]:
+    def _list_collections_rest(self) -> list[Collection]:
         """List collections via REST"""
-        url = urljoin(self.base_url, "/api/v1/collections")
+        url = urljoin(self.base_url, "/api/v2/collections")
         try:
             response = requests.get(url, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
             return [
                 Collection(
-                    id=col.get("id", ""),
-                    name=col["name"],
-                    dimension=col["dimension"],
-                    distance_metric=DistanceMetric(col["distance_metric"].lower()),
-                    storage_engine=StorageEngine(col["storage_engine"].lower()),
+                    id=col.get("collection_id", col.get("id", col["name"])),
+                    config=CollectionConfig(
+                        name=col["name"],
+                        dimension=col["dimension"],
+                        distance_metric=DistanceMetric(
+                            col.get("distance_metric", "cosine").lower()
+                        ),
+                        storage_engine=StorageEngine(col["engine"].lower()),
+                    ),
                 )
                 for col in data.get("collections", [])
             ]
@@ -310,93 +331,55 @@ class ProximaDBClientV1:
             raise NetworkError(f"REST request failed: {e}")
 
     # Vector operations
-    def insert_vectors(
-        self, collection_id: str, vectors: List[VectorRecord]
-    ) -> Dict[str, Any]:
-        """Insert vectors into collection"""
+    def insert_records(
+        self, collection_id: str, records: list[VectorRecord | dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Insert ProximaRecord-shaped payloads through the record API."""
         if self.protocol == "grpc":
-            return self._insert_vectors_grpc(collection_id, vectors)
-        else:
-            return self._insert_vectors_rest(collection_id, vectors)
+            return self._insert_records_grpc(collection_id, records)
+        return self._insert_records_rest(collection_id, records)
 
-    def _convert_metadata_to_sql_value(
-        self, metadata_dict: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Convert Python dict metadata to gRPC SqlValue format"""
-        from .v1 import types_pb2
+    def insert_vectors(
+        self, collection_id: str, vectors: list[VectorRecord]
+    ) -> dict[str, Any]:
+        """Compatibility alias for record-native inserts."""
+        return self.insert_records(collection_id, vectors)
 
-        sql_metadata = {}
-        for key, value in (metadata_dict or {}).items():
-            sql_value = types_pb2.SqlValue()
-            if isinstance(value, bool):
-                sql_value.bool_value = value
-            elif isinstance(value, int):
-                sql_value.int64_value = value
-            elif isinstance(value, float):
-                sql_value.number_value = value
-            elif isinstance(value, str):
-                sql_value.string_value = value
-            elif value is None:
-                sql_value.null_value = None
-            else:
-                sql_value.string_value = str(value)
-            sql_metadata[key] = sql_value
-        return sql_metadata
+    def _record_payload(
+        self, record: VectorRecord | dict[str, Any], index: int
+    ) -> dict[str, Any]:
+        if isinstance(record, dict):
+            payload = dict(record)
+            if "props" not in payload and "metadata" in payload:
+                payload["props"] = payload.pop("metadata")
+            payload.setdefault("id", payload.get("oid") or f"record_{index}")
+            return payload
 
-    def _insert_vectors_grpc(
-        self, collection_id: str, vectors: List[VectorRecord]
-    ) -> Dict[str, Any]:
-        """Insert vectors via gRPC"""
-        proto_vectors = []
-        for vec in vectors:
-            proto_vec = vector_types_pb2.VectorRecord(
-                id=vec.id,
-                vector=vec.vector,
-                metadata=self._convert_metadata_to_sql_value(vec.metadata),
-            )
-            proto_vectors.append(proto_vec)
-
-        request = vector_types_pb2.VectorBatchRequest(
-            collection_id=collection_id, vectors=proto_vectors
-        )
-
-        try:
-            response = self.vector_stub.VectorBatch(request, timeout=self.timeout)
-            return {
-                "success": response.success,
-                "vector_ids": list(response.vector_ids),
-                "metrics": (
-                    {
-                        "total_processed": (
-                            response.metrics.total_processed if response.metrics else 0
-                        ),
-                        "successful_count": (
-                            response.metrics.successful_count if response.metrics else 0
-                        ),
-                        "failed_count": (
-                            response.metrics.failed_count if response.metrics else 0
-                        ),
-                    }
-                    if response.metrics
-                    else {}
-                ),
-            }
-        except grpc.RpcError as e:
-            raise ProximaDBError(f"gRPC error: {e.details()}")
-
-    def _insert_vectors_rest(
-        self, collection_id: str, vectors: List[VectorRecord]
-    ) -> Dict[str, Any]:
-        """Insert vectors via REST"""
         payload = {
-            "collection_id": collection_id,
-            "vectors": [
-                {"id": vec.id, "vector": vec.vector, "metadata": vec.metadata or {}}
-                for vec in vectors
+            "id": record.id or f"record_{index}",
+            "vector": record.vector,
+            "props": record.metadata or {},
+        }
+        source = getattr(record, "source", None)
+        if source:
+            payload["source"] = source
+            payload["text_fields"] = [{"name": "text", "content": source}]
+        return payload
+
+    def _insert_records_rest(
+        self, collection_id: str, records: list[VectorRecord | dict[str, Any]]
+    ) -> dict[str, Any]:
+        payload = {
+            "records": [
+                self._record_payload(record, index)
+                for index, record in enumerate(records)
             ],
+            "validate_schema": True,
         }
 
-        url = urljoin(self.base_url, "/api/v1/vectors/batch")
+        url = urljoin(
+            self.base_url, f"/api/v2/collections/{collection_id}/records/batch"
+        )
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
@@ -404,12 +387,120 @@ class ProximaDBClientV1:
         except requests.RequestException as e:
             raise NetworkError(f"REST request failed: {e}")
 
+    def _typed_value(self, value: Any):
+        if record_pb2 is None:
+            raise ProximaDBError("v2 record protobuf stubs are unavailable")
+        if value is None:
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.COLUMN_TYPE_UNSPECIFIED,
+                is_null=True,
+            )
+        if isinstance(value, bool):
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.BOOLEAN,
+                boolean_value=value,
+            )
+        if isinstance(value, int) and not isinstance(value, bool):
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.INTEGER,
+                integer_value=value,
+            )
+        if isinstance(value, float):
+            return record_pb2.TypedValue(
+                declared_type=record_pb2.FLOAT,
+                float_value=value,
+            )
+        return record_pb2.TypedValue(
+            declared_type=record_pb2.TEXT,
+            text_value=str(value),
+        )
+
+    def _insert_records_grpc(
+        self, collection_id: str, records: list[VectorRecord | dict[str, Any]]
+    ) -> dict[str, Any]:
+        if record_pb2 is None or not hasattr(self, "record_stub"):
+            raise ProximaDBError("v2 ProximaRecord gRPC stubs are unavailable")
+
+        proto_records = []
+        for index, record in enumerate(records):
+            payload = self._record_payload(record, index)
+            props = {
+                str(key): self._typed_value(value)
+                for key, value in (payload.get("props") or {}).items()
+            }
+            text_fields = [
+                record_pb2.TextField(
+                    name=str(field.get("name", "text")),
+                    content=str(field.get("content", "")),
+                )
+                for field in payload.get("text_fields", [])
+            ]
+            proto_records.append(
+                record_pb2.ProximaRecord(
+                    id=payload["id"],
+                    vector=payload.get("vector") or [],
+                    props=props,
+                    source=payload.get("source"),
+                    text_fields=text_fields,
+                )
+            )
+
+        request = record_pb2.ProximaRecordBatch(
+            collection_id=collection_id,
+            records=proto_records,
+            write_mode=record_pb2.INSERT,
+            validate_schema=True,
+            return_ids=True,
+            return_errors=True,
+        )
+        try:
+            response = self.record_stub.InsertRecords(request, timeout=self.timeout)
+            return {
+                "success": response.success,
+                "total_processed": response.total_processed,
+                "success_count": response.success_count,
+                "failed_count": response.failed_count,
+                "inserted_ids": list(response.inserted_ids),
+                "errors": [
+                    {
+                        "record_index": error.record_index,
+                        "record_id": error.record_id,
+                        "error_code": error.error_code,
+                        "error_message": error.error_message,
+                    }
+                    for error in response.errors
+                ],
+            }
+        except grpc.RpcError as e:
+            raise ProximaDBError(f"gRPC error: {e.details()}")
+
+    def _convert_metadata_to_sql_value(
+        self, metadata_dict: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Convert Python dict metadata to gRPC SqlValue format"""
+        sql_metadata = {}
+        for key, value in (metadata_dict or {}).items():
+            sql_metadata[key] = self._convert_to_sql_value(value)
+        return sql_metadata
+
+    def _insert_vectors_grpc(
+        self, collection_id: str, vectors: list[VectorRecord]
+    ) -> dict[str, Any]:
+        """Compatibility alias for record-native gRPC inserts."""
+        return self._insert_records_grpc(collection_id, vectors)
+
+    def _insert_vectors_rest(
+        self, collection_id: str, vectors: list[VectorRecord]
+    ) -> dict[str, Any]:
+        """Compatibility alias for record-native REST inserts."""
+        return self._insert_records_rest(collection_id, vectors)
+
     def search_vectors(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
     ) -> SearchResult:
         """Search for similar vectors"""
         if self.protocol == "grpc":
@@ -420,10 +511,10 @@ class ProximaDBClientV1:
     def _search_vectors_grpc(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int,
-        filters: Optional[Dict[str, Any]],
-    ) -> List[SearchResult]:
+        filters: dict[str, Any] | None,
+    ) -> list[SearchResult]:
         """Search vectors via gRPC"""
         # Create SearchQuery with vector and filters
         search_query = vector_types_pb2.SearchQuery(
@@ -456,20 +547,22 @@ class ProximaDBClientV1:
     def _search_vectors_rest(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int,
-        filters: Optional[Dict[str, Any]],
+        filters: dict[str, Any] | None,
     ) -> SearchResult:
         """Search vectors via REST"""
         payload = {
-            "collection_id": collection_id,
             "vector": vector,
             "top_k": top_k,
         }
         if filters:
-            payload["filters"] = filters
+            payload["filters"] = [
+                {"field": key, "op": "eq", "value": value}
+                for key, value in filters.items()
+            ]
 
-        url = urljoin(self.base_url, "/api/v1/vectors/search")
+        url = urljoin(self.base_url, f"/api/v2/collections/{collection_id}/search")
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
@@ -483,7 +576,7 @@ class ProximaDBClientV1:
         except requests.RequestException as e:
             raise NetworkError(f"REST request failed: {e}")
 
-    def get_vector(self, collection_id: str, vector_id: str) -> Optional[VectorRecord]:
+    def get_vector(self, collection_id: str, vector_id: str) -> VectorRecord | None:
         """Get a vector by ID"""
         if self.protocol == "grpc":
             return self._get_vector_grpc(collection_id, vector_id)
@@ -492,7 +585,7 @@ class ProximaDBClientV1:
 
     def _get_vector_grpc(
         self, collection_id: str, vector_id: str
-    ) -> Optional[VectorRecord]:
+    ) -> VectorRecord | None:
         """Get vector via gRPC"""
         request = vector_types_pb2.VectorGetRequest(
             collection_id=collection_id, vector_id=vector_id
@@ -515,9 +608,12 @@ class ProximaDBClientV1:
 
     def _get_vector_rest(
         self, collection_id: str, vector_id: str
-    ) -> Optional[VectorRecord]:
+    ) -> VectorRecord | None:
         """Get vector via REST"""
-        url = urljoin(self.base_url, f"/api/v1/vectors/{collection_id}/{vector_id}")
+        url = urljoin(
+            self.base_url,
+            f"/api/v2/collections/{collection_id}/records/{vector_id}?include_vector=true&include_text=false",
+        )
         try:
             response = requests.get(url, timeout=self.timeout)
             if response.status_code == 404:
@@ -525,12 +621,11 @@ class ProximaDBClientV1:
             response.raise_for_status()
             data = response.json()
 
-            if data.get("success") and data.get("results"):
-                result = data["results"][0]
+            if data.get("id"):
                 return VectorRecord(
-                    id=result["id"],
-                    vector=result.get("vector", []),
-                    metadata=result.get("metadata", {}),
+                    id=data["id"],
+                    vector=data.get("vector", []),
+                    metadata=data.get("props", {}),
                 )
             return None
         except requests.RequestException as e:
@@ -538,8 +633,8 @@ class ProximaDBClientV1:
 
     # SQL operations
     def execute_sql(
-        self, query: str, parameters: Optional[List[Any]] = None
-    ) -> Dict[str, Any]:
+        self, query: str, parameters: list[Any] | None = None
+    ) -> dict[str, Any]:
         """Execute SQL query"""
         if self.protocol == "grpc":
             return self._execute_sql_grpc(query, parameters)
@@ -547,8 +642,8 @@ class ProximaDBClientV1:
             return self._execute_sql_rest(query, parameters)
 
     def _execute_sql_grpc(
-        self, query: str, parameters: Optional[List[Any]] = None
-    ) -> Dict[str, Any]:
+        self, query: str, parameters: list[Any] | None = None
+    ) -> dict[str, Any]:
         """Execute SQL via gRPC"""
         # Convert parameters to proto SqlValue format if provided
         proto_parameters = []
@@ -557,10 +652,12 @@ class ProximaDBClientV1:
                 proto_param = self._convert_to_sql_value(param)
                 proto_parameters.append(proto_param)
 
-        request = types_pb2.ExecuteSqlRequest(query=query, parameters=proto_parameters)
+        request = types_pb2.ExecuteQueryRequest(
+            query=query, parameters=proto_parameters
+        )
 
         try:
-            response = self.sql_stub.ExecuteSql(request, timeout=self.timeout)
+            response = self.sql_stub.ExecuteQuery(request, timeout=self.timeout)
 
             # Convert response to dictionary format
             rows = []
@@ -581,16 +678,17 @@ class ProximaDBClientV1:
             raise ProximaDBError(f"SQL gRPC error: {e.details()}")
 
     def _execute_sql_rest(
-        self, query: str, parameters: Optional[List[Any]] = None
-    ) -> Dict[str, Any]:
-        """Execute SQL via REST"""
-        payload = {
+        self, query: str, parameters: list[Any] | None = None
+    ) -> dict[str, Any]:
+        """Execute SQL via REST (canonical v2 query facade, language="uql")."""
+        payload: dict[str, Any] = {
+            "language": "uql",
             "query": query,
         }
         if parameters:
             payload["parameters"] = parameters
 
-        url = urljoin(self.base_url, "/api/v1/sql/execute")
+        url = urljoin(self.base_url, "/api/v2/query")
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
             response.raise_for_status()
@@ -598,7 +696,7 @@ class ProximaDBClientV1:
         except requests.RequestException as e:
             raise NetworkError(f"REST request failed: {e}")
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Check server health"""
         url = urljoin(self.base_url, "/health")
         try:
@@ -609,38 +707,34 @@ class ProximaDBClientV1:
             raise NetworkError(f"Health check failed: {e}")
 
     def _convert_to_sql_value(self, value: Any) -> types_pb2.SqlValue:
-        """Convert Python value to SQL proto value"""
+        """Convert Python value to SQL proto value without flattening nested data."""
+        from google.protobuf.struct_pb2 import NullValue
+
+        if value is None:
+            return types_pb2.SqlValue(null_value=NullValue.NULL_VALUE)
+        if isinstance(value, bool):
+            return types_pb2.SqlValue(bool_value=value)
+        if isinstance(value, int) and not isinstance(value, bool):
+            return types_pb2.SqlValue(int64_value=value)
+        if isinstance(value, float):
+            return types_pb2.SqlValue(number_value=value)
         if isinstance(value, str):
             return types_pb2.SqlValue(string_value=value)
-        elif isinstance(value, bool):
-            # Check bool before int since bool is a subclass of int in Python
-            return types_pb2.SqlValue(bool_value=value)
-        elif isinstance(value, int):
-            return types_pb2.SqlValue(int64_value=value)
-        elif isinstance(value, float):
-            return types_pb2.SqlValue(number_value=value)
-            return types_pb2.SqlValue(bool_value=value)
-        elif value is None:
-            from google.protobuf.struct_pb2 import NullValue
-
-            return types_pb2.SqlValue(null_value=NullValue.NULL_VALUE)
-        elif isinstance(value, (bytes, bytearray)):
+        if isinstance(value, (bytes, bytearray, memoryview)):
             return types_pb2.SqlValue(bytes_value=bytes(value))
-        elif isinstance(value, list):
+        if isinstance(value, (list, tuple)):
             array_values = [self._convert_to_sql_value(item) for item in value]
             return types_pb2.SqlValue(
                 array_value=types_pb2.SqlArray(values=array_values)
             )
-        elif isinstance(value, dict):
+        if isinstance(value, dict):
             object_fields = {
-                key: self._convert_to_sql_value(val) for key, val in value.items()
+                str(key): self._convert_to_sql_value(val) for key, val in value.items()
             }
             return types_pb2.SqlValue(
                 object_value=types_pb2.SqlObject(fields=object_fields)
             )
-        else:
-            # Fallback: convert to string
-            return types_pb2.SqlValue(string_value=str(value))
+        return types_pb2.SqlValue(string_value=str(value))
 
     def _convert_from_sql_value(self, sql_value: types_pb2.SqlValue) -> Any:
         """Convert SQL proto value to Python value"""
@@ -654,7 +748,7 @@ class ProximaDBClientV1:
         elif sql_value.HasField("bool_value"):
             return sql_value.bool_value
         elif sql_value.HasField("bytes_value"):
-            return sql_value.bytes_value
+            return bytes(sql_value.bytes_value)
         elif sql_value.HasField("null_value"):
             return None
         elif sql_value.HasField("array_value"):
@@ -676,10 +770,10 @@ class ProximaDBClientV1:
     def create_node(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
+    ) -> dict[str, Any]:
         """Create a graph node"""
         if self.protocol == "grpc":
             return self._create_node_grpc(node_id, labels, properties, embedding)
@@ -689,10 +783,10 @@ class ProximaDBClientV1:
     def _create_node_grpc(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
+    ) -> dict[str, Any]:
         """Create node via gRPC"""
         node_properties = {}
         if properties:
@@ -716,10 +810,10 @@ class ProximaDBClientV1:
     def _create_node_rest(
         self,
         node_id: str,
-        labels: List[str],
-        properties: Optional[Dict[str, Any]] = None,
-        embedding: Optional[List[float]] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str],
+        properties: dict[str, Any] | None = None,
+        embedding: list[float] | None = None,
+    ) -> dict[str, Any]:
         """Create node via REST"""
         payload = {
             "id": node_id,
@@ -731,7 +825,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/nodes"),
+                urljoin(self.base_url, "/api/v2/graphs/default/nodes"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -747,9 +841,9 @@ class ProximaDBClientV1:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        properties: dict[str, Any] | None = None,
+        weight: float | None = None,
+    ) -> dict[str, Any]:
         """Create a graph edge"""
         if self.protocol == "grpc":
             return self._create_edge_grpc(
@@ -766,9 +860,9 @@ class ProximaDBClientV1:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        properties: dict[str, Any] | None = None,
+        weight: float | None = None,
+    ) -> dict[str, Any]:
         """Create edge via gRPC"""
         edge_properties = {}
         if properties:
@@ -800,9 +894,9 @@ class ProximaDBClientV1:
         from_node_id: str,
         to_node_id: str,
         edge_type: str,
-        properties: Optional[Dict[str, Any]] = None,
-        weight: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        properties: dict[str, Any] | None = None,
+        weight: float | None = None,
+    ) -> dict[str, Any]:
         """Create edge via REST"""
         payload = {
             "id": edge_id,
@@ -816,7 +910,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/edges"),
+                urljoin(self.base_url, "/api/v2/graphs/default/edges"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -830,11 +924,11 @@ class ProximaDBClientV1:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Traverse graph from a starting node"""
         if self.protocol == "grpc":
             return self._traverse_graph_grpc(
@@ -849,11 +943,11 @@ class ProximaDBClientV1:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Traverse graph via gRPC"""
         # Map algorithm string to enum
         algorithm_enum = graph_pb2.TRAVERSAL_ALGORITHM_BFS
@@ -900,11 +994,11 @@ class ProximaDBClientV1:
         self,
         start_node_id: str,
         max_depth: int = 3,
-        edge_types: Optional[List[str]] = None,
-        node_labels: Optional[List[str]] = None,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
         algorithm: str = "BFS",
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Traverse graph via REST"""
         payload = {
             "start_node_id": start_node_id,
@@ -918,7 +1012,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/traverse"),
+                urljoin(self.base_url, "/api/v2/graphs/default/traverse"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -930,11 +1024,11 @@ class ProximaDBClientV1:
 
     def query_nodes(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict[str, Any]:
         """Query nodes by labels and properties"""
         if self.protocol == "grpc":
             return self._query_nodes_grpc(labels, properties, limit, offset)
@@ -943,11 +1037,11 @@ class ProximaDBClientV1:
 
     def _query_nodes_grpc(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict[str, Any]:
         """Query nodes via gRPC"""
         filters = []
         if properties:
@@ -981,11 +1075,11 @@ class ProximaDBClientV1:
 
     def _query_nodes_rest(
         self,
-        labels: Optional[List[str]] = None,
-        properties: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-        offset: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        labels: list[str] | None = None,
+        properties: dict[str, Any] | None = None,
+        limit: int | None = None,
+        offset: int | None = None,
+    ) -> dict[str, Any]:
         """Query nodes via REST"""
         payload = {"labels": labels or [], "properties": properties or {}}
         if limit is not None:
@@ -995,7 +1089,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/graph/nodes/query"),
+                urljoin(self.base_url, "/api/v2/graphs/default/query/nodes"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -1010,15 +1104,15 @@ class ProximaDBClientV1:
     def hybrid_search(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
-        start_node_id: Optional[str] = None,
+        start_node_id: str | None = None,
         max_depth: int = 2,
         combination_strategy: str = "VECTOR_THEN_GRAPH",
-        edge_types: Optional[List[str]] = None,
-        vector_filters: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        edge_types: list[str] | None = None,
+        vector_filters: dict[str, Any] | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Execute hybrid search combining vector similarity and graph traversal"""
         if self.protocol == "grpc":
             return self._hybrid_search_grpc(
@@ -1048,15 +1142,15 @@ class ProximaDBClientV1:
     def _hybrid_search_grpc(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
-        start_node_id: Optional[str] = None,
+        start_node_id: str | None = None,
         max_depth: int = 2,
         combination_strategy: str = "VECTOR_THEN_GRAPH",
-        edge_types: Optional[List[str]] = None,
-        vector_filters: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        edge_types: list[str] | None = None,
+        vector_filters: dict[str, Any] | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Execute hybrid search via gRPC"""
         # Create vector search request
         search_query = vector_types_pb2.SearchQuery(vector=vector)
@@ -1124,15 +1218,15 @@ class ProximaDBClientV1:
     def _hybrid_search_rest(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
-        start_node_id: Optional[str] = None,
+        start_node_id: str | None = None,
         max_depth: int = 2,
         combination_strategy: str = "VECTOR_THEN_GRAPH",
-        edge_types: Optional[List[str]] = None,
-        vector_filters: Optional[Dict[str, Any]] = None,
-        limit: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        edge_types: list[str] | None = None,
+        vector_filters: dict[str, Any] | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
         """Execute hybrid search via REST"""
         payload = {
             "vector_search": {
@@ -1156,7 +1250,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/hybrid/search"),
+                urljoin(self.base_url, "/api/v2/hybrid/search"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -1171,14 +1265,14 @@ class ProximaDBClientV1:
     def advanced_vector_search(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         include_vector: bool = False,
         include_metadata: bool = True,
-        accuracy_threshold: Optional[float] = None,
-        search_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        accuracy_threshold: float | None = None,
+        search_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Enhanced vector search with advanced parameters"""
         if self.protocol == "grpc":
             return self._advanced_vector_search_grpc(
@@ -1206,14 +1300,14 @@ class ProximaDBClientV1:
     def _advanced_vector_search_grpc(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         include_vector: bool = False,
         include_metadata: bool = True,
-        accuracy_threshold: Optional[float] = None,
-        search_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        accuracy_threshold: float | None = None,
+        search_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Advanced vector search via gRPC"""
         # Create search query with filters
         search_query = vector_types_pb2.SearchQuery(vector=vector)
@@ -1269,22 +1363,24 @@ class ProximaDBClientV1:
     def _advanced_vector_search_rest(
         self,
         collection_id: str,
-        vector: List[float],
+        vector: list[float],
         top_k: int = 10,
-        filters: Optional[Dict[str, Any]] = None,
+        filters: dict[str, Any] | None = None,
         include_vector: bool = False,
         include_metadata: bool = True,
-        accuracy_threshold: Optional[float] = None,
-        search_params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+        accuracy_threshold: float | None = None,
+        search_params: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Advanced vector search via REST"""
         payload = {
-            "collection_id": collection_id,
             "vector": vector,
             "top_k": top_k,
             "include_vector": include_vector,
-            "include_metadata": include_metadata,
-            "filters": filters or {},
+            "include_text": False,
+            "filters": [
+                {"field": key, "op": "eq", "value": value}
+                for key, value in (filters or {}).items()
+            ],
         }
 
         if accuracy_threshold is not None:
@@ -1295,7 +1391,7 @@ class ProximaDBClientV1:
 
         try:
             response = requests.post(
-                urljoin(self.base_url, "/api/v1/vectors/search/advanced"),
+                urljoin(self.base_url, f"/api/v2/collections/{collection_id}/search"),
                 json=payload,
                 timeout=self.timeout,
                 headers={"Content-Type": "application/json"},
@@ -1360,7 +1456,7 @@ class ProximaDBClientV1:
         else:
             return None
 
-    def _convert_node_from_proto(self, node: graph_pb2.Node) -> Dict[str, Any]:
+    def _convert_node_from_proto(self, node: graph_pb2.Node) -> dict[str, Any]:
         """Convert Node proto to dictionary"""
         return {
             "id": node.id,
@@ -1381,7 +1477,7 @@ class ProximaDBClientV1:
             ),
         }
 
-    def _convert_edge_from_proto(self, edge: graph_pb2.Edge) -> Dict[str, Any]:
+    def _convert_edge_from_proto(self, edge: graph_pb2.Edge) -> dict[str, Any]:
         """Convert Edge proto to dictionary"""
         return {
             "id": edge.id,
@@ -1405,7 +1501,7 @@ class ProximaDBClientV1:
             ),
         }
 
-    def _convert_path_from_proto(self, path) -> List[str]:
+    def _convert_path_from_proto(self, path) -> list[str]:
         """Convert GraphPath proto to list of node IDs"""
         # Assuming GraphPath has node_ids field - adjust based on actual proto definition
         if hasattr(path, "node_ids"):
@@ -1413,7 +1509,7 @@ class ProximaDBClientV1:
         else:
             return []
 
-    def _convert_search_result_from_proto(self, result) -> Dict[str, Any]:
+    def _convert_search_result_from_proto(self, result) -> dict[str, Any]:
         """Convert SearchVectorRecord proto to dictionary"""
         return {
             "id": result.id,

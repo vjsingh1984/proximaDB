@@ -5,12 +5,12 @@
 
 pub mod adaptive_filter_executor;
 pub mod column_projector;
+pub mod columnar_query_reader;
 pub mod columnar_reader;
 pub mod filter_pushdown_engine;
 pub mod pipeline;
 pub mod query_metrics;
 pub mod result_cache;
-pub mod unified_reader;
 pub mod vectorized_executor;
 
 // Re-export main types for convenience with semantic names
@@ -26,16 +26,17 @@ pub use result_cache::{CacheStrategy, QueryCache};
 pub use vectorized_executor::{DataChunk, vectorized_filter_batch};
 
 // Re-export unified reader types for compatibility
-pub use unified_reader::{
+pub use columnar_query_reader::{
     CollectionContext, FilterValue, PagePruningInfo, PageRange, QuantizationMethod, ReaderConfig,
     ReadingStrategy, ReadingStrategySelector, RowGroupAccessPattern, SchemaMapping, SearchType,
     SeekRange, Stage2Strategy, UnifiedParquetReader, VectorPosition,
 };
 
 // Common traits used across query implementations
-use crate::proto::proximadb_v1::{MetadataFilter, VectorRecord};
+use crate::proto::proximadb_v1::MetadataFilter;
 use anyhow::Result;
 use arrow::record_batch::RecordBatch;
+use proximadb_records::ProximaRecord;
 
 /// Common trait for all Parquet readers
 #[allow(async_fn_in_trait)]
@@ -45,10 +46,10 @@ pub trait ParquetQueryEngine: Send + Sync {
         &self,
         file_path: &str,
         filters: &[MetadataFilter],
-    ) -> Result<Vec<VectorRecord>>;
+    ) -> Result<Vec<ProximaRecord>>;
 
     /// Query by IDs
-    async fn query_by_ids(&self, file_path: &str, ids: &[String]) -> Result<Vec<VectorRecord>>;
+    async fn query_by_ids(&self, file_path: &str, ids: &[String]) -> Result<Vec<ProximaRecord>>;
 
     /// Query with projection
     async fn query_with_projection(

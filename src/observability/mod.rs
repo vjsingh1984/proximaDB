@@ -69,10 +69,50 @@ pub mod alerting;
 pub mod audit;
 /// High-throughput ingestion pipeline with multi-format parsing.
 pub mod ingestion;
+/// Metering event builder — converts SearchPlanTrace → operator metering
+/// event JSON shape so the data plane and operator pipelines can't drift.
+pub mod metering_event;
+/// Embedding-precision metrics — Prometheus gauges/counters per
+/// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
+pub mod precision_metrics;
+/// TD-064 predicate diagnostics bus — task-local channel that carries
+/// recall-shortfall events from AxisManager-deep search paths to the
+/// REST/gRPC handler that builds the SearchPlanTrace.
+pub mod predicate_diagnostics;
 /// Query engine for logs, metrics, and traces with PromQL support.
 pub mod query;
+/// Rank-pipeline metrics — Prometheus histograms/counters per
+/// RANKING_FRAMEWORK_SPEC NFR-8 (R-7c.4d follow-up).
+pub mod rank_metrics;
+/// Route explain builder — human-readable explanation derived from a
+/// populated SearchPlanTrace for the LLD §1 debug=true response.
+pub mod route_explain;
+/// SearchPlanTrace — per-query telemetry envelope feeding KRU billing and the
+/// learned planner v2 (LLD §10).
+pub mod search_plan_trace;
+/// Post-execution SearchPlanTrace builder.
+pub mod search_plan_trace_builder;
 /// Time-partitioned storage for observability data with WAL durability.
 pub mod storage;
+/// Tenant Prometheus label resolver — bundles tenant_id → bounded
+/// label resolution with the LLD's cardinality-safety guardrail.
+pub mod tenant_label;
+/// Trace batcher — bundles N populated traces into one POST payload
+/// for the async billing sink (digest-keyed dedup + fingerprint-aware).
+pub mod trace_batcher;
+/// Trace digest — stable FNV-1a hash for billing-event dedup +
+/// idempotency keys on the async sink.
+pub mod trace_digest;
+/// Trace fingerprint — shape-only hash for incident-triage grouping.
+pub mod trace_fingerprint;
+/// Trace retention policy — companion to trace_sampling; per-tier age
+/// windows + soft storage-budget shedding.
+pub mod trace_retention;
+/// Trace sampling policy — LLD-anchored down-sampling by tier + load.
+pub mod trace_sampling;
+/// Workload mix detector — aggregates fingerprint counts into a typed
+/// summary for tier-recommendation hints and cache-warm targeting.
+pub mod workload_mix;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -92,7 +132,7 @@ use crate::proto::proximadb_v1::{
 
 /// Storage engine trait for observability data model (metrics, logs, traces).
 ///
-/// Unlike `UnifiedStorageEngine` (vector-centric), this trait operates on
+/// Unlike `UnifiedStorageFormat` (vector-centric), this trait operates on
 /// `MetricSample`, `LogEntry`, and `TraceData` natively. CHRONO implements this.
 #[async_trait]
 pub trait ObservabilityStorageEngine: Send + Sync {
@@ -269,6 +309,7 @@ impl ObservabilityService {
         format: Option<IngestionFormat>,
     ) -> Result<IngestResult> {
         debug!("Ingesting {} logs to namespace {}", logs.len(), namespace);
+        let start = std::time::Instant::now();
 
         // Verify namespace exists
         {
@@ -278,7 +319,17 @@ impl ObservabilityService {
             }
         }
 
-        let result = self.ingester.ingest_logs(namespace, logs, format).await?;
+        let result = if let Some(engine) = &self.observability_engine {
+            let ingested = engine.ingest_logs(namespace.to_string(), logs).await?;
+            IngestResult {
+                ingested,
+                failed: 0,
+                errors: Vec::new(),
+                processing_time_ms: start.elapsed().as_millis() as u64,
+            }
+        } else {
+            self.ingester.ingest_logs(namespace, logs, format).await?
+        };
 
         // Update namespace stats
         {
@@ -304,6 +355,7 @@ impl ObservabilityService {
             metrics.len(),
             namespace
         );
+        let start = std::time::Instant::now();
 
         // Verify namespace exists
         {
@@ -313,7 +365,19 @@ impl ObservabilityService {
             }
         }
 
-        let result = self.ingester.ingest_metrics(namespace, metrics).await?;
+        let result = if let Some(engine) = &self.observability_engine {
+            let ingested = engine
+                .ingest_metrics(namespace.to_string(), metrics)
+                .await?;
+            IngestResult {
+                ingested,
+                failed: 0,
+                errors: Vec::new(),
+                processing_time_ms: start.elapsed().as_millis() as u64,
+            }
+        } else {
+            self.ingester.ingest_metrics(namespace, metrics).await?
+        };
 
         // Update namespace stats
         {
@@ -334,6 +398,52 @@ impl ObservabilityService {
         namespace: &str,
         params: LogQueryParams,
     ) -> Result<LogQueryResult> {
+        if let Some(engine) = &self.observability_engine {
+            let start = std::time::Instant::now();
+            let min_severity = params.severities.iter().map(|s| *s as i32).min();
+            let mut logs = engine
+                .query_logs(
+                    namespace.to_string(),
+                    params.start_time_ns,
+                    params.end_time_ns,
+                    min_severity,
+                    params.query.clone(),
+                )
+                .await?;
+
+            if !params.severities.is_empty() {
+                let allowed: std::collections::HashSet<i32> =
+                    params.severities.iter().map(|s| *s as i32).collect();
+                logs.retain(|log| allowed.contains(&log.severity));
+            }
+            if !params.services.is_empty() {
+                logs.retain(|log| {
+                    log.service
+                        .as_ref()
+                        .is_some_and(|service| params.services.contains(service))
+                });
+            }
+            if !params.sources.is_empty() {
+                logs.retain(|log| {
+                    log.source
+                        .as_ref()
+                        .is_some_and(|source| params.sources.contains(source))
+                });
+            }
+
+            let total_matched = logs.len() as u64;
+            if params.limit > 0 && logs.len() > params.limit as usize {
+                logs.truncate(params.limit as usize);
+            }
+
+            return Ok(LogQueryResult {
+                logs,
+                next_cursor: None,
+                total_matched: Some(total_matched),
+                query_time_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+
         self.query_engine.query_logs(namespace, params).await
     }
 
@@ -413,19 +523,36 @@ impl ObservabilityService {
         let start = std::time::Instant::now();
 
         // Get raw metrics from storage
-        let mut samples = self
-            .storage
-            .query_metrics(namespace, metric_name, start_time_ns, end_time_ns)
-            .await?;
+        let mut samples = if let Some(engine) = &self.observability_engine {
+            let label_matchers = labels
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            engine
+                .query_metrics(
+                    namespace.to_string(),
+                    metric_name.to_string(),
+                    label_matchers,
+                    start_time_ns,
+                    end_time_ns,
+                )
+                .await?
+        } else {
+            let mut samples = self
+                .storage
+                .query_metrics(namespace, metric_name, start_time_ns, end_time_ns)
+                .await?;
 
-        // Apply label filters
-        if !labels.is_empty() {
-            samples.retain(|sample| {
-                labels
-                    .iter()
-                    .all(|(k, v)| sample.labels.get(k).is_some_and(|sv| sv == v))
-            });
-        }
+            // Apply label filters
+            if !labels.is_empty() {
+                samples.retain(|sample| {
+                    labels
+                        .iter()
+                        .all(|(k, v)| sample.labels.get(k).is_some_and(|sv| sv == v))
+                });
+            }
+            samples
+        };
 
         // Apply limit
         if limit > 0 && samples.len() > limit as usize {
@@ -468,64 +595,72 @@ impl ObservabilityService {
         let mut errors = Vec::new();
 
         // TraceData in proto is a single span, convert and write
-        for trace_data in traces {
-            // Extract service name from attributes or use empty string
-            let service_name = trace_data
-                .attributes
-                .get("service.name")
-                .and_then(|v| v.value.as_ref())
-                .and_then(|v| match v {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => Some(s.clone()),
-                    _ => None,
-                })
-                .unwrap_or_default();
-
-            // Convert SqlValue attributes to String attributes
-            let attributes: std::collections::HashMap<String, String> = trace_data
-                .attributes
-                .iter()
-                .filter_map(|(k, v)| {
-                    v.value.as_ref().and_then(|val| match val {
+        if let Some(engine) = &self.observability_engine {
+            let ingested_count = engine.ingest_spans(namespace.to_string(), traces).await?;
+            ingested += ingested_count;
+        } else {
+            for trace_data in traces {
+                // Extract service name from attributes or use empty string
+                let service_name = trace_data
+                    .attributes
+                    .get("service.name")
+                    .and_then(|v| v.value.as_ref())
+                    .and_then(|v| match v {
                         crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                            Some((k.clone(), s.clone()))
-                        }
-                        crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                            Some((k.clone(), i.to_string()))
-                        }
-                        crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
-                            Some((k.clone(), f.to_string()))
-                        }
-                        crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
-                            Some((k.clone(), b.to_string()))
+                            Some(s.clone())
                         }
                         _ => None,
                     })
-                })
-                .collect();
+                    .unwrap_or_default();
 
-            // Extract status code from SpanStatus message
-            let (status_code, status_message) = trace_data.status.map_or((0, String::new()), |s| {
-                (s.code, s.message.unwrap_or_default())
-            }); // 0 = Unset
+                // Convert SqlValue attributes to String attributes
+                let attributes: std::collections::HashMap<String, String> = trace_data
+                    .attributes
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        v.value.as_ref().and_then(|val| match val {
+                            crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
+                                Some((k.clone(), s.clone()))
+                            }
+                            crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
+                                Some((k.clone(), i.to_string()))
+                            }
+                            crate::proto::proximadb_v1::sql_value::Value::NumberValue(f) => {
+                                Some((k.clone(), f.to_string()))
+                            }
+                            crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => {
+                                Some((k.clone(), b.to_string()))
+                            }
+                            _ => None,
+                        })
+                    })
+                    .collect();
 
-            let span = TraceSpan {
-                trace_id: trace_data.trace_id,
-                span_id: trace_data.span_id,
-                parent_span_id: trace_data.parent_span_id.unwrap_or_default(),
-                name: trace_data.name,
-                service_name,
-                start_time_ns: trace_data.start_time_ns,
-                end_time_ns: trace_data.end_time_ns,
-                attributes,
-                status: status_code,
-                status_message,
-            };
+                // Extract status code from SpanStatus message
+                let (status_code, status_message) =
+                    trace_data.status.map_or((0, String::new()), |s| {
+                        (s.code, s.message.unwrap_or_default())
+                    }); // 0 = Unset
 
-            match self.storage.write_span(namespace, &span).await {
-                Ok(()) => ingested += 1,
-                Err(e) => {
-                    failed += 1;
-                    errors.push(e.to_string());
+                let span = TraceSpan {
+                    trace_id: trace_data.trace_id,
+                    span_id: trace_data.span_id,
+                    parent_span_id: trace_data.parent_span_id.unwrap_or_default(),
+                    name: trace_data.name,
+                    service_name,
+                    start_time_ns: trace_data.start_time_ns,
+                    end_time_ns: trace_data.end_time_ns,
+                    attributes,
+                    status: status_code,
+                    status_message,
+                };
+
+                match self.storage.write_span(namespace, &span).await {
+                    Ok(()) => ingested += 1,
+                    Err(e) => {
+                        failed += 1;
+                        errors.push(e.to_string());
+                    }
                 }
             }
         }
@@ -555,6 +690,39 @@ impl ObservabilityService {
         params: TraceQueryParams,
     ) -> Result<TraceQueryResult> {
         let start = std::time::Instant::now();
+
+        if let Some(engine) = &self.observability_engine {
+            let mut traces = engine
+                .query_traces(
+                    namespace.to_string(),
+                    params.trace_id.clone(),
+                    params.service.clone(),
+                    params.start_time_ns,
+                    params.end_time_ns,
+                )
+                .await?;
+
+            if let Some(operation) = &params.operation {
+                traces.retain(|trace| &trace.name == operation);
+            }
+            if let Some(min_duration_ns) = params.min_duration_ns {
+                traces.retain(|trace| {
+                    trace.end_time_ns.saturating_sub(trace.start_time_ns) >= min_duration_ns
+                });
+            }
+            if let Some(status) = params.status {
+                traces.retain(|trace| trace.status.as_ref().is_some_and(|s| s.code == status));
+            }
+            if params.limit > 0 && traces.len() > params.limit as usize {
+                traces.truncate(params.limit as usize);
+            }
+
+            return Ok(TraceQueryResult {
+                traces,
+                next_cursor: None,
+                query_time_ms: start.elapsed().as_millis() as u64,
+            });
+        }
 
         // If trace_id is specified, fetch that specific trace
         if let Some(trace_id) = &params.trace_id {

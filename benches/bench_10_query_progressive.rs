@@ -11,7 +11,7 @@ use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_ma
 use proximadb::{
     compute::{
         distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute},
-        quantization::unified::UnifiedQuantizationEngine,
+        quantization::UnifiedQuantizationEngine,
     },
     core::search::progressive_quantization::{ProgressiveSearchConfig, SearchScenario, StageSizes},
     proto::proximadb_v1::VectorRecord,

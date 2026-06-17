@@ -3,7 +3,7 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "proximadb"
+name = "proximadb_embedded"
 version = "0.2.0"
 description = "ProximaDB - High-performance vector database with embedded mode"
 authors = [
@@ -51,10 +51,12 @@ Repository = "https://github.com/vjsingh1984/proximadb"
 Issues = "https://github.com/vjsingh1984/proximadb/issues"
 
 [tool.maturin]
-# Build settings - use PyO3 bindings (not CFFI)
-features = ["python"]
-# Module name must match the #[pymodule] function name in src/embedded/python.rs
-module-name = "proximadb.proximadb"
+# Canonical embedded wheel configuration.
+# This pyproject is the authoritative one when building against the repo-root
+# Cargo manifest, including `maturin build -m Cargo.toml ...`.
+features = ["python", "pylib"]
+python-source = "clients/python-embedded/src"
+module-name = "proximadb_embedded._proximadb_embedded"
 bindings = "pyo3"
 
 # Strip release builds for smaller size

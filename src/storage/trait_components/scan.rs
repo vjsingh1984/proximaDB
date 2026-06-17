@@ -8,8 +8,8 @@ use anyhow::Result;
 use async_trait::async_trait;
 
 use crate::proto::proximadb_v1::Collection;
-use crate::storage::traits::StorageEngineStrategy;
-use crate::storage::unified_scan_strategy::{ScanCapabilities, ScanIterator, ScanStrategy};
+use crate::storage::scan_strategy::{ScanCapabilities, ScanIterator, ScanStrategy};
+use crate::storage::traits::StorageFormatStrategy;
 
 /// Scan operations for storage engines
 ///
@@ -23,7 +23,7 @@ use crate::storage::unified_scan_strategy::{ScanCapabilities, ScanIterator, Scan
 #[async_trait]
 pub trait StorageScan: Send + Sync {
     /// Get the storage strategy for this engine
-    fn strategy(&self) -> StorageEngineStrategy;
+    fn strategy(&self) -> StorageFormatStrategy;
 
     /// Create a scan iterator based on the unified scan strategy pattern
     ///
@@ -52,7 +52,7 @@ pub trait StorageScan: Send + Sync {
     /// Reports what optimizations this engine supports for scans.
     fn scan_capabilities(&self) -> ScanCapabilities {
         match self.strategy() {
-            StorageEngineStrategy::Sst => ScanCapabilities {
+            StorageFormatStrategy::Sst => ScanCapabilities {
                 supports_predicate_pushdown: false,
                 supports_column_projection: false,
                 supports_row_group_pruning: false,
@@ -67,7 +67,7 @@ pub trait StorageScan: Send + Sync {
                 supports_tier_aware_scanning: false,
                 supports_consolidated_reading: false,
             },
-            StorageEngineStrategy::Viper => ScanCapabilities {
+            StorageFormatStrategy::Viper => ScanCapabilities {
                 supports_predicate_pushdown: true,
                 supports_column_projection: true,
                 supports_row_group_pruning: true,
@@ -82,7 +82,7 @@ pub trait StorageScan: Send + Sync {
                 supports_tier_aware_scanning: false,
                 supports_consolidated_reading: false,
             },
-            StorageEngineStrategy::Nova => ScanCapabilities {
+            StorageFormatStrategy::Nova => ScanCapabilities {
                 supports_predicate_pushdown: true,
                 supports_column_projection: true,
                 supports_row_group_pruning: true,
@@ -97,7 +97,7 @@ pub trait StorageScan: Send + Sync {
                 supports_tier_aware_scanning: false,
                 supports_consolidated_reading: false,
             },
-            StorageEngineStrategy::Raptor => ScanCapabilities {
+            StorageFormatStrategy::Raptor => ScanCapabilities {
                 supports_predicate_pushdown: true,
                 supports_column_projection: true,
                 supports_row_group_pruning: true,
@@ -112,7 +112,7 @@ pub trait StorageScan: Send + Sync {
                 supports_tier_aware_scanning: true,
                 supports_consolidated_reading: true,
             },
-            StorageEngineStrategy::Swift => ScanCapabilities {
+            StorageFormatStrategy::Swift => ScanCapabilities {
                 supports_predicate_pushdown: false,
                 supports_column_projection: false,
                 supports_row_group_pruning: false,
@@ -127,7 +127,7 @@ pub trait StorageScan: Send + Sync {
                 supports_tier_aware_scanning: true,
                 supports_consolidated_reading: false,
             },
-            StorageEngineStrategy::Helix => ScanCapabilities {
+            StorageFormatStrategy::Helix => ScanCapabilities {
                 supports_predicate_pushdown: false,
                 supports_column_projection: false,
                 supports_row_group_pruning: true,

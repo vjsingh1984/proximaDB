@@ -770,31 +770,29 @@ impl SchemaEvolutionService {
             match change {
                 SchemaChange::ColumnAdded {
                     column_name,
-                    nullable,
+                    nullable: false,
                     ..
                 } => {
-                    if !nullable {
-                        // Check for default value
-                        let has_default = new_schema
-                            .columns
-                            .iter()
-                            .find(|c| &c.name == column_name)
-                            .is_some_and(|c| c.default_value.is_some());
+                    // Check for default value
+                    let has_default = new_schema
+                        .columns
+                        .iter()
+                        .find(|c| &c.name == column_name)
+                        .is_some_and(|c| c.default_value.is_some());
 
-                        if !has_default {
-                            result.issues.push(CompatibilityIssue {
-                                severity: IssueSeverity::Error,
-                                column_name: Some(column_name.clone()),
-                                description: format!(
-                                    "Non-nullable column '{}' added without default value",
-                                    column_name
-                                ),
-                                resolution: Some(
-                                    "Add a default value or make the column nullable".to_string(),
-                                ),
-                            });
-                            result.is_compatible = false;
-                        }
+                    if !has_default {
+                        result.issues.push(CompatibilityIssue {
+                            severity: IssueSeverity::Error,
+                            column_name: Some(column_name.clone()),
+                            description: format!(
+                                "Non-nullable column '{}' added without default value",
+                                column_name
+                            ),
+                            resolution: Some(
+                                "Add a default value or make the column nullable".to_string(),
+                            ),
+                        });
+                        result.is_compatible = false;
                     }
                 }
                 SchemaChange::ColumnRemoved { column_name, .. } => {
@@ -842,24 +840,22 @@ impl SchemaEvolutionService {
                 }
                 SchemaChange::NullabilityChanged {
                     column_name,
-                    old_nullable,
-                    new_nullable,
+                    old_nullable: true,
+                    new_nullable: false,
                 } => {
-                    if *old_nullable && !*new_nullable {
-                        result.issues.push(CompatibilityIssue {
-                            severity: IssueSeverity::Warning,
-                            column_name: Some(column_name.clone()),
-                            description: format!(
-                                "Column '{}' changed from nullable to non-nullable - requires data migration",
-                                column_name
-                            ),
-                            resolution: Some(
-                                "Ensure no NULL values exist or provide a default for NULL values"
-                                    .to_string(),
-                            ),
-                        });
-                        result.compatibility_level = CompatibilityLevel::Forward;
-                    }
+                    result.issues.push(CompatibilityIssue {
+                        severity: IssueSeverity::Warning,
+                        column_name: Some(column_name.clone()),
+                        description: format!(
+                            "Column '{}' changed from nullable to non-nullable - requires data migration",
+                            column_name
+                        ),
+                        resolution: Some(
+                            "Ensure no NULL values exist or provide a default for NULL values"
+                                .to_string(),
+                        ),
+                    });
+                    result.compatibility_level = CompatibilityLevel::Forward;
                 }
                 _ => {}
             }
@@ -1223,23 +1219,21 @@ impl SchemaEvolutionService {
         match change {
             SchemaChange::ColumnAdded {
                 column_name,
-                nullable,
+                nullable: false,
                 ..
             } => {
-                if !*nullable {
-                    // Non-nullable column must have default
-                    let has_default = new_schema
-                        .columns
-                        .iter()
-                        .find(|c| &c.name == column_name)
-                        .is_some_and(|c| c.default_value.is_some());
+                // Non-nullable column must have default
+                let has_default = new_schema
+                    .columns
+                    .iter()
+                    .find(|c| &c.name == column_name)
+                    .is_some_and(|c| c.default_value.is_some());
 
-                    if !has_default {
-                        result.add_error(format!(
-                            "Cannot add non-nullable column '{}' without default value",
-                            column_name
-                        ));
-                    }
+                if !has_default {
+                    result.add_error(format!(
+                        "Cannot add non-nullable column '{}' without default value",
+                        column_name
+                    ));
                 }
             }
             SchemaChange::ColumnRemoved { column_name, .. } => {
@@ -1269,16 +1263,14 @@ impl SchemaEvolutionService {
             }
             SchemaChange::NullabilityChanged {
                 column_name,
-                old_nullable,
-                new_nullable,
+                old_nullable: true,
+                new_nullable: false,
             } => {
-                if *old_nullable && !*new_nullable {
-                    result.add_warning(format!(
-                        "Column '{}' changed to non-nullable. Existing NULL values must be handled.",
-                        column_name
-                    ));
-                    result.requires_migration = true;
-                }
+                result.add_warning(format!(
+                    "Column '{}' changed to non-nullable. Existing NULL values must be handled.",
+                    column_name
+                ));
+                result.requires_migration = true;
             }
             _ => {}
         }

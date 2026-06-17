@@ -18,6 +18,8 @@ from .batching_unified import (
     RestBatchProcessor,
     ThreadedBatchProcessor,
     UnifiedBatchManager,
+    batch_insert_records,
+    batch_insert_vectors,
 )
 
 # Legacy alias
@@ -35,4 +37,6 @@ __all__ = [
     "UnifiedBatchManager",
     "RequestBatcher",
     "RestBatchProcessor",
+    "batch_insert_records",
+    "batch_insert_vectors",
 ]

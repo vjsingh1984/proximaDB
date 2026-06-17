@@ -13,9 +13,8 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-use super::event_log::{
-    EventLogQueue, ExtractionMode, IndexEvent, IndexEventBuilder, StorageEngineType,
-};
+use super::event_log::{EventLogQueue, ExtractionMode, IndexEvent, IndexEventBuilder};
+use crate::core::types::StorageEngineType;
 use crate::proto::proximadb_v1::Collection;
 use crate::storage::persistence::filesystem::FilesystemFactory;
 

@@ -20,7 +20,7 @@ use crate::api_handlers::UnifiedHandlers;
 /// Configuration for the gRPC handler
 pub struct GrpcHandlerConfig {
     /// Shared unified handlers for business logic delegation
-    pub unified_handlers: Arc<UnifiedHandlers>,
+    pub request_handlers: Arc<UnifiedHandlers>,
     /// Whether gzip compression is enabled for gRPC responses
     pub compression_enabled: bool,
 }
@@ -55,7 +55,7 @@ impl GrpcHandler {
 
     /// Create a gRPC handler with configuration
     ///
-    /// Note: The unified_handlers are not currently used because gRPC
+    /// Note: The request_handlers are not currently used because gRPC
     /// multiplexing requires http crate version alignment.
     pub fn with_config(config: GrpcHandlerConfig) -> Self {
         // Log that we received the config but can't use it yet

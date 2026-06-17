@@ -17,7 +17,7 @@ use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, FilterableColumnSpec, FilterableDataType, SqlValue,
     StorageAssignment, VectorRecord, sql_value,
 };
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::{
     FlushParameters, StorageQueryContext, StorageQueryMetadata, UnifiedStorageEngine,
@@ -296,7 +296,10 @@ async fn setup_test_collection(
         collection_id: Some(collection_id.to_string()),
         force: true,
         synchronous: true,
-        vector_records: vectors,
+        vector_records: vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         batch_ids: vec![],
         hints: HashMap::new(),
         timeout_ms: None,

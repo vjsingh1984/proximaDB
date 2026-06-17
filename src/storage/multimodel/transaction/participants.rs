@@ -9,11 +9,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use proximadb_records::ProximaRecord;
 use tokio::sync::RwLock;
 
-use crate::proto::proximadb_v1::{
-    DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData, VectorRecord,
-};
+use crate::proto::proximadb_v1::{DocumentUpdate, LogEntry, MetricSample, SqlObject, TraceData};
 use crate::storage::traits::{DocumentStorageOperations, ObservabilityStorageOperations};
 
 use super::two_phase_commit::{CommitResult, ParticipantType, PrepareResult, TwoPhaseParticipant};
@@ -475,7 +474,8 @@ impl TwoPhaseParticipant for ObservabilityStoreParticipant {
 #[async_trait::async_trait]
 pub trait VectorWriteOperations: Send + Sync {
     /// Insert a batch of vectors into a collection.
-    async fn insert_vectors(&self, collection_id: &str, vectors: Vec<VectorRecord>) -> Result<u64>;
+    async fn insert_vectors(&self, collection_id: &str, vectors: Vec<ProximaRecord>)
+    -> Result<u64>;
 
     /// Delete vectors by their IDs.
     async fn delete_vectors(&self, collection_id: &str, ids: Vec<String>) -> Result<u64>;
@@ -486,7 +486,7 @@ pub trait VectorWriteOperations: Send + Sync {
 pub enum StagedVectorOperation {
     Insert {
         collection: String,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     },
     Delete {
         collection: String,
@@ -512,7 +512,7 @@ impl VectorStoreParticipant {
         &self,
         transaction_id: &str,
         collection: &str,
-        vectors: Vec<VectorRecord>,
+        vectors: Vec<ProximaRecord>,
     ) -> Result<()> {
         self.stage_operation(
             transaction_id,
@@ -671,10 +671,10 @@ impl TwoPhaseParticipant for VectorStoreParticipant {
 #[async_trait::async_trait]
 pub trait GraphWriteOperations: Send + Sync {
     /// Create a node in a graph.
-    async fn create_node(&self, graph_id: &str, node: GraphNode) -> Result<()>;
+    async fn create_node(&self, graph_id: &str, node: TxnLegacyGraphNode) -> Result<()>;
 
     /// Create an edge in a graph.
-    async fn create_edge(&self, graph_id: &str, edge: GraphEdge) -> Result<()>;
+    async fn create_edge(&self, graph_id: &str, edge: TxnLegacyGraphEdge) -> Result<()>;
 
     /// Delete a node by ID.
     async fn delete_node(&self, graph_id: &str, node_id: &str) -> Result<()>;
@@ -683,17 +683,23 @@ pub trait GraphWriteOperations: Send + Sync {
     async fn delete_edge(&self, graph_id: &str, edge_id: &str) -> Result<()>;
 }
 
+/// Backwards-compat alias for [`TxnLegacyGraphNode`].
+pub type GraphNode = TxnLegacyGraphNode;
+
 /// Lightweight node representation for staged graph transactions.
 #[derive(Debug, Clone)]
-pub struct GraphNode {
+pub struct TxnLegacyGraphNode {
     pub id: String,
     pub label: String,
     pub properties: HashMap<String, String>,
 }
 
+/// Backwards-compat alias for [`TxnLegacyGraphEdge`].
+pub type GraphEdge = TxnLegacyGraphEdge;
+
 /// Lightweight edge representation for staged graph transactions.
 #[derive(Debug, Clone)]
-pub struct GraphEdge {
+pub struct TxnLegacyGraphEdge {
     pub id: String,
     pub source: String,
     pub target: String,
@@ -704,19 +710,34 @@ pub struct GraphEdge {
 /// Staged graph operations buffered until commit.
 #[derive(Debug, Clone)]
 pub enum StagedGraphOperation {
-    CreateNode { graph_id: String, node: GraphNode },
-    CreateEdge { graph_id: String, edge: GraphEdge },
-    DeleteNode { graph_id: String, node_id: String },
-    DeleteEdge { graph_id: String, edge_id: String },
+    CreateNode {
+        graph_id: String,
+        node: TxnLegacyGraphNode,
+    },
+    CreateEdge {
+        graph_id: String,
+        edge: TxnLegacyGraphEdge,
+    },
+    DeleteNode {
+        graph_id: String,
+        node_id: String,
+    },
+    DeleteEdge {
+        graph_id: String,
+        edge_id: String,
+    },
 }
 
+/// Backwards-compat alias for [`LegacyMultimodelGraphStoreParticipant`].
+pub type GraphStoreParticipant = LegacyMultimodelGraphStoreParticipant;
+
 /// Graph-service-backed participant for multi-model 2PC.
-pub struct GraphStoreParticipant {
+pub struct LegacyMultimodelGraphStoreParticipant {
     service: Arc<dyn GraphWriteOperations>,
     transactions: RwLock<HashMap<String, ParticipantTransactionState<StagedGraphOperation>>>,
 }
 
-impl GraphStoreParticipant {
+impl LegacyMultimodelGraphStoreParticipant {
     pub fn new(service: Arc<dyn GraphWriteOperations>) -> Self {
         Self {
             service,
@@ -728,7 +749,7 @@ impl GraphStoreParticipant {
         &self,
         transaction_id: &str,
         graph_id: &str,
-        node: GraphNode,
+        node: TxnLegacyGraphNode,
     ) -> Result<()> {
         self.stage_operation(
             transaction_id,
@@ -744,7 +765,7 @@ impl GraphStoreParticipant {
         &self,
         transaction_id: &str,
         graph_id: &str,
-        edge: GraphEdge,
+        edge: TxnLegacyGraphEdge,
     ) -> Result<()> {
         self.stage_operation(
             transaction_id,
@@ -844,7 +865,7 @@ impl GraphStoreParticipant {
 }
 
 #[async_trait::async_trait]
-impl TwoPhaseParticipant for GraphStoreParticipant {
+impl TwoPhaseParticipant for LegacyMultimodelGraphStoreParticipant {
     async fn prepare(&self, transaction_id: &str) -> PrepareResult {
         let mut transactions = self.transactions.write().await;
         if let Some(state) = transactions.get_mut(transaction_id) {

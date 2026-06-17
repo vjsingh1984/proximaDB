@@ -37,10 +37,10 @@ Create a client and perform basic operations:
 		Metric:    proximadb.Cosine,
 	})
 
-	// Insert vectors
-	err = client.Insert(ctx, "my_vectors", []*proximadb.VectorRecord{
-		{ID: "vec1", Vector: embedding1, Metadata: map[string]interface{}{"label": "a"}},
-		{ID: "vec2", Vector: embedding2, Metadata: map[string]interface{}{"label": "b"}},
+	// Insert canonical records with embeddings
+	err = client.InsertRecords(ctx, "my_vectors", []*proximadb.ProximaRecord{
+		{ID: "vec1", Vector: embedding1, Props: map[string]interface{}{"label": "a"}},
+		{ID: "vec2", Vector: embedding2, Props: map[string]interface{}{"label": "b"}},
 	})
 
 	// Search for similar vectors

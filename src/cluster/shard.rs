@@ -25,38 +25,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-/// Configuration for shard management
-#[derive(Debug, Clone)]
-pub struct ShardConfig {
-    /// Default number of shards per collection
-    pub default_shard_count: u32,
-    /// Default replication factor
-    pub default_replication_factor: u32,
-    /// Minimum shards per collection
-    pub min_shards: u32,
-    /// Maximum shards per collection
-    pub max_shards: u32,
-    /// Enable automatic shard rebalancing
-    pub auto_rebalance: bool,
-    /// Rebalance threshold (load imbalance percentage)
-    pub rebalance_threshold: f32,
-    /// Maximum concurrent rebalance operations
-    pub max_concurrent_rebalance: u32,
-}
-
-impl Default for ShardConfig {
-    fn default() -> Self {
-        Self {
-            default_shard_count: 3,
-            default_replication_factor: 2,
-            min_shards: 1,
-            max_shards: 256,
-            auto_rebalance: true,
-            rebalance_threshold: 0.2,
-            max_concurrent_rebalance: 2,
-        }
-    }
-}
+// Config consolidated into proximadb-config (TD-107, seam S4); re-exported
+// so existing `crate::cluster::...` import paths keep resolving.
+pub use proximadb_config::cluster_config::{PartitionConfig, PartitionStrategy, ShardConfig};
 
 /// Unique identifier for a shard
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -257,102 +228,6 @@ fn compare_json_values(a: &serde_json::Value, b: &serde_json::Value) -> std::cmp
         }
         (serde_json::Value::String(a_s), serde_json::Value::String(b_s)) => a_s.cmp(b_s),
         _ => std::cmp::Ordering::Equal,
-    }
-}
-
-/// Partition strategy for a collection
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub enum PartitionStrategy {
-    /// Hash-based partitioning on record ID (default)
-    #[default]
-    HashId,
-    /// Hash-based partitioning on specified metadata field(s)
-    HashMetadata {
-        /// Fields to hash for partition assignment
-        fields: Vec<String>,
-    },
-    /// Range-based partitioning on a field
-    Range {
-        /// Field to partition by
-        field: String,
-        /// Range boundaries
-        boundaries: Vec<serde_json::Value>,
-    },
-    /// Tenant-based partitioning (co-locate all data for a tenant)
-    Tenant,
-    /// Domain-based partitioning (co-locate all data for a domain)
-    Domain,
-    /// Composite: tenant + hash for scalability within tenants
-    TenantHash {
-        /// Number of sub-shards per tenant
-        shards_per_tenant: u32,
-    },
-}
-
-/// Configuration for collection partitioning
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct PartitionConfig {
-    /// Partitioning strategy
-    pub strategy: PartitionStrategy,
-    /// Fields to extract partition key from (for HashMetadata strategy)
-    pub partition_key_fields: Vec<String>,
-    /// Whether to update shard metadata bounds on writes
-    pub track_metadata_bounds: bool,
-}
-
-impl PartitionConfig {
-    /// Extract partition key from record metadata
-    pub fn extract_partition_key(
-        &self,
-        metadata: &HashMap<String, serde_json::Value>,
-    ) -> Option<String> {
-        match &self.strategy {
-            PartitionStrategy::HashId => None,
-            PartitionStrategy::HashMetadata { fields } => {
-                let key_parts: Vec<String> = fields
-                    .iter()
-                    .filter_map(|f| {
-                        metadata.get(f).map(|v| match v {
-                            serde_json::Value::String(s) => s.clone(),
-                            _ => v.to_string(),
-                        })
-                    })
-                    .collect();
-                if key_parts.is_empty() {
-                    None
-                } else {
-                    Some(key_parts.join(":"))
-                }
-            }
-            PartitionStrategy::Range {
-                field,
-                boundaries: _,
-            } => metadata.get(field).map(|v| match v {
-                serde_json::Value::String(s) => s.clone(),
-                _ => v.to_string(),
-            }),
-            PartitionStrategy::Tenant => metadata.get("tenant_id").and_then(|v| {
-                if let serde_json::Value::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            }),
-            PartitionStrategy::Domain => metadata.get("domain_id").and_then(|v| {
-                if let serde_json::Value::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            }),
-            PartitionStrategy::TenantHash { .. } => metadata.get("tenant_id").and_then(|v| {
-                if let serde_json::Value::String(s) = v {
-                    Some(s.clone())
-                } else {
-                    None
-                }
-            }),
-        }
     }
 }
 

@@ -52,7 +52,7 @@ impl std::fmt::Debug for DistanceTableCache {
 
 /// Cache statistics
 #[derive(Debug, Default, Clone)]
-pub struct CacheStats {
+pub struct DistanceCacheStats {
     pub hits: u64,
     pub misses: u64,
     pub evictions: u64,
@@ -142,7 +142,7 @@ impl DistanceTableCache {
     }
 
     /// Get cache statistics from unified cache orchestrator
-    pub async fn get_statistics(&self) -> CacheStats {
+    pub async fn get_statistics(&self) -> DistanceCacheStats {
         // Get statistics from unified cache orchestrator
         if let Ok(metrics) = self.cache_orchestrator.get_metrics().await {
             // Extract metrics from the JSON structure
@@ -164,7 +164,7 @@ impl DistanceTableCache {
                 .unwrap_or(0);
 
             // Convert unified cache metrics to our local format
-            CacheStats {
+            DistanceCacheStats {
                 hits,
                 misses,
                 evictions,
@@ -177,7 +177,7 @@ impl DistanceTableCache {
                 },
             }
         } else {
-            CacheStats::default()
+            DistanceCacheStats::default()
         }
     }
 
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_cache_stats_default() {
-        let stats = CacheStats::default();
+        let stats = DistanceCacheStats::default();
 
         assert_eq!(stats.hits, 0);
         assert_eq!(stats.misses, 0);

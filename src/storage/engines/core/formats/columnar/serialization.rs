@@ -18,9 +18,8 @@ use crate::compute::distance_computation::SelectedFormat;
 use crate::compute::quantization::storage_engine::{
     StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
-use crate::core::compression::CompressionAlgorithm;
-use crate::core::hardware_capabilities::get_hardware_capabilities;
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_compression::CompressionAlgorithm;
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 
 /// Serialization configuration for columnar storage
 #[derive(Debug, Clone)]
@@ -162,10 +161,6 @@ pub struct ColumnarSerializer {
 
     /// Memory pools for reuse
     memory_pools: MemoryPools,
-
-    /// Hardware capabilities for optimization
-    #[allow(dead_code)]
-    hardware_caps: Arc<crate::core::hardware_capabilities::HardwareCapabilities>,
 }
 
 /// Memory pools for efficient reuse
@@ -313,14 +308,17 @@ pub struct SerializationResult {
 pub struct SerializationMetadata {
     pub record_count: usize,
     pub dimension: usize,
-    pub quantization_stats: QuantizationStats,
-    pub compression_stats: CompressionStats,
-    pub performance_stats: PerformanceStats,
+    pub quantization_stats: ColumnarQuantizationStats,
+    pub compression_stats: ColumnarCompressionStats,
+    pub performance_stats: ColumnarSerPerformanceStats,
 }
+
+/// Backwards-compat alias for [`ColumnarQuantizationStats`].
+pub type QuantizationStats = ColumnarQuantizationStats;
 
 /// Statistics about quantization quality
 #[derive(Debug, Clone)]
-pub struct QuantizationStats {
+pub struct ColumnarQuantizationStats {
     pub binary_hamming_accuracy: Option<f32>,
     pub int8_mse: Option<f32>,
     pub pq_mse: Option<f32>,
@@ -328,9 +326,12 @@ pub struct QuantizationStats {
     pub memory_reduction: f32,
 }
 
+/// Backwards-compat alias for [`ColumnarCompressionStats`].
+pub type CompressionStats = ColumnarCompressionStats;
+
 /// Statistics about compression
 #[derive(Debug, Clone)]
-pub struct CompressionStats {
+pub struct ColumnarCompressionStats {
     pub fp32_compressed_size: usize,
     pub binary_compressed_size: usize,
     pub int8_compressed_size: usize,
@@ -340,9 +341,12 @@ pub struct CompressionStats {
     pub compression_ratio: f32,
 }
 
+/// Backwards-compat alias for [`ColumnarSerPerformanceStats`].
+pub type PerformanceStats = ColumnarSerPerformanceStats;
+
 /// Performance statistics
 #[derive(Debug, Clone)]
-pub struct PerformanceStats {
+pub struct ColumnarSerPerformanceStats {
     pub serialization_time_ms: f64,
     pub quantization_time_ms: f64,
     pub compression_time_ms: f64,
@@ -353,8 +357,6 @@ pub struct PerformanceStats {
 impl ColumnarSerializer {
     /// Create new serializer
     pub fn new(config: ColumnarSerializationConfig) -> Result<Self> {
-        let hardware_caps = get_hardware_capabilities();
-
         let quantization_engine = if config.quantization.is_some() {
             let quant_config = StorageQuantizationConfig::default(); // Deferred: Convert from QuantizationConfig
             let distance_compute = Arc::new(
@@ -380,14 +382,13 @@ impl ColumnarSerializer {
             config,
             quantization_engine,
             memory_pools: MemoryPools::new(),
-            hardware_caps,
         })
     }
 
     /// Serialize vector records with transparent quantization
     pub async fn serialize_vectors(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         _schema: &Schema,
     ) -> Result<SerializationResult> {
         let start_time = std::time::Instant::now();
@@ -401,7 +402,10 @@ impl ColumnarSerializer {
         );
 
         // Extract vectors from records
-        let vectors: Vec<&[f32]> = records.iter().map(|r| r.vector.as_slice()).collect();
+        let vectors: Vec<&[f32]> = records
+            .iter()
+            .map(|r| r.embeddings.first().map_or(&[][..], |e| e.as_fp32_slice()))
+            .collect();
 
         // Serialize FP32 vectors
         let fp32_array = self.serialize_fp32_vectors(&vectors)?;
@@ -441,7 +445,7 @@ impl ColumnarSerializer {
                     None,
                     None,
                     None,
-                    QuantizationStats {
+                    ColumnarQuantizationStats {
                         binary_hamming_accuracy: None,
                         int8_mse: None,
                         pq_mse: None,
@@ -470,7 +474,7 @@ impl ColumnarSerializer {
             dimension: self.config.dimension,
             quantization_stats: quant_stats,
             compression_stats,
-            performance_stats: PerformanceStats {
+            performance_stats: ColumnarSerPerformanceStats {
                 serialization_time_ms: total_time,
                 quantization_time_ms: quantization_time,
                 compression_time_ms: _compression_time,
@@ -501,7 +505,7 @@ impl ColumnarSerializer {
         arrays: &HashMap<String, ArrayRef>,
         _schema: &Schema,
         format_preference: FormatPreference,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let start_time = std::time::Instant::now();
 
         info!(
@@ -518,7 +522,7 @@ impl ColumnarSerializer {
             SelectedFormat::FP32 => {
                 let vector_key = "vector";
                 let array = arrays.get(vector_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         vector_key
                     ))
@@ -528,7 +532,7 @@ impl ColumnarSerializer {
             SelectedFormat::Binary => {
                 let binary_key = "vector_binary";
                 let array = arrays.get(binary_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         binary_key
                     ))
@@ -540,19 +544,19 @@ impl ColumnarSerializer {
                 let scale_key = "int8_scale";
                 let zero_point_key = "int8_zero_point";
                 let vector_array = arrays.get(vector_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         vector_key
                     ))
                 })?;
                 let scale_array = arrays.get(scale_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         scale_key
                     ))
                 })?;
                 let zero_point_array = arrays.get(zero_point_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         zero_point_key
                     ))
@@ -562,7 +566,7 @@ impl ColumnarSerializer {
             SelectedFormat::PQ => {
                 let pq_key = "vector_pq";
                 let array = arrays.get(pq_key).ok_or_else(|| {
-                    crate::core::error::VectorDBError::InvalidInput(format!(
+                    proximadb_kernel::error::VectorDBError::InvalidInput(format!(
                         "Missing required array: {}",
                         pq_key
                     ))
@@ -571,15 +575,26 @@ impl ColumnarSerializer {
             }
         };
 
-        // Convert to VectorRecord format (this would need ID and metadata from other columns)
+        // Convert to ProximaRecord format
         let records = vectors
             .into_iter()
             .enumerate()
-            .map(|(i, vector)| VectorRecord {
-                id: format!("record_{i}"), // Placeholder - would come from ID column
-                vector,
-                timestamp: Some(chrono::Utc::now().timestamp()),
-                ..Default::default()
+            .map(|(i, vector)| {
+                let dim = vector.len() as u32;
+                let mut record = ProximaRecord {
+                    oid: format!("record_{i}"), // Placeholder - would come from ID column
+                    ..Default::default()
+                };
+                if !vector.is_empty() {
+                    record.embeddings.push(EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        values: proximadb_records::EmbeddingValues::Fp32(vector),
+                        dim,
+                        ..Default::default()
+                    });
+                }
+                record
             })
             .collect();
 
@@ -791,7 +806,7 @@ impl ColumnarSerializer {
         &self,
         original_vectors: &[&[f32]],
         quantized_data: &[StorageQuantizedData],
-    ) -> Result<QuantizationStats> {
+    ) -> Result<ColumnarQuantizationStats> {
         // Simplified statistics calculation
         let compression_ratio = if !quantized_data.is_empty() {
             let original_size = original_vectors.len() * self.config.dimension * 4; // FP32
@@ -813,7 +828,7 @@ impl ColumnarSerializer {
             1.0
         };
 
-        Ok(QuantizationStats {
+        Ok(ColumnarQuantizationStats {
             binary_hamming_accuracy: None, // Deferred: Calculate actual accuracy
             int8_mse: None,                // Deferred: Calculate MSE
             pq_mse: None,                  // Deferred: Calculate PQ MSE
@@ -829,7 +844,7 @@ impl ColumnarSerializer {
         binary_array: &Option<ArrayRef>,
         int8_array: &Option<&ArrayRef>,
         pq_array: &Option<ArrayRef>,
-    ) -> Result<CompressionStats> {
+    ) -> Result<ColumnarCompressionStats> {
         let fp32_size = fp32_array.get_array_memory_size();
         let binary_size = binary_array.as_ref().map(|a| a.get_array_memory_size());
         let int8_size = int8_array.map(|a| a.get_array_memory_size());
@@ -845,7 +860,7 @@ impl ColumnarSerializer {
             1.0
         };
 
-        Ok(CompressionStats {
+        Ok(ColumnarCompressionStats {
             fp32_compressed_size: fp32_size,
             binary_compressed_size: binary_size.unwrap_or(0),
             int8_compressed_size: int8_size.unwrap_or(0),

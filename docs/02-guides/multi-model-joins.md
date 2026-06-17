@@ -112,9 +112,9 @@ JOIN METRICS('app-metrics', 'cpu_usage > 80') AS m
 ## Python SDK
 
 ```python
-from proximadb import ProximaDB
+from proximadb_sdk import ProximaDBClient
 
-client = ProximaDB("http://localhost:5678")
+client = ProximaDBClient(url="http://localhost:5678")
 
 # Multi-model query
 results = client.unified_query("""
@@ -384,9 +384,9 @@ METRICS(
 ## Next Steps
 
 - [Vector Search](./vector-search.md) - Vector search deep dive
-- [Graph Queries](./graph-queries.md) - Graph patterns
-- [Document Store](./document-store.md) - JSON queries
-- [SQL Extensions](../03-api-reference/sql-extensions.md) - Full reference
+- [Graph API](../03-api-reference/graph.adoc) - Graph patterns
+- [REST API](../03-api-reference/rest.adoc) - Document and JSON APIs
+- [API Reference](../03-api-reference/) - Full reference
 
 ---
 

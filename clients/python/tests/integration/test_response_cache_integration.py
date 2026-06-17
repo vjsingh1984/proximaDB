@@ -4,12 +4,11 @@ Integration tests for response caching with REST client
 
 import threading
 import time
-from typing import Any, Dict
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
-from proximadb_sdk.cache import CacheLevel, CacheStrategy, ResponseCache
+from proximadb_sdk.cache import CacheStrategy
 from proximadb_sdk.config import ClientConfig
 from proximadb_sdk.protocols.rest_sync import ProximaDBClient
 
@@ -92,7 +91,9 @@ class TestResponseCacheIntegration:
 
     def test_client_initialization_with_caching(self, config, cache_config):
         """Test client initialization with caching enabled"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(
                 config=config, enable_caching=True, cache_config=cache_config
             )
@@ -105,7 +106,9 @@ class TestResponseCacheIntegration:
 
     def test_client_initialization_without_caching(self, config):
         """Test client initialization without caching"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(config=config)
 
             assert client.enable_caching is False
@@ -117,11 +120,11 @@ class TestResponseCacheIntegration:
         """Test search operation with caching"""
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.search"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.search"
             ) as mock_search,
         ):
 
@@ -165,11 +168,11 @@ class TestResponseCacheIntegration:
         """Test get_vector operation with caching"""
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.get_vector"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.get_vector"
             ) as mock_get,
         ):
 
@@ -208,11 +211,11 @@ class TestResponseCacheIntegration:
         """Test list_collections operation with caching"""
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.list_collections"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.list_collections"
             ) as mock_list,
         ):
 
@@ -246,14 +249,14 @@ class TestResponseCacheIntegration:
         """Test cache invalidation after write operations"""
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.search"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.search"
             ) as mock_search,
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.insert_vectors"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.insert_vectors"
             ) as mock_insert,
         ):
 
@@ -299,11 +302,11 @@ class TestResponseCacheIntegration:
         """Test fallback to non-cached operations when caching is disabled"""
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.search"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.search"
             ) as mock_search,
         ):
 
@@ -332,11 +335,11 @@ class TestResponseCacheIntegration:
         """Test cache management operations"""
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.search"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.search"
             ) as mock_search,
         ):
 
@@ -376,7 +379,9 @@ class TestResponseCacheIntegration:
 
     def test_cache_management_disabled_errors(self, config):
         """Test errors when trying cache management on disabled caching"""
-        with patch("proximadb.protocols.rest_sync.ProximaDBClient._create_http_client"):
+        with patch(
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client"
+        ):
             client = ProximaDBClient(config=config)  # No caching
 
             try:
@@ -397,7 +402,7 @@ class TestResponseCacheIntegration:
     def test_cache_warming(self, config, cache_config, mock_http_client):
         """Test cache warming functionality"""
         with patch(
-            "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
             return_value=mock_http_client,
         ):
 
@@ -438,11 +443,11 @@ class TestResponseCacheIntegration:
         """Test concurrent cache operations"""
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.search"
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.search"
             ) as mock_search,
         ):
 
@@ -503,7 +508,7 @@ class TestResponseCacheIntegration:
     def test_context_manager_with_caching(self, config, cache_config, mock_http_client):
         """Test client as context manager with caching"""
         with patch(
-            "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+            "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
             return_value=mock_http_client,
         ):
 
@@ -537,11 +542,11 @@ class TestResponseCacheIntegration:
 
             with (
                 patch(
-                    "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                    "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                     return_value=mock_http_client,
                 ),
                 patch(
-                    "proximadb.protocols.rest_sync.ProximaDBClient.search"
+                    "proximadb_sdk.protocols.rest_sync.ProximaDBClient.search"
                 ) as mock_search,
             ):
 
@@ -585,11 +590,11 @@ class TestCachePerformanceIntegration:
 
         with (
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient._create_http_client",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient._create_http_client",
                 return_value=mock_http_client,
             ),
             patch(
-                "proximadb.protocols.rest_sync.ProximaDBClient.search",
+                "proximadb_sdk.protocols.rest_sync.ProximaDBClient.search",
                 side_effect=slow_search,
             ),
         ):

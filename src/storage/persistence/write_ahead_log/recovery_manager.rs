@@ -21,7 +21,7 @@ use crate::storage::persistence::write_ahead_log::{
     recovery_thread_pool::get_recovery_thread_pool, serialization::SerializationFormat,
     serialization::SerializerFactory,
 };
-use crate::storage::traits::{InternalCollectionProvider, UnifiedStorageEngine};
+use crate::storage::traits::{InternalCollectionProvider, UnifiedStorageFormat};
 
 /// Recovery destination configuration
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -37,20 +37,23 @@ pub struct RecoveryManager {
     /// Disk manager for reading WAL files
     disk_manager: Arc<WriteAheadLogDiskManager>,
     /// Storage engines by collection (LSM or VIPER)
-    storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+    storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
     /// Flush coordinator for managing recovery coordination
     flush_coordinator: Arc<WALFlushCoordinator>,
     /// Recovery mode
     recovery_mode: RecoveryMode,
     /// Statistics
-    stats: Arc<tokio::sync::RwLock<RecoveryStats>>,
+    stats: Arc<tokio::sync::RwLock<WalRecoveryStats>>,
     /// Metadata provider for getting real collection configs
     metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
 }
 
+/// Backwards-compat alias for [`WalRecoveryStats`].
+pub type RecoveryStats = WalRecoveryStats;
+
 /// Statistics for recovery operations
 #[derive(Debug, Clone, Default)]
-pub struct RecoveryStats {
+pub struct WalRecoveryStats {
     pub total_files_recovered: u64,
     pub total_vectors_recovered: u64,
     pub total_collections_recovered: usize,
@@ -115,7 +118,7 @@ impl RecoveryManager {
             // This recovers vectors to memtable where they're immediately searchable
             // Can be flushed to storage later when engines are ready
             recovery_mode: RecoveryMode::ViaMemtable,
-            stats: Arc::new(tokio::sync::RwLock::new(RecoveryStats::default())),
+            stats: Arc::new(tokio::sync::RwLock::new(WalRecoveryStats::default())),
             metadata_provider,
         }
     }
@@ -130,7 +133,7 @@ impl RecoveryManager {
     pub async fn register_storage_engine(
         &self,
         collection_id: &str,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<()> {
         // Register with our internal map
         let mut engines = self.storage_engines.write().await;
@@ -138,7 +141,7 @@ impl RecoveryManager {
 
         // Also register with flush coordinator by engine type
         // The flush coordinator needs engines registered by type (VIPER, LSM), not collection
-        let engine_type = engine.engine_name(); // Get the engine name
+        let engine_type = engine.format_name(); // Get the engine name
         self.flush_coordinator
             .register_storage_engine(engine_type, engine)
             .await;
@@ -151,7 +154,7 @@ impl RecoveryManager {
     }
 
     /// Recover all collections from disk to storage engines in parallel
-    pub async fn recover_all(&self) -> Result<RecoveryStats> {
+    pub async fn recover_all(&self) -> Result<WalRecoveryStats> {
         info!(
             "🔄 Starting WAL recovery using global manifest (mode: {:?})",
             self.recovery_mode
@@ -178,7 +181,7 @@ impl RecoveryManager {
         if all_entries.is_empty() {
             info!("📝 No active WAL entries to recover (manifest is empty or all entries flushed)");
             recovery_guard.complete(0, 0).await;
-            return Ok(RecoveryStats::default());
+            return Ok(WalRecoveryStats::default());
         }
 
         info!(
@@ -211,7 +214,7 @@ impl RecoveryManager {
         if collections.is_empty() {
             // Recovery phase complete
             recovery_guard.complete(0, 0).await;
-            return Ok(RecoveryStats::default());
+            return Ok(WalRecoveryStats::default());
         }
 
         // Create recovery tasks for all collections
@@ -337,13 +340,8 @@ impl RecoveryManager {
     }
 
     /// Recover a specific collection (public API)
-    /// Returns RecoveryStats with detailed recovery information
-    pub async fn recover_collection(&self, collection_id: &str) -> Result<RecoveryStats> {
-        eprintln!(
-            "🔍 DEBUG: RecoveryManager::recover_collection() called for: {}",
-            collection_id
-        );
-
+    /// Returns WalRecoveryStats with detailed recovery information
+    pub async fn recover_collection(&self, collection_id: &str) -> Result<WalRecoveryStats> {
         let (vectors_recovered, files_recovered) = Self::recover_collection_internal(
             collection_id,
             self.disk_manager.clone(),
@@ -355,11 +353,6 @@ impl RecoveryManager {
         )
         .await?;
 
-        eprintln!(
-            "✅ DEBUG: recover_collection_internal returned: {} vectors, {} files",
-            vectors_recovered, files_recovered
-        );
-
         // Update global stats
         if vectors_recovered > 0 {
             let mut stats = self.stats.write().await;
@@ -369,7 +362,7 @@ impl RecoveryManager {
         }
 
         // Return recovery stats for this collection
-        Ok(RecoveryStats {
+        Ok(WalRecoveryStats {
             total_files_recovered: files_recovered,
             total_vectors_recovered: vectors_recovered,
             total_collections_recovered: if vectors_recovered > 0 { 1 } else { 0 },
@@ -410,39 +403,26 @@ impl RecoveryManager {
     async fn recover_collection_internal(
         collection_id: &str,
         disk_manager: Arc<WriteAheadLogDiskManager>,
-        storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        storage_engines: Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         _flush_coordinator: Arc<WALFlushCoordinator>,
         recovery_mode: RecoveryMode,
         progress_callback: Option<RecoveryProgressCallback>,
         metadata_provider: Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
     ) -> Result<(u64, u64)> {
-        eprintln!(
-            "🔍 DEBUG: recover_collection_internal() for collection: {}",
-            collection_id
-        );
         info!(
             "🔄 Recovering collection: {} (mode: {:?})",
             collection_id, recovery_mode
         );
 
         if recovery_mode == RecoveryMode::DirectToStorage {
-            eprintln!("🔍 DEBUG: Recovery mode is DirectToStorage, checking storage engine");
             let engines = storage_engines.read().await;
-            eprintln!(
-                "🔍 DEBUG: Total storage engines registered: {}",
+            trace!(
+                "Checking WAL recovery storage engine registration for collection {} across {} engines",
+                collection_id,
                 engines.len()
-            );
-            eprintln!(
-                "🔍 DEBUG: Looking for engine for collection: {}",
-                collection_id
             );
 
             if !engines.contains_key(collection_id) {
-                eprintln!(
-                    "⚠️ DEBUG: No storage engine registered for {}. Available engines: {:?}",
-                    collection_id,
-                    engines.keys().collect::<Vec<_>>()
-                );
                 warn!(
                     "⏭️ Skipping recovery for collection {}: No storage engine registered. \
                     Collection will be initialized fresh if accessed.",
@@ -451,21 +431,20 @@ impl RecoveryManager {
                 // Return 0 vectors recovered instead of error - allows graceful degradation
                 return Ok((0, 0));
             }
-            eprintln!("✅ DEBUG: Storage engine found for {}", collection_id);
+            trace!(
+                "Storage engine found for WAL recovery collection {}",
+                collection_id
+            );
         }
 
         // Get entries from global manifest
-        eprintln!(
-            "🔍 DEBUG: Getting WAL entries from global manifest for {}",
-            collection_id
-        );
         let entries =
             crate::storage::persistence::write_ahead_log::manifest::get_collection_entries(
                 collection_id,
             )
             .await;
-        eprintln!(
-            "🔍 DEBUG: Found {} WAL entries for {}",
+        debug!(
+            "Found {} WAL manifest entries for collection {}",
             entries.len(),
             collection_id
         );
@@ -473,14 +452,9 @@ impl RecoveryManager {
         let mut vectors_recovered = 0u64;
         let mut files_recovered = 0u64;
 
-        eprintln!(
-            "🔍 DEBUG: Starting WAL entry recovery loop for {} entries",
-            entries.len()
-        );
-
         for (idx, e) in entries.iter().enumerate() {
-            eprintln!(
-                "🔍 DEBUG: Processing WAL entry {}/{}: batch_id={}, lsn={}, size={}",
+            trace!(
+                "Processing WAL entry {}/{}: batch_id={}, lsn={}, size={}",
                 idx + 1,
                 entries.len(),
                 e.batch_id,
@@ -490,7 +464,6 @@ impl RecoveryManager {
 
             // Use full_url() from manifest entry (includes storage_url + file_path)
             let file_url = e.full_url();
-            eprintln!("🔍 DEBUG: WAL file URL: {}", file_url);
 
             // Convert string format to SerializationFormat
             let format = match e.format.as_str() {
@@ -499,7 +472,6 @@ impl RecoveryManager {
                 "avro" => SerializationFormat::Avro,
                 _ => SerializationFormat::ProtocolBuffers, // Default fallback
             };
-            eprintln!("🔍 DEBUG: Format: {:?}", format);
 
             let file_info = WalFileInfo {
                 collection_id: collection_id.to_string(),
@@ -515,31 +487,21 @@ impl RecoveryManager {
                 e.batch_id, file_url, e.global_lsn, e.size_bytes
             );
 
-            eprintln!("🔍 DEBUG: Reading batch from disk...");
             match disk_manager.read_batch(&file_info).await {
                 Ok(data) => {
-                    eprintln!("✅ DEBUG: Read {} bytes from WAL file", data.len());
-                    eprintln!("🔍 DEBUG: Validating checksum...");
-                    let checksum = crate::utils::checksum::Crc32::checksum(&data);
+                    trace!("Read {} bytes from WAL file {}", data.len(), file_url);
+                    let checksum = proximadb_kernel::checksum::Crc32::checksum(&data);
                     if checksum != e.checksum_crc32 {
-                        eprintln!(
-                            "❌ DEBUG: Checksum mismatch! Expected: {}, Got: {}",
-                            e.checksum_crc32, checksum
-                        );
                         warn!("Checksum mismatch for {}, skipping", file_info.file_url);
                         continue;
                     }
-                    eprintln!("✅ DEBUG: Checksum valid");
 
-                    eprintln!("🔍 DEBUG: Deserializing {} bytes...", data.len());
                     let serializer = SerializerFactory::create(file_info.format);
                     let vectors = serializer
                         .deserialize_batch(&data)
                         .context("Failed to deserialize WAL data")?;
                     let count = vectors.len() as u64;
-                    eprintln!("✅ DEBUG: Deserialized {} vectors from WAL file", count);
 
-                    eprintln!("🔍 DEBUG: Flushing {} vectors to storage...", count);
                     let result = Self::flush_recovered_vectors(
                         &file_info,
                         vectors,
@@ -550,7 +512,6 @@ impl RecoveryManager {
                         &metadata_provider,
                     )
                     .await?;
-                    eprintln!("🔍 DEBUG: Flush result: success={}", result.success);
 
                     if result.success {
                         files_recovered += 1;
@@ -669,7 +630,7 @@ impl RecoveryManager {
     async fn recover_file_internal(
         file_info: &WalFileInfo,
         disk_manager: &Arc<WriteAheadLogDiskManager>,
-        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         recovery_mode: RecoveryMode,
     ) -> Result<u64> {
         debug!(
@@ -750,9 +711,9 @@ impl RecoveryManager {
     /// Flush recovered vectors to storage engine
     async fn flush_recovered_vectors(
         file_info: &WalFileInfo,
-        vectors: Vec<crate::proto::proximadb_v1::VectorRecord>,
+        vectors: Vec<proximadb_records::ProximaRecord>,
         _disk_manager: &Arc<WriteAheadLogDiskManager>,
-        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageEngine>>>>,
+        storage_engines: &Arc<tokio::sync::RwLock<HashMap<String, Arc<dyn UnifiedStorageFormat>>>>,
         _recovery_mode: RecoveryMode,
         storage_url: &str,
         metadata_provider: &Arc<RwLock<Option<Arc<dyn InternalCollectionProvider>>>>,
@@ -864,7 +825,7 @@ impl RecoveryManager {
     }
 
     /// Get recovery statistics
-    pub async fn get_stats(&self) -> Result<RecoveryStats> {
+    pub async fn get_stats(&self) -> Result<WalRecoveryStats> {
         let stats = self.stats.read().await;
         Ok(stats.clone())
     }
@@ -872,7 +833,7 @@ impl RecoveryManager {
     /// Clear recovery statistics
     pub async fn clear_stats(&self) -> Result<()> {
         let mut stats = self.stats.write().await;
-        *stats = RecoveryStats::default();
+        *stats = WalRecoveryStats::default();
         Ok(())
     }
 }
@@ -927,7 +888,7 @@ impl ParallelRecoveryManager {
     pub async fn register_storage_engine(
         &self,
         collection_id: &str,
-        engine: Arc<dyn UnifiedStorageEngine>,
+        engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<()> {
         self.recovery_manager
             .register_storage_engine(collection_id, engine)
@@ -935,7 +896,7 @@ impl ParallelRecoveryManager {
     }
 
     /// Recover all collections in parallel
-    pub async fn recover_all_parallel(&self) -> Result<RecoveryStats> {
+    pub async fn recover_all_parallel(&self) -> Result<WalRecoveryStats> {
         info!(
             "🔄 Starting parallel WAL recovery with {} workers",
             self.num_workers
@@ -1063,10 +1024,10 @@ impl ParallelRecoveryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
     use crate::storage::persistence::write_ahead_log::{BatchId, SerializationFormat};
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     use tempfile::TempDir;
 
     async fn create_test_managers() -> (
@@ -1112,16 +1073,18 @@ mod tests {
         (disk_manager, flush_coordinator, recovery_manager, temp_dir)
     }
 
-    fn create_test_vector(id: &str) -> VectorRecord {
-        VectorRecord {
-            id: id.to_string(),
-            vector: vec![0.1, 0.2, 0.3, 0.4],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(1234567890),
-            updated_at: Some(1234567890),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    fn create_test_vector(id: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vec![0.1, 0.2, 0.3, 0.4]),
+                dim: 4,
+                ..Default::default()
+            }],
+            record_version: 1,
+            ..Default::default()
         }
     }
 
@@ -1161,7 +1124,7 @@ mod tests {
                 metadata_bloom_filter: None,
             };
             let data = serializer
-                .serialize_batch(&batch.vector_records)
+                .serialize_batch(std::slice::from_ref(&vector))
                 .expect("Failed to serialize");
             disk_manager
                 .write_batch(
@@ -1169,6 +1132,7 @@ mod tests {
                     &batch.batch_id,
                     &data,
                     SerializationFormat::ProtocolBuffers,
+                    1,
                 )
                 .await
                 .expect("Failed to write batch");
@@ -1209,22 +1173,22 @@ mod tests {
     }
 
     // Mock storage engine for testing
-    fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageEngine> {
+    fn create_mock_storage_engine() -> Arc<dyn UnifiedStorageFormat> {
         use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use crate::storage::traits::{
             CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-            StorageEngineStrategy, UnifiedStorageEngine,
+            StorageFormatStrategy, UnifiedStorageFormat,
         };
         use async_trait::async_trait;
         use std::collections::HashMap;
 
         struct MockStorageEngine {
-            vectors_received: Arc<tokio::sync::Mutex<Vec<VectorRecord>>>,
+            vectors_received: Arc<tokio::sync::Mutex<Vec<proximadb_records::ProximaRecord>>>,
             filesystem_factory: FilesystemFactory,
         }
 
         #[async_trait]
-        impl UnifiedStorageEngine for MockStorageEngine {
+        impl UnifiedStorageFormat for MockStorageEngine {
             fn engine_name(&self) -> &'static str {
                 "MockEngine"
             }
@@ -1233,8 +1197,8 @@ mod tests {
                 "1.0.0"
             }
 
-            fn strategy(&self) -> StorageEngineStrategy {
-                StorageEngineStrategy::Sst
+            fn strategy(&self) -> StorageFormatStrategy {
+                StorageFormatStrategy::Sst
             }
 
             async fn do_flush(&self, params: &FlushParameters) -> Result<FlushResult> {
@@ -1283,7 +1247,7 @@ mod tests {
                 _collection_id: &str,
                 _base_path: &str,
                 _vector_id: &str,
-            ) -> Result<Option<VectorRecord>> {
+            ) -> Result<Option<proximadb_records::ProximaRecord>> {
                 Ok(None)
             }
 
@@ -1307,7 +1271,9 @@ mod tests {
         });
 
         Arc::new(MockStorageEngine {
-            vectors_received: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            vectors_received: Arc::new(tokio::sync::Mutex::new(Vec::<
+                proximadb_records::ProximaRecord,
+            >::new())),
             filesystem_factory,
         })
     }

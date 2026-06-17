@@ -3,9 +3,9 @@
 
 use std::sync::Arc;
 
-use crate::core::error::ProximaDBError;
 use crate::storage::engines::core::io::zero_copy::ZeroCopyIOSystemBuilder;
 use crate::storage::persistence::filesystem::{FileSystem, FilesystemFactory};
+use proximadb_kernel::error::ProximaDBError;
 
 /// Example integration showing how to enhance existing readers with zero-copy optimization
 ///

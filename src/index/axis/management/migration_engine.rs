@@ -79,11 +79,14 @@ impl std::fmt::Debug for IndexMigrationEngine {
     }
 }
 
+/// Backwards-compat alias for [`AxisIndexMigrationPlan`].
+pub type MigrationPlan = AxisIndexMigrationPlan;
+
 /// Migration plan for transitioning between index strategies
 #[derive(Debug, Clone)]
-pub struct MigrationPlan {
+pub struct AxisIndexMigrationPlan {
     /// Unique identifier for this migration.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Collection being migrated.
     pub collection_id: String,
     /// Source index selection strategy.
@@ -110,7 +113,7 @@ pub struct MigrationStep {
     /// Estimated duration of this step.
     pub estimated_duration: Duration,
     /// CPU, memory, and IO resources needed.
-    pub resource_requirements: ResourceRequirements,
+    pub resource_requirements: MigrationStepResourceRequirements,
     /// Whether this step can be rolled back.
     pub can_rollback: bool,
 }
@@ -204,9 +207,12 @@ pub enum VerificationType {
     FullScan,
 }
 
+/// Backwards-compat alias for [`MigrationStepResourceRequirements`].
+pub type ResourceRequirements = MigrationStepResourceRequirements;
+
 /// Resource requirements for migration steps
 #[derive(Debug, Clone)]
-pub struct ResourceRequirements {
+pub struct MigrationStepResourceRequirements {
     /// CPU cores required.
     pub cpu_cores: f32,
     /// Memory required in megabytes.
@@ -263,11 +269,14 @@ pub struct TrafficDistribution {
     pub write_distribution: Vec<(Data, f32)>,
 }
 
+/// Backwards-compat alias for [`AxisMigrationResult`].
+pub type MigrationResult = AxisMigrationResult;
+
 /// Migration result
 #[derive(Debug, Clone)]
-pub struct MigrationResult {
+pub struct AxisMigrationResult {
     /// Unique identifier of the completed migration.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Whether the migration completed successfully.
     pub success: bool,
     /// The new active index strategy after migration.
@@ -331,7 +340,7 @@ pub struct MigrationContext {
     /// Collection being migrated.
     pub collection_id: String,
     /// Unique migration identifier.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Source index strategy.
     pub from_strategy: IndexSelectionStrategy,
     /// Target index strategy.
@@ -392,7 +401,7 @@ pub struct MigrationProgressTracker {
 #[derive(Debug, Clone)]
 pub struct MigrationProgress {
     /// Unique migration identifier.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Index of the currently executing step (0-based).
     pub current_step: usize,
     /// Total number of steps in the migration plan.
@@ -436,7 +445,7 @@ pub enum MigrationPhase {
 #[derive(Debug, Clone)]
 pub struct MigrationHistory {
     /// Unique migration identifier.
-    pub migration_id: crate::utils::uuid::Uuid,
+    pub migration_id: proximadb_kernel::uuid::Uuid,
     /// Collection that was migrated.
     pub collection_id: String,
     /// Source index strategy before migration.
@@ -448,7 +457,7 @@ pub struct MigrationHistory {
     /// When the migration ended.
     pub end_time: DateTime<Utc>,
     /// Outcome of the migration.
-    pub result: MigrationResult,
+    pub result: AxisMigrationResult,
 }
 
 impl IndexMigrationEngine {
@@ -471,7 +480,7 @@ impl IndexMigrationEngine {
         collection_id: &str,
         from: IndexSelectionStrategy,
         to: IndexSelectionStrategy,
-    ) -> Result<MigrationResult> {
+    ) -> Result<AxisMigrationResult> {
         // Acquire resource permit
         let _permit = self.resource_limiter.acquire().await?;
 
@@ -538,7 +547,7 @@ impl IndexMigrationEngine {
         }
 
         // Create result
-        let result = MigrationResult {
+        let result = AxisMigrationResult {
             migration_id: plan.migration_id,
             success: errors.is_empty(),
             new_strategy: to.clone(),
@@ -578,8 +587,8 @@ impl IndexMigrationEngine {
         collection_id: &str,
         from: IndexSelectionStrategy,
         to: IndexSelectionStrategy,
-    ) -> Result<MigrationPlan> {
-        let migration_id = crate::utils::uuid::Uuid::new_v4();
+    ) -> Result<AxisIndexMigrationPlan> {
+        let migration_id = proximadb_kernel::uuid::Uuid::new_v4();
         let mut steps = Vec::new();
         let rollback_points = Vec::new();
 
@@ -601,7 +610,7 @@ impl IndexMigrationEngine {
                         index_spec: index_spec.clone(),
                     },
                     estimated_duration: Duration::from_secs(10),
-                    resource_requirements: ResourceRequirements {
+                    resource_requirements: MigrationStepResourceRequirements {
                         cpu_cores: 1.0,
                         memory_mb: 1024,
                         disk_mb: 100,
@@ -620,7 +629,7 @@ impl IndexMigrationEngine {
                 parallel_workers: 4,
             },
             estimated_duration: Duration::from_secs(300),
-            resource_requirements: ResourceRequirements {
+            resource_requirements: MigrationStepResourceRequirements {
                 cpu_cores: 4.0,
                 memory_mb: 4096,
                 disk_mb: 1000,
@@ -652,7 +661,7 @@ impl IndexMigrationEngine {
                         },
                     },
                     estimated_duration: Duration::from_secs(600),
-                    resource_requirements: ResourceRequirements {
+                    resource_requirements: MigrationStepResourceRequirements {
                         cpu_cores: 8.0,
                         memory_mb: 8192,
                         disk_mb: 2000,
@@ -671,7 +680,7 @@ impl IndexMigrationEngine {
                 verification_type: VerificationType::SampleQuery,
             },
             estimated_duration: Duration::from_secs(60),
-            resource_requirements: ResourceRequirements {
+            resource_requirements: MigrationStepResourceRequirements {
                 cpu_cores: 2.0,
                 memory_mb: 2048,
                 disk_mb: 100,
@@ -689,7 +698,7 @@ impl IndexMigrationEngine {
                     duration: Duration::from_secs(300),
                 },
                 estimated_duration: Duration::from_secs(300),
-                resource_requirements: ResourceRequirements {
+                resource_requirements: MigrationStepResourceRequirements {
                     cpu_cores: 0.1,
                     memory_mb: 100,
                     disk_mb: 0,
@@ -702,7 +711,7 @@ impl IndexMigrationEngine {
         // Calculate total estimated duration
         let estimated_duration = steps.iter().map(|s| s.estimated_duration).sum();
 
-        Ok(MigrationPlan {
+        Ok(AxisIndexMigrationPlan {
             migration_id,
             collection_id: collection_id.to_string(),
             from_strategy: from.clone(),
@@ -791,6 +800,7 @@ impl IndexMigrationEngine {
             IndexAlgorithm::Annoy { .. } => 80.0, // Good for approximate nearest neighbor
             IndexAlgorithm::EDR { .. } => 92.0, // Excellent for enhanced dense retrieval with late interaction
             IndexAlgorithm::GlobalId { .. } => 100.0, // Excellent for O(1) vector ID lookup
+            IndexAlgorithm::HMGI { .. } => 93.0, // Excellent for multi-modal collections (per-modality HNSW with routing)
         }
     }
 

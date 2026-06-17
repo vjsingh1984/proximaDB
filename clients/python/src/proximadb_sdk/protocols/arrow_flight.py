@@ -17,8 +17,10 @@ limitations under the License.
 """
 
 import json
+import warnings
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Optional
 
 try:
     import pyarrow as pa
@@ -35,8 +37,8 @@ except ImportError:
 class WriteMode:
     """Write mode for Arrow Flight operations."""
 
-    WAL = "wal"  # WAL-backed writes (30-50K vectors/sec)
-    DIRECT = "direct"  # Direct engine writes (100-200K vectors/sec)
+    WAL = "wal"  # WAL-backed writes
+    DIRECT = "direct"  # Accepted by the server, currently falls back to WAL
 
 
 @dataclass
@@ -46,7 +48,34 @@ class FlightPutResult:
     success: bool
     vectors_inserted: int
     message: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
+
+    @property
+    def records_processed(self) -> int:
+        """Record-oriented alias for vectors_inserted."""
+        return self.vectors_inserted
+
+    @property
+    def records_failed(self) -> int:
+        """Number of failed records reported by the server, if present."""
+        metrics = self.metadata.get("metrics", {})
+        failed = metrics.get("failed_count")
+        if failed is not None:
+            return int(failed)
+        return len(self.metadata.get("errors", []))
+
+
+@dataclass
+class FlightExchangeResult:
+    """Result from a DoExchange bulk write operation."""
+
+    success: bool
+    records_processed: int
+    records_failed: int
+    batches_processed: int
+    message: str
+    progress: list[dict[str, Any]]
+    metadata: dict[str, Any]
 
 
 @dataclass
@@ -54,9 +83,9 @@ class FlightSearchResult:
     """Result from a DoGet search operation."""
 
     id: str
-    vector: List[float]
+    vector: list[float]
     score: float
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
 
 
 class ArrowFlightClient:
@@ -97,7 +126,8 @@ class ArrowFlightClient:
     def __init__(
         self,
         url: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
+        tenant_id: str | None = None,
         timeout_seconds: float = 300.0,
         max_message_size_mb: int = 512,
     ):
@@ -107,6 +137,7 @@ class ArrowFlightClient:
         Args:
             url: Server URL (e.g., "grpc://localhost:5678" or "localhost:5680")
             api_key: Optional API key for authentication
+            tenant_id: Optional tenant ID sent as Flight call metadata
             timeout_seconds: Request timeout in seconds (default: 5 min for bulk ops)
             max_message_size_mb: Maximum message size in MB (default: 512MB)
         """
@@ -117,6 +148,7 @@ class ArrowFlightClient:
 
         self._url = url
         self._api_key = api_key
+        self._tenant_id = tenant_id
         self._timeout_seconds = timeout_seconds
         self._max_message_size = max_message_size_mb * 1024 * 1024
 
@@ -124,7 +156,7 @@ class ArrowFlightClient:
         self._location = self._parse_location(url)
 
         # Initialize client lazily
-        self._client: Optional[flight.FlightClient] = None
+        self._client: flight.FlightClient | None = None
 
     def _parse_location(self, url: str) -> "flight.Location":
         """Parse URL into Flight location."""
@@ -177,12 +209,58 @@ class ArrowFlightClient:
         """Get call options with timeout and auth headers."""
         headers = []
         if self._api_key:
-            headers.append((b"authorization", f"Bearer {self._api_key}".encode()))
+            headers.append((b"authorization", f"API-Key {self._api_key}".encode()))
+        if self._tenant_id:
+            headers.append((b"x-proximadb-tenant-id", self._tenant_id.encode()))
 
         return flight.FlightCallOptions(
             timeout=self._timeout_seconds,
             headers=headers,
         )
+
+    @staticmethod
+    def _warn_direct_write_fallback(write_mode: str) -> None:
+        if write_mode == WriteMode.DIRECT:
+            warnings.warn(
+                "Arrow Flight write_mode='direct' is accepted by the server "
+                "but currently falls back to WAL-backed writes.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+
+    @staticmethod
+    def _affected_count(result_data: dict[str, Any], fallback: int) -> int:
+        """Extract affected row count from ProximaDB batch metadata."""
+        metrics = result_data.get("metrics", {})
+        for key in ("successful_count", "total_processed"):
+            value = metrics.get(key)
+            if value is not None:
+                return int(value)
+        return fallback
+
+    @staticmethod
+    def _decode_metadata(payload: Any) -> dict[str, Any]:
+        """Decode JSON metadata returned by Flight DoPut/DoExchange."""
+        if payload is None:
+            return {}
+        if hasattr(payload, "to_pybytes"):
+            payload = payload.to_pybytes()
+        if isinstance(payload, memoryview):
+            payload = payload.tobytes()
+        if isinstance(payload, str):
+            payload = payload.encode()
+        if not payload:
+            return {}
+        return json.loads(payload)
+
+    @classmethod
+    def _metadata_from_exchange_chunk(cls, chunk: Any) -> dict[str, Any]:
+        """Extract app_metadata from a PyArrow Flight exchange chunk."""
+        if hasattr(chunk, "app_metadata"):
+            return cls._decode_metadata(chunk.app_metadata)
+        if hasattr(chunk, "data") and hasattr(chunk.data, "app_metadata"):
+            return cls._decode_metadata(chunk.data.app_metadata)
+        return {}
 
     @staticmethod
     def create_vector_schema(dimension: int) -> "pa.Schema":
@@ -226,9 +304,10 @@ class ArrowFlightClient:
         write_mode: str = WriteMode.WAL,
         trigger_compaction: bool = False,
         batch_size: int = 10000,
+        operation: str = "insert",
     ) -> FlightPutResult:
         """
-        Bulk insert vectors using Arrow Flight DoPut.
+        Bulk insert/upsert records using Arrow Flight DoPut.
 
         Args:
             collection_id: Target collection ID
@@ -236,6 +315,7 @@ class ArrowFlightClient:
             write_mode: "wal" (safe) or "direct" (faster but less durable)
             trigger_compaction: Whether to trigger compaction after insert
             batch_size: Number of rows per batch for streaming
+            operation: "insert" or "upsert"
 
         Returns:
             FlightPutResult with insert statistics
@@ -248,28 +328,20 @@ class ArrowFlightClient:
             result = client.bulk_insert("my_collection", table)
         """
         client = self._get_client()
+        self._warn_direct_write_fallback(write_mode)
 
         # Create FlightDescriptor with collection ID and options
         cmd = json.dumps(
             {
+                "collection_id": collection_id,
+                "operation": operation,
                 "write_mode": write_mode,
                 "trigger_compaction": trigger_compaction,
             }
         ).encode()
 
-        descriptor = flight.FlightDescriptor.for_path(collection_id)
-        # Note: descriptor.cmd is read-only in pyarrow, we need to use a different approach
-
         # Create a new descriptor with cmd
-        descriptor = flight.FlightDescriptor.for_command(
-            json.dumps(
-                {
-                    "collection_id": collection_id,
-                    "write_mode": write_mode,
-                    "trigger_compaction": trigger_compaction,
-                }
-            ).encode()
-        )
+        descriptor = flight.FlightDescriptor.for_command(cmd)
 
         # Stream data in batches
         total_rows = 0
@@ -295,10 +367,12 @@ class ArrowFlightClient:
             else:
                 result_data = {}
 
+            affected = self._affected_count(result_data, total_rows)
+
             return FlightPutResult(
-                success=True,
-                vectors_inserted=total_rows,
-                message=result_data.get("message", "Bulk insert completed"),
+                success=result_data.get("success", True),
+                vectors_inserted=affected,
+                message=result_data.get("message", f"Bulk {operation} completed"),
                 metadata=result_data,
             )
 
@@ -310,6 +384,175 @@ class ArrowFlightClient:
                 metadata={},
             )
 
+    def bulk_upsert(
+        self,
+        collection_id: str,
+        data: "pa.Table",
+        write_mode: str = WriteMode.WAL,
+        trigger_compaction: bool = False,
+        batch_size: int = 10000,
+    ) -> FlightPutResult:
+        """
+        Bulk upsert records using Arrow Flight DoPut.
+
+        This uses the v2 rich-record ingestion path and preserves supported
+        Arrow scalar columns as typed record properties.
+        """
+        return self.bulk_insert(
+            collection_id=collection_id,
+            data=data,
+            write_mode=write_mode,
+            trigger_compaction=trigger_compaction,
+            batch_size=batch_size,
+            operation="upsert",
+        )
+
+    def bulk_delete(
+        self,
+        collection_id: str,
+        ids: list[str],
+        batch_size: int = 10000,
+        trigger_compaction: bool = False,
+    ) -> FlightPutResult:
+        """
+        Bulk delete records using Arrow Flight DoPut.
+
+        The server accepts `id` or `oid`; the SDK sends `id`.
+        """
+        if not ARROW_AVAILABLE:
+            raise ImportError(
+                "PyArrow is required. Install with: pip install pyarrow>=14.0.0"
+            )
+
+        table = pa.table({"id": ids})
+        return self.bulk_insert(
+            collection_id=collection_id,
+            data=table,
+            write_mode=WriteMode.WAL,
+            trigger_compaction=trigger_compaction,
+            batch_size=batch_size,
+            operation="delete",
+        )
+
+    def bulk_write_exchange(
+        self,
+        collection_id: str,
+        data: "pa.Table",
+        operation: str = "bulk_upsert",
+        batch_size: int = 10000,
+    ) -> FlightExchangeResult:
+        """
+        Stream bulk writes over Arrow Flight DoExchange.
+
+        Args:
+            collection_id: Target collection ID
+            data: Arrow Table. Upsert/insert expects id/oid plus record columns;
+                delete expects id or oid.
+            operation: "insert"/"bulk_insert", "upsert"/"bulk_upsert", or
+                "delete"/"bulk_delete"
+            batch_size: Number of rows per streamed batch
+
+        Returns:
+            FlightExchangeResult with final metadata and per-batch progress.
+        """
+        operation = {
+            "insert": "bulk_insert",
+            "upsert": "bulk_upsert",
+            "delete": "bulk_delete",
+        }.get(operation, operation)
+        if operation not in {"bulk_insert", "bulk_upsert", "bulk_delete"}:
+            raise ValueError(
+                "operation must be one of insert, upsert, delete, bulk_insert, bulk_upsert, or bulk_delete"
+            )
+
+        client = self._get_client()
+        descriptor = flight.FlightDescriptor.for_path(operation, collection_id)
+        writer, reader = client.do_exchange(
+            descriptor,
+            options=self._get_call_options(),
+        )
+
+        total_rows = 0
+        progress: list[dict[str, Any]] = []
+        final_metadata: dict[str, Any] = {}
+
+        try:
+            if hasattr(writer, "begin"):
+                writer.begin(data.schema)
+
+            for batch in data.to_batches(max_chunksize=batch_size):
+                writer.write_batch(batch)
+                total_rows += batch.num_rows
+
+            writer.close()
+
+            for chunk in reader:
+                metadata = self._metadata_from_exchange_chunk(chunk)
+                if not metadata:
+                    continue
+                if metadata.get("type") == "complete":
+                    final_metadata = metadata
+                else:
+                    progress.append(metadata)
+
+            records_processed = int(final_metadata.get("total_records", total_rows))
+            records_failed = int(final_metadata.get("total_failed", 0))
+            batches_processed = int(final_metadata.get("total_batches", len(progress)))
+            success = bool(final_metadata.get("success", records_failed == 0))
+
+            return FlightExchangeResult(
+                success=success,
+                records_processed=records_processed,
+                records_failed=records_failed,
+                batches_processed=batches_processed,
+                message=f"{operation} completed",
+                progress=progress,
+                metadata=final_metadata,
+            )
+
+        except Exception as e:
+            return FlightExchangeResult(
+                success=False,
+                records_processed=0,
+                records_failed=0,
+                batches_processed=0,
+                message=str(e),
+                progress=progress,
+                metadata=final_metadata,
+            )
+
+    def bulk_upsert_exchange(
+        self,
+        collection_id: str,
+        data: "pa.Table",
+        batch_size: int = 10000,
+    ) -> FlightExchangeResult:
+        """Bulk upsert records over DoExchange with progress metadata."""
+        return self.bulk_write_exchange(
+            collection_id=collection_id,
+            data=data,
+            operation="bulk_upsert",
+            batch_size=batch_size,
+        )
+
+    def bulk_delete_exchange(
+        self,
+        collection_id: str,
+        ids: list[str],
+        batch_size: int = 10000,
+    ) -> FlightExchangeResult:
+        """Bulk delete records over DoExchange with progress metadata."""
+        if not ARROW_AVAILABLE:
+            raise ImportError(
+                "PyArrow is required. Install with: pip install pyarrow>=14.0.0"
+            )
+        return self.bulk_write_exchange(
+            collection_id=collection_id,
+            data=pa.table({"id": ids}),
+            operation="bulk_delete",
+            batch_size=batch_size,
+        )
+
     def bulk_insert_from_batches(
         self,
         collection_id: str,
@@ -317,9 +560,10 @@ class ArrowFlightClient:
         schema: "pa.Schema",
         write_mode: str = WriteMode.WAL,
         trigger_compaction: bool = False,
+        operation: str = "insert",
     ) -> FlightPutResult:
         """
-        Stream RecordBatches directly for zero-copy bulk insert.
+        Stream RecordBatches directly for zero-copy bulk insert/upsert/delete.
 
         This is the most efficient method for large datasets as it avoids
         materializing the full dataset in memory.
@@ -330,16 +574,19 @@ class ArrowFlightClient:
             schema: Arrow schema for the data
             write_mode: "wal" (safe) or "direct" (faster)
             trigger_compaction: Whether to trigger compaction after insert
+            operation: "insert", "upsert", or "delete"
 
         Returns:
             FlightPutResult with insert statistics
         """
         client = self._get_client()
+        self._warn_direct_write_fallback(write_mode)
 
         descriptor = flight.FlightDescriptor.for_command(
             json.dumps(
                 {
                     "collection_id": collection_id,
+                    "operation": operation,
                     "write_mode": write_mode,
                     "trigger_compaction": trigger_compaction,
                 }
@@ -362,11 +609,12 @@ class ArrowFlightClient:
 
             result_buf = reader.read()
             result_data = json.loads(result_buf.to_pybytes()) if result_buf else {}
+            affected = self._affected_count(result_data, total_rows)
 
             return FlightPutResult(
-                success=True,
-                vectors_inserted=total_rows,
-                message="Bulk insert completed",
+                success=result_data.get("success", True),
+                vectors_inserted=affected,
+                message=f"Bulk {operation} completed",
                 metadata=result_data,
             )
 
@@ -381,11 +629,11 @@ class ArrowFlightClient:
     def search(
         self,
         collection_id: str,
-        query_vector: List[float],
+        query_vector: list[float],
         top_k: int = 10,
-        filter_metadata: Optional[Dict[str, Any]] = None,
+        filter_metadata: dict[str, Any] | None = None,
         include_vectors: bool = False,
-    ) -> List[FlightSearchResult]:
+    ) -> list[FlightSearchResult]:
         """
         Search vectors using Arrow Flight DoGet.
 
@@ -439,9 +687,9 @@ class ArrowFlightClient:
     def search_batch(
         self,
         collection_id: str,
-        query_vectors: List[List[float]],
+        query_vectors: list[list[float]],
         top_k: int = 10,
-    ) -> List[List[FlightSearchResult]]:
+    ) -> list[list[FlightSearchResult]]:
         """
         Batch search for multiple query vectors.
 
@@ -495,7 +743,7 @@ class ArrowFlightClient:
         """
         return self._do_action("flush_and_compact", {"collection_id": collection_id})
 
-    def _do_action(self, action_type: str, body: Dict[str, Any]) -> bool:
+    def _do_action(self, action_type: str, body: dict[str, Any]) -> bool:
         """Execute a DoAction request."""
         client = self._get_client()
 
@@ -508,7 +756,7 @@ class ArrowFlightClient:
             print(f"Action {action_type} failed: {e}")
             return False
 
-    def list_actions(self) -> List[Tuple[str, str]]:
+    def list_actions(self) -> list[tuple[str, str]]:
         """
         List available actions.
 
@@ -556,10 +804,10 @@ class ArrowFlightClient:
 
 # Convenience function for creating Arrow tables from Python data
 def vectors_to_arrow_table(
-    ids: List[str],
-    vectors: List[List[float]],
-    metadata: Optional[List[Dict[str, Any]]] = None,
-    timestamps: Optional[List[int]] = None,
+    ids: list[str],
+    vectors: list[list[float]],
+    metadata: list[dict[str, Any]] | None = None,
+    timestamps: list[int] | None = None,
 ) -> "pa.Table":
     """
     Convert Python data to Arrow Table for bulk insert.
@@ -656,7 +904,7 @@ def vectors_to_arrow_table(
 
 def arrow_table_to_vectors(
     table: "pa.Table",
-) -> Tuple[List[str], List[List[float]], List[Optional[Dict[str, Any]]]]:
+) -> tuple[list[str], list[list[float]], list[dict[str, Any] | None]]:
     """
     Convert Arrow Table back to Python data.
 

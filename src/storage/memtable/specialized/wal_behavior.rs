@@ -17,10 +17,23 @@ use tracing::debug;
 use crate::compute::distance_computation::DistanceMetric as CoreDistanceMetric;
 use crate::core::bloom::strategies::composite::CompositeBloomFilter;
 use crate::core::bloom::{BloomFilterConfig, BloomFilterStrategy};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::memtable::core::MemtableConfig;
 use crate::storage::memtable::implementations::global_partitioned::GlobalPartitionedMemtable;
 use crate::storage::persistence::write_ahead_log::{BatchId, WALOperation, WALStats};
+use proximadb_records::ProximaRecord;
+
+/// Canonical key format for a metadata `field=value` entry in a batch's
+/// `metadata_bloom_filter`.
+///
+/// This is the **single source of truth** shared by the bloom *build* site
+/// (`WALVectorBatch::create_bloom_filter`) and every *query* site (the WAL
+/// search path's `filter_batches_with_bloom`). Keeping one helper prevents the
+/// build/query separators from ever drifting apart — a past `=` vs `:` mismatch
+/// silently turned the bloom pre-filter into a false-negative generator that
+/// excluded *every* batch, so a metadata-filtered search returned zero results.
+pub(crate) fn metadata_bloom_key(field: &str, value: &str) -> String {
+    format!("{}={}", field, value)
+}
 
 /// Write Buffer-specific vector batch for tracking deserialized data
 #[derive(Debug, Clone)]
@@ -29,7 +42,7 @@ pub struct WALVectorBatch {
     pub batch_id: BatchId,
     /// Deserialized vector records (ready for search/flush)
     /// Using Arc for zero-copy sharing across WAL strategies
-    pub vector_records: Arc<Vec<VectorRecord>>,
+    pub vector_records: Arc<Vec<ProximaRecord>>,
     /// Batch metadata
     pub timestamp: std::time::SystemTime,
     pub total_size_bytes: usize,
@@ -53,27 +66,27 @@ impl WALVectorBatch {
 
         let mut bloom_filter = CompositeBloomFilter::new(self.vector_records.len(), &config);
 
-        // Add all metadata keys to bloom filter
+        // Add all props keys to bloom filter
         for record in self.vector_records.iter() {
-            for (key, value) in &record.metadata {
+            for (key, node) in &record.props {
                 bloom_filter.insert(key.as_bytes());
 
                 // Also add key=value pairs for exact matching
-                let value_str = match &value.value {
-                    Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-                    Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(n)) => {
-                        n.to_string()
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::BoolValue(b)) => {
-                        b.to_string()
-                    }
-                    Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => {
-                        i.to_string()
+                let value_str = match node {
+                    proximadb_records::ProximaTreeNode::Value(v) => {
+                        use proximadb_data_model::ProximaValue;
+                        match v {
+                            ProximaValue::String(s) => s.clone(),
+                            ProximaValue::Float64(n) => n.to_string(),
+                            ProximaValue::Boolean(b) => b.to_string(),
+                            ProximaValue::Int64(i) => i.to_string(),
+                            _ => continue,
+                        }
                     }
                     _ => continue,
                 };
 
-                let key_value = format!("{}={}", key, value_str);
+                let key_value = metadata_bloom_key(key, &value_str);
                 bloom_filter.insert(key_value.as_bytes());
             }
         }
@@ -94,7 +107,7 @@ impl WALVectorBatch {
     pub fn might_contain_metadata_value(&self, key: &str, value: &str) -> bool {
         match &self.metadata_bloom_filter {
             Some(bloom) => {
-                let key_value = format!("{}={}", key, value);
+                let key_value = metadata_bloom_key(key, value);
                 bloom.might_contain(key_value.as_bytes())
             }
             None => true,
@@ -126,7 +139,7 @@ impl BatchCoordinator {
         // Update vector index
         for (index, vector_record) in batch.vector_records.iter().enumerate() {
             self.vector_index.insert(
-                vector_record.id.clone(),
+                vector_record.oid.clone(),
                 (collection_id.to_string(), batch_id.clone(), index),
             );
         }
@@ -187,7 +200,8 @@ impl BatchCoordinator {
             let mut cleared_batch_records = Vec::new();
             for batch in collection_batches.values() {
                 if batch.is_flushed {
-                    cleared_batch_records.extend(batch.vector_records.iter().map(|v| v.id.clone()));
+                    cleared_batch_records
+                        .extend(batch.vector_records.iter().map(|v| v.oid.clone()));
                 }
             }
 
@@ -266,7 +280,7 @@ impl WALBehaviorWrapper {
 
     /// Get the wrapped implementation
     pub fn inner(&self) -> &GlobalPartitionedMemtable {
-        &*self.inner
+        &self.inner
     }
 
     /// Get next sequence number for WAL ordering
@@ -300,24 +314,17 @@ impl WALBehaviorWrapper {
             operation.vector_count
         );
 
-        // Single point of deserialization - leverage this for ALL strategies
-        let vector_records = match operation.payload_format.as_str() {
+        // Single point of deserialization - leverage this for ALL strategies.
+        let vector_records: Vec<ProximaRecord> = match operation.payload_format.as_str() {
             "avro" => {
-                // Use centralized Avro deserializer
-                // Use the avro serializer for deserialization
                 use crate::storage::persistence::write_ahead_log::serialization::{
                     AvroSerializer, VectorBatchSerializer,
                 };
                 let serializer = AvroSerializer::new();
                 serializer.deserialize_batch(&operation.payload_data)?
             }
-            "bincode" => {
-                // Use Bincode deserializer
-                bincode::deserialize::<Vec<crate::proto::proximadb_v1::VectorRecord>>(
-                    &operation.payload_data,
-                )
-                .map_err(|e| anyhow::anyhow!("Failed to deserialize Bincode payload: {}", e))?
-            }
+            "bincode" => bincode::deserialize::<Vec<ProximaRecord>>(&operation.payload_data)
+                .map_err(|e| anyhow::anyhow!("Failed to deserialize Bincode payload: {}", e))?,
             format => {
                 anyhow::bail!("Unsupported payload format: {}", format);
             }
@@ -347,7 +354,26 @@ impl WALBehaviorWrapper {
     pub async fn add_vector_batch(
         &self,
         collection_id: &str,
+        batch: WALVectorBatch,
+    ) -> Result<Vec<u64>> {
+        self.add_vector_batch_internal(collection_id, batch, false)
+            .await
+    }
+
+    pub async fn add_vector_batch_insert_only(
+        &self,
+        collection_id: &str,
+        batch: WALVectorBatch,
+    ) -> Result<Vec<u64>> {
+        self.add_vector_batch_internal(collection_id, batch, true)
+            .await
+    }
+
+    async fn add_vector_batch_internal(
+        &self,
+        collection_id: &str,
         mut batch: WALVectorBatch,
+        insert_only: bool,
     ) -> Result<Vec<u64>> {
         // Backpressure: per-collection threshold check
         let current_usage = {
@@ -406,10 +432,15 @@ impl WALBehaviorWrapper {
 
         // STREAMLINED: Store batch natively in GlobalPartitionedMemtable (no duplication)
         tracing::debug!("🚀 WAL_BEHAVIOR: Calling inner.add_wal_batch()...");
-        let sequences = self
-            .inner
-            .add_wal_batch(collection_id, batch.clone())
-            .await?;
+        let sequences = if insert_only {
+            self.inner
+                .add_wal_batch_insert_only(collection_id, batch.clone())
+                .await?
+        } else {
+            self.inner
+                .add_wal_batch(collection_id, batch.clone())
+                .await?
+        };
         tracing::debug!(
             "🚀 WAL_BEHAVIOR: inner.add_wal_batch() returned sequences: {:?}",
             sequences
@@ -433,19 +464,22 @@ impl WALBehaviorWrapper {
         );
         drop(metrics);
 
-        // Debug: Check what GlobalPartitionedMemtable stats look like
-        let collection_stats = self.inner.get_all_collection_stats().await;
-        tracing::debug!(
-            "🚀 WAL_BEHAVIOR: After add, GlobalPartitionedMemtable has {} collections",
-            collection_stats.len()
-        );
-        for (coll_id, (entry_count, size_bytes)) in &collection_stats {
+        // Avoid collecting global memtable stats on the hot insert path unless
+        // the debug logs that consume them are enabled.
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let collection_stats = self.inner.get_all_collection_stats().await;
             tracing::debug!(
-                "🚀 WAL_BEHAVIOR: Collection {} has {} entries, {} bytes",
-                coll_id,
-                entry_count,
-                size_bytes
+                "🚀 WAL_BEHAVIOR: After add, GlobalPartitionedMemtable has {} collections",
+                collection_stats.len()
             );
+            for (coll_id, (entry_count, size_bytes)) in &collection_stats {
+                tracing::debug!(
+                    "🚀 WAL_BEHAVIOR: Collection {} has {} entries, {} bytes",
+                    coll_id,
+                    entry_count,
+                    size_bytes
+                );
+            }
         }
 
         tracing::debug!(
@@ -479,7 +513,7 @@ impl WALBehaviorWrapper {
 /// Write Buffer-specific implementation
 impl WALBehaviorWrapper {
     /// Get all vectors from the memtable (for recovery) - MODERN
-    pub async fn get_all_vectors(&self, limit: Option<usize>) -> Result<Vec<VectorRecord>> {
+    pub async fn get_all_vectors(&self, limit: Option<usize>) -> Result<Vec<ProximaRecord>> {
         let vectors_with_sequences = self.inner.get_all_vectors(limit).await?;
         Ok(vectors_with_sequences
             .into_iter()
@@ -570,25 +604,44 @@ impl WALBehaviorWrapper {
             raw_results.len()
         );
 
-        // Convert (SimilarityResult, VectorRecord) to SearchVectorRecord objects
+        // Convert (SimilarityResult, ProximaRecord) to SearchVectorRecord objects
         let mut search_results = Vec::new();
-        for (_rank, (similarity, vector_record)) in raw_results.into_iter().enumerate() {
+        for (similarity, vector_record) in raw_results.into_iter() {
             let search_result = crate::proto::proximadb_v1::SearchVectorRecord {
-                id: vector_record.id.clone(),
+                id: vector_record.oid.clone(),
                 score: similarity.raw_value as f64,
                 similarity: Some(similarity.normalized_score),
                 vector: if include_vectors {
-                    vector_record.vector.clone()
+                    vector_record
+                        .embeddings
+                        .first()
+                        .map(|e| e.values.to_fp32_owned())
+                        .unwrap_or_default()
                 } else {
                     Vec::new()
                 },
                 metadata: if include_metadata {
-                    vector_record.metadata.clone()
+                    // Convert ProximaTree props to legacy SqlValue metadata map (protocol edge)
+                    {
+                        use crate::core::search::results::proxima_value_to_sql_value;
+                        use proximadb_records::ProximaTreeNode;
+                        vector_record
+                            .props
+                            .iter()
+                            .filter_map(|(k, node)| {
+                                if let ProximaTreeNode::Value(pv) = node {
+                                    Some((k.clone(), proxima_value_to_sql_value(pv.clone())))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    }
                 } else {
                     std::collections::HashMap::new()
                 },
-                version: vector_record.version,
-                timestamp: Some(vector_record.timestamp.unwrap_or(0)),
+                version: Some(vector_record.record_version as u32),
+                timestamp: Some(vector_record.created_at_ns / 1_000_000),
                 source: None,
                 expanded_context: Vec::new(),
                 quantization_info: None,
@@ -607,7 +660,7 @@ impl WALBehaviorWrapper {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         self.inner.vector_by_id(collection_id, vector_id).await
     }
 
@@ -719,12 +772,12 @@ impl WALBehaviorWrapper {
     }
 
     /// Flush vectors up to sequence number (MODERN)
-    pub async fn flush_all_vectors(&self) -> Result<Vec<VectorRecord>> {
+    pub async fn flush_all_vectors(&self) -> Result<Vec<ProximaRecord>> {
         // Get all vectors from memtable
         let all_vectors_with_sequences = self.inner.get_all_vectors(None).await?;
 
         // Extract just the vectors
-        let vectors_to_flush: Vec<VectorRecord> = all_vectors_with_sequences
+        let vectors_to_flush: Vec<ProximaRecord> = all_vectors_with_sequences
             .into_iter()
             .map(|(_, vector)| vector)
             .collect();
@@ -756,7 +809,7 @@ impl WALBehaviorWrapper {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         // MVCC is now handled natively by GlobalPartitionedMemtable
         // No need for separate version tracking at WAL level
         self.inner.vector_by_id(collection_id, vector_id).await
@@ -796,12 +849,12 @@ impl WALBehaviorWrapper {
 
 impl WALBehaviorWrapper {
     /// Get all vectors from all collections ordered by sequence (MODERN)
-    pub async fn get_all_ordered(&self) -> Result<Vec<(u64, VectorRecord)>> {
+    pub async fn get_all_ordered(&self) -> Result<Vec<(u64, ProximaRecord)>> {
         self.inner.get_all_vectors(None).await
     }
 
     /// Get all vectors for a specific collection (MODERN)
-    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<VectorRecord>> {
+    pub async fn get_collection_vectors(&self, collection_id: &str) -> Result<Vec<ProximaRecord>> {
         // Direct access to collection vectors from GlobalPartitionedMemtable
         let vectors = self.inner.get_collection_vectors(collection_id).await?;
 
@@ -814,6 +867,29 @@ impl WALBehaviorWrapper {
         Ok(vectors)
     }
 
+    /// Paginated, deduped, time-ordered scan of a collection's unflushed records
+    /// (TD-099(3d) push-down). Returns up to `limit` records with canonical key
+    /// `(updated_at_ns, oid)` strictly greater than `after`, in ascending order,
+    /// passing `predicate`, excluding TTL-expired-at-`now_ns`. Byte-identical to
+    /// `get_collection_vectors` + sort + cursor-filter + take, but O(log d +
+    /// limit) per page once the per-collection scan index is warm.
+    ///
+    /// `after` is the raw `(last_updated_at_ns, last_oid)` cursor tuple — kept
+    /// protocol-agnostic so the storage layer stays free of the `ScanCursor`
+    /// codec (and reusable for future predicate push-downs).
+    pub async fn stream_unflushed_records(
+        &self,
+        collection_id: &str,
+        after: Option<(i64, &str)>,
+        limit: usize,
+        predicate: Option<&(dyn Fn(&ProximaRecord) -> bool + Send + Sync)>,
+        now_ns: i64,
+    ) -> Result<Vec<ProximaRecord>> {
+        self.inner
+            .scan_collection_paginated(collection_id, after, limit, predicate, now_ns)
+            .await
+    }
+
     /// Get current size in bytes (with actual vector data size calculation)
     pub async fn size_bytes(&self) -> usize {
         // Direct access to GlobalPartitionedMemtable
@@ -822,8 +898,12 @@ impl WALBehaviorWrapper {
 
     /// Get current entry count
     pub async fn len(&self) -> usize {
-        // Direct access to GlobalPartitionedMemtable
         self.inner.len().await
+    }
+
+    /// Check if the memtable has no entries
+    pub async fn is_empty(&self) -> bool {
+        self.inner.len().await == 0
     }
 
     /// Distributed: register idempotency token; returns false if duplicate
@@ -909,8 +989,8 @@ impl WALBehaviorWrapper {
         {
             // Remove vector index entries for this batch
             for vector_record in removed_batch.vector_records.iter() {
-                if !vector_record.id.is_empty() {
-                    coordinator.vector_index.remove(&vector_record.id);
+                if !vector_record.oid.is_empty() {
+                    coordinator.vector_index.remove(&vector_record.oid);
                 }
             }
         }
@@ -977,7 +1057,7 @@ impl WALBehaviorWrapper {
         &self,
         collection_id: &str,
         vector_id: &str,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         self.inner.vector_by_id(collection_id, vector_id).await
     }
 
@@ -986,7 +1066,7 @@ impl WALBehaviorWrapper {
         &self,
         collection_id: &str,
         limit: Option<usize>,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let mut vectors = self.inner.get_collection_vectors(collection_id).await?;
 
         // Apply limit if specified
@@ -1113,7 +1193,63 @@ struct FlushState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proximadb_records::{EmbeddingCell, LabelSet, ProximaRecord};
     // Tests now use unified add_vector_batch API only
+
+    fn test_vector_record(id: &str, vector: Vec<f32>) -> ProximaRecord {
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as i64;
+        let dim = vector.len() as u32;
+        ProximaRecord {
+            oid: id.to_string(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: 1,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: Some("test".to_string()),
+            memory_type: None,
+            props: std::collections::HashMap::new(),
+            refs: Vec::new(),
+            edge: None,
+            embeddings: if !vector.is_empty() {
+                vec![EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "dense_vector".to_string(),
+                    dim,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
+                    ..Default::default()
+                }]
+            } else {
+                vec![]
+            },
+            sequence: None,
+            labels: LabelSet::new(),
+            ..Default::default()
+        }
+    }
+
+    fn test_wal_batch(records: Vec<ProximaRecord>) -> WALVectorBatch {
+        WALVectorBatch {
+            batch_id: BatchId::new(),
+            vector_records: Arc::new(records),
+            timestamp: std::time::SystemTime::now(),
+            total_size_bytes: 1024,
+            is_flushed: false,
+            metadata_bloom_filter: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_wal_behavior_wrapper() {
@@ -1121,28 +1257,8 @@ mod tests {
         let wal_wrapper = WALBehaviorWrapper::new(config);
 
         // Create test vector records using the new unified API
-        let now = chrono::Utc::now().timestamp_millis();
-        let vector_record1 = crate::proto::proximadb_v1::VectorRecord {
-            id: "test_vector_1".to_string(),
-            vector: vec![0.1, 0.2, 0.3],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(now),
-            updated_at: Some(now),
-            expires_at: None,
-            version: Some(1),
-            source: Some("test".to_string()),
-        };
-
-        let vector_record2 = crate::proto::proximadb_v1::VectorRecord {
-            id: "test_vector_2".to_string(),
-            vector: vec![0.4, 0.5, 0.6],
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(now + 1),
-            updated_at: Some(now + 1),
-            expires_at: None,
-            version: Some(1),
-            source: Some("test".to_string()),
-        };
+        let vector_record1 = test_vector_record("test_vector_1", vec![0.1, 0.2, 0.3]);
+        let vector_record2 = test_vector_record("test_vector_2", vec![0.4, 0.5, 0.6]);
 
         // Test first batch insertion using unified add_vector_batch API
         let batch1 = WALVectorBatch {
@@ -1204,6 +1320,77 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_insert_only_wrapper_rejects_duplicate_ids_in_request() {
+        let wal_wrapper = WALBehaviorWrapper::new(MemtableConfig::default());
+        let batch = test_wal_batch(vec![
+            test_vector_record("record_1", vec![1.0, 0.0]),
+            test_vector_record("record_1", vec![0.0, 1.0]),
+        ]);
+
+        let error = wal_wrapper
+            .add_vector_batch_insert_only("test_collection", batch)
+            .await
+            .expect_err("duplicate ids in insert-only WAL batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            wal_wrapper
+                .vector_by_id("test_collection", "record_1")
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            wal_wrapper
+                .get_unflushed_batches("test_collection")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_insert_only_wrapper_rejects_existing_id_without_partial_batch() {
+        let wal_wrapper = WALBehaviorWrapper::new(MemtableConfig::default());
+        wal_wrapper
+            .add_vector_batch_insert_only(
+                "test_collection",
+                test_wal_batch(vec![test_vector_record("record_1", vec![1.0, 0.0])]),
+            )
+            .await
+            .unwrap();
+
+        let error = wal_wrapper
+            .add_vector_batch_insert_only(
+                "test_collection",
+                test_wal_batch(vec![
+                    test_vector_record("record_1", vec![0.0, 1.0]),
+                    test_vector_record("record_2", vec![0.5, 0.5]),
+                ]),
+            )
+            .await
+            .expect_err("existing ids in insert-only WAL batch should fail");
+
+        assert!(error.to_string().contains("INSERT_CONFLICT"));
+        assert!(
+            wal_wrapper
+                .vector_by_id("test_collection", "record_2")
+                .await
+                .unwrap()
+                .is_none(),
+            "failed insert-only WAL batch must not partially add new records"
+        );
+        assert_eq!(
+            wal_wrapper
+                .get_unflushed_batches("test_collection")
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
     async fn test_wal_mvcc_functionality() {
         let mut config = MemtableConfig::default();
         config.enable_mvcc = true;
@@ -1213,32 +1400,22 @@ mod tests {
         let vector_id = "test_vector_mvcc";
 
         // Insert multiple versions of the same vector using unified API
-        for i in 0..3 {
-            let now = chrono::Utc::now().timestamp_millis();
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert(
+        for i in 0u32..3 {
+            let mut props = std::collections::HashMap::new();
+            props.insert(
                 "version".to_string(),
-                crate::proto::proximadb_v1::SqlValue {
-                    value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                        i.to_string(),
-                    )),
-                },
+                proximadb_records::ProximaTreeNode::Value(
+                    proximadb_data_model::ProximaValue::String(i.to_string()),
+                ),
             );
 
-            let vector_record = crate::proto::proximadb_v1::VectorRecord {
-                id: vector_id.to_string(),
-                vector: vec![i as f32, (i + 1) as f32],
-                metadata,
-                timestamp: Some(now + i as i64),
-                updated_at: Some(now + i as i64),
-                expires_at: None,
-                version: Some(i + 1),
-                source: Some("test".to_string()),
-            };
+            let mut record = test_vector_record(vector_id, vec![i as f32, (i + 1) as f32]);
+            record.props = props;
+            record.record_version = (i + 1) as u64;
 
             let batch = WALVectorBatch {
                 batch_id: BatchId::new(),
-                vector_records: Arc::new(vec![vector_record]),
+                vector_records: Arc::new(vec![record]),
                 timestamp: std::time::SystemTime::now(),
                 total_size_bytes: 1024,
                 is_flushed: false,
@@ -1262,7 +1439,7 @@ mod tests {
         // Verify vector data integrity
         let found_vectors: Vec<_> = all_vectors
             .iter()
-            .filter(|(_, record)| record.id == vector_id)
+            .filter(|(_, record)| record.oid == vector_id)
             .collect();
         assert!(!found_vectors.is_empty());
     }

@@ -9,6 +9,7 @@ import numpy as np
 
 # Connect to the running server
 
+
 def main():
     client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
 
@@ -23,7 +24,7 @@ def main():
             name=collection_name,
             dimension=128,
             distance_metric=DistanceMetric.COSINE,
-            enable_two_stage_search=True
+            enable_two_stage_search=True,
         )
         print(f"   ✓ Collection created successfully")
     except Exception as e:
@@ -39,7 +40,7 @@ def main():
         vec = VectorRecord(
             id=f"vec_{i}",
             vector=np.random.rand(128).tolist(),
-            metadata={"index": i, "test": "persistence", "timestamp": time.time()}
+            metadata={"index": i, "test": "persistence", "timestamp": time.time()},
         )
         vectors.append(vec)
 
@@ -57,9 +58,7 @@ def main():
     try:
         query_vector = np.random.rand(128).tolist()
         results = collection.search(
-            vector=query_vector,
-            top_k=5,
-            distance_metric=DistanceMetric.COSINE
+            vector=query_vector, top_k=5, distance_metric=DistanceMetric.COSINE
         )
         print(f"   ✓ Found {len(results)} results")
         for i, result in enumerate(results[:3]):
@@ -76,7 +75,9 @@ def main():
         print(f"   Collection info:")
         print(f"   - Name: {col.name}")
         print(f"   - Dimension: {col.dimension}")
-        print(f"   - Vector count: {col.vector_count if hasattr(col, 'vector_count') else 'N/A'}")
+        print(
+            f"   - Vector count: {col.vector_count if hasattr(col, 'vector_count') else 'N/A'}"
+        )
     except Exception as e:
         print(f"   ✗ Error: {e}")
 
@@ -90,6 +91,7 @@ def main():
     print(f"=== Test Complete ===")
     print(f"Collection '{collection_name}' created with {len(vectors)} vectors")
     print("Now restart the server and check if vectors persist!")
+
 
 if __name__ == "__main__":
     main()

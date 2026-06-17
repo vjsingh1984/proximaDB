@@ -6,16 +6,16 @@
 
 //! Query Optimization Tests
 //!
-//! Consolidated test suite for unified_query_optimizer module.
+//! Consolidated test suite for query_optimizer module.
 //! Tests cover cost models, selectivity estimation, index selection,
 //! combined optimization, and filter pushdown.
 //!
-//! Source: src/query/unified_query_optimizer.rs
+//! Source: src/query/query_optimizer.rs
 //! Tests extracted: 3 (all tests from the source module)
 
 use proximadb::core::search::{ComparisonOperator, FilterExpression, SearchParams};
 use proximadb::proto::proximadb_v1::Collection;
-use proximadb::query::unified_query_optimizer::*;
+use proximadb::query::query_optimizer::*;
 use std::sync::Arc;
 
 #[test]

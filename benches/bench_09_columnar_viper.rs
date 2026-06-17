@@ -12,7 +12,7 @@ use proximadb::{
     },
     storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory},
     storage::{
-        engines::impls::viper::engine::ViperEngine,
+        engines::viper::engine::ViperEngine,
         traits::{FlushParameters, UnifiedStorageEngine},
     },
 };
@@ -68,6 +68,7 @@ fn create_quantization_config(
         binary_threshold: Some(0.5),
         int8_threshold: Some(0.3),
         pq_threshold: Some(0.1),
+        enable_turboquant: None,
     }
 }
 
@@ -182,7 +183,11 @@ fn bench_viper_flush(c: &mut Criterion) {
 
                         let params = FlushParameters {
                             collection_id: Some("bench-viper".to_string()),
-                            vector_records: vectors.clone(),
+                            vector_records: vectors
+                                .iter()
+                                .cloned()
+                                .map(proximadb::proto::defaults::vector_record_to_proxima_record)
+                                .collect(),
                             force: true,
                             synchronous: true,
                             collection_config: Some(collection),

@@ -30,18 +30,22 @@ pub struct CollectionOwnership {
     pub owner_tenant_id: String,
 }
 
+/// Tenant access permissions for collection-level sharing decisions.
 #[derive(Debug, Clone, PartialEq)]
-pub enum Permission {
+pub enum TenantAccessPermission {
     Read,
     Write,
     Admin,
 }
 
+/// Backward-compatible local alias used by existing signatures/tests.
+pub type Permission = TenantAccessPermission;
+
 #[derive(Debug, Clone)]
 pub struct CollectionSharing {
     pub collection_id: String,
     pub shared_with_tenant_id: String,
-    pub permissions: Vec<Permission>,
+    pub permissions: Vec<TenantAccessPermission>,
 }
 
 #[derive(Debug, Clone)]
@@ -71,7 +75,7 @@ impl Default for ResourceQuotas {
 }
 
 #[derive(Debug, Clone)]
-pub struct ResourceUsage {
+pub struct TenantAccessResourceUsage {
     pub tenant_id: String,
     pub collection_count: u64,
     pub total_vector_count: u64,
@@ -80,7 +84,7 @@ pub struct ResourceUsage {
     pub requests_this_minute: u64,
 }
 
-impl Default for ResourceUsage {
+impl Default for TenantAccessResourceUsage {
     fn default() -> Self {
         Self {
             tenant_id: String::new(),
@@ -102,7 +106,7 @@ pub trait TenantAccessService: Send + Sync {
         &self,
         tenant_id: &str,
         collection_id: &str,
-        required_permission: Permission,
+        required_permission: TenantAccessPermission,
     ) -> Result<bool>;
     async fn get_owned_collections(&self, tenant_id: &str) -> Result<Vec<String>>;
     async fn get_shared_collections(&self, tenant_id: &str) -> Result<Vec<String>>;
@@ -115,7 +119,7 @@ pub trait TenantAccessService: Send + Sync {
         &self,
         collection_id: &str,
         shared_with_tenant_id: &str,
-        permissions: Vec<Permission>,
+        permissions: Vec<TenantAccessPermission>,
     ) -> Result<()>;
     async fn revoke_collection_access(
         &self,
@@ -131,8 +135,12 @@ pub trait TenantAccessService: Send + Sync {
         resource_type: ResourceType,
         requested_amount: u64,
     ) -> Result<bool>;
-    async fn get_resource_usage(&self, tenant_id: &str) -> Result<ResourceUsage>;
-    async fn update_resource_usage(&self, tenant_id: &str, usage: ResourceUsage) -> Result<()>;
+    async fn get_resource_usage(&self, tenant_id: &str) -> Result<TenantAccessResourceUsage>;
+    async fn update_resource_usage(
+        &self,
+        tenant_id: &str,
+        usage: TenantAccessResourceUsage,
+    ) -> Result<()>;
 }
 
 #[derive(Debug, Clone)]
@@ -151,7 +159,7 @@ pub struct InMemoryTenantAccessService {
     organizations: RwLock<HashMap<String, Organization>>,
     collection_ownership: RwLock<HashMap<String, CollectionOwnership>>, // collection_id -> ownership
     collection_sharing: RwLock<HashMap<String, Vec<CollectionSharing>>>, // collection_id -> list of shares
-    resource_usage: RwLock<HashMap<String, ResourceUsage>>, // tenant_id -> current usage
+    resource_usage: RwLock<HashMap<String, TenantAccessResourceUsage>>, // tenant_id -> current usage
 }
 
 impl InMemoryTenantAccessService {
@@ -231,7 +239,7 @@ impl TenantAccessService for InMemoryTenantAccessService {
         &self,
         tenant_id: &str,
         collection_id: &str,
-        required_permission: Permission,
+        required_permission: TenantAccessPermission,
     ) -> Result<bool> {
         let ownership = self.collection_ownership.read().await;
         let sharing = self.collection_sharing.read().await;
@@ -321,7 +329,7 @@ impl TenantAccessService for InMemoryTenantAccessService {
         &self,
         collection_id: &str,
         shared_with_tenant_id: &str,
-        permissions: Vec<Permission>,
+        permissions: Vec<TenantAccessPermission>,
     ) -> Result<()> {
         let mut sharing = self.collection_sharing.write().await;
         let shares_for_col = sharing.entry(collection_id.to_string()).or_default();
@@ -378,13 +386,14 @@ impl TenantAccessService for InMemoryTenantAccessService {
             None => return Ok(false), // Tenant doesn't exist
         };
 
-        let current_usage = usage_map
-            .get(tenant_id)
-            .cloned()
-            .unwrap_or_else(|| ResourceUsage {
-                tenant_id: tenant_id.to_string(),
-                ..Default::default()
-            });
+        let current_usage =
+            usage_map
+                .get(tenant_id)
+                .cloned()
+                .unwrap_or_else(|| TenantAccessResourceUsage {
+                    tenant_id: tenant_id.to_string(),
+                    ..Default::default()
+                });
 
         let quota_limit = match resource_type {
             ResourceType::Collections => tenant.quotas.max_collections,
@@ -409,18 +418,22 @@ impl TenantAccessService for InMemoryTenantAccessService {
         }
     }
 
-    async fn get_resource_usage(&self, tenant_id: &str) -> Result<ResourceUsage> {
+    async fn get_resource_usage(&self, tenant_id: &str) -> Result<TenantAccessResourceUsage> {
         let usage_map = self.resource_usage.read().await;
         Ok(usage_map
             .get(tenant_id)
             .cloned()
-            .unwrap_or_else(|| ResourceUsage {
+            .unwrap_or_else(|| TenantAccessResourceUsage {
                 tenant_id: tenant_id.to_string(),
                 ..Default::default()
             }))
     }
 
-    async fn update_resource_usage(&self, tenant_id: &str, usage: ResourceUsage) -> Result<()> {
+    async fn update_resource_usage(
+        &self,
+        tenant_id: &str,
+        usage: TenantAccessResourceUsage,
+    ) -> Result<()> {
         let mut usage_map = self.resource_usage.write().await;
         usage_map.insert(tenant_id.to_string(), usage);
         info!(

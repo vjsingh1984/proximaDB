@@ -12,7 +12,7 @@ use tracing::debug;
 
 use crate::core::bloom::{BloomFilter, BloomFilterBuilder};
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Metadata filter optimizer with pushdown capabilities
 pub struct MetadataFilterPushdown {
@@ -20,7 +20,7 @@ pub struct MetadataFilterPushdown {
     bloom_filters: HashMap<String, Arc<BloomFilter>>,
 
     /// Column statistics for selective filtering
-    column_stats: HashMap<String, ColumnStatistics>,
+    column_stats: HashMap<String, MetadataColumnStatistics>,
 
     /// Index on frequently filtered columns
     column_indexes: HashMap<String, ColumnIndex>,
@@ -28,11 +28,95 @@ pub struct MetadataFilterPushdown {
     /// Filter selectivity estimator
     #[allow(dead_code)]
     selectivity_estimator: SelectivityEstimator,
+
+    /// Runtime policy for metadata pushdown decisions.
+    config: MetadataFilterPushdownConfig,
+}
+
+/// Configuration for metadata filter pushdown heuristics.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataFilterPushdownConfig {
+    /// Build per-column bloom filters only below this distinct-value count.
+    pub bloom_distinct_value_limit: usize,
+    /// Bits per key for generated metadata bloom filters.
+    pub bloom_bits_per_key: u32,
+    /// False-positive rate for generated metadata bloom filters.
+    pub bloom_false_positive_rate: f64,
+    /// Selectivity below this threshold uses indexed filtering first.
+    pub indexed_selectivity_threshold: f64,
+    /// Selectivity below this threshold uses bloom filtering before direct evaluation.
+    pub bloom_selectivity_threshold: f64,
+    /// Fallback selectivity for columns without statistics.
+    pub unknown_column_selectivity: f64,
+    /// Fallback selectivity for malformed `IN` predicates.
+    pub invalid_in_selectivity: f64,
+    /// Fallback selectivity for range-like predicates.
+    pub range_selectivity: f64,
+    /// Minimum distinct/total ratio required before building an index.
+    pub min_index_selectivity: f64,
+    /// Maximum distinct values allowed before skipping an index.
+    pub max_index_distinct_values: usize,
+}
+
+impl Default for MetadataFilterPushdownConfig {
+    fn default() -> Self {
+        Self {
+            bloom_distinct_value_limit: 1000,
+            bloom_bits_per_key: 10,
+            bloom_false_positive_rate: 0.01,
+            indexed_selectivity_threshold: 0.01,
+            bloom_selectivity_threshold: 0.1,
+            unknown_column_selectivity: 0.5,
+            invalid_in_selectivity: 0.5,
+            range_selectivity: 0.3,
+            min_index_selectivity: 0.01,
+            max_index_distinct_values: 10_000,
+        }
+    }
+}
+
+impl MetadataFilterPushdownConfig {
+    /// Validate selectivity and bloom policy values.
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        for (name, value) in [
+            ("bloom_false_positive_rate", self.bloom_false_positive_rate),
+            (
+                "indexed_selectivity_threshold",
+                self.indexed_selectivity_threshold,
+            ),
+            (
+                "bloom_selectivity_threshold",
+                self.bloom_selectivity_threshold,
+            ),
+            (
+                "unknown_column_selectivity",
+                self.unknown_column_selectivity,
+            ),
+            ("invalid_in_selectivity", self.invalid_in_selectivity),
+            ("range_selectivity", self.range_selectivity),
+            ("min_index_selectivity", self.min_index_selectivity),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(format!(
+                    "metadata pushdown config {name} must be finite and between 0.0 and 1.0, got {value}"
+                ));
+            }
+        }
+        if self.bloom_selectivity_threshold < self.indexed_selectivity_threshold {
+            return Err(
+                "bloom_selectivity_threshold must be >= indexed_selectivity_threshold".to_string(),
+            );
+        }
+        if self.bloom_bits_per_key == 0 {
+            return Err("bloom_bits_per_key must be greater than zero".to_string());
+        }
+        Ok(())
+    }
 }
 
 /// Statistics for a metadata column
 #[derive(Debug, Clone)]
-pub struct ColumnStatistics {
+pub struct MetadataColumnStatistics {
     /// Name of the metadata column
     pub column_name: String,
     /// Number of distinct values
@@ -94,16 +178,27 @@ struct SelectivityEstimator {
 impl MetadataFilterPushdown {
     /// Create a new metadata filter pushdown optimizer
     pub fn new() -> Self {
+        Self::with_config(MetadataFilterPushdownConfig::default())
+    }
+
+    /// Create a metadata filter pushdown optimizer with explicit policy.
+    pub fn with_config(config: MetadataFilterPushdownConfig) -> Self {
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid metadata filter pushdown config: {:?}",
+            config.validate().err()
+        );
         Self {
             bloom_filters: HashMap::new(),
             column_stats: HashMap::new(),
             column_indexes: HashMap::new(),
             selectivity_estimator: SelectivityEstimator::new(),
+            config,
         }
     }
 
     /// Build column statistics and indexes from a batch of records
-    pub fn build_statistics(&mut self, records: &[VectorRecord]) {
+    pub fn build_statistics(&mut self, records: &[ProximaRecord]) {
         let mut column_data: HashMap<String, Vec<Option<Value>>> = HashMap::new();
 
         // Collect all metadata values by column
@@ -123,12 +218,12 @@ impl MetadataFilterPushdown {
             let stats = self.compute_column_stats(&column_name, &values);
 
             // Build bloom filter for the column
-            if stats.distinct_values < 1000 {
+            if stats.distinct_values < self.config.bloom_distinct_value_limit {
                 use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
                 let config = BloomFilterConfig {
                     strategy: BloomStrategy::BitPacked,
-                    bits_per_key: 10,
-                    false_positive_rate: Some(0.01),
+                    bits_per_key: self.config.bloom_bits_per_key,
+                    false_positive_rate: Some(self.config.bloom_false_positive_rate),
                     expected_items: stats.distinct_values,
                     enabled: true,
                     hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
@@ -157,9 +252,9 @@ impl MetadataFilterPushdown {
     /// Apply filter pushdown at the WAL level
     pub fn apply_wal_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         // Estimate filter selectivity
         let selectivity = self.estimate_selectivity(filter);
 
@@ -169,10 +264,10 @@ impl MetadataFilterPushdown {
         );
 
         // Use different strategies based on selectivity
-        if selectivity < 0.01 {
+        if selectivity < self.config.indexed_selectivity_threshold {
             // Very selective - use index if available
             self.apply_indexed_filter(records, filter)
-        } else if selectivity < 0.1 {
+        } else if selectivity < self.config.bloom_selectivity_threshold {
             // Moderately selective - use bloom filter first
             self.apply_bloom_then_filter(records, filter)
         } else {
@@ -184,9 +279,9 @@ impl MetadataFilterPushdown {
     /// Apply indexed filtering for very selective filters
     fn apply_indexed_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         // Extract columns used in filter
         let filter_columns = self.extract_filter_columns(filter);
 
@@ -206,16 +301,16 @@ impl MetadataFilterPushdown {
         // Filter records by candidate IDs
         records
             .into_iter()
-            .filter(|record| candidate_ids.contains(&record.id))
+            .filter(|record| candidate_ids.contains(&record.oid))
             .collect()
     }
 
     /// Apply bloom filter before full filtering
     fn apply_bloom_then_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         // First pass: bloom filter
         let bloom_candidates = self.bloom_filter_pass(records, filter);
 
@@ -226,20 +321,20 @@ impl MetadataFilterPushdown {
     /// Bloom filter pass for quick elimination
     fn bloom_filter_pass(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         records
             .into_iter()
-            .filter(|record| {
+            .filter(|_record| {
                 // Check if record might match based on bloom filters
-                self.check_bloom_filters(record, filter)
+                self.check_bloom_filters(filter)
             })
             .collect()
     }
 
-    /// Check bloom filters for a record
-    fn check_bloom_filters(&self, record: &VectorRecord, filter: &FilterExpression) -> bool {
+    /// Check bloom filters for a filter expression
+    fn check_bloom_filters(&self, filter: &FilterExpression) -> bool {
         match filter {
             FilterExpression::Comparison {
                 field,
@@ -261,22 +356,18 @@ impl MetadataFilterPushdown {
                     true // No bloom filter, can't eliminate
                 }
             }
-            FilterExpression::And(exprs) => exprs
-                .iter()
-                .all(|expr| self.check_bloom_filters(record, expr)),
-            FilterExpression::Or(exprs) => exprs
-                .iter()
-                .any(|expr| self.check_bloom_filters(record, expr)),
-            FilterExpression::Not(expr) => !self.check_bloom_filters(record, expr),
+            FilterExpression::And(exprs) => exprs.iter().all(|expr| self.check_bloom_filters(expr)),
+            FilterExpression::Or(exprs) => exprs.iter().any(|expr| self.check_bloom_filters(expr)),
+            FilterExpression::Not(expr) => !self.check_bloom_filters(expr),
         }
     }
 
     /// Apply direct filter evaluation
     fn apply_direct_filter(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         filter: &FilterExpression,
-    ) -> Vec<VectorRecord> {
+    ) -> Vec<ProximaRecord> {
         use crate::core::search::json_comparison::evaluate_filter;
 
         records
@@ -299,7 +390,7 @@ impl MetadataFilterPushdown {
                 if let Some(stats) = self.column_stats.get(field) {
                     self.estimate_comparison_selectivity(stats, operator, value)
                 } else {
-                    0.5 // Default selectivity for unknown columns
+                    self.config.unknown_column_selectivity
                 }
             }
             FilterExpression::And(exprs) => {
@@ -326,7 +417,7 @@ impl MetadataFilterPushdown {
     /// Estimate selectivity for a comparison
     fn estimate_comparison_selectivity(
         &self,
-        stats: &ColumnStatistics,
+        stats: &MetadataColumnStatistics,
         operator: &ComparisonOperator,
         value: &Value,
     ) -> f64 {
@@ -363,60 +454,20 @@ impl MetadataFilterPushdown {
                         .sum::<f64>()
                         .min(1.0)
                 } else {
-                    0.5
+                    self.config.invalid_in_selectivity
                 }
             }
-            _ => 0.3, // Default for range queries
+            _ => self.config.range_selectivity,
         }
     }
 
-    /// Extract metadata from a record
-    fn extract_metadata(&self, record: &VectorRecord) -> HashMap<String, Value> {
-        let mut metadata = HashMap::new();
-
-        for (key, entry) in &record.metadata {
-            // Convert the protobuf metadata value to serde_json::Value
-            if let Some(ref proto_value) = entry.value {
-                // No longer need sql_value module - using optional fields directly
-                let json_value = match proto_value {
-                    crate::proto::proximadb_v1::sql_value::Value::StringValue(s) => {
-                        Value::String(s.clone())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NumberValue(n) => {
-                        if let Some(num) = serde_json::Number::from_f64(*n) {
-                            Value::Number(num)
-                        } else {
-                            continue;
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BoolValue(b) => Value::Bool(*b),
-                    crate::proto::proximadb_v1::sql_value::Value::Int64Value(i) => {
-                        if let Some(num) = serde_json::Number::from_f64(*i as f64) {
-                            Value::Number(num)
-                        } else {
-                            continue;
-                        }
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::BytesValue(_) => {
-                        Value::String("[binary]".to_string())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::NullValue(_) => Value::Null,
-                    crate::proto::proximadb_v1::sql_value::Value::ArrayValue(_) => {
-                        Value::String("[array]".to_string())
-                    }
-                    crate::proto::proximadb_v1::sql_value::Value::ObjectValue(_) => {
-                        Value::String("[object]".to_string())
-                    }
-                };
-                metadata.insert(key.clone(), json_value);
-            }
-        }
-
-        metadata
+    /// Extract metadata from a record's props as JSON map
+    fn extract_metadata(&self, record: &ProximaRecord) -> HashMap<String, Value> {
+        crate::core::search::sql_value_filter::proxima_tree_to_json_map(&record.props)
     }
 
     /// Extract metadata as HashMap for filter evaluation
-    fn extract_metadata_hashmap(&self, record: &VectorRecord) -> HashMap<String, Value> {
+    fn extract_metadata_hashmap(&self, record: &ProximaRecord) -> HashMap<String, Value> {
         self.extract_metadata(record)
     }
 
@@ -425,7 +476,7 @@ impl MetadataFilterPushdown {
         &self,
         column_name: &str,
         values: &[Option<Value>],
-    ) -> ColumnStatistics {
+    ) -> MetadataColumnStatistics {
         let mut distinct_values = HashSet::new();
         let mut null_count = 0;
         let mut value_histogram = HashMap::new();
@@ -458,7 +509,7 @@ impl MetadataFilterPushdown {
             }
         }
 
-        ColumnStatistics {
+        MetadataColumnStatistics {
             column_name: column_name.to_string(),
             distinct_values: distinct_values.len(),
             null_count,
@@ -483,10 +534,11 @@ impl MetadataFilterPushdown {
     }
 
     /// Check if we should build an index for a column
-    fn should_build_index(&self, stats: &ColumnStatistics) -> bool {
+    fn should_build_index(&self, stats: &MetadataColumnStatistics) -> bool {
         // Build index if column is selective and frequently used
         let selectivity = stats.distinct_values as f64 / stats.total_count as f64;
-        selectivity > 0.01 && stats.distinct_values < 10000
+        selectivity > self.config.min_index_selectivity
+            && stats.distinct_values < self.config.max_index_distinct_values
     }
 
     /// Build column index
@@ -494,19 +546,19 @@ impl MetadataFilterPushdown {
         &self,
         _column_name: &str,
         values: &[Option<Value>],
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
     ) -> ColumnIndex {
         let mut inverted_index = HashMap::new();
 
         for (i, value_opt) in values.iter().enumerate() {
             if let Some(value) = value_opt
                 && let Some(record) = records.get(i)
-                && !record.id.is_empty()
+                && !record.oid.is_empty()
             {
                 inverted_index
                     .entry(value.clone())
                     .or_insert_with(HashSet::new)
-                    .insert(record.id.clone());
+                    .insert(record.oid.clone());
             }
         }
 
@@ -611,28 +663,71 @@ impl SelectivityEstimator {
 pub struct MetadataBloomBuilder {
     builders: HashMap<String, BloomFilterBuilder>,
     expected_items: usize,
-    false_positive_rate: f64,
+    config: MetadataBloomBuilderConfig,
+}
+
+/// Configuration for standalone metadata bloom construction.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetadataBloomBuilderConfig {
+    pub false_positive_rate: f64,
+    pub bits_per_key: u32,
+}
+
+impl Default for MetadataBloomBuilderConfig {
+    fn default() -> Self {
+        Self {
+            false_positive_rate: 0.01,
+            bits_per_key: 10,
+        }
+    }
+}
+
+impl MetadataBloomBuilderConfig {
+    pub fn validate(&self) -> std::result::Result<(), String> {
+        if !self.false_positive_rate.is_finite() || !(0.0..=1.0).contains(&self.false_positive_rate)
+        {
+            return Err(format!(
+                "metadata bloom false_positive_rate must be finite and between 0.0 and 1.0, got {}",
+                self.false_positive_rate
+            ));
+        }
+        if self.bits_per_key == 0 {
+            return Err("metadata bloom bits_per_key must be greater than zero".to_string());
+        }
+        Ok(())
+    }
 }
 
 impl MetadataBloomBuilder {
     /// Create a new metadata bloom filter builder for the expected number of items
     pub fn new(expected_items: usize) -> Self {
+        Self::with_config(expected_items, MetadataBloomBuilderConfig::default())
+    }
+
+    /// Create a metadata bloom filter builder with explicit policy.
+    pub fn with_config(expected_items: usize, config: MetadataBloomBuilderConfig) -> Self {
+        debug_assert!(
+            config.validate().is_ok(),
+            "invalid metadata bloom builder config: {:?}",
+            config.validate().err()
+        );
         Self {
             builders: HashMap::new(),
             expected_items,
-            false_positive_rate: 0.01,
+            config,
         }
     }
 
     /// Add a record's metadata to bloom filters
-    pub fn add_record(&mut self, record: &VectorRecord) {
+    pub fn add_record(&mut self, record: &ProximaRecord) {
         use crate::core::bloom::{BloomFilterConfig, BloomStrategy};
+        use crate::core::search::sql_value_filter::proxima_tree_to_json_map;
 
-        for (key, entry) in &record.metadata {
+        for (key, value) in proxima_tree_to_json_map(&record.props) {
             let config = BloomFilterConfig {
                 strategy: BloomStrategy::BitPacked,
-                bits_per_key: 10,
-                false_positive_rate: Some(self.false_positive_rate),
+                bits_per_key: self.config.bits_per_key,
+                false_positive_rate: Some(self.config.false_positive_rate),
                 expected_items: self.expected_items,
                 enabled: true,
                 hash_algorithm: crate::core::bloom::HashAlgorithm::default(),
@@ -642,15 +737,8 @@ impl MetadataBloomBuilder {
                 .entry(key.clone())
                 .or_insert_with(|| BloomFilterBuilder::new(config));
 
-            // Serialize the metadata value for the bloom filter
-            if let Some(ref value) = entry.value {
-                // Create parent SqlValue to use custom serde implementation
-                let sql_value = crate::proto::proximadb_v1::SqlValue {
-                    value: Some(value.clone()),
-                };
-                let serialized = serde_json::to_vec(&sql_value).unwrap_or_default();
-                builder.add(&serialized);
-            }
+            let serialized = serde_json::to_vec(&value).unwrap_or_default();
+            builder.add(&serialized);
         }
     }
 
@@ -666,6 +754,94 @@ impl MetadataBloomBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn column_stats(distinct_values: usize, total_count: usize) -> MetadataColumnStatistics {
+        MetadataColumnStatistics {
+            column_name: "category".to_string(),
+            distinct_values,
+            null_count: 0,
+            total_count,
+            min_value: None,
+            max_value: None,
+            value_histogram: HashMap::new(),
+            bloom_filter: None,
+        }
+    }
+
+    #[test]
+    fn test_metadata_pushdown_config_validation() {
+        let mut config = MetadataFilterPushdownConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.bloom_selectivity_threshold = 0.001;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn test_metadata_pushdown_uses_configured_selectivity_policy() {
+        let mut pushdown = MetadataFilterPushdown::with_config(MetadataFilterPushdownConfig {
+            unknown_column_selectivity: 0.72,
+            invalid_in_selectivity: 0.61,
+            range_selectivity: 0.41,
+            ..Default::default()
+        });
+        pushdown
+            .column_stats
+            .insert("known".to_string(), column_stats(10, 100));
+
+        let unknown = FilterExpression::Comparison {
+            field: "missing".to_string(),
+            operator: ComparisonOperator::Equals,
+            value: Value::String("electronics".to_string()),
+        };
+        assert_eq!(pushdown.estimate_selectivity(&unknown), 0.72);
+
+        let malformed_in = FilterExpression::Comparison {
+            field: "known".to_string(),
+            operator: ComparisonOperator::In,
+            value: Value::String("not-an-array".to_string()),
+        };
+        assert_eq!(pushdown.estimate_selectivity(&malformed_in), 0.61);
+
+        let range = FilterExpression::Comparison {
+            field: "known".to_string(),
+            operator: ComparisonOperator::GreaterThan,
+            value: Value::Number(serde_json::Number::from(100)),
+        };
+        assert_eq!(pushdown.estimate_selectivity(&range), 0.41);
+    }
+
+    #[test]
+    fn test_metadata_pushdown_uses_configured_index_policy() {
+        let pushdown = MetadataFilterPushdown::with_config(MetadataFilterPushdownConfig {
+            min_index_selectivity: 0.2,
+            max_index_distinct_values: 50,
+            ..Default::default()
+        });
+
+        assert!(pushdown.should_build_index(&column_stats(25, 100)));
+        assert!(!pushdown.should_build_index(&column_stats(10, 100)));
+        assert!(!pushdown.should_build_index(&column_stats(60, 100)));
+    }
+
+    #[test]
+    fn test_metadata_bloom_builder_config_validation() {
+        let mut config = MetadataBloomBuilderConfig::default();
+        assert!(config.validate().is_ok());
+
+        config.bits_per_key = 0;
+        assert!(config.validate().is_err());
+
+        let builder = MetadataBloomBuilder::with_config(
+            128,
+            MetadataBloomBuilderConfig {
+                false_positive_rate: 0.05,
+                bits_per_key: 12,
+            },
+        );
+        assert_eq!(builder.config.false_positive_rate, 0.05);
+        assert_eq!(builder.config.bits_per_key, 12);
+    }
 
     #[test]
     fn test_selectivity_estimation() {
@@ -690,38 +866,55 @@ mod tests {
 
     #[test]
     fn test_bloom_filter_building() {
-        use crate::proto::proximadb_v1::VectorRecord;
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::{
+            EmbeddingCell, LabelSet, ProximaRecord, ProximaTree, ProximaTreeNode,
+        };
 
         let mut builder = MetadataBloomBuilder::new(1000);
 
-        let record = VectorRecord {
-            id: "test1".to_string(),
-            vector: vec![1.0, 2.0, 3.0],
-            metadata: {
-                let mut map = std::collections::HashMap::new();
-                map.insert(
-                    "category".to_string(),
-                    crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(
-                            "electronics".to_string(),
-                        )),
-                    },
-                );
-                map.insert(
-                    "price".to_string(),
-                    crate::proto::proximadb_v1::SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                            99.99,
-                        )),
-                    },
-                );
-                map
-            },
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
+        let mut props = ProximaTree::new();
+        props.insert(
+            "category".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String("electronics".to_string())),
+        );
+        props.insert(
+            "price".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Float64(99.99)),
+        );
+
+        let now_ns = 0i64;
+        let record = ProximaRecord {
+            oid: "test1".to_string(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: 1,
+            spec_version: 1,
+            tenant_id: String::new(),
+            permitted_principals: Vec::new(),
+            rls_policy_id: None,
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: None,
+            memory_type: None,
+            props,
+            refs: Vec::new(),
+            edge: None,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                values: proximadb_records::EmbeddingValues::Fp32(vec![1.0, 2.0, 3.0]),
+                dim: 3,
+                ..Default::default()
+            }],
+            sequence: None,
+            labels: LabelSet::new(),
+            ..Default::default()
         };
 
         builder.add_record(&record);

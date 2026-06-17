@@ -159,6 +159,7 @@ mod tests {
             quantization_info: None,
             engine_stats: None,
             index_path: None,
+            ..Default::default()
         }
     }
 

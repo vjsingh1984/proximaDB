@@ -42,7 +42,7 @@ pub struct ProximaDBConfig {
 
 /// Search result
 #[napi(object)]
-pub struct SearchResult {
+pub struct NodejsSearchResult {
     /// Vector ID
     pub id: String,
     /// Similarity score
@@ -53,7 +53,7 @@ pub struct SearchResult {
 
 /// Collection information
 #[napi(object)]
-pub struct CollectionInfo {
+pub struct NodejsCollectionInfo {
     /// Collection name
     pub name: String,
     /// Vector dimension
@@ -64,9 +64,12 @@ pub struct CollectionInfo {
     pub engine: String,
 }
 
+/// Backwards-compat alias for [`NodejsStorageStats`].
+pub type StorageStats = NodejsStorageStats;
+
 /// Storage statistics
 #[napi(object)]
-pub struct StorageStats {
+pub struct NodejsStorageStats {
     /// Total vectors
     pub total_vectors: i64,
     /// Total collections
@@ -179,11 +182,11 @@ impl ProximaDB {
     /// @param name - Collection name
     /// @returns Collection info or null if not found
     #[napi]
-    pub fn get_collection(&self, name: String) -> Result<Option<CollectionInfo>> {
+    pub fn get_collection(&self, name: String) -> Result<Option<NodejsCollectionInfo>> {
         self.inner
             .get_collection(&name)
             .map(|opt| {
-                opt.map(|info| CollectionInfo {
+                opt.map(|info| NodejsCollectionInfo {
                     name: info.name,
                     dimension: info.dimension as i32,
                     vector_count: info.vector_count as i64,
@@ -197,13 +200,13 @@ impl ProximaDB {
     ///
     /// @returns Array of collection info
     #[napi]
-    pub fn list_collections(&self) -> Result<Vec<CollectionInfo>> {
+    pub fn list_collections(&self) -> Result<Vec<NodejsCollectionInfo>> {
         self.inner
             .list_collections()
             .map(|collections| {
                 collections
                     .into_iter()
-                    .map(|info| CollectionInfo {
+                    .map(|info| NodejsCollectionInfo {
                         name: info.name,
                         dimension: info.dimension as i32,
                         vector_count: info.vector_count as i64,
@@ -284,7 +287,7 @@ impl ProximaDB {
         query: Vec<f64>,
         top_k: Option<i32>,
         filter: Option<String>,
-    ) -> Result<Vec<SearchResult>> {
+    ) -> Result<Vec<NodejsSearchResult>> {
         let f32_query: Vec<f32> = query.into_iter().map(|x| x as f32).collect();
         let k = top_k.unwrap_or(10) as usize;
 
@@ -293,7 +296,7 @@ impl ProximaDB {
             .map(|results| {
                 results
                     .into_iter()
-                    .map(|r| SearchResult {
+                    .map(|r| NodejsSearchResult {
                         id: r.id,
                         score: r.score as f64,
                         metadata: Some(r.metadata),
@@ -315,10 +318,10 @@ impl ProximaDB {
     ///
     /// @returns Storage statistics
     #[napi]
-    pub fn stats(&self) -> Result<StorageStats> {
+    pub fn stats(&self) -> Result<NodejsStorageStats> {
         self.inner
             .stats()
-            .map(|s| StorageStats {
+            .map(|s| NodejsStorageStats {
                 total_vectors: s.total_vectors as i64,
                 total_collections: s.total_collections as i64,
                 disk_usage_bytes: s.disk_usage_bytes as i64,

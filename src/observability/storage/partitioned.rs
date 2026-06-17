@@ -11,18 +11,22 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::Result;
+use proximadb_data_model::ProximaValue;
+use proximadb_observability::log_entry_to_proxima_record;
+use proximadb_records::ProximaTreeNode;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
-use crate::proto::proximadb_v1::sql_value::Value;
-use crate::proto::proximadb_v1::{LogEntry, SqlValue, VectorRecord};
-use crate::storage::traits::{FlushParameters, UnifiedStorageEngine};
+use crate::proto::proximadb_v1::{LogEntry, SqlValue, sql_value::Value};
+use crate::storage::traits::{FlushParameters, UnifiedStorageFormat};
 
 /// Time-partitioned storage for logs
 pub struct PartitionedStorage {
     /// Base path for storage
     #[allow(dead_code)]
     base_path: String,
+    /// Observability namespace represented by this partition set.
+    namespace: String,
     /// Partitions by timestamp (hour granularity)
     partitions: RwLock<BTreeMap<i64, Arc<Partition>>>,
     /// Partition duration in nanoseconds (1 hour default)
@@ -32,7 +36,7 @@ pub struct PartitionedStorage {
     /// Total storage bytes (estimated)
     total_bytes: AtomicU64,
     /// Optional storage engine for tier transitions
-    storage_engine: Option<Arc<dyn UnifiedStorageEngine>>,
+    storage_engine: Option<Arc<dyn UnifiedStorageFormat>>,
 }
 
 /// A single time partition
@@ -101,11 +105,17 @@ fn estimate_sql_value_size(value: &SqlValue) -> u64 {
 impl PartitionedStorage {
     /// Create a new partitioned storage
     pub fn new(base_path: &str) -> Result<Self> {
+        Self::new_for_namespace(base_path, "default")
+    }
+
+    /// Create a new partitioned storage for a namespace.
+    pub fn new_for_namespace(base_path: &str, namespace: &str) -> Result<Self> {
         // Default to hourly partitions
         let partition_duration_ns = 3600 * 1_000_000_000i64;
 
         Ok(Self {
             base_path: base_path.to_string(),
+            namespace: namespace.to_string(),
             partitions: RwLock::new(BTreeMap::new()),
             partition_duration_ns,
             entry_count: AtomicU64::new(0),
@@ -117,13 +127,15 @@ impl PartitionedStorage {
     /// Create a new partitioned storage with storage engine for tier transitions
     pub fn new_with_engine(
         base_path: &str,
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        namespace: &str,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
     ) -> Result<Self> {
         // Default to hourly partitions
         let partition_duration_ns = 3600 * 1_000_000_000i64;
 
         Ok(Self {
             base_path: base_path.to_string(),
+            namespace: namespace.to_string(),
             partitions: RwLock::new(BTreeMap::new()),
             partition_duration_ns,
             entry_count: AtomicU64::new(0),
@@ -133,7 +145,7 @@ impl PartitionedStorage {
     }
 
     /// Set the storage engine for tier transitions
-    pub fn set_storage_engine(&mut self, engine: Arc<dyn UnifiedStorageEngine>) {
+    pub fn set_storage_engine(&mut self, engine: Arc<dyn UnifiedStorageFormat>) {
         self.storage_engine = Some(engine);
     }
 
@@ -295,7 +307,7 @@ impl PartitionedStorage {
         }
 
         // Sort by timestamp descending (most recent first)
-        results.sort_by(|a, b| b.timestamp_ns.cmp(&a.timestamp_ns));
+        results.sort_by_key(|r| std::cmp::Reverse(r.timestamp_ns));
 
         if results.len() > limit {
             results.truncate(limit);
@@ -390,7 +402,7 @@ impl PartitionedStorage {
     /// Flush a partition to SST storage engine
     async fn flush_partition_to_sst(
         &self,
-        engine: &Arc<dyn UnifiedStorageEngine>,
+        engine: &Arc<dyn UnifiedStorageFormat>,
         partition: &Arc<Partition>,
         partition_key: i64,
     ) -> Result<usize> {
@@ -399,17 +411,16 @@ impl PartitionedStorage {
             return Ok(0);
         }
 
-        // Convert log entries to VectorRecords
-        let vector_records: Vec<VectorRecord> = entries
+        let vector_records: Vec<proximadb_records::ProximaRecord> = entries
             .iter()
             .enumerate()
-            .map(|(i, log)| self.log_entry_to_vector_record(log, partition_key, i))
+            .map(|(i, log)| self.log_projection_record(log, partition_key, i))
             .collect();
 
         let count = vector_records.len();
         let estimated_size: usize = vector_records
             .iter()
-            .map(|r| r.id.len() + 4 + r.metadata.len() * 100) // rough estimate
+            .map(|r| r.oid.len() + 4 + r.props.len() * 100)
             .sum();
 
         // Build flush parameters
@@ -440,7 +451,7 @@ impl PartitionedStorage {
     /// - VIPER compression for maximal space savings
     async fn convert_partition_to_cold(
         &self,
-        engine: &Arc<dyn UnifiedStorageEngine>,
+        engine: &Arc<dyn UnifiedStorageFormat>,
         partition: &Arc<Partition>,
         partition_key: i64,
     ) -> Result<usize> {
@@ -484,62 +495,20 @@ impl PartitionedStorage {
         // 2. Store in VIPER (compressed SST) for maximum efficiency
         // 3. Update partition metadata to point to cold files
 
-        // Convert to VectorRecords for storage
-        let vector_records: Vec<VectorRecord> = entries
+        let vector_records: Vec<proximadb_records::ProximaRecord> = entries
             .iter()
             .enumerate()
             .map(|(i, log)| {
-                // Create a record with compressed metadata
-                let mut metadata = std::collections::HashMap::new();
-
-                // Add cold storage marker
-                metadata.insert(
+                let mut record = self.log_projection_record(log, partition_key, i);
+                record.props.insert(
                     "_cold".to_string(),
-                    SqlValue {
-                        value: Some(Value::StringValue("true".to_string())),
-                    },
+                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
                 );
-                metadata.insert(
-                    "_partition_key".to_string(),
-                    SqlValue {
-                        value: Some(Value::StringValue(partition_key.to_string())),
-                    },
-                );
-                metadata.insert(
+                record.props.insert(
                     "_compressed".to_string(),
-                    SqlValue {
-                        value: Some(Value::StringValue("true".to_string())),
-                    },
+                    ProximaTreeNode::Value(ProximaValue::Boolean(true)),
                 );
-
-                // Add selected fields for querying
-                if let Some(source) = &log.source {
-                    metadata.insert(
-                        "source".to_string(),
-                        SqlValue {
-                            value: Some(Value::StringValue(source.clone())),
-                        },
-                    );
-                }
-                if let Some(service) = &log.service {
-                    metadata.insert(
-                        "service".to_string(),
-                        SqlValue {
-                            value: Some(Value::StringValue(service.clone())),
-                        },
-                    );
-                }
-
-                VectorRecord {
-                    id: format!("{}:{}", partition_key, i),
-                    vector: vec![], // No vector in logs
-                    metadata,
-                    timestamp: Some(log.timestamp_ns),
-                    updated_at: Some(log.timestamp_ns),
-                    expires_at: None,
-                    version: Some(0),
-                    source: Some("observability_log".to_string()),
-                }
+                record
             })
             .collect();
 
@@ -568,90 +537,19 @@ impl PartitionedStorage {
         }
     }
 
-    /// Convert a LogEntry to VectorRecord for SST storage
-    fn log_entry_to_vector_record(
+    /// Convert a LogEntry to canonical observability record plus projection hints.
+    fn log_projection_record(
         &self,
         log: &LogEntry,
         partition_key: i64,
         seq: usize,
-    ) -> VectorRecord {
-        let mut metadata = HashMap::new();
-
-        // Store log type marker
-        metadata.insert(
-            "_type".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("log".to_string())),
-            },
+    ) -> proximadb_records::ProximaRecord {
+        let mut record = log_entry_to_proxima_record(&self.namespace, log, seq);
+        record.props.insert(
+            "_partition_key".to_string(),
+            ProximaTreeNode::Value(ProximaValue::Int64(partition_key)),
         );
-
-        // Store partition key
-        metadata.insert(
-            "_partition".to_string(),
-            SqlValue {
-                value: Some(Value::Int64Value(partition_key)),
-            },
-        );
-
-        // Store severity
-        metadata.insert(
-            "severity".to_string(),
-            SqlValue {
-                value: Some(Value::Int64Value(log.severity as i64)),
-            },
-        );
-
-        // Store message
-        metadata.insert(
-            "message".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue(log.message.clone())),
-            },
-        );
-
-        // Store source if present
-        if let Some(ref source) = log.source {
-            metadata.insert(
-                "source".to_string(),
-                SqlValue {
-                    value: Some(Value::StringValue(source.clone())),
-                },
-            );
-        }
-
-        // Store service if present
-        if let Some(ref service) = log.service {
-            metadata.insert(
-                "service".to_string(),
-                SqlValue {
-                    value: Some(Value::StringValue(service.clone())),
-                },
-            );
-        }
-
-        // Store additional fields
-        for (key, value) in &log.fields {
-            // Serialize the value to string for storage
-            if let Ok(json_value) = serde_json::to_string(value) {
-                metadata.insert(
-                    format!("field_{}", key),
-                    SqlValue {
-                        value: Some(Value::StringValue(json_value)),
-                    },
-                );
-            }
-        }
-
-        VectorRecord {
-            id: format!("log_{}_{}", partition_key, seq),
-            vector: vec![0.0], // Placeholder - logs don't have vectors
-            metadata,
-            timestamp: Some(log.timestamp_ns / 1_000_000), // Convert ns to ms
-            updated_at: Some(log.timestamp_ns / 1_000_000),
-            expires_at: None,
-            version: Some(0),
-            source: log.source.clone(),
-        }
+        record
     }
 
     /// Force flush all hot partitions to SST
@@ -799,5 +697,17 @@ mod tests {
             .unwrap();
 
         assert_eq!(storage.partition_count().await, 3);
+    }
+
+    #[test]
+    fn projection_record_uses_observability_canonical_shape() {
+        let storage =
+            PartitionedStorage::new_for_namespace("/tmp/test_projection", "tenant-a").unwrap();
+        let record = storage.log_projection_record(&make_log(42, "canonical"), 0, 7);
+
+        assert_eq!(record.oid, "obs://tenant-a/log/42:7");
+        assert_eq!(record.tenant_id, "tenant-a");
+        assert!(record.labels.contains(proximadb_observability::LOG_LABEL));
+        assert!(record.props.contains_key("_partition_key"));
     }
 }

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use anyhow::Result;
-use proximadb::storage::engines::impls::sst::{SstEngine, SstConfig};
+use proximadb::storage::engines::sst::{SstEngine, SstConfig};
 use proximadb::storage::persistence::filesystem::{FilesystemFactory, FilesystemConfig};
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
 use proximadb::storage::traits::{FlushParameters, UnifiedStorageEngine};

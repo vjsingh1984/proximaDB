@@ -12,14 +12,16 @@ use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
 
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
-use crate::proto::proximadb_v1::VectorRecord;
 
 // Export ClusterManager
 pub use super::cluster_manager::ClusterManager;
 
+/// Backwards-compat alias for [`AxisClusteringConfig`].
+pub type ClusteringConfig = AxisClusteringConfig;
+
 /// Clustering configuration
 #[derive(Debug, Clone)]
-pub struct ClusteringConfig {
+pub struct AxisClusteringConfig {
     /// Algorithm to use
     pub algorithm: ClusteringAlgorithm,
     /// Minimum vectors required before clustering
@@ -36,7 +38,7 @@ pub struct ClusteringConfig {
     pub enable_incremental: bool,
 }
 
-impl Default for ClusteringConfig {
+impl Default for AxisClusteringConfig {
     fn default() -> Self {
         Self {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig::default()),
@@ -176,12 +178,12 @@ pub struct ClusteringMetrics {
 /// AXIS clustering engine
 pub struct AxisClusteringEngine {
     /// Configuration
-    config: ClusteringConfig,
+    config: AxisClusteringConfig,
     /// Current models per collection
     #[allow(dead_code)]
     models: Arc<RwLock<HashMap<String, ClusteringModel>>>,
     /// Pending vectors for incremental updates
-    pending_vectors: Arc<RwLock<HashMap<String, Vec<VectorRecord>>>>,
+    pending_vectors: Arc<RwLock<HashMap<String, Vec<Vec<f32>>>>>,
     /// Distance computation
     distance_compute: Arc<UnifiedDistanceCompute>,
     /// Statistics
@@ -239,7 +241,7 @@ pub struct ClusteringStats {
 
 impl AxisClusteringEngine {
     /// Create new clustering engine
-    pub fn new(config: ClusteringConfig) -> Self {
+    pub fn new(config: AxisClusteringConfig) -> Self {
         Self {
             config,
             models: Arc::new(RwLock::new(HashMap::new())),
@@ -253,27 +255,25 @@ impl AxisClusteringEngine {
     pub async fn train_model(
         &self,
         collection_id: &str,
-        vectors: Vec<VectorRecord>,
+        vector_data: Vec<Vec<f32>>,
     ) -> Result<ClusteringModel> {
         let start_time = std::time::Instant::now();
 
         tracing::info!(
             "🎯 Training clustering model for collection {} with {} vectors",
             collection_id,
-            vectors.len()
+            vector_data.len()
         );
+        let vector_count = vector_data.len() as u64;
 
         // Check minimum vectors requirement
-        if vectors.len() < self.config.min_vectors_for_clustering {
+        if vector_data.len() < self.config.min_vectors_for_clustering {
             return Err(anyhow::anyhow!(
                 "Not enough vectors for clustering: {} < {}",
-                vectors.len(),
+                vector_data.len(),
                 self.config.min_vectors_for_clustering
             ));
         }
-
-        // Extract vector data
-        let vector_data: Vec<Vec<f32>> = vectors.iter().map(|v| v.vector.clone()).collect();
 
         // Train based on algorithm
         let model = match &self.config.algorithm {
@@ -289,7 +289,7 @@ impl AxisClusteringEngine {
         {
             let mut stats = self.stats.write().await;
             stats.total_clustering_ops += 1;
-            stats.total_vectors_clustered += vectors.len() as u64;
+            stats.total_vectors_clustered += vector_count;
             stats.avg_clustering_time_ms = (stats.avg_clustering_time_ms
                 * (stats.total_clustering_ops - 1) as f64
                 + elapsed.as_millis() as f64)
@@ -385,11 +385,7 @@ impl AxisClusteringEngine {
     }
 
     /// Add vector for incremental update
-    pub async fn add_pending_vector(
-        &self,
-        collection_id: &str,
-        vector: VectorRecord,
-    ) -> Result<()> {
+    pub async fn add_pending_vector(&self, collection_id: &str, vector: Vec<f32>) -> Result<()> {
         let mut pending = self.pending_vectors.write().await;
         pending
             .entry(collection_id.to_string())
@@ -1018,7 +1014,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_kmeans_clustering() {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                 k: 3,
                 ..Default::default()
@@ -1031,38 +1027,7 @@ mod tests {
         let engine = AxisClusteringEngine::new(config);
 
         // Create test vectors
-        let vectors = vec![
-            VectorRecord {
-                id: "1".to_string(),
-                vector: vec![1.0, 0.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            },
-            VectorRecord {
-                id: "2".to_string(),
-                vector: vec![0.0, 1.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            },
-            VectorRecord {
-                id: "3".to_string(),
-                vector: vec![-1.0, 0.0],
-                metadata: std::collections::HashMap::new(),
-                timestamp: Some(0),
-                updated_at: Some(0),
-                expires_at: None,
-                version: Some(1),
-                source: None,
-            },
-        ];
+        let vectors = vec![vec![1.0_f32, 0.0], vec![0.0, 1.0], vec![-1.0, 0.0]];
 
         let model = engine.train_model("test", vectors).await.unwrap();
         assert_eq!(model.centroids.len(), 3);
@@ -1100,7 +1065,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cluster_manager_creation() -> Result<()> {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig::default()),
             min_vectors_for_clustering: 100,
             max_clusters: 10,
@@ -1126,7 +1091,7 @@ mod tests {
             init_method: KMeansInit::KMeansPlusPlus,
         };
 
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(kmeans_config),
             min_vectors_for_clustering: 10,
             max_clusters: 10,
@@ -1172,7 +1137,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_adaptive_cluster_count() -> Result<()> {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig::default()),
             min_vectors_for_clustering: 10,
             max_clusters: 20,
@@ -1208,7 +1173,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_empty_vector_clustering() -> Result<()> {
-        let config = ClusteringConfig::default();
+        let config = AxisClusteringConfig::default();
         let mut manager = ClusterManager::new(config).await?;
 
         let empty_vectors: Vec<Vec<f32>> = Vec::new();
@@ -1224,7 +1189,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_single_vector_clustering() -> Result<()> {
-        let config = ClusteringConfig {
+        let config = AxisClusteringConfig {
             algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                 k: 1,
                 ..Default::default()
@@ -1256,7 +1221,7 @@ mod tests {
             DistanceMetric::Cosine,
             DistanceMetric::Manhattan,
         ] {
-            let config = ClusteringConfig {
+            let config = AxisClusteringConfig {
                 algorithm: ClusteringAlgorithm::KMeans(KMeansConfig {
                     k: 3,
                     ..Default::default()

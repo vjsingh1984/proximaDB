@@ -17,7 +17,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any
 
 from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
 
@@ -73,9 +73,9 @@ class SourceLocation:
     """Source code location information"""
 
     file_path: str
-    repository: Optional[str] = None
-    branch: Optional[str] = None
-    commit_hash: Optional[str] = None
+    repository: str | None = None
+    branch: str | None = None
+    commit_hash: str | None = None
     start_line: int = 0
     start_column: int = 0
     end_line: int = 0
@@ -95,14 +95,14 @@ class CodeSymbol:
     location: SourceLocation
     source_code: str
     language: str
-    documentation: Optional[str] = None
-    signature: Optional[str] = None
-    modifiers: List[str] = field(default_factory=list)
-    scope_chain: List[str] = field(default_factory=list)
-    parameters: List[Dict[str, Any]] = field(default_factory=list)
-    return_type: Optional[str] = None
-    complexity: Optional[Dict[str, int]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    documentation: str | None = None
+    signature: str | None = None
+    modifiers: list[str] = field(default_factory=list)
+    scope_chain: list[str] = field(default_factory=list)
+    parameters: list[dict[str, Any]] = field(default_factory=list)
+    return_type: str | None = None
+    complexity: dict[str, int] | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -112,8 +112,8 @@ class CodeRelation:
     from_symbol_id: str
     to_symbol_id: str
     relation_type: CodeRelationType
-    call_site: Optional[SourceLocation] = None
-    context: Optional[str] = None
+    call_site: SourceLocation | None = None
+    context: str | None = None
     confidence: float = 1.0
 
 
@@ -123,9 +123,9 @@ class ParsedCode:
 
     file_path: str
     language: str
-    symbols: List[CodeSymbol]
-    relations: List[CodeRelation]
-    imports: List[str]
+    symbols: list[CodeSymbol]
+    relations: list[CodeRelation]
+    imports: list[str]
     content_hash: str
 
 
@@ -134,7 +134,7 @@ class CodeChunkingConfig(ChunkingConfig):
     """Extended configuration for code-aware chunking"""
 
     # Languages to parse (None = auto-detect from extension)
-    languages: Optional[List[str]] = None
+    languages: list[str] | None = None
 
     # Include private/internal symbols
     include_private: bool = True
@@ -164,7 +164,7 @@ class LanguageParser(ABC):
 
     @property
     @abstractmethod
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         """Supported file extensions"""
         pass
 
@@ -207,7 +207,7 @@ class PythonParser(LanguageParser):
         return "python"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".py", ".pyi"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -281,7 +281,7 @@ class PythonParser(LanguageParser):
             content_hash=content_hash,
         )
 
-    def _extract_imports_ts(self, node, content: str) -> List[str]:
+    def _extract_imports_ts(self, node, content: str) -> list[str]:
         """Extract import statements"""
         imports = []
         for child in node.children:
@@ -289,7 +289,7 @@ class PythonParser(LanguageParser):
                 imports.append(content[child.start_byte : child.end_byte])
         return imports
 
-    def _extract_decorators_ts(self, node, content: str) -> List[str]:
+    def _extract_decorators_ts(self, node, content: str) -> list[str]:
         """Extract decorators from a decorated_definition"""
         decorators = []
         for child in node.children:
@@ -302,9 +302,9 @@ class PythonParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        scope_chain: List[str],
-        decorators: Optional[List[str]] = None,
-    ) -> Optional[CodeSymbol]:
+        scope_chain: list[str],
+        decorators: list[str] | None = None,
+    ) -> CodeSymbol | None:
         """Extract a function/method from AST node"""
         name_node = None
         params_node = None
@@ -393,8 +393,8 @@ class PythonParser(LanguageParser):
         )
 
     def _extract_class_ts(
-        self, node, content: str, file_path: str, decorators: Optional[List[str]] = None
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+        self, node, content: str, file_path: str, decorators: list[str] | None = None
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract a class and its methods from AST node"""
         name_node = None
         bases_node = None
@@ -483,7 +483,7 @@ class PythonParser(LanguageParser):
 
         return class_symbol, method_symbols
 
-    def _extract_parameters_ts(self, node, content: str) -> List[Dict[str, Any]]:
+    def _extract_parameters_ts(self, node, content: str) -> list[dict[str, Any]]:
         """Extract parameter information from parameters node"""
         params = []
         for child in node.children:
@@ -500,7 +500,7 @@ class PythonParser(LanguageParser):
                     params.append(param)
         return params
 
-    def _parse_parameter_ts(self, node, content: str) -> Optional[Dict[str, Any]]:
+    def _parse_parameter_ts(self, node, content: str) -> dict[str, Any] | None:
         """Parse a single parameter node"""
         if node.type == "identifier":
             name = content[node.start_byte : node.end_byte]
@@ -547,7 +547,7 @@ class PythonParser(LanguageParser):
                     return {"name": f"**{name}", "is_variadic": True}
         return None
 
-    def _extract_docstring_ts(self, body_node, content: str) -> Optional[str]:
+    def _extract_docstring_ts(self, body_node, content: str) -> str | None:
         """Extract docstring from function/class body"""
         if not body_node or not body_node.children:
             return None
@@ -566,15 +566,15 @@ class PythonParser(LanguageParser):
         return None
 
     def _extract_relations_ts(
-        self, node, content: str, symbols: List[CodeSymbol]
-    ) -> List[CodeRelation]:
+        self, node, content: str, symbols: list[CodeSymbol]
+    ) -> list[CodeRelation]:
         """Extract call relationships from AST"""
         relations = []
         symbol_map = {s.simple_name: s for s in symbols}
         symbol_id_map = {s.id: s for s in symbols}
 
         # Find all call expressions
-        def find_calls(n, containing_symbol: Optional[CodeSymbol] = None):
+        def find_calls(n, containing_symbol: CodeSymbol | None = None):
             # Update containing symbol based on position
             for sym in symbols:
                 if (
@@ -612,7 +612,7 @@ class PythonParser(LanguageParser):
         find_calls(node)
         return relations
 
-    def _get_callee_name_ts(self, node, content: str) -> Optional[str]:
+    def _get_callee_name_ts(self, node, content: str) -> str | None:
         """Get the name of the called function"""
         for child in node.children:
             if child.type == "identifier":
@@ -624,7 +624,7 @@ class PythonParser(LanguageParser):
                         return content[attr_child.start_byte : attr_child.end_byte]
         return None
 
-    def _calculate_complexity_ts(self, node, content: str) -> Dict[str, int]:
+    def _calculate_complexity_ts(self, node, content: str) -> dict[str, int]:
         """Calculate complexity metrics for a function"""
         complexity = {
             "cyclomatic": 1,  # Base complexity
@@ -671,7 +671,7 @@ class PythonParser(LanguageParser):
         return complexity
 
     def _build_signature(
-        self, name: str, params: List[Dict], return_type: Optional[str]
+        self, name: str, params: list[dict], return_type: str | None
     ) -> str:
         """Build function signature string"""
         param_strs = []
@@ -830,7 +830,7 @@ class PythonParser(LanguageParser):
         )
 
     def _find_block_end_regex(
-        self, lines: List[str], start: int, base_indent: int
+        self, lines: list[str], start: int, base_indent: int
     ) -> int:
         """Find the end of a block based on indentation"""
         for i in range(start + 1, len(lines)):
@@ -842,7 +842,7 @@ class PythonParser(LanguageParser):
                 return i - 1
         return len(lines) - 1
 
-    def _parse_params_regex(self, params_str: str) -> List[Dict[str, Any]]:
+    def _parse_params_regex(self, params_str: str) -> list[dict[str, Any]]:
         """Parse parameters from string"""
         params = []
         if not params_str.strip():
@@ -904,7 +904,7 @@ class JavaScriptParser(LanguageParser):
         return "typescript" if self._typescript else "javascript"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         if self._typescript:
             return [".ts", ".tsx"]
         return [".js", ".jsx", ".mjs", ".cjs"]
@@ -949,7 +949,7 @@ class RustParser(LanguageParser):
         return "rust"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".rs"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -986,8 +986,8 @@ class RustParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        scope_chain: List[str],
-        symbols: List[CodeSymbol],
+        scope_chain: list[str],
+        symbols: list[CodeSymbol],
     ):
         """Extract Rust items recursively"""
         for child in node.children:
@@ -1023,8 +1023,8 @@ class RustParser(LanguageParser):
                     )
 
     def _extract_rust_function(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Optional[CodeSymbol]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> CodeSymbol | None:
         """Extract Rust function/method"""
         name = self._get_rust_name(node, content)
         if not name:
@@ -1093,7 +1093,7 @@ class RustParser(LanguageParser):
 
     def _extract_rust_struct(
         self, node, content: str, file_path: str
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract Rust struct and its fields"""
         name = self._get_rust_name(node, content)
         if not name:
@@ -1141,7 +1141,7 @@ class RustParser(LanguageParser):
 
     def _extract_rust_field(
         self, node, content: str, file_path: str, parent_name: str
-    ) -> Optional[CodeSymbol]:
+    ) -> CodeSymbol | None:
         """Extract a struct field"""
         field_name = None
         field_type = None
@@ -1175,7 +1175,7 @@ class RustParser(LanguageParser):
 
     def _extract_rust_enum(
         self, node, content: str, file_path: str
-    ) -> Optional[CodeSymbol]:
+    ) -> CodeSymbol | None:
         """Extract Rust enum"""
         name = self._get_rust_name(node, content)
         if not name:
@@ -1203,7 +1203,7 @@ class RustParser(LanguageParser):
 
     def _extract_rust_trait(
         self, node, content: str, file_path: str
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract Rust trait and its methods"""
         name = self._get_rust_name(node, content)
         if not name:
@@ -1246,7 +1246,7 @@ class RustParser(LanguageParser):
         return trait_symbol, methods
 
     def _extract_rust_impl(
-        self, node, content: str, file_path: str, symbols: List[CodeSymbol]
+        self, node, content: str, file_path: str, symbols: list[CodeSymbol]
     ):
         """Extract impl block methods"""
         # Get the type being implemented
@@ -1277,7 +1277,7 @@ class RustParser(LanguageParser):
                         if method:
                             symbols.append(method)
 
-    def _extract_rust_params(self, node, content: str) -> List[Dict[str, Any]]:
+    def _extract_rust_params(self, node, content: str) -> list[dict[str, Any]]:
         """Extract function parameters"""
         params = []
         for child in node.children:
@@ -1299,13 +1299,13 @@ class RustParser(LanguageParser):
         return params
 
     def _extract_rust_relations(
-        self, node, content: str, symbols: List[CodeSymbol]
-    ) -> List[CodeRelation]:
+        self, node, content: str, symbols: list[CodeSymbol]
+    ) -> list[CodeRelation]:
         """Extract call relationships"""
         relations = []
         symbol_map = {s.simple_name: s for s in symbols}
 
-        def find_calls(n, containing_symbol: Optional[CodeSymbol] = None):
+        def find_calls(n, containing_symbol: CodeSymbol | None = None):
             for sym in symbols:
                 if (
                     sym.location.byte_offset <= n.start_byte
@@ -1346,7 +1346,7 @@ class RustParser(LanguageParser):
         find_calls(node)
         return relations
 
-    def _get_rust_name(self, node, content: str) -> Optional[str]:
+    def _get_rust_name(self, node, content: str) -> str | None:
         """Get identifier name from node"""
         for child in node.children:
             if child.type in ("identifier", "type_identifier"):
@@ -1354,7 +1354,7 @@ class RustParser(LanguageParser):
         return None
 
     def _build_rust_signature(
-        self, name: str, params: List[Dict], return_type: Optional[str]
+        self, name: str, params: list[dict], return_type: str | None
     ) -> str:
         """Build Rust function signature"""
         param_strs = [f"{p['name']}: {p.get('type', '?')}" for p in params]
@@ -1438,7 +1438,7 @@ class GoParser(LanguageParser):
         return "go"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".go"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -1482,7 +1482,7 @@ class GoParser(LanguageParser):
 
     def _extract_go_function(
         self, node, content: str, file_path: str
-    ) -> Optional[CodeSymbol]:
+    ) -> CodeSymbol | None:
         """Extract Go function"""
         name = None
         params = []
@@ -1523,7 +1523,7 @@ class GoParser(LanguageParser):
 
     def _extract_go_method(
         self, node, content: str, file_path: str
-    ) -> Optional[CodeSymbol]:
+    ) -> CodeSymbol | None:
         """Extract Go method (function with receiver)"""
         name = None
         receiver_type = None
@@ -1570,7 +1570,7 @@ class GoParser(LanguageParser):
             parameters=params,
         )
 
-    def _extract_go_type(self, node, content: str, file_path: str) -> List[CodeSymbol]:
+    def _extract_go_type(self, node, content: str, file_path: str) -> list[CodeSymbol]:
         """Extract Go type declarations (struct, interface)"""
         symbols = []
 
@@ -1609,7 +1609,7 @@ class GoParser(LanguageParser):
 
         return symbols
 
-    def _extract_go_params(self, node, content: str) -> List[Dict[str, Any]]:
+    def _extract_go_params(self, node, content: str) -> list[dict[str, Any]]:
         """Extract function parameters"""
         params = []
         for child in node.children:
@@ -1697,7 +1697,7 @@ class JavaParser(LanguageParser):
         return "java"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".java"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -1733,8 +1733,8 @@ class JavaParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        scope_chain: List[str],
-        symbols: List[CodeSymbol],
+        scope_chain: list[str],
+        symbols: list[CodeSymbol],
     ):
         """Extract Java declarations recursively"""
         for child in node.children:
@@ -1774,8 +1774,8 @@ class JavaParser(LanguageParser):
                 )
 
     def _extract_java_class(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract Java class"""
         name = None
         modifiers = []
@@ -1836,8 +1836,8 @@ class JavaParser(LanguageParser):
         return class_symbol, methods
 
     def _extract_java_interface(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract Java interface"""
         name = None
         modifiers = []
@@ -1882,8 +1882,8 @@ class JavaParser(LanguageParser):
         return iface_symbol, methods
 
     def _extract_java_enum(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Optional[CodeSymbol]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> CodeSymbol | None:
         """Extract Java enum"""
         name = None
         for child in node.children:
@@ -1915,8 +1915,8 @@ class JavaParser(LanguageParser):
         )
 
     def _extract_java_method(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Optional[CodeSymbol]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> CodeSymbol | None:
         """Extract Java method"""
         name = None
         modifiers = []
@@ -1968,8 +1968,8 @@ class JavaParser(LanguageParser):
         )
 
     def _extract_java_constructor(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Optional[CodeSymbol]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> CodeSymbol | None:
         """Extract Java constructor"""
         name = None
         modifiers = []
@@ -2009,7 +2009,7 @@ class JavaParser(LanguageParser):
             parameters=params,
         )
 
-    def _extract_java_params(self, node, content: str) -> List[Dict[str, Any]]:
+    def _extract_java_params(self, node, content: str) -> list[dict[str, Any]]:
         """Extract method parameters"""
         params = []
         for child in node.children:
@@ -2110,7 +2110,7 @@ class CppParser(LanguageParser):
         return "c" if self._c_mode else "cpp"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         if self._c_mode:
             return [".c", ".h"]
         return [".cpp", ".cc", ".cxx", ".hpp", ".hxx", ".h"]
@@ -2148,8 +2148,8 @@ class CppParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        scope_chain: List[str],
-        symbols: List[CodeSymbol],
+        scope_chain: list[str],
+        symbols: list[CodeSymbol],
     ):
         """Extract C/C++ items recursively"""
         for child in node.children:
@@ -2186,8 +2186,8 @@ class CppParser(LanguageParser):
                 self._extract_cpp_items(child, content, file_path, scope_chain, symbols)
 
     def _extract_cpp_function(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Optional[CodeSymbol]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> CodeSymbol | None:
         """Extract C/C++ function"""
         name = None
         return_type = None
@@ -2234,8 +2234,8 @@ class CppParser(LanguageParser):
         )
 
     def _extract_cpp_class(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract C++ class"""
         name = self._get_cpp_name(node, content)
         if not name:
@@ -2270,8 +2270,8 @@ class CppParser(LanguageParser):
         return class_symbol, members
 
     def _extract_cpp_struct(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract C/C++ struct"""
         name = self._get_cpp_name(node, content)
         if not name:
@@ -2302,7 +2302,7 @@ class CppParser(LanguageParser):
 
     def _extract_cpp_enum(
         self, node, content: str, file_path: str
-    ) -> Optional[CodeSymbol]:
+    ) -> CodeSymbol | None:
         """Extract C/C++ enum"""
         name = self._get_cpp_name(node, content)
         if not name:
@@ -2327,7 +2327,7 @@ class CppParser(LanguageParser):
             language=self.language,
         )
 
-    def _extract_cpp_params(self, node, content: str) -> List[Dict[str, Any]]:
+    def _extract_cpp_params(self, node, content: str) -> list[dict[str, Any]]:
         """Extract function parameters"""
         params = []
         for child in node.children:
@@ -2342,7 +2342,7 @@ class CppParser(LanguageParser):
                     params.append(param)
         return params
 
-    def _get_cpp_name(self, node, content: str) -> Optional[str]:
+    def _get_cpp_name(self, node, content: str) -> str | None:
         """Get name from node"""
         for child in node.children:
             if child.type in ("identifier", "type_identifier"):
@@ -2395,7 +2395,7 @@ class RubyParser(LanguageParser):
         return "ruby"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".rb", ".rake", ".gemspec"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -2427,9 +2427,9 @@ class RubyParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        scope_chain: List[str],
-        symbols: List[CodeSymbol],
-        imports: List[str],
+        scope_chain: list[str],
+        symbols: list[CodeSymbol],
+        imports: list[str],
     ):
         """Extract Ruby items recursively"""
         for child in node.children:
@@ -2472,9 +2472,9 @@ class RubyParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        scope_chain: List[str],
+        scope_chain: list[str],
         is_class_method: bool = False,
-    ) -> Optional[CodeSymbol]:
+    ) -> CodeSymbol | None:
         """Extract Ruby method"""
         name = None
         params = []
@@ -2517,8 +2517,8 @@ class RubyParser(LanguageParser):
         )
 
     def _extract_ruby_class(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract Ruby class"""
         name = None
         superclass = None
@@ -2562,7 +2562,7 @@ class RubyParser(LanguageParser):
 
         methods = []
         new_scope = scope_chain + [name]
-        imports_placeholder: List[str] = []
+        imports_placeholder: list[str] = []
         self._extract_ruby_items(
             node, content, file_path, new_scope, methods, imports_placeholder
         )
@@ -2570,8 +2570,8 @@ class RubyParser(LanguageParser):
         return class_symbol, methods
 
     def _extract_ruby_module(
-        self, node, content: str, file_path: str, scope_chain: List[str]
-    ) -> Tuple[Optional[CodeSymbol], List[CodeSymbol]]:
+        self, node, content: str, file_path: str, scope_chain: list[str]
+    ) -> tuple[CodeSymbol | None, list[CodeSymbol]]:
         """Extract Ruby module"""
         name = None
 
@@ -2605,14 +2605,14 @@ class RubyParser(LanguageParser):
 
         contents = []
         new_scope = scope_chain + [name]
-        imports_placeholder: List[str] = []
+        imports_placeholder: list[str] = []
         self._extract_ruby_items(
             node, content, file_path, new_scope, contents, imports_placeholder
         )
 
         return module_symbol, contents
 
-    def _extract_ruby_params(self, node, content: str) -> List[Dict[str, Any]]:
+    def _extract_ruby_params(self, node, content: str) -> list[dict[str, Any]]:
         """Extract method parameters"""
         params = []
         for child in node.children:
@@ -2696,7 +2696,7 @@ class CSharpParser(LanguageParser):
         return "csharp"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".cs"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -2732,7 +2732,7 @@ class PhpParser(LanguageParser):
         return "php"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".php", ".phtml"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -2767,7 +2767,7 @@ class SwiftParser(LanguageParser):
         return "swift"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".swift"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -2802,7 +2802,7 @@ class KotlinParser(LanguageParser):
         return "kotlin"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".kt", ".kts"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -2837,7 +2837,7 @@ class ScalaParser(LanguageParser):
         return "scala"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".scala", ".sc"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -2872,7 +2872,7 @@ class BashParser(LanguageParser):
         return "bash"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".sh", ".bash", ".zsh", ".ksh"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -2906,7 +2906,7 @@ class BashParser(LanguageParser):
         )
 
     def _extract_bash_items(
-        self, node, content: str, file_path: str, symbols: List[CodeSymbol]
+        self, node, content: str, file_path: str, symbols: list[CodeSymbol]
     ):
         """Extract bash functions"""
         for child in node.children:
@@ -3009,7 +3009,7 @@ class SqlParser(LanguageParser):
         return "sql"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".sql", ".psql", ".mysql"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3034,7 +3034,7 @@ class SqlParser(LanguageParser):
         )
 
     def _extract_sql_items(
-        self, node, content: str, file_path: str, symbols: List[CodeSymbol]
+        self, node, content: str, file_path: str, symbols: list[CodeSymbol]
     ):
         """Extract SQL objects"""
         for child in node.children:
@@ -3106,7 +3106,7 @@ class SqlParser(LanguageParser):
             if hasattr(child, "children"):
                 self._extract_sql_items(child, content, file_path, symbols)
 
-    def _get_sql_name(self, node, content: str) -> Optional[str]:
+    def _get_sql_name(self, node, content: str) -> str | None:
         """Get object name from SQL node"""
         for child in node.children:
             if child.type in ("identifier", "object_reference"):
@@ -3185,7 +3185,7 @@ class YamlParser(LanguageParser):
         return "yaml"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".yaml", ".yml"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3214,8 +3214,8 @@ class YamlParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        path: List[str],
-        symbols: List[CodeSymbol],
+        path: list[str],
+        symbols: list[CodeSymbol],
     ):
         """Extract YAML keys as symbols"""
         for child in node.children:
@@ -3326,7 +3326,7 @@ class JsonParser(LanguageParser):
         return "json"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".json", ".jsonc", ".json5"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3355,8 +3355,8 @@ class JsonParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        path: List[str],
-        symbols: List[CodeSymbol],
+        path: list[str],
+        symbols: list[CodeSymbol],
     ):
         """Extract JSON keys as symbols"""
         for child in node.children:
@@ -3454,7 +3454,7 @@ class XmlParser(LanguageParser):
         return "xml"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".xml", ".xhtml", ".xsd", ".xsl", ".pom", ".csproj", ".fsproj"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3520,7 +3520,7 @@ class PerlParser(LanguageParser):
         return "perl"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".pl", ".pm", ".t"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3549,8 +3549,8 @@ class PerlParser(LanguageParser):
         node,
         content: str,
         file_path: str,
-        symbols: List[CodeSymbol],
-        imports: List[str],
+        symbols: list[CodeSymbol],
+        imports: list[str],
     ):
         """Extract Perl subroutines and packages"""
         for child in node.children:
@@ -3695,7 +3695,7 @@ class LuaParser(LanguageParser):
         return "lua"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".lua"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3731,7 +3731,7 @@ class HaskellParser(LanguageParser):
         return "haskell"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".hs", ".lhs"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3766,7 +3766,7 @@ class ElixirParser(LanguageParser):
         return "elixir"
 
     @property
-    def file_extensions(self) -> List[str]:
+    def file_extensions(self) -> list[str]:
         return [".ex", ".exs"]
 
     def parse(self, content: str, file_path: str) -> ParsedCode:
@@ -3786,7 +3786,7 @@ class ElixirParser(LanguageParser):
 # ============================================================================
 
 # Registry of available parsers - easily extensible
-LANGUAGE_PARSERS: Dict[str, type] = {
+LANGUAGE_PARSERS: dict[str, type] = {
     # Primary languages with full implementation
     "python": PythonParser,
     "rust": RustParser,
@@ -3821,7 +3821,7 @@ LANGUAGE_PARSERS: Dict[str, type] = {
 }
 
 # Extension to language mapping for auto-detection
-EXTENSION_TO_LANGUAGE: Dict[str, str] = {
+EXTENSION_TO_LANGUAGE: dict[str, str] = {
     # Python
     ".py": "python",
     ".pyi": "python",
@@ -3933,12 +3933,12 @@ def register_file_extension(extension: str, language: str) -> None:
     EXTENSION_TO_LANGUAGE[extension.lower()] = language
 
 
-def get_supported_languages() -> List[str]:
+def get_supported_languages() -> list[str]:
     """Get list of supported languages"""
     return list(LANGUAGE_PARSERS.keys())
 
 
-def get_supported_extensions() -> List[str]:
+def get_supported_extensions() -> list[str]:
     """Get list of supported file extensions"""
     return list(EXTENSION_TO_LANGUAGE.keys())
 
@@ -3953,9 +3953,9 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
     - Preserves semantic context
     """
 
-    def __init__(self, config: Optional[CodeChunkingConfig] = None):
+    def __init__(self, config: CodeChunkingConfig | None = None):
         self.config = config or CodeChunkingConfig()
-        self._parsers: Dict[str, LanguageParser] = {}
+        self._parsers: dict[str, LanguageParser] = {}
         self._init_parsers()
 
     def _init_parsers(self):
@@ -3975,8 +3975,8 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
                     logging.debug(f"Skipping parser for {lang}: {e}")
 
     def chunk(
-        self, text: str, source_id: str, metadata: Optional[Dict[str, Any]] = None
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
         """
         Chunk code into semantic units.
 
@@ -4047,14 +4047,14 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
 
         return chunks
 
-    def _detect_language(self, file_path: str) -> Optional[str]:
+    def _detect_language(self, file_path: str) -> str | None:
         """Detect language from file extension using global registry"""
         ext = os.path.splitext(file_path)[1].lower()
         return EXTENSION_TO_LANGUAGE.get(ext)
 
     def _fallback_chunk(
-        self, text: str, source_id: str, metadata: Dict[str, Any]
-    ) -> List[TextChunk]:
+        self, text: str, source_id: str, metadata: dict[str, Any]
+    ) -> list[TextChunk]:
         """Fallback to simple text chunking when parser not available"""
         from .semantic import SemanticStrategy
 
@@ -4074,7 +4074,7 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
 
 # Convenience function
 def create_code_chunker(
-    languages: Optional[List[str]] = None, **kwargs
+    languages: list[str] | None = None, **kwargs
 ) -> CodeChunkingStrategy:
     """
     Create a code-aware chunker.

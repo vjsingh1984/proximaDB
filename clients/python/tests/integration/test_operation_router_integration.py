@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 import pytest
 
@@ -18,12 +18,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.base_test import BaseProximaDBTest
 from utils.server_utils import ensure_server_running
 
-from proximadb_sdk.config import ClientConfig, Protocol
+from proximadb_sdk.config import Protocol
 from proximadb_sdk.intelligent_router import (
     IntelligentRouter,
     OperationType,
     ProtocolHealth,
-    ProtocolMetrics,
     RoutingConfig,
     RoutingStrategy,
 )

@@ -71,6 +71,7 @@ export {
 
 // Type-only exports (interfaces and types)
 export type {
+  ProximaRecord,
   VectorRecord,
   SearchResult,
   CollectionConfig,
@@ -96,6 +97,16 @@ export type {
   OperationMetrics,
   SearchResultBatch,
   SearchResultIterator,
+  ProbeResponse,
+  ColumnDefinition,
+  SchemaDefinition,
+  SchemaResponse,
+  UpdateSchemaRequest,
+  UpdateSchemaResponse,
+  QueryLanguage,
+  QueryRequest,
+  ExplainQueryRequest,
+  QueryResponse,
 } from "./types";
 
 // ============================================================================

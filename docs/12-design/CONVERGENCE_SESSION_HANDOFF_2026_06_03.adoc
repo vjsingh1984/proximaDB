@@ -1,0 +1,341 @@
+= Convergence Session Handoff — TD-106 / TD-109 / TD-104
+:toc: left
+:toclevels: 2
+Date: 2026-06-03
+Branch: proximadb-embedding (HOT — interleaved with other agents)
+
+[NOTE]
+====
+Resume handoff after a long convergence session. TD-106 (seam S3) and TD-109 are
+CLOSED; TD-104 advanced to "all 4 protocols off the concrete root handler"
+(S1+S2+S3) plus S5 (REST router-build off ROOT fields) and item 2 (ports=None
+fallback removed, 2a+2b). The remaining work is item 3 (full ROOT deletion, plan
+in §3bis). This doc is the source of truth for what shipped, what needs a
+smoke-test, and that remaining ROOT-deletion work. Companions:
+`TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc` (full TD-104 design) and
+`TD106_DOCUMENT_CANONICAL_MIGRATION_HANDOFF_2026_06_03.adoc` (TD-106).
+
+**REPRIORITIZED 2026-06-04:** the data-warehouse course correction
+(`DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc`) makes the
+relational/pgwire/DataFusion warehouse the primary wedge. TD-104 ROOT deletion is
+vector-era monolith cleanup and is now **SECONDARY** — off the warehouse critical
+path (pgwire never used the monolith). Execute item 3 when warehouse phases (P0–P5
+in that doc) permit; it blocks nothing there.
+====
+
+== 0. Resume prompt (paste into the new session)
+
+[source,text]
+----
+Continue convergence on ProximaDB, branch proximadb-embedding (HOT — commit each
+slice individually with `git commit -o <explicit files>`; the linter reformats
+unstaged files; parallel agents commit concurrently; verify with `git show --stat`).
+FIRST READ: docs/12-design/CONVERGENCE_SESSION_HANDOFF_2026_06_03.adoc and
+docs/12-design/TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc, plus memory
+project_td106_sqlvalue_migration_2026_06_03.md and
+project_td104_handler_convergence_plan_2026_06_03.md.
+
+DONE & VERIFIED: TD-106 (document compute fully ProximaValue-native,
+document:SqlObject deleted), TD-109 (json->proxima converters converged), TD-104
+S1/S2/S3 (REST, gRPC, pgwire, Arrow Flight all off the CONCRETE root
+UnifiedHandlers). ALL THREE boot-wiring paths runtime-verified on a real server
+(local FS): REST (multi-port + gRPC-disabled round-trip), gRPC (create/list/insert/
+search), Arrow Flight (DoPut/ListFlights/DoGet-search-executes). 3 real bugs fixed
+that cargo test --lib could NOT catch: ProximaTree feature-gate build break
+(3c944044c), arrow StructArray 'key' panic (69029d4ee), dead api.enable_grpc
+toggle (56740fee8). The original task list is COMPLETE; below is the larger
+ROOT-deletion arc that emerged from TD-104.
+
+CONFIG/SMOKE-TEST CRIB: server bin `cargo build -p proximadb-server` ->
+target/debug/proximadb-server --config <toml>; unified mode (api.unified_mode=true)
+multiplexes REST/gRPC/Flight on 5678; multi-port = REST 5678 / gRPC 5679 / Arrow
+5680. gRPC on/off = `[api] enable_grpc` (NOT [api.protocols.grpc].enabled). Clients:
+grpcurl -plaintext (reflection on), pyarrow.flight (DoGet ticket = proto
+VectorSearchRequest JSON {collection_id,queries:[{vector:[..]}],top_k}; DoPut
+descriptor = for_command(json{collection_id,operation,write_mode,trigger_compaction})).
+
+NEXT, in priority order:
+1. TD-104 S5 — build-time field-extraction injection: ~9 REST router-build sites
+   read state.request_handlers.{vector_operations_service,document_service,
+   event_log,observability_service} (rest/v1/handlers.rs:1207-1521) +
+   request_handlers.graph_execution_service (rest/server.rs:312). Inject these
+   services (all in SharedServices) into AppState at build so the REST router-build
+   no longer reads ROOT's concrete fields. Boot wiring; same-instance swaps.
+2. Remove the rest/v1/handlers.rs:1337 ports=None ROOT fallback once the
+   legacy/cluster constructors (with_security_and_config) also wire api_handlers.
+3. ROOT deletion (large): re-home UnifiedHandlers' ~30 methods' logic onto the
+   concrete services as port impls; make Arrow's ports runtime-backed (impl
+   RecordOpsPort on a runtime-accessible target + inject vector/collection
+   services at boot instead of extracting from the passed UnifiedHandlers in
+   ProximaFlightService::new); then delete src/api_handlers/request_handlers.rs
+   UnifiedHandlers.
+4. (Foreign, optional) Fix codec::search_results_to_batch: it builds the vector
+   column as FixedSizeList(dim) even when search results carry no vectors ->
+   RecordBatch::try_new fails, breaking Flight DoGet search RESPONSES. Build the
+   vector column null/safe when absent. Also greens 2 of the 3 remaining arrow_ipc
+   test failures (other is onnx-gated). Out of TD-104 routing scope.
+
+Reuse-first; cite the canonical surface or an ADR for any new struct/port. Verify
+each slice: cargo check --lib + targeted cargo test --lib + BUILD THE BINARY
+(cargo build -p proximadb-server) — cargo check --lib uses default features and
+skips #[cfg(test)], so it hides feature-gated + test-only breaks. The crate DENIES
+unused imports (an unused import => "could not compile"). For boot-wiring slices,
+smoke-test on a running server (the crib above).
+----
+
+== 1. Shipped this session (all committed, compile-verified)
+
+=== TD-106 (seam S3) — CLOSED
+Document modality compute is 100% `ProximaValue`/`ProximaTree`-native;
+`DocumentRecord.document: SqlObject` deleted; `props: ProximaTree` is the sole
+in-memory body. Commits: `58a4f4ac4` (S5 aggregation), `32d4436b3` (S6 dual-carry),
+`39a68714e` (sync-fix), `f8f2e5e65` (S7a filter), `dfed61722` (S7b index+sort),
+`a10695861` (S7c fulltext), `3ed3fe14b` (S7d update-mutation), `47d1186b4`
+(S7e delete field), `2e5595a8f` (dead JsonPath engine removed), `13518b14f`
+(index-value minor), `4be1f7958` (drop unwired AggregationExpression). Residual
+`SqlObject` = edges only (proto wire, persistence `_document`, `$lookup` join,
+AggregateResult, condition operands).
+
+=== TD-109 — DONE
+`aff26afca`: the 3 scattered `json->ProximaValue` copies (rest/v2/query.rs,
+arrow_ipc/codec.rs, rest/websocket.rs) converged onto
+`proximadb_records::conversions::json_to_proxima` (websocket gained correct
+Array/Map/Null — was a stringify bug). Deferred (optional): relocate
+`proxima_value_to_json`/`proxima_tree_to_json_map` into `proximadb-records`.
+
+=== TD-104 (seam S1) — S1+S2+S3 SHIPPED: all 4 protocols off the concrete root handler
+* **S1** `f141dcc5d` — REST: `RestServerPorts.api_handlers` unconditional
+  (doc/graph/obs ports → `Option`); multi-port REST wires the runtime handler even
+  with gRPC disabled.
+* **S2** `7e18a483b` — gRPC: api_port switched from `services.request_handlers`
+  (ROOT) to `services.api_handlers` (RUNTIME) at all 3 boot sites; gRPC v1 only
+  ever used the 7 `ApiHandlersPort` methods.
+* **pgwire** — already decomposed (never used the monolith).
+* **S3a** `f10c7cbbe` — `RecordOpsPort` (insert/upsert/delete over
+  `Vec<ProximaRecord>`) + relocated `BatchOperationResult`/`BatchOperationMetrics`
+  to `proximadb-runtime` (root `src/services/operations/batch_result.rs` is a
+  re-export shim; 8 consumers unchanged); added `proximadb-records` dep to runtime;
+  impl `RecordOpsPort for UnifiedHandlers` (delegates to `handle_record_*`).
+* **S3b** `20e41ad95` — `ProximaFlightService` holds `Arc<dyn ApiHandlersPort>` +
+  `Arc<dyn RecordOpsPort>` + the vector-ops/collection services directly (not
+  `Arc<UnifiedHandlers>`); `new()` is the boot adapter (extracts/casts from the
+  passed `UnifiedHandlers`), so `ArrowFlightServer`/`multi_server` are unchanged.
+  Verified: 131 Arrow tests pass unchanged (5 failures pre-existing onnx/StructArray).
+
+== 2. Smoke-tests — gRPC + Arrow Flight PASSED (2026-06-04, unified mode, local FS)
+
+Ran the built `proximadb-server` (unified mode, port 5678 multiplexing REST/gRPC/Flight)
+against `/tmp/proximadb` (no S3/MinIO). Also caught + fixed a real build break first:
+S7 used `ProximaTree` unconditionally but its import was `canonical-document-store`-gated
+— the server's feature set (that flag off) failed to compile until the import was made
+unconditional (`3c944044c`). `cargo check --lib` (default features) had hidden it.
+
+* **gRPC (S2) — PASS.** `grpcurl` + reflection: `CollectionService.ListCollections`
+  (`{}`), `CreateCollection` (id returned), `VectorService.VectorBatch` insert (2
+  records, success), `VectorService.VectorSearch` (2 results, v1 score 1.0 exact / v2
+  0.92). Routed gRPC → runtime `api_handlers` → `CollectionPort`/`VectorOpsPort`.
+* **Arrow Flight (S3) — PASS.** Raw `pyarrow.flight` to `grpc://localhost:5678`:
+  **DoPut** insert OK (2 records → `record_port.insert_record_batch`); **ListFlights**
+  OK (count=0, correct — no flushed `.arrow` files; reached `collection_service`);
+  **DoGet** search executed and `✅ WAL search completed: 2 results` in the server log
+  (routed via `api_port.handle_vector_search_v1`). NOTE: the DoGet *response* then hit
+  a **pre-existing, foreign** panic in the Arrow result encoder
+  (`arrow-array-57.3.1 struct_array.rs:91: "Found unmasked nulls for non-nullable
+  StructArray field 'key'"`) — the SAME bug as the 5 pre-existing `arrow_ipc` test
+  failures (verified foreign earlier via stash-on-HEAD). It crashes the Flight
+  search-response encoding (metadata struct), NOT the S3-changed routing/search.
+
+=== Arrow Flight search-response encoding (foreign, out of TD-104 routing scope)
+A chain of pre-existing bugs in the Flight DoGet *response* encoder (not the
+S3-changed routing — the search executes; the log shows "WAL search completed: 2
+results"):
+* **FIXED `69029d4ee`** — metadata `StructArray` `key` field was non-nullable but
+  encoders push `None` keys → arrow-array 57.3.1 panic ("unmasked nulls for
+  non-nullable StructArray field 'key'"). Made `key` nullable at all 3 sites
+  (schema + 2 builders); greened `arrow_ipc` codec tests (5 failures → 3) and
+  stopped the Flight DoGet crash.
+* **FIXED `a99f707e7`** — `codec::search_results_to_batch` built the `vector`
+  column as a `FixedSizeList(dim)` unconditionally, but search results carry no
+  vectors unless `include_fields.vector=true`, so it got 0 floats vs `dim×N`
+  expected → `RecordBatch::try_new` failed ("Failed to create RecordBatch from
+  search results"). Fix: derive a search-specific schema with a nullable `vector`
+  field (the shared write schema stays non-nullable) and emit per-row validity —
+  a row with no/dimension-mismatched vector becomes a NULL list while still
+  reserving `dim` backing slots so the child buffer stays `len×dim`. Present
+  vectors preserved. 2 regression tests added (no-vector + mixed). NOTE: this had
+  no failing unit test (the bug only fires at runtime on the Flight DoGet response
+  — the current 3 `arrow_ipc` lib failures are foreign: 2 `rank_features_export`
+  declaration-order + 1 onnx-off embedding). Remaining wrinkle (separate): the
+  proto `VectorSearchRequest` ticket is parsed by strict prost-serde —
+  `include_fields` JSON shape is finicky; the no-`include_fields` ticket parses
+  fine.
+
+* **REST (S1) — PASS (2026-06-04).** Verified in the exact target scenario:
+  `unified_mode=false` (multi-port) + `enable_grpc=false`. To get there I first had
+  to fix a dead config toggle (`56740fee8`): `server_builder::build()` never wired
+  `api.enable_grpc` into the gRPC builder, so gRPC always started and the
+  gRPC-disabled mode was unreachable. With the fix, gRPC no longer binds (5679
+  refused) and the REST round-trip — `GET /api/v1/collections`, `POST
+  /api/v2/collections`, `POST /api/v1/vectors/batch` (2 inserted), `POST
+  /api/v1/search` (v1 score 1.0) — all succeed via the runtime port handler,
+  exactly the path that pre-S1 fell back to the root inherent handler.
+
+All three S1/S2/S3 boot-wiring paths are now runtime-verified. (Config knob: gRPC
+is enabled/disabled via `[api] enable_grpc`, NOT `[api.protocols.grpc] enabled`,
+which is unused for the multi-server toggle.)
+
+== 3. What still ties to ROOT (`src/api_handlers/request_handlers.rs` UnifiedHandlers)
+. **S5 build-time field extraction — DONE `dc751efca`.** The ~13 router-build sites
+  + 2 request-time handlers (`graph.rs` RAG retriever, `v2/collections.rs` recluster)
+  that read `state.request_handlers.{vector_operations_service,document_service,
+  observability_service,event_log}` now read `state.<service>`. Added the 4 as
+  `AppState` fields (mirroring `graph_execution_service`), extracted ONCE in
+  `AppState::new` (the boot adapter) — same Arcs, no behavior change. The REST
+  router-build no longer reaches ROOT's concrete fields. RESIDUAL: `AppState::new`
+  itself still extracts from the `request_handlers` param (the single boot-adapter
+  point — dies when ROOT is deleted / `AppState::new` takes the services from
+  `SharedServices` instead); `rest/server.rs:312` still extracts
+  `request_handlers.graph_execution_service` to thread as a dedicated param, but
+  that is already the "extract once at the constructor boundary" shape (not a
+  scattered router-build read) — leave until ROOT deletion.
+. **`ports=None` fallback — DONE (removed `fa3befe4e`).** **2(a) `e144ab24e`** —
+  CLUSTER boot (`multi_server.rs` `start_with_cluster`, `#[cfg(feature="cluster")]`)
+  now passes `api_handlers = services.api_handlers` via
+  `with_security_and_config_and_ports` (compile-clean w/ `--features cluster`; NOT
+  cluster-boot smoke-tested — needs multi-node Raft). **2(b) `fa3befe4e`** — made
+  `AppState.api_handlers` NON-optional, defaulted in `AppState::new` to the root
+  handler cast to `ApiHandlersPort` (boot adapter); `with_api_handlers` overrides
+  with the runtime handler in production. `create_router` now uses
+  `state.api_handlers` directly — the `:1337` `unwrap_or_else(ROOT)` fallback is
+  GONE (no concrete `request_handlers` reference left in router-build; clippy-clean,
+  no expect). Verified default check + server build + test-compile + `--features
+  cluster` all exit 0; unified server boots healthy, REST dispatch reaches the port
+  handler. NOTE: the legacy/dev/test root-as-port default path is not runtime-
+  exercised in unified mode (override wins) but is the same trait object the old
+  fallback produced — identical by construction.
+. **Arrow ports backed by ROOT** — `ProximaFlightService::new` extracts/casts from
+  the passed `UnifiedHandlers` (the runtime handler doesn't impl `RecordOpsPort`
+  and lacks the concrete vector/collection service fields).
+. **ROOT's business logic** — UnifiedHandlers still implements the port traits and
+  owns the concrete services. ROOT deletion = re-home its ~30 methods onto the
+  concrete services as port impls.
+
+S4 (`execute_sql_frontend`) is MOOT — it's an internal helper of ROOT's
+`execute_sql_v1` (request_handlers.rs:2309), bypassed by the runtime handler's
+port-delegating path; it dies with ROOT.
+
+=== 3bis. Item 3 (ROOT deletion) — full consumer survey + sequenced plan (2026-06-04)
+
+A complete survey of every `Arc<UnifiedHandlers>` (ROOT,
+`src/api_handlers/request_handlers.rs`) consumer. ROOT is deeply wired —
+**18+ type-holders, ~20 inherent methods, 13+ `.collection_metrics` sites**.
+This is multi-session; execute the slices below IN ORDER, each compile- +
+(where it touches a wire path) smoke-verified. DO NOT attempt as one change.
+
+**Consumers by category (file:line):**
+
+. *Construction* — `shared_services.rs:1306` (ROOT `UnifiedHandlers::new` →
+  `Arc` at :1322; setters `.set_hybrid_runtime`:1320, `.set_query_adapter`:1481,
+  `.set_dml_service`:1522, `.set_precision_resolver` in `ProximaDB::new`).
+  `shared_services.rs:1528` builds the RUNTIME handler separately. Test ctors:
+  `crates/platform/proximadb-api/src/lib.rs:24` (`noop_unified_handlers`),
+  `tests/integration/sql_frontend/sql_query_tests.rs:37`.
+. *Type-holders* (hold `Arc<UnifiedHandlers>`): `SharedServices.request_handlers`
+  (:63); `AppState.request_handlers` (`rest/v1/handlers.rs`); `CustomerRouter`
+  (`router.rs:16`); gRPC `GraphService` (`grpc/graph_service.rs:36/72`); gRPC v2
+  `RecordServiceV2` (`grpc/v2/record_service.rs:86/123`); Arrow
+  `ProximaFlightService` (`arrow_ipc/service.rs:165`) + `ArrowFlightServer`
+  (`arrow_ipc/server.rs:45/76`); pgwire `server.rs:52` (`_handlers`, UNUSED
+  placeholder); multiplex `handlers/grpc.rs:35` + `handlers/rest.rs:39`; REST
+  `health.rs:37`; embedded `database.rs:1049/1159`; re-export
+  `api_handlers/mod.rs`.
+. *Inherent methods still called on ROOT* (NOT the 7 ApiHandlersPort + 3
+  RecordOpsPort trait methods):
+.. `.collection_metrics(id)` — **13+ sites** in `metrics/{updater.rs (6×),
+   query_service.rs:165, store.rs (6×)}`. → needs a **MetricsPort** (plan S2).
+.. `.force_flush_collection(id)` — `database.rs:949`, `arrow_ipc/service.rs:1932/
+   2013`, + tests. `.force_flush_all()` in tests. → MetricsPort or a FlushPort.
+.. `.execute_sql_v1` — `router.rs:244`, `rest/v1/handlers.rs:774`,
+   `rest/v1/hybrid.rs:387` (ALREADY an ApiHandlersPort method — switch these to
+   `state.api_handlers`/a port handle; CAUTION: runtime `execute_sql_v1` routes
+   via QueryAdapterPort — confirm it covers the legacy `execute_sql_frontend`
+   path before switching, SQL smoke-test required).
+.. `.execute_hybrid_query` — `router.rs:287`, `grpc/graph_service.rs:1100` (also
+   ApiHandlersPort — same treatment).
+.. Concrete fields `.vector_operations_service`/`.collection_service`/
+   `.graph_execution_service` — Arrow `service.rs:183/184`, `rest/server.rs:312`
+   (already single-point boot extractions). `.storage_config()` — Arrow
+   `service.rs:167`.
+.. Cache helpers `.resolve_collection_id_cached`/`.invalidate_collection_cache`/
+   `.clear_collection_cache` — internal to ROOT only.
+. *RUNTIME handler gap*: `proximadb-runtime` `UnifiedHandlers` impls
+  **ApiHandlersPort only, NOT RecordOpsPort**, and holds ports
+  (Collection/VectorOps/QueryAdapter), not the concrete vector/document services
+  RecordOpsPort needs.
+
+**Sequenced execution plan (each = its own commit, verify before next):**
+
+. **S3-a (safe, same-trait): per-request REST/router SQL+hybrid dispatch off
+  ROOT.** Switch `rest/v1/handlers.rs:774`, `rest/v1/hybrid.rs:387`,
+  `router.rs:244/287`, `grpc/graph_service.rs:1100` from
+  `request_handlers.{execute_sql_v1,execute_hybrid_query}` to a
+  `Arc<dyn ApiHandlersPort>` handle. BLOCKER to verify first: does runtime
+  `execute_sql_v1` reproduce ROOT's DML-routing + `execute_sql_frontend`? If not,
+  fold that into `QueryAdapterPort` first (old plan S4). SQL/hybrid smoke-test.
+. **S3-b: `MetricsPort`** (plan S2) — define in `proximadb-runtime`
+  (`collection_metrics`, `force_flush_collection`, `force_flush_all`,
+  `list_unflushed_vectors`); impl on the concrete service that owns the data
+  (likely `VectorOperationsService`/`MetricsQueryService`); switch the 13+
+  `metrics/*` + `database.rs:949` + Arrow flush sites. Additive, compile-verified.
+. **S3-c: make Arrow `RecordOpsPort` runtime-backed.** Impl `RecordOpsPort` on a
+  runtime-accessible target (the runtime handler, given the vector/document
+  services) and inject `vector_operations_service`+`collection_service` into
+  `ProximaFlightService` at boot from `SharedServices` instead of extracting from
+  the passed ROOT in `new()`. Then `ArrowFlightServer`/`multi_server` pass
+  ports/services, not `Arc<UnifiedHandlers>`. Flight smoke-test (DoPut/DoGet).
+. **S3-d: gRPC graph + v2 record services off ROOT.** `grpc/graph_service.rs`
+  and `grpc/v2/record_service.rs` hold `Arc<UnifiedHandlers>` — re-type to the
+  ports they actually use. gRPC smoke-test.
+. **S3-e: multiplex/router/health/embedded/pgwire holders.** Re-type
+  `multiplex/handlers/{grpc,rest}.rs`, `router.rs`, `rest/health.rs`,
+  `database.rs` (embedded — verify it's a real path, not test-only), drop the
+  pgwire `_handlers` placeholder.
+. **S3-f: collapse construction + DELETE.** Replace `shared_services.rs:1306`
+  ROOT build with the port-based handler everywhere; move the ROOT setters
+  (`set_dml_service` etc.) onto their real owners; switch test ctors
+  (`noop_unified_handlers`, `sql_query_tests`) to the runtime handler; remove
+  `AppState.request_handlers` + the `AppState::new` root-as-port default +
+  `rest/server.rs:312` graph extraction; delete
+  `src/api_handlers/request_handlers.rs` `UnifiedHandlers` + `api_handlers/mod.rs`
+  re-export. Full build (default + cluster + server bin) + all smoke-tests.
+
+NOTE: v2 `create_collection_v2` (`rest/v2/collections.rs:448`) still calls
+`state.request_handlers.handle_collection_operation_for_tenant` (a per-request
+ApiHandlersPort call) — fold into S3-a (switch to `state.api_handlers`), but it
+sits on the write path whose create-visibility gap (see §2 NOTE) currently
+blocks a full round-trip verification.
+
+== 4. Landmarks
+* Root handler (logic): `src/api_handlers/request_handlers.rs` (`UnifiedHandlers`,
+  impls `ApiHandlersPort`+`RecordOpsPort`; `handle_record_*` at 1021/1069/1145).
+* Runtime handler (port facade): `crates/platform/proximadb-runtime/src/handlers.rs`.
+* Ports: `crates/platform/proximadb-runtime/src/{port.rs,service_ports.rs,
+  record_ops_port.rs}`; `batch_result.rs` (relocated result types).
+* Boot: `src/network/multi_server.rs` (`start`/`start_unified`/`start_with_cluster`);
+  `src/network/rest/server.rs` (`RestServerPorts`, `with_security_and_config_and_ports`).
+* Arrow: `src/network/arrow_ipc/{service.rs,server.rs}`.
+
+== 5. Lessons
+* The crate DENIES unused imports (an unused `use` => "could not compile", shown
+  only as a warning line — look past the summary).
+* `cargo check --lib` SKIPS `#[cfg(test)]` and feature-gated code; run a
+  test-compile (`cargo test --lib <path>`) before declaring a slice done.
+* WAL-recovery tests (`test_canonical_document_wal_recovery_*`) fail in ISOLATION
+  (global-manifest set-once 2nd-boot singleton) but pass in the full suite — a
+  pre-existing flake, not a regression. arrow_ipc has 5 pre-existing failures
+  (onnx-off embedding + an arrow `StructArray` test panic) — foreign.
+* For deep multi-line field-extraction chains, a `perl -0777 -pi` collapse of
+  `\n[ \t]*\.request_handlers(?=\n[ \t]*\.X)` is faster + safer than manual edits;
+  the compiler then proves completeness (no `.request_handlers` left + types match).
+* HOT branch: HEAD moves under you (other agents commit); `git commit -o` lands on
+  whatever HEAD is. Your committed work survives linter reformat of the working tree.

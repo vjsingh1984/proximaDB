@@ -11,62 +11,53 @@
 mod tests {
     use crate::index::axis::management::manager::AxisManager;
     use crate::index::axis::management::manager::{
-        FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
+        AnnFilteringMode, FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
     };
     use crate::index::axis::types::{Data, IndexAlgorithm, IndexSpecification};
-    use crate::proto::proximadb_v1::{SqlValue, VectorRecord, sql_value};
+    use proximadb_data_model::ProximaValue;
+    use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
     use tracing::debug;
 
     fn create_vector_record(
         id: &str,
         vector: Vec<f32>,
         metadata: &[(&str, serde_json::Value)],
-    ) -> VectorRecord {
-        let metadata = metadata
+    ) -> ProximaRecord {
+        let props = metadata
             .iter()
             .map(|(key, value)| {
-                let sql_value = match value {
-                    serde_json::Value::String(s) => SqlValue {
-                        value: Some(sql_value::Value::StringValue(s.clone())),
-                    },
+                let value = match value {
+                    serde_json::Value::String(s) => ProximaValue::String(s.clone()),
                     serde_json::Value::Number(n) => {
                         if let Some(i) = n.as_i64() {
-                            SqlValue {
-                                value: Some(sql_value::Value::Int64Value(i)),
-                            }
+                            ProximaValue::Int64(i)
                         } else if let Some(f) = n.as_f64() {
-                            SqlValue {
-                                value: Some(sql_value::Value::NumberValue(f)),
-                            }
+                            ProximaValue::Float64(f)
                         } else {
-                            SqlValue {
-                                value: Some(sql_value::Value::StringValue(n.to_string())),
-                            }
+                            ProximaValue::String(n.to_string())
                         }
                     }
-                    serde_json::Value::Bool(b) => SqlValue {
-                        value: Some(sql_value::Value::BoolValue(*b)),
-                    },
-                    serde_json::Value::Null => SqlValue {
-                        value: Some(sql_value::Value::NullValue(0)),
-                    },
-                    other => SqlValue {
-                        value: Some(sql_value::Value::StringValue(other.to_string())),
-                    },
+                    serde_json::Value::Bool(b) => ProximaValue::Boolean(*b),
+                    serde_json::Value::Null => ProximaValue::Null,
+                    other => ProximaValue::Json(other.clone()),
                 };
-                ((*key).to_string(), sql_value)
+                ((*key).to_string(), ProximaTreeNode::Value(value))
             })
             .collect();
 
-        VectorRecord {
-            id: id.to_string(),
-            vector,
-            metadata,
-            timestamp: Some(chrono::Utc::now().timestamp()),
-            updated_at: Some(chrono::Utc::now().timestamp()),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+        ProximaRecord {
+            oid: id.to_string(),
+            local_id: Some(id.to_string()),
+            record_version: 1,
+            props,
+            embeddings: vec![EmbeddingCell {
+                model_id: "test".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: vector.len() as u32,
+                values: proximadb_records::EmbeddingValues::Fp32(vector),
+                ..Default::default()
+            }],
+            ..ProximaRecord::default()
         }
     }
 
@@ -107,6 +98,9 @@ mod tests {
             id_filters: vec![],
             top_k: 2,
             include_expired: false,
+            ann_filtering_mode: AnnFilteringMode::PostFilter,
+            ann_filtering_policy: None,
+            estimated_selectivity: None,
         };
 
         let result = manager.query(query).await.unwrap();
@@ -150,6 +144,9 @@ mod tests {
             id_filters: vec![],
             top_k: 10,
             include_expired: false,
+            ann_filtering_mode: AnnFilteringMode::PostFilter,
+            ann_filtering_policy: None,
+            estimated_selectivity: None,
         };
 
         // Verify both indexes are used

@@ -30,9 +30,13 @@ pub struct ObservabilityApiState {
     pub observability_service: Arc<ObservabilityService>,
 }
 
-/// Create namespace request
+/// REST request body for observability-namespace creation (legacy root-crate copy).
+///
+/// Mirrors `proximadb_api::rest::v1::observability::CreateNamespaceRequestBody`
+/// — Phase 9 will delete this file. The `…Body` suffix distinguishes the
+/// REST shape from the proto-generated `crate::proto::v1::CreateNamespaceRequest`.
 #[derive(Debug, Deserialize)]
-pub struct CreateNamespaceRequest {
+pub struct CreateNamespaceRequestBody {
     /// Namespace name
     pub name: String,
     /// Retention days for hot tier
@@ -297,30 +301,30 @@ pub fn create_observability_router() -> Router<ObservabilityApiState> {
         // Namespace management
         .route("/namespaces", post(create_namespace))
         // Log ingestion
-        .route("/namespaces/:namespace/logs/_bulk", post(ingest_logs))
+        .route("/namespaces/:namespace/logs/bulk", post(ingest_logs))
         .route("/namespaces/:namespace/logs", post(ingest_log))
         // Log queries
-        .route("/namespaces/:namespace/logs/_search", post(query_logs))
+        .route("/namespaces/:namespace/logs/search", post(query_logs))
         // Metric ingestion
-        .route("/namespaces/:namespace/metrics/_bulk", post(ingest_metrics))
+        .route("/namespaces/:namespace/metrics/bulk", post(ingest_metrics))
         .route("/namespaces/:namespace/metrics", post(ingest_metric))
         // Metric queries
         .route(
-            "/namespaces/:namespace/metrics/_aggregate",
+            "/namespaces/:namespace/metrics/aggregate",
             post(aggregate_metrics),
         )
         // PromQL endpoint
-        .route("/namespaces/:namespace/metrics/_promql", post(query_promql))
+        .route("/namespaces/:namespace/metrics/promql", post(query_promql))
         // Trace ingestion
-        .route("/namespaces/:namespace/traces/_bulk", post(ingest_traces))
+        .route("/namespaces/:namespace/traces/bulk", post(ingest_traces))
         // Trace queries
-        .route("/namespaces/:namespace/traces/_search", post(query_traces))
+        .route("/namespaces/:namespace/traces/search", post(query_traces))
 }
 
 /// Create a namespace
 async fn create_namespace(
     State(state): State<ObservabilityApiState>,
-    Json(request): Json<CreateNamespaceRequest>,
+    Json(request): Json<CreateNamespaceRequestBody>,
 ) -> ApiResult<JsonResponse<serde_json::Value>> {
     info!("Creating observability namespace: {}", request.name);
 
@@ -1161,7 +1165,7 @@ mod tests {
 
         // Verify CreateNamespaceRequest defaults
         let ns_json = serde_json::json!({ "name": "production" });
-        let ns: CreateNamespaceRequest = serde_json::from_value(ns_json).expect("should parse");
+        let ns: CreateNamespaceRequestBody = serde_json::from_value(ns_json).expect("should parse");
         assert_eq!(ns.name, "production");
         assert_eq!(ns.hot_retention_days, 1); // default_hot_retention
         assert_eq!(ns.warm_retention_days, 7); // default_warm_retention

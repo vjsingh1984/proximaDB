@@ -15,8 +15,10 @@ pub mod service_interface;
 
 pub use event_log::{
     EventLogQueue, EventType, ExtractionMode, FileIndexingStatus, IndexEvent, IndexEventBuilder,
-    OperationType, StorageEngineType,
+    OperationType,
 };
+// Re-export StorageEngineType from canonical source
+pub use crate::core::types::StorageEngineType;
 
 pub use event_log_manager::{EventLogConfig, EventLogManager};
 

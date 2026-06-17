@@ -15,8 +15,6 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pytest
@@ -26,7 +24,6 @@ from proximadb_sdk.chunking import (
     ChunkingConfig,
     ChunkingStrategy,
     TextChunker,
-    chunk_and_embed_text,
 )
 from proximadb_sdk.embedding_providers import get_provider
 from proximadb_sdk.embedding_providers.core import (
@@ -35,7 +32,6 @@ from proximadb_sdk.embedding_providers.core import (
 from proximadb_sdk.models import (
     CollectionConfig,
     DistanceMetric,
-    SearchQuery,
     StorageEngine,
     VectorRecord,
 )
@@ -102,7 +98,7 @@ class TestComprehensiveBenchmark:
 
         for doc_file in doc_candidates:
             if os.path.exists(doc_file):
-                with open(doc_file, "r", encoding="utf-8") as f:
+                with open(doc_file, encoding="utf-8") as f:
                     full_text = f.read()
                 logger.info(
                     f"Loaded {len(full_text)} characters from {os.path.relpath(doc_file, os.getcwd())}"
@@ -212,7 +208,7 @@ class TestComprehensiveBenchmark:
 
         return ProximaDBClient(url=url)
 
-    def get_available_embedding_providers(self) -> List[Tuple[str, EmbeddingProvider]]:
+    def get_available_embedding_providers(self) -> list[tuple[str, EmbeddingProvider]]:
         """Get list of available free embedding providers"""
         providers = []
 
@@ -234,7 +230,7 @@ class TestComprehensiveBenchmark:
         return providers
 
     def calculate_search_accuracy(
-        self, results: List[Dict], expected_terms: List[str], top_k: int = 10
+        self, results: list[dict], expected_terms: list[str], top_k: int = 10
     ) -> float:
         """Calculate search accuracy based on expected terms in results"""
         if not results:
@@ -243,7 +239,15 @@ class TestComprehensiveBenchmark:
         # Check top results for expected terms
         found_terms = set()
         for i, result in enumerate(results[:top_k]):
-            text = result.get("metadata", {}).get("text_preview", "").lower()
+            # Handle both dict and SearchResult objects
+            if hasattr(result, "model_dump"):  # Pydantic model
+                metadata = result.metadata if result.metadata else {}
+            elif isinstance(result, dict):  # Regular dict
+                metadata = result.get("metadata", {})
+            else:
+                metadata = {}
+
+            text = metadata.get("text_preview", "").lower()
             for term in expected_terms:
                 if term.lower() in text:
                     found_terms.add(term)
@@ -259,7 +263,7 @@ class TestComprehensiveBenchmark:
         embedding_provider: EmbeddingProvider,
         storage_engine: StorageEngine,
         protocol: str,
-        search_queries: List[Dict],
+        search_queries: list[dict],
     ) -> BenchmarkResult:
         """Run benchmark for a specific combination"""
 
@@ -515,7 +519,7 @@ class TestComprehensiveBenchmark:
         # Generate summary report
         self.generate_summary_report(results)
 
-    def generate_summary_report(self, results: List[BenchmarkResult]):
+    def generate_summary_report(self, results: list[BenchmarkResult]):
         """Generate comprehensive summary report"""
         print("\n" + "=" * 80)
         print("COMPREHENSIVE BENCHMARK SUMMARY")

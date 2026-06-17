@@ -16,8 +16,8 @@ use proximadb::core::serialization::{CompressionAlgorithm, VectorSerializationCo
 use proximadb::proto::proximadb_v1::{
     Collection, CollectionConfig, DistanceMetric, SqlValue, StorageEngine, VectorRecord, sql_value,
 };
-use proximadb::storage::engines::impls::sst::SstEngine;
-use proximadb::storage::engines::impls::viper::ViperEngine;
+use proximadb::storage::engines::sst::SstEngine;
+use proximadb::storage::engines::viper::ViperEngine;
 use proximadb::storage::metadata::store::{MetadataStore, MetadataStoreConfig};
 use proximadb::storage::persistence::filesystem::FilesystemFactory;
 use proximadb::storage::traits::UnifiedStorageEngine;
@@ -175,6 +175,7 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
         prefetch_size_kb: 64,
         vector_encoding_strategy: "FullVector".to_string(),
         block_format: "ProximaBlocks".to_string(),
+        tiering: None,
     });
 
     let viper_config = proximadb::core::config::ViperConfig {
@@ -295,7 +296,10 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let start = Instant::now();
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("optimization_test".to_string()),
-        vector_records: sst_vectors.clone(),
+        vector_records: sst_vectors
+            .iter()
+            .map(|v: &VectorRecord| v.into())
+            .collect(),
         force: true,
         collection_config: Some(collection.clone()), // Pass the collection config with storage assignment
         ..Default::default()
@@ -313,7 +317,10 @@ async fn test_optimization_end_to_end() -> anyhow::Result<()> {
     let start = Instant::now();
     let flush_params = proximadb::storage::traits::FlushParameters {
         collection_id: Some("optimization_test".to_string()),
-        vector_records: viper_vectors,
+        vector_records: viper_vectors
+            .into_iter()
+            .map(|v: VectorRecord| v.into())
+            .collect(),
         force: true,
         collection_config: Some(collection.clone()), // Pass the collection config with storage assignment
         ..Default::default()

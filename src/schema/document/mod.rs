@@ -121,53 +121,41 @@ impl DocumentSchema {
         value: &serde_json::Value,
     ) -> Result<(), ValidationError> {
         match field_type {
-            FieldType::String => {
-                if !value.is_string() {
-                    return Err(ValidationError::TypeMismatch(
-                        field_name.to_string(),
-                        "string".to_string(),
-                    ));
-                }
+            FieldType::String if !value.is_string() => {
+                return Err(ValidationError::TypeMismatch(
+                    field_name.to_string(),
+                    "string".to_string(),
+                ));
             }
-            FieldType::Integer => {
-                if !value.is_i64() && !value.is_u64() {
-                    return Err(ValidationError::TypeMismatch(
-                        field_name.to_string(),
-                        "integer".to_string(),
-                    ));
-                }
+            FieldType::Integer if !value.is_i64() && !value.is_u64() => {
+                return Err(ValidationError::TypeMismatch(
+                    field_name.to_string(),
+                    "integer".to_string(),
+                ));
             }
-            FieldType::Float => {
-                if !value.is_f64() {
-                    return Err(ValidationError::TypeMismatch(
-                        field_name.to_string(),
-                        "float".to_string(),
-                    ));
-                }
+            FieldType::Float if !value.is_f64() => {
+                return Err(ValidationError::TypeMismatch(
+                    field_name.to_string(),
+                    "float".to_string(),
+                ));
             }
-            FieldType::Boolean => {
-                if !value.is_boolean() {
-                    return Err(ValidationError::TypeMismatch(
-                        field_name.to_string(),
-                        "boolean".to_string(),
-                    ));
-                }
+            FieldType::Boolean if !value.is_boolean() => {
+                return Err(ValidationError::TypeMismatch(
+                    field_name.to_string(),
+                    "boolean".to_string(),
+                ));
             }
-            FieldType::Array(_) => {
-                if !value.is_array() {
-                    return Err(ValidationError::TypeMismatch(
-                        field_name.to_string(),
-                        "array".to_string(),
-                    ));
-                }
+            FieldType::Array(_) if !value.is_array() => {
+                return Err(ValidationError::TypeMismatch(
+                    field_name.to_string(),
+                    "array".to_string(),
+                ));
             }
-            FieldType::Object(_) => {
-                if !value.is_object() {
-                    return Err(ValidationError::TypeMismatch(
-                        field_name.to_string(),
-                        "object".to_string(),
-                    ));
-                }
+            FieldType::Object(_) if !value.is_object() => {
+                return Err(ValidationError::TypeMismatch(
+                    field_name.to_string(),
+                    "object".to_string(),
+                ));
             }
             FieldType::Vector(expected_dim) => {
                 if let Some(array) = value.as_array() {

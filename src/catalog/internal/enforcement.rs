@@ -623,14 +623,15 @@ mod tests {
     use crate::catalog::internal::{
         CatalogObject, ObjectSchema, ObjectType, SchemaEnforcementMode, TableConstraint,
     };
-    use crate::catalog::types::{CatalogColumn, CatalogDataType};
+    use proximadb_catalog::CatalogColumn;
+    use proximadb_data_model::ProximaType;
 
     fn create_test_object() -> CatalogObject {
         let schema = ObjectSchema {
             columns: vec![
-                CatalogColumn::new(1, "id", CatalogDataType::Int64).nullable(false),
-                CatalogColumn::new(2, "email", CatalogDataType::String).nullable(false),
-                CatalogColumn::new(3, "age", CatalogDataType::Int32),
+                CatalogColumn::new(1, "id", ProximaType::Int64).nullable(false),
+                CatalogColumn::new(2, "email", ProximaType::String).nullable(false),
+                CatalogColumn::new(3, "age", ProximaType::Int32),
             ],
             primary_key: vec!["id".to_string()],
             constraints: vec![
@@ -640,6 +641,7 @@ mod tests {
             ],
             indexes: vec![],
             model_properties: super::super::ModelProperties::None,
+            ..Default::default()
         };
 
         CatalogObject::new(

@@ -14,8 +14,8 @@ use std::sync::Arc;
 
 use crate::compute::quantization::{
     global_cache::{GlobalQuantizationCache, QuantizationCacheKey},
+    quantization_engine::{Codebook, CodebookData, QuantizationLevel, UnifiedQuantizationEngine},
     storage_engine::StorageQuantizationEngine,
-    unified::{Codebook, CodebookData, QuantizationLevel, UnifiedQuantizationEngine},
 };
 
 /// Codebook metadata stored at file level

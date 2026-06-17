@@ -31,6 +31,8 @@ pub mod server;
 pub mod v1;
 /// V2 REST API handlers (ProximaRecord, typed fields, schema)
 pub mod v2;
+/// V3 REST API handlers (native server-side embedding, text-only documents)
+pub mod v3;
 /// WebSocket support for real-time streaming
 pub mod websocket;
 

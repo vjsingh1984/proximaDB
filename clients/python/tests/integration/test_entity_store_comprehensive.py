@@ -22,7 +22,6 @@ Prerequisites:
 import os
 import time
 import uuid
-from typing import Any, Dict, List
 
 import numpy as np
 import pytest
@@ -183,7 +182,7 @@ def test_entity_update_metadata(client, test_collection):
     assert "title" in results[0].metadata, "Title field missing"
     assert "version" in results[0].metadata, "Version field missing"
 
-    print(f"\n✓ Successfully created and retrieved entity with metadata")
+    print("\n✓ Successfully created and retrieved entity with metadata")
 
 
 @pytest.mark.integration
@@ -217,7 +216,7 @@ def test_entity_delete(client, test_collection):
     # Deletion is tested via collection deletion in fixture cleanup
     # This validates entity lifecycle management
 
-    print(f"\n✓ Entity created and verified (deletion via collection cleanup)")
+    print("\n✓ Entity created and verified (deletion via collection cleanup)")
 
 
 # ============================================================================
@@ -339,7 +338,7 @@ def test_entity_metadata_types(client, test_collection):
     assert "int_field" in metadata
     assert "bool_field" in metadata
 
-    print(f"\n✓ Metadata type preservation validated (all fields present)")
+    print("\n✓ Metadata type preservation validated (all fields present)")
 
 
 @pytest.mark.integration
@@ -518,7 +517,7 @@ def test_entity_large_metadata(client, test_collection):
     result = client.insert_vectors(collection, records=[record])
     assert result.success, "Failed to create entity with large metadata"
 
-    print(f"\n✓ Large metadata entity created successfully")
+    print("\n✓ Large metadata entity created successfully")
 
 
 @pytest.mark.integration
@@ -585,7 +584,7 @@ def test_entity_empty_metadata(client, test_collection):
     result = client.insert_vectors(collection, records=[record])
     assert result.success, "Failed to create entity with empty metadata"
 
-    print(f"\n✓ Entity with empty metadata created successfully")
+    print("\n✓ Entity with empty metadata created successfully")
 
 
 # ============================================================================
@@ -608,20 +607,20 @@ def test_entity_store_coverage_summary(client):
     assert isinstance(collections, list), "Should return a list of collections"
 
     print(f"\n{'='*70}")
-    print(f"  Entity Store Test Coverage Summary")
+    print("  Entity Store Test Coverage Summary")
     print(f"{'='*70}\n")
-    print(f"  Coverage Areas Tested:")
-    print(f"  ✓ Entity CRUD Operations (Create, Read, Update, Delete)")
-    print(f"  ✓ Batch Entity Operations (Create, Read)")
-    print(f"  ✓ Metadata Management (Types, Large Payloads, Empty)")
-    print(f"  ✓ Entity Querying & Search")
-    print(f"  ✓ Graph Relationships (Create, Traverse, Multiple Types)")
-    print(f"  ✓ High-Dimensional Vectors")
-    print(f"  ✓ Concurrent Operations")
-    print(f"  ✓ Edge Cases & Error Handling")
-    print(f"\n  Total Integration Tests: 15")
-    print(f"  Client Connection: ✅ Verified")
-    print(f"  Basic Operations: ✅ Working")
+    print("  Coverage Areas Tested:")
+    print("  ✓ Entity CRUD Operations (Create, Read, Update, Delete)")
+    print("  ✓ Batch Entity Operations (Create, Read)")
+    print("  ✓ Metadata Management (Types, Large Payloads, Empty)")
+    print("  ✓ Entity Querying & Search")
+    print("  ✓ Graph Relationships (Create, Traverse, Multiple Types)")
+    print("  ✓ High-Dimensional Vectors")
+    print("  ✓ Concurrent Operations")
+    print("  ✓ Edge Cases & Error Handling")
+    print("\n  Total Integration Tests: 15")
+    print("  Client Connection: ✅ Verified")
+    print("  Basic Operations: ✅ Working")
     print(f"{'='*70}\n")
 
 

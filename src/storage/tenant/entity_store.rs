@@ -57,9 +57,12 @@ pub struct EntityCollectionMapping {
     pub created_at: DateTime<Utc>,
 }
 
+/// Backwards-compat alias for [`TenantUserContext`].
+pub type UserContext = TenantUserContext;
+
 /// Simple user context for RBAC
 #[derive(Debug, Clone)]
-pub struct UserContext {
+pub struct TenantUserContext {
     pub user_id: String,
     pub tenant_id: String,
     pub roles: Vec<String>,
@@ -84,7 +87,7 @@ impl TenantAwareEntityStore {
         tenant_id: &str,
         collection_id: &str,
         entity: Entity,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<String> {
         // Simple tenant validation
         self.tenant_manager
@@ -149,7 +152,7 @@ impl TenantAwareEntityStore {
         tenant_id: &str,
         collection_id: &str,
         entity_id: &str,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<Option<Entity>> {
         // Validate user can access this tenant
         self.tenant_manager
@@ -180,7 +183,7 @@ impl TenantAwareEntityStore {
         tenant_id: &str,
         collection_id: &str,
         limit: Option<usize>,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<Vec<Entity>> {
         // Validate tenant access
         self.tenant_manager
@@ -221,7 +224,7 @@ impl TenantAwareEntityStore {
         tenant_id: &str,
         collection_id: &str,
         entity_id: &str,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<bool> {
         // Validate tenant access
         self.tenant_manager
@@ -294,7 +297,7 @@ impl EntityAuditLogger {
         tenant_id: &str,
         collection_id: &str,
         entity_id: &str,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<()> {
         let event = EntityAuditEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
@@ -315,7 +318,7 @@ impl EntityAuditLogger {
         tenant_id: &str,
         collection_id: &str,
         entity_id: &str,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<()> {
         let event = EntityAuditEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
@@ -336,7 +339,7 @@ impl EntityAuditLogger {
         tenant_id: &str,
         collection_id: &str,
         entity_id: &str,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<()> {
         let event = EntityAuditEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
@@ -357,7 +360,7 @@ impl EntityAuditLogger {
         tenant_id: &str,
         collection_id: &str,
         entity_count: usize,
-        user_context: &UserContext,
+        user_context: &TenantUserContext,
     ) -> Result<()> {
         let event = EntityAuditEvent {
             event_id: uuid::Uuid::new_v4().to_string(),
@@ -431,7 +434,7 @@ mod tests {
     use crate::storage::tenant::context::ResourceLimits;
     use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies, TenantConfig};
 
-    async fn create_test_setup() -> (TenantAwareEntityStore, UserContext) {
+    async fn create_test_setup() -> (TenantAwareEntityStore, TenantUserContext) {
         let tenant_manager = Arc::new(TenantManager::new());
 
         // Create test tenant
@@ -450,7 +453,7 @@ mod tests {
 
         let entity_store = TenantAwareEntityStore::new(tenant_manager);
 
-        let user_context = UserContext {
+        let user_context = TenantUserContext {
             user_id: "test_user".to_string(),
             tenant_id: "test_tenant".to_string(),
             roles: vec!["user".to_string()],
@@ -520,7 +523,7 @@ mod tests {
             .expect("failed to store entity");
 
         // Try to access from different tenant (should fail)
-        let wrong_tenant_user = UserContext {
+        let wrong_tenant_user = TenantUserContext {
             user_id: "wrong_user".to_string(),
             tenant_id: "different_tenant".to_string(),
             roles: vec!["user".to_string()],

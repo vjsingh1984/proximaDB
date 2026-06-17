@@ -1,20 +1,14 @@
 //! Service Types Module - Core Types for Vector Operations Service
 //!
 //! This module defines all the essential types for vector operations, including
-//! VectorRecord (service-level, not proto), search requests/responses, collection operations,
+//! collection operations, search requests/responses, service metrics,
 //! and metrics. These types form the core API for the vector operations service.
 
 use crate::core::search::OptimizedSearchRecord;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::security::EncryptionConfig;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 // SearchResult is now only used from proto layer - not re-exported in core::search
-
-// Avro schema removed - using proto::proximadb_v1::VectorRecord directly
-
-// VectorRecord has been removed - use proto::proximadb_v1::VectorRecord directly
-// The proto type is the single source of truth for vector records
 
 /// Domain search hit (engine-agnostic)
 #[derive(Debug, Clone)]
@@ -51,21 +45,10 @@ pub type DistanceMetric = String;
 pub type IndexingAlgorithm = String;
 /// Storage engine name (e.g., "sst", "viper", "helix")
 pub type StorageEngine = String;
-/// Compression algorithms for data storage and transmission
-#[derive(Debug, Clone, Default)]
-pub enum CompressionAlgorithm {
-    /// No compression
-    None,
-    /// Snappy compression (default - fast with moderate ratio)
-    #[default]
-    Snappy,
-    /// LZ4 compression (very fast)
-    Lz4,
-    /// Zstandard compression (best ratio)
-    Zstd,
-    /// Gzip compression (widely compatible)
-    Gzip,
-}
+
+// Re-export foundation compression algorithm type for backward compatibility
+// TODO: Migrate all uses to FoundationCompressionAlgorithm (Phase 2.2)
+pub use proximadb_compression_types::CompressionAlgorithm;
 
 /// Compaction strategies for storage optimization
 #[derive(Debug, Clone, Default)]
@@ -81,9 +64,12 @@ pub enum CompactionStrategy {
     None,
 }
 
+/// Backwards-compat alias for [`ServiceCompactionConfig`].
+pub type CompactionConfig = ServiceCompactionConfig;
+
 /// Compaction configuration for storage engines
 #[derive(Debug, Clone)]
-pub struct CompactionConfig {
+pub struct ServiceCompactionConfig {
     /// Maximum SSTable file size in megabytes before splitting
     pub max_sstable_size_mb: u64,
     /// Maximum total size per level in megabytes
@@ -96,7 +82,7 @@ pub struct CompactionConfig {
     pub compaction_interval_seconds: u64,
 }
 
-impl Default for CompactionConfig {
+impl Default for ServiceCompactionConfig {
     fn default() -> Self {
         Self {
             // strategy removed -  CompactionStrategy::SizeTiered,
@@ -145,9 +131,12 @@ pub enum AuditLevel {
     All,
 }
 
+/// Backwards-compat alias for [`ServiceCollectionConfig`] used by pre-disambiguation imports.
+pub type CollectionConfig = ServiceCollectionConfig;
+
 /// Collection configuration for CREATE and UPDATE operations
 #[derive(Debug, Clone)]
-pub struct CollectionConfig {
+pub struct ServiceCollectionConfig {
     /// Collection name
     pub name: String,
     /// Vector dimension (required)
@@ -217,7 +206,7 @@ pub struct VectorInsertRequest {
     /// Target collection identifier
     pub collection_id: String,
     /// Vector records to insert (supports single or batch)
-    pub vectors: Vec<VectorRecord>,
+    pub vectors: Vec<proximadb_records::ProximaRecord>,
     /// Update if vector ID already exists
     pub upsert_mode: bool,
     /// Optional batch identifier for tracking
@@ -241,7 +230,10 @@ pub struct VectorInsertResponse {
 
 impl VectorInsertRequest {
     /// Create a single vector insert request
-    pub fn single_insert(collection_id: String, vector_record: VectorRecord) -> Self {
+    pub fn single_insert(
+        collection_id: String,
+        vector_record: proximadb_records::ProximaRecord,
+    ) -> Self {
         Self {
             collection_id,
             vectors: vec![vector_record],
@@ -251,7 +243,10 @@ impl VectorInsertRequest {
     }
 
     /// Create a batch vector insert request
-    pub fn batch_insert(collection_id: String, vectors: Vec<VectorRecord>) -> Self {
+    pub fn batch_insert(
+        collection_id: String,
+        vectors: Vec<proximadb_records::ProximaRecord>,
+    ) -> Self {
         Self {
             collection_id,
             vectors,
@@ -261,7 +256,7 @@ impl VectorInsertRequest {
     }
 
     /// Create an upsert request
-    pub fn upsert(collection_id: String, vectors: Vec<VectorRecord>) -> Self {
+    pub fn upsert(collection_id: String, vectors: Vec<proximadb_records::ProximaRecord>) -> Self {
         Self {
             collection_id,
             vectors,
@@ -294,23 +289,6 @@ impl VectorInsertResponse {
     }
 }
 
-/// Request for a vector similarity search
-#[derive(Debug, Clone)]
-pub struct VectorSearchRequest {
-    /// Target collection to search
-    pub collection_id: String,
-    /// Query vector for similarity matching
-    pub query_vector: Vec<f32>,
-    /// Number of nearest neighbors to return
-    pub k: i32,
-    /// Metadata filter predicates
-    pub metadata_filter: HashMap<String, serde_json::Value>,
-    /// Whether to include vectors in the response
-    pub include_vector: bool,
-    /// Whether to include metadata in the response
-    pub include_metadata: bool,
-}
-
 /// Request for batch vector similarity search
 #[derive(Debug, Clone)]
 pub struct BatchSearchRequest {
@@ -340,12 +318,24 @@ pub struct SearchMetadata {
     /// Suggested optimization hint for the caller
     pub performance_hint: Option<String>,
     /// Index-level performance statistics
-    pub index_stats: Option<IndexStats>,
+    pub index_stats: Option<ServiceIndexStats>,
 }
 
 /// Index performance statistics
-#[derive(Debug, Clone)]
-pub struct IndexStats {
+///
+/// Per-query counters emitted by the search runtime. Anchors the planner v2
+/// training inputs (see `SearchPlanTrace` for the per-query envelope that
+/// wraps this) and any operator-side metering wrapper that consumes scan
+/// statistics.
+///
+/// All new fields default to zero so unimplemented features can stub-emit
+/// without changing the JSON shape consumed by downstream telemetry
+/// (planner trainers, gateway scan-stats wrappers, etc.).
+/// Backwards-compat alias for [`ServiceIndexStats`].
+pub type IndexStats = ServiceIndexStats;
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServiceIndexStats {
     /// Total vectors in the index
     pub total_vectors: i64,
     /// Vectors compared during distance calculation
@@ -362,6 +352,53 @@ pub struct IndexStats {
     pub cache_hits: i64,
     /// Index cache misses during search
     pub cache_misses: i64,
+
+    // ── LLD trace-spine counters (Phase 0 additions; stub-zero until later phases)
+    /// Average per-block fill (0.0–1.0). Target rises above 0.30 once the
+    /// block-aware AXIS runtime lands; baseline is <0.15 per arXiv 2603.01779.
+    #[serde(default)]
+    pub block_fill_pct: f64,
+    /// Graph nodes routed through in memory without an SSD read because their
+    /// predicate failed (GateANN graph tunneling, arXiv 2603.21466). 0 until
+    /// tunneling is wired in Phase 3.
+    #[serde(default)]
+    pub tunneled_nodes: i64,
+    /// Candidates traversed in the quantized (2-bit/BQ) metric space (QuIVer
+    /// arXiv 2605.02171). 0 until the quantized route is enabled in Phase 4.
+    #[serde(default)]
+    pub quantized_hops: i64,
+    /// Record-level buffer-pool hits (VeloANN arXiv 2602.22805). Compared
+    /// against `page_hits` to validate the record-level cache wins.
+    #[serde(default)]
+    pub record_hits: i64,
+    /// Page-level cache hits, retained for comparison against `record_hits`.
+    #[serde(default)]
+    pub page_hits: i64,
+    /// Whether a catapult shortcut edge was used to pick the entry node
+    /// (CatapultDB arXiv 2603.02164). False until catapults land in Phase 7.
+    #[serde(default)]
+    pub catapult_used: bool,
+    /// Object-storage/SST selected blocks after vector access-method pruning.
+    #[serde(default)]
+    pub object_selected_blocks: i64,
+    /// Object-storage/SST blocks pruned before data-block reads.
+    #[serde(default)]
+    pub object_pruned_blocks: i64,
+    /// Planned object range GET/read requests.
+    #[serde(default)]
+    pub object_estimated_gets: i64,
+    /// Actual object range GET/read requests issued by the reader.
+    #[serde(default)]
+    pub object_actual_gets: i64,
+    /// Planned remote/range bytes for object-economy reads.
+    #[serde(default)]
+    pub object_estimated_remote_bytes: i64,
+    /// Actual remote/range bytes read by the object-economy path.
+    #[serde(default)]
+    pub object_actual_remote_bytes: i64,
+    /// Bytes read because selected blocks were coalesced across small gaps.
+    #[serde(default)]
+    pub object_overfetch_bytes: i64,
 }
 
 /// Search debug information
@@ -433,7 +470,7 @@ pub struct CollectionRequest {
     /// Collection identifier (required for all ops except CREATE and LIST)
     pub collection_id: Option<String>,
     /// Collection configuration (for CREATE and UPDATE operations)
-    pub collection_config: Option<CollectionConfig>,
+    pub collection_config: Option<ServiceCollectionConfig>,
     /// Query parameters (limit, offset, filters, etc.)
     pub query_params: Option<HashMap<String, String>>,
     /// Operation options (force, include_stats, etc.)
@@ -469,7 +506,7 @@ pub struct CollectionResponse {
 // Implementation blocks for new types
 impl CollectionRequest {
     /// Create a new collection creation request
-    pub fn create_collection(config: CollectionConfig) -> Self {
+    pub fn create_collection(config: ServiceCollectionConfig) -> Self {
         Self {
             operation: CollectionOperation::Create,
             collection_id: None,
@@ -636,12 +673,21 @@ pub enum FieldCondition {
 }
 
 /// Vector operations for batch processing
+//
+// The `Insert` and `Search` variants are intentionally large (a full
+// `ProximaRecord` / `SearchRequest`). Boxing them would force every
+// caller — including tests and the storage/transaction layer — to
+// allocate even on the hot insert path. Operations are typically held
+// in `Vec<VectorOperation>` for batch execution; the per-variant size
+// is amortised across the batch and matched against the heap-resident
+// payloads they describe.
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum VectorOperation {
     /// Insert a new vector
     Insert {
         /// Vector record to insert
-        record: VectorRecord,
+        record: proximadb_records::ProximaRecord,
         /// Whether to update indexes immediately or defer
         index_immediately: bool,
     },
@@ -784,31 +830,6 @@ pub enum OperationResult {
 
 // Search metadata, index stats, and debug info are already defined above
 
-/// Health response structure for binary Avro serialization
-#[derive(Debug, Clone)]
-pub struct HealthResponse {
-    /// Service health status: "HEALTHY", "DEGRADED", "UNHEALTHY"
-    pub status: String,
-    /// Service version
-    pub version: String,
-    /// Server uptime in seconds
-    pub uptime_seconds: i64,
-    /// Total operations processed
-    pub total_operations: i64,
-    /// Successful operations count
-    pub successful_operations: i64,
-    /// Failed operations count
-    pub failed_operations: i64,
-    /// Average processing time in microseconds
-    pub avg_processing_time_us: f64,
-    /// Storage subsystem health
-    pub storage_healthy: bool,
-    /// WAL subsystem health
-    pub wal_healthy: bool,
-    /// Timestamp when health check was performed (microseconds)
-    pub timestamp: i64,
-}
-
 /// Metrics response structure for binary Avro serialization
 #[derive(Debug, Clone)]
 pub struct MetricsResponse {
@@ -867,56 +888,6 @@ pub struct OperationResponse {
     pub metadata: HashMap<String, String>,
 }
 
-impl HealthResponse {
-    /// Create a healthy status response
-    pub fn healthy(
-        version: String,
-        uptime_seconds: i64,
-        total_operations: i64,
-        successful_operations: i64,
-        failed_operations: i64,
-        avg_processing_time_us: f64,
-    ) -> Self {
-        Self {
-            status: "HEALTHY".to_string(),
-            version,
-            uptime_seconds,
-            total_operations,
-            successful_operations,
-            failed_operations,
-            avg_processing_time_us,
-            storage_healthy: true,
-            wal_healthy: true,
-            timestamp: chrono::Utc::now().timestamp_micros(),
-        }
-    }
-
-    /// Create a degraded status response
-    pub fn degraded(
-        version: String,
-        uptime_seconds: i64,
-        total_operations: i64,
-        successful_operations: i64,
-        failed_operations: i64,
-        avg_processing_time_us: f64,
-        storage_healthy: bool,
-        wal_healthy: bool,
-    ) -> Self {
-        Self {
-            status: "DEGRADED".to_string(),
-            version,
-            uptime_seconds,
-            total_operations,
-            successful_operations,
-            failed_operations,
-            avg_processing_time_us,
-            storage_healthy,
-            wal_healthy,
-            timestamp: chrono::Utc::now().timestamp_micros(),
-        }
-    }
-}
-
 impl OperationResponse {
     /// Create a successful operation response
     pub fn success(affected_count: i64, processing_time_us: i64) -> Self {
@@ -947,8 +918,6 @@ impl OperationResponse {
     }
 }
 
-/// Backward-compatible alias for VectorRecord
-pub type UnifiedVectorRecord = VectorRecord;
 /// Backward-compatible alias for OptimizedSearchRecord
 pub type UnifiedSearchResult = OptimizedSearchRecord;
 /// Backward-compatible alias for Collection

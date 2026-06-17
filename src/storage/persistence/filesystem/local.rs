@@ -62,8 +62,9 @@ pub struct LocalFileSystem {
     config: LocalConfig,
     /// LRU cache for memory-mapped files (thread-safe)
     /// Files above MIN_MMAP_SIZE are cached for faster subsequent reads
-    mmap_cache:
-        parking_lot::RwLock<crate::utils::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>>,
+    mmap_cache: parking_lot::RwLock<
+        proximadb_runtime_common::cache::LruCache<PathBuf, std::sync::Arc<memmap2::Mmap>>,
+    >,
     /// Optional file encryption layer for transparent encryption at rest
     encryption_layer: Option<std::sync::Arc<crate::storage::encryption::FileEncryptionLayer>>,
 }
@@ -90,6 +91,17 @@ impl LocalFileSystem {
         use crate::storage::persistence::filesystem::FilesystemFactory;
 
         let path = FilesystemFactory::resolve_path(url)?;
+        // For bare relative paths (no scheme), anchor to root_dir so each
+        // LocalFileSystem instance with its own root_dir stays isolated.
+        // Paths that came in with a scheme (file://, etc.) keep their
+        // extracted form so callers can reason about them directly.
+        let path_buf = PathBuf::from(&path);
+        if !path_buf.is_absolute()
+            && !url.contains("://")
+            && let Some(ref root) = self.config.root_dir
+        {
+            return Ok(root.join(&path_buf).to_string_lossy().into_owned());
+        }
         Ok(path)
     }
 
@@ -141,7 +153,7 @@ impl LocalFileSystem {
 
         Ok(Self {
             config,
-            mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(
+            mmap_cache: parking_lot::RwLock::new(proximadb_runtime_common::cache::LruCache::new(
                 MMAP_CACHE_SIZE,
             )),
             encryption_layer,
@@ -337,7 +349,7 @@ impl LocalFileSystem {
 
         Ok(Self {
             config,
-            mmap_cache: parking_lot::RwLock::new(crate::utils::cache::LruCache::new(
+            mmap_cache: parking_lot::RwLock::new(proximadb_runtime_common::cache::LruCache::new(
                 MMAP_CACHE_SIZE,
             )),
             encryption_layer: None,
@@ -1031,7 +1043,7 @@ impl FilesystemFile for LocalFile {
 mod tests {
     use super::*;
     use once_cell::sync::Lazy;
-    use std::sync::Mutex;
+    use std::sync::{Arc, Mutex};
     use tempfile::TempDir;
     use tracing::{debug, error, info};
 
@@ -1544,5 +1556,245 @@ mod tests {
         std::env::set_current_dir(original_dir).unwrap();
 
         info!("✅ All exists() relative path tests passed!");
+    }
+
+    // Additional sync tests from standalone test file
+
+    #[tokio::test]
+    async fn test_local_filesystem_sync_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        let config = LocalConfig {
+            root_dir: Some(base_path.into()),
+            sync_enabled: true,
+            ..Default::default()
+        };
+
+        let fs = LocalFileSystem::new(config).await.unwrap();
+
+        // Write test data
+        let test_path = "test_sync.dat";
+        let test_data = b"Critical data that must be synced";
+        // Clean up if file exists from previous run
+        if fs.exists(test_path).await.unwrap_or(false) {
+            let _ = fs.delete(test_path).await;
+        }
+        fs.write(test_path, test_data, None).await.unwrap();
+
+        // Yield to ensure async write completes before sync
+        tokio::task::yield_now().await;
+
+        // Call sync_file - should succeed
+        fs.sync_file(test_path).await.unwrap();
+
+        // Verify data can be read back
+        let read_data = fs.read(test_path).await.unwrap();
+        assert_eq!(read_data, test_data);
+    }
+
+    #[tokio::test]
+    async fn test_local_filesystem_sync_disabled() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        let config = LocalConfig {
+            root_dir: Some(base_path.into()),
+            sync_enabled: false, // Sync disabled
+            ..Default::default()
+        };
+
+        let fs = LocalFileSystem::new(config).await.unwrap();
+
+        // Write test data
+        let test_path = "test_no_sync.dat";
+        let test_data = b"Data without sync";
+        // Clean up if file exists from previous run
+        if fs.exists(test_path).await.unwrap_or(false) {
+            let _ = fs.delete(test_path).await;
+        }
+        fs.write(test_path, test_data, None).await.unwrap();
+
+        // Call sync_file - should succeed but do nothing
+        fs.sync_file(test_path).await.unwrap();
+
+        // Data should still be readable
+        let read_data = fs.read(test_path).await.unwrap();
+        assert_eq!(read_data, test_data);
+    }
+
+    #[tokio::test]
+    async fn test_sync_file_not_found() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        let config = LocalConfig {
+            root_dir: Some(base_path.into()),
+            sync_enabled: true,
+            ..Default::default()
+        };
+
+        let fs = LocalFileSystem::new(config).await.unwrap();
+
+        // Try to sync non-existent file
+        let result = fs.sync_file("non_existent.dat").await;
+
+        // Should fail with appropriate error
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            FilesystemError::NotFound(_) => {} // Expected
+            e => panic!(
+                "Expected NotFound error for non-existent file, got: {:?}",
+                e
+            ),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sync_after_append() {
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        let config = LocalConfig {
+            root_dir: Some(base_path.into()),
+            sync_enabled: true,
+            ..Default::default()
+        };
+
+        let fs = LocalFileSystem::new(config).await.unwrap();
+
+        let test_path = "append_sync.dat";
+
+        // Clean up if file exists from previous run
+        if fs.exists(test_path).await.unwrap_or(false) {
+            let _ = fs.delete(test_path).await;
+        }
+
+        // Initial write
+        fs.write(test_path, b"Initial data", None).await.unwrap();
+        fs.sync_file(test_path).await.unwrap();
+
+        // Append more data
+        fs.append(test_path, b" - Appended data").await.unwrap();
+
+        // Yield to ensure async operations complete
+        tokio::task::yield_now().await;
+
+        // Sync after append
+        fs.sync_file(test_path).await.unwrap();
+
+        // Verify complete data
+        let read_data = fs.read(test_path).await.unwrap();
+        assert_eq!(read_data, b"Initial data - Appended data");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_sync_operations() {
+        // Use a fixture-based approach with proper async synchronization
+        let temp_dir = TempDir::new().unwrap();
+        let base_path = temp_dir.path().to_str().unwrap();
+
+        let config = LocalConfig {
+            root_dir: Some(base_path.into()),
+            sync_enabled: true,
+            ..Default::default()
+        };
+
+        let fs = Arc::new(LocalFileSystem::new(config).await.unwrap());
+
+        // Test data: file paths and their contents
+        let test_files = vec![
+            ("file1.dat", b"Data 1"),
+            ("file2.dat", b"Data 2"),
+            ("file3.dat", b"Data 3"),
+        ];
+
+        // Setup phase: Write all files synchronously with verification
+        // This ensures all files exist and are readable before concurrent operations
+        for (path, data) in &test_files {
+            // Clean up any existing file
+            if fs.exists(path).await.unwrap_or(false) {
+                fs.delete(path).await.unwrap();
+            }
+
+            // Write and immediately verify
+            fs.write(path, &data[..], None).await.unwrap();
+
+            // Synchronously verify the write was successful
+            let read_data = fs.read(path).await.unwrap();
+            assert_eq!(
+                &read_data, data,
+                "Initial write verification failed for {}",
+                path
+            );
+        }
+
+        // Use a barrier to ensure all writes are flushed before concurrent syncs
+        // This is more reliable than sleep-based approaches
+        // Use tokio::sync::Barrier for async-compatible synchronization
+        let barrier = Arc::new(tokio::sync::Barrier::new(test_files.len() + 1));
+        let mut handles = vec![];
+
+        // Spawn concurrent sync operations with barrier synchronization
+        for (path, _) in &test_files {
+            let fs_clone = Arc::clone(&fs);
+            let barrier_clone = Arc::clone(&barrier);
+            let path = path.to_string();
+
+            handles.push(tokio::spawn(async move {
+                // Wait for all tasks to be ready before starting
+                barrier_clone.wait().await;
+
+                // Perform sync operation with simple error handling
+                // No retries or timeouts - let the test fail if there's a real issue
+                match fs_clone.sync_file(&path).await {
+                    Ok(()) => Ok(path),
+                    Err(e) => Err((path, e)),
+                }
+            }));
+        }
+
+        // Wait for all tasks to be ready, then release the barrier
+        barrier.wait().await;
+
+        // Collect results with clear error messages
+        let mut results = vec![];
+        for handle in handles {
+            match handle.await {
+                Ok(Ok(path)) => results.push((path, true)),
+                Ok(Err((path, e))) => {
+                    eprintln!("Sync failed for {}: {}", path, e);
+                    results.push((path, false));
+                }
+                Err(e) => {
+                    eprintln!("Sync task panicked: {}", e);
+                    results.push(("unknown".to_string(), false));
+                }
+            }
+        }
+
+        // Assert with clear, stable error messages
+        let failed_syncs: Vec<_> = results
+            .into_iter()
+            .filter(|(_, success)| !success)
+            .collect();
+        assert!(
+            failed_syncs.is_empty(),
+            "Sync operations failed for files: {:?}",
+            failed_syncs
+                .iter()
+                .map(|(path, _)| path)
+                .collect::<Vec<_>>()
+        );
+
+        // Final verification: Ensure all data is intact after concurrent syncs
+        for (path, expected_data) in &test_files {
+            let read_data = fs.read(path).await.unwrap();
+            assert_eq!(
+                &read_data, expected_data,
+                "Data verification failed after concurrent sync for {}",
+                path
+            );
+        }
     }
 }

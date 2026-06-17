@@ -29,7 +29,8 @@ Example::
 from __future__ import annotations
 
 import uuid
-from typing import Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import Any, Union
 
 # Verify that at least one autogen package is available
 try:
@@ -50,7 +51,7 @@ if not _AUTOGEN_AVAILABLE:
         "Install with: pip install autogen-agentchat or pip install pyautogen"
     )
 
-from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.integrations._records import insert_records, record_payload
 
 # Type aliases matching AutoGen's VectorDB conventions
 Document = dict[str, Any]
@@ -75,7 +76,7 @@ class ProximaDBVectorDB:
     def __init__(
         self,
         client: Any,
-        embedding_fn: Optional[Callable[..., list[float]]] = None,
+        embedding_fn: Callable[..., list[float]] | None = None,
         dimension: int = 768,
     ) -> None:
         self._client = client
@@ -134,7 +135,7 @@ class ProximaDBVectorDB:
         if not docs:
             return
 
-        records: list[VectorRecord] = []
+        records: list[dict[str, Any]] = []
         for doc in docs:
             doc_id = str(doc.get("id", uuid.uuid4()))
             content = doc.get("content") or doc.get("text", "")
@@ -148,16 +149,16 @@ class ProximaDBVectorDB:
 
             metadata = dict(doc.get("metadata", {}))
             records.append(
-                VectorRecord(
-                    id=doc_id,
+                record_payload(
+                    record_id=doc_id,
                     vector=embedding,
-                    source=content,
+                    text=content,
                     metadata=metadata,
                 )
             )
 
         if records:
-            self._client.insert_vectors(collection_name, records=records)
+            insert_records(self._client, collection_name, records)
 
     def update_docs(
         self,
@@ -234,9 +235,9 @@ class ProximaDBVectorDB:
 
     def get_docs_by_ids(
         self,
-        ids: Optional[list[ItemID]] = None,
+        ids: list[ItemID] | None = None,
         collection_name: str = "default",
-        include: Optional[list[str]] = None,
+        include: list[str] | None = None,
         **kwargs: Any,
     ) -> list[Document]:
         """Retrieve documents by their IDs.

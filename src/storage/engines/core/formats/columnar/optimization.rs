@@ -7,7 +7,6 @@
 //! - Cost-based query optimization
 
 use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::engines::core::formats::columnar::{
     ColumnarConfig, MetadataFilter, RowGroupStats, SearchCandidate,
 };
@@ -17,6 +16,7 @@ use arrow_array::RecordBatch;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use parquet::bloom_filter::Sbbf as BloomFilter;
 use parquet::file::metadata::{ParquetMetaData, RowGroupMetaData};
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{debug, info};
@@ -74,9 +74,12 @@ pub struct StreamingRowGroupIterator {
     #[allow(dead_code)]
     batch_size: usize,
 }
+/// Backwards-compat alias for [`ColumnarOptProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = ColumnarOptProgressiveSearchConfig;
+
 /// Progressive search configuration
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct ColumnarOptProgressiveSearchConfig {
     /// Enable binary quantization filtering
     pub use_binary_filter: bool,
     /// Binary filter threshold (0.0-1.0)
@@ -93,7 +96,7 @@ pub struct ProgressiveSearchConfig {
     pub final_rerank: bool,
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for ColumnarOptProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             use_binary_filter: true,
@@ -341,7 +344,7 @@ impl ColumnarOptimizer {
         top_k: usize,
         distance_metric: &DistanceMetric,
         filter: Option<&MetadataFilter>,
-        config: &ProgressiveSearchConfig,
+        config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<crate::core::search::results::OptimizedSearchRecord>> {
         info!(
             "Progressive search across {} files, top_k={}",
@@ -394,7 +397,11 @@ impl ColumnarOptimizer {
                     }),
                     score: candidate.similarity,
                     similarity: Some(1.0 - candidate.similarity),
-                    vector: Some(Arc::new(vector.vector)),
+                    vector: vector
+                        .embeddings
+                        .into_iter()
+                        .next()
+                        .map(|e| Arc::new(e.values.to_fp32_owned())),
                     metadata: HashMap::new(), // Use SqlValue metadata
                     ..Default::default()
                 });
@@ -410,7 +417,7 @@ impl ColumnarOptimizer {
         top_k: usize,
         distance_metric: &DistanceMetric,
         filter: Option<&MetadataFilter>,
-        config: &ProgressiveSearchConfig,
+        config: &ColumnarOptProgressiveSearchConfig,
         _stats: &mut OptimizationStats,
     ) -> Result<Vec<SearchCandidate>> {
         debug!("Progressive search in file: {}", file_path);
@@ -467,7 +474,7 @@ impl ColumnarOptimizer {
         &self,
         iterator: &mut StreamingRowGroupIterator,
         _query_vector: &[f32],
-        config: &ProgressiveSearchConfig,
+        config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         let mut candidates = Vec::new();
         while let Some(batch) = iterator.next().await? {
@@ -516,7 +523,7 @@ impl ColumnarOptimizer {
         _iterator: &mut StreamingRowGroupIterator,
         _query_vector: &[f32],
         candidates: &[SearchCandidate],
-        _config: &ProgressiveSearchConfig,
+        _config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         // Refine candidates using INT8 quantized vectors
         // For now, just return the input candidates
@@ -528,7 +535,7 @@ impl ColumnarOptimizer {
         _iterator: &mut StreamingRowGroupIterator,
         _query_vector: &[f32],
         candidates: &[SearchCandidate],
-        _config: &ProgressiveSearchConfig,
+        _config: &ColumnarOptProgressiveSearchConfig,
     ) -> Result<Vec<SearchCandidate>> {
         // Refine candidates using PQ vectors
         Ok(candidates.to_vec())
@@ -567,25 +574,30 @@ impl ColumnarOptimizer {
         Ok(Some(vec![0.0; 768])) // Placeholder vector
     }
 
-    /// Load full VectorRecord at candidate location
+    /// Load full ProximaRecord at candidate location
     async fn load_vector_at_location(
         &self,
         candidate: &SearchCandidate,
-    ) -> Result<Option<VectorRecord>> {
+    ) -> Result<Option<ProximaRecord>> {
         // In production, would load the full record from Parquet
-        Ok(Some(VectorRecord {
-            id: candidate
-                .vector_id
-                .clone()
-                .unwrap_or_else(|| format!("unknown_{}", candidate.row_offset)),
-            vector: vec![0.0; 768], // Placeholder
-            metadata: std::collections::HashMap::new(),
-            timestamp: Some(0),
-            updated_at: None,
-            expires_at: None,
-            version: None,
-            source: None,
-        }))
+        let oid = candidate
+            .vector_id
+            .clone()
+            .unwrap_or_else(|| format!("unknown_{}", candidate.row_offset));
+        let values = vec![0.0_f32; 768]; // Placeholder
+        let dim = values.len() as u32;
+        let mut record = ProximaRecord {
+            oid,
+            ..Default::default()
+        };
+        record.embeddings.push(EmbeddingCell {
+            model_id: "default".to_string(),
+            modality: "vector".to_string(),
+            values: proximadb_records::EmbeddingValues::Fp32(values),
+            dim,
+            ..Default::default()
+        });
+        Ok(Some(record))
     }
 
     /// Optimize row group layout for better performance
@@ -736,8 +748,7 @@ mod tests {
     use super::*;
     #[allow(dead_code)]
     async fn test_columnar_optimizer_creation() {
-        let _ = crate::core::hardware_capabilities::initialize_hardware_capabilities_default();
-        let _hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(
             crate::proto::proximadb_v1::DistanceMetric::Cosine,
         ));
@@ -763,7 +774,7 @@ mod tests {
 
     #[test]
     fn test_progressive_search_config() {
-        let config = ProgressiveSearchConfig::default();
+        let config = ColumnarOptProgressiveSearchConfig::default();
         assert!(config.use_binary_filter);
         assert!(config.use_int8_search);
         assert!(config.use_pq_search);

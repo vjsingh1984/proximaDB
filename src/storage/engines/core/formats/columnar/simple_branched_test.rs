@@ -2,8 +2,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::*;
-    use crate::proto::proximadb_v1::VectorRecord;
-    use std::collections::HashMap;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
     use tempfile::tempdir;
 
     #[tokio::test]
@@ -15,16 +14,23 @@ mod tests {
         let file_path = dir.path().join("test_branched.parquet");
 
         // Create simple test data without metadata to avoid MapArray issues
-        let test_records: Vec<VectorRecord> = (0..100)
-            .map(|i| VectorRecord {
-                id: format!("id_{i}"),
-                vector: vec![i as f32; 128],
-                metadata: HashMap::new(), // Empty to avoid MapArray
-                timestamp: Some(i as i64),
-                updated_at: None,
-                expires_at: None,
-                version: Some(1),
-                source: None,
+        let test_records: Vec<ProximaRecord> = (0..100)
+            .map(|i| {
+                let mut record = ProximaRecord {
+                    oid: format!("id_{i}"),
+                    created_at_ns: i as i64 * 1_000_000,
+                    updated_at_ns: i as i64 * 1_000_000,
+                    record_version: 1,
+                    ..Default::default()
+                };
+                record.embeddings.push(EmbeddingCell {
+                    model_id: "default".to_string(),
+                    modality: "vector".to_string(),
+                    values: proximadb_records::EmbeddingValues::Fp32(vec![i as f32; 128]),
+                    dim: 128,
+                    ..Default::default()
+                });
+                record
             })
             .collect();
 
@@ -52,11 +58,11 @@ mod tests {
         // Test reading without filters (no MapArray projection issues)
         let _all_ids = test_records
             .iter()
-            .map(|r| r.id.clone())
+            .map(|r| r.oid.clone())
             .collect::<Vec<_>>();
         // TODO: Implement optimized_batch_id_lookup method
         // For now, simulate lookup results
-        let results: Vec<crate::proto::proximadb_v1::VectorRecord> = test_records[0..10].to_vec();
+        let results: Vec<ProximaRecord> = test_records[0..10].to_vec();
         /*
         let results = reader
             .optimized_batch_id_lookup(

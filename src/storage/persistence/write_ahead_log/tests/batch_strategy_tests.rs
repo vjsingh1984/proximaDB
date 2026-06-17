@@ -3,9 +3,6 @@
 #[cfg(test)]
 mod tests {
 
-    use crate::proto::proximadb_v1::VectorRecord;
-    use std::collections::HashMap;
-    use crate::proto::proximadb_v1::SqlValue;
     use crate::storage::BatchId;
     use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
     use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -15,7 +12,7 @@ mod tests {
     // WalBatchStrategyExt removed - use write_native_batch directly
     use crate::compute::distance_computation::DistanceMetric;
     use crate::storage::WALConfig;
-    use chrono::Utc;
+    use proximadb_records::{EmbeddingCell, ProximaRecord};
 
     use std::sync::Arc;
     use tempfile::TempDir;
@@ -85,27 +82,29 @@ mod tests {
         _collection_id: &str,
         vector_id: &str,
         vector_data: Vec<f32>,
-    ) -> VectorRecord {
-        let now = Utc::now().timestamp_micros();
-        VectorRecord {
-            id: vector_id.to_string(),
-            vector: vector_data,
-            metadata: HashMap::new(),
-            timestamp: now,
-            updated_at: Some(now),
-            expires_at: None,
-            version: Some(1),
-            source: None,
+    ) -> ProximaRecord {
+        ProximaRecord {
+            oid: vector_id.to_string(),
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "dense_vector".to_string(),
+                dim: vector_data.len() as u32,
+                values: vector_data,
+                ..Default::default()
+            }],
+            record_version: 1,
+            method: Some("test".to_string()),
+            ..ProximaRecord::default()
         }
     }
 
     /// Create a test WAL vector batch
-    fn create_test_wal_batch(collection_id: &str, vectors: Vec<VectorRecord>) -> WALVectorBatch {
+    fn create_test_wal_batch(collection_id: &str, vectors: Vec<ProximaRecord>) -> WALVectorBatch {
         let total_size_bytes: usize = vectors
             .iter()
             .map(|v| {
                 // Estimate size: vector data + metadata + overhead
-                v.vector.len() * 4 + v.metadata.len() * 64 + 256
+                vector_values(v).len() * 4 + v.props.len() * 64 + 256
             })
             .sum();
         let batch_id = BatchId::new();
@@ -118,6 +117,14 @@ mod tests {
             is_flushed: false,
             metadata_bloom_filter: None,
         }
+    }
+
+    fn vector_values(record: &ProximaRecord) -> &[f32] {
+        record
+            .embeddings
+            .first()
+            .map(|embedding| embedding.as_fp32_slice())
+            .unwrap_or(&[])
     }
 
     /// Helper to create WriteBuffer directory for a collection
@@ -244,7 +251,7 @@ mod tests {
         create_collection_write_buffer_dir(&temp_dir, collection_id);
         let vector_record =
             create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
-        let search_id = vector_record.id.clone();
+        let search_id = vector_record.oid.clone();
 
         // Create a batch and write it properly with collection_id
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
@@ -263,8 +270,8 @@ mod tests {
 
         assert!(found_vector.is_some());
         let vector = found_vector.unwrap();
-        assert_eq!(vector.id, search_id.clone());
-        assert_eq!(vector.vector, vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(vector.oid, search_id.clone());
+        assert_eq!(vector_values(&vector), &[1.0, 2.0, 3.0, 4.0]);
     }
 
     #[tokio::test]
@@ -275,7 +282,7 @@ mod tests {
         create_collection_write_buffer_dir(&temp_dir, collection_id);
         let vector_record =
             create_test_vector_record(collection_id, "vector_1", vec![1.0, 2.0, 3.0, 4.0]);
-        let search_id = vector_record.id.clone();
+        let search_id = vector_record.oid.clone();
 
         // Create a batch and write it properly with collection_id
         let batch = create_test_wal_batch(collection_id, vec![vector_record]);
@@ -294,8 +301,8 @@ mod tests {
 
         assert!(found_vector.is_some());
         let vector = found_vector.unwrap();
-        assert_eq!(vector.id, search_id.clone());
-        assert_eq!(vector.vector, vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(vector.oid, search_id.clone());
+        assert_eq!(vector_values(&vector), &[1.0, 2.0, 3.0, 4.0]);
     }
 
     #[tokio::test]
@@ -402,7 +409,7 @@ mod tests {
         // Check that we got the right vectors
         let ids: Vec<String> = collection_vectors
             .iter()
-            .map(|v| v.id.clone())
+            .map(|v| v.oid.clone())
             .collect();
         assert!(ids.contains(&"vector_1".to_string()));
         assert!(ids.contains(&"vector_2".to_string()));
@@ -436,7 +443,7 @@ mod tests {
         // Check that we got the right vectors
         let ids: Vec<String> = collection_vectors
             .iter()
-            .map(|v| v.id.clone())
+            .map(|v| v.oid.clone())
             .collect();
         assert!(ids.contains(&"vector_1".to_string()));
         assert!(ids.contains(&"vector_2".to_string()));
@@ -596,7 +603,7 @@ mod tests {
 
         assert_eq!(vectors1.len(), 1);
         assert_eq!(vectors2.len(), 1);
-        assert_eq!(vectors1[0].id, "vector_1".to_string());
-        assert_eq!(vectors2[0].id, "vector_2".to_string());
+        assert_eq!(vectors1[0].oid, "vector_1".to_string());
+        assert_eq!(vectors2[0].oid, "vector_2".to_string());
     }
 }

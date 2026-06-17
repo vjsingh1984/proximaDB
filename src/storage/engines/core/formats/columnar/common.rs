@@ -18,9 +18,9 @@ use super::serialization::{
     ColumnarSerializationConfig, ColumnarSerializer, FormatPreference, SerializationResult,
 };
 use super::{ColumnarConfig, ColumnarFileMetadata, CompressionMetadata, QuantizationConfig};
-use crate::core::compression::CompressionAlgorithm;
-use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_compression::CompressionAlgorithm;
+use proximadb_records::ProximaRecord;
 
 /// Common configuration for VIPER and NOVA engines
 #[derive(Debug, Clone, Default)]
@@ -41,7 +41,7 @@ pub struct CommonColumnarConfig {
     pub engine_optimizations: EngineOptimizations,
 
     /// Performance monitoring settings
-    pub monitoring_config: MonitoringConfig,
+    pub monitoring_config: ColumnarMonitoringConfig,
 }
 
 /// Schema generation configuration
@@ -77,7 +77,7 @@ pub struct CompressionStrategy {
 #[derive(Debug, Clone)]
 pub enum CompressionAlgorithmSelection {
     /// Fixed algorithm for all data
-    Fixed(crate::core::compression::CompressionAlgorithm),
+    Fixed(proximadb_compression::CompressionAlgorithm),
     /// Per-column type optimization
     PerColumnType,
     /// Adaptive based on data characteristics
@@ -99,7 +99,7 @@ pub struct CompressionLevels {
 #[derive(Debug, Clone, Default)]
 pub struct SerializationOptimizationConfig {
     /// Memory pool configuration
-    pub memory_pools: MemoryPoolConfig,
+    pub memory_pools: ColumnarMemoryPoolConfig,
 
     /// SIMD optimization settings
     pub simd_settings: SIMDOptimizationSettings,
@@ -111,9 +111,12 @@ pub struct SerializationOptimizationConfig {
     pub zero_copy_optimization: ZeroCopyConfig,
 }
 
+/// Backwards-compat alias for [`ColumnarMemoryPoolConfig`].
+pub type MemoryPoolConfig = ColumnarMemoryPoolConfig;
+
 /// Memory pool configuration
 #[derive(Debug, Clone)]
-pub struct MemoryPoolConfig {
+pub struct ColumnarMemoryPoolConfig {
     /// Enable memory pooling
     pub enable_pooling: bool,
 
@@ -198,7 +201,7 @@ pub struct DistanceComputationConfig {
     pub default_distance_metric: crate::compute::distance_computation::DistanceMetric,
 
     /// Progressive search configuration
-    pub progressive_search: ProgressiveSearchConfig,
+    pub progressive_search: ColumnarCommonProgressiveSearchConfig,
 
     /// Distance caching settings
     pub distance_caching: DistanceCachingConfig,
@@ -207,9 +210,12 @@ pub struct DistanceComputationConfig {
     pub hardware_acceleration: HardwareAccelerationConfig,
 }
 
+/// Backwards-compat alias for [`ColumnarCommonProgressiveSearchConfig`].
+pub type ProgressiveSearchConfig = ColumnarCommonProgressiveSearchConfig;
+
 /// Progressive search configuration
 #[derive(Debug, Clone)]
-pub struct ProgressiveSearchConfig {
+pub struct ColumnarCommonProgressiveSearchConfig {
     /// Enable progressive search
     pub enable_progressive: bool,
 
@@ -370,7 +376,7 @@ pub struct AdvancedCachingConfig {
 
 /// Monitoring configuration
 #[derive(Debug, Clone)]
-pub struct MonitoringConfig {
+pub struct ColumnarMonitoringConfig {
     /// Enable performance metrics collection
     pub enable_metrics: bool,
 
@@ -381,12 +387,12 @@ pub struct MonitoringConfig {
     pub enable_detailed_tracing: bool,
 
     /// Resource usage monitoring
-    pub resource_monitoring: ResourceMonitoringConfig,
+    pub resource_monitoring: ResourceColumnarMonitoringConfig,
 }
 
 /// Resource monitoring configuration
 #[derive(Debug, Clone)]
-pub struct ResourceMonitoringConfig {
+pub struct ResourceColumnarMonitoringConfig {
     /// Monitor memory usage
     pub monitor_memory: bool,
 
@@ -420,7 +426,7 @@ pub struct CommonColumnarOperations {
     metadata_cache: Arc<RwLock<MetadataCache>>,
 
     /// Performance monitor
-    performance_monitor: Arc<PerformanceMonitor>,
+    performance_monitor: Arc<ColumnarPerformanceMonitor>,
 }
 
 /// Metadata cache for columnar files
@@ -448,23 +454,30 @@ struct CachedFileMetadata {
     access_count: usize,
 }
 
+/// Backwards-compat alias for [`ColumnarPerformanceMonitor`].
+pub type PerformanceMonitor = ColumnarPerformanceMonitor;
+
 /// Performance monitoring and metrics collection
 #[derive(Debug)]
-pub struct PerformanceMonitor {
+pub struct ColumnarPerformanceMonitor {
     /// Operation metrics
-    operation_metrics: Arc<RwLock<OperationMetrics>>,
+    operation_metrics: Arc<RwLock<ColumnarCommonOperationMetrics>>,
 
     /// Resource usage metrics
     resource_metrics: Arc<RwLock<ResourceMetrics>>,
 
     /// Configuration
-    config: MonitoringConfig,
+    config: ColumnarMonitoringConfig,
 }
+
+/// Backwards-compat alias for [`ColumnarCommonOperationMetrics`].
+#[allow(dead_code)]
+pub type OperationMetrics = ColumnarCommonOperationMetrics;
 
 /// Operation performance metrics
 #[derive(Debug, Default, Clone)]
 #[allow(dead_code)]
-pub struct OperationMetrics {
+pub struct ColumnarCommonOperationMetrics {
     /// Serialization metrics
     serialization_ops: usize,
     serialization_total_time_ms: f64,
@@ -556,8 +569,9 @@ impl CommonColumnarOperations {
         }));
 
         // Initialize performance monitor
-        let performance_monitor =
-            Arc::new(PerformanceMonitor::new(config.monitoring_config.clone()));
+        let performance_monitor = Arc::new(ColumnarPerformanceMonitor::new(
+            config.monitoring_config.clone(),
+        ));
 
         info!("Common columnar operations initialized successfully");
 
@@ -624,7 +638,7 @@ impl CommonColumnarOperations {
     /// Serialize vector records with transparent quantization
     pub async fn serialize_records(
         &self,
-        records: &[VectorRecord],
+        records: &[ProximaRecord],
         schema: &Schema,
     ) -> Result<SerializationResult> {
         let start_time = std::time::Instant::now();
@@ -637,9 +651,9 @@ impl CommonColumnarOperations {
         let result = self.serializer.serialize_vectors(records, schema).await?;
 
         let serialization_time = start_time.elapsed().as_secs_f64() * 1000.0;
-        let bytes_processed = records
-            .first()
-            .map_or(0, |r| records.len() * r.vector.len() * 4);
+        let bytes_processed = records.first().map_or(0, |r| {
+            records.len() * r.embeddings.first().map_or(0, |e| e.values.len()) * 4
+        });
 
         // Update metrics
         self.performance_monitor
@@ -662,7 +676,7 @@ impl CommonColumnarOperations {
         arrays: &HashMap<String, ArrayRef>,
         schema: &Schema,
         format_preference: FormatPreference,
-    ) -> Result<Vec<VectorRecord>> {
+    ) -> Result<Vec<ProximaRecord>> {
         let start_time = std::time::Instant::now();
 
         debug!(
@@ -762,7 +776,9 @@ impl CommonColumnarOperations {
     }
 
     /// Get performance metrics
-    pub async fn get_performance_metrics(&self) -> Result<(OperationMetrics, ResourceMetrics)> {
+    pub async fn get_performance_metrics(
+        &self,
+    ) -> Result<(ColumnarCommonOperationMetrics, ResourceMetrics)> {
         let operation_metrics = {
             let guard = self.performance_monitor.operation_metrics.read().await;
             (*guard).clone()
@@ -868,10 +884,10 @@ impl CommonColumnarOperations {
     }
 }
 
-impl PerformanceMonitor {
-    fn new(config: MonitoringConfig) -> Self {
+impl ColumnarPerformanceMonitor {
+    fn new(config: ColumnarMonitoringConfig) -> Self {
         Self {
-            operation_metrics: Arc::new(RwLock::new(OperationMetrics::default())),
+            operation_metrics: Arc::new(RwLock::new(ColumnarCommonOperationMetrics::default())),
             resource_metrics: Arc::new(RwLock::new(ResourceMetrics::default())),
             config,
         }
@@ -910,7 +926,7 @@ impl PerformanceMonitor {
 
     async fn reset_metrics(&self) {
         let mut op_metrics = self.operation_metrics.write().await;
-        *op_metrics = OperationMetrics::default();
+        *op_metrics = ColumnarCommonOperationMetrics::default();
 
         let mut res_metrics = self.resource_metrics.write().await;
         *res_metrics = ResourceMetrics::default();
@@ -1012,7 +1028,7 @@ impl Default for CompressionLevels {
     }
 }
 
-impl Default for MemoryPoolConfig {
+impl Default for ColumnarMemoryPoolConfig {
     fn default() -> Self {
         Self {
             enable_pooling: true,
@@ -1082,14 +1098,14 @@ impl Default for DistanceComputationConfig {
     fn default() -> Self {
         Self {
             default_distance_metric: crate::compute::distance_computation::DistanceMetric::Cosine,
-            progressive_search: ProgressiveSearchConfig::default(),
+            progressive_search: ColumnarCommonProgressiveSearchConfig::default(),
             distance_caching: DistanceCachingConfig::default(),
             hardware_acceleration: HardwareAccelerationConfig::default(),
         }
     }
 }
 
-impl Default for ProgressiveSearchConfig {
+impl Default for ColumnarCommonProgressiveSearchConfig {
     fn default() -> Self {
         Self {
             enable_progressive: true,
@@ -1219,18 +1235,18 @@ impl Default for AdvancedCachingConfig {
     }
 }
 
-impl Default for MonitoringConfig {
+impl Default for ColumnarMonitoringConfig {
     fn default() -> Self {
         Self {
             enable_metrics: true,
             metrics_interval_seconds: 60,
             enable_detailed_tracing: false,
-            resource_monitoring: ResourceMonitoringConfig::default(),
+            resource_monitoring: ResourceColumnarMonitoringConfig::default(),
         }
     }
 }
 
-impl Default for ResourceMonitoringConfig {
+impl Default for ResourceColumnarMonitoringConfig {
     fn default() -> Self {
         Self {
             monitor_memory: true,

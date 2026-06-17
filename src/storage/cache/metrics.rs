@@ -4,9 +4,12 @@ use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use tracing::debug;
 
+/// Backwards-compat alias for [`StorageCacheMetrics`].
+pub type CacheMetrics = StorageCacheMetrics;
+
 /// Cache metrics collector
 #[derive(Debug, Clone)]
-pub struct CacheMetrics {
+pub struct StorageCacheMetrics {
     // Hit/Miss counters per tier
     l1_hits: Arc<AtomicU64>,
     l2_hits: Arc<AtomicU64>,
@@ -35,7 +38,7 @@ pub struct CacheMetrics {
     start_time: Instant,
 }
 
-impl CacheMetrics {
+impl StorageCacheMetrics {
     pub fn new() -> Self {
         Self {
             l1_hits: Arc::new(AtomicU64::new(0)),
@@ -105,7 +108,7 @@ impl CacheMetrics {
         self.total_bytes.load(Ordering::Relaxed)
     }
 
-    pub fn snapshot(&self) -> CacheMetricsSnapshot {
+    pub fn snapshot(&self) -> StorageCacheMetricsSnapshot {
         let total_hits = self.l1_hits.load(Ordering::Relaxed)
             + self.l2_hits.load(Ordering::Relaxed)
             + self.l3_hits.load(Ordering::Relaxed);
@@ -119,18 +122,18 @@ impl CacheMetrics {
         };
 
         let get_latency_count = self.get_latency_count.load(Ordering::Relaxed);
-        let avg_get_latency_us = if get_latency_count > 0 {
-            self.get_latency_sum.load(Ordering::Relaxed) / get_latency_count
-        } else {
-            0
-        };
+        let avg_get_latency_us = self
+            .get_latency_sum
+            .load(Ordering::Relaxed)
+            .checked_div(get_latency_count)
+            .unwrap_or(0);
 
         let put_latency_count = self.put_latency_count.load(Ordering::Relaxed);
-        let avg_put_latency_us = if put_latency_count > 0 {
-            self.put_latency_sum.load(Ordering::Relaxed) / put_latency_count
-        } else {
-            0
-        };
+        let avg_put_latency_us = self
+            .put_latency_sum
+            .load(Ordering::Relaxed)
+            .checked_div(put_latency_count)
+            .unwrap_or(0);
 
         let elapsed_secs = self.start_time.elapsed().as_secs_f64();
         let gets_per_sec = if elapsed_secs > 0.0 {
@@ -139,7 +142,7 @@ impl CacheMetrics {
             0.0
         };
 
-        CacheMetricsSnapshot {
+        StorageCacheMetricsSnapshot {
             l1_hits: self.l1_hits.load(Ordering::Relaxed),
             l2_hits: self.l2_hits.load(Ordering::Relaxed),
             l3_hits: self.l3_hits.load(Ordering::Relaxed),
@@ -341,7 +344,7 @@ impl CacheMetrics {
     }
 }
 
-impl Default for CacheMetrics {
+impl Default for StorageCacheMetrics {
     fn default() -> Self {
         Self::new()
     }
@@ -349,7 +352,7 @@ impl Default for CacheMetrics {
 
 /// Snapshot of cache metrics at a point in time
 #[derive(Debug, Clone)]
-pub struct CacheMetricsSnapshot {
+pub struct StorageCacheMetricsSnapshot {
     pub l1_hits: u64,
     pub l2_hits: u64,
     pub l3_hits: u64,
@@ -367,7 +370,7 @@ pub struct CacheMetricsSnapshot {
     pub uptime_secs: u64,
 }
 
-impl CacheMetricsSnapshot {
+impl StorageCacheMetricsSnapshot {
     pub fn print_summary(&self) {
         debug!("=== Cache Metrics Summary ===");
         debug!("Hit Rate: {:.2}%", self.hit_rate * 100.0);

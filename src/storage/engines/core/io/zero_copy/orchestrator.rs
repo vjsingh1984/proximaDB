@@ -15,11 +15,11 @@ use super::metrics::SystemPerformanceMetrics;
 use super::traits::{
     DataRange, FileAccessRequest, MetadataSerializer, QueryContext, RequestPriority,
 };
-use crate::core::error::ProximaDBError;
 use crate::storage::cache::specialized::filesystem_metadata_store::{
     FilesystemMetadata, FilesystemMetadataStore,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
+use proximadb_kernel::error::ProximaDBError;
 
 /// Result of I/O optimization analysis
 #[derive(Debug, Clone)]
@@ -29,7 +29,7 @@ pub struct OptimizedIOResult {
     /// Estimated performance savings
     pub estimated_savings: IOSavings,
     /// Detailed execution plan
-    pub execution_plan: ExecutionPlan,
+    pub execution_plan: ZeroCopyExecutionPlan,
     /// Human-readable rationale
     pub rationale: String,
     /// Confidence in the optimization (0.0-1.0)
@@ -84,15 +84,15 @@ pub struct IOSavings {
 
 /// Detailed execution plan for the chosen strategy
 #[derive(Debug, Clone)]
-pub struct ExecutionPlan {
+pub struct ZeroCopyExecutionPlan {
     /// Ordered list of operations to execute
     pub operations: Vec<ExecutionOperation>,
     /// Estimated total execution time
     pub estimated_duration: Duration,
     /// Resource requirements
-    pub resource_requirements: ResourceRequirements,
+    pub resource_requirements: ZeroCopyResourceRequirements,
     /// Fallback plans in case of failure
-    pub fallback_plans: Vec<ExecutionPlan>,
+    pub fallback_plans: Vec<ZeroCopyExecutionPlan>,
 }
 
 /// Individual execution operation
@@ -131,7 +131,7 @@ pub enum OperationType {
 
 /// Resource requirements for execution
 #[derive(Debug, Clone, Default)]
-pub struct ResourceRequirements {
+pub struct ZeroCopyResourceRequirements {
     /// Memory required in bytes
     pub memory_bytes: u64,
     /// Disk space required in bytes
@@ -154,7 +154,7 @@ pub struct BatchOptimizationResult {
     /// Total estimated savings
     pub total_savings: IOSavings,
     /// Batch execution plan
-    pub batch_execution_plan: ExecutionPlan,
+    pub batch_execution_plan: ZeroCopyExecutionPlan,
 }
 
 /// Cross-file optimization opportunities
@@ -322,10 +322,10 @@ impl ZeroCopyIOSystem {
                     reason: "File filtered out by metadata analysis".to_string(),
                 },
                 estimated_savings: savings,
-                execution_plan: ExecutionPlan {
+                execution_plan: ZeroCopyExecutionPlan {
                     operations: vec![],
                     estimated_duration: Duration::from_millis(1),
-                    resource_requirements: ResourceRequirements::default(),
+                    resource_requirements: ZeroCopyResourceRequirements::default(),
                     fallback_plans: vec![],
                 },
                 rationale: "Metadata analysis determined no relevant data in file".to_string(),
@@ -617,7 +617,7 @@ impl ZeroCopyIOSystem {
     ) -> std::pin::Pin<
         Box<
             dyn std::future::Future<
-                    Output = Result<(IOStrategy, ExecutionPlan, IOSavings), ProximaDBError>,
+                    Output = Result<(IOStrategy, ZeroCopyExecutionPlan, IOSavings), ProximaDBError>,
                 > + Send
                 + 'a,
         >,
@@ -626,10 +626,10 @@ impl ZeroCopyIOSystem {
             match strategy {
                 DownloadStrategy::SkipFile { reason } => {
                     let io_strategy = IOStrategy::SkipFile { reason };
-                    let plan = ExecutionPlan {
+                    let plan = ZeroCopyExecutionPlan {
                         operations: vec![],
                         estimated_duration: Duration::from_millis(1),
-                        resource_requirements: ResourceRequirements::default(),
+                        resource_requirements: ZeroCopyResourceRequirements::default(),
                         fallback_plans: vec![],
                     };
                     let savings = IOSavings {
@@ -670,10 +670,10 @@ impl ZeroCopyIOSystem {
                         });
                     }
 
-                    let plan = ExecutionPlan {
+                    let plan = ZeroCopyExecutionPlan {
                         operations,
                         estimated_duration: Duration::from_millis(150),
-                        resource_requirements: ResourceRequirements {
+                        resource_requirements: ZeroCopyResourceRequirements {
                             memory_bytes: file_size,
                             disk_bytes: if cache_locally { file_size } else { 0 },
                             bandwidth_bps: file_size,
@@ -720,10 +720,10 @@ impl ZeroCopyIOSystem {
                         dependencies: vec![],
                     }];
 
-                    let plan = ExecutionPlan {
+                    let plan = ZeroCopyExecutionPlan {
                         operations,
                         estimated_duration: Duration::from_millis(ranges.len() as u64 * 25),
-                        resource_requirements: ResourceRequirements {
+                        resource_requirements: ZeroCopyResourceRequirements {
                             memory_bytes: total_bytes,
                             disk_bytes: 0,
                             bandwidth_bps: total_bytes,
@@ -822,13 +822,13 @@ impl ZeroCopyIOSystem {
         &self,
         _individual_results: &[OptimizedIOResult],
         _cross_file_optimizations: &[CrossFileOptimization],
-    ) -> Result<ExecutionPlan, ProximaDBError> {
+    ) -> Result<ZeroCopyExecutionPlan, ProximaDBError> {
         // This would implement batch execution planning
         let _ = (_individual_results, _cross_file_optimizations); // Suppress unused warnings
-        Ok(ExecutionPlan {
+        Ok(ZeroCopyExecutionPlan {
             operations: vec![],
             estimated_duration: Duration::from_millis(100),
-            resource_requirements: ResourceRequirements::default(),
+            resource_requirements: ZeroCopyResourceRequirements::default(),
             fallback_plans: vec![],
         })
     }

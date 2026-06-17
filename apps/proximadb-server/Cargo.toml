@@ -1,0 +1,37 @@
+[package]
+name = "proximadb-server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage = "https://github.com/vjsingh1984/proximadb"
+description = "ProximaDB server binary - cloud-native vector database"
+
+[[bin]]
+name = "proximadb-server"
+path = "src/main.rs"
+
+[features]
+default = []
+# Build with real ONNX inference. Adds the ort + ndarray runtime, downloads
+# a prebuilt ONNX Runtime binary at build time, and links the resulting
+# native library into the server. Required for production embedding;
+# without it, `EmbeddingService` returns `ModelUnavailable` on first BGE
+# request. Pass through to the embedding crate's `onnx` feature.
+onnx = ["proximadb-embedding/onnx"]
+# CoreML execution provider (macOS / iOS). Implies `onnx`. Lets operators
+# set `PROXIMADB_EMBED_PROVIDER=coreml` to route BGE inference through the
+# Apple Neural Engine + GPU instead of CPU.
+coreml = ["onnx", "proximadb-embedding/coreml"]
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+proximadb = { path = "../../", default-features = false }
+proximadb-embedding = { path = "../../crates/modalities/proximadb-embedding" }
+tokio = { version = "1.37", features = ["full"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

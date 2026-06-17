@@ -6,7 +6,6 @@
 """Embedding Service using Victor's embedding infrastructure."""
 
 import asyncio
-from typing import Any, Dict, List, Optional
 
 from proximadb_sdk.llm.config import EmbeddingConfig, EmbeddingProvider
 
@@ -23,7 +22,7 @@ class EmbeddingService:
     Usage:
         service = EmbeddingService(EmbeddingConfig(
             provider=EmbeddingProvider.SENTENCE_TRANSFORMERS,
-            model_name="all-MiniLM-L12-v2",
+            model_name="BAAI/bge-small-en-v1.5",
         ))
         await service.initialize()
         embedding = await service.embed_text("Hello, world!")
@@ -183,7 +182,7 @@ class EmbeddingService:
             )
             self._use_victor = False
 
-    async def embed_text(self, text: str) -> List[float]:
+    async def embed_text(self, text: str) -> list[float]:
         """Generate embedding for a single text.
 
         Args:
@@ -227,7 +226,7 @@ class EmbeddingService:
 
         raise ValueError(f"Unknown provider: {self.config.provider}")
 
-    async def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for multiple texts.
 
         Args:

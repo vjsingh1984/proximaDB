@@ -99,7 +99,20 @@
 
 pub mod constants;
 pub mod core;
-pub mod impls;
+pub mod helix;
+pub mod impls; // Deprecated: Moving engines directly to engines/ level
+pub mod nova; // Phase 1: Moved from impls/nova/
+pub mod raptor; // Phase 1: Moved from impls/raptor/
+pub mod sst; // Phase 1: Moved from impls/sst/
+pub mod swift; // Phase 1: Moved from impls/swift/
+pub mod viper; // Phase 1: Moved from impls/viper/ // Phase 1: Moved from impls/helix/
+// Phase 2: Moved remaining specialized engines from impls/
+pub mod cedar; // CEDAR: Columnar Extensible Document Archive
+pub mod chrono; // CHRONO: Chronological Hierarchical Record and Observation store
+pub mod eventlog; // Event Sourcing Engine
+pub mod sequoia; // SEQUOIA: Relational row-store with typed schema validation
+pub mod titan; // TITAN: Traversal-Indexed Topology and Adjacency Network
+pub mod tst; // TST: Time-Series Storage
 
 // Keep these at the top level for now (will be moved/refactored later)
 pub mod event_log_integration;
@@ -107,23 +120,46 @@ pub mod factory;
 pub mod migration;
 pub mod universal;
 
-// Re-export traits
+// Re-export traits (legacy names kept for back-compat; the format-vocabulary
+// aliases are surfaced below).
 pub use crate::storage::traits::{
     CompactionParameters, CompactionResult, FlushParameters, FlushResult, StorageEngineStrategy,
     UnifiedStorageEngine,
 };
 
 // Re-export main engine types
+// Note: Phase 2 complete - All engines now at engines/ level
+// impls/ deprecated and contains only test modules
 #[allow(deprecated)]
-pub use impls::{
-    nova::NovaEngine, raptor::RaptorEngine, sst::SstEngine, swift::SwiftEngine, viper::ViperEngine,
-};
+pub use helix::HelixEngine;
+#[allow(deprecated)]
+pub use nova::NovaEngine; // Phase 1: Moved from impls/
+#[allow(deprecated)]
+pub use raptor::RaptorEngine; // Phase 1: Moved from impls/
+#[allow(deprecated)]
+pub use sst::SstEngine; // Phase 1: Moved from impls/
+#[allow(deprecated)]
+pub use swift::SwiftEngine; // Phase 1: Moved from impls/
+#[allow(deprecated)]
+pub use viper::ViperEngine; // Phase 1: Moved from impls/ // Phase 1: Moved from impls/
+// Phase 2: Moved remaining specialized engines from impls/
+pub use cedar::CedarEngine;
+pub use chrono::ChronoEngine;
+pub use eventlog::EventLogEngine;
+pub use sequoia::SequoiaEngine;
+pub use titan::TitanEngine;
+pub use tst::TimeSeriesEngine;
 
 // Re-export constants
 pub use constants::*;
 
 // Re-export factory
 pub use factory::{EngineComparison, EngineRequirements, StorageEngineFactory, WorkloadType};
+
+// Engines → formats convergence: surface the back-compat format aliases at the
+// same paths the engine names are reached (see NAMING_CONVENTIONS.adoc).
+pub use crate::storage::traits::{StorageFormatStrategy, UnifiedStorageFormat};
+pub use factory::StorageFormatFactory;
 
 // Re-export universal adapter
 pub use universal::{

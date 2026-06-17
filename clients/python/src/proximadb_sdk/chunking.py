@@ -4,7 +4,7 @@ Text chunking module for ProximaDB SDK
 This module provides clean text chunking functionality with performance optimizations:
 - Delegates all chunking logic to the strategy pattern modules
 - Includes ChunkerPool optimization for performance
-- Provides convenient utility functions for creating vector records
+- Provides convenient utility functions for creating ProximaRecord-shaped records
 - Maintains clean separation of concerns
 
 Usage:
@@ -17,28 +17,29 @@ Usage:
     with PooledChunkerContext(config) as chunker:
         chunks = chunker.chunk_text(text, source_id="doc_1")
 
-    # Create vector records from chunks and embeddings
-    records = create_vector_records(chunks, embeddings, collection_metadata)
+    # Create records from chunks and embeddings
+    records = create_records(chunks, embeddings, collection_metadata)
 
     # Convenience function that combines chunking and embedding
     records = chunk_and_embed_text(text, source_id, embedding_provider, config)
 """
 
 import threading
-import time
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Union
+from collections.abc import Callable
+from typing import Any
 
 # Import from chunking strategies for clean separation
 from .chunking_strategies import (
     ChunkingConfig,
     ChunkingStrategy,
-    ChunkingStrategyInterface,
     TextChunk,
     get_chunking_strategy,
 )
 from .models import VectorRecord
 from .resource_pool import ResourceFactory, ResourcePool
+
+RecordPayload = dict[str, Any]
 
 
 class ChunkerFactory(ResourceFactory):
@@ -88,8 +89,8 @@ class ChunkerPool:
 
     def __init__(self, max_pool_size: int = 50):
         self.max_pool_size = max_pool_size
-        self._pools: Dict[str, ResourcePool[TextChunker]] = {}
-        self._pool_locks: Dict[str, threading.RLock] = defaultdict(threading.RLock)
+        self._pools: dict[str, ResourcePool[TextChunker]] = {}
+        self._pool_locks: dict[str, threading.RLock] = defaultdict(threading.RLock)
 
     @classmethod
     def get_instance(cls) -> "ChunkerPool":
@@ -128,7 +129,7 @@ class ChunkerPool:
         pool = self._get_or_create_pool(config)
         pool.release(chunker)
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get pool performance statistics"""
         all_stats = {}
         for pool_key, pool in self._pools.items():
@@ -191,7 +192,7 @@ class TextChunker:
     to the appropriate strategy while maintaining compatibility with existing code.
     """
 
-    def __init__(self, config: Optional[ChunkingConfig] = None):
+    def __init__(self, config: ChunkingConfig | None = None):
         """
         Initialize text chunker
 
@@ -221,9 +222,9 @@ class TextChunker:
     def chunk_text(
         self,
         text: str,
-        source_id: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> List[TextChunk]:
+        source_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> list[TextChunk]:
         """
         Chunk text using the configured strategy
 
@@ -245,8 +246,8 @@ class TextChunker:
         return self._strategy.chunk(text, source_id, metadata)
 
     def add_context_to_chunks(
-        self, chunks: List[TextChunk], context_size: int = 50
-    ) -> List[TextChunk]:
+        self, chunks: list[TextChunk], context_size: int = 50
+    ) -> list[TextChunk]:
         """
         Add context from surrounding chunks
 
@@ -289,22 +290,34 @@ class TextChunker:
         return enhanced_chunks
 
 
-def create_vector_records(
-    chunks: List[TextChunk],
-    embeddings: List[List[float]],
-    collection_metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None,
-    source_type: Optional[str] = None,
-    source_metadata: Optional[Dict[str, Any]] = None,
-) -> List[VectorRecord]:
+def _records_to_vector_records(records: list[RecordPayload]) -> list[VectorRecord]:
+    """Convert record-shaped payloads to legacy VectorRecord objects."""
+    return [
+        VectorRecord(
+            id=record.get("id"),
+            vector=record.get("vector") or [],
+            metadata=record.get("props") or {},
+            source=record.get("source"),
+        )
+        for record in records
+    ]
+
+
+def create_records(
+    chunks: list[TextChunk],
+    embeddings: list[list[float]],
+    collection_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+) -> list[RecordPayload]:
     """
-    Create VectorRecord objects from chunks and embeddings with ultra-efficient enum packing
+    Create ProximaRecord-shaped dictionaries from chunks and embeddings.
 
     This function combines the results of chunking and embedding into
-    the format needed for ProximaDB storage, leveraging the new gRPC source content
-    fields and 75% storage savings through enum packing.
+    the record-native format needed for ProximaDB storage.
 
     Args:
         chunks: List of text chunks
@@ -315,7 +328,7 @@ def create_vector_records(
         processing_config: Optional processing configuration
 
     Returns:
-        List of VectorRecord objects ready for insertion
+        List of record-shaped dictionaries ready for insertion
 
     Raises:
         ValueError: If chunks and embeddings lengths don't match
@@ -364,38 +377,62 @@ def create_vector_records(
             k: v for k, v in metadata.items() if k not in filterable_fields
         }
 
-        # Create vector record with optimized structure
-        # Merge filterable and non-filterable metadata (no nesting allowed)
+        # Merge filterable and non-filterable props (no nesting needed here).
         all_metadata = {**filterable_metadata, **non_filterable_metadata}
 
-        record = VectorRecord(
-            id=chunk.chunk_id,
-            vector=embedding,
-            metadata=all_metadata,
-            source=chunk.text,  # Store original chunk text in source field for RAG
-        )
+        record = {
+            "id": chunk.chunk_id,
+            "vector": embedding,
+            "props": all_metadata,
+            "source": chunk.text,
+            "text_fields": [{"name": "chunk_text", "content": chunk.text}],
+        }
 
         records.append(record)
 
     return records
 
 
-def chunk_and_embed_text(
+def create_vector_records(
+    chunks: list[TextChunk],
+    embeddings: list[list[float]],
+    collection_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+) -> list[VectorRecord]:
+    """Compatibility wrapper returning legacy VectorRecord objects."""
+    return _records_to_vector_records(
+        create_records(
+            chunks,
+            embeddings,
+            collection_metadata,
+            filterable_fields,
+            model_id,
+            processing_config,
+            source_type,
+            source_metadata,
+        )
+    )
+
+
+def chunk_and_embed_records(
     text: str,
     source_id: str,
     embedding_provider,
-    chunking_config: Optional[ChunkingConfig] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    model_id: Optional[str] = None,
-    processing_config: Optional[Dict[str, Any]] = None,
-) -> List[VectorRecord]:
+    chunking_config: ChunkingConfig | None = None,
+    metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+) -> list[RecordPayload]:
     """
-    Convenience function that chunks text and generates embeddings with ultra-efficient storage
+    Convenience function that chunks text and generates record-native embeddings.
 
     This is a helper that combines chunking and embedding in one call,
-    but still maintains separation of concerns internally. Now leverages
-    the new gRPC source content fields and enum packing for 75% storage savings.
+    but still maintains separation of concerns internally.
 
     Args:
         text: Text to process
@@ -408,7 +445,7 @@ def chunk_and_embed_text(
         processing_config: Optional processing configuration
 
     Returns:
-        List of VectorRecord objects with optimized source content storage
+        List of ProximaRecord-shaped dictionaries with source content storage
     """
     # 1. Chunk text using pooled chunker for performance
     config = chunking_config or ChunkingConfig()
@@ -430,8 +467,8 @@ def chunk_and_embed_text(
         # Fallback for providers that don't support metadata
         embeddings = embedding_provider.embed_texts(chunk_texts)
 
-    # 3. Create vector records with ultra-efficient enum packing
-    records = create_vector_records(
+    # 3. Create record-native payloads
+    records = create_records(
         chunks,
         embeddings.tolist() if hasattr(embeddings, "tolist") else embeddings,
         metadata,
@@ -443,9 +480,34 @@ def chunk_and_embed_text(
     return records
 
 
+def chunk_and_embed_text(
+    text: str,
+    source_id: str,
+    embedding_provider,
+    chunking_config: ChunkingConfig | None = None,
+    metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    model_id: str | None = None,
+    processing_config: dict[str, Any] | None = None,
+) -> list[VectorRecord]:
+    """Compatibility wrapper returning legacy VectorRecord objects."""
+    return _records_to_vector_records(
+        chunk_and_embed_records(
+            text,
+            source_id,
+            embedding_provider,
+            chunking_config,
+            metadata,
+            filterable_fields,
+            model_id,
+            processing_config,
+        )
+    )
+
+
 # Backward compatibility functions (legacy API from old chunking.py)
 def create_chunker(
-    strategy: Union[str, ChunkingStrategy, ChunkingConfig] = None, **kwargs
+    strategy: str | ChunkingStrategy | ChunkingConfig = None, **kwargs
 ) -> TextChunker:
     """Create a text chunker instance (backward compatibility)
 
@@ -482,20 +544,19 @@ def create_enhanced_semantic_chunker(
     Returns:
         TextChunker instance configured for semantic chunking
     """
-    # Add enable_caching to kwargs if not already present
-    if "enable_caching" not in kwargs:
-        kwargs["enable_caching"] = enable_caching
-
-    # Create chunker with semantic strategy
+    # `enable_caching` is accepted for API/back-compat but is NOT a
+    # ChunkingConfig field — forwarding it into kwargs raised TypeError on
+    # every call. It is intentionally not propagated; semantic chunking is
+    # selected purely via the strategy.
     return create_chunker(ChunkingStrategy.SEMANTIC, **kwargs)
 
 
 def chunk_by_sentences(
     text: str,
     chunk_size: int = 512,
-    document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> List[TextChunk]:
+    document_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[TextChunk]:
     """
     Chunk text by sentences.
 
@@ -517,9 +578,9 @@ def chunk_by_sentences(
 def chunk_by_paragraphs(
     text: str,
     max_size: int = 1000,
-    document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> List[TextChunk]:
+    document_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[TextChunk]:
     """
     Chunk text by paragraphs.
 
@@ -542,9 +603,9 @@ def chunk_sliding_window(
     text: str,
     window_size: int = 512,
     overlap: int = 128,
-    document_id: Optional[str] = None,
-    metadata: Optional[Dict[str, Any]] = None,
-) -> List[TextChunk]:
+    document_id: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> list[TextChunk]:
     """
     Chunk text using sliding window.
 
@@ -568,21 +629,21 @@ def chunk_sliding_window(
     return chunker.chunk_text(text, source_id, metadata)
 
 
-def prepare_vector_records(
-    response: Dict[str, Any],
+def prepare_records(
+    response: dict[str, Any],
     source_id: str,
-    source_type: Optional[str] = None,
-    source_metadata: Optional[Dict[str, Any]] = None,
-    filterable_fields: Optional[List[str]] = None,
-    chunk_metadata_fn: Optional[Callable[[Dict[str, Any], int], Dict[str, Any]]] = None,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    chunk_metadata_fn: Callable[[dict[str, Any], int], dict[str, Any]] | None = None,
     preserve_embedding_metadata: bool = False,
-) -> List[VectorRecord]:
+) -> list[RecordPayload]:
     """
-    Prepare vector records from embedding service response with flexible metadata handling.
+    Prepare record-shaped payloads from embedding service response.
 
-    This function processes chunks from an embedding service response and creates VectorRecord
+    This function processes chunks from an embedding service response and creates ProximaRecord
     objects with sophisticated metadata management:
-    - Filterable fields go into metadata at top level
+    - Filterable fields go into props at top level
     - Non-filterable fields get namespaced with prefixes (source_, chunk_, custom_, etc.)
     - Custom metadata functions can enrich chunks
     - Preserves or filters embedding service metadata
@@ -608,7 +669,7 @@ def prepare_vector_records(
                                     prefix unless in filterable_fields
 
     Returns:
-        List of VectorRecord objects with properly structured metadata
+        List of record-shaped dictionaries with properly structured props
 
     Raises:
         ValueError: If response has no chunks or chunks missing embeddings
@@ -643,7 +704,6 @@ def prepare_vector_records(
         ...     filterable_fields=["section", "has_numbers"]
         ... )
     """
-    import time
     from datetime import datetime, timezone
 
     # Extract chunks from response
@@ -741,15 +801,43 @@ def prepare_vector_records(
         metadata["created_at"] = datetime.now(timezone.utc).isoformat()
         metadata["indexed_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Create VectorRecord
-        record = VectorRecord(id=chunk_id, vector=embedding, metadata=metadata)
+        record = {
+            "id": chunk_id,
+            "vector": embedding,
+            "props": metadata,
+            "source": text,
+            "text_fields": [{"name": "chunk_text", "content": text}],
+        }
 
         records.append(record)
 
     return records
 
 
-def get_chunker_pool_stats() -> Dict[str, Any]:
+def prepare_vector_records(
+    response: dict[str, Any],
+    source_id: str,
+    source_type: str | None = None,
+    source_metadata: dict[str, Any] | None = None,
+    filterable_fields: list[str] | None = None,
+    chunk_metadata_fn: Callable[[dict[str, Any], int], dict[str, Any]] | None = None,
+    preserve_embedding_metadata: bool = False,
+) -> list[VectorRecord]:
+    """Compatibility wrapper returning legacy VectorRecord objects."""
+    return _records_to_vector_records(
+        prepare_records(
+            response,
+            source_id,
+            source_type,
+            source_metadata,
+            filterable_fields,
+            chunk_metadata_fn,
+            preserve_embedding_metadata,
+        )
+    )
+
+
+def get_chunker_pool_stats() -> dict[str, Any]:
     """Get global chunker pool performance statistics"""
     return _global_chunker_pool.get_stats()
 
@@ -770,13 +858,16 @@ __all__ = [
     "ChunkingConfig",
     "TextChunk",
     # Main utility functions
+    "create_records",
     "create_vector_records",
+    "chunk_and_embed_records",
     "chunk_and_embed_text",
     # Backward compatibility functions
     "create_chunker",
     "chunk_by_sentences",
     "chunk_by_paragraphs",
     "chunk_sliding_window",
+    "prepare_records",
     "prepare_vector_records",
     # Pool utilities
     "get_chunker_pool_stats",

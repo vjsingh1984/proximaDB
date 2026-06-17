@@ -21,7 +21,7 @@ pub struct SystemPerformanceMetrics {
     /// Cost analysis metrics
     pub cost_analysis: CostAnalysisMetrics,
     /// Access pattern metrics
-    pub access_patterns: AccessPatternMetrics,
+    pub access_patterns: ZeroCopyAccessPatternMetrics,
     /// Resource utilization metrics
     pub resource_utilization: ResourceUtilizationMetrics,
 }
@@ -128,7 +128,7 @@ pub struct CostAnalysisMetrics {
 
 /// Access pattern analysis metrics
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AccessPatternMetrics {
+pub struct ZeroCopyAccessPatternMetrics {
     /// Total files tracked
     pub files_tracked: u64,
     /// Total collections tracked
@@ -214,10 +214,14 @@ pub enum AlertSeverity {
     Emergency,
 }
 
+/// Backwards-compat alias for [`ZeroCopyOptimizationRecommendation`].
+#[allow(dead_code)]
+pub type OptimizationRecommendation = ZeroCopyOptimizationRecommendation;
+
 /// Optimization recommendation
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
-pub struct OptimizationRecommendation {
+pub struct ZeroCopyOptimizationRecommendation {
     /// Category of recommendation
     pub category: RecommendationCategory,
     /// Priority level
@@ -554,7 +558,7 @@ impl MetricsCollector {
                 roi_percentage: 250.0, // Placeholder
                 break_even_operations: 1000,
             },
-            access_patterns: AccessPatternMetrics {
+            access_patterns: ZeroCopyAccessPatternMetrics {
                 files_tracked: 500, // Placeholder
                 collections_tracked: 10,
                 hot_files_count: 50,
@@ -635,13 +639,13 @@ impl MetricsCollector {
     }
 
     /// Generate optimization recommendations based on current metrics
-    pub fn generate_recommendations(&self) -> Vec<OptimizationRecommendation> {
+    pub fn generate_recommendations(&self) -> Vec<ZeroCopyOptimizationRecommendation> {
         let metrics = self.get_metrics();
         let mut recommendations = Vec::new();
 
         // Cache hit rate optimization
         if metrics.metadata_cache.hit_rate < 0.9 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(ZeroCopyOptimizationRecommendation {
                 category: RecommendationCategory::CacheOptimization,
                 priority: RecommendationPriority::High,
                 description: format!(
@@ -657,7 +661,7 @@ impl MetricsCollector {
 
         // Threshold tuning recommendation
         if metrics.download_optimizer.request_reduction_ratio < 0.5 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(ZeroCopyOptimizationRecommendation {
                 category: RecommendationCategory::ThresholdTuning,
                 priority: RecommendationPriority::Medium,
                 description:
@@ -672,7 +676,7 @@ impl MetricsCollector {
 
         // Cost optimization recommendation
         if metrics.cost_analysis.cost_per_operation > 0.01 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(ZeroCopyOptimizationRecommendation {
                 category: RecommendationCategory::CostOptimization,
                 priority: RecommendationPriority::High,
                 description:
@@ -687,7 +691,7 @@ impl MetricsCollector {
 
         // Resource utilization recommendation
         if metrics.resource_utilization.memory_usage_percent > 0.8 {
-            recommendations.push(OptimizationRecommendation {
+            recommendations.push(ZeroCopyOptimizationRecommendation {
                 category: RecommendationCategory::ResourceAllocation,
                 priority: RecommendationPriority::Critical,
                 description: "High memory usage. Consider increasing memory allocation or optimizing cache size".to_string(),
@@ -713,9 +717,9 @@ impl MetricsCollector {
     }
 
     /// Get metrics trend analysis
-    pub fn get_trend_analysis(&self, window_size: usize) -> TrendAnalysis {
+    pub fn get_trend_analysis(&self, window_size: usize) -> ZeroCopyTrendAnalysis {
         if self.historical_metrics.len() < 2 {
-            return TrendAnalysis::default();
+            return ZeroCopyTrendAnalysis::default();
         }
 
         let recent_window = std::cmp::min(window_size, self.historical_metrics.len());
@@ -744,7 +748,7 @@ impl MetricsCollector {
                 .collect(),
         );
 
-        TrendAnalysis {
+        ZeroCopyTrendAnalysis {
             hit_rate_trend,
             throughput_trend,
             cost_trend,
@@ -810,7 +814,7 @@ impl Default for MetricsCollector {
 
 /// Trend analysis results
 #[derive(Debug, Clone, Default)]
-pub struct TrendAnalysis {
+pub struct ZeroCopyTrendAnalysis {
     #[allow(dead_code)]
     pub hit_rate_trend: TrendDirection,
     #[allow(dead_code)]

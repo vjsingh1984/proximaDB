@@ -4,10 +4,11 @@ Collection Builder
 Fluent interface for building collection configurations.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from ..models import (
     CollectionConfig,
+    CompressionType,
     DistanceMetric,
     IndexingAlgorithm,
     StorageEngine,
@@ -52,8 +53,8 @@ class CollectionBuilder:
         self._distance_metric = DistanceMetric.COSINE
         self._storage_engine = StorageEngine.VIPER
         self._index_type = IndexingAlgorithm.HNSW
-        self._description: Optional[str] = None
-        self._index_params: Dict[str, Any] = {}
+        self._description: str | None = None
+        self._index_params: dict[str, Any] = {}
         # Compression/bloom moved to server/engine config; SDK leaves defaults
 
     # Distance metrics
@@ -227,7 +228,7 @@ class CollectionBuilder:
             description=self._description,
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation"""
         config = self.build()
         return {

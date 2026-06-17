@@ -2,7 +2,8 @@ use std::sync::Arc;
 use anyhow::{Result, Context};
 use tracing::{info, debug, warn};
 
-use crate::proto::proximadb_v1::{VectorRecord, Collection};
+use crate::proto::proximadb_v1::{Collection};
+use proximadb_records::{EmbeddingCell, ProximaRecord};
 use crate::storage::traits::{CompactionParameters, CompactionResult};
 use crate::compute::quantization::precompute::{
     QuantizationPrecomputeService, QuantizedBatch
@@ -80,7 +81,7 @@ impl QuantizationAwareCompaction {
     }
 
     /// Extract all records from blocks
-    fn extract_all_records(&self, blocks: Vec<ProximaDataBlock>) -> Result<Vec<VectorRecord>> {
+    fn extract_all_records(&self, blocks: Vec<ProximaDataBlock>) -> Result<Vec<ProximaRecord>> {
         let mut all_records = Vec::new();
 
         for block in blocks {
@@ -92,7 +93,7 @@ impl QuantizationAwareCompaction {
     }
 
     /// Merge and deduplicate records
-    fn merge_and_deduplicate(&self, mut records: Vec<VectorRecord>) -> Result<Vec<VectorRecord>> {
+    fn merge_and_deduplicate(&self, mut records: Vec<ProximaRecord>) -> Result<Vec<ProximaRecord>> {
         use std::collections::HashMap;
 
         // Sort by ID and version to handle updates
@@ -101,7 +102,7 @@ impl QuantizationAwareCompaction {
         });
 
         // Keep only the latest version of each ID
-        let mut deduped: HashMap<String, VectorRecord> = HashMap::new();
+        let mut deduped: HashMap<String, ProximaRecord> = HashMap::new();
 
         for record in records {
             match deduped.get(&record.id) {
@@ -118,7 +119,7 @@ impl QuantizationAwareCompaction {
         }
 
         // Convert back to sorted vector
-        let mut result: Vec<VectorRecord> = deduped.into_values().collect();
+        let mut result: Vec<ProximaRecord> = deduped.into_values().collect();
         result.sort_by(|a, b| a.id.cmp(&b.id));
 
         Ok(result)
@@ -191,7 +192,7 @@ impl QuantizationAwareCompaction {
     /// Create a compacted block with recalculated quantization
     fn create_compacted_block(
         &self,
-        records: Vec<VectorRecord>,
+        records: Vec<ProximaRecord>,
         quantized: Vec<Option<crate::compute::quantization::precompute::QuantizedVector>>,
         block_id: u32,
         layout: VectorEncodingLayout,
@@ -204,7 +205,7 @@ impl QuantizationAwareCompaction {
 
         // Use higher compression for compacted blocks
         let compression_config = BlockCompressionConfig {
-            algorithm: crate::core::compression::CompressionAlgorithm::Zstd,
+            algorithm: proximadb_compression::CompressionAlgorithm::Zstd,
             compression_level: 6, // Higher compression for compacted data
             enable_vector_compression: true,
             enable_metadata_compression: true,
@@ -323,7 +324,7 @@ impl QuantizationAwareCompaction {
         Ok(section)
     }
 
-    fn estimate_record_size(&self, record: &VectorRecord) -> usize {
+    fn estimate_record_size(&self, record: &ProximaRecord) -> usize {
         record.id.len() + (record.values.len() * 4) + 100
     }
 }

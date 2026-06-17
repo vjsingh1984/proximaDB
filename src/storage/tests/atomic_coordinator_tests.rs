@@ -7,38 +7,12 @@
 //! - Abort/rollback scenarios
 //! - Multi-operation coordination
 
-use crate::proto::proximadb_v1::VectorRecord;
-use crate::proto::proximadb_v1::{SqlValue, sql_value};
 use crate::storage::persistence::filesystem::FilesystemFactory;
 use crate::storage::transaction_coordinator::{
     StagingConfig, TransactionCoordinator, TransactionStageType, TransactionState,
     TransactionalOperationStatus,
 };
 use std::sync::Arc;
-
-/// Create test vector
-#[allow(dead_code)]
-fn create_test_vector(id: &str) -> VectorRecord {
-    VectorRecord {
-        id: id.to_string(),
-        vector: vec![0.1; 128],
-        metadata: {
-            let mut metadata = std::collections::HashMap::new();
-            metadata.insert(
-                "atomic_test".to_string(),
-                SqlValue {
-                    value: Some(sql_value::Value::StringValue("true".to_string())),
-                },
-            );
-            metadata
-        },
-        timestamp: Some(chrono::Utc::now().timestamp()),
-        updated_at: Some(chrono::Utc::now().timestamp()),
-        expires_at: None,
-        version: Some(1),
-        source: None,
-    }
-}
 
 #[tokio::test]
 async fn test_atomic_coordinator_creation() {

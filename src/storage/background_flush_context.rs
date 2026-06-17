@@ -46,15 +46,18 @@ impl TryFrom<i32> for StorageEngineType {
     }
 }
 
+/// Backwards-compat alias for [`BackgroundFlushCompressionConfig`].
+pub type CompressionConfig = BackgroundFlushCompressionConfig;
+
 /// Compression configuration for storage engines
 #[derive(Debug, Clone)]
-pub struct CompressionConfig {
+pub struct BackgroundFlushCompressionConfig {
     pub enabled: bool,
     pub compression_type: String, // "zstd", "snappy", "lz4", "gzip"
     pub level: i32,
 }
 
-impl Default for CompressionConfig {
+impl Default for BackgroundFlushCompressionConfig {
     fn default() -> Self {
         Self {
             enabled: true,
@@ -64,9 +67,14 @@ impl Default for CompressionConfig {
     }
 }
 
-/// Quantization configuration for vector compression
+/// Quantization configuration for vector compression during background flush.
+///
+/// Distinct from the canonical `proximadb_quantization_types::QuantizationConfig`
+/// (which models quantization type/level/asymmetry/cache): this is the flush-context
+/// shape (enabled + string type + bit width + PQ subspaces). Renamed from the former
+/// `QuantizationConfig` to remove the cross-module name collision (LLD duplication watch).
 #[derive(Debug, Clone)]
-pub struct QuantizationConfig {
+pub struct FlushQuantizationConfig {
     pub enabled: bool,
     pub quantization_type: String, // "product", "scalar", "binary"
     pub bits_per_component: u8,
@@ -107,7 +115,7 @@ pub struct BackgroundFlushContext {
 
     // === Storage Configuration ===
     /// Compression settings for storage engine
-    pub compression_config: CompressionConfig,
+    pub compression_config: BackgroundFlushCompressionConfig,
 
     // === Schema Configuration ===
     /// Filterable metadata columns with their types
@@ -115,7 +123,7 @@ pub struct BackgroundFlushContext {
 
     // === Performance Configuration ===
     /// Vector quantization settings (if enabled)
-    pub quantization: Option<QuantizationConfig>,
+    pub quantization: Option<FlushQuantizationConfig>,
     /// Suggested batch size for operations
     pub batch_size_hint: Option<usize>,
 
@@ -249,17 +257,17 @@ impl BackgroundFlushContext {
 
         // Create compression config based on storage engine defaults
         let compression_config = match storage_engine {
-            StorageEngineType::Viper => CompressionConfig {
+            StorageEngineType::Viper => BackgroundFlushCompressionConfig {
                 enabled: true,
                 compression_type: "zstd".to_string(),
                 level: 3, // Balanced for Parquet
             },
-            StorageEngineType::Sst => CompressionConfig {
+            StorageEngineType::Sst => BackgroundFlushCompressionConfig {
                 enabled: true,
                 compression_type: "snappy".to_string(),
                 level: 1, // Fast compression for OLTP
             },
-            StorageEngineType::Tst => CompressionConfig {
+            StorageEngineType::Tst => BackgroundFlushCompressionConfig {
                 enabled: true,
                 compression_type: "zstd".to_string(),
                 level: 3, // Balanced archival compression for time-series workloads
@@ -282,7 +290,7 @@ impl BackgroundFlushContext {
                 }
             };
 
-            QuantizationConfig {
+            FlushQuantizationConfig {
                 enabled: qc.enabled.unwrap_or(false),
                 quantization_type: quantization_type.to_string(),
                 bits_per_component: 8, // Default - could be extracted from specific quantization types
@@ -321,7 +329,7 @@ impl BackgroundFlushContext {
             base_location: "file:///tmp/test_data".to_string(),
             dimension: 384,
             distance_metric: DistanceMetric::Cosine,
-            compression_config: CompressionConfig::default(),
+            compression_config: BackgroundFlushCompressionConfig::default(),
             filterable_columns: Vec::new(),
             quantization: None,
             batch_size_hint: Some(1000),

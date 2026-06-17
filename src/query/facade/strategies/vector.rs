@@ -36,11 +36,14 @@ use async_trait::async_trait;
 use tracing::{debug, info, instrument};
 
 use crate::proto::proximadb_v1::{IncludeFields, SearchQuery, VectorSearchRequest};
+use proximadb_records::{ProximaRecord, ProximaTreeNode, ScoredRecord};
+
 use crate::query::facade::{
     ExecutionMetrics, QueryContent, QueryContext, QueryRequest, QueryResult, QueryResultData,
-    QueryStrategy, QueryType, VectorMatch,
+    QueryStrategy, QueryType,
 };
-use crate::services::{CollectionService, VectorOps};
+use crate::services::VectorOps;
+use proximadb_runtime::CollectionPort;
 
 /// Vector Search Strategy - Real implementation wrapping VectorOps
 ///
@@ -51,18 +54,19 @@ use crate::services::{CollectionService, VectorOps};
 pub struct VectorSearchStrategy {
     /// Vector operations service for search execution
     vector_ops: Arc<VectorOps>,
-    /// Collection service for metadata lookup
-    collection_service: Arc<CollectionService>,
+    /// Collection port for metadata lookup (Task #76 migration: was
+    /// `Arc<CollectionService>`, now port-typed view from SharedServices).
+    collection_port: Arc<dyn CollectionPort>,
     /// Strategy priority (higher = preferred)
     priority: i32,
 }
 
 impl VectorSearchStrategy {
     /// Create a new VectorSearchStrategy
-    pub fn new(vector_ops: Arc<VectorOps>, collection_service: Arc<CollectionService>) -> Self {
+    pub fn new(vector_ops: Arc<VectorOps>, collection_port: Arc<dyn CollectionPort>) -> Self {
         Self {
             vector_ops,
-            collection_service,
+            collection_port,
             priority: 100, // High priority for vector searches
         }
     }
@@ -92,7 +96,9 @@ impl VectorSearchStrategy {
             collection_id,
             queries: vec![SearchQuery {
                 vector: query_vector,
-                filters: request.params.vector_filters.clone(),
+                filters: crate::core::search::results::proxima_map_to_sql(
+                    request.params.vector_filters.clone(),
+                ),
                 advanced_filter: request.params.vector_advanced_filter.clone(),
             }],
             top_k: top_k as u32,
@@ -119,26 +125,26 @@ impl VectorSearchStrategy {
         // Extract results from the nested structure
         let search_records = response.results.map(|r| r.results).unwrap_or_default();
 
-        let matches: Vec<VectorMatch> = search_records
+        let matches: Vec<ScoredRecord> = search_records
             .into_iter()
-            .map(|r| VectorMatch {
-                id: r.id,
-                score: r.score as f32,
-                metadata: if r.metadata.is_empty() {
-                    None
-                } else {
-                    // Convert SqlValue map to JSON
-                    let map: serde_json::Map<String, serde_json::Value> = r
-                        .metadata
-                        .into_iter()
-                        .filter_map(|(key, value)| sql_value_to_json(value).map(|v| (key, v)))
-                        .collect();
-                    if map.is_empty() {
-                        None
-                    } else {
-                        Some(serde_json::Value::Object(map))
+            .enumerate()
+            .map(|(i, r)| {
+                let mut record = ProximaRecord {
+                    oid: r.id,
+                    created_at_ns: r.timestamp.map(|ms| ms * 1_000_000).unwrap_or(0),
+                    ..Default::default()
+                };
+                // Convert SqlValue metadata to ProximaTree props
+                for (key, sql_val) in r.metadata {
+                    if let Some(pv) = sql_value_to_proxima_value(sql_val) {
+                        record.props.insert(key, ProximaTreeNode::Value(pv));
                     }
-                },
+                }
+                ScoredRecord {
+                    record,
+                    score: r.score as f32,
+                    rank: (i + 1) as u32,
+                }
             })
             .collect();
 
@@ -163,37 +169,35 @@ impl VectorSearchStrategy {
     }
 }
 
-/// Convert proto SqlValue to JSON
-fn sql_value_to_json(value: crate::proto::proximadb_v1::SqlValue) -> Option<serde_json::Value> {
+/// Convert proto SqlValue to canonical ProximaValue.
+fn sql_value_to_proxima_value(
+    value: crate::proto::proximadb_v1::SqlValue,
+) -> Option<proximadb_data_model::ProximaValue> {
     use crate::proto::proximadb_v1::sql_value::Value;
+    use proximadb_data_model::ProximaValue;
 
     value.value.map(|v| match v {
-        Value::StringValue(s) => serde_json::Value::String(s),
-        Value::Int64Value(i) => serde_json::Value::Number(i.into()),
-        Value::NumberValue(f) => serde_json::Number::from_f64(f)
-            .map_or(serde_json::Value::Null, serde_json::Value::Number),
-        Value::BoolValue(b) => serde_json::Value::Bool(b),
-        Value::NullValue(_) => serde_json::Value::Null,
-        Value::BytesValue(bytes) => {
-            use base64::Engine;
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            serde_json::Value::String(encoded)
-        }
+        Value::StringValue(s) => ProximaValue::String(s),
+        Value::Int64Value(i) => ProximaValue::Int64(i),
+        Value::NumberValue(f) => ProximaValue::Float64(f),
+        Value::BoolValue(b) => ProximaValue::Boolean(b),
+        Value::NullValue(_) => ProximaValue::Null,
+        Value::BytesValue(bytes) => ProximaValue::Binary(bytes),
         Value::ArrayValue(list) => {
-            let items: Vec<serde_json::Value> = list
+            let items: Vec<ProximaValue> = list
                 .values
                 .into_iter()
-                .filter_map(sql_value_to_json)
+                .filter_map(sql_value_to_proxima_value)
                 .collect();
-            serde_json::Value::Array(items)
+            ProximaValue::Array(items)
         }
         Value::ObjectValue(map) => {
-            let obj: serde_json::Map<String, serde_json::Value> = map
+            let obj: std::collections::HashMap<String, ProximaValue> = map
                 .fields
                 .into_iter()
-                .filter_map(|(k, v)| sql_value_to_json(v).map(|jv| (k, jv)))
+                .filter_map(|(k, v)| sql_value_to_proxima_value(v).map(|pv| (k, pv)))
                 .collect();
-            serde_json::Value::Object(obj)
+            ProximaValue::Map(obj)
         }
     })
 }
@@ -224,8 +228,8 @@ impl QueryStrategy for VectorSearchStrategy {
 
         // Verify collection exists
         let _collection = self
-            .collection_service
-            .collection(collection_id)
+            .collection_port
+            .get_collection(collection_id, None)
             .await?
             .ok_or_else(|| anyhow!("Collection '{}' not found", collection_id))?;
 
@@ -264,6 +268,7 @@ impl QueryStrategy for VectorSearchStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::formats::sql_value_to_json;
 
     #[test]
     fn test_sql_value_to_json_string() {
@@ -271,8 +276,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::StringValue("hello".to_string())),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::json!("hello")));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::json!("hello"));
     }
 
     #[test]
@@ -281,8 +286,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::Int64Value(42)),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::json!(42)));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::json!(42));
     }
 
     #[test]
@@ -291,8 +296,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::NumberValue(3.14)),
         };
-        let json = sql_value_to_json(value);
-        if let Some(serde_json::Value::Number(n)) = json {
+        let json = sql_value_to_json(&value);
+        if let serde_json::Value::Number(n) = json {
             let f = n.as_f64().unwrap();
             assert!((f - 3.14).abs() < 0.001);
         } else {
@@ -306,8 +311,8 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::BoolValue(true)),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::json!(true)));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::json!(true));
     }
 
     #[test]
@@ -316,16 +321,16 @@ mod tests {
         let value = SqlValue {
             value: Some(Value::NullValue(0)),
         };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, Some(serde_json::Value::Null));
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::Value::Null);
     }
 
     #[test]
     fn test_sql_value_to_json_none() {
         use crate::proto::proximadb_v1::SqlValue;
         let value = SqlValue { value: None };
-        let json = sql_value_to_json(value);
-        assert_eq!(json, None);
+        let json = sql_value_to_json(&value);
+        assert_eq!(json, serde_json::Value::Null);
     }
 
     #[test]

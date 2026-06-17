@@ -4,7 +4,7 @@
  * only trait methods available on all engines.
  */
 
-use crate::core::error::ProximaDBError;
+use proximadb_kernel::error::ProximaDBError;
 type Result<T> = std::result::Result<T, ProximaDBError>;
 use crate::graph::engines::{GraphEngine, GraphEngineImpl};
 use crate::graph::{Edge, Node, NodeId};

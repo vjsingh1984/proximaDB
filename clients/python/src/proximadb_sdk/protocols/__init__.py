@@ -9,6 +9,7 @@ The Arrow Flight client is also exposed for high-throughput bulk operations.
 try:
     from .arrow_flight import (
         ArrowFlightClient,
+        FlightExchangeResult,
         FlightPutResult,
         FlightSearchResult,
         WriteMode,
@@ -20,6 +21,7 @@ try:
 except ImportError:
     ARROW_FLIGHT_AVAILABLE = False
     ArrowFlightClient = None
+    FlightExchangeResult = None
     FlightPutResult = None
     FlightSearchResult = None
     WriteMode = None
@@ -28,6 +30,7 @@ except ImportError:
 
 __all__ = [
     "ArrowFlightClient",
+    "FlightExchangeResult",
     "FlightPutResult",
     "FlightSearchResult",
     "WriteMode",

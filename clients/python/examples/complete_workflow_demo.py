@@ -24,7 +24,7 @@ import random
 import requests
 
 # Add SDK to path
-sys.path.insert(0, 'clients/python/src')
+sys.path.insert(0, "clients/python/src")
 
 from proximadb import ProximaDBClient
 from proximadb.models import DistanceMetric, StorageEngine
@@ -39,17 +39,14 @@ def generate_random_vector(dimension: int) -> list:
 
 
 def main():
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("ProximaDB Complete Workflow Demo")
-    print("="*70)
+    print("=" * 70)
 
     # Step 1: Connect to ProximaDB
     print("\n📡 Step 1: Connecting to ProximaDB...")
     try:
-        client = ProximaDBClient(
-            url="http://localhost:5678",
-            protocol="rest"
-        )
+        client = ProximaDBClient(url="http://localhost:5678", protocol="rest")
         print("   ✅ Connected to ProximaDB server (localhost:5678)")
     except Exception as e:
         print(f"   ❌ Failed to connect: {e}")
@@ -64,11 +61,12 @@ def main():
 
     try:
         from proximadb.models import CollectionConfig
+
         config = CollectionConfig(
             name=collection_name,
             dimension=dimension,
             distance_metric=DistanceMetric.COSINE,
-            storage_engine=StorageEngine.SST  # Use SST for OLTP workload
+            storage_engine=StorageEngine.SST,  # Use SST for OLTP workload
         )
         collection = client.create_collection(collection_name, config)
         print(f"   ✅ Collection created: {collection_name}")
@@ -85,18 +83,21 @@ def main():
 
     try:
         from proximadb.models import VectorRecord
+
         for batch_idx in range(0, total_vectors, batch_size):
             vectors = [
                 VectorRecord(
                     id=f"vec_{i}",
                     vector=generate_random_vector(dimension),
-                    metadata={"batch": batch_idx // batch_size + 1}
+                    metadata={"batch": batch_idx // batch_size + 1},
                 )
                 for i in range(batch_idx, min(batch_idx + batch_size, total_vectors))
             ]
 
             client.insert_vectors(collection_name, vectors)
-            print(f"   ✅ Batch {batch_idx // batch_size + 1}: Inserted vectors {batch_idx} to {batch_idx + len(vectors) - 1}")
+            print(
+                f"   ✅ Batch {batch_idx // batch_size + 1}: Inserted vectors {batch_idx} to {batch_idx + len(vectors) - 1}"
+            )
             time.sleep(0.1)  # Small delay to simulate real workload
 
         print(f"\n   🎉 Total vectors inserted: {total_vectors}")
@@ -112,9 +113,7 @@ def main():
 
         print(f"   🎯 Executing search with top_k={top_k}...")
         search_results = client.search(
-            collection_id=collection_name,
-            vector=query_vector,
-            top_k=top_k
+            collection_id=collection_name, vector=query_vector, top_k=top_k
         )
 
         print(f"   ✅ Search complete: Found {len(search_results)} results")
@@ -137,7 +136,7 @@ def main():
         response = requests.get(f"{base_url}/metrics/json", timeout=5)
         if response.status_code == 200:
             metrics = response.json()
-            storage = metrics.get('storage', {})
+            storage = metrics.get("storage", {})
 
             print(f"   ✅ Metrics retrieved:")
             print(f"      - Total Collections: {storage.get('total_collections', 0)}")
@@ -149,8 +148,17 @@ def main():
         if response.status_code == 200:
             collections = response.json()
             # Collections are Collection objects with config.name
-            our_collection = next((c for c in collections if isinstance(c, dict) and c.get('name') == collection_name or
-                                  hasattr(c, 'name') and c.name == collection_name), None)
+            our_collection = next(
+                (
+                    c
+                    for c in collections
+                    if isinstance(c, dict)
+                    and c.get("name") == collection_name
+                    or hasattr(c, "name")
+                    and c.name == collection_name
+                ),
+                None,
+            )
 
             if our_collection:
                 print(f"\n   ✅ Collection visible in dashboard API:")
@@ -180,9 +188,9 @@ def main():
         print(f"   ⚠️  Failed to get collection info: {e}")
 
     # Final Summary
-    print("\n" + "="*70)
+    print("\n" + "=" * 70)
     print("🎉 Demo Complete!")
-    print("="*70)
+    print("=" * 70)
     print(f"\n✅ Successfully demonstrated:")
     print(f"   1. ✓ Collection creation via gRPC")
     print(f"   2. ✓ Batch vector insertion ({total_vectors} vectors)")

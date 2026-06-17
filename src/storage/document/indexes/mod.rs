@@ -18,13 +18,17 @@ use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::proto::proximadb_v1::{DocIndexType, IndexDefinition};
+use proximadb_data_model::ProximaValue;
+use proximadb_records::{ProximaRecord, ProximaTree, tree_get};
 
 use self::array_index::ArrayIndex;
 use self::fulltext::FullTextIndex;
 use self::path_index::PathIndex;
 use super::DocumentRecord;
+use super::canonical_adapter::proxima_record_to_legacy_document;
 
 /// Index type wrapper for different index implementations
+#[allow(clippy::large_enum_variant)]
 enum IndexType {
     Path(PathIndex),
     Array(ArrayIndex),
@@ -127,31 +131,63 @@ impl IndexManager {
 
     /// Index a new document
     pub async fn index_document(&self, collection: &str, document: &DocumentRecord) -> Result<()> {
+        self.index_document_with_key(collection, document, &document.id)
+            .await
+    }
+
+    /// Index a document using an explicit projection key.
+    ///
+    /// Legacy document mode uses the facade document id. Canonical record-backed
+    /// mode uses `ProximaRecord::oid` so projection entries can be traced and
+    /// rebuilt by canonical record identity.
+    async fn index_document_with_key(
+        &self,
+        collection: &str,
+        document: &DocumentRecord,
+        projection_key: &str,
+    ) -> Result<()> {
         debug!("Indexing document {} in {}", document.id, collection);
 
         let indexes = self.indexes.read().await;
         if let Some(collection_indexes) = indexes.get(collection) {
-            // Update path indexes
+            // Update path indexes (TD-106 Slice 7b: read the canonical `props` tree)
             for (path, index) in &collection_indexes.path_indexes {
-                if let Some(value) = self.extract_path_value(&document.document, path) {
-                    index.insert(&document.id, value)?;
+                if let Some(value) = self.extract_path_value(&document.props, path) {
+                    index.insert(projection_key, value)?;
                 }
             }
 
             // Update array indexes
             for (path, index) in &collection_indexes.array_indexes {
-                if let Some(values) = self.extract_array_values(&document.document, path) {
-                    index.insert(&document.id, values)?;
+                if let Some(values) = self.extract_array_values(&document.props, path) {
+                    index.insert(projection_key, values)?;
                 }
             }
 
             // Update full-text index
             if let Some(ref ft_index) = collection_indexes.fulltext_index {
-                ft_index.index_document(&document.id, &document.document)?;
+                ft_index.index_document(projection_key, &document.props)?;
             }
         }
 
         Ok(())
+    }
+
+    /// Apply document projection indexes from a canonical record.
+    ///
+    /// This is the Phase 2 convergence boundary: JSON path, array, and
+    /// full-text structures are rebuildable projections over `ProximaRecord`.
+    /// Projection entries are keyed by canonical record oid; query execution
+    /// accepts canonical oid candidate sets and facade document-id candidate
+    /// sets while the public document API remains v1-compatible.
+    pub async fn index_record_projection(&self, record: &ProximaRecord) -> Result<Option<String>> {
+        let Some(document) = proxima_record_to_legacy_document(record) else {
+            return Ok(None);
+        };
+
+        self.index_document_with_key(&document.collection_id, &document, &record.oid)
+            .await?;
+        Ok(Some(record.oid.clone()))
     }
 
     /// Reindex a document after update
@@ -167,6 +203,22 @@ impl IndexManager {
         self.index_document(collection, document).await?;
 
         Ok(())
+    }
+
+    /// Rebuild projection entries for one canonical record after an update.
+    pub async fn reindex_record_projection(
+        &self,
+        record: &ProximaRecord,
+    ) -> Result<Option<String>> {
+        let Some(document) = proxima_record_to_legacy_document(record) else {
+            return Ok(None);
+        };
+
+        self.remove_document(&document.collection_id, &record.oid)
+            .await?;
+        self.index_document_with_key(&document.collection_id, &document, &record.oid)
+            .await?;
+        Ok(Some(record.oid.clone()))
     }
 
     /// Remove a document from all indexes
@@ -192,6 +244,43 @@ impl IndexManager {
         }
 
         Ok(())
+    }
+
+    /// Remove projection entries by projection key.
+    ///
+    /// Canonical storage owns durable truth; this only removes rebuildable
+    /// projection state for the canonical record-backed document facade.
+    pub async fn remove_record_projection(
+        &self,
+        collection: &str,
+        projection_key: &str,
+    ) -> Result<()> {
+        self.remove_document(collection, projection_key).await
+    }
+
+    /// Rebuild projection entries for a collection from canonical records.
+    ///
+    /// Existing entries for supplied records are replaced. A future full
+    /// rebuild path should clear all collection projection state before replay,
+    /// but this helper gives canonical recovery/query paths a record-shaped
+    /// projection API today.
+    pub async fn rebuild_record_projections(
+        &self,
+        collection: &str,
+        records: &[ProximaRecord],
+    ) -> Result<usize> {
+        let mut projected = 0;
+
+        for record in records {
+            if let Some(document) = proxima_record_to_legacy_document(record)
+                && document.collection_id == collection
+            {
+                self.reindex_document(collection, &document).await?;
+                projected += 1;
+            }
+        }
+
+        Ok(projected)
     }
 
     /// Query a path index for documents matching a condition
@@ -244,68 +333,54 @@ impl IndexManager {
 
     // Helper methods for value extraction
 
-    fn extract_path_value(
-        &self,
-        document: &crate::proto::proximadb_v1::SqlObject,
-        path: &str,
-    ) -> Option<IndexValue> {
-        use super::query::path_parser::JsonPath;
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-        // Parse and evaluate the path
-        let json_path = JsonPath::parse(&format!("$.{}", path.trim_start_matches("$."))).ok()?;
-        let values = json_path.evaluate(document);
-
-        // Get the first value and convert to IndexValue
-        values.into_iter().next().and_then(|v| {
-            match v.value {
-                Some(SqlVal::NullValue(_)) => Some(IndexValue::Null),
-                Some(SqlVal::BoolValue(b)) => Some(IndexValue::Bool(b)),
-                Some(SqlVal::Int64Value(i)) => Some(IndexValue::Int(i)),
-                Some(SqlVal::NumberValue(f)) => Some(IndexValue::Float(f)),
-                Some(SqlVal::StringValue(s)) => Some(IndexValue::String(s)),
-                Some(SqlVal::BytesValue(b)) => Some(IndexValue::Bytes(b)),
-                _ => None, // Objects and arrays aren't directly indexable
-            }
-        })
+    /// Look up a dotted path in the canonical `props` tree (TD-106 Slice 7b).
+    fn extract_path_value(&self, props: &ProximaTree, path: &str) -> Option<IndexValue> {
+        let key = path.trim_start_matches('$').trim_start_matches('.');
+        tree_get(props, key).and_then(Self::proxima_value_to_index_value)
     }
 
-    fn extract_array_values(
-        &self,
-        document: &crate::proto::proximadb_v1::SqlObject,
-        path: &str,
-    ) -> Option<Vec<IndexValue>> {
-        use super::query::path_parser::JsonPath;
-        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
-
-        // Parse and evaluate the path
-        let json_path = JsonPath::parse(&format!("$.{}", path.trim_start_matches("$."))).ok()?;
-        let values = json_path.evaluate(document);
-
-        // Get the first value (should be an array)
-        let first = values.into_iter().next()?;
-
-        if let Some(SqlVal::ArrayValue(arr)) = first.value {
-            let index_values: Vec<IndexValue> = arr
-                .values
-                .into_iter()
-                .filter_map(|v| match v.value {
-                    Some(SqlVal::NullValue(_)) => Some(IndexValue::Null),
-                    Some(SqlVal::BoolValue(b)) => Some(IndexValue::Bool(b)),
-                    Some(SqlVal::Int64Value(i)) => Some(IndexValue::Int(i)),
-                    Some(SqlVal::NumberValue(f)) => Some(IndexValue::Float(f)),
-                    Some(SqlVal::StringValue(s)) => Some(IndexValue::String(s)),
-                    Some(SqlVal::BytesValue(b)) => Some(IndexValue::Bytes(b)),
-                    _ => None,
-                })
-                .collect();
-
-            if !index_values.is_empty() {
-                return Some(index_values);
+    fn extract_array_values(&self, props: &ProximaTree, path: &str) -> Option<Vec<IndexValue>> {
+        let key = path.trim_start_matches('$').trim_start_matches('.');
+        match tree_get(props, key)? {
+            ProximaValue::Array(items) => {
+                let index_values: Vec<IndexValue> = items
+                    .iter()
+                    .filter_map(Self::proxima_value_to_index_value)
+                    .collect();
+                (!index_values.is_empty()).then_some(index_values)
             }
+            _ => None,
         }
+    }
 
-        None
+    /// Map a canonical scalar leaf to an `IndexValue`. Objects/arrays/maps and
+    /// non-scalar variants are not directly indexable (matches the prior
+    /// `SqlValue` scalar-only behavior). Shared with the query-operand path so
+    /// index build and index query agree on the canonical mapping (TD-106).
+    pub fn proxima_value_to_index_value(value: &ProximaValue) -> Option<IndexValue> {
+        match value {
+            ProximaValue::Null => Some(IndexValue::Null),
+            ProximaValue::Boolean(b) => Some(IndexValue::Bool(*b)),
+            ProximaValue::Int8(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Int16(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Int32(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Int64(i) => Some(IndexValue::Int(*i)),
+            ProximaValue::UInt8(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::UInt16(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::UInt32(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::UInt64(i) => Some(IndexValue::Int(*i as i64)),
+            ProximaValue::Float16(f) | ProximaValue::Float32(f) => {
+                Some(IndexValue::Float(*f as f64))
+            }
+            ProximaValue::Float64(f) => Some(IndexValue::Float(*f)),
+            ProximaValue::String(s) | ProximaValue::Symbol(s) => {
+                Some(IndexValue::String(s.clone()))
+            }
+            ProximaValue::Binary(b) | ProximaValue::BinaryVector(b) => {
+                Some(IndexValue::Bytes(b.clone()))
+            }
+            _ => None,
+        }
     }
 }
 

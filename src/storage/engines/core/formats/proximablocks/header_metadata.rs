@@ -1,11 +1,11 @@
 // Shared Header and Metadata Structures for SST and SWIFT engines
 
-use crate::utils::uuid::Uuid;
 use anyhow::Result;
+use proximadb_kernel::uuid::Uuid;
 use std::collections::HashMap;
 
 use crate::compute::distance_computation::DistanceMetric;
-use crate::core::compression::CompressionAlgorithm;
+use proximadb_compression::CompressionAlgorithm;
 
 /// Row-based file header structure
 #[derive(Debug, Clone)]
@@ -24,16 +24,16 @@ pub struct RowBasedHeader {
     pub engine_metadata: EngineMetadata,
 
     /// Collection information
-    pub collection_metadata: CollectionMetadata,
+    pub collection_metadata: ProximaBlockCollectionMetadata,
 
     /// File layout information
     pub layout_metadata: LayoutMetadata,
 
     /// Index offsets and sizes
-    pub index_metadata: IndexMetadata,
+    pub index_metadata: BlockIndexMetadata,
 
     /// Compression and quantization
-    pub compression_metadata: CompressionMetadata,
+    pub compression_metadata: BlockCompressionMetadata,
 
     /// Version and compatibility
     pub version_info: VersionInfo,
@@ -84,25 +84,31 @@ pub enum IOPatternHint {
     BatchOriented,
 }
 
-/// Collection-specific metadata
+/// Collection-specific metadata stored in a ProximaBlock file header.
+///
+/// Renamed from the former `CollectionMetadata` to disambiguate from the cluster-level
+/// `ClusterCollectionMetadata` and other same-named local structs (LLD duplication watch).
 #[derive(Debug, Clone)]
-pub struct CollectionMetadata {
+pub struct ProximaBlockCollectionMetadata {
     pub collection_id: String,
     pub collection_name: Option<String>,
     pub dimension: usize,
     pub distance_metric: DistanceMetric,
     pub schema_version: u32,
-    pub filterable_columns: Vec<FilterableColumn>,
-    pub collection_statistics: CollectionStatistics,
+    pub filterable_columns: Vec<HeaderFilterableColumn>,
+    pub collection_statistics: BlockCollectionStatistics,
 }
+
+/// Backwards-compat alias for [`HeaderFilterableColumn`].
+pub type FilterableColumn = HeaderFilterableColumn;
 
 /// Filterable column definition
 #[derive(Debug, Clone)]
-pub struct FilterableColumn {
+pub struct HeaderFilterableColumn {
     pub name: String,
     pub indexed: bool,
     pub bloom_filter_enabled: bool,
-    pub statistics: ColumnStatistics,
+    pub statistics: HeaderColumnStatistics,
 }
 
 #[derive(Debug, Clone)]
@@ -117,7 +123,7 @@ pub enum ColumnData {
 
 /// Column statistics
 #[derive(Debug, Clone)]
-pub struct ColumnStatistics {
+pub struct HeaderColumnStatistics {
     pub null_count: u64,
     pub distinct_count: u64,
     pub min_value: Option<serde_json::Value>,
@@ -134,9 +140,12 @@ pub struct SizeDistribution {
     pub p99: f64,
 }
 
+/// Backwards-compat alias for [`BlockCollectionStatistics`].
+pub type CollectionStatistics = BlockCollectionStatistics;
+
 /// Collection-level statistics
 #[derive(Debug, Clone)]
-pub struct CollectionStatistics {
+pub struct BlockCollectionStatistics {
     pub total_records: u64,
     pub total_size_bytes: u64,
     pub average_vector_size: f64,
@@ -210,9 +219,12 @@ pub enum PaddingStrategy {
     CacheLineAlign,
 }
 
+/// Backwards-compat alias for [`BlockIndexMetadata`].
+pub type IndexMetadata = BlockIndexMetadata;
+
 /// Index metadata
 #[derive(Debug, Clone)]
-pub struct IndexMetadata {
+pub struct BlockIndexMetadata {
     /// ID index information
     pub id_index_offset: u64,
     pub id_index_size: u64,
@@ -222,12 +234,12 @@ pub struct IndexMetadata {
     /// Bloom filter information
     pub bloom_filter_offset: u64,
     pub bloom_filter_size: u64,
-    pub bloom_filter_config: BloomFilterMetadata,
+    pub bloom_filter_config: BlockBloomFilterMetadata,
 
     /// Quantization index information
     pub quantization_index_offset: u64,
     pub quantization_index_size: u64,
-    pub quantization_metadata: QuantizationMetadata,
+    pub quantization_metadata: BlockQuantizationMetadata,
 
     /// Hierarchical index information
     pub hierarchical_levels: u8,
@@ -244,9 +256,12 @@ pub enum Index {
     Hybrid,
 }
 
+/// Backwards-compat alias for [`BlockBloomFilterMetadata`].
+pub type BloomFilterMetadata = BlockBloomFilterMetadata;
+
 /// Bloom filter metadata
 #[derive(Debug, Clone)]
-pub struct BloomFilterMetadata {
+pub struct BlockBloomFilterMetadata {
     pub filter_type: BloomFilter,
     pub false_positive_rate: f64,
     #[allow(dead_code)]
@@ -264,9 +279,12 @@ pub enum BloomFilter {
     XorFilter,
 }
 
+/// Backwards-compat alias for [`BlockQuantizationMetadata`].
+pub type QuantizationMetadata = BlockQuantizationMetadata;
+
 /// Quantization metadata
 #[derive(Debug, Clone)]
-pub struct QuantizationMetadata {
+pub struct BlockQuantizationMetadata {
     pub quantization_enabled: bool,
     pub binary_quantization: Option<BinaryQuantizationMeta>,
     pub int8_quantization: Option<Int8QuantizationMeta>,
@@ -299,9 +317,12 @@ pub struct PQQuantizationMeta {
     pub centroid_norms: Vec<f32>,
 }
 
+/// Backwards-compat alias for [`BlockCompressionMetadata`].
+pub type CompressionMetadata = BlockCompressionMetadata;
+
 /// Compression metadata
 #[derive(Debug, Clone)]
-pub struct CompressionMetadata {
+pub struct BlockCompressionMetadata {
     /// Global compression settings
     pub compression_enabled: bool,
     pub compression_algorithm: CompressionAlgorithm,
@@ -327,9 +348,12 @@ pub struct SectionCompressionInfo {
     pub compression_ratio: f32,
 }
 
+/// Backwards-compat alias for [`BlockFileMetadata`].
+pub type FileMetadata = BlockFileMetadata;
+
 /// File metadata (high-level file information)
 #[derive(Debug, Clone)]
-pub struct FileMetadata {
+pub struct BlockFileMetadata {
     /// Basic file information
     pub file_path: String,
     pub file_size: u64,
@@ -485,10 +509,10 @@ impl RowBasedHeader {
             timestamp: chrono::Utc::now().timestamp(),
             created_by: "SST Engine".to_string(),
             engine_metadata: EngineMetadata::new_sst(),
-            collection_metadata: CollectionMetadata::new(collection_id, dimension),
+            collection_metadata: ProximaBlockCollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
-            index_metadata: IndexMetadata::default(),
-            compression_metadata: CompressionMetadata::default(),
+            index_metadata: BlockIndexMetadata::default(),
+            compression_metadata: BlockCompressionMetadata::default(),
             version_info: VersionInfo::default(),
             checksum_config: ChecksumConfig::default(),
             extensions: HashMap::new(),
@@ -505,10 +529,10 @@ impl RowBasedHeader {
             timestamp: chrono::Utc::now().timestamp(),
             created_by: "SWIFT Engine".to_string(),
             engine_metadata: EngineMetadata::new_swift(),
-            collection_metadata: CollectionMetadata::new(collection_id, dimension),
+            collection_metadata: ProximaBlockCollectionMetadata::new(collection_id, dimension),
             layout_metadata: LayoutMetadata::default(),
-            index_metadata: IndexMetadata::default(),
-            compression_metadata: CompressionMetadata::default(),
+            index_metadata: BlockIndexMetadata::default(),
+            compression_metadata: BlockCompressionMetadata::default(),
             version_info: VersionInfo::default(),
             checksum_config: ChecksumConfig::default(),
             extensions: HashMap::new(),
@@ -593,7 +617,7 @@ impl EngineMetadata {
     }
 }
 
-impl CollectionMetadata {
+impl ProximaBlockCollectionMetadata {
     pub fn new(collection_id: String, dimension: usize) -> Self {
         Self {
             collection_id,
@@ -602,7 +626,7 @@ impl CollectionMetadata {
             distance_metric: DistanceMetric::Cosine,
             schema_version: 1,
             filterable_columns: Vec::new(),
-            collection_statistics: CollectionStatistics::default(),
+            collection_statistics: BlockCollectionStatistics::default(),
         }
     }
 }
@@ -632,7 +656,7 @@ impl Default for LayoutMetadata {
     }
 }
 
-impl Default for IndexMetadata {
+impl Default for BlockIndexMetadata {
     fn default() -> Self {
         Self {
             id_index_offset: 0,
@@ -641,10 +665,10 @@ impl Default for IndexMetadata {
             id_index_compression: Some(CompressionAlgorithm::Lz4),
             bloom_filter_offset: 0,
             bloom_filter_size: 0,
-            bloom_filter_config: BloomFilterMetadata::default(),
+            bloom_filter_config: BlockBloomFilterMetadata::default(),
             quantization_index_offset: 0,
             quantization_index_size: 0,
-            quantization_metadata: QuantizationMetadata::default(),
+            quantization_metadata: BlockQuantizationMetadata::default(),
             hierarchical_levels: 0,
             level_offsets: Vec::new(),
             level_sizes: Vec::new(),
@@ -652,7 +676,7 @@ impl Default for IndexMetadata {
     }
 }
 
-impl Default for BloomFilterMetadata {
+impl Default for BlockBloomFilterMetadata {
     fn default() -> Self {
         Self {
             filter_type: BloomFilter::Standard,
@@ -665,7 +689,7 @@ impl Default for BloomFilterMetadata {
     }
 }
 
-impl Default for QuantizationMetadata {
+impl Default for BlockQuantizationMetadata {
     fn default() -> Self {
         Self {
             quantization_enabled: true,
@@ -678,7 +702,7 @@ impl Default for QuantizationMetadata {
     }
 }
 
-impl Default for CompressionMetadata {
+impl Default for BlockCompressionMetadata {
     fn default() -> Self {
         Self {
             compression_enabled: true,
@@ -731,7 +755,7 @@ impl Default for ChecksumConfig {
     }
 }
 
-impl Default for CollectionStatistics {
+impl Default for BlockCollectionStatistics {
     fn default() -> Self {
         Self {
             total_records: 0,

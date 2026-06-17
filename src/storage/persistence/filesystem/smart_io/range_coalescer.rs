@@ -105,7 +105,7 @@ impl RangeOptimizer for DefaultRangeCoalescer {
 
         debug!(
             "Coalesced {} ranges to {} ranges (threshold: {} bytes)",
-            coalesced.len() + (coalesced.len() - 1).max(0),
+            coalesced.len() + (coalesced.len() - 1),
             coalesced.len(),
             threshold
         );

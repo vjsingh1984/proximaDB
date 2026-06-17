@@ -31,7 +31,7 @@ Example::
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from victor.storage.vector_stores.base import (
     BaseEmbeddingProvider,
@@ -44,7 +44,7 @@ from victor.storage.vector_stores.models import (
     create_embedding_model,
 )
 
-from proximadb_sdk.models import VectorRecord
+from proximadb_sdk.integrations._records import insert_records, record_payload
 from proximadb_sdk.unified_client import ProximaDBClient
 
 
@@ -71,9 +71,9 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
             "collection_name", "code_embeddings"
         )
         self._dimension: int = config.extra_config.get("dimension", 384)
-        self.embedding_model: Optional[BaseEmbeddingModel] = None
+        self.embedding_model: BaseEmbeddingModel | None = None
 
-    def _get_embedding_model_name(self) -> Optional[str]:
+    def _get_embedding_model_name(self) -> str | None:
         return getattr(
             self.config,
             "embedding_model_name",
@@ -135,17 +135,17 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
         self,
         doc_id: str,
         content: str,
-        metadata: Optional[dict[str, Any]] = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Embed and insert a single document."""
         vector = await self.embed_text(content)
-        record = VectorRecord(
-            id=doc_id,
+        record = record_payload(
+            record_id=doc_id,
             vector=vector,
-            source=content,
+            text=content,
             metadata=metadata or {},
         )
-        self._client.insert_vectors(self._collection_name, records=[record])
+        insert_records(self._client, self._collection_name, [record])
 
     async def index_documents(self, documents: list[dict[str, Any]]) -> None:
         """Embed and insert multiple documents in batch."""
@@ -156,15 +156,15 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
         vectors = await self.embed_batch(contents)
 
         records = [
-            VectorRecord(
-                id=doc["id"],
+            record_payload(
+                record_id=doc["id"],
                 vector=vec,
-                source=doc["content"],
+                text=doc["content"],
                 metadata=doc.get("metadata", {}),
             )
             for doc, vec in zip(documents, vectors)
         ]
-        self._client.insert_vectors(self._collection_name, records=records)
+        insert_records(self._client, self._collection_name, records)
 
     # ------------------------------------------------------------------
     # Search
@@ -174,7 +174,7 @@ class ProximaDBEmbeddingProvider(BaseEmbeddingProvider):
         self,
         query: str,
         limit: int = 10,
-        filter_metadata: Optional[dict[str, Any]] = None,
+        filter_metadata: dict[str, Any] | None = None,
     ) -> list[EmbeddingSearchResult]:
         """Embed *query* and return the most similar documents."""
         query_vector = await self.embed_text(query)

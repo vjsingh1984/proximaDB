@@ -26,7 +26,7 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::{RingBuffer, SessionConfig};
-use crate::proto::proximadb_v1::VectorRecord;
+use proximadb_records::ProximaRecord;
 
 /// Unique identifier for a streaming session
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -136,7 +136,7 @@ pub struct StreamSession {
     pub collection: String,
 
     /// Ring buffer for incoming records
-    pub buffer: Arc<RingBuffer<VectorRecord>>,
+    pub buffer: Arc<RingBuffer<ProximaRecord>>,
 
     /// Current session state
     pub state: AtomicCell<SessionState>,

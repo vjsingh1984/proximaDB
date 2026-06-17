@@ -18,14 +18,14 @@ use proximadb::compute::distance_computation::engine::{DistanceMetric, UnifiedDi
 use proximadb::compute::quantization::storage_engine::{
     SearchStage, StorageQuantizationConfig, StorageQuantizationEngine, StorageQuantizedData,
 };
-use proximadb::compute::quantization::unified::{
+use proximadb::compute::quantization::{
     BinaryQuantization, InMemoryCodebookStore, ProductQuantization, QuantizationLevel,
     ScalarQuantization, UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
 use proximadb::core::memory::pool::VectorMemoryPool;
 use proximadb::proto::proximadb_v1::CompressionConfig;
 use proximadb::storage::engines::core::formats::proximablocks::ProximaDataBlock;
-use proximadb::storage::engines::impls::sst::{SstEntry, SstableWriter};
+use proximadb::storage::engines::sst::{SstEntry, SstableWriter};
 use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 
 /// Test configuration

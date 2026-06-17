@@ -4,7 +4,6 @@ Comprehensive unit tests for all language parsers in the code chunking module.
 This module tests the AST-aware code parsing functionality for all supported languages.
 """
 
-import os
 import sys
 from pathlib import Path
 
@@ -14,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent))
 
 # Import from loader which handles the module loading
-from loader import RESOURCES_DIR, code_module, read_resource_file
+from loader import code_module, read_resource_file
 
 # Get references to classes and functions from the loaded module
 CodeSymbol = code_module.CodeSymbol

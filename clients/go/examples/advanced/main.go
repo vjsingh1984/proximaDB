@@ -89,7 +89,8 @@ func main() {
 	}
 	fmt.Println("Collection created successfully")
 
-	// Demonstrate batch insert with progress tracking
+	// Demonstrate compatibility batch insert with progress tracking.
+	// New non-streaming writes should prefer InsertRecords with ProximaRecord.
 	fmt.Println("=== Batch Insert with Progress ===")
 	records := generateLargeDataset(5000, 256)
 
@@ -217,20 +218,20 @@ func main() {
 
 	// Demonstrate upsert
 	fmt.Println("=== Upsert Operation ===")
-	upsertRecords := []*proximadb.VectorRecord{
+	upsertRecords := []*proximadb.ProximaRecord{
 		{
-			ID:       "vec_0",
-			Vector:   generateRandomVector(256),
-			Metadata: map[string]interface{}{"updated": true, "version": 2},
+			ID:     "vec_0",
+			Vector: generateRandomVector(256),
+			Props:  map[string]interface{}{"updated": true, "version": 2},
 		},
 		{
-			ID:       "new_vec_1",
-			Vector:   generateRandomVector(256),
-			Metadata: map[string]interface{}{"new": true},
+			ID:     "new_vec_1",
+			Vector: generateRandomVector(256),
+			Props:  map[string]interface{}{"new": true},
 		},
 	}
 
-	err = client.Upsert(ctx, collectionName, upsertRecords)
+	err = client.UpsertRecords(ctx, collectionName, upsertRecords)
 	if err != nil {
 		log.Printf("Upsert failed: %v", err)
 	} else {

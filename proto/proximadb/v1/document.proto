@@ -53,6 +53,9 @@ message DocumentCollectionConfig {
 
   // Compression settings
   CompressionConfig compression = 7;
+
+  // Use binary storage format (MessagePack)
+  bool use_jsonb = 8;
 }
 
 // Index definition for document paths

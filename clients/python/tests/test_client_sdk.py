@@ -4,9 +4,7 @@ ProximaDB Client & SDK Test Suite
 Consolidated tests for client creation, configuration, error handling, and SDK features
 """
 
-import asyncio
 import time
-from typing import Any, Dict
 
 import pytest
 
@@ -14,7 +12,6 @@ from proximadb_sdk import (
     ClientConfig,
     CollectionConfig,
     CollectionNotFoundError,
-    DistanceMetric,
     Protocol,
     ProximaDBClient,
     ProximaDBError,
@@ -407,7 +404,6 @@ class TestClientPerformance:
     def test_concurrent_operations(self):
         """Test concurrent client operations"""
         import threading
-        import time
 
         client = connect_rest("http://localhost:5678")
         results = []

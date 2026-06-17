@@ -270,6 +270,30 @@ impl RewardCalculator {
         reward.clamp(0.0, 1.0)
     }
 
+    /// Same as [`calculate`] but folds in an optional `quality` signal
+    /// derived from match-features against a held-out labeled set (R-7
+    /// extension). When `quality` is `Some(q)` (with `q` ∈ [0, 1]),
+    /// the final reward is `0.7 * base + 0.3 * q`. When `None`,
+    /// returns the base reward unchanged so callers that don't have
+    /// quality measurements get identical behavior to [`calculate`].
+    pub fn calculate_with_quality(
+        &self,
+        latency_ms: f64,
+        recall: f32,
+        throughput_qps: f32,
+        quality: Option<f32>,
+        target: Option<&OptimizationTarget>,
+    ) -> f32 {
+        let base = self.calculate(latency_ms, recall, throughput_qps, target);
+        match quality {
+            None => base,
+            Some(q) => {
+                let q = q.clamp(0.0, 1.0);
+                (0.7 * base + 0.3 * q).clamp(0.0, 1.0)
+            }
+        }
+    }
+
     /// Calculate reward with collection-size-aware latency normalization
     ///
     /// This is the preferred method for RL training as it properly accounts
@@ -460,6 +484,51 @@ impl HardConstraints {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calculate_with_quality_none_matches_base() {
+        let calc = RewardCalculator::new(OptimizationGoal::Balanced);
+        let base = calc.calculate(10.0, 0.95, 200.0, None);
+        let with_none = calc.calculate_with_quality(10.0, 0.95, 200.0, None, None);
+        assert!(
+            (base - with_none).abs() < 1e-6,
+            "quality=None must equal calculate(): base={base}, with_none={with_none}"
+        );
+    }
+
+    #[test]
+    fn calculate_with_quality_boosts_when_quality_high() {
+        let calc = RewardCalculator::new(OptimizationGoal::Balanced);
+        // Modest performance + high quality signal should outscore
+        // modest performance alone.
+        let base = calc.calculate(40.0, 0.85, 100.0, None);
+        let boosted = calc.calculate_with_quality(40.0, 0.85, 100.0, Some(1.0), None);
+        assert!(
+            boosted > base,
+            "high quality should raise reward: base={base}, boosted={boosted}"
+        );
+    }
+
+    #[test]
+    fn calculate_with_quality_drags_when_quality_low() {
+        let calc = RewardCalculator::new(OptimizationGoal::Balanced);
+        // Good baseline + bad quality should pull the reward down.
+        let base = calc.calculate(5.0, 0.99, 500.0, None);
+        let dragged = calc.calculate_with_quality(5.0, 0.99, 500.0, Some(0.0), None);
+        assert!(
+            dragged < base,
+            "zero quality should drag reward: base={base}, dragged={dragged}"
+        );
+    }
+
+    #[test]
+    fn calculate_with_quality_clamps_to_unit_range() {
+        let calc = RewardCalculator::new(OptimizationGoal::Balanced);
+        let r = calc.calculate_with_quality(10.0, 0.95, 200.0, Some(2.0), None);
+        assert!((0.0..=1.0).contains(&r), "result must be clamped: {r}");
+        let r = calc.calculate_with_quality(10.0, 0.95, 200.0, Some(-1.0), None);
+        assert!((0.0..=1.0).contains(&r), "result must be clamped: {r}");
+    }
 
     #[test]
     fn test_reward_calculation_balanced() {

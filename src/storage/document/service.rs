@@ -21,25 +21,38 @@ use crate::metrics::collectors::DocumentMetricsCollector;
 use crate::proto::proximadb_v1::{
     DocumentCollectionConfig, DocumentFilter, DocumentUpdate, SqlObject, SqlValue, UpdateOperation,
 };
-use crate::storage::persistence::write_ahead_log::unified_operations::{
+use crate::storage::persistence::write_ahead_log::wal_operations::{
     DocumentOperation, UnifiedWALOperation, UnifiedWALWriter,
 };
-use crate::storage::traits::UnifiedStorageEngine;
+use crate::storage::traits::UnifiedStorageFormat;
+#[cfg(feature = "canonical-document-store")]
+use proximadb_document::{DOCUMENT_COLLECTION_PROP, DOCUMENT_RECORD_LABEL, DocumentRecordKey};
+#[cfg(feature = "canonical-document-store")]
+use proximadb_records::{
+    RecordKey, RecordRecoveryOperation, RecordScanOptions, RecordStorage,
+    replay_record_recovery_operations,
+};
 
 use super::DocumentStorageEngine;
 use super::aggregation_extensions::LookupFetcher;
+#[cfg(feature = "canonical-document-store")]
+use super::canonical_adapter::legacy_document_to_proxima_record;
+use super::canonical_adapter::proxima_record_to_legacy_document;
+use super::canonical_adapter::{proxima_tree_to_sql_object, sql_value_to_tree_node};
 use super::indexes::IndexManager;
 use super::query::QueryExecutor;
-use super::query::path_parser::JsonPath;
 use super::{
     DocumentCollection, DocumentIngestResult, DocumentQueryParams, DocumentQueryResult,
     DocumentRecord, FlushToStorageResult,
 };
+use proximadb_data_model::ProximaValue;
+use proximadb_records::conversions::sql_value_to_proxima;
+use proximadb_records::{ProximaTree, ProximaTreeNode, tree_get};
 
 /// Document service for CRUD operations
 pub struct DocumentService {
     /// Storage engine for persistence (vector-centric, used for legacy flush path)
-    storage_engine: Arc<dyn UnifiedStorageEngine>,
+    storage_engine: Arc<dyn UnifiedStorageFormat>,
     /// Document-native storage engine (CEDAR) for direct document operations.
     /// When present, CRUD operations delegate to this engine instead of
     /// the in-memory HashMap cache. (Phase 2: wire CRUD through this)
@@ -54,6 +67,13 @@ pub struct DocumentService {
     /// In-memory document store (hot cache, backed by WAL)
     /// Used when document_engine is None (legacy mode)
     documents: Arc<RwLock<HashMap<String, HashMap<String, DocumentRecord>>>>,
+    /// Canonical durable record store for the Phase 2 document rebase.
+    /// When the `canonical-document-store` feature is enabled and this is
+    /// configured, document writes/read-throughs use `ProximaRecord` as the
+    /// source of durable truth. The in-memory map and indexes remain hot
+    /// compatibility/projection surfaces during migration.
+    #[cfg(feature = "canonical-document-store")]
+    canonical_record_store: Option<Arc<dyn RecordStorage>>,
     /// WAL writer for durability
     wal_writer: Arc<Mutex<Option<UnifiedWALWriter>>>,
     /// Base path for WAL files
@@ -64,7 +84,7 @@ pub struct DocumentService {
 
 impl DocumentService {
     /// Create a new document service (legacy mode, uses in-memory HashMap)
-    pub fn new(storage_engine: Arc<dyn UnifiedStorageEngine>) -> Self {
+    pub fn new(storage_engine: Arc<dyn UnifiedStorageFormat>) -> Self {
         Self {
             storage_engine,
             document_engine: None,
@@ -72,6 +92,8 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: None,
@@ -83,7 +105,7 @@ impl DocumentService {
     /// When a document engine is provided, all CRUD operations delegate to it
     /// instead of the in-memory HashMap cache.
     pub fn with_document_engine(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         document_engine: Arc<dyn DocumentStorageEngine>,
     ) -> Self {
         Self {
@@ -93,6 +115,8 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: None,
@@ -101,7 +125,7 @@ impl DocumentService {
 
     /// Create a new document service with metrics collection
     pub fn new_with_metrics(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         metrics_collector: Arc<DocumentMetricsCollector>,
     ) -> Self {
         Self {
@@ -111,15 +135,76 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
             metrics_collector: Some(metrics_collector),
         }
     }
 
+    /// Create a document service backed by canonical `ProximaRecord` storage.
+    ///
+    /// This is the Phase 2 migration path from
+    /// `docs/12-design/RELATIONAL_DOCUMENT_GRAPH_CONVERGENCE_2026_05_14.adoc`.
+    /// The service API still accepts/returns legacy document protocol shapes,
+    /// but durable state is written/read as `ProximaRecord`.
+    #[cfg(feature = "canonical-document-store")]
+    pub fn with_canonical_record_store(
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
+        record_store: Arc<dyn RecordStorage>,
+    ) -> Self {
+        Self {
+            storage_engine,
+            document_engine: None,
+            index_manager: Arc::new(IndexManager::new()),
+            query_executor: Arc::new(QueryExecutor::new()),
+            collections: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            canonical_record_store: Some(record_store),
+            wal_writer: Arc::new(Mutex::new(None)),
+            wal_path: String::new(),
+            metrics_collector: None,
+        }
+    }
+
+    /// Create a canonical-record-backed document service with WAL recovery.
+    ///
+    /// Recovered canonical document WAL entries are replayed through the shared
+    /// `proximadb_records::replay_record_recovery_operations` hook so the
+    /// canonical record store, not the document facade map, owns durable state.
+    #[cfg(feature = "canonical-document-store")]
+    pub async fn with_canonical_record_store_and_wal(
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
+        record_store: Arc<dyn RecordStorage>,
+        wal_base_path: &str,
+    ) -> Result<Self> {
+        let wal_path = format!("{}/document_wal", wal_base_path);
+        let wal_writer = UnifiedWALWriter::new(wal_path.clone())
+            .await
+            .context("Failed to create document WAL writer")?;
+
+        let mut service = Self {
+            storage_engine,
+            document_engine: None,
+            index_manager: Arc::new(IndexManager::new()),
+            query_executor: Arc::new(QueryExecutor::new()),
+            collections: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(RwLock::new(HashMap::new())),
+            canonical_record_store: Some(record_store),
+            wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
+            wal_path,
+            metrics_collector: None,
+        };
+
+        service.recover_from_wal().await?;
+
+        Ok(service)
+    }
+
     /// Create a new document service with WAL support
     pub async fn new_with_wal(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
     ) -> Result<Self> {
         Self::new_with_wal_and_metrics(storage_engine, wal_base_path, None).await
@@ -127,7 +212,7 @@ impl DocumentService {
 
     /// Create a new document service with WAL support and optional metrics
     pub async fn new_with_wal_and_metrics(
-        storage_engine: Arc<dyn UnifiedStorageEngine>,
+        storage_engine: Arc<dyn UnifiedStorageFormat>,
         wal_base_path: &str,
         metrics_collector: Option<Arc<DocumentMetricsCollector>>,
     ) -> Result<Self> {
@@ -143,6 +228,8 @@ impl DocumentService {
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
             documents: Arc::new(RwLock::new(HashMap::new())),
+            #[cfg(feature = "canonical-document-store")]
+            canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
             wal_path,
             metrics_collector,
@@ -188,7 +275,7 @@ impl DocumentService {
 
     /// Recover state from WAL on startup
     async fn recover_from_wal(&mut self) -> Result<()> {
-        use crate::storage::persistence::write_ahead_log::unified_operations::UnifiedWALReader;
+        use crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALReader;
 
         info!("Recovering document service from WAL at: {}", self.wal_path);
         let reader = UnifiedWALReader::new(self.wal_path.clone()).await?;
@@ -196,6 +283,8 @@ impl DocumentService {
 
         let mut recovered_docs = 0;
         let mut recovered_collections = 0;
+        #[cfg(feature = "canonical-document-store")]
+        let mut canonical_recovery_ops = Vec::new();
 
         for entry in entries {
             if entry.is_document_operation()
@@ -211,6 +300,26 @@ impl DocumentService {
                         let collection_docs = documents.entry(collection_id).or_default();
                         collection_docs.insert(document.id.clone(), document);
                         recovered_docs += 1;
+                    }
+                    DocumentOperation::UpsertCanonicalDocumentRecord {
+                        collection_id,
+                        record,
+                    } => {
+                        #[cfg(feature = "canonical-document-store")]
+                        canonical_recovery_ops
+                            .push(RecordRecoveryOperation::Upsert(Box::new(record.clone())));
+
+                        if let Some(document) = proxima_record_to_legacy_document(&record) {
+                            let mut documents = self.documents.write().await;
+                            let collection_docs = documents.entry(collection_id).or_default();
+                            collection_docs.insert(document.id.clone(), document);
+                            recovered_docs += 1;
+                        } else {
+                            warn!(
+                                "Skipping canonical WAL record '{}' because it is not a document",
+                                record.oid
+                            );
+                        }
                     }
                     DocumentOperation::UpdateDocument {
                         collection_id,
@@ -231,6 +340,22 @@ impl DocumentService {
                         document_id,
                     } => {
                         // Replay delete
+                        let mut documents = self.documents.write().await;
+                        if let Some(collection_docs) = documents.get_mut(&collection_id) {
+                            collection_docs.remove(&document_id);
+                        }
+                    }
+                    DocumentOperation::DeleteCanonicalDocumentRecord {
+                        collection_id,
+                        document_id,
+                        record_oid,
+                    } => {
+                        #[cfg(feature = "canonical-document-store")]
+                        canonical_recovery_ops
+                            .push(RecordRecoveryOperation::Delete(RecordKey::new(record_oid)));
+                        #[cfg(not(feature = "canonical-document-store"))]
+                        let _ = record_oid;
+
                         let mut documents = self.documents.write().await;
                         if let Some(collection_docs) = documents.get_mut(&collection_id) {
                             collection_docs.remove(&document_id);
@@ -273,6 +398,26 @@ impl DocumentService {
             }
         }
 
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            let summary =
+                replay_record_recovery_operations(record_store.as_ref(), canonical_recovery_ops)
+                    .await
+                    .context("Failed to replay canonical document WAL into record store")?;
+
+            if summary.upserts_replayed > 0 || summary.deletes_replayed > 0 {
+                info!(
+                    "Canonical document WAL recovery complete: {} upserts, {} deletes replayed into record store",
+                    summary.upserts_replayed, summary.deletes_replayed
+                );
+            }
+        } else if !canonical_recovery_ops.is_empty() {
+            warn!(
+                "Recovered {} canonical document WAL operations without a canonical record store",
+                canonical_recovery_ops.len()
+            );
+        }
+
         info!(
             "WAL recovery complete: {} documents, {} collections recovered",
             recovered_docs, recovered_collections
@@ -290,6 +435,104 @@ impl DocumentService {
         Ok(())
     }
 
+    /// Write a document upsert to WAL using canonical record intent when the
+    /// canonical store is active, otherwise use the legacy document entry.
+    async fn write_document_upsert_to_wal(
+        &self,
+        collection: &str,
+        record: &DocumentRecord,
+    ) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            return self
+                .write_to_wal(DocumentOperation::UpsertCanonicalDocumentRecord {
+                    collection_id: collection.to_string(),
+                    record: legacy_document_to_proxima_record(record),
+                })
+                .await;
+        }
+
+        self.write_to_wal(DocumentOperation::InsertDocument {
+            collection_id: collection.to_string(),
+            document: record.clone(),
+        })
+        .await
+    }
+
+    /// Write a document delete to WAL using canonical record identity when the
+    /// canonical store is active, otherwise use the legacy document entry.
+    async fn write_document_delete_to_wal(&self, collection: &str, id: &str) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            let record_oid = DocumentRecordKey::new(collection, id).canonical_oid();
+            return self
+                .write_to_wal(DocumentOperation::DeleteCanonicalDocumentRecord {
+                    collection_id: collection.to_string(),
+                    document_id: id.to_string(),
+                    record_oid,
+                })
+                .await;
+        }
+
+        self.write_to_wal(DocumentOperation::DeleteDocument {
+            collection_id: collection.to_string(),
+            document_id: id.to_string(),
+        })
+        .await
+    }
+
+    /// Apply insert projection maintenance using canonical record-shaped input
+    /// when the canonical store is active.
+    async fn index_document_projection(
+        &self,
+        collection: &str,
+        record: &DocumentRecord,
+    ) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            self.index_manager
+                .index_record_projection(&legacy_document_to_proxima_record(record))
+                .await?;
+            return Ok(());
+        }
+
+        self.index_manager.index_document(collection, record).await
+    }
+
+    /// Refresh projection maintenance using canonical record-shaped input when
+    /// the canonical store is active.
+    async fn reindex_document_projection(
+        &self,
+        collection: &str,
+        record: &DocumentRecord,
+    ) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            self.index_manager
+                .reindex_record_projection(&legacy_document_to_proxima_record(record))
+                .await?;
+            return Ok(());
+        }
+
+        self.index_manager
+            .reindex_document(collection, record)
+            .await
+    }
+
+    /// Remove projection entries for a document facade id.
+    async fn remove_document_projection(&self, collection: &str, id: &str) -> Result<()> {
+        #[cfg(feature = "canonical-document-store")]
+        if self.canonical_record_store.is_some() {
+            let record_oid = DocumentRecordKey::new(collection, id).canonical_oid();
+            self.index_manager
+                .remove_record_projection(collection, &record_oid)
+                .await?;
+            return Ok(());
+        }
+
+        self.index_manager.remove_document(collection, id).await
+    }
+
     /// Flush WAL to disk
     pub async fn flush_wal(&self) -> Result<()> {
         let mut wal_guard = self.wal_writer.lock().await;
@@ -301,7 +544,7 @@ impl DocumentService {
 
     /// Flush documents from a collection to persistent storage (SST engine)
     ///
-    /// This method converts in-memory documents to VectorRecords and flushes them
+    /// This method converts in-memory documents to ProximaRecords and flushes them
     /// to the underlying storage engine for cold tier persistence.
     ///
     /// Documents are stored with:
@@ -309,7 +552,6 @@ impl DocumentService {
     /// - vector: [0.0] placeholder (documents don't have inherent vectors)
     /// - metadata: "_document" contains serialized JSON, "_collection" for routing
     pub async fn flush_to_storage(&self, collection: &str) -> Result<FlushToStorageResult> {
-        use crate::proto::proximadb_v1::VectorRecord;
         use crate::storage::traits::FlushParameters;
 
         info!(
@@ -347,16 +589,15 @@ impl DocumentService {
             });
         }
 
-        // Convert documents to VectorRecords
-        let vector_records: Vec<VectorRecord> = docs_to_flush
+        let vector_records: Vec<proximadb_records::ProximaRecord> = docs_to_flush
             .iter()
-            .filter_map(|doc| self.document_to_vector_record(doc, collection))
+            .filter_map(|doc| self.document_to_proxima_record(doc, collection))
             .collect();
 
         let record_count = vector_records.len();
         let estimated_size: usize = vector_records
             .iter()
-            .map(|r| r.id.len() + 4 + r.metadata.len() * 50) // rough estimate
+            .map(|r| r.oid.len() + 4 + r.props.len() * 50)
             .sum();
 
         // Build flush parameters
@@ -387,17 +628,13 @@ impl DocumentService {
         })
     }
 
-    /// Convert a DocumentRecord to VectorRecord for storage engine persistence
-    fn document_to_vector_record(
+    /// Convert a DocumentRecord to ProximaRecord for storage engine persistence.
+    fn document_to_proxima_record(
         &self,
         doc: &DocumentRecord,
         collection: &str,
-    ) -> Option<crate::proto::proximadb_v1::VectorRecord> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-        use crate::proto::proximadb_v1::{SqlValue, VectorRecord};
-
-        // Serialize the document to JSON string
-        let doc_json = match serde_json::to_string(&doc.document) {
+    ) -> Option<proximadb_records::ProximaRecord> {
+        let doc_json = match serde_json::to_string(&proxima_tree_to_sql_object(&doc.props)) {
             Ok(json) => json,
             Err(e) => {
                 warn!("Failed to serialize document {}: {}", doc.id, e);
@@ -405,50 +642,39 @@ impl DocumentService {
             }
         };
 
-        // Build metadata map
-        let mut metadata = HashMap::new();
-
-        // Store document type marker
-        metadata.insert(
+        let mut props = proximadb_records::ProximaTree::new();
+        props.insert(
             "_type".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue("document".to_string())),
-            },
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "document".to_string(),
+            )),
         );
-
-        // Store collection for routing
-        metadata.insert(
+        props.insert(
             "_collection".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue(collection.to_string())),
-            },
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                collection.to_string(),
+            )),
         );
-
-        // Store serialized document
-        metadata.insert(
+        props.insert(
             "_document".to_string(),
-            SqlValue {
-                value: Some(Value::StringValue(doc_json)),
-            },
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                doc_json,
+            )),
         );
-
-        // Store version
-        metadata.insert(
+        props.insert(
             "_version".to_string(),
-            SqlValue {
-                value: Some(Value::Int64Value(doc.version as i64)),
-            },
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::Int64(
+                doc.version as i64,
+            )),
         );
 
-        Some(VectorRecord {
-            id: format!("{}::{}", collection, doc.id),
-            vector: vec![0.0], // Placeholder - documents don't have vectors
-            metadata,
-            timestamp: Some(doc.updated_at_ns / 1_000_000), // Convert ns to ms
-            updated_at: Some(doc.updated_at_ns / 1_000_000),
-            expires_at: None,
-            version: Some(doc.version as u32), // VectorRecord uses u32, DocumentRecord uses u64
-            source: None,
+        Some(proximadb_records::ProximaRecord {
+            oid: format!("{}::{}", collection, doc.id),
+            props,
+            created_at_ns: doc.updated_at_ns,
+            updated_at_ns: doc.updated_at_ns,
+            record_version: doc.version,
+            ..Default::default()
         })
     }
 
@@ -462,7 +688,7 @@ impl DocumentService {
     /// - Uses ColdTierRetriever trait for storage access (DIP)
     /// - Can be extended for different storage backends (OCP)
     ///
-    /// Documents are stored as VectorRecords with metadata:
+    /// Documents are stored as ProximaRecords with properties:
     /// - `_type`: "document"
     /// - `_collection`: collection name
     /// - `_document`: serialized JSON content
@@ -510,80 +736,6 @@ impl DocumentService {
                 Ok(Vec::new())
             }
         }
-    }
-
-    /// Convert a VectorRecord back to DocumentRecord
-    #[allow(dead_code)]
-    fn vector_record_to_document(
-        &self,
-        record: &crate::proto::proximadb_v1::VectorRecord,
-    ) -> Option<DocumentRecord> {
-        use crate::proto::proximadb_v1::sql_value::Value;
-
-        // Check if this is a document record
-        let type_value = record.metadata.get("_type")?;
-        if let Some(Value::StringValue(t)) = &type_value.value {
-            if t != "document" {
-                return None;
-            }
-        } else {
-            return None;
-        }
-
-        // Get collection
-        let collection = record.metadata.get("_collection")?;
-        let collection_name = if let Some(Value::StringValue(c)) = &collection.value {
-            c.clone()
-        } else {
-            return None;
-        };
-
-        // Get document JSON
-        let doc_value = record.metadata.get("_document")?;
-        let doc_json = if let Some(Value::StringValue(j)) = &doc_value.value {
-            j.clone()
-        } else {
-            return None;
-        };
-
-        // Deserialize document
-        let document: SqlObject = match serde_json::from_str(&doc_json) {
-            Ok(d) => d,
-            Err(e) => {
-                warn!("Failed to deserialize document from storage: {}", e);
-                return None;
-            }
-        };
-
-        // Extract original ID (remove collection prefix)
-        let original_id = record
-            .id
-            .strip_prefix(&format!("{}::", collection_name))
-            .unwrap_or(&record.id)
-            .to_string();
-
-        // Get version
-        let version = record
-            .metadata
-            .get("_version")
-            .and_then(|v| {
-                if let Some(Value::Int64Value(i)) = &v.value {
-                    Some(*i as u64)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or(0);
-
-        Some(DocumentRecord {
-            id: original_id,
-            document,
-            collection_id: collection_name,
-            version,
-            updated_at_ns: record.updated_at.unwrap_or(0) * 1_000_000, // Convert ms to ns
-            schema_id: None,
-            document_type: None,
-        })
     }
 
     /// Flush all collections to storage
@@ -739,19 +891,32 @@ impl DocumentService {
         let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
 
         // Write to WAL first (durability before in-memory update)
-        if let Err(e) = self
-            .write_to_wal(DocumentOperation::InsertDocument {
-                collection_id: collection.to_string(),
-                document: record.clone(),
-            })
-            .await
-        {
+        if let Err(e) = self.write_document_upsert_to_wal(collection, &record).await {
             self.record_insert_metrics(start, true).await;
             return Err(e);
         }
 
+        // Phase 2 migration path: when configured, canonical records are the
+        // durable truth and legacy maps/indexes are compatibility projections.
+        #[cfg(feature = "canonical-document-store")]
+        let record = if let Some(record_store) = &self.canonical_record_store {
+            let stored = record_store
+                .upsert_record(legacy_document_to_proxima_record(&record))
+                .await
+                .context("Failed to upsert canonical document record")?;
+
+            proxima_record_to_legacy_document(&stored).ok_or_else(|| {
+                anyhow!(
+                    "Canonical document record '{}' could not be rebuilt",
+                    stored.oid
+                )
+            })?
+        } else {
+            record
+        };
+
         // Update indexes
-        if let Err(e) = self.index_manager.index_document(collection, &record).await {
+        if let Err(e) = self.index_document_projection(collection, &record).await {
             self.record_insert_metrics(start, true).await;
             return Err(e);
         }
@@ -814,6 +979,36 @@ impl DocumentService {
             .await?
             .ok_or_else(|| anyhow!("Collection '{}' not found", collection))?;
 
+        // Phase 2 migration path: canonical record store is authoritative when
+        // supplied. The legacy in-memory map remains the fallback path.
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            let key = DocumentRecordKey::new(collection, id);
+            let record = record_store
+                .get_record(&RecordKey::new(key.canonical_oid()))
+                .await
+                .context("Failed to get canonical document record")?;
+
+            if let Some(record) = record {
+                let mut result = proxima_record_to_legacy_document(&record).ok_or_else(|| {
+                    anyhow!(
+                        "Canonical document record '{}' could not be rebuilt",
+                        record.oid
+                    )
+                })?;
+
+                if let Some(fields) = projection
+                    && !fields.is_empty()
+                {
+                    result.props = self.apply_projection(&result.props, &fields);
+                }
+
+                return Ok(Some(result));
+            }
+
+            return Ok(None);
+        }
+
         // Retrieve from in-memory store
         let documents = self.documents.read().await;
         if let Some(collection_docs) = documents.get(collection)
@@ -825,7 +1020,7 @@ impl DocumentService {
             if let Some(fields) = projection
                 && !fields.is_empty()
             {
-                result.document = self.apply_projection(&result.document, &fields);
+                result.props = self.apply_projection(&result.props, &fields);
             }
 
             return Ok(Some(result));
@@ -834,24 +1029,20 @@ impl DocumentService {
         Ok(None)
     }
 
-    /// Apply field projection to a document
-    fn apply_projection(&self, document: &SqlObject, fields: &[String]) -> SqlObject {
-        let mut projected = SqlObject {
-            fields: HashMap::new(),
-        };
+    /// Apply field projection over the canonical props tree (TD-106 Slice 7e).
+    ///
+    /// Nested scalar paths (`a.b`) project under their last segment; top-level
+    /// object/array fields are copied whole.
+    fn apply_projection(&self, props: &ProximaTree, fields: &[String]) -> ProximaTree {
+        let mut projected = ProximaTree::new();
 
         for field in fields {
-            // Parse field as JSON path and extract value
-            if let Ok(path) = JsonPath::parse(&format!("$.{}", field)) {
-                let values = path.evaluate(document);
-                if let Some(value) = values.into_iter().next() {
-                    // Use the field name as key (simplified - doesn't handle nested paths)
-                    let key = field.split('.').next_back().unwrap_or(field);
-                    projected.fields.insert(key.to_string(), value);
-                }
-            } else if let Some(value) = document.fields.get(field) {
-                // Direct field access if path parsing fails
-                projected.fields.insert(field.clone(), value.clone());
+            let key = field.split('.').next_back().unwrap_or(field);
+            if let Some(value) = tree_get(props, field.trim_start_matches("$.")) {
+                projected.insert(key.to_string(), ProximaTreeNode::Value(value.clone()));
+            } else if let Some(node) = props.get(field) {
+                // Top-level object/array (or a field whose path traverses an object).
+                projected.insert(field.clone(), node.clone());
             }
         }
 
@@ -894,9 +1085,9 @@ impl DocumentService {
             ));
         }
 
-        // Apply updates
+        // Apply updates onto the canonical props tree (TD-106 Slice 7d).
         for update in &updates {
-            if let Err(e) = self.apply_update(&mut record.document, update) {
+            if let Err(e) = self.apply_update(&mut record.props, update) {
                 self.record_update_metrics(start, true).await;
                 return Err(e);
             }
@@ -909,23 +1100,30 @@ impl DocumentService {
 
         // Write to WAL first (durability before in-memory update)
         // Store full updated document for proper recovery replay
-        if let Err(e) = self
-            .write_to_wal(DocumentOperation::InsertDocument {
-                collection_id: collection.to_string(),
-                document: record.clone(),
-            })
-            .await
-        {
+        if let Err(e) = self.write_document_upsert_to_wal(collection, &record).await {
             self.record_update_metrics(start, true).await;
             return Err(e);
         }
 
+        // Phase 2 migration path: when configured, persist the updated
+        // document as canonical durable state before refreshing projections.
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            let stored = record_store
+                .upsert_record(legacy_document_to_proxima_record(&record))
+                .await
+                .context("Failed to upsert updated canonical document record")?;
+
+            record = proxima_record_to_legacy_document(&stored).ok_or_else(|| {
+                anyhow!(
+                    "Canonical document record '{}' could not be rebuilt",
+                    stored.oid
+                )
+            })?;
+        }
+
         // Update indexes
-        if let Err(e) = self
-            .index_manager
-            .reindex_document(collection, &record)
-            .await
-        {
+        if let Err(e) = self.reindex_document_projection(collection, &record).await {
             self.record_update_metrics(start, true).await;
             return Err(e);
         }
@@ -943,44 +1141,59 @@ impl DocumentService {
         Ok(record)
     }
 
-    /// Apply a single update operation to a document
-    fn apply_update(&self, document: &mut SqlObject, update: &DocumentUpdate) -> Result<()> {
+    /// Apply a single update operation to the canonical props tree.
+    ///
+    /// TD-106 Slice 7d: navigation/mutation is `ProximaTree`-native; the proto
+    /// `update.value` (SqlValue wire operand) is lifted to canonical at this
+    /// boundary (`$set` keeps object structure via `sql_value_to_tree_node`;
+    /// array/scalar ops lift via `sql_value_to_proxima`).
+    fn apply_update(&self, props: &mut ProximaTree, update: &DocumentUpdate) -> Result<()> {
+        use crate::proto::proximadb_v1::sql_value::Value as SqlVal;
         let path = &update.path;
         let value = update.value.as_ref();
 
         match UpdateOperation::try_from(update.operation).unwrap_or(UpdateOperation::Unspecified) {
             UpdateOperation::Set => {
                 if let Some(v) = value {
-                    self.set_path_value(document, path, v.clone())?;
+                    self.set_path_value(props, path, sql_value_to_tree_node(v))?;
                 }
             }
             UpdateOperation::Unset => {
-                self.unset_path(document, path)?;
+                self.unset_path(props, path)?;
             }
             UpdateOperation::Inc => {
                 if let Some(v) = value {
-                    self.increment_path(document, path, v)?;
+                    let inc = match &v.value {
+                        Some(SqlVal::Int64Value(i)) => *i as f64,
+                        Some(SqlVal::NumberValue(f)) => *f,
+                        _ => return Err(anyhow!("Increment value must be numeric")),
+                    };
+                    self.increment_path(props, path, inc)?;
                 }
             }
             UpdateOperation::Push => {
                 if let Some(v) = value {
-                    self.push_to_array(document, path, v.clone())?;
+                    self.push_to_array(props, path, sql_value_to_proxima(v))?;
                 }
             }
             UpdateOperation::Pull => {
                 if let Some(v) = value {
-                    self.pull_from_array(document, path, v)?;
+                    self.pull_from_array(props, path, &sql_value_to_proxima(v))?;
                 }
             }
             UpdateOperation::AddToSet => {
                 if let Some(v) = value {
-                    self.add_to_set(document, path, v.clone())?;
+                    self.add_to_set(props, path, sql_value_to_proxima(v))?;
                 }
             }
             UpdateOperation::Rename => {
                 if let Some(v) = value {
-                    // Value should be the new path name
-                    self.rename_path(document, path, v)?;
+                    // Value should be the new field name.
+                    let new_name = match &v.value {
+                        Some(SqlVal::StringValue(s)) => s.clone(),
+                        _ => return Err(anyhow!("New name must be a string")),
+                    };
+                    self.rename_path(props, path, &new_name)?;
                 }
             }
             UpdateOperation::Unspecified => {
@@ -991,333 +1204,197 @@ impl DocumentService {
         Ok(())
     }
 
-    // Path manipulation helpers
+    // Path manipulation helpers (canonical ProximaTree, TD-106 Slice 7d)
 
-    /// Set a value at a JSON path
-    fn set_path_value(&self, doc: &mut SqlObject, path: &str, value: SqlValue) -> Result<()> {
-        // Parse path segments (simplified: handle dot notation)
+    /// Split `$.a.b.c` into segments; errors on an empty path.
+    fn path_segments(path: &str) -> Result<Vec<&str>> {
         let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
-
         if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
             return Err(anyhow!("Empty path"));
         }
+        Ok(parts)
+    }
 
-        // Navigate to parent and set final field
+    /// Set a node at a dotted path, creating intermediate objects as needed.
+    fn set_path_value(
+        &self,
+        doc: &mut ProximaTree,
+        path: &str,
+        node: ProximaTreeNode,
+    ) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
+
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - set the value
-                current.fields.insert(part.to_string(), value.clone());
-            } else {
-                // Navigate to nested object, creating if needed
-                let entry = current
-                    .fields
-                    .entry(part.to_string())
-                    .or_insert_with(|| SqlValue {
-                        value: Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                            SqlObject {
-                                fields: HashMap::new(),
-                            },
-                        )),
-                    });
-
-                // Get mutable reference to nested object
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
+        for part in parents {
+            let entry = current
+                .entry(part.to_string())
+                .or_insert_with(|| ProximaTreeNode::Object(ProximaTree::new()));
+            match entry {
+                ProximaTreeNode::Object(sub) => current = sub,
+                _ => return Err(anyhow!("Path {} is not an object", part)),
             }
         }
-
+        current.insert(last.to_string(), node);
         Ok(())
     }
 
-    /// Remove a field at a JSON path
-    fn unset_path(&self, doc: &mut SqlObject, path: &str) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Remove a field at a dotted path.
+    fn unset_path(&self, doc: &mut ProximaTree, path: &str) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to parent
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - remove the field
-                current.fields.remove(*part);
-                return Ok(());
-            } else {
-                // Navigate to nested object
-                if let Some(entry) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                        ref mut obj,
-                    )) = entry.value
-                    {
-                        current = obj;
-                    } else {
-                        return Err(anyhow!("Path {} is not an object", part));
-                    }
-                } else {
-                    return Ok(()); // Path doesn't exist, nothing to unset
-                }
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Ok(()), // path doesn't exist, nothing to unset
             }
         }
-
+        current.remove(*last);
         Ok(())
     }
 
-    /// Increment a numeric value at a path
-    fn increment_path(&self, doc: &mut SqlObject, path: &str, value: &SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Increment a numeric leaf at a dotted path (creating it if absent).
+    fn increment_path(&self, doc: &mut ProximaTree, path: &str, inc: f64) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Get the increment value
-        let inc = match &value.value {
-            Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(i)) => *i as f64,
-            Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(f)) => *f,
-            _ => return Err(anyhow!("Increment value must be numeric")),
-        };
-
-        // Navigate to the field and increment
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - increment the value
-                if let Some(field) = current.fields.get_mut(*part) {
-                    match &mut field.value {
-                        Some(crate::proto::proximadb_v1::sql_value::Value::Int64Value(v)) => {
-                            *v += inc as i64;
-                        }
-                        Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(v)) => {
-                            *v += inc;
-                        }
-                        _ => return Err(anyhow!("Field at path {} is not numeric", path)),
-                    }
-                } else {
-                    // Initialize to increment value
-                    current.fields.insert(
-                        part.to_string(),
-                        SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::NumberValue(
-                                inc,
-                            )),
-                        },
-                    );
-                }
-                return Ok(());
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Err(anyhow!("Path {} does not exist", part));
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Err(anyhow!("Path {} does not exist", part)),
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Int64(v))) => *v += inc as i64,
+            Some(ProximaTreeNode::Value(ProximaValue::Float64(v))) => *v += inc,
+            Some(_) => return Err(anyhow!("Field at path {} is not numeric", path)),
+            None => {
+                current.insert(
+                    last.to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Float64(inc)),
+                );
+            }
+        }
         Ok(())
     }
 
-    /// Push a value to an array at a path
-    fn push_to_array(&self, doc: &mut SqlObject, path: &str, value: SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Push a value onto an array leaf at a dotted path (creating it if absent).
+    fn push_to_array(&self, doc: &mut ProximaTree, path: &str, value: ProximaValue) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to the field and push
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - push to array
-                if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                        ref mut arr,
-                    )) = field.value
-                    {
-                        arr.values.push(value);
-                        return Ok(());
-                    } else {
-                        return Err(anyhow!("Field at path {} is not an array", path));
-                    }
-                } else {
-                    // Initialize as new array with single value
-                    current.fields.insert(
-                        part.to_string(),
-                        SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                                crate::proto::proximadb_v1::SqlArray {
-                                    values: vec![value],
-                                },
-                            )),
-                        },
-                    );
-                    return Ok(());
-                }
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Err(anyhow!("Path {} does not exist", part));
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Err(anyhow!("Path {} does not exist", part)),
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Array(arr))) => arr.push(value),
+            Some(_) => return Err(anyhow!("Field at path {} is not an array", path)),
+            None => {
+                current.insert(
+                    last.to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Array(vec![value])),
+                );
+            }
+        }
         Ok(())
     }
 
-    /// Pull (remove) a value from an array at a path
-    fn pull_from_array(&self, doc: &mut SqlObject, path: &str, value: &SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Pull (remove) matching values from an array leaf at a dotted path.
+    fn pull_from_array(
+        &self,
+        doc: &mut ProximaTree,
+        path: &str,
+        value: &ProximaValue,
+    ) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to the field and pull
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                        ref mut arr,
-                    )) = field.value
-                    {
-                        arr.values.retain(|v| v != value);
-                        return Ok(());
-                    } else {
-                        return Err(anyhow!("Field at path {} is not an array", path));
-                    }
-                }
-                return Ok(()); // Field doesn't exist
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Ok(()); // Path doesn't exist
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Ok(()), // path doesn't exist
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Array(arr))) => arr.retain(|v| v != value),
+            Some(_) => return Err(anyhow!("Field at path {} is not an array", path)),
+            None => {} // field doesn't exist
+        }
         Ok(())
     }
 
-    /// Add a value to a set (array with unique values) at a path
-    fn add_to_set(&self, doc: &mut SqlObject, path: &str, value: SqlValue) -> Result<()> {
-        let parts: Vec<&str> = path.trim_start_matches("$.").split('.').collect();
+    /// Add a value to a set (array with unique values) at a dotted path.
+    fn add_to_set(&self, doc: &mut ProximaTree, path: &str, value: ProximaValue) -> Result<()> {
+        let parts = Self::path_segments(path)?;
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to the field and add if not exists
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                if let Some(field) = current.fields.get_mut(*part) {
-                    if let Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                        ref mut arr,
-                    )) = field.value
-                    {
-                        // Only add if not already present
-                        if !arr.values.contains(&value) {
-                            arr.values.push(value);
-                        }
-                        return Ok(());
-                    } else {
-                        return Err(anyhow!("Field at path {} is not an array", path));
-                    }
-                } else {
-                    // Initialize as new array with single value
-                    current.fields.insert(
-                        part.to_string(),
-                        SqlValue {
-                            value: Some(crate::proto::proximadb_v1::sql_value::Value::ArrayValue(
-                                crate::proto::proximadb_v1::SqlArray {
-                                    values: vec![value],
-                                },
-                            )),
-                        },
-                    );
-                    return Ok(());
-                }
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Err(anyhow!("Path {} does not exist", part));
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Err(anyhow!("Path {} does not exist", part)),
             }
         }
-
+        match current.get_mut(*last) {
+            Some(ProximaTreeNode::Value(ProximaValue::Array(arr))) => {
+                if !arr.contains(&value) {
+                    arr.push(value);
+                }
+            }
+            Some(_) => return Err(anyhow!("Field at path {} is not an array", path)),
+            None => {
+                current.insert(
+                    last.to_string(),
+                    ProximaTreeNode::Value(ProximaValue::Array(vec![value])),
+                );
+            }
+        }
         Ok(())
     }
 
-    /// Rename a field at a path
-    fn rename_path(&self, doc: &mut SqlObject, old_path: &str, new_name: &SqlValue) -> Result<()> {
-        // Get new name from SqlValue
-        let new_field_name = match &new_name.value {
-            Some(crate::proto::proximadb_v1::sql_value::Value::StringValue(s)) => s.clone(),
-            _ => return Err(anyhow!("New name must be a string")),
-        };
+    /// Rename a field at a dotted path. `new_name` is the new (leaf) field name.
+    fn rename_path(&self, doc: &mut ProximaTree, old_path: &str, new_name: &str) -> Result<()> {
+        let parts = Self::path_segments(old_path)?;
+        let (last, parents) = parts
+            .split_last()
+            .ok_or_else(|| anyhow!("path must have at least one segment"))?;
 
-        let parts: Vec<&str> = old_path.trim_start_matches("$.").split('.').collect();
-
-        if parts.is_empty() || (parts.len() == 1 && parts[0].is_empty()) {
-            return Err(anyhow!("Empty path"));
-        }
-
-        // Navigate to parent and rename
         let mut current = doc;
-        for (i, part) in parts.iter().enumerate() {
-            if i == parts.len() - 1 {
-                // Last segment - rename the field
-                if let Some(value) = current.fields.remove(*part) {
-                    current.fields.insert(new_field_name, value);
-                }
-                return Ok(());
-            } else if let Some(entry) = current.fields.get_mut(*part) {
-                if let Some(crate::proto::proximadb_v1::sql_value::Value::ObjectValue(
-                    ref mut obj,
-                )) = entry.value
-                {
-                    current = obj;
-                } else {
-                    return Err(anyhow!("Path {} is not an object", part));
-                }
-            } else {
-                return Ok(()); // Path doesn't exist
+        for part in parents {
+            match current.get_mut(*part) {
+                Some(ProximaTreeNode::Object(sub)) => current = sub,
+                Some(_) => return Err(anyhow!("Path {} is not an object", part)),
+                None => return Ok(()), // path doesn't exist
             }
         }
-
+        if let Some(node) = current.remove(*last) {
+            current.insert(new_name.to_string(), node);
+        }
         Ok(())
     }
 
@@ -1336,12 +1413,33 @@ impl DocumentService {
             return Err(e);
         }
 
-        // Check if document exists before WAL write
+        // Check if document exists before WAL write. In canonical mode the
+        // RecordStore is authoritative; otherwise use the legacy hot map.
+        #[cfg(feature = "canonical-document-store")]
+        let canonical_key = RecordKey::new(DocumentRecordKey::new(collection, id).canonical_oid());
+
         let exists = {
-            let documents = self.documents.read().await;
-            documents
-                .get(collection)
-                .is_some_and(|docs| docs.contains_key(id))
+            #[cfg(feature = "canonical-document-store")]
+            if let Some(record_store) = &self.canonical_record_store {
+                record_store
+                    .get_record(&canonical_key)
+                    .await
+                    .context("Failed to check canonical document record existence")?
+                    .is_some()
+            } else {
+                let documents = self.documents.read().await;
+                documents
+                    .get(collection)
+                    .is_some_and(|docs| docs.contains_key(id))
+            }
+
+            #[cfg(not(feature = "canonical-document-store"))]
+            {
+                let documents = self.documents.read().await;
+                documents
+                    .get(collection)
+                    .is_some_and(|docs| docs.contains_key(id))
+            }
         };
 
         if !exists {
@@ -1350,19 +1448,21 @@ impl DocumentService {
         }
 
         // Write to WAL first (durability before in-memory update)
-        if let Err(e) = self
-            .write_to_wal(DocumentOperation::DeleteDocument {
-                collection_id: collection.to_string(),
-                document_id: id.to_string(),
-            })
-            .await
-        {
+        if let Err(e) = self.write_document_delete_to_wal(collection, id).await {
             self.record_delete_metrics(start, true).await;
             return Err(e);
         }
 
+        #[cfg(feature = "canonical-document-store")]
+        if let Some(record_store) = &self.canonical_record_store {
+            record_store
+                .delete_record(&canonical_key)
+                .await
+                .context("Failed to delete canonical document record")?;
+        }
+
         // Remove from indexes
-        if let Err(e) = self.index_manager.remove_document(collection, id).await {
+        if let Err(e) = self.remove_document_projection(collection, id).await {
             self.record_delete_metrics(start, true).await;
             return Err(e);
         }
@@ -1414,6 +1514,32 @@ impl DocumentService {
         };
 
         // Execute query
+        #[cfg(feature = "canonical-document-store")]
+        let documents: Vec<DocumentRecord> =
+            if let Some(record_store) = &self.canonical_record_store {
+                record_store
+                    .scan_records_with_options(
+                        RecordScanOptions::unbounded()
+                            .with_required_label(DOCUMENT_RECORD_LABEL)
+                            .with_property(
+                                DOCUMENT_COLLECTION_PROP,
+                                proximadb_data_model::ProximaValue::String(collection.to_string()),
+                            ),
+                    )
+                    .await
+                    .context("Failed to scan canonical document records")?
+                    .iter()
+                    .filter_map(proxima_record_to_legacy_document)
+                    .collect()
+            } else {
+                let docs = self.documents.read().await;
+                match docs.get(collection) {
+                    Some(collection_docs) => collection_docs.values().cloned().collect(),
+                    None => Vec::new(),
+                }
+            };
+
+        #[cfg(not(feature = "canonical-document-store"))]
         let documents: Vec<DocumentRecord> = {
             let docs = self.documents.read().await;
             match docs.get(collection) {
@@ -1624,16 +1750,18 @@ impl DocumentService {
             service: this.clone(),
         };
 
-        // Execute aggregation pipeline with lookup support
+        // Execute aggregation pipeline with lookup support. The working set is the
+        // canonical `ProximaTree` (TD-106 Slice 5); Slice 6 reads the record's
+        // canonical `props` tree directly at the input edge.
         let executor = AggregationExecutor::new();
-        let mut working_set: Vec<SqlObject> = if let Some(f) = &filter {
+        let mut working_set: Vec<ProximaTree> = if let Some(f) = &filter {
             documents
                 .iter()
                 .filter(|doc| executor.matches_filter(doc, f))
-                .map(|doc| doc.document.clone())
+                .map(|doc| doc.props.clone())
                 .collect()
         } else {
-            documents.into_iter().map(|doc| doc.document).collect()
+            documents.into_iter().map(|doc| doc.props).collect()
         };
 
         // Process each stage, handling lookups specially
@@ -1667,8 +1795,12 @@ impl DocumentService {
             query_time_ms
         );
 
+        // Output edge: lower the canonical working set back to the proto row shape
+        // for the public `AggregateResult` contract.
+        let results: Vec<SqlObject> = working_set.iter().map(proxima_tree_to_sql_object).collect();
+
         Ok(crate::storage::document::AggregateResult {
-            results: working_set,
+            results,
             query_time_ms,
         })
     }
@@ -1739,12 +1871,17 @@ use crate::storage::traits::{
     DocumentStorageOperations,
 };
 use async_trait::async_trait;
+use proximadb_document_query::{
+    DocumentQueryResult as ContractDocumentQueryResult, DocumentQueryService,
+    DocumentSearchRequest, DocumentSearchResult, SortDirection,
+};
+use proximadb_kernel::error::ProximaDBError;
 
 /// Convert internal DocumentRecord to trait DocumentRecord
 fn to_trait_doc_record(doc: &DocumentRecord) -> TraitDocRecord {
     TraitDocRecord {
         id: doc.id.clone(),
-        document: doc.document.clone(),
+        document: proxima_tree_to_sql_object(&doc.props),
         version: doc.version,
         // Use updated_at_ns for both since internal type doesn't have created_at_ns
         created_at_ns: doc.updated_at_ns,
@@ -1852,6 +1989,73 @@ impl DocumentStorageOperations for DocumentService {
     }
 }
 
+#[async_trait]
+impl DocumentQueryService for DocumentService {
+    async fn document_search(
+        &self,
+        request: DocumentSearchRequest,
+    ) -> ContractDocumentQueryResult<DocumentSearchResult> {
+        if request.filter.is_some() {
+            return Err(ProximaDBError::Query(
+                proximadb_kernel::error::QueryError::InvalidFilter(
+                    "string document filters are not yet parsed by DocumentQueryService adapter"
+                        .to_string(),
+                ),
+            ));
+        }
+
+        let sort = request
+            .sort
+            .map(|sort| crate::proto::proximadb_v1::SortField {
+                path: sort.field,
+                order: match sort.direction {
+                    SortDirection::Ascending => crate::proto::proximadb_v1::SortOrder::Asc as i32,
+                    SortDirection::Descending => crate::proto::proximadb_v1::SortOrder::Desc as i32,
+                },
+            })
+            .into_iter()
+            .collect();
+
+        let params = DocumentQueryParams {
+            filter: None,
+            projection: request.projection.unwrap_or_default(),
+            sort,
+            limit: request.limit as u32,
+            offset: request.offset as u32,
+            include_count: true,
+        };
+
+        let query_result = DocumentService::query_documents(self, &request.collection_id, params)
+            .await
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))?;
+
+        let total_count = query_result
+            .total_count
+            .unwrap_or(query_result.documents.len() as u64) as usize;
+
+        Ok(DocumentSearchResult {
+            results: query_result
+                .documents
+                .iter()
+                .map(|document| document.to_proto_result(None))
+                .collect(),
+            total_count,
+            execution_time_ms: query_result.query_time_ms,
+        })
+    }
+
+    async fn get_document(
+        &self,
+        collection_id: String,
+        document_id: String,
+    ) -> ContractDocumentQueryResult<Option<proximadb_document_query::DocumentRecord>> {
+        DocumentService::get_document(self, &collection_id, &document_id, None)
+            .await
+            .map(|document| document.map(|document| document.to_proto_result(None)))
+            .map_err(|error| ProximaDBError::Internal(error.to_string()))
+    }
+}
+
 // =============================================================================
 // LOOKUP FETCHER FOR AGGREGATION PIPELINE
 // =============================================================================
@@ -1892,7 +2096,7 @@ impl LookupFetcher for DocumentServiceLookupFetcher {
             Ok(result
                 .documents
                 .into_iter()
-                .map(|doc| doc.document)
+                .map(|doc| proxima_tree_to_sql_object(&doc.props))
                 .collect())
         })
     }
@@ -1913,16 +2117,206 @@ fn create_field_eq_filter(
     }
 }
 
+// =============================================================================
+// DOCUMENTPORT IMPL — ADR-015 (port impl lives on bare concrete service)
+// =============================================================================
+//
+// Bare-service implementation of `proximadb_runtime::DocumentPort`. Each
+// method takes the proto request shape directly, performs the same proto-
+// conversion + bare-service-call logic that was previously in
+// `impl DocumentService for DocumentServiceImpl` (the gRPC tonic wrapper),
+// and returns the proto response wrapped in `anyhow::Result`.
+//
+// This impl coexists with the existing `impl DocumentPort for DocumentServiceImpl`
+// at `src/network/grpc/document_service.rs:284` during the migration window.
+// Subsequent commits will remove the wrapper's port impl + shrink the tonic
+// `impl DocumentService for DocumentServiceImpl` methods to one-liners that
+// delegate to this port impl. See ADR-015 for the full rationale.
+
+#[async_trait::async_trait]
+impl proximadb_runtime::DocumentPort for DocumentService {
+    async fn create_collection(
+        &self,
+        request: crate::proto::proximadb_v1::CreateDocumentCollectionRequest,
+    ) -> Result<crate::proto::proximadb_v1::CreateDocumentCollectionResponse> {
+        let config = request.config.ok_or_else(|| anyhow!("Missing config"))?;
+        let name = config.name.clone();
+        let id = self
+            .create_collection(&name, config)
+            .await
+            .map_err(|e| anyhow!("Failed to create collection: {}", e))?;
+        Ok(
+            crate::proto::proximadb_v1::CreateDocumentCollectionResponse {
+                collection_id: id,
+                success: true,
+            },
+        )
+    }
+
+    async fn list_collections(
+        &self,
+        _request: crate::proto::proximadb_v1::ListDocumentCollectionsRequest,
+    ) -> Result<crate::proto::proximadb_v1::ListDocumentCollectionsResponse> {
+        let collections = self
+            .list_collections()
+            .await
+            .map_err(|e| anyhow!("Failed to list collections: {}", e))?;
+        let infos: Vec<crate::proto::proximadb_v1::DocumentCollectionInfo> = collections
+            .iter()
+            .map(|c| crate::proto::proximadb_v1::DocumentCollectionInfo {
+                name: c.name.clone(),
+                document_count: c.document_count,
+                storage_size_bytes: c.storage_size_bytes,
+                indexes: c.indexes.clone(),
+            })
+            .collect();
+        Ok(crate::proto::proximadb_v1::ListDocumentCollectionsResponse { collections: infos })
+    }
+
+    async fn delete_collection(
+        &self,
+        request: crate::proto::proximadb_v1::DeleteDocumentCollectionRequest,
+    ) -> Result<crate::proto::proximadb_v1::DeleteDocumentCollectionResponse> {
+        self.delete_collection(&request.collection)
+            .await
+            .map_err(|e| anyhow!("Failed to delete collection: {}", e))?;
+        Ok(crate::proto::proximadb_v1::DeleteDocumentCollectionResponse { success: true })
+    }
+
+    async fn insert_document(
+        &self,
+        request: crate::proto::proximadb_v1::InsertDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::InsertDocumentResponse> {
+        let document = request
+            .document
+            .ok_or_else(|| anyhow!("Missing document"))?;
+        let id = request.id.as_deref();
+        let record = self
+            .insert_document(&request.collection, id, document)
+            .await
+            .map_err(|e| anyhow!("Failed to insert document: {}", e))?;
+        Ok(crate::proto::proximadb_v1::InsertDocumentResponse {
+            id: record.id,
+            version: record.version,
+        })
+    }
+
+    async fn get_document(
+        &self,
+        request: crate::proto::proximadb_v1::GetDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::GetDocumentResponse> {
+        let projection = if request.projection.is_empty() {
+            None
+        } else {
+            Some(request.projection)
+        };
+        match self
+            .get_document(&request.collection, &request.id, projection)
+            .await
+            .map_err(|e| anyhow!("Failed to get document: {}", e))?
+        {
+            Some(record) => Ok(crate::proto::proximadb_v1::GetDocumentResponse {
+                document: Some(proxima_tree_to_sql_object(&record.props)),
+                version: record.version,
+                found: true,
+            }),
+            None => Ok(crate::proto::proximadb_v1::GetDocumentResponse {
+                document: None,
+                version: 0,
+                found: false,
+            }),
+        }
+    }
+
+    async fn update_document(
+        &self,
+        request: crate::proto::proximadb_v1::UpdateDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::UpdateDocumentResponse> {
+        let record = self
+            .update_document(
+                &request.collection,
+                &request.id,
+                request.updates,
+                request.expected_version,
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to update document: {}", e))?;
+        Ok(crate::proto::proximadb_v1::UpdateDocumentResponse {
+            new_version: record.version,
+            success: true,
+        })
+    }
+
+    async fn delete_document(
+        &self,
+        request: crate::proto::proximadb_v1::DeleteDocumentRequest,
+    ) -> Result<crate::proto::proximadb_v1::DeleteDocumentResponse> {
+        let deleted = self
+            .delete_document(&request.collection, &request.id)
+            .await
+            .map_err(|e| anyhow!("Failed to delete document: {}", e))?;
+        Ok(crate::proto::proximadb_v1::DeleteDocumentResponse { deleted })
+    }
+
+    async fn query_documents(
+        &self,
+        request: crate::proto::proximadb_v1::QueryDocumentsRequest,
+    ) -> Result<crate::proto::proximadb_v1::QueryDocumentsResponse> {
+        let params = DocumentQueryParams {
+            filter: request.filter,
+            projection: request.projection,
+            sort: request.sort,
+            limit: request.limit,
+            offset: request.offset,
+            include_count: request.include_count,
+        };
+        let result = self
+            .query_documents(&request.collection, params)
+            .await
+            .map_err(|e| anyhow!("Failed to query documents: {}", e))?;
+        let documents: Vec<crate::proto::proximadb_v1::DocumentResult> = result
+            .documents
+            .into_iter()
+            .map(|d| crate::proto::proximadb_v1::DocumentResult {
+                id: d.id,
+                document: Some(proxima_tree_to_sql_object(&d.props)),
+                version: d.version,
+                score: None,
+            })
+            .collect();
+        Ok(crate::proto::proximadb_v1::QueryDocumentsResponse {
+            documents,
+            total_count: result.total_count,
+            query_time_ms: result.query_time_ms,
+        })
+    }
+
+    async fn aggregate_documents(
+        &self,
+        request: crate::proto::proximadb_v1::AggregateDocumentsRequest,
+    ) -> Result<crate::proto::proximadb_v1::AggregateDocumentsResponse> {
+        let result = self
+            .aggregate_documents(&request.collection, request.filter, request.pipeline)
+            .await
+            .map_err(|e| anyhow!("Failed to aggregate documents: {}", e))?;
+        Ok(crate::proto::proximadb_v1::AggregateDocumentsResponse {
+            results: result.results,
+            query_time_ms: result.query_time_ms,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::proto::proximadb_v1::{
-        DocFilterCondition, DocFilterOperator, DocumentCollectionConfig, DocumentFilter,
-        DocumentUpdate, SqlObject, SqlValue, UpdateOperation, sql_value,
+        DocFilterCondition, DocFilterOperator, DocIndexType, DocumentCollectionConfig,
+        DocumentFilter, DocumentUpdate, IndexDefinition, SqlObject, SqlValue, UpdateOperation,
+        sql_value,
     };
     use crate::storage::traits::{
         CompactionParameters, CompactionResult, FlushParameters, FlushResult,
-        StorageEngineStrategy, UnifiedStorageEngine,
+        StorageFormatStrategy, UnifiedStorageFormat,
     };
     use async_trait::async_trait;
     use std::collections::HashMap;
@@ -1935,7 +2329,7 @@ mod tests {
     struct MockStorageEngine;
 
     #[async_trait]
-    impl UnifiedStorageEngine for MockStorageEngine {
+    impl UnifiedStorageFormat for MockStorageEngine {
         fn engine_name(&self) -> &'static str {
             "MockEngine"
         }
@@ -1944,8 +2338,8 @@ mod tests {
             "1.0.0"
         }
 
-        fn strategy(&self) -> StorageEngineStrategy {
-            StorageEngineStrategy::Sst
+        fn strategy(&self) -> StorageFormatStrategy {
+            StorageFormatStrategy::Sst
         }
 
         async fn do_flush(&self, _params: &FlushParameters) -> Result<FlushResult> {
@@ -1990,7 +2384,7 @@ mod tests {
             _collection_id: &str,
             _base_path: &str,
             _vector_id: &str,
-        ) -> Result<Option<crate::proto::proximadb_v1::VectorRecord>> {
+        ) -> Result<Option<proximadb_records::ProximaRecord>> {
             Ok(None)
         }
 
@@ -2014,7 +2408,7 @@ mod tests {
 
     /// Create a DocumentService backed by the mock storage engine (no WAL)
     fn create_test_service() -> DocumentService {
-        let engine: Arc<dyn UnifiedStorageEngine> = Arc::new(MockStorageEngine);
+        let engine: Arc<dyn UnifiedStorageFormat> = Arc::new(MockStorageEngine);
         DocumentService::new(engine)
     }
 
@@ -2073,6 +2467,49 @@ mod tests {
         svc
     }
 
+    /// Set up a canonical-record-backed service with a pre-created collection.
+    #[cfg(feature = "canonical-document-store")]
+    async fn canonical_service_with_collection(collection_name: &str) -> DocumentService {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let storage_engine: Arc<dyn UnifiedStorageFormat> = cedar.clone();
+        let record_store: Arc<dyn RecordStorage> = cedar;
+        let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
+
+        svc.create_collection(
+            collection_name,
+            DocumentCollectionConfig {
+                name: collection_name.to_string(),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("collection creation should succeed");
+        svc
+    }
+
+    #[allow(dead_code)]
+    fn assert_same_document_shape(left: &DocumentRecord, right: &DocumentRecord) {
+        assert_eq!(left.id, right.id);
+        assert_eq!(left.collection_id, right.collection_id);
+        assert_eq!(left.version, right.version);
+        assert_eq!(left.schema_id, right.schema_id);
+        assert_eq!(left.document_type, right.document_type);
+        assert_eq!(left.props, right.props);
+    }
+
+    /// Read a top-level field from a record's canonical props as a legacy
+    /// `SqlValue` (test convenience after TD-106 Slice 7e removed `document`).
+    fn field(rec: &DocumentRecord, key: &str) -> SqlValue {
+        proxima_tree_to_sql_object(&rec.props)
+            .fields
+            .get(key)
+            .cloned()
+            .unwrap_or_else(|| panic!("{key} field"))
+    }
+
     // =========================================================================
     // Document CRUD lifecycle tests
     // =========================================================================
@@ -2106,7 +2543,7 @@ mod tests {
         assert_eq!(fetched.version, 1);
 
         // Verify field contents
-        let title_val = fetched.document.fields.get("title").expect("title field");
+        let title_val = field(&fetched, "title");
         assert_eq!(
             title_val.value,
             Some(sql_value::Value::StringValue(
@@ -2114,7 +2551,7 @@ mod tests {
             ))
         );
 
-        let year_val = fetched.document.fields.get("year").expect("year field");
+        let year_val = field(&fetched, "year");
         assert_eq!(year_val.value, Some(sql_value::Value::Int64Value(2024)));
     }
 
@@ -2151,7 +2588,7 @@ mod tests {
             .expect("get should succeed")
             .expect("document should exist");
 
-        let email = fetched.document.fields.get("email").expect("email field");
+        let email = field(&fetched, "email");
         assert_eq!(
             email.value,
             Some(sql_value::Value::StringValue(
@@ -2160,11 +2597,22 @@ mod tests {
         );
 
         // Original field should still be present
-        let name = fetched.document.fields.get("name").expect("name field");
+        let name = field(&fetched, "name");
         assert_eq!(
             name.value,
             Some(sql_value::Value::StringValue("Alice".to_string()))
         );
+
+        // TD-106 Slice 7: the update mutates the canonical props tree directly.
+        match fetched.props.get("email") {
+            Some(proximadb_records::ProximaTreeNode::Value(
+                proximadb_data_model::ProximaValue::String(s),
+            )) => assert_eq!(
+                s, "alice@newdomain.com",
+                "props must carry the updated value"
+            ),
+            other => panic!("expected updated email in props, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -2221,7 +2669,7 @@ mod tests {
             .expect("document should exist");
 
         // The second insert should have overwritten the first
-        let val = fetched.document.fields.get("val").expect("val field");
+        let val = field(&fetched, "val");
         assert_eq!(
             val.value,
             Some(sql_value::Value::StringValue("second".to_string())),
@@ -2270,7 +2718,7 @@ mod tests {
                 .await
                 .expect("get should succeed")
                 .expect("document should exist");
-            let idx_val = doc.document.fields.get("index").expect("index field");
+            let idx_val = field(&doc, "index");
             assert_eq!(idx_val.value, Some(sql_value::Value::Int64Value(i)));
         }
     }
@@ -2350,7 +2798,7 @@ mod tests {
 
         // Verify all returned docs are in the electronics category
         for doc in &result.documents {
-            let cat = doc.document.fields.get("category").expect("category field");
+            let cat = field(doc, "category");
             assert_eq!(
                 cat.value,
                 Some(sql_value::Value::StringValue("electronics".to_string()))
@@ -2430,6 +2878,356 @@ mod tests {
         assert_eq!(result.total_count, Some(4));
     }
 
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_service_parity_with_legacy_path() {
+        let legacy = service_with_collection("parity").await;
+        let canonical = canonical_service_with_collection("parity").await;
+
+        let doc = make_document(vec![
+            ("title", sql_string("Record Spine")),
+            ("category", sql_string("architecture")),
+            ("revision", sql_int(1)),
+        ]);
+
+        let legacy_inserted = legacy
+            .insert_document("parity", Some("doc-1"), doc.clone())
+            .await
+            .expect("legacy insert");
+        let canonical_inserted = canonical
+            .insert_document("parity", Some("doc-1"), doc)
+            .await
+            .expect("canonical insert");
+        assert_same_document_shape(&legacy_inserted, &canonical_inserted);
+
+        let legacy_fetched = legacy
+            .get_document("parity", "doc-1", None)
+            .await
+            .expect("legacy get")
+            .expect("legacy document");
+        let canonical_fetched = canonical
+            .get_document("parity", "doc-1", None)
+            .await
+            .expect("canonical get")
+            .expect("canonical document");
+        assert_same_document_shape(&legacy_fetched, &canonical_fetched);
+
+        let updates = vec![DocumentUpdate {
+            operation: UpdateOperation::Set as i32,
+            path: "revision".to_string(),
+            value: Some(sql_int(2)),
+        }];
+        let legacy_updated = legacy
+            .update_document("parity", "doc-1", updates.clone(), None)
+            .await
+            .expect("legacy update");
+        let canonical_updated = canonical
+            .update_document("parity", "doc-1", updates, None)
+            .await
+            .expect("canonical update");
+        assert_same_document_shape(&legacy_updated, &canonical_updated);
+
+        legacy
+            .insert_document(
+                "parity",
+                Some("doc-2"),
+                make_document(vec![
+                    ("title", sql_string("Projection")),
+                    ("category", sql_string("architecture")),
+                    ("revision", sql_int(1)),
+                ]),
+            )
+            .await
+            .expect("legacy insert second");
+        canonical
+            .insert_document(
+                "parity",
+                Some("doc-2"),
+                make_document(vec![
+                    ("title", sql_string("Projection")),
+                    ("category", sql_string("architecture")),
+                    ("revision", sql_int(1)),
+                ]),
+            )
+            .await
+            .expect("canonical insert second");
+
+        let filter = DocumentFilter {
+            conditions: vec![DocFilterCondition {
+                path: "category".to_string(),
+                operator: DocFilterOperator::Eq as i32,
+                value: Some(sql_string("architecture")),
+                values: Vec::new(),
+            }],
+            ..Default::default()
+        };
+        let query_params = DocumentQueryParams {
+            filter: Some(filter),
+            include_count: true,
+            limit: 100,
+            ..Default::default()
+        };
+        let legacy_query = legacy
+            .query_documents("parity", query_params.clone())
+            .await
+            .expect("legacy query");
+        let canonical_query = canonical
+            .query_documents("parity", query_params)
+            .await
+            .expect("canonical query");
+        assert_eq!(legacy_query.total_count, canonical_query.total_count);
+
+        let mut legacy_ids: Vec<_> = legacy_query
+            .documents
+            .iter()
+            .map(|document| document.id.as_str())
+            .collect();
+        let mut canonical_ids: Vec<_> = canonical_query
+            .documents
+            .iter()
+            .map(|document| document.id.as_str())
+            .collect();
+        legacy_ids.sort_unstable();
+        canonical_ids.sort_unstable();
+        assert_eq!(legacy_ids, canonical_ids);
+
+        assert!(legacy.delete_document("parity", "doc-1").await.unwrap());
+        assert!(canonical.delete_document("parity", "doc-1").await.unwrap());
+        assert!(
+            legacy
+                .get_document("parity", "doc-1", None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            canonical
+                .get_document("parity", "doc-1", None)
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_query_uses_record_oid_projection_keys() {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let storage_engine: Arc<dyn UnifiedStorageFormat> = cedar.clone();
+        let record_store: Arc<dyn RecordStorage> = cedar;
+        let svc = DocumentService::with_canonical_record_store(storage_engine, record_store);
+
+        svc.create_collection(
+            "indexed",
+            DocumentCollectionConfig {
+                name: "indexed".to_string(),
+                indexes: vec![IndexDefinition {
+                    path: "category".to_string(),
+                    index_type: DocIndexType::Btree as i32,
+                    unique: false,
+                    sparse: false,
+                    name: Some("category_idx".to_string()),
+                }],
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("collection creation should succeed");
+
+        svc.insert_document(
+            "indexed",
+            Some("doc-1"),
+            make_document(vec![
+                ("title", sql_string("Canonical Index")),
+                ("category", sql_string("architecture")),
+            ]),
+        )
+        .await
+        .expect("insert should succeed");
+
+        let query_params = DocumentQueryParams {
+            filter: Some(DocumentFilter {
+                conditions: vec![DocFilterCondition {
+                    path: "category".to_string(),
+                    operator: DocFilterOperator::Eq as i32,
+                    value: Some(sql_string("architecture")),
+                    values: Vec::new(),
+                }],
+                ..Default::default()
+            }),
+            include_count: true,
+            ..Default::default()
+        };
+
+        let query_result = svc
+            .query_documents("indexed", query_params.clone())
+            .await
+            .expect("indexed canonical query should succeed");
+        assert_eq!(query_result.total_count, Some(1));
+        assert_eq!(query_result.documents[0].id, "doc-1");
+
+        assert!(
+            svc.delete_document("indexed", "doc-1")
+                .await
+                .expect("delete should succeed")
+        );
+
+        let query_after_delete = svc
+            .query_documents("indexed", query_params)
+            .await
+            .expect("indexed canonical query after delete should succeed");
+        assert_eq!(query_after_delete.total_count, Some(0));
+        assert!(query_after_delete.documents.is_empty());
+    }
+
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_wal_recovery_replays_into_record_store() {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let temp_dir = tempfile::tempdir().expect("temp wal dir");
+        let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
+
+        let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
+        let first_record_store: Arc<dyn RecordStorage> = first_cedar;
+        let first = DocumentService::with_canonical_record_store_and_wal(
+            first_storage_engine,
+            first_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("canonical wal service");
+
+        first
+            .create_collection(
+                "wal_docs",
+                DocumentCollectionConfig {
+                    name: "wal_docs".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("create collection");
+        first
+            .insert_document(
+                "wal_docs",
+                Some("doc-1"),
+                make_document(vec![("title", sql_string("Recovered"))]),
+            )
+            .await
+            .expect("insert");
+        first.flush_wal().await.expect("flush wal");
+
+        let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
+        let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
+        let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
+        let restarted_record_probe = restarted_record_store.clone();
+        let restarted = DocumentService::with_canonical_record_store_and_wal(
+            restarted_storage_engine,
+            restarted_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("restart from wal");
+
+        let recovered_records = restarted_record_probe
+            .scan_records(10)
+            .await
+            .expect("scan recovered records");
+        assert_eq!(recovered_records.len(), 1);
+
+        let recovered = restarted
+            .get_document("wal_docs", "doc-1", None)
+            .await
+            .expect("get recovered")
+            .expect("document recovered through canonical store");
+        assert_eq!(
+            field(&recovered, "title").value,
+            Some(sql_value::Value::StringValue("Recovered".to_string()))
+        );
+    }
+
+    #[cfg(feature = "canonical-document-store")]
+    #[tokio::test]
+    async fn test_canonical_document_wal_recovery_replays_deletes_into_record_store() {
+        use crate::storage::engines::cedar::CedarEngine;
+        use proximadb_records::RecordStorage;
+
+        let temp_dir = tempfile::tempdir().expect("temp wal dir");
+        let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
+
+        let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
+        let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
+        let first_record_store: Arc<dyn RecordStorage> = first_cedar;
+        let first = DocumentService::with_canonical_record_store_and_wal(
+            first_storage_engine,
+            first_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("canonical wal service");
+
+        first
+            .create_collection(
+                "wal_docs",
+                DocumentCollectionConfig {
+                    name: "wal_docs".to_string(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("create collection");
+        first
+            .insert_document(
+                "wal_docs",
+                Some("doc-1"),
+                make_document(vec![("title", sql_string("Deleted"))]),
+            )
+            .await
+            .expect("insert");
+        assert!(
+            first
+                .delete_document("wal_docs", "doc-1")
+                .await
+                .expect("delete")
+        );
+        first.flush_wal().await.expect("flush wal");
+
+        let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
+        let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
+        let restarted_record_store: Arc<dyn RecordStorage> = restarted_cedar;
+        let restarted_record_probe = restarted_record_store.clone();
+        let restarted = DocumentService::with_canonical_record_store_and_wal(
+            restarted_storage_engine,
+            restarted_record_store,
+            wal_base_path,
+        )
+        .await
+        .expect("restart from wal");
+
+        let recovered_records = restarted_record_probe
+            .scan_records(10)
+            .await
+            .expect("scan recovered records");
+        assert!(
+            recovered_records.is_empty(),
+            "delete replay should remove canonical records"
+        );
+
+        assert!(
+            restarted
+                .get_document("wal_docs", "doc-1", None)
+                .await
+                .expect("get after delete replay")
+                .is_none()
+        );
+    }
+
     #[tokio::test]
     async fn test_query_empty_collection() {
         let svc = service_with_collection("empty").await;
@@ -2447,6 +3245,73 @@ mod tests {
 
         assert!(result.documents.is_empty(), "should return no documents");
         assert_eq!(result.total_count, Some(0));
+    }
+
+    #[tokio::test]
+    async fn document_query_service_searches_via_contract() {
+        use proximadb_document_query::{
+            DocumentQueryService, DocumentSearchRequest, DocumentSortOrder, SortDirection,
+        };
+
+        let svc = service_with_collection("contract_docs").await;
+
+        for i in 0..3 {
+            svc.insert_document(
+                "contract_docs",
+                Some(&format!("doc-{i}")),
+                make_document(vec![("seq", sql_int(i))]),
+            )
+            .await
+            .expect("insert should succeed");
+        }
+
+        let result = DocumentQueryService::document_search(
+            &svc,
+            DocumentSearchRequest {
+                collection_id: "contract_docs".to_string(),
+                filter: None,
+                limit: 2,
+                offset: 1,
+                projection: None,
+                sort: Some(DocumentSortOrder {
+                    field: "seq".to_string(),
+                    direction: SortDirection::Ascending,
+                }),
+            },
+        )
+        .await
+        .expect("contract search should succeed");
+
+        assert_eq!(result.total_count, 3);
+        assert_eq!(result.results.len(), 2);
+        assert_eq!(result.results[0].id, "doc-1");
+        assert_eq!(result.results[1].id, "doc-2");
+    }
+
+    #[tokio::test]
+    async fn document_query_service_gets_document_via_contract() {
+        use proximadb_document_query::DocumentQueryService;
+
+        let svc = service_with_collection("contract_get").await;
+        svc.insert_document(
+            "contract_get",
+            Some("doc-1"),
+            make_document(vec![("title", sql_string("Contract"))]),
+        )
+        .await
+        .expect("insert should succeed");
+
+        let result = DocumentQueryService::get_document(
+            &svc,
+            "contract_get".to_string(),
+            "doc-1".to_string(),
+        )
+        .await
+        .expect("contract get should succeed")
+        .expect("document should exist");
+
+        assert_eq!(result.id, "doc-1");
+        assert_eq!(result.version, 1);
     }
 
     // =========================================================================

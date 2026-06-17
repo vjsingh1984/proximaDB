@@ -6,15 +6,8 @@ the new unified IntelligentRouter system.
 """
 
 import sys
-import threading
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any, Dict, List
-from unittest.mock import Mock, patch
-
-import numpy as np
-import pytest
+from unittest.mock import Mock
 
 # Add utils to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -31,7 +24,6 @@ from proximadb_sdk.intelligent_router import (
     RoutingRule,
     RoutingStrategy,
 )
-from proximadb_sdk.models import VectorRecord
 
 # Backward compatibility
 from proximadb_sdk.operation_router import OperationRouter, create_operation_router
@@ -354,9 +346,6 @@ class TestBackwardCompatibility:
         """Test that old imports still work"""
         # These imports should work due to backward compatibility
         from proximadb_sdk.operation_router import (
-            OperationRouter,
-            RoutingConfig,
-            RoutingStrategy,
             create_operation_router,
         )
 
