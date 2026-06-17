@@ -87,7 +87,9 @@ pub use header::{
     BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
     fnv1a_hash,
 };
-pub use prune::{FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups};
+pub use prune::{
+    BlockZoneSource, FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups,
+};
 pub use ranged::{BlockLayout, MetadataRanges, footer_tail_range, metadata_ranges};
 pub use reader::PaxBlockReader;
 pub use record::{

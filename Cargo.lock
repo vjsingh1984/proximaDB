@@ -7486,6 +7486,7 @@ dependencies = [
  "proximadb-catalog",
  "proximadb-compression-types",
  "proximadb-data-model",
+ "proximadb-filter-expression",
  "proximadb-kernel",
  "proximadb-records",
  "proximadb-runtime-common",

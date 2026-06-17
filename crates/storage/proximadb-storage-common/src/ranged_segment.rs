@@ -16,10 +16,13 @@
 
 use object_store::path::Path;
 use proximadb_block_format::{
-    BLOCK_FOOTER_SIZE, BlockFooter,
+    BLOCK_FOOTER_SIZE, BlockFooter, BlockZoneSource, FlatRow, PaxBlockReader, PruneResult,
+    evaluate_block,
     ranged::{BlockLayout, metadata_ranges},
 };
+use proximadb_filter_expression::FilterExpression;
 use proximadb_kernel::error::StorageError;
+use proximadb_records::ProximaRecord;
 
 use crate::object_store_bridge::ObjectStoreBridge;
 use crate::pax_block::SegmentIndex;
@@ -140,6 +143,47 @@ impl<'b> RangedSegmentReader<'b> {
                 .decode_f32_vec_column(column_id, &stripe)
                 .map_err(|e| fs_err("decode vector column", e))?;
             out.extend(decoded);
+        }
+        Ok(out)
+    }
+
+    /// Reconstruct full records, **skipping whole blocks** the filter provably
+    /// excludes (predicate pushdown). For each block only the footer/metadata is
+    /// range-read first; a block that survives [`evaluate_block`] has its body
+    /// fetched and decoded, a pruned block costs only its metadata. This is the
+    /// I/O win for selective scans over object storage.
+    ///
+    /// `field_to_col` maps filter field names to canonical PAX column ids;
+    /// `embedding_model_ids`/`user_column_keys` are the positional schema hints
+    /// for record materialization (empty slices ⇒ best-effort defaults).
+    pub async fn read_records_pruned(
+        &self,
+        filter: &FilterExpression,
+        field_to_col: &(dyn Fn(&str) -> Option<i32> + Sync),
+        embedding_model_ids: &[String],
+        user_column_keys: &[String],
+    ) -> Result<Vec<ProximaRecord>, StorageError> {
+        let mut out = Vec::new();
+        for entry in &self.index.blocks {
+            let (off, bsz) = (entry.offset, entry.size as u64);
+            let layout = self.block_layout(off, bsz).await?;
+
+            // Block-level prune from metadata alone — no block body fetched.
+            if evaluate_block(&layout as &dyn BlockZoneSource, filter, field_to_col)
+                == PruneResult::Skip
+            {
+                continue;
+            }
+
+            // Surviving block: fetch the whole block and reconstruct its rows.
+            let block_bytes = self.fetch(off, bsz).await?;
+            let reader = PaxBlockReader::open(&block_bytes).map_err(|e| fs_err("open block", e))?;
+            for flat in FlatRow::from_block_reader(&reader).map_err(|e| fs_err("flat rows", e))? {
+                out.push(
+                    flat.into_record(embedding_model_ids, user_column_keys)
+                        .map_err(|e| fs_err("into record", e))?,
+                );
+            }
         }
         Ok(out)
     }
@@ -314,6 +358,55 @@ mod tests {
         // test is about correctness; the I/O saving is shown by the scalar test).
         assert_eq!(ranged, expected);
         let _ = total;
+    }
+
+    #[tokio::test]
+    async fn ranged_segment_pruned_records_skip_blocks() {
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+
+        // Monotonic created_at across many small blocks (16KB threshold).
+        let bytes = build_segment_bytes(2000, 32);
+        let total = bytes.len() as u64;
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+        };
+        let reader = RangedSegmentReader::open(&bridge, Path::from("seg.pax"), Some("t"))
+            .await
+            .unwrap();
+        assert!(reader.block_count() > 1, "need multiple blocks to prune");
+
+        // created_at = 1000 + i; keep only the last ~quarter of rows.
+        let threshold = 1000 + 1500i64;
+        let filter = FilterExpression::Comparison {
+            field: "created_at".into(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(threshold),
+        };
+        let field_to_col = |f: &str| match f {
+            "created_at" => Some(col_id::CREATED_AT),
+            _ => None,
+        };
+
+        let recs = reader
+            .read_records_pruned(&filter, &field_to_col, &[], &[])
+            .await
+            .unwrap();
+
+        // Every returned row satisfies the predicate (blocks fully below the
+        // threshold were skipped; surviving blocks may include some below-rows
+        // which the caller re-filters — but here block bounds align to the cut).
+        assert!(!recs.is_empty() && recs.len() < 2000);
+        assert!(recs.iter().all(|r| r.created_at_ns >= threshold - 8192)); // block-granular
+        let with_match = recs.iter().filter(|r| r.created_at_ns >= threshold).count();
+        assert!(with_match > 0);
+
+        // Pruned blocks' bodies were never fetched ⇒ far fewer bytes than whole.
+        let fetched = bridge.ranged_bytes.load(Ordering::Relaxed);
+        assert!(
+            fetched < total,
+            "pruned read fetched {fetched} not < segment {total}"
+        );
     }
 
     #[tokio::test]

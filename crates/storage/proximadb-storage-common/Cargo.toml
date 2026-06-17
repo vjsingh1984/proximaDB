@@ -33,6 +33,7 @@ proximadb-compression-types.workspace = true
 proximadb-data-model = { workspace = true }
 proximadb-records = { workspace = true }
 proximadb-block-format = { workspace = true }
+proximadb-filter-expression = { workspace = true }
 # ADR-024 Step 4: storage-side ProximaSchema/ProximaColumn are now aliases for
 # the canonical CatalogTableSchema/CatalogColumn (durable authority in control).
 # storage -> control is validator-legal (acyclic; catalog deps only foundation).

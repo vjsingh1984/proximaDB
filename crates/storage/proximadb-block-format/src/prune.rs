@@ -20,6 +20,7 @@ use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
 use serde_json::Value;
 
 use crate::reader::PaxBlockReader;
+use crate::rowgroup::RowGroupBlock;
 
 /// Outcome of evaluating a filter against a block's statistics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,12 +50,100 @@ const DT_I64: u8 = 0x03;
 const DT_F64: u8 = 0x07;
 const DT_BYTES_OR_STR: u8 = 0xff;
 
+/// The block statistics a pruner needs, abstracted over how they were obtained.
+///
+/// Implemented by both the whole-block [`PaxBlockReader`] (string equality uses
+/// the bloom filter) and the metadata-only [`crate::ranged::BlockLayout`] of the
+/// object-storage ranged path (string equality falls back to hash bounds, since
+/// the bloom bytes are not fetched). This is what lets the SAME pruning logic run
+/// before a block's body is ever read.
+pub trait BlockZoneSource {
+    fn column_meta_type(&self, column_id: i32) -> Option<u8>;
+    fn may_contain_i64(&self, column_id: i32, value: i64) -> bool;
+    fn range_overlaps_i64(&self, column_id: i32, lo: i64, hi: i64) -> bool;
+    fn range_overlaps_f64(&self, column_id: i32, lo: f64, hi: f64) -> bool;
+    fn may_contain_str(&self, column_id: i32, value: &str) -> bool;
+    fn row_group_index(&self) -> &RowGroupBlock;
+    fn row_count_hint(&self) -> u32;
+}
+
+impl BlockZoneSource for PaxBlockReader<'_> {
+    fn column_meta_type(&self, column_id: i32) -> Option<u8> {
+        self.column_metas()
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.data_type_id)
+    }
+    fn may_contain_i64(&self, column_id: i32, value: i64) -> bool {
+        self.column_may_contain_i64(column_id, value)
+    }
+    fn range_overlaps_i64(&self, column_id: i32, lo: i64, hi: i64) -> bool {
+        self.column_range_overlaps_i64(column_id, lo, hi)
+    }
+    fn range_overlaps_f64(&self, column_id: i32, lo: f64, hi: f64) -> bool {
+        self.column_range_overlaps_f64(column_id, lo, hi)
+    }
+    fn may_contain_str(&self, column_id: i32, value: &str) -> bool {
+        self.column_may_contain_str(column_id, value)
+    }
+    fn row_group_index(&self) -> &RowGroupBlock {
+        self.row_groups()
+    }
+    fn row_count_hint(&self) -> u32 {
+        self.row_count()
+    }
+}
+
+impl BlockZoneSource for crate::ranged::BlockLayout {
+    fn column_meta_type(&self, column_id: i32) -> Option<u8> {
+        self.column_metas()
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.data_type_id)
+    }
+    fn may_contain_i64(&self, column_id: i32, value: i64) -> bool {
+        self.column_metas()
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.i64_in_range(value))
+            .unwrap_or(true)
+    }
+    fn range_overlaps_i64(&self, column_id: i32, lo: i64, hi: i64) -> bool {
+        self.column_metas()
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.i64_range_overlaps(lo, hi))
+            .unwrap_or(true)
+    }
+    fn range_overlaps_f64(&self, column_id: i32, lo: f64, hi: f64) -> bool {
+        self.column_metas()
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.f64_range_overlaps(lo, hi))
+            .unwrap_or(true)
+    }
+    fn may_contain_str(&self, column_id: i32, value: &str) -> bool {
+        // No bloom bytes fetched on the ranged path — hash bounds only.
+        self.column_metas()
+            .iter()
+            .find(|m| m.column_id == column_id)
+            .map(|m| m.hash64_in_range(crate::header::fnv1a_hash(value)))
+            .unwrap_or(true)
+    }
+    fn row_group_index(&self) -> &RowGroupBlock {
+        self.row_groups()
+    }
+    fn row_count_hint(&self) -> u32 {
+        self.row_count()
+    }
+}
+
 /// Evaluate a filter against `reader`'s block statistics.
 ///
 /// `field_to_col` resolves leaf field names to column ids. See [`PruneResult`]
 /// for the soundness contract.
 pub fn evaluate_block(
-    reader: &PaxBlockReader<'_>,
+    source: &dyn BlockZoneSource,
     filter: &FilterExpression,
     field_to_col: &FieldToColumn<'_>,
 ) -> PruneResult {
@@ -62,7 +151,7 @@ pub fn evaluate_block(
         FilterExpression::And(children) => {
             // AND prunes if ANY conjunct prunes the block.
             for c in children {
-                if evaluate_block(reader, c, field_to_col) == PruneResult::Skip {
+                if evaluate_block(source, c, field_to_col) == PruneResult::Skip {
                     return PruneResult::Skip;
                 }
             }
@@ -75,7 +164,7 @@ pub fn evaluate_block(
             }
             if children
                 .iter()
-                .all(|c| evaluate_block(reader, c, field_to_col) == PruneResult::Skip)
+                .all(|c| evaluate_block(source, c, field_to_col) == PruneResult::Skip)
             {
                 PruneResult::Skip
             } else {
@@ -88,7 +177,7 @@ pub fn evaluate_block(
             field,
             operator,
             value,
-        } => evaluate_leaf(reader, field, operator, value, field_to_col),
+        } => evaluate_leaf(source, field, operator, value, field_to_col),
     }
 }
 
@@ -98,26 +187,26 @@ pub fn evaluate_block(
 /// sub-index conservatively returns all row groups. Same soundness contract as
 /// [`evaluate_block`]: a row group is dropped only when provably empty.
 pub fn evaluate_row_groups(
-    reader: &PaxBlockReader<'_>,
+    source: &dyn BlockZoneSource,
     filter: &FilterExpression,
     field_to_col: &FieldToColumn<'_>,
 ) -> Vec<usize> {
-    let rg_block = reader.row_groups();
+    let rg_block = source.row_group_index();
     let n = rg_block.n_row_groups as usize;
     if rg_block.is_empty() || n == 0 {
         // No sub-index: fall back to "all groups" (block-level pruning still applies).
-        let count = crate::rowgroup::RowGroupBlock::group_count(reader.row_count()) as usize;
+        let count = crate::rowgroup::RowGroupBlock::group_count(source.row_count_hint()) as usize;
         return (0..count.max(1)).collect();
     }
     (0..n)
         .filter(|&rg| {
-            eval_rg(reader, filter, rg as u32, field_to_col) == PruneResult::MayMatch
+            eval_rg(source, filter, rg as u32, field_to_col) == PruneResult::MayMatch
         })
         .collect()
 }
 
 fn eval_rg(
-    reader: &PaxBlockReader<'_>,
+    source: &dyn BlockZoneSource,
     filter: &FilterExpression,
     rg: u32,
     field_to_col: &FieldToColumn<'_>,
@@ -125,7 +214,7 @@ fn eval_rg(
     match filter {
         FilterExpression::And(children) => {
             for c in children {
-                if eval_rg(reader, c, rg, field_to_col) == PruneResult::Skip {
+                if eval_rg(source, c, rg, field_to_col) == PruneResult::Skip {
                     return PruneResult::Skip;
                 }
             }
@@ -137,7 +226,7 @@ fn eval_rg(
             }
             if children
                 .iter()
-                .all(|c| eval_rg(reader, c, rg, field_to_col) == PruneResult::Skip)
+                .all(|c| eval_rg(source, c, rg, field_to_col) == PruneResult::Skip)
             {
                 PruneResult::Skip
             } else {
@@ -153,7 +242,7 @@ fn eval_rg(
             let Some(col) = field_to_col(field) else {
                 return PruneResult::MayMatch;
             };
-            let Some(entry) = reader.row_groups().get(col, rg) else {
+            let Some(entry) = source.row_group_index().get(col, rg) else {
                 return PruneResult::MayMatch; // no rg stats for this column
             };
             match entry.data_type_id {
@@ -233,7 +322,7 @@ fn prune_f64_bounds(
 }
 
 fn evaluate_leaf(
-    reader: &PaxBlockReader<'_>,
+    source: &dyn BlockZoneSource,
     field: &str,
     op: &ComparisonOperator,
     value: &Value,
@@ -242,19 +331,14 @@ fn evaluate_leaf(
     let Some(col) = field_to_col(field) else {
         return PruneResult::MayMatch; // unknown column → cannot prune
     };
-    let Some(type_id) = reader
-        .column_metas()
-        .iter()
-        .find(|m| m.column_id == col)
-        .map(|m| m.data_type_id)
-    else {
+    let Some(type_id) = source.column_meta_type(col) else {
         return PruneResult::MayMatch; // column not in this block
     };
 
     match type_id {
-        DT_I64 => prune_i64(reader, col, op, value),
-        DT_F64 => prune_f64(reader, col, op, value),
-        DT_BYTES_OR_STR => prune_str(reader, col, op, value),
+        DT_I64 => prune_i64(source, col, op, value),
+        DT_F64 => prune_f64(source, col, op, value),
+        DT_BYTES_OR_STR => prune_str(source, col, op, value),
         // Vectors and anything else: not a scalar zone-map-prunable column.
         DT_F32_VECTOR | _ => PruneResult::MayMatch,
     }
@@ -277,28 +361,28 @@ fn as_f64(v: &Value) -> Option<f64> {
 }
 
 fn prune_i64(
-    reader: &PaxBlockReader<'_>,
+    source: &dyn BlockZoneSource,
     col: i32,
     op: &ComparisonOperator,
     value: &Value,
 ) -> PruneResult {
     match op {
         ComparisonOperator::Equals => match as_i64(value) {
-            Some(v) => keep_if(reader.column_may_contain_i64(col, v)),
+            Some(v) => keep_if(source.may_contain_i64(col, v)),
             None => PruneResult::MayMatch,
         },
         ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
             match as_i64(value) {
-                Some(v) => keep_if(reader.column_range_overlaps_i64(col, v, i64::MAX)),
+                Some(v) => keep_if(source.range_overlaps_i64(col, v, i64::MAX)),
                 None => PruneResult::MayMatch,
             }
         }
         ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => match as_i64(value) {
-            Some(v) => keep_if(reader.column_range_overlaps_i64(col, i64::MIN, v)),
+            Some(v) => keep_if(source.range_overlaps_i64(col, i64::MIN, v)),
             None => PruneResult::MayMatch,
         },
         ComparisonOperator::Between => match between_bounds(value) {
-            Some((lo, hi)) => keep_if(reader.column_range_overlaps_i64(
+            Some((lo, hi)) => keep_if(source.range_overlaps_i64(
                 col,
                 lo as i64,
                 hi.ceil() as i64,
@@ -309,7 +393,7 @@ fn prune_i64(
             // Keep if ANY listed value may be present; skip only if none can.
             Some(arr) => {
                 let any = arr.iter().filter_map(as_i64).any(|v| {
-                    reader.column_may_contain_i64(col, v)
+                    source.may_contain_i64(col, v)
                 });
                 let had_ints = arr.iter().any(|v| as_i64(v).is_some());
                 if had_ints { keep_if(any) } else { PruneResult::MayMatch }
@@ -322,28 +406,28 @@ fn prune_i64(
 }
 
 fn prune_f64(
-    reader: &PaxBlockReader<'_>,
+    source: &dyn BlockZoneSource,
     col: i32,
     op: &ComparisonOperator,
     value: &Value,
 ) -> PruneResult {
     match op {
         ComparisonOperator::Equals => match as_f64(value) {
-            Some(v) => keep_if(reader.column_range_overlaps_f64(col, v, v)),
+            Some(v) => keep_if(source.range_overlaps_f64(col, v, v)),
             None => PruneResult::MayMatch,
         },
         ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
             match as_f64(value) {
-                Some(v) => keep_if(reader.column_range_overlaps_f64(col, v, f64::INFINITY)),
+                Some(v) => keep_if(source.range_overlaps_f64(col, v, f64::INFINITY)),
                 None => PruneResult::MayMatch,
             }
         }
         ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => match as_f64(value) {
-            Some(v) => keep_if(reader.column_range_overlaps_f64(col, f64::NEG_INFINITY, v)),
+            Some(v) => keep_if(source.range_overlaps_f64(col, f64::NEG_INFINITY, v)),
             None => PruneResult::MayMatch,
         },
         ComparisonOperator::Between => match between_bounds(value) {
-            Some((lo, hi)) => keep_if(reader.column_range_overlaps_f64(col, lo, hi)),
+            Some((lo, hi)) => keep_if(source.range_overlaps_f64(col, lo, hi)),
             None => PruneResult::MayMatch,
         },
         _ => PruneResult::MayMatch,
@@ -351,7 +435,7 @@ fn prune_f64(
 }
 
 fn prune_str(
-    reader: &PaxBlockReader<'_>,
+    source: &dyn BlockZoneSource,
     col: i32,
     op: &ComparisonOperator,
     value: &Value,
@@ -359,7 +443,7 @@ fn prune_str(
     match op {
         // Only exact equality can use the string hash bounds + bloom filter.
         ComparisonOperator::Equals => match value.as_str() {
-            Some(s) => keep_if(reader.column_may_contain_str(col, s)),
+            Some(s) => keep_if(source.may_contain_str(col, s)),
             None => PruneResult::MayMatch,
         },
         _ => PruneResult::MayMatch,
