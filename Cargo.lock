@@ -6717,6 +6717,7 @@ dependencies = [
  "dashmap",
  "moka",
  "serde",
+ "serde_json",
  "tokio",
 ]
 

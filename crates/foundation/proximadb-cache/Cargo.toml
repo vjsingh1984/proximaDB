@@ -17,6 +17,7 @@ path = "src/lib.rs"
 moka.workspace = true
 dashmap.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true }

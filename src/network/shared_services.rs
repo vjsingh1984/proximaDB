@@ -355,10 +355,14 @@ impl SharedServices {
         // hard ceiling as a runaway guard — a solo tenant borrows idle capacity
         // up to 128 MiB; under pressure each is reclaimed toward the fair share
         // (total / active tenants). ObjectStoreVectorRecordStore auto-picks up.
+        // OSS passes no limits resolver → uniform elastic fair share. The
+        // enterprise/control-plane boot path injects a tier-weighted resolver
+        // (TierPolicy from cache_tiers.json + TenantContext.tier) here.
         crate::services::record_store::init_segment_caches(
             proximadb_cache::CacheBudget::new(256 * 1024 * 1024, /*hard*/ 128 * 1024 * 1024)
                 .with_floor(8 * 1024 * 1024)
                 .with_high_watermark(0.9),
+            None,
         );
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());

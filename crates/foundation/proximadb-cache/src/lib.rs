@@ -86,6 +86,89 @@ pub struct TenantLimits {
     pub weight: u32,
 }
 
+/// One tier's cache shares, expressed as **fractions of the global pool** so the
+/// same policy scales to any `total_bytes`. `weight` drives the contended fair
+/// share (higher tier = larger share); `floor_frac` is the protected working
+/// set; `ceiling_frac` is the absolute runaway cap.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct TierSpec {
+    pub weight: u32,
+    pub floor_frac: f64,
+    pub ceiling_frac: f64,
+}
+
+/// JSON-loadable per-tier cache policy — a **generic, operator-supplied** config
+/// schema (string-keyed tier ids; an unknown tenant tier falls back to
+/// `default_tier`). OSS ships no commercial tiers: the actual tier→share data is
+/// deployment config provided by the control plane (e.g. anvaiops ships a
+/// `cache_tiers.json` keyed by its pricing tiers). This struct is just the Rust
+/// parser + the resolver factory (the adapter that turns config into a
+/// [`LimitsResolver`]).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TierPolicy {
+    pub default_tier: String,
+    pub tiers: HashMap<String, TierSpec>,
+}
+
+impl TierPolicy {
+    /// Parse a tier policy from operator-supplied JSON (`cache_tiers.json`).
+    pub fn from_json(s: &str) -> Result<Self, serde_json::Error> {
+        serde_json::from_str(s)
+    }
+
+    /// Neutral OSS default: a single `"default"` tier that may use the whole pool
+    /// (uniform fair share, no tier preference). Production tier shares come from
+    /// operator config — OSS bakes in no commercial tiers.
+    pub fn single_default() -> Self {
+        let mut tiers = HashMap::new();
+        tiers.insert(
+            "default".into(),
+            TierSpec { weight: 1, floor_frac: 0.0, ceiling_frac: 1.0 },
+        );
+        Self { default_tier: "default".into(), tiers }
+    }
+
+    /// Absolute [`TenantLimits`] for `tier` at a given pool `total_bytes`
+    /// (falls back to `default_tier`, then to a permissive default).
+    pub fn limits(&self, tier: &str, total_bytes: u64) -> TenantLimits {
+        let spec = self
+            .tiers
+            .get(tier)
+            .or_else(|| self.tiers.get(&self.default_tier));
+        match spec {
+            Some(s) => TenantLimits {
+                floor_bytes: (total_bytes as f64 * s.floor_frac) as u64,
+                hard_ceiling_bytes: ((total_bytes as f64 * s.ceiling_frac) as u64).max(1),
+                weight: s.weight.max(1),
+            },
+            None => TenantLimits {
+                floor_bytes: 0,
+                hard_ceiling_bytes: total_bytes,
+                weight: 1,
+            },
+        }
+    }
+
+    /// Build a [`LimitsResolver`] from this policy: `tenant_id → tier`
+    /// (host-supplied, e.g. catalog/billing lookup) → [`TenantLimits`].
+    pub fn resolver(
+        self: Arc<Self>,
+        total_bytes: u64,
+        tenant_to_tier: Arc<dyn Fn(&str) -> String + Send + Sync>,
+    ) -> Arc<LimitsResolver> {
+        Arc::new(move |tenant: &str| {
+            let tier = tenant_to_tier(tenant);
+            self.limits(&tier, total_bytes)
+        })
+    }
+}
+
+/// Pluggable per-tenant limits policy — the Strategy seam for tier-driven
+/// preference. The host supplies a `tenant_id → TenantLimits` function (e.g.
+/// [`TierPolicy::resolver`]); when unset, the cache falls back to the
+/// `CacheBudget`'s static per-tenant map / defaults.
+pub type LimitsResolver = dyn Fn(&str) -> TenantLimits + Send + Sync;
+
 /// Cache sizing policy: a global byte pool with **work-conserving** per-tenant
 /// elasticity — tenants borrow idle pool capacity up to their hard ceiling, and
 /// are reclaimed toward a weighted fair share only when the pool is under
@@ -179,6 +262,9 @@ pub struct TenantCache<V: Clone + Send + Sync + 'static> {
     default_floor: u64,
     default_hard_ceiling: u64,
     per_tenant: Arc<HashMap<String, TenantLimits>>,
+    /// Optional tier-driven limits policy (Strategy seam); overrides the static
+    /// per-tenant map when set.
+    limits_resolver: Option<Arc<LimitsResolver>>,
 }
 
 impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
@@ -219,7 +305,16 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
             default_floor: budget.default_floor_bytes,
             default_hard_ceiling: budget.default_hard_ceiling_bytes,
             per_tenant: Arc::new(budget.per_tenant),
+            limits_resolver: None,
         }
+    }
+
+    /// Plug a tier-driven limits policy (the Strategy seam): a
+    /// `tenant_id → TenantLimits` resolver, e.g. catalog tier lookup +
+    /// [`TenantTier::limits`]. Overrides the static per-tenant map.
+    pub fn with_limits_resolver(mut self, resolver: Arc<LimitsResolver>) -> Self {
+        self.limits_resolver = Some(resolver);
+        self
     }
 
     fn usage_for(&self, tenant: &Arc<str>) -> dashmap::mapref::one::Ref<'_, Arc<str>, TenantUsage> {
@@ -231,6 +326,9 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
     }
 
     fn limits_for(&self, tenant: &str) -> TenantLimits {
+        if let Some(resolver) = &self.limits_resolver {
+            return resolver(tenant);
+        }
         self.per_tenant.get(tenant).copied().unwrap_or(TenantLimits {
             floor_bytes: self.default_floor,
             hard_ceiling_bytes: self.default_hard_ceiling,
@@ -505,6 +603,47 @@ mod tests {
             "tracked bytes {} exceed pool",
             c.tenant_bytes("A")
         );
+    }
+
+    #[tokio::test]
+    async fn json_tier_policy_gives_higher_tier_preference_under_pressure() {
+        // Operator-supplied JSON tier policy (the open-core seam): a higher-tier
+        // tenant wins the contended fair share. Tier ids are arbitrary strings
+        // (here mimicking the control plane's pricing tiers) — OSS bakes in none.
+        let total = 1600u64;
+        let json = r#"{
+            "default_tier": "free_trial",
+            "tiers": {
+                "free_trial": {"weight": 1, "floor_frac": 0.0,    "ceiling_frac": 0.0625},
+                "enterprise": {"weight": 8, "floor_frac": 0.0625, "ceiling_frac": 0.5}
+            }
+        }"#;
+        let policy = Arc::new(TierPolicy::from_json(json).unwrap());
+        // Host-supplied tenant→tier authority (in prod: TenantContext.tier).
+        let tenant_to_tier: Arc<dyn Fn(&str) -> String + Send + Sync> =
+            Arc::new(|t: &str| if t == "ent" { "enterprise".into() } else { "free_trial".into() });
+        let resolver = policy.resolver(total, tenant_to_tier);
+
+        let budget = CacheBudget::new(total, total).with_high_watermark(0.5); // hwm=800
+        let c: TenantCache<u64> = TenantCache::new(budget).with_limits_resolver(resolver);
+
+        for round in 0..200u64 {
+            for t in ["ent", "free"] {
+                c.insert(CacheKey::new(t, CacheKind::Footer, format!("k{round}")), 10, round)
+                    .await;
+            }
+        }
+        c.sync().await;
+        let ent = c.tenant_bytes("ent");
+        let free = c.tenant_bytes("free");
+        assert!(
+            ent > free * 3,
+            "enterprise {ent} not strongly preferred over free {free}"
+        );
+        // Free is bounded by its tier ceiling (total/16 = 100).
+        assert!(free <= 100 + 20, "free {free} exceeded its tier ceiling");
+        // Enterprise bounded by its tier ceiling (total/2 = 800).
+        assert!(ent <= 800 + 20, "enterprise {ent} exceeded its tier ceiling");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

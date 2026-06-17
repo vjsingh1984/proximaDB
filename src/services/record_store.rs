@@ -3020,13 +3020,24 @@ static GLOBAL_SEGMENT_CACHES: std::sync::OnceLock<(
 
 /// Initialize the global footer/index caches from `budget` (idempotent — first
 /// call wins). Call once during server boot.
-pub fn init_segment_caches(budget: proximadb_cache::CacheBudget) {
-    let _ = GLOBAL_SEGMENT_CACHES.set((
-        Arc::new(proximadb_storage_common::ranged_segment::FooterCache::new(
-            budget.clone(),
-        )),
-        Arc::new(proximadb_storage_common::ranged_segment::SegmentIndexCache::new(budget)),
-    ));
+///
+/// `limits_resolver` is the open-core injection seam (Dependency Inversion): OSS
+/// passes `None` → uniform elastic fair share. An enterprise/control-plane boot
+/// path supplies a [`proximadb_cache::LimitsResolver`] (built from an
+/// operator `cache_tiers.json` [`proximadb_cache::TierPolicy`] + a tenant→tier
+/// authority such as `TenantContext.tier`) to get tier-weighted preference —
+/// without any commercial policy baked into the OSS engine.
+pub fn init_segment_caches(
+    budget: proximadb_cache::CacheBudget,
+    limits_resolver: Option<Arc<proximadb_cache::LimitsResolver>>,
+) {
+    let mut footer = proximadb_storage_common::ranged_segment::FooterCache::new(budget.clone());
+    let mut index = proximadb_storage_common::ranged_segment::SegmentIndexCache::new(budget);
+    if let Some(resolver) = limits_resolver {
+        footer = footer.with_limits_resolver(resolver.clone());
+        index = index.with_limits_resolver(resolver);
+    }
+    let _ = GLOBAL_SEGMENT_CACHES.set((Arc::new(footer), Arc::new(index)));
 }
 
 /// Per-tenant stats snapshot for the global footer cache (for metrics emission).
