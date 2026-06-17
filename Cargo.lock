@@ -6702,6 +6702,7 @@ dependencies = [
  "proptest",
  "proximadb-codec",
  "proximadb-data-model",
+ "proximadb-filter-expression",
  "proximadb-records",
  "rmp-serde",
  "serde",

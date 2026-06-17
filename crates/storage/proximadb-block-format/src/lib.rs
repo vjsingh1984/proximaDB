@@ -71,6 +71,7 @@
 //! driven by the DataFusion execution engine.
 
 pub mod header;
+pub mod prune;
 pub mod reader;
 pub mod record;
 pub mod row_dir;
@@ -84,6 +85,7 @@ pub use header::{
     BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
     fnv1a_hash,
 };
+pub use prune::{FieldToColumn, PruneResult, evaluate_block};
 pub use reader::PaxBlockReader;
 pub use record::{
     ColumnDescriptor, FlatRow, canonical_columns, col_id, encode_f32_vec_col, encode_i64_col,
