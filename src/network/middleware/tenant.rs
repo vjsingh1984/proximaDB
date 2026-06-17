@@ -360,8 +360,22 @@ pub async fn tenant_middleware(
                     .into_response();
             }
 
+            // Open-core cache tier hook: if the control plane stamped a tier
+            // claim (`X-Tenant-Tier`), record it in the process-global registry
+            // the cache LimitsResolver reads. The id is opaque (commercial tier
+            // names + their cache shares are operator config, not OSS code).
+            let tier_claim = req
+                .headers()
+                .get("x-tenant-tier")
+                .and_then(|v| v.to_str().ok())
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
+
             // Inject tenant context into request extensions
             let context = MiddlewareTenantContext::new(tenant_id, source);
+            if let Some(tier) = tier_claim {
+                crate::services::record_store::set_tenant_tier(&context.tenant_id, tier);
+            }
             // Also inject api-crate MiddlewareTenantContext for port-backed handlers in proximadb-api
             req.extensions_mut()
                 .insert(proximadb_api::rest::TenantContext {

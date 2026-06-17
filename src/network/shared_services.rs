@@ -355,15 +355,34 @@ impl SharedServices {
         // hard ceiling as a runaway guard — a solo tenant borrows idle capacity
         // up to 128 MiB; under pressure each is reclaimed toward the fair share
         // (total / active tenants). ObjectStoreVectorRecordStore auto-picks up.
-        // OSS passes no limits resolver → uniform elastic fair share. The
-        // enterprise/control-plane boot path injects a tier-weighted resolver
-        // (TierPolicy from cache_tiers.json + TenantContext.tier) here.
-        crate::services::record_store::init_segment_caches(
-            proximadb_cache::CacheBudget::new(256 * 1024 * 1024, /*hard*/ 128 * 1024 * 1024)
-                .with_floor(8 * 1024 * 1024)
-                .with_high_watermark(0.9),
-            None,
-        );
+        // Multitenant footer cache: 256 MiB pool, 8 MiB floor, 128 MiB hard
+        // ceiling, work-conserving elasticity (0.9 watermark). An operator may
+        // supply a tier policy via PROXIMADB_CACHE_TIERS_PATH (generic JSON, no
+        // commercial data in OSS); the resolver maps tenant→tier through the
+        // process-global registry the auth layer stamps (set_tenant_tier). With
+        // no config it stays uniform elastic fair share.
+        let cache_total_bytes: u64 = 256 * 1024 * 1024;
+        let cache_budget = proximadb_cache::CacheBudget::new(cache_total_bytes, 128 * 1024 * 1024)
+            .with_floor(8 * 1024 * 1024)
+            .with_high_watermark(0.9);
+        let limits_resolver = std::env::var("PROXIMADB_CACHE_TIERS_PATH")
+            .ok()
+            .and_then(|path| std::fs::read_to_string(&path).ok())
+            .and_then(|json| proximadb_cache::TierPolicy::from_json(&json).ok())
+            .map(|policy| {
+                let policy = std::sync::Arc::new(policy);
+                let default_tier = policy.default_tier.clone();
+                let tenant_to_tier: std::sync::Arc<dyn Fn(&str) -> String + Send + Sync> =
+                    std::sync::Arc::new(move |t: &str| {
+                        crate::services::record_store::tenant_tier(t)
+                            .unwrap_or_else(|| default_tier.clone())
+                    });
+                policy.resolver(cache_total_bytes, tenant_to_tier)
+            });
+        if limits_resolver.is_some() {
+            info!("🎟️  SharedServices: cache tier policy loaded from PROXIMADB_CACHE_TIERS_PATH");
+        }
+        crate::services::record_store::init_segment_caches(cache_budget, limits_resolver);
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 

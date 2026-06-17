@@ -3059,6 +3059,25 @@ fn segment_caches() -> (
     }
 }
 
+/// Process-global tenant→tier map (the *authority* hook for the open-core cache
+/// tier policy). OSS leaves it empty (→ uniform fair share); the auth/control
+/// plane populates it from a request tier claim via [`set_tenant_tier`], and the
+/// cache `LimitsResolver` (built from an operator `cache_tiers.json`) reads it.
+/// Commercial tier *data* stays out of OSS — this only carries opaque tier ids.
+static TENANT_TIERS: std::sync::LazyLock<dashmap::DashMap<String, String>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
+
+/// Record (or update) a tenant's tier id — called by the auth layer from a
+/// request claim/header. No-op semantics for unknown tenants (just inserts).
+pub fn set_tenant_tier(tenant_id: impl Into<String>, tier: impl Into<String>) {
+    TENANT_TIERS.insert(tenant_id.into(), tier.into());
+}
+
+/// The recorded tier id for a tenant, if the control plane has stamped one.
+pub fn tenant_tier(tenant_id: &str) -> Option<String> {
+    TENANT_TIERS.get(tenant_id).map(|r| r.clone())
+}
+
 pub struct ObjectStoreVectorRecordStore {
     bridge: Arc<dyn ObjectStoreBridge>,
     footer_cache: Option<Arc<proximadb_storage_common::ranged_segment::FooterCache>>,
