@@ -677,6 +677,15 @@ impl PostgresProtocol {
             if let Some(database) = params.get("database") {
                 session.database = database.clone();
             }
+            // Open-core cache tier hook: a `proximadb_tier` startup parameter
+            // (control-plane supplied) records the connection tenant's tier for
+            // the cache policy. database == tenant/catalog (TD-064). Opaque id.
+            if let (Some(tier), db) = (params.get("proximadb_tier"), session.database.clone())
+                && !tier.is_empty()
+                && !db.is_empty()
+            {
+                crate::services::record_store::set_tenant_tier(db, tier.clone());
+            }
         }
 
         // Send authentication OK (trust auth)

@@ -384,6 +384,21 @@ impl SharedServices {
         }
         crate::services::record_store::init_segment_caches(cache_budget, limits_resolver);
 
+        // Publish per-tenant cache stats for observability/chargeback (the
+        // multitenant fairness + noisy-neighbor signal) on the consumption gauge.
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                let stats = crate::services::record_store::segment_cache_tenant_stats();
+                if !stats.is_empty() {
+                    crate::metrics::consumption_metrics::record_cache_tenant_stats(
+                        "footer", &stats,
+                    );
+                }
+            }
+        });
+
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 
         // SharedServices owns metadata configuration logic

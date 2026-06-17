@@ -70,6 +70,24 @@ lazy_static! {
         )
         .unwrap()
     });
+    /// Per-tenant cache footprint + hit/miss snapshot (the multitenant cache
+    /// observability for fairness/noisy-neighbor + chargeback). Gauges carry the
+    /// current cumulative totals per tenant from `TenantCache::tenant_stats`.
+    pub static ref CACHE_TENANT_STATS: GaugeVec = register_gauge_vec!(
+        Opts::new(
+            "proximadb_cache_tenant",
+            "Per-tenant cache stats snapshot (metric label selects bytes/hits/misses/hit_ratio/evictions)"
+        ),
+        &["tenant_id", "cache", "metric"]
+    )
+    .unwrap_or_else(|err| {
+        error!("failed to register proximadb_cache_tenant: {}", err);
+        GaugeVec::new(
+            Opts::new("proximadb_cache_tenant", ""),
+            &["tenant_id", "cache", "metric"],
+        )
+        .unwrap()
+    });
 }
 
 /// Helper to record an object store operation.
@@ -94,4 +112,22 @@ pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duratio
     TASK_EXECUTION_TIME_MS
         .with_label_values(&[t_id, engine])
         .inc_by(duration_ms);
+}
+
+/// Publish a per-tenant cache stats snapshot (e.g. from the footer cache's
+/// `tenant_stats()`) onto the `proximadb_cache_tenant` gauge. `cache` names the
+/// cache (e.g. "footer").
+pub fn record_cache_tenant_stats(cache: &str, stats: &[proximadb_cache::TenantCacheStat]) {
+    for s in stats {
+        let g = |metric: &str, v: f64| {
+            CACHE_TENANT_STATS
+                .with_label_values(&[s.tenant.as_str(), cache, metric])
+                .set(v);
+        };
+        g("bytes", s.bytes as f64);
+        g("hits", s.hits as f64);
+        g("misses", s.misses as f64);
+        g("evictions", s.evictions as f64);
+        g("hit_ratio", s.hit_ratio);
+    }
 }
