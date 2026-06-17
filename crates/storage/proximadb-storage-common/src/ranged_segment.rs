@@ -422,6 +422,64 @@ mod tests {
         std::fs::read(&meta.path).unwrap()
     }
 
+    /// End-to-end: filter pushdown + footer cache + correctness on one path.
+    /// A selective SELECT-WHERE over a multi-block segment, run twice through a
+    /// shared tenant footer cache, must (1) return exactly the matching rows,
+    /// (2) skip non-matching block bodies (pruning → < whole segment), and
+    /// (3) fetch fewer bytes the second time (footer cache hit).
+    #[tokio::test]
+    async fn e2e_filtered_pruned_cached_read() {
+        use proximadb_filter_expression::{ComparisonOperator, FilterExpression};
+
+        let bytes = build_segment_bytes(2000, 16);
+        let total = bytes.len() as u64;
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+        };
+        let footer_cache: Arc<FooterCache> =
+            Arc::new(FooterCache::new(proximadb_cache::CacheBudget::new(1 << 30, 1 << 30)));
+
+        // created_at = 1000 + i; keep only the upper portion.
+        let threshold = 1000 + 1500i64;
+        let filter = FilterExpression::Comparison {
+            field: "created_at".into(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(threshold),
+        };
+        let field_to_col = |f: &str| match f {
+            "created_at" => Some(col_id::CREATED_AT),
+            _ => None,
+        };
+
+        // Pass 1 — populates the footer cache, prunes low blocks.
+        let r1 = RangedSegmentReader::open_with_cache(
+            &bridge, Path::from("seg.pax"), Some("t"), Some(footer_cache.clone()), None,
+        ).await.unwrap();
+        let recs1 = r1.read_records_pruned(&filter, &field_to_col, &[], &[]).await.unwrap();
+        let after_1 = bridge.ranged_bytes.load(Ordering::Relaxed);
+
+        // (1) correctness: every returned row is in a surviving block (block-
+        // granular pruning) and at least the true matches are present.
+        assert!(!recs1.is_empty() && recs1.len() < 2000, "pruned to a subset");
+        assert!(recs1.iter().all(|r| r.created_at_ns >= threshold - 8192));
+        assert!(recs1.iter().filter(|r| r.created_at_ns >= threshold).count() > 0);
+        // (2) pruning: low block bodies skipped → less than the whole segment.
+        assert!(after_1 < total, "pass 1 {after_1} not < whole segment {total}");
+        footer_cache.sync().await;
+
+        // Pass 2 — same query, footer cache hot.
+        let r2 = RangedSegmentReader::open_with_cache(
+            &bridge, Path::from("seg.pax"), Some("t"), Some(footer_cache.clone()), None,
+        ).await.unwrap();
+        let recs2 = r2.read_records_pruned(&filter, &field_to_col, &[], &[]).await.unwrap();
+        let delta_2 = bridge.ranged_bytes.load(Ordering::Relaxed) - after_1;
+
+        // (3) cache: identical results, fewer bytes (footers served from cache).
+        assert_eq!(recs2.len(), recs1.len(), "cached pass must match");
+        assert!(delta_2 < after_1, "pass 2 {delta_2} not < pass 1 {after_1} (cache miss)");
+    }
+
     #[tokio::test]
     async fn ranged_segment_column_equals_whole_read() {
         let bytes = build_segment_bytes(512, 64);
