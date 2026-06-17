@@ -383,63 +383,108 @@ impl PyDataFusionSession {
                 },
             );
 
-            // 3. Create appropriate reader for the engine
+            // 3. Create appropriate table provider for the engine
             let filesystem_factory = self.db.shared_services().filesystem_factory.clone();
 
-            let reader: Arc<dyn crate::datafusion::proxima_scan_exec::SplitReader> =
-                match df_info.engine_type {
-                    crate::datafusion::EngineType::Sst => {
-                        Arc::new(crate::datafusion::engine_adapters::SstSplitReader::new(
+            // For embedded mode, we use the local data directory
+            let base_path = format!(
+                "file://{}/data/{}",
+                self.db.config.storage_locations[0]
+                    .path
+                    .trim_end_matches('/'),
+                table_name
+            );
+
+            let table: Arc<dyn datafusion::datasource::TableProvider> = match df_info.engine_type {
+                crate::datafusion::EngineType::Sst => {
+                    Arc::new(crate::datafusion::engine_adapters::SstTableProvider::new(
+                        df_info.clone(),
+                        base_path.clone(),
+                        filesystem_factory.clone(),
+                    ))
+                }
+                crate::datafusion::EngineType::Viper => {
+                    Arc::new(crate::datafusion::engine_adapters::ViperTableProvider::new(
+                        df_info.clone(),
+                        base_path.clone(),
+                        filesystem_factory.clone(),
+                    ))
+                }
+                crate::datafusion::EngineType::Helix => {
+                    Arc::new(crate::datafusion::engine_adapters::HelixTableProvider::new(
+                        df_info.clone(),
+                        base_path.clone(),
+                        filesystem_factory.clone(),
+                    ))
+                }
+                _ => {
+                    let reader =
+                        Arc::new(crate::datafusion::proxima_scan_exec::NullSplitReader::new(
                             schema.clone(),
-                            filesystem_factory.clone(),
-                            df_info.dimension,
-                        ))
-                    }
-                    crate::datafusion::EngineType::Viper => {
-                        Arc::new(crate::datafusion::engine_adapters::ViperSplitReader::new(
-                            schema.clone(),
-                            filesystem_factory.clone(),
-                            df_info.dimension,
-                        ))
-                    }
-                    crate::datafusion::EngineType::Helix => {
-                        Arc::new(crate::datafusion::engine_adapters::HelixSplitReader::new(
-                            schema.clone(),
-                            filesystem_factory.clone(),
-                            df_info.dimension,
-                            6, // default hilbert order
-                        ))
-                    }
-                    _ => Arc::new(crate::datafusion::proxima_scan_exec::NullSplitReader::new(
-                        schema.clone(),
-                        df_info.engine_type.clone(),
-                    )),
-                };
+                            df_info.engine_type.clone(),
+                        ));
+                    Arc::new(ProximaDataFusionTable::new(
+                        table_name.clone(),
+                        df_info,
+                        schema,
+                        reader,
+                    ))
+                }
+            };
 
             // 4. Create and register table. Refreshing is expected to be safe
             // in long-lived notebook sessions, so replace an existing provider
             // for the collection instead of treating duplicate registration as
             // fatal.
-            let table = ProximaDataFusionTable::new(table_name.clone(), df_info, schema, reader);
-
             self.ctx.deregister_table(&table_name).map_err(|e| {
                 PyRuntimeError::new_err(format!(
                     "Failed to refresh table {} before registration: {}",
                     table_name, e
                 ))
             })?;
-
-            self.ctx
-                .register_table(&table_name, Arc::new(table))
-                .map_err(|e| {
-                    PyRuntimeError::new_err(format!(
-                        "Failed to register table {}: {}",
-                        table_name, e
-                    ))
-                })?;
+            self.ctx.register_table(&table_name, table).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to register table {}: {}", table_name, e))
+            })?;
         }
 
         Ok(())
+    }
+
+    /// Perform a vector similarity search natively in DataFusion.
+    /// This utilizes the `vector_search` UDTF to return a DataFrame of `(id, score)`
+    /// that can be joined with other relational data.
+    #[pyo3(signature = (collection, query_vector, k=10))]
+    fn vector_search(
+        &self,
+        py: Python<'_>,
+        collection: String,
+        query_vector: Vec<f32>,
+        k: u32,
+    ) -> PyResult<PyDataFrame> {
+        require_non_blank("Collection name", &collection)?;
+        if query_vector.is_empty() {
+            return Err(PyValueError::new_err(
+                "Query vector must contain at least one dimension",
+            ));
+        }
+        if k == 0 {
+            return Err(PyValueError::new_err("k must be greater than zero"));
+        }
+
+        let escaped_collection = collection.replace('\'', "''");
+        let vector_str = query_vector
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let vector_literal = format!("[{}]", vector_str);
+
+        let sql = format!(
+            "SELECT * FROM vector_search('{}', '{}', {})",
+            escaped_collection, vector_literal, k
+        );
+
+        self.sql(py, sql)
     }
 
     /// Execute a query across the entire ProximaDB cluster (Distributed)

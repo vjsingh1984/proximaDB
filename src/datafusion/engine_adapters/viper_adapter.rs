@@ -75,7 +75,7 @@ use crate::datafusion::proxima_table_provider::{
 use crate::storage::formats::{
     CacheStatus, ColumnBounds, FileSplit, SplitStatistics, SplitType, StorageTier,
 };
-use crate::storage::persistence::filesystem::FilesystemFactory;
+use crate::storage::persistence::filesystem::{FilesystemError, FilesystemFactory};
 
 use super::common::vector_collection_schema;
 
@@ -191,10 +191,18 @@ impl ViperTableProvider {
             .get_filesystem(&self.base_path)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        let entries = filesystem
-            .list(&self.base_path)
-            .await
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let entries = match filesystem.list(&self.base_path).await {
+            Ok(entries) => entries,
+            Err(crate::storage::persistence::filesystem::FilesystemError::NotFound(_)) => {
+                Vec::new()
+            }
+            Err(crate::storage::persistence::filesystem::FilesystemError::Io(e))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Vec::new()
+            }
+            Err(e) => return Err(DataFusionError::External(Box::new(e))),
+        };
 
         let mut files = Vec::new();
         for entry in entries {

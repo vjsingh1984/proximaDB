@@ -376,7 +376,9 @@ mod tests {
             endpoint: None,
             client_id: Some("00000000-0000-0000-0000-000000000001".to_string()),
             tenant_id: Some("00000000-0000-0000-0000-000000000002".to_string()),
-            federated_token_file: Some("/var/run/secrets/azure/tokens/azure-identity-token".to_string()),
+            federated_token_file: Some(
+                "/var/run/secrets/azure/tokens/azure-identity-token".to_string(),
+            ),
         };
         let fs = AzureBlobFileSystem::new(cfg).await.unwrap();
         // Builds the credential provider (token file is read lazily per-request,

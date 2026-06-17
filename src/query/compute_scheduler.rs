@@ -284,7 +284,11 @@ mod tests {
                 engages_relational: true,
                 parquet_backed: true,
             })
-            .routed_read_plan_with_splits(ReadSplitSummary::row_groups(8, Some(50_000), Some(1 << 20)));
+            .routed_read_plan_with_splits(ReadSplitSummary::row_groups(
+                8,
+                Some(50_000),
+                Some(1 << 20),
+            ));
 
         assert_eq!(plan.backend, ComputeBackend::DataFusionLocal);
         let explain = plan.route_explanation();

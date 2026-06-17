@@ -1203,6 +1203,7 @@ impl PostgresProtocol {
                             {
                                 self.ensure_relational_backing_collection(
                                     &table_name,
+                                    ddl_scope.as_deref(),
                                     backing_precision.as_deref(),
                                 )
                                 .await?;
@@ -1304,6 +1305,7 @@ impl PostgresProtocol {
     async fn ensure_relational_backing_collection(
         &self,
         table_name: &str,
+        tenant_id: Option<&str>,
         canonical_embedding_precision_label: Option<&str>,
     ) -> Result<()> {
         use crate::proto::proximadb_v1::{CollectionConfig, EmbeddingPrecision, StorageEngine};
@@ -1343,7 +1345,11 @@ impl PostgresProtocol {
             ..Default::default()
         };
 
-        match self.collection_port.create_collection(config, None).await {
+        match self
+            .collection_port
+            .create_collection(config, tenant_id)
+            .await
+        {
             Ok(_) => {
                 debug!(
                     "Created relational backing collection '{}' via PostgreSQL",

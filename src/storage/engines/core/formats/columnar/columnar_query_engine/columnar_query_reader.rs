@@ -1075,11 +1075,8 @@ impl UnifiedParquetReader {
                     None => {
                         // Some sub-expression has no vectorized kernel — fall back to
                         // correct row-at-a-time filtering.
-                        let batch_records = self.extract_records_from_batch(
-                            &batch,
-                            needs_vectors,
-                            needs_metadata,
-                        )?;
+                        let batch_records =
+                            self.extract_records_from_batch(&batch, needs_vectors, needs_metadata)?;
                         for record in batch_records {
                             if self.matches_filter_expression(&record, filter_expr) {
                                 records.push(record);
@@ -1190,8 +1187,7 @@ impl UnifiedParquetReader {
                     None => {
                         // Some sub-expression has no vectorized kernel — fall back to
                         // correct row-at-a-time evaluation rather than passing everything.
-                        let filtered =
-                            self.filter_batch_row_at_a_time(&batch, filter_expr)?;
+                        let filtered = self.filter_batch_row_at_a_time(&batch, filter_expr)?;
                         if filtered.num_rows() > 0 {
                             result_batches.push(filtered);
                         }

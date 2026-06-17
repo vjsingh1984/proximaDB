@@ -93,9 +93,7 @@ fn normalize_in_values(expr: &FilterExpression) -> FilterExpression {
         FilterExpression::Or(exprs) => {
             FilterExpression::Or(exprs.iter().map(normalize_in_values).collect())
         }
-        FilterExpression::Not(inner) => {
-            FilterExpression::Not(Box::new(normalize_in_values(inner)))
-        }
+        FilterExpression::Not(inner) => FilterExpression::Not(Box::new(normalize_in_values(inner))),
         FilterExpression::Comparison {
             field,
             operator,

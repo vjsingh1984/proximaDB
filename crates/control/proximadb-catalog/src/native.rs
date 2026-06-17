@@ -385,7 +385,8 @@ impl Catalog for NativeCatalog {
         namespace: &[String],
         properties: HashMap<String, String>,
     ) -> Result<CatalogNamespace> {
-        self.create_namespace_inner(namespace, properties, None).await
+        self.create_namespace_inner(namespace, properties, None)
+            .await
     }
 
     async fn create_namespace_for_tenant(

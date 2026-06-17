@@ -201,9 +201,9 @@ pub mod query_service;
 /// gauge + observation / hot-swap counters for /route-health +
 /// /recall-tune.
 pub mod recall_drift_metrics;
+pub mod saas_billing_metrics;
 pub mod schema;
 pub mod store;
-pub mod saas_billing_metrics;
 /// TD-064 predicate-aware vector search shortfall counters.
 pub mod td064_metrics;
 /// TD-066 canonical-WAL-authority recovery observability (Option E from

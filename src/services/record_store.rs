@@ -36,11 +36,11 @@ use proximadb_storage_common::{
     proxima_arrow,
 };
 
+use crate::metrics::saas_billing_metrics::{record_object_store_op, record_storage_bytes};
 use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
 use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};
 use crate::storage::tenant::context::TenantContext;
-use crate::metrics::saas_billing_metrics::{record_object_store_op, record_storage_bytes};
 
 /// Logical mutation kind at the canonical table-record boundary.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,15 +254,23 @@ fn sanitize_object_path_segment(value: &str) -> String {
     }
 }
 
-fn object_store_write_base_path(schema: &CatalogTableSchema, tenant_context: Option<&TenantContext>) -> String {
-    let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str()).unwrap_or("default_tenant");
+fn object_store_write_base_path(
+    schema: &CatalogTableSchema,
+    tenant_context: Option<&TenantContext>,
+) -> String {
+    let tenant_id = tenant_context
+        .map(|tc| tc.tenant_id.as_str())
+        .unwrap_or("default_tenant");
     let mock_namespace = proximadb_catalog::CatalogNamespace::new(vec!["default".into()])
         .with_tenant(tenant_id)
         .with_namespace_id("ns_default");
-        
-    let dr_path = crate::storage::trait_components::path_resolver::DrPathBuilder::build(&mock_namespace, &schema.name)
-        .expect("DrPathBuilder failed to construct valid tenant-isolated path");
-        
+
+    let dr_path = crate::storage::trait_components::path_resolver::DrPathBuilder::build(
+        &mock_namespace,
+        &schema.name,
+    )
+    .expect("DrPathBuilder failed to construct valid tenant-isolated path");
+
     dr_path.root_prefix()
 }
 
@@ -1254,20 +1262,19 @@ impl DirectWalTableRecordStore {
             return Ok(());
         }
         let primary_key = schema_primary_key_column(table_schema);
-        let existing = RecordStorageTableRecordStore::new(
-            self.partition(tenant_id, &table_schema.name),
-        )
-        .scan_records(
-            table_schema,
-            TableRecordScanRequest {
-                table_id: table_schema.name.clone(),
-                limit: None,
-                include_vector: false,
-                include_props: true,
-            },
-            None,
-        )
-        .await?;
+        let existing =
+            RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
+                .scan_records(
+                    table_schema,
+                    TableRecordScanRequest {
+                        table_id: table_schema.name.clone(),
+                        limit: None,
+                        include_vector: false,
+                        include_props: true,
+                    },
+                    None,
+                )
+                .await?;
         let mut index = TableUniqueIndex::with_sets(&set_columns);
         for record in &existing {
             index.upsert(record, primary_key.as_deref());
@@ -1804,8 +1811,10 @@ mod tests {
             _data_prefix: &ObjectPath,
             _manifest_prefix: &str,
             _parent: Option<u64>,
-        ) -> std::result::Result<proximadb_storage_common::object_store_bridge::CommitOutcome, StorageError>
-        {
+        ) -> std::result::Result<
+            proximadb_storage_common::object_store_bridge::CommitOutcome,
+            StorageError,
+        > {
             use proximadb_storage_common::object_store_bridge::CommitOutcome;
             Ok(CommitOutcome::Committed(0))
         }
@@ -2861,16 +2870,20 @@ impl ObjectStoreIcebergRecordStore {
     /// reads — are deferred to F5/P5 and layer behind this same `ObjectStoreBridge`
     /// seam (see `iceberg-engine/src/lib.rs` v1-scope notes; routing these leaf
     /// reads through DataFusion via `ComputeScheduler` is P1/P5).
-    async fn read_all_records(&self, schema: &CatalogTableSchema, tenant_context: Option<&TenantContext>) -> Result<Vec<ProximaRecord>> {
+    async fn read_all_records(
+        &self,
+        schema: &CatalogTableSchema,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Vec<ProximaRecord>> {
         let base = object_store_write_base_path(schema, tenant_context);
         let prefix = ObjectPath::from(format!("{base}data"));
         let parquet_paths = list_objects_with_suffix(&self.bridge, &prefix, ".parquet").await?;
-        
+
         let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
         record_object_store_op(tenant_id, "list_parquet");
 
         let mut records = Vec::new();
-        
+
         for path in parquet_paths {
             record_object_store_op(tenant_id, "read_parquet");
             let mut stream = self
@@ -2998,7 +3011,11 @@ impl ObjectStoreVectorRecordStore {
     /// Read every current record for `schema` by listing the PAX segment objects
     /// the write path produced under the table's `segments/` prefix and decoding
     /// each via the bridge's `fetch_vector_segment`.
-    async fn read_all_records(&self, schema: &CatalogTableSchema, tenant_context: Option<&TenantContext>) -> Result<Vec<ProximaRecord>> {
+    async fn read_all_records(
+        &self,
+        schema: &CatalogTableSchema,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Vec<ProximaRecord>> {
         let base = object_store_write_base_path(schema, tenant_context);
         let prefix = ObjectPath::from(format!("{base}segments"));
         let segment_paths =
@@ -3100,7 +3117,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             )
         })?;
         let remove_result = std::fs::remove_file(&segment_meta.path);
-        
+
         let tenant_id = _tenant_context.map(|tc| tc.tenant_id.as_str());
         self.bridge
             .persist_vector_segment(&object_path, &bytes, tenant_id)

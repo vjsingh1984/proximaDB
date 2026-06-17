@@ -952,9 +952,8 @@ fn parse_metadata_filter(
         serde_json::Value::Array(items) if items.is_empty() => Ok(None),
         serde_json::Value::Object(map) if map.is_empty() => Ok(None),
         serde_json::Value::Array(_) => {
-            let typed: Vec<TypedFilter> = serde_json::from_value(value.clone()).map_err(|e| {
-                ApiError::InvalidArgument(format!("invalid filter list: {e}"))
-            })?;
+            let typed: Vec<TypedFilter> = serde_json::from_value(value.clone())
+                .map_err(|e| ApiError::InvalidArgument(format!("invalid filter list: {e}")))?;
             validate_typed_filters(&typed)?;
             let rich = typed
                 .iter()
@@ -1575,31 +1574,29 @@ pub async fn search_with_typed_filters(
         turboquant_hints,
         vector_bounds_pruned_blocks,
     ) = crate::observability::predicate_diagnostics::scope(async {
-            let outcome = state
-                .request_handlers
-                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
-                .await;
-            let downgraded =
-                crate::observability::predicate_diagnostics::take_quantized_downgrade();
-            // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
-            let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
-            // TD-040 S3e: SST vector-bounds prune count (also taken in-scope —
-            // the task-local binding ends when this future completes).
-            let vb_pruned =
-                crate::observability::predicate_diagnostics::take_vector_bounds_pruned();
-            // Phase K (Quantization Trait Convergence Plan): TurboQuant
-            // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
-            // the scope because the task-local binding ends when this
-            // future completes — same constraint as the take above.
-            // `None` is the common case (most searches don't run
-            // through TurboQuant scoring); the slot is skipped at
-            // serialization time via the `skip_serializing_if` on
-            // `SearchPlanHints.turboquant` (Phase J) and
-            // `VectorHints.turboquant` (Phase F).
-            let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
-            (outcome, downgraded, cold_stage1, tq_hints, vb_pruned)
-        })
-        .await;
+        let outcome = state
+            .request_handlers
+            .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+            .await;
+        let downgraded = crate::observability::predicate_diagnostics::take_quantized_downgrade();
+        // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
+        let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
+        // TD-040 S3e: SST vector-bounds prune count (also taken in-scope —
+        // the task-local binding ends when this future completes).
+        let vb_pruned = crate::observability::predicate_diagnostics::take_vector_bounds_pruned();
+        // Phase K (Quantization Trait Convergence Plan): TurboQuant
+        // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
+        // the scope because the task-local binding ends when this
+        // future completes — same constraint as the take above.
+        // `None` is the common case (most searches don't run
+        // through TurboQuant scoring); the slot is skipped at
+        // serialization time via the `skip_serializing_if` on
+        // `SearchPlanHints.turboquant` (Phase J) and
+        // `VectorHints.turboquant` (Phase F).
+        let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
+        (outcome, downgraded, cold_stage1, tq_hints, vb_pruned)
+    })
+    .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
     match search_outcome {
@@ -2329,10 +2326,9 @@ mod tests {
         }
 
         // Multiple keys → an AND of equality comparisons.
-        let expr =
-            parse_metadata_filter(&serde_json::json!({ "account_id": "acctA", "tier": 2 }))
-                .expect("valid")
-                .expect("some");
+        let expr = parse_metadata_filter(&serde_json::json!({ "account_id": "acctA", "tier": 2 }))
+            .expect("valid")
+            .expect("some");
         match expr {
             FilterExpression::And(conditions) => assert_eq!(conditions.len(), 2),
             other => panic!("expected AND, got {other:?}"),
@@ -2362,9 +2358,21 @@ mod tests {
 
     #[test]
     fn parse_metadata_filter_empty_and_invalid() {
-        assert!(parse_metadata_filter(&serde_json::Value::Null).unwrap().is_none());
-        assert!(parse_metadata_filter(&serde_json::json!({})).unwrap().is_none());
-        assert!(parse_metadata_filter(&serde_json::json!([])).unwrap().is_none());
+        assert!(
+            parse_metadata_filter(&serde_json::Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_metadata_filter(&serde_json::json!({}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            parse_metadata_filter(&serde_json::json!([]))
+                .unwrap()
+                .is_none()
+        );
         // Bad operator in the typed-list form is rejected.
         assert!(
             parse_metadata_filter(&serde_json::json!([

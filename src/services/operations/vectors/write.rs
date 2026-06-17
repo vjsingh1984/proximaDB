@@ -142,11 +142,9 @@ impl VectorWriteCoordinator {
     ) -> Result<()> {
         let collection = self.resolver.get_or_load_collection(collection_id).await?;
         match &collection.config {
-            Some(config) => super::input_validation::validate_records_for_insert(
-                collection_id,
-                config,
-                records,
-            ),
+            Some(config) => {
+                super::input_validation::validate_records_for_insert(collection_id, config, records)
+            }
             None => Ok(()),
         }
     }

@@ -61,9 +61,7 @@ pub(crate) async fn read_selected_row_groups(
     let (store, path) = match object_store::parse_url(&url) {
         Ok(pair) => pair,
         Err(e) => {
-            tracing::debug!(
-                "NOVA ranged reader: parse_url({url}) failed, full-read fallback: {e}"
-            );
+            tracing::debug!("NOVA ranged reader: parse_url({url}) failed, full-read fallback: {e}");
             return Ok(None);
         }
     };

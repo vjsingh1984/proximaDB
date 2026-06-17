@@ -205,9 +205,8 @@ pub(crate) fn rich_filters_to_filter_expression(
                 } else {
                     filter.value_list.clone()
                 };
-                let array = serde_json::Value::Array(
-                    values.iter().map(proxima_value_to_json).collect(),
-                );
+                let array =
+                    serde_json::Value::Array(values.iter().map(proxima_value_to_json).collect());
                 conditions.push(FilterExpression::Comparison {
                     field,
                     operator: if matches!(filter.operator, RichFilterOperator::In) {
@@ -1763,7 +1762,9 @@ impl VectorOperationsService {
             return Err(anyhow::anyhow!(e));
         }
 
-        self.write_coordinator().insert_batch_internal(collection_id, records).await
+        self.write_coordinator()
+            .insert_batch_internal(collection_id, records)
+            .await
     }
 
     /// Alias kept for callers already using ProximaRecord envelopes.
@@ -1816,7 +1817,9 @@ impl VectorOperationsService {
             }
         }
 
-        self.write_coordinator().insert_batch_internal(collection_id, records).await
+        self.write_coordinator()
+            .insert_batch_internal(collection_id, records)
+            .await
     }
 
     /// Check whether a rich record ID already exists in WAL or the collection's
@@ -3852,7 +3855,9 @@ impl VectorOperationsService {
 
     /// Get unflushed vectors for a collection from the WAL/memtable
     pub async fn get_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<ProximaRecord>> {
-        self.diagnostics().get_unflushed_vectors(collection_id).await
+        self.diagnostics()
+            .get_unflushed_vectors(collection_id)
+            .await
     }
 
     /// Get unflushed vectors as canonical ProximaRecord envelopes.
@@ -4100,8 +4105,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err = ensure_tenant_on_records(&mut records, "tenant_a")
-            .unwrap_err();
+        let err = ensure_tenant_on_records(&mut records, "tenant_a").unwrap_err();
 
         assert!(
             err.to_string()
@@ -4131,8 +4135,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err = ensure_tenant_on_records(&mut records, "tenant_a")
-            .unwrap_err();
+        let err = ensure_tenant_on_records(&mut records, "tenant_a").unwrap_err();
 
         assert!(
             err.to_string()
@@ -4191,7 +4194,10 @@ mod tenant_tests {
         // starts_with / ends_with must NOT collapse to Contains (which would
         // broaden the match and risk leaking cross-scope records).
         for (op, expected) in [
-            (RichFilterOperator::StartsWith, ComparisonOperator::StartsWith),
+            (
+                RichFilterOperator::StartsWith,
+                ComparisonOperator::StartsWith,
+            ),
             (RichFilterOperator::EndsWith, ComparisonOperator::EndsWith),
             (RichFilterOperator::Contains, ComparisonOperator::Contains),
         ] {
@@ -4290,8 +4296,7 @@ mod tenant_tests {
     #[test]
     fn tombstone_records_for_ids_use_delete_shape() {
         let now_ns = 1_234_000_000i64;
-        let tombstones =
-            tombstone_records_for_ids(&["doc_3".to_string()], now_ns);
+        let tombstones = tombstone_records_for_ids(&["doc_3".to_string()], now_ns);
 
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].oid, "doc_3");
@@ -4672,9 +4677,8 @@ mod index_first_search_tests {
             },
         ];
 
-        let result =
-            duplicate_insert_conflict_result("collection-1", &vectors)
-                .expect("duplicate insert should return a conflict");
+        let result = duplicate_insert_conflict_result("collection-1", &vectors)
+            .expect("duplicate insert should return a conflict");
 
         assert!(!result.success);
         assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
@@ -4689,10 +4693,7 @@ mod index_first_search_tests {
 
     #[test]
     fn test_insert_only_lock_key_scopes_by_tenant() {
-        assert_eq!(
-            insert_only_lock_key("collection-1", None),
-            "collection-1"
-        );
+        assert_eq!(insert_only_lock_key("collection-1", None), "collection-1");
         assert_eq!(
             insert_only_lock_key("collection-1", Some("tenant-a")),
             "tenant-a:collection-1"
@@ -5302,10 +5303,7 @@ impl proximadb_runtime::VectorOpsPort for VectorOperationsService {
         let matching = records
             .into_iter()
             .filter(|record| {
-                crate::core::search::sql_value_filter::evaluate_filter_proxima(
-                    &expr,
-                    &record.props,
-                )
+                crate::core::search::sql_value_filter::evaluate_filter_proxima(&expr, &record.props)
             })
             .map(|record| {
                 // Mirror the v2 scan serializer's id selection (oid, then the

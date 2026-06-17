@@ -1244,8 +1244,9 @@ mod tests {
         let schema = ab_schema_with_check("a > 0 AND b < 100");
         CatalogRow::validate(&schema, ab_row(5.0, 10.0), &RelationalWriteProfile::oltp())
             .expect("a>0 AND b<100 holds");
-        let err = CatalogRow::validate(&schema, ab_row(5.0, 200.0), &RelationalWriteProfile::oltp())
-            .expect_err("b>=100 fails the AND");
+        let err =
+            CatalogRow::validate(&schema, ab_row(5.0, 200.0), &RelationalWriteProfile::oltp())
+                .expect_err("b>=100 fails the AND");
         assert!(
             err.to_string()
                 .contains("CHECK constraint 'a > 0 AND b < 100' failed")
@@ -1382,8 +1383,9 @@ mod tests {
         values.insert("id".to_string(), ProximaValue::Int64(42));
         values.insert("customer_id".to_string(), ProximaValue::Int64(7));
 
-        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp())
-            .expect("non-null FK tuple is now accepted by row validation (DML enforces references)");
+        CatalogRow::validate(&schema, values, &RelationalWriteProfile::oltp()).expect(
+            "non-null FK tuple is now accepted by row validation (DML enforces references)",
+        );
     }
 
     #[test]

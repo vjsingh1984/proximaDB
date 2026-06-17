@@ -61,7 +61,7 @@ impl SstEngine {
     /// (Synchronous) or runs in the background. There is no double-index risk —
     /// the live write path does not populate AXIS, so flush is the first
     /// indexing point.
-    async fn index_flushed_into_axis(&self, params: &FlushParameters) {
+    async fn index_flushed_into_axis(&self, params: &FlushParameters, files_created: Vec<String>) {
         let Some(axis_manager) = self.axis_manager() else {
             return;
         };
@@ -72,7 +72,7 @@ impl SstEngine {
             return;
         }
         if let Err(e) = axis_manager
-            .handle_flushed_vectors(collection_id, params.vector_records.clone(), Vec::new())
+            .handle_flushed_vectors(collection_id, params.vector_records.clone(), files_created)
             .await
         {
             tracing::warn!(
@@ -495,12 +495,15 @@ impl SstEngine {
             }
         }
 
+        let final_file_path = format!("{}/{}", atomic_op.final_url, filename);
+
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
 
         // TD-112: index the just-flushed vectors into AXIS so post-flush search is
         // served by the ANN index rather than a brute-force segment scan.
-        self.index_flushed_into_axis(params).await;
+        self.index_flushed_into_axis(params, vec![final_file_path.clone()])
+            .await;
 
         // Create flush result with file path for AXIS index building
         Ok(FlushResult {
@@ -509,7 +512,7 @@ impl SstEngine {
             entries_flushed: Some(entries_written),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
-            file_paths: vec![format!("{}/{}", atomic_op.final_url, filename)],
+            file_paths: vec![final_file_path],
             duration_ms: Some(0), // Will be set by caller
             completed_at: Utc::now(),
             engine_metrics: {
@@ -670,7 +673,10 @@ mod tests {
             estimated_size: 0,
         };
 
-        let result = engine.do_flush(&params).await.expect("flush should succeed");
+        let result = engine
+            .do_flush(&params)
+            .await
+            .expect("flush should succeed");
         assert!(result.success, "flush should succeed");
 
         assert_eq!(

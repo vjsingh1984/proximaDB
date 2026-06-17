@@ -301,10 +301,8 @@ impl PostgresServer {
             observability_service,
         );
         let mut protocol = if let Some(direct_write_services) = direct_write_services {
-            protocol.with_direct_catalog_manager(
-                catalog_manager,
-                direct_write_services.canonical_store,
-            )
+            protocol
+                .with_direct_catalog_manager(catalog_manager, direct_write_services.canonical_store)
         } else {
             protocol.with_catalog_manager(catalog_manager)
         };

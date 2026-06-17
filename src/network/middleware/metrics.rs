@@ -13,9 +13,7 @@ use axum::response::Response;
 use std::time::Instant;
 
 use lazy_static::lazy_static;
-use prometheus::{
-    CounterVec, HistogramVec, register_counter_vec, register_histogram_vec,
-};
+use prometheus::{CounterVec, HistogramVec, register_counter_vec, register_histogram_vec};
 
 lazy_static! {
     static ref HTTP_REQUESTS_TOTAL: CounterVec = register_counter_vec!(

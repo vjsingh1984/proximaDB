@@ -1427,7 +1427,10 @@ mod vector_bounds_prune_tests {
         assert_eq!(vector_bounds_prune_seed_size(1), 1);
         assert_eq!(vector_bounds_prune_seed_size(3), 3);
         // At/above the floor, ceil(sqrt(n)) but never below the floor.
-        assert_eq!(vector_bounds_prune_seed_size(16), VECTOR_BOUNDS_PRUNE_SEED_FLOOR);
+        assert_eq!(
+            vector_bounds_prune_seed_size(16),
+            VECTOR_BOUNDS_PRUNE_SEED_FLOOR
+        );
         assert_eq!(vector_bounds_prune_seed_size(100), 10);
         assert_eq!(vector_bounds_prune_seed_size(101), 11);
     }
@@ -1436,7 +1439,10 @@ mod vector_bounds_prune_tests {
     fn prune_engages_only_for_unfiltered_exact_l2() {
         // Unfiltered Euclidean, not force-exact → engages, returns the query.
         let params = euclidean_params(vec![1.0, 2.0, 3.0]);
-        assert_eq!(vector_bounds_prune_query(&params), Some(&[1.0, 2.0, 3.0][..]));
+        assert_eq!(
+            vector_bounds_prune_query(&params),
+            Some(&[1.0, 2.0, 3.0][..])
+        );
 
         // Cosine → the L2 lower bound is invalid → disabled.
         let mut cosine = euclidean_params(vec![1.0, 2.0, 3.0]);

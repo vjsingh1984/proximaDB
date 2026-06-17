@@ -2634,7 +2634,11 @@ mod tests {
 
     // ----- AssertMaxOneRow (scalar-subquery cardinality guard) ---------
 
-    fn one_col_scan(f: &VecReaderFactory, name: &str, rows: Vec<Vec<ProximaValue>>) -> PhysicalPlan {
+    fn one_col_scan(
+        f: &VecReaderFactory,
+        name: &str,
+        rows: Vec<Vec<ProximaValue>>,
+    ) -> PhysicalPlan {
         let schema = RelationalSchema::new(vec![ColumnInfo::new("v", ProximaType::Int64, true)]);
         f.register(name, schema.clone(), rows, vec![]);
         PhysicalPlan::Scan {
@@ -3008,8 +3012,7 @@ mod tests {
     async fn run_setop(op: SetOpKind, all: bool, left: &[i64], right: &[i64]) -> Vec<i64> {
         let int_schema =
             || RelationalSchema::new(vec![ColumnInfo::new("v", ProximaType::Int64, false)]);
-        let int_rows =
-            |vals: &[i64]| vals.iter().map(|v| vec![ProximaValue::Int64(*v)]).collect();
+        let int_rows = |vals: &[i64]| vals.iter().map(|v| vec![ProximaValue::Int64(*v)]).collect();
         let f = VecReaderFactory::new();
         f.register("lft", int_schema(), int_rows(left), vec![0]);
         f.register("rgt", int_schema(), int_rows(right), vec![0]);
@@ -3046,9 +3049,7 @@ mod tests {
             || RelationalSchema::new(vec![ColumnInfo::new("v", ProximaType::Int64, true)]);
         let to_rows = |vals: &[Option<i64>]| -> Vec<RelationalRow> {
             vals.iter()
-                .map(|v| {
-                    vec![v.map_or(ProximaValue::Null, ProximaValue::Int64)]
-                })
+                .map(|v| vec![v.map_or(ProximaValue::Null, ProximaValue::Int64)])
                 .collect()
         };
         let f = VecReaderFactory::new();
@@ -3120,9 +3121,15 @@ mod tests {
         let l = [1, 2, 2, 3];
         let r = [2, 3, 3, 4];
         // INTERSECT (distinct): keys in both → {2, 3}.
-        assert_eq!(run_setop(SetOpKind::Intersect, false, &l, &r).await, vec![2, 3]);
+        assert_eq!(
+            run_setop(SetOpKind::Intersect, false, &l, &r).await,
+            vec![2, 3]
+        );
         // INTERSECT ALL: min(count_l, count_r) → 2×min(2,1)=1, 3×min(1,2)=1 → [2,3].
-        assert_eq!(run_setop(SetOpKind::Intersect, true, &l, &r).await, vec![2, 3]);
+        assert_eq!(
+            run_setop(SetOpKind::Intersect, true, &l, &r).await,
+            vec![2, 3]
+        );
         // EXCEPT (distinct): left keys absent on right → {1}.
         assert_eq!(run_setop(SetOpKind::Except, false, &l, &r).await, vec![1]);
         // EXCEPT ALL: max(0, count_l − count_r) → 1×1, 2×(2−1)=1, 3×0 → [1,2].

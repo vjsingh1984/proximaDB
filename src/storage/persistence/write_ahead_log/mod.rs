@@ -2686,9 +2686,10 @@ impl WriteAheadLogManager {
                 // format MUST match the build site — both go through the shared
                 // `metadata_bloom_key` helper so the separator can never drift.
                 for (field, value) in &filter_conditions {
-                    let key = crate::storage::memtable::specialized::wal_behavior::metadata_bloom_key(
-                        field, value,
-                    );
+                    let key =
+                        crate::storage::memtable::specialized::wal_behavior::metadata_bloom_key(
+                            field, value,
+                        );
                     if !bloom_filter.might_contain(key.as_bytes()) {
                         should_include = false;
                         bloom_misses += 1;

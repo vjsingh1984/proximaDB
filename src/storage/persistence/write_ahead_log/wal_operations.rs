@@ -281,15 +281,40 @@ impl UnifiedWALEntry {
         }
     }
 
-    /// Calculate CRC32 checksum
+    /// Calculate a stable operation checksum.
     fn calculate_checksum(operation: &UnifiedWALOperation) -> u32 {
-        // In production, use a proper CRC32 implementation
-        // For now, using a simple hash
-        let serialized = bincode::serialize(operation).unwrap_or_default();
+        let serialized = Self::canonical_operation_bytes(operation)
+            .or_else(|| bincode::serialize(operation).ok())
+            .unwrap_or_default();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         use std::hash::{Hash, Hasher};
         serialized.hash(&mut hasher);
         hasher.finish() as u32
+    }
+
+    fn canonical_operation_bytes(operation: &UnifiedWALOperation) -> Option<Vec<u8>> {
+        let value = serde_json::to_value(operation).ok()?;
+        let canonical = Self::canonical_json_value(value);
+        serde_json::to_vec(&canonical).ok()
+    }
+
+    fn canonical_json_value(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(items) => serde_json::Value::Array(
+                items.into_iter().map(Self::canonical_json_value).collect(),
+            ),
+            serde_json::Value::Object(map) => {
+                let mut entries = map.into_iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+
+                let mut canonical = serde_json::Map::new();
+                for (key, value) in entries {
+                    canonical.insert(key, Self::canonical_json_value(value));
+                }
+                serde_json::Value::Object(canonical)
+            }
+            scalar => scalar,
+        }
     }
 
     /// Verify checksum integrity
@@ -488,18 +513,10 @@ impl UnifiedWALWriter {
             let url = format!("file://{}", path);
             let fs = self.filesystem.get_filesystem(&url)?;
 
-            // Read existing data if file exists
-            let mut full_data = if fs.exists(&url).await? {
-                fs.read(&url).await?
-            } else {
-                Vec::new()
-            };
-
-            // Append new data
-            full_data.extend_from_slice(&self.current_segment_data);
-
-            // Write back atomically
-            fs.write(&url, &full_data, None).await?;
+            // WAL segments are append-only. Avoid read-modify-write here:
+            // cached reads can lag behind recent writes, and rewriting the
+            // segment risks dropping entries that were already durable.
+            fs.append(&url, &self.current_segment_data).await?;
             fs.sync_file(&url).await?;
 
             // Clear buffer after successful write
@@ -747,6 +764,36 @@ mod tests {
         assert!(entry.is_graph_operation());
         assert!(entry.is_vector_operation());
         assert!(entry.verify_checksum());
+    }
+
+    #[test]
+    fn test_document_checksum_survives_unordered_props_roundtrip() {
+        let mut record = test_record("document/coll/doc1", vec![]);
+        record.props.insert(
+            "zeta".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "last".to_string(),
+            )),
+        );
+        record.props.insert(
+            "alpha".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "first".to_string(),
+            )),
+        );
+
+        let entry = UnifiedWALEntry::new(
+            7,
+            UnifiedWALOperation::DocumentOp(DocumentOperation::UpsertCanonicalDocumentRecord {
+                collection_id: "coll".to_string(),
+                record,
+            }),
+        );
+        let encoded = bincode::serialize(&entry).expect("serialize wal entry");
+        let decoded: UnifiedWALEntry =
+            bincode::deserialize(&encoded).expect("deserialize wal entry");
+
+        assert!(decoded.verify_checksum());
     }
 
     fn test_record(id: &str, vector: Vec<f32>) -> ProximaRecord {

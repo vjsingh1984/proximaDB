@@ -65,9 +65,8 @@ pub fn evaluate_filter(expr: &FilterExpression, metadata: &HashMap<String, SqlVa
 fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
     match value {
         SqlVal::StringValue(s) => serde_json::Value::String(s.clone()),
-        SqlVal::NumberValue(n) => {
-            serde_json::Number::from_f64(*n).map_or(serde_json::Value::Null, serde_json::Value::Number)
-        }
+        SqlVal::NumberValue(n) => serde_json::Number::from_f64(*n)
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
         SqlVal::BoolValue(b) => serde_json::Value::Bool(*b),
         SqlVal::Int64Value(i) => serde_json::Value::Number((*i).into()),
         SqlVal::BytesValue(bytes) => serde_json::Value::Array(
@@ -81,7 +80,11 @@ fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
             array
                 .values
                 .iter()
-                .map(|v| v.value.as_ref().map_or(serde_json::Value::Null, sql_val_to_json))
+                .map(|v| {
+                    v.value
+                        .as_ref()
+                        .map_or(serde_json::Value::Null, sql_val_to_json)
+                })
                 .collect(),
         ),
         SqlVal::ObjectValue(object) => serde_json::Value::Object(
@@ -91,7 +94,9 @@ fn sql_val_to_json(value: &SqlVal) -> serde_json::Value {
                 .map(|(k, v)| {
                     (
                         k.clone(),
-                        v.value.as_ref().map_or(serde_json::Value::Null, sql_val_to_json),
+                        v.value
+                            .as_ref()
+                            .map_or(serde_json::Value::Null, sql_val_to_json),
                     )
                 })
                 .collect(),
@@ -285,12 +290,14 @@ pub fn compare_json_op(
         ComparisonOperator::IsNotNull => !json_val.is_null(),
         // Full SQL LIKE: `%` = any run, `_` = exactly one char, anywhere in the
         // pattern. Shared with every evaluator via `json_comparison`.
-        ComparisonOperator::Like => json_val
-            .as_str()
-            .zip(value.as_str())
-            .is_some_and(|(haystack, pattern)| {
-                crate::core::search::json_comparison::like_pattern_match(haystack, pattern)
-            }),
+        ComparisonOperator::Like => {
+            json_val
+                .as_str()
+                .zip(value.as_str())
+                .is_some_and(|(haystack, pattern)| {
+                    crate::core::search::json_comparison::like_pattern_match(haystack, pattern)
+                })
+        }
     }
 }
 
@@ -310,9 +317,7 @@ where
     F: Fn(&str) -> Option<serde_json::Value>,
 {
     match expr {
-        FilterExpression::And(exprs) => {
-            exprs.iter().all(|e| evaluate_filter_resolved(e, resolve))
-        }
+        FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter_resolved(e, resolve)),
         FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter_resolved(e, resolve)),
         FilterExpression::Not(e) => !evaluate_filter_resolved(e, resolve),
         FilterExpression::Comparison {
@@ -442,14 +447,29 @@ mod tests {
         );
 
         let cases: Vec<(&str, ComparisonOperator, serde_json::Value, bool)> = vec![
-            ("account_id", ComparisonOperator::Equals, json!("acctA"), true),
-            ("account_id", ComparisonOperator::Equals, json!("acctB"), false),
+            (
+                "account_id",
+                ComparisonOperator::Equals,
+                json!("acctA"),
+                true,
+            ),
+            (
+                "account_id",
+                ComparisonOperator::Equals,
+                json!("acctB"),
+                false,
+            ),
             // int prop vs int literal AND float-typed literal (numeric-aware).
             ("tier", ComparisonOperator::Equals, json!(2), true),
             ("tier", ComparisonOperator::Equals, json!(2.0), true),
             ("tier", ComparisonOperator::GreaterThan, json!(1), true),
             ("tier", ComparisonOperator::LessThan, json!(2), false),
-            ("score", ComparisonOperator::LessThanOrEqual, json!(0.5), true),
+            (
+                "score",
+                ComparisonOperator::LessThanOrEqual,
+                json!(0.5),
+                true,
+            ),
             ("score", ComparisonOperator::GreaterThan, json!(0.9), false),
             ("active", ComparisonOperator::Equals, json!(true), true),
             ("active", ComparisonOperator::NotEquals, json!(false), true),
@@ -461,7 +481,11 @@ mod tests {
                 operator,
                 value,
             };
-            assert_eq!(evaluate_filter_proxima(&filter, &props), expected, "{label}");
+            assert_eq!(
+                evaluate_filter_proxima(&filter, &props),
+                expected,
+                "{label}"
+            );
         }
     }
 

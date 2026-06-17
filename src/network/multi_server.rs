@@ -735,8 +735,7 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
             // Warehouse object-store root for `ALTER TABLE … MATERIALIZE`, derived from
             // the server data dir the same way document/observability roots are.
-            let warehouse_root_url =
-                format!("file://{}/warehouse", self.config.data_dir.display());
+            let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
 
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
@@ -752,11 +751,8 @@ impl MultiServer {
                 if let Some(direct_write_services) = direct_write_services {
                     server = server.with_direct_write_services(direct_write_services);
                 }
-                server = server.with_rank_pipeline(
-                    rank_services,
-                    rank_profile_store,
-                    function_store,
-                );
+                server =
+                    server.with_rank_pipeline(rank_services, rank_profile_store, function_store);
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
                 server = server.with_warehouse_materialization(warehouse_root_url);
                 if let Err(e) = server.start().await {
@@ -1099,8 +1095,7 @@ impl MultiServer {
             let pg_bind_addr = self.config.postgres_config.active_bind_address();
             let services = self.shared_services.clone();
             let direct_write_services = self.build_direct_pgwire_write_services().await?;
-            let warehouse_root_url =
-                format!("file://{}/warehouse", self.config.data_dir.display());
+            let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
 

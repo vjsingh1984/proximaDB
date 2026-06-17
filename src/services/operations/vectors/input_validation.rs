@@ -13,9 +13,7 @@ use crate::proto::proximadb_v1::{Collection, CollectionConfig};
 
 /// Find the first non-finite value in an embedding (across precisions), if any,
 /// as `(dimension_index, value_as_f32)`.
-pub(crate) fn first_non_finite_embedding_value(
-    values: &EmbeddingValues,
-) -> Option<(usize, f32)> {
+pub(crate) fn first_non_finite_embedding_value(values: &EmbeddingValues) -> Option<(usize, f32)> {
     match values {
         EmbeddingValues::Fp32(v) => v
             .iter()
@@ -80,7 +78,8 @@ pub(crate) fn validate_records_for_insert(
         let is_tombstone = dim == 0 && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
 
         for (embedding_idx, embedding) in record.embeddings.iter().enumerate() {
-            if let Some((dimension_idx, value)) = first_non_finite_embedding_value(&embedding.values)
+            if let Some((dimension_idx, value)) =
+                first_non_finite_embedding_value(&embedding.values)
             {
                 return Err(anyhow::anyhow!(
                     "Record at index {} embedding {} contains non-finite value at dimension {}: {}",

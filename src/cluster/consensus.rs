@@ -669,9 +669,8 @@ impl RaftConsensus {
 
     /// Propose a command to be replicated and applied to the state machine
     pub async fn propose(&self, command: Command) -> Result<ApplyResult> {
-        let state = self.state.read().await;
-
-        if *state != ConsensusState::Leader {
+        let is_leader = { *self.state.read().await == ConsensusState::Leader };
+        if !is_leader {
             return Ok(ApplyResult {
                 success: false,
                 response: None,
@@ -728,41 +727,58 @@ impl RaftConsensus {
         last_log_index: u64,
         last_log_term: u64,
     ) -> (u64, bool) {
-        let mut persistent = self.persistent.write().await;
+        let mut step_down = false;
+        let response = {
+            let mut persistent = self.persistent.write().await;
 
-        // Reply false if term < currentTerm
-        if term < persistent.current_term {
-            return (persistent.current_term, false);
-        }
+            // Reply false if term < currentTerm
+            if term < persistent.current_term {
+                return (persistent.current_term, false);
+            }
 
-        // If term > currentTerm, update currentTerm and become follower
-        if term > persistent.current_term {
-            persistent.current_term = term;
-            persistent.voted_for = None;
-            let mut state = self.state.write().await;
-            *state = ConsensusState::Follower;
-        }
+            // If term > currentTerm, update currentTerm and become follower.
+            if term > persistent.current_term {
+                persistent.current_term = term;
+                persistent.voted_for = None;
+                step_down = true;
+            }
 
-        // Check if we can grant vote
-        let can_vote = persistent.voted_for.is_none()
-            || persistent.voted_for.as_ref() == Some(&candidate_id.to_string());
+            // Check if we can grant vote
+            let can_vote = persistent.voted_for.is_none()
+                || persistent.voted_for.as_ref() == Some(&candidate_id.to_string());
 
-        // Check if candidate's log is at least as up-to-date as ours
-        let our_last_log = persistent.log.last();
-        let log_ok = match our_last_log {
-            None => true,
-            Some(entry) => {
-                last_log_term > entry.term
-                    || (last_log_term == entry.term && last_log_index >= entry.index)
+            // Check if candidate's log is at least as up-to-date as ours
+            let our_last_log = persistent.log.last();
+            let log_ok = match our_last_log {
+                None => true,
+                Some(entry) => {
+                    last_log_term > entry.term
+                        || (last_log_term == entry.term && last_log_index >= entry.index)
+                }
+            };
+
+            if can_vote && log_ok {
+                persistent.voted_for = Some(candidate_id.to_string());
+                (persistent.current_term, true)
+            } else {
+                (persistent.current_term, false)
             }
         };
 
-        if can_vote && log_ok {
-            persistent.voted_for = Some(candidate_id.to_string());
-            (persistent.current_term, true)
-        } else {
-            (persistent.current_term, false)
+        if step_down {
+            let mut state = self.state.write().await;
+            *state = ConsensusState::Follower;
+            drop(state);
+
+            let mut current_leader = self.current_leader.write().await;
+            *current_leader = None;
+            drop(current_leader);
+
+            let mut leader_state = self.leader_state.write().await;
+            *leader_state = None;
         }
+
+        response
     }
 
     /// Handle AppendEntries RPC
@@ -775,66 +791,93 @@ impl RaftConsensus {
         entries: Vec<LogEntry>,
         leader_commit: u64,
     ) -> (u64, bool) {
-        let mut persistent = self.persistent.write().await;
+        let mut recognized_leader = false;
+        let mut higher_term = false;
+        let (response_term, commit_target) = {
+            let mut persistent = self.persistent.write().await;
 
-        // Reply false if term < currentTerm
-        if term < persistent.current_term {
-            return (persistent.current_term, false);
-        }
-
-        // If term >= currentTerm, recognize leader
-        if term >= persistent.current_term {
-            persistent.current_term = term;
-            let mut state = self.state.write().await;
-            *state = ConsensusState::Follower;
-            let mut current_leader = self.current_leader.write().await;
-            *current_leader = Some(leader_id.to_string());
-        }
-
-        // Check if log contains entry at prevLogIndex with prevLogTerm
-        if prev_log_index > 0 {
-            if let Some(entry) = persistent.log.get(prev_log_index as usize - 1) {
-                if entry.term != prev_log_term {
-                    // Log inconsistency - delete conflicting entries
-                    persistent.log.truncate(prev_log_index as usize - 1);
-                    return (persistent.current_term, false);
-                }
-            } else {
+            // Reply false if term < currentTerm
+            if term < persistent.current_term {
                 return (persistent.current_term, false);
             }
-        }
 
-        // Append new entries
-        for entry in entries {
-            if entry.index as usize <= persistent.log.len() {
-                // Entry already exists, check for conflict
-                if let Some(existing) = persistent.log.get(entry.index as usize - 1)
-                    && existing.term != entry.term
-                {
-                    persistent.log.truncate(entry.index as usize - 1);
+            // If term >= currentTerm, recognize leader.
+            if term >= persistent.current_term {
+                if term > persistent.current_term {
+                    persistent.voted_for = None;
+                    higher_term = true;
+                }
+                persistent.current_term = term;
+                recognized_leader = true;
+            }
+
+            // Check if log contains entry at prevLogIndex with prevLogTerm
+            if prev_log_index > 0 {
+                if let Some(entry) = persistent.log.get(prev_log_index as usize - 1) {
+                    if entry.term != prev_log_term {
+                        // Log inconsistency - delete conflicting entries
+                        persistent.log.truncate(prev_log_index as usize - 1);
+                        return (persistent.current_term, false);
+                    }
+                } else {
+                    return (persistent.current_term, false);
+                }
+            }
+
+            // Append new entries
+            for entry in entries {
+                if entry.index as usize <= persistent.log.len() {
+                    // Entry already exists, check for conflict
+                    if let Some(existing) = persistent.log.get(entry.index as usize - 1)
+                        && existing.term != entry.term
+                    {
+                        persistent.log.truncate(entry.index as usize - 1);
+                        persistent.log.push(entry);
+                    }
+                } else {
                     persistent.log.push(entry);
                 }
-            } else {
-                persistent.log.push(entry);
+            }
+
+            let last_index = persistent.log.len() as u64;
+            (
+                persistent.current_term,
+                (leader_commit > 0).then_some(std::cmp::min(leader_commit, last_index)),
+            )
+        };
+
+        if recognized_leader {
+            let mut state = self.state.write().await;
+            *state = ConsensusState::Follower;
+            drop(state);
+
+            let mut current_leader = self.current_leader.write().await;
+            *current_leader = Some(leader_id.to_string());
+            drop(current_leader);
+
+            if higher_term {
+                let mut leader_state = self.leader_state.write().await;
+                *leader_state = None;
             }
         }
 
-        // Update commit index
-        if leader_commit > self.volatile.read().await.commit_index {
-            let last_index = persistent.log.len() as u64;
-            let mut volatile = self.volatile.write().await;
-            let old_commit = volatile.commit_index;
-            volatile.commit_index = std::cmp::min(leader_commit, last_index);
-            let new_commit = volatile.commit_index;
-            drop(volatile);
+        if let Some(commit_target) = commit_target {
+            let mut should_apply = false;
+            {
+                let mut volatile = self.volatile.write().await;
+                if commit_target > volatile.commit_index {
+                    volatile.commit_index = commit_target;
+                    should_apply = true;
+                }
+            }
 
-            if new_commit > old_commit {
-                // After updating commit index, apply entries to state machine
+            if should_apply {
+                // Apply after releasing the volatile and persistent locks.
                 self.apply_to_state_machine().await;
             }
         }
 
-        (persistent.current_term, true)
+        (response_term, true)
     }
 
     /// Get log entries starting from an index

@@ -94,7 +94,6 @@ impl RestHybridPortImpl {
             indexes,
         }
     }
-
 }
 
 #[async_trait]
@@ -195,8 +194,7 @@ impl HybridPort for RestHybridPortImpl {
         // Fail-closed: any error resolving the filtered id set drops every BM25
         // candidate rather than risk surfacing a record the filter excludes —
         // the safe direction, never a cross-account disclosure.
-        let bm25_results: Vec<BM25Result> = if request.filters.is_empty()
-            || bm25_results.is_empty()
+        let bm25_results: Vec<BM25Result> = if request.filters.is_empty() || bm25_results.is_empty()
         {
             bm25_results
         } else {
