@@ -1069,6 +1069,9 @@ fn encode_i64_with_scheme(values: &[i64], scheme: &ProximaScheme) -> Result<Vec<
         ProximaScheme::SparseCOO => functions::sparse_coo::encode_i64(values),
         ProximaScheme::Dictionary => functions::dictionary::encode_i64(values),
         ProximaScheme::RunLength => functions::run_length::encode_i64(values),
+        ProximaScheme::Sq8 => {
+            anyhow::bail!("SQ8 is a vector-only scheme; not valid for i64 columns")
+        }
         ProximaScheme::Adaptive => functions::adaptive::encode_i64(values),
     }
 }

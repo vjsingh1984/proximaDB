@@ -854,6 +854,8 @@ fn decode_estimate_ns_per_value(scheme: &ProximaScheme) -> u64 {
         ProximaScheme::PForDelta { .. } | ProximaScheme::PForDoubleDelta { .. } => 8,
         ProximaScheme::Zigzag { .. } => 3,
         ProximaScheme::Gorilla => 9,
+        // SQ8 decode is a single affine multiply-add per value (cheap, ~Raw+1).
+        ProximaScheme::Sq8 => 2,
         ProximaScheme::Adaptive => 10,
     }
 }
@@ -999,6 +1001,8 @@ fn estimate_compression_ratio(
             (full_bits / (*bits).max(1) as f32).max(1.0)
         }
         ProximaScheme::Gorilla => 2.0,
+        // SQ8 stores 1 byte/value; ratio vs the source width (4.0 for f32).
+        ProximaScheme::Sq8 => (type_bits(type_id).max(1) as f32 / 8.0).max(1.0),
         ProximaScheme::Adaptive => 1.0,
     }
 }

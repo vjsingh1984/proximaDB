@@ -149,3 +149,9 @@ pub use vector_base_xor::{
     encode_f32_vectors_with_profile as vector_base_xor_encode_f32_vectors_with_profile,
     profile_f32_vectors as vector_base_xor_profile_f32_vectors,
 };
+
+pub mod sq8;
+pub use sq8::{
+    Sq8Params, decode as sq8_decode, decode_into as sq8_decode_into, encode as sq8_encode,
+    fit_params as sq8_fit_params,
+};

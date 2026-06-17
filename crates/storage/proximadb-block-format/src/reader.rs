@@ -321,6 +321,7 @@ fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Resul
                 )
             }
         }
+        ProximaScheme::Sq8 => bail!("SQ8 is a vector-only scheme; not valid for i64 columns"),
         ProximaScheme::Adaptive => functions::adaptive::decode_i64(data, count),
     }
 }
