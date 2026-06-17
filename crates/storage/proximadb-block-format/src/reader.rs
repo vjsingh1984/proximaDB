@@ -22,6 +22,7 @@ use crate::{
     header::{BlockHeader, HEADER_SIZE, fnv1a_hash},
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     stripe::{COLUMN_META_SIZE, ColumnMeta},
+    rowgroup::RowGroupBlock,
     vparam::{QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
@@ -38,6 +39,8 @@ pub struct PaxBlockReader<'a> {
     columns: Vec<ColumnMeta>,
     /// Per-vector-column quantization params (dim, quant_kind, SQ8 scale/offset).
     vparams: VectorParamBlock,
+    /// Row-group sub-index for finer-than-block pruning (empty if absent).
+    rowgroups: RowGroupBlock,
 }
 
 impl<'a> PaxBlockReader<'a> {
@@ -80,12 +83,24 @@ impl<'a> PaxBlockReader<'a> {
             VectorParamBlock::default()
         };
 
+        // Parse the RowGroupBlock side region (finer-grained pruning).
+        let rowgroups = if footer.rgdir_offset != 0 {
+            let start = footer.rgdir_offset as usize;
+            if start >= footer_start {
+                bail!("row-group index overlaps block footer");
+            }
+            RowGroupBlock::from_bytes(&data[start..footer_start])?
+        } else {
+            RowGroupBlock::default()
+        };
+
         Ok(Self {
             data,
             header,
             footer,
             columns,
             vparams,
+            rowgroups,
         })
     }
 
@@ -255,6 +270,11 @@ impl<'a> PaxBlockReader<'a> {
     /// The parsed vector-param side region (dim/quant_kind/SQ8 params per column).
     pub fn vector_params(&self) -> &VectorParamBlock {
         &self.vparams
+    }
+
+    /// The parsed row-group sub-index (empty if the block has none).
+    pub fn row_groups(&self) -> &RowGroupBlock {
+        &self.rowgroups
     }
 
     /// Decode f32 vector values from an embedding stripe.

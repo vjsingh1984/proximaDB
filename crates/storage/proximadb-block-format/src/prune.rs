@@ -92,6 +92,146 @@ pub fn evaluate_block(
     }
 }
 
+/// Return the indices of row groups that may contain matching rows for `filter`.
+///
+/// Uses the block's row-group sub-index (`reader.row_groups()`); a block with no
+/// sub-index conservatively returns all row groups. Same soundness contract as
+/// [`evaluate_block`]: a row group is dropped only when provably empty.
+pub fn evaluate_row_groups(
+    reader: &PaxBlockReader<'_>,
+    filter: &FilterExpression,
+    field_to_col: &FieldToColumn<'_>,
+) -> Vec<usize> {
+    let rg_block = reader.row_groups();
+    let n = rg_block.n_row_groups as usize;
+    if rg_block.is_empty() || n == 0 {
+        // No sub-index: fall back to "all groups" (block-level pruning still applies).
+        let count = crate::rowgroup::RowGroupBlock::group_count(reader.row_count()) as usize;
+        return (0..count.max(1)).collect();
+    }
+    (0..n)
+        .filter(|&rg| {
+            eval_rg(reader, filter, rg as u32, field_to_col) == PruneResult::MayMatch
+        })
+        .collect()
+}
+
+fn eval_rg(
+    reader: &PaxBlockReader<'_>,
+    filter: &FilterExpression,
+    rg: u32,
+    field_to_col: &FieldToColumn<'_>,
+) -> PruneResult {
+    match filter {
+        FilterExpression::And(children) => {
+            for c in children {
+                if eval_rg(reader, c, rg, field_to_col) == PruneResult::Skip {
+                    return PruneResult::Skip;
+                }
+            }
+            PruneResult::MayMatch
+        }
+        FilterExpression::Or(children) => {
+            if children.is_empty() {
+                return PruneResult::MayMatch;
+            }
+            if children
+                .iter()
+                .all(|c| eval_rg(reader, c, rg, field_to_col) == PruneResult::Skip)
+            {
+                PruneResult::Skip
+            } else {
+                PruneResult::MayMatch
+            }
+        }
+        FilterExpression::Not(_) => PruneResult::MayMatch,
+        FilterExpression::Comparison {
+            field,
+            operator,
+            value,
+        } => {
+            let Some(col) = field_to_col(field) else {
+                return PruneResult::MayMatch;
+            };
+            let Some(entry) = reader.row_groups().get(col, rg) else {
+                return PruneResult::MayMatch; // no rg stats for this column
+            };
+            match entry.data_type_id {
+                DT_I64 => prune_i64_bounds(entry, operator, value),
+                DT_F64 => prune_f64_bounds(entry, operator, value),
+                _ => PruneResult::MayMatch,
+            }
+        }
+    }
+}
+
+fn prune_i64_bounds(
+    entry: &crate::rowgroup::RowGroupEntry,
+    op: &ComparisonOperator,
+    value: &Value,
+) -> PruneResult {
+    match op {
+        ComparisonOperator::Equals => match as_i64(value) {
+            Some(v) => keep_if(entry.i64_range_overlaps(v, v)),
+            None => PruneResult::MayMatch,
+        },
+        ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
+            match as_i64(value) {
+                Some(v) => keep_if(entry.i64_range_overlaps(v, i64::MAX)),
+                None => PruneResult::MayMatch,
+            }
+        }
+        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => match as_i64(value) {
+            Some(v) => keep_if(entry.i64_range_overlaps(i64::MIN, v)),
+            None => PruneResult::MayMatch,
+        },
+        ComparisonOperator::Between => match between_bounds(value) {
+            Some((lo, hi)) => keep_if(entry.i64_range_overlaps(lo as i64, hi.ceil() as i64)),
+            None => PruneResult::MayMatch,
+        },
+        ComparisonOperator::In => match value.as_array() {
+            Some(arr) => {
+                let had_ints = arr.iter().any(|v| as_i64(v).is_some());
+                let any = arr
+                    .iter()
+                    .filter_map(as_i64)
+                    .any(|v| entry.i64_range_overlaps(v, v));
+                if had_ints { keep_if(any) } else { PruneResult::MayMatch }
+            }
+            None => PruneResult::MayMatch,
+        },
+        _ => PruneResult::MayMatch,
+    }
+}
+
+fn prune_f64_bounds(
+    entry: &crate::rowgroup::RowGroupEntry,
+    op: &ComparisonOperator,
+    value: &Value,
+) -> PruneResult {
+    match op {
+        ComparisonOperator::Equals => match as_f64(value) {
+            Some(v) => keep_if(entry.f64_range_overlaps(v, v)),
+            None => PruneResult::MayMatch,
+        },
+        ComparisonOperator::GreaterThan | ComparisonOperator::GreaterThanOrEqual => {
+            match as_f64(value) {
+                Some(v) => keep_if(entry.f64_range_overlaps(v, f64::INFINITY)),
+                None => PruneResult::MayMatch,
+            }
+        }
+        ComparisonOperator::LessThan | ComparisonOperator::LessThanOrEqual => match as_f64(value) {
+            Some(v) => keep_if(entry.f64_range_overlaps(f64::NEG_INFINITY, v)),
+            None => PruneResult::MayMatch,
+        },
+        ComparisonOperator::Between => match between_bounds(value) {
+            Some((lo, hi)) => keep_if(entry.f64_range_overlaps(lo, hi)),
+            None => PruneResult::MayMatch,
+        },
+        _ => PruneResult::MayMatch,
+    }
+}
+
 fn evaluate_leaf(
     reader: &PaxBlockReader<'_>,
     field: &str,
@@ -354,6 +494,47 @@ mod tests {
             value: json!(99999),
         };
         assert_eq!(evaluate_block(&reader, &out, &field_map), PruneResult::Skip);
+    }
+
+    #[test]
+    fn row_group_subset_selection() {
+        // > ROW_GROUP_SIZE rows with monotonically increasing created_at puts
+        // low timestamps in rg0 and high timestamps in rg1.
+        let rgs = crate::rowgroup::ROW_GROUP_SIZE;
+        let n = (rgs + 1000) as usize; // two row groups
+        let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 0);
+        for i in 0..n {
+            w.add_record(&rec(&format!("r{i}"), 1000 + i as i64)).unwrap();
+        }
+        let block = w.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+        assert_eq!(reader.row_groups().n_row_groups, 2);
+
+        // rg1 covers rows [rgs .. n) → created_at >= 1000 + rgs.
+        let hi_threshold = 1000 + rgs as i64 + 500;
+        let f_high = FilterExpression::Comparison {
+            field: "created_at".into(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: json!(hi_threshold),
+        };
+        // Only rg1 can match.
+        assert_eq!(evaluate_row_groups(&reader, &f_high, &field_map), vec![1]);
+
+        // created_at < 2000 → only rg0 can match.
+        let f_low = FilterExpression::Comparison {
+            field: "created_at".into(),
+            operator: ComparisonOperator::LessThan,
+            value: json!(2000),
+        };
+        assert_eq!(evaluate_row_groups(&reader, &f_low, &field_map), vec![0]);
+
+        // No predicate match anywhere → empty.
+        let f_none = FilterExpression::Comparison {
+            field: "created_at".into(),
+            operator: ComparisonOperator::GreaterThan,
+            value: json!(10_000_000),
+        };
+        assert!(evaluate_row_groups(&reader, &f_none, &field_map).is_empty());
     }
 
     #[test]

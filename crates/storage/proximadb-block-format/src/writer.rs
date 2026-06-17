@@ -32,6 +32,7 @@ use crate::{
     header::{BlockCompression, BlockHeader, BlockMode, HEADER_SIZE, flags, fnv1a_hash},
     record::{FlatRow, col_id, encode_str_col, update_i64_bounds},
     row_dir::{RowDirectory, RowEntry},
+    rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
     vparam::{QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock, VectorParamEntry},
 };
@@ -422,9 +423,24 @@ impl PaxBlockWriter {
             (bytes, offset, len)
         };
 
+        // ---- Build the RowGroupBlock side region (after the vector params) ----
+        let rg_index = build_row_group_index(
+            n,
+            &self.created_at,
+            &self.updated_at,
+            &self.valid_from,
+            &self.valid_to,
+            &self.edge_weight,
+        );
+        let vparam_end = col_footer_offset + col_footer_bytes.len() as u32 + vparam_bytes.len() as u32;
+        let (rgdir_bytes, rgdir_offset) = if rg_index.is_empty() {
+            (Vec::new(), 0u32)
+        } else {
+            (rg_index.to_bytes(), vparam_end)
+        };
+
         // ---- Build block footer ----
-        let block_footer_offset =
-            col_footer_offset + col_footer_bytes.len() as u32 + vparam_bytes.len() as u32;
+        let block_footer_offset = vparam_end + rgdir_bytes.len() as u32;
         let block_footer = BlockFooter {
             col_footer_offset,
             row_dir_offset,
@@ -433,8 +449,7 @@ impl PaxBlockWriter {
             n_rows: n as u32,
             vparam_offset,
             vparam_len,
-            // Row-group sub-index pointer is populated by the next pass; 0 = absent.
-            rgdir_offset: 0,
+            rgdir_offset,
         };
 
         let total_size = block_footer_offset + BLOCK_FOOTER_SIZE as u32;
@@ -447,6 +462,7 @@ impl PaxBlockWriter {
         }
         body.extend_from_slice(&col_footer_bytes);
         body.extend_from_slice(&vparam_bytes);
+        body.extend_from_slice(&rgdir_bytes);
         body.extend_from_slice(&block_footer.to_bytes());
 
         // ---- Compute checksum ----
@@ -1073,6 +1089,92 @@ fn encode_str_dictionary_col(values: &[Option<&str>]) -> (Vec<u8>, u32) {
     }
 
     (buf, null_count)
+}
+
+/// Build the row-group sub-index from the writer's in-memory scalar columns.
+///
+/// For each row group, records per-column `[min, max]` for the prunable i64
+/// columns (created/updated/valid timestamps) and the f64 edge weight. Columns
+/// whose group has no usable values are omitted (then that group can't be pruned
+/// on that column — conservative). Vector byte ranges are NOT stored: they are
+/// derivable from the fixed stride + [`crate::vparam`].
+fn build_row_group_index(
+    n: usize,
+    created_at: &[i64],
+    updated_at: &[i64],
+    valid_from: &[Option<i64>],
+    valid_to: &[Option<i64>],
+    edge_weight: &[Option<f64>],
+) -> RowGroupBlock {
+    let rgs = RowGroupBlock::group_count(n as u32);
+    let size = crate::rowgroup::ROW_GROUP_SIZE;
+    let mut entries: Vec<RowGroupEntry> = Vec::new();
+
+    let i64_cols: [(i32, &dyn Fn(usize) -> Option<i64>); 4] = [
+        (col_id::CREATED_AT, &|i| created_at.get(i).copied()),
+        (col_id::UPDATED_AT, &|i| updated_at.get(i).copied()),
+        (col_id::VALID_FROM, &|i| valid_from.get(i).copied().flatten()),
+        (col_id::VALID_TO, &|i| valid_to.get(i).copied().flatten()),
+    ];
+
+    for rg in 0..rgs {
+        let start = (rg * size) as usize;
+        let end = ((rg + 1) * size).min(n as u32) as usize;
+        if start >= end {
+            continue;
+        }
+
+        for (col, get) in i64_cols.iter() {
+            let mut lo = i64::MAX;
+            let mut hi = i64::MIN;
+            let mut any = false;
+            for i in start..end {
+                if let Some(v) = get(i) {
+                    any = true;
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+            }
+            if any {
+                let (min_val, max_val) = i64_bounds(lo, hi);
+                entries.push(RowGroupEntry {
+                    column_id: *col,
+                    rg_index: rg,
+                    data_type_id: 0x03,
+                    min_val,
+                    max_val,
+                });
+            }
+        }
+
+        // f64 edge weight (skip None + NaN).
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let mut any = false;
+        for v in edge_weight.iter().take(end).skip(start).flatten() {
+            if v.is_finite() {
+                any = true;
+                lo = lo.min(*v);
+                hi = hi.max(*v);
+            }
+        }
+        if any {
+            let (min_val, max_val) = f64_bounds(lo, hi);
+            entries.push(RowGroupEntry {
+                column_id: col_id::EDGE_WEIGHT,
+                rg_index: rg,
+                data_type_id: 0x07,
+                min_val,
+                max_val,
+            });
+        }
+    }
+
+    RowGroupBlock {
+        n_row_groups: rgs,
+        row_group_size: size,
+        entries,
+    }
 }
 
 /// Kill-switch: when set, vector stripes fall back to raw fixed-stride f32

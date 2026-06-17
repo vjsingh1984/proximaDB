@@ -75,6 +75,7 @@ pub mod prune;
 pub mod reader;
 pub mod record;
 pub mod row_dir;
+pub mod rowgroup;
 pub mod stripe;
 pub mod vparam;
 pub mod writer;
@@ -85,7 +86,7 @@ pub use header::{
     BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
     fnv1a_hash,
 };
-pub use prune::{FieldToColumn, PruneResult, evaluate_block};
+pub use prune::{FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups};
 pub use reader::PaxBlockReader;
 pub use record::{
     ColumnDescriptor, FlatRow, canonical_columns, col_id, encode_f32_vec_col, encode_i64_col,
@@ -93,6 +94,7 @@ pub use record::{
 };
 pub use row_dir::{ROW_ENTRY_SIZE, RowDirectory, RowEntry, row_flags};
 pub use stripe::{BlockStats, COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe};
+pub use rowgroup::{ROW_GROUP_SIZE, RowGroupBlock, RowGroupEntry};
 pub use vparam::{
     QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock, VectorParamEntry,
 };
