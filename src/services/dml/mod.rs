@@ -200,6 +200,85 @@ impl RelationalPredicateTree {
     }
 }
 
+/// Parse a SQL literal into a JSON value for the pushdown filter: integers and
+/// floats become JSON numbers (so i64/f64 zone-map pruning fires); everything
+/// else stays a string (string-equality hash pruning).
+fn literal_to_json(literal: &str) -> serde_json::Value {
+    if let Ok(i) = literal.parse::<i64>() {
+        serde_json::Value::from(i)
+    } else if let Ok(f) = literal.parse::<f64>() {
+        serde_json::json!(f)
+    } else {
+        serde_json::Value::String(literal.to_string())
+    }
+}
+
+/// Lower a resolved [`RelationalPredicateTree`] to a canonical `FilterExpression`
+/// for **block/row-group pushdown** in the object-store vector store. Only the
+/// operators the zone-map pruner can use are converted; the row-exact closure
+/// still filters, so this is purely a coarse pre-filter.
+///
+/// Soundness (no false negatives when used for pruning): an unconvertible `AND`
+/// conjunct is dropped (only weakens pruning); an `OR` with any unconvertible
+/// branch returns `None` (cannot soundly prune); `NOT` and unsupported operators
+/// (`!=`, `NOT IN`, `LIKE`, `IS NULL`) return `None`.
+fn predicate_tree_to_filter_expression(
+    tree: &RelationalPredicateTree,
+) -> Option<proximadb_filter_expression::FilterExpression> {
+    use proximadb_filter_expression::{ComparisonOperator as FxOp, FilterExpression as Fx};
+    match tree {
+        RelationalPredicateTree::Leaf(pred) => {
+            let field = pred.column.name.clone();
+            match &pred.condition {
+                RelationalSelectPredicateCondition::Comparison { operator, literal } => {
+                    let op = match operator {
+                        RelationalSelectPredicateOperator::Equal => FxOp::Equals,
+                        RelationalSelectPredicateOperator::LessThan => FxOp::LessThan,
+                        RelationalSelectPredicateOperator::LessThanOrEqual => FxOp::LessThanOrEqual,
+                        RelationalSelectPredicateOperator::GreaterThan => FxOp::GreaterThan,
+                        RelationalSelectPredicateOperator::GreaterThanOrEqual => {
+                            FxOp::GreaterThanOrEqual
+                        }
+                        RelationalSelectPredicateOperator::NotEqual => return None,
+                    };
+                    Some(Fx::Comparison {
+                        field,
+                        operator: op,
+                        value: literal_to_json(literal),
+                    })
+                }
+                RelationalSelectPredicateCondition::In {
+                    literals,
+                    negated: false,
+                } => Some(Fx::Comparison {
+                    field,
+                    operator: FxOp::In,
+                    value: serde_json::Value::Array(literals.iter().map(|l| literal_to_json(l)).collect()),
+                }),
+                _ => None,
+            }
+        }
+        RelationalPredicateTree::And(children) => {
+            let parts: Vec<_> = children
+                .iter()
+                .filter_map(predicate_tree_to_filter_expression)
+                .collect();
+            if parts.is_empty() { None } else { Some(Fx::And(parts)) }
+        }
+        RelationalPredicateTree::Or(children) => {
+            // Every disjunct must convert, else a block matching the dropped
+            // branch could be wrongly skipped.
+            let parts: Option<Vec<_>> = children
+                .iter()
+                .map(predicate_tree_to_filter_expression)
+                .collect();
+            parts.map(Fx::Or)
+        }
+        // Negation cannot be soundly pruned by a min/max zone map.
+        RelationalPredicateTree::Not(_) => None,
+    }
+}
+
 /// Syntax-level predicate input from a SQL/protocol facade.
 ///
 /// DML resolves this against xCatalog before route selection or evaluation.
@@ -1192,7 +1271,10 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 table_schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    // Block/row-group pushdown for object-store vector tables; the
+                    // `predicate` closure remains the row-exact authority.
+                    filter: predicate_tree_to_filter_expression(tree),
                     table_id: table_id_name.to_string(),
                     limit,
                     include_vector: true,
@@ -3508,7 +3590,8 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 table_schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: predicate_tree_to_filter_expression(&tree),
                     table_id: table_id_name.to_string(),
                     limit: None,
                     include_vector: true,
