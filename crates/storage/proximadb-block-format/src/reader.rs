@@ -336,7 +336,7 @@ fn i64_scheme_from_encoding_id(encoding_id: u8) -> Option<ProximaScheme> {
     }
 }
 
-fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Result<Vec<i64>> {
+pub(crate) fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Result<Vec<i64>> {
     let scheme = i64_scheme_from_encoding_id(encoding_id)
         .ok_or_else(|| anyhow::anyhow!("unknown PAX i64 encoding id: {encoding_id}"))?;
     match scheme {
@@ -470,7 +470,7 @@ fn decode_dictionary_str_col(data: &[u8], count: usize) -> Result<Vec<Option<Str
 /// `entry` supplies the dimension, the quant kind, and (for SQ8) the affine
 /// params. Each present row is a fixed-size slice at `i * stride`; absent rows
 /// (validity bit clear) are returned as `None` regardless of their zeroed slot.
-fn decode_f32_vec_v2(
+pub(crate) fn decode_f32_vec_v2(
     data: &[u8],
     count: usize,
     entry: &crate::vparam::VectorParamEntry,

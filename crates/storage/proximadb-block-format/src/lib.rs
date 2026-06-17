@@ -72,6 +72,7 @@
 
 pub mod header;
 pub mod prune;
+pub mod ranged;
 pub mod reader;
 pub mod record;
 pub mod row_dir;
@@ -87,6 +88,7 @@ pub use header::{
     fnv1a_hash,
 };
 pub use prune::{FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups};
+pub use ranged::{BlockLayout, MetadataRanges, footer_tail_range, metadata_ranges};
 pub use reader::PaxBlockReader;
 pub use record::{
     ColumnDescriptor, FlatRow, canonical_columns, col_id, encode_f32_vec_col, encode_i64_col,
