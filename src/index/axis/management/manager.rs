@@ -103,7 +103,6 @@ use crate::index::axis::{
     types::{AxisConfig, Data, IndexAlgorithm, IndexSelectionStrategy},
 };
 use crate::index::{DenseVectorIndex, GlobalIdIndex, JoinEngine, MetadataIndex, SparseVectorIndex};
-use proximadb_data_model::ProximaValue;
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 // Temporarily disabled due to arrow-arith compilation conflicts - DEFERRED: Re-enable when resolved
 // use crate::storage::engines::viper::QuantizationMethod;
@@ -1706,7 +1705,15 @@ impl AxisManager {
         if let Some(index) = indexes.get(collection_id) {
             // Extract query vector
             if let Some(VectorQuery::Dense { vector, .. }) = &query.vector_query {
-                let results = index.search(vector, query.top_k, None).await?;
+                // Map the caller's search effort onto the HNSW `ef` budget so
+                // `approximate`/`approximate:N` actually trade recall for
+                // latency on the warm path. `None` ⇒ index size-aware default.
+                let ef_override = query
+                    .search_effort
+                    .and_then(|effort| effort.hnsw_ef_override(query.top_k));
+                let results = index
+                    .search_with_effort(vector, query.top_k, ef_override, None)
+                    .await?;
                 let metric = index.distance_metric();
                 return Ok(results
                     .into_iter()
@@ -1824,6 +1831,14 @@ impl AxisManager {
         // (default 2×) when a policy is present; Inline keeps the 2× default
         // regardless. Either way we apply max(top_k) so we never request
         // FEWER candidates than the caller asked for.
+        //
+        // NB (1.3 investigation, 2026-06-14): oversample *escalation* on shortfall
+        // was evaluated and rejected — `search_layer_predicate` pushes ALL
+        // neighbours onto an unbounded frontier and only early-terminates once it
+        // has `ef` PASSING results, so when matches are sparse it already drains
+        // the full reachable graph regardless of `oversample_k`. A larger pool
+        // therefore cannot recover more matches; the real lever for filtered
+        // recall is graph connectivity (ACORN `gamma`), not oversampling.
         let oversample_k = match (effective_mode, query.ann_filtering_policy.as_ref()) {
             (AnnFilteringMode::PostFilter, Some(policy)) => {
                 policy.effective_top_k_for_post_filter(query.top_k)
@@ -1832,8 +1847,14 @@ impl AxisManager {
         }
         .max(query.top_k);
 
+        // Map the caller's effort onto the predicate traversal `ef` (recall vs
+        // latency). `oversample_k` above is the orthogonal post-filter pool and
+        // is left to the filtering policy.
+        let ef_override = query
+            .search_effort
+            .and_then(|effort| effort.hnsw_ef_override(query.top_k));
         let raw = index
-            .search_with_predicate_fn(vector, oversample_k, predicate)
+            .search_with_predicate_fn(vector, oversample_k, predicate, ef_override)
             .await?;
 
         // See query_hnsw for the score-units rationale — raw values
@@ -2184,12 +2205,18 @@ impl AxisManager {
                     // via the per-request diagnostics bus (no-op outside a scope).
                     crate::observability::predicate_diagnostics::record_quantized_downgrade();
                 }
+                // Map the caller's accuracy-vs-latency effort onto IVF `nprobe`
+                // (cells probed). `None` ⇒ the index's configured default;
+                // Exact ⇒ all `nlist` cells; Approximate ⇒ fewer cells, faster.
+                let nprobe = query
+                    .search_effort
+                    .map(|effort| effort.ivf_nprobe(index.nlist()));
                 let results = if use_quantized {
                     index
-                        .search_with_quantized_acceleration(vector, query.top_k, None)
+                        .search_with_quantized_acceleration(vector, query.top_k, nprobe)
                         .await?
                 } else {
-                    index.search(vector, query.top_k, None).await?
+                    index.search(vector, query.top_k, nprobe).await?
                 };
                 let search_time = start.elapsed();
 
@@ -2895,6 +2922,20 @@ impl AxisManager {
         );
 
         Ok(())
+    }
+
+    /// Number of vectors currently registered in the in-memory store for a
+    /// collection. Diagnostic accessor; also the "is this collection present in
+    /// AXIS" signal used by the lazy rebuild-from-SST path (TD-112). HNSW/IVF
+    /// structures are built lazily atop this store and are not a reliable
+    /// presence signal for small collections.
+    #[doc(hidden)]
+    pub async fn registered_vector_count(&self, collection_id: &str) -> usize {
+        self.collection_vectors
+            .read()
+            .await
+            .get(collection_id)
+            .map_or(0, |m| m.len())
     }
 
     /// Index vectors synchronously (blocking the flush completion)
@@ -3957,6 +3998,12 @@ pub struct AxisHybridQuery {
     /// TD-064 / ADR-011: Pre-computed selectivity estimate from
     /// `FilterDiagnostics` or a sampler. Feeds `AnnFilteringPolicy::routing_mode`.
     pub estimated_selectivity: Option<f64>,
+    /// Per-query accuracy-vs-latency effort, derived from the caller's
+    /// `SearchMode`. `None` (the default) keeps each index's own size-aware
+    /// default, so existing callers are behavior-identical. When `Some`, the
+    /// HNSW/IVF dispatch maps it to a per-query `ef` / `nprobe` so the
+    /// `exact`/`approximate`/`approximate:N` knob actually controls recall.
+    pub search_effort: Option<crate::core::search::SearchEffort>,
 }
 
 /// Vector query types
@@ -4127,6 +4174,10 @@ pub struct ScoredResult {
 }
 
 impl AxisManager {
+    /// ADR-011 PreFilter: evaluate scalar predicates first, then score the
+    /// surviving candidates EXACTLY. `query.search_effort` is intentionally not
+    /// consulted here — exact scoring has no ANN approximation to trade; the
+    /// only recall/latency lever on this path is predicate selectivity.
     async fn execute_exact_filtered_query(
         &self,
         collection_id: &str,
@@ -4262,11 +4313,10 @@ impl AxisManager {
     }
 
     fn record_filter_metadata(&self, record: &ProximaRecord) -> HashMap<String, Value> {
-        let mut metadata: HashMap<String, Value> = record
-            .props
-            .iter()
-            .map(|(key, value)| (key.clone(), Self::tree_node_to_json(value)))
-            .collect();
+        // Reuse the canonical ProximaTree→json-map converter (single source) and
+        // add the synthetic identity fields the filter grammar may reference.
+        let mut metadata =
+            crate::core::search::sql_value_filter::proxima_tree_to_json_map(&record.props);
         metadata.insert("id".to_string(), Value::String(record.oid.clone()));
         metadata.insert("oid".to_string(), Value::String(record.oid.clone()));
         metadata.insert(
@@ -4282,68 +4332,6 @@ impl AxisManager {
             .iter()
             .find(|embedding| !embedding.values.is_empty())
             .map(|embedding| embedding.as_fp32_slice())
-    }
-
-    fn tree_node_to_json(node: &ProximaTreeNode) -> Value {
-        match node {
-            ProximaTreeNode::Value(value) => Self::proxima_value_to_json(value),
-            ProximaTreeNode::Object(tree) => Value::Object(
-                tree.iter()
-                    .map(|(key, value)| (key.clone(), Self::tree_node_to_json(value)))
-                    .collect(),
-            ),
-        }
-    }
-
-    fn proxima_value_to_json(value: &ProximaValue) -> Value {
-        match value {
-            ProximaValue::Boolean(value) => Value::Bool(*value),
-            ProximaValue::Int8(value) => Value::from(*value),
-            ProximaValue::Int16(value) => Value::from(*value),
-            ProximaValue::Int32(value) => Value::from(*value),
-            ProximaValue::Int64(value) => Value::from(*value),
-            ProximaValue::UInt8(value) => Value::from(*value),
-            ProximaValue::UInt16(value) => Value::from(*value),
-            ProximaValue::UInt32(value) => Value::from(*value),
-            ProximaValue::UInt64(value) => Value::from(*value),
-            ProximaValue::Float16(value) => Value::from(*value as f64),
-            ProximaValue::Float32(value) => Value::from(*value as f64),
-            ProximaValue::Float64(value) => Value::from(*value),
-            ProximaValue::Decimal(value)
-            | ProximaValue::String(value)
-            | ProximaValue::Symbol(value) => Value::String(value.clone()),
-            ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
-                Value::Array(value.iter().map(|byte| Value::from(*byte)).collect())
-            }
-            ProximaValue::Date(value) => Value::from(*value),
-            ProximaValue::Time(value, _)
-            | ProximaValue::Timestamp(value, _)
-            | ProximaValue::TimestampTz(value, _) => Value::from(*value),
-            ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
-                Value::Array(value.iter().map(|byte| Value::from(*byte)).collect())
-            }
-            ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
-            ProximaValue::Array(values) => {
-                Value::Array(values.iter().map(Self::proxima_value_to_json).collect())
-            }
-            ProximaValue::Map(values) | ProximaValue::Struct(values) => Value::Object(
-                values
-                    .iter()
-                    .map(|(key, value)| (key.clone(), Self::proxima_value_to_json(value)))
-                    .collect(),
-            ),
-            ProximaValue::DenseVector(values) => Value::Array(
-                values
-                    .iter()
-                    .map(|value| Value::from(*value as f64))
-                    .collect(),
-            ),
-            ProximaValue::SparseVector { indices, values } => serde_json::json!({
-                "indices": indices,
-                "values": values,
-            }),
-            ProximaValue::Null => Value::Null,
-        }
     }
 
     fn datetime_from_timestamp_ns(timestamp_ns: i64) -> Option<DateTime<Utc>> {
@@ -5173,6 +5161,164 @@ mod recluster_apply_tests {
                 rec(&format!("{prefix}{i}"), x)
             })
             .collect()
+    }
+
+    /// `rec` plus a single filterable `grp` property for predicate-aware tests.
+    fn rec_grp(id: &str, v: Vec<f32>, grp: &str) -> ProximaRecord {
+        use proximadb_data_model::ProximaValue;
+        use proximadb_records::ProximaTreeNode;
+        let mut r = rec(id, v);
+        r.props.insert(
+            "grp".to_string(),
+            ProximaTreeNode::Value(ProximaValue::String(grp.to_string())),
+        );
+        r
+    }
+
+    /// TD-112 characterization lock-in.
+    ///
+    /// `handle_flushed_vectors` is the AXIS entry point that the flush/compaction
+    /// path is *meant* to call to register newly-flushed vectors into the ANN
+    /// index. This test proves the primitive works in isolation: when invoked, it
+    /// indexes the batch into the manager (here observed via `collection_vectors`,
+    /// which `insert` populates).
+    ///
+    /// The TD-112 live-path guard lives in SST's `do_flush` ->
+    /// `flush_implementation`; this test keeps the lower-level indexing
+    /// primitive locked down independently. If this test ever goes red, the
+    /// primitive itself regressed rather than the SST call site.
+    #[tokio::test]
+    async fn td112_handle_flushed_vectors_indexes_flushed_batch() {
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        let collection = "td112_flush";
+        // Small batch: with the default `Synchronous` update mode, indexing
+        // completes before `handle_flushed_vectors` returns (no async race).
+        let flushed = batch("flushed", 4, 8, 0);
+        let expected_oids: Vec<String> = flushed.iter().map(|r| r.oid.clone()).collect();
+
+        manager
+            .handle_flushed_vectors(collection, flushed, vec!["segment-000001.sst".to_string()])
+            .await
+            .expect("handle_flushed_vectors should index a small flushed batch");
+
+        let stored = manager.collection_vectors.read().await;
+        let collection_store = stored
+            .get(collection)
+            .expect("flushed vectors must be registered under the collection");
+        for oid in &expected_oids {
+            assert!(
+                collection_store.contains_key(oid),
+                "flushed vector {oid} must be indexed into AXIS by handle_flushed_vectors"
+            );
+        }
+        assert_eq!(collection_store.len(), expected_oids.len());
+    }
+
+    /// TD-064 / 1.3 characterization: a selective metadata filter whose matches
+    /// rank BEYOND the base 2× oversample window is still fully recovered by the
+    /// predicate-aware HNSW walk — WITHOUT any oversample escalation. This is the
+    /// evidence that escalation is unnecessary here: `search_layer_predicate`
+    /// pushes every neighbour onto an unbounded frontier and only early-terminates
+    /// once it holds `ef` PASSING results, so when matches are sparse it drains
+    /// the whole reachable graph regardless of `oversample_k`. Guards against a
+    /// future regression that would re-introduce premature termination.
+    #[tokio::test]
+    async fn predicate_aware_search_recovers_sparse_matches_without_oversampling() {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::indexes::hnsw_index::{AxisHnswConfig, AxisHnswIndex};
+        use std::collections::HashMap;
+
+        let dim = 8;
+        let top_k = 5usize;
+        let n = 40usize;
+        // Matching records sit at ranks 12..36 — all well beyond the base
+        // oversample window (2×top_k = 10) — but reachable along a connected
+        // manifold (a line), so this exercises window/ef breadth, NOT graph
+        // disconnection.
+        let target_ranks = [12usize, 18, 24, 30, 36];
+
+        let q = vec![0.0f32; dim]; // query at the origin (rank 0 is nearest)
+
+        // (id, vector, grp): points spread along axis 0 at increasing distance,
+        // so consecutive ranks are neighbours → a connected HNSW graph.
+        let specs: Vec<(String, Vec<f32>, &str)> = (0..n)
+            .map(|i| {
+                let mut v = vec![0.0f32; dim];
+                v[0] = 0.5 * i as f32;
+                let grp = if target_ranks.contains(&i) {
+                    "target"
+                } else {
+                    "other"
+                };
+                (format!("v{i:02}"), v, grp)
+            })
+            .collect();
+
+        // Tiny search `ef`: `ef = config.ef.max(k)` so the base pool is 10.
+        let config = AxisHnswConfig {
+            ef: 4,
+            distance_metric: DistanceMetric::Euclidean,
+            ..AxisHnswConfig::default()
+        };
+        let index = AxisHnswIndex::new(config, dim).unwrap();
+        for (id, v, _) in &specs {
+            index.add(id.clone(), v.clone()).await.unwrap();
+        }
+
+        let manager = AxisManager::new(AxisConfig::default()).await.unwrap();
+        manager
+            .hnsw_indexes
+            .write()
+            .await
+            .insert("col".to_string(), std::sync::Arc::new(index));
+        let by_id: HashMap<String, ProximaRecord> = specs
+            .iter()
+            .map(|(id, v, grp)| (id.clone(), rec_grp(id, v.clone(), grp)))
+            .collect();
+        manager
+            .collection_vectors
+            .write()
+            .await
+            .insert("col".to_string(), by_id);
+
+        let query = AxisHybridQuery {
+            collection_id: "col".to_string(),
+            vector_query: Some(VectorQuery::Dense {
+                vector: q.clone(),
+                similarity_threshold: 0.0,
+            }),
+            metadata_filters: vec![AxisMetadataFilter {
+                field: "grp".to_string(),
+                operator: FilterOperator::Equals,
+                value: serde_json::json!("target"),
+            }],
+            id_filters: vec![],
+            top_k,
+            include_expired: false,
+            ann_filtering_mode: AnnFilteringMode::Inline,
+            ann_filtering_policy: None,
+            estimated_selectivity: None,
+            search_effort: None,
+        };
+
+        let (results, _shortfall) = manager
+            .query_hnsw_with_predicate("col", &query, AnnFilteringMode::Inline)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            results.len(),
+            top_k,
+            "predicate-aware search must recover all {top_k} reachable matches \
+             (ranks {target_ranks:?}) despite the base 2× window, got {}",
+            results.len()
+        );
+        assert!(
+            results.iter().all(|r| r.vector_id.starts_with('v')
+                && target_ranks.contains(&r.vector_id[1..].parse::<usize>().unwrap_or(usize::MAX))),
+            "only matching records may be returned: {:?}",
+            results.iter().map(|r| &r.vector_id).collect::<Vec<_>>()
+        );
     }
 
     #[tokio::test]

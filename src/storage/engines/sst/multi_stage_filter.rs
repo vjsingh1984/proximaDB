@@ -714,6 +714,8 @@ mod tests {
             block_metadata_bloom: None,
             // Vector format optimization
             vector_format: crate::storage::engines::sst::VectorFormat::Variable,
+            block_component_min: None,
+            block_component_max: None,
         }]
     }
 }

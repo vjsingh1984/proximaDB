@@ -131,10 +131,13 @@ SDKs only insofar as the field name passes deserialization; the server does not 
 
 === Release gate
 
-* New `make release-check` target chains `fmt-check`, `docs-claim-check`, `proto-check`,
-  `release-smoke`, and `build-server`. `release-smoke` now runs the canonical lib unit
-  battery plus three integration smokes: `release_smoke_v2` (REST v2 round trip + 404 +
-  top_k cap), `graph_branch_merge_integration_test`, and `grpc_hybrid_integration_test`.
+* New `make release-check` target chains `work-commit-check`, `proto-check`,
+  `release-smoke`, and `build-server`. `work-commit-check` is the fast deterministic
+  architecture guard: formatting, zero-retry nextest policy wiring, docs/support-claim
+  checks, capability matrix, workspace boundaries, tenant-path guard, panic-policy guard,
+  and tracked-artifact hygiene. `release-smoke` now runs the canonical lib unit battery
+  plus three integration smokes: `release_smoke_v2` (REST v2 round trip + 404 + top_k cap),
+  `graph_branch_merge_integration_test`, and `grpc_hybrid_integration_test`.
 
 == Known Limitations
 

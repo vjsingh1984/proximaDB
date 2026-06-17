@@ -43,6 +43,8 @@
 //! let results = ctx.sql("SELECT * FROM vectors WHERE id = 'vec_001'").await?;
 //! ```
 
+#![allow(dead_code)] // forward-scaffolding fields pending wiring
+
 use std::any::Any;
 use std::fmt::Debug;
 use std::pin::Pin;
@@ -96,7 +98,6 @@ pub struct SstTableProvider {
 
 /// Metadata for an SST file
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 struct SstFileMetadata {
     /// File path
     path: String,
@@ -161,10 +162,18 @@ impl SstTableProvider {
             .get_filesystem(&self.base_path)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        let entries = filesystem
-            .list(&self.base_path)
-            .await
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let entries = match filesystem.list(&self.base_path).await {
+            Ok(entries) => entries,
+            Err(crate::storage::persistence::filesystem::FilesystemError::NotFound(_)) => {
+                Vec::new()
+            }
+            Err(crate::storage::persistence::filesystem::FilesystemError::Io(e))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Vec::new()
+            }
+            Err(e) => return Err(DataFusionError::External(Box::new(e))),
+        };
 
         let mut files = Vec::new();
         for entry in entries {
@@ -365,7 +374,6 @@ impl ProximaTableProvider for SstTableProvider {
 ///
 /// Reads individual blocks from SST files and returns RecordBatch streams.
 #[derive(Debug)]
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct SstSplitReader {
     /// Arrow schema for records
     schema: SchemaRef,
@@ -439,7 +447,6 @@ impl SplitReader for SstSplitReader {
 /// RecordBatch stream for reading SST blocks.
 ///
 /// Reads blocks from SST files and yields RecordBatches.
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct SstBlockStream {
     /// Output schema (after projection)
     schema: SchemaRef,

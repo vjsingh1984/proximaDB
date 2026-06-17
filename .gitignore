@@ -328,6 +328,9 @@ test_*.py
 debug_*.py
 analyze_*.py
 check_*.py
+# Negation: scripts/ holds committed repo-tooling guards (check_workspace_boundaries.py,
+# check_tenant_path_guard.py, ...), not ad-hoc generated scripts. Keep them tracked.
+!scripts/check_*.py
 clean_*.py
 comprehensive_*.py
 concrete_*.py

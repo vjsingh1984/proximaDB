@@ -256,28 +256,35 @@ impl MultiServer {
                     })?,
             )
         };
-        let record_storage = Arc::new(crate::services::MemtableRecordStorage::new());
+        // TD-064: the canonical store is per-(tenant, collection) partitioned and
+        // shared across all pgwire connections. Build it once, recover its
+        // partitions from the canonical WAL (routing each entry by its
+        // tenant_id + collection_id), then hand the shared store down.
+        let canonical_store = Arc::new(
+            crate::services::record_store::DirectWalTableRecordStore::new_partitioned(
+                wal_appender.clone(),
+            ),
+        );
         let entries = wal_appender.read_entries().await.with_context(|| {
             format!(
                 "reading pgwire direct canonical WAL at {}",
                 wal_path.display()
             )
         })?;
-        let summary = record_storage
+        let summary = canonical_store
             .replay_wal_entries(entries)
             .await
-            .context("replaying pgwire direct canonical WAL into record memtable")?;
+            .context("replaying pgwire direct canonical WAL into record partitions")?;
 
         info!(
-            "🐘 pgwire direct record writes enabled: WAL={}, replayed_upserts={}, replayed_deletes={}, current_records={}",
+            "🐘 pgwire direct record writes enabled: WAL={}, replayed_upserts={}, replayed_deletes={}",
             wal_path.display(),
             summary.upserts_replayed,
             summary.deletes_replayed,
-            record_storage.len()
         );
 
         Ok(Some(
-            crate::network::postgres::DirectPgwireWriteServices::new(record_storage, wal_appender),
+            crate::network::postgres::DirectPgwireWriteServices::new(canonical_store),
         ))
     }
 

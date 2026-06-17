@@ -1567,29 +1567,36 @@ pub async fn search_with_typed_filters(
     // Capture the quantized-route downgrade INSIDE the scope — the task-local
     // binding ends when the scoped future completes, so it must be taken here
     // (TD-075 / F2: surfaced in EXPLAIN below).
-    let (search_outcome, quantized_route_downgraded, cold_stage1_only, turboquant_hints) =
-        crate::observability::predicate_diagnostics::scope(async {
-            let outcome = state
-                .request_handlers
-                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
-                .await;
-            let downgraded =
-                crate::observability::predicate_diagnostics::take_quantized_downgrade();
-            // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
-            let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
-            // Phase K (Quantization Trait Convergence Plan): TurboQuant
-            // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
-            // the scope because the task-local binding ends when this
-            // future completes — same constraint as the take above.
-            // `None` is the common case (most searches don't run
-            // through TurboQuant scoring); the slot is skipped at
-            // serialization time via the `skip_serializing_if` on
-            // `SearchPlanHints.turboquant` (Phase J) and
-            // `VectorHints.turboquant` (Phase F).
-            let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
-            (outcome, downgraded, cold_stage1, tq_hints)
-        })
-        .await;
+    let (
+        search_outcome,
+        quantized_route_downgraded,
+        cold_stage1_only,
+        turboquant_hints,
+        vector_bounds_pruned_blocks,
+    ) = crate::observability::predicate_diagnostics::scope(async {
+        let outcome = state
+            .request_handlers
+            .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+            .await;
+        let downgraded = crate::observability::predicate_diagnostics::take_quantized_downgrade();
+        // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
+        let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
+        // TD-040 S3e: SST vector-bounds prune count (also taken in-scope —
+        // the task-local binding ends when this future completes).
+        let vb_pruned = crate::observability::predicate_diagnostics::take_vector_bounds_pruned();
+        // Phase K (Quantization Trait Convergence Plan): TurboQuant
+        // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
+        // the scope because the task-local binding ends when this
+        // future completes — same constraint as the take above.
+        // `None` is the common case (most searches don't run
+        // through TurboQuant scoring); the slot is skipped at
+        // serialization time via the `skip_serializing_if` on
+        // `SearchPlanHints.turboquant` (Phase J) and
+        // `VectorHints.turboquant` (Phase F).
+        let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
+        (outcome, downgraded, cold_stage1, tq_hints, vb_pruned)
+    })
+    .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
     match search_outcome {
@@ -1787,6 +1794,7 @@ pub async fn search_with_typed_filters(
                         recall_probe_open,
                         quantized_route_downgraded,
                         cold_stage1_only,
+                        vector_bounds_pruned_blocks,
                     },
                 );
                 (Some(trace.clone()), Some(explain))

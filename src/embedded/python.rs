@@ -3562,15 +3562,16 @@ impl PyProximaDB {
     fn dataframe_session(
         &self,
     ) -> PyResult<crate::embedded::python_dataframe::PyDataFusionSession> {
-        use crate::datafusion::create_session_context;
+        let db = self.db()?;
+        let vector_ops = db.shared_services().vector_operations_service.clone();
 
-        let ctx = create_session_context().map_err(|e| {
-            PyRuntimeError::new_err(format!("Failed to create DataFusion context: {}", e))
-        })?;
+        let ctx =
+            crate::datafusion::create_session_context_with_vector_ops(vector_ops).map_err(|e| {
+                PyRuntimeError::new_err(format!("Failed to create DataFusion context: {}", e))
+            })?;
 
         Ok(crate::embedded::python_dataframe::PyDataFusionSession::new(
-            ctx,
-            self.db()?,
+            ctx, db,
         ))
     }
 

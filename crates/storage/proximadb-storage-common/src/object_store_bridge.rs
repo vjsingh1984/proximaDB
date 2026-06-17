@@ -15,6 +15,16 @@ pub use object_store::ObjectStore as BridgeObjectStore;
 pub use object_store::memory::InMemory as BridgeInMemoryObjectStore;
 pub use object_store::path::Path as BridgeObjectPath;
 
+/// Outcome of an attempted manifest commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitOutcome {
+    /// The manifest was atomically published as this new version.
+    Committed(u64),
+    /// Another committer already claimed the target slot. `latest` is the highest
+    /// version currently present — the snapshot to rebase onto and retry from.
+    Conflict { latest: Option<u64> },
+}
+
 /// The canonical bridge interface between ProximaDB's compute/storage engines
 /// and decoupled object storage (S3, GCS, Azure, Local).
 ///
@@ -116,5 +126,30 @@ pub trait ObjectStoreBridge: Send + Sync {
             paths.push(meta.location);
         }
         Ok(paths)
+    }
+
+    /// Retrieve the latest committed manifest version for a given table prefix.
+    async fn latest_manifest_version(
+        &self,
+        manifest_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let _ = manifest_prefix;
+        Err(StorageError::Serialization(
+            "latest_manifest_version not supported".into(),
+        ))
+    }
+
+    /// Atomically publish the data objects currently under `data_prefix` as the next
+    /// snapshot in the manifest log at `manifest_prefix`.
+    async fn publish_snapshot(
+        &self,
+        data_prefix: &Path,
+        manifest_prefix: &str,
+        parent: Option<u64>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let _ = (data_prefix, manifest_prefix, parent);
+        Err(StorageError::Serialization(
+            "publish_snapshot not supported".into(),
+        ))
     }
 }

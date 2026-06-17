@@ -269,6 +269,87 @@ impl SearchMode {
             }
         }
     }
+
+    /// Map this mode to a per-query [`SearchEffort`] for the AXIS warm path.
+    ///
+    /// The warm (AXIS HNSW/IVF) search path historically ignored
+    /// `SearchMode`/`nprobe` entirely — `nprobe` was honored only by the
+    /// `fallback_to_direct_search` file-centroid pruning, which the engine
+    /// does not reach when an AXIS manager is present. This converter lets the
+    /// accuracy-vs-latency knob actually flow into the AXIS query (mapped to
+    /// HNSW `ef` / IVF `nprobe` by [`SearchEffort`]).
+    ///
+    /// - `Exact` ⇒ `Exact` (keeps the index's recall-maximizing default).
+    /// - `Approximate { nprobe }` ⇒ `Approximate { hint: nprobe }` — an
+    ///   explicit value is used directly as the HNSW `ef` / IVF `nprobe`.
+    /// - `Adaptive` ⇒ `None`: the index's own size-aware default already
+    ///   adapts to dataset size, and dataset size isn't known at this layer.
+    pub fn to_search_effort(&self) -> Option<SearchEffort> {
+        match self {
+            SearchMode::Exact => Some(SearchEffort::Exact),
+            SearchMode::Approximate { nprobe } => Some(SearchEffort::Approximate { hint: *nprobe }),
+            SearchMode::Adaptive { .. } => None,
+        }
+    }
+}
+
+/// Per-query search effort derived from [`SearchMode`], threaded into the AXIS
+/// query so the warm HNSW/IVF path honors the accuracy-vs-latency knob.
+///
+/// This decouples the *intent* (exact vs approximate, with an optional explicit
+/// budget) from the per-index *mechanism* (HNSW `ef`, IVF `nprobe`): the index
+/// boundary calls [`SearchEffort::hnsw_ef_override`] / [`SearchEffort::ivf_nprobe`].
+/// A `None` ef override preserves the index's own size-aware default, so the
+/// default (`Exact`) path is behavior-identical to before this knob existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SearchEffort {
+    /// Maximize recall: keep the index's full / size-aware effort.
+    Exact,
+    /// Trade recall for latency. `hint` is the caller's explicit budget
+    /// (interpreted as HNSW `ef` or IVF `nprobe`); `None` asks the engine for
+    /// a recall-trading default below the exact ceiling.
+    Approximate {
+        /// Explicit per-query effort budget (HNSW `ef` / IVF `nprobe`).
+        hint: Option<usize>,
+    },
+}
+
+impl SearchEffort {
+    /// Recall-trading HNSW `ef` floor for `Approximate { hint: None }`, as a
+    /// multiple of `top_k`. Chosen to sit below the size-aware exact ceiling
+    /// (`clamp(sqrt(N), 50, 500)`) at the scales we test so approximate mode
+    /// actually drops recall/latency; tuned empirically via `bench_24`.
+    const APPROX_EF_TOPK_MULT: usize = 2;
+    /// Absolute floor so tiny `top_k` still explores enough candidates.
+    const APPROX_EF_FLOOR: usize = 64;
+
+    /// HNSW per-query `ef` override. `None` ⇒ keep the index's own size-aware
+    /// default (today's recall-maximizing behavior — used for `Exact`).
+    pub fn hnsw_ef_override(&self, top_k: usize) -> Option<usize> {
+        match self {
+            // Exact keeps the index default, which is already recall-maximizing.
+            SearchEffort::Exact => None,
+            // Power user: the explicit budget IS the ef (floored at top_k so we
+            // never return fewer than the requested results).
+            SearchEffort::Approximate { hint: Some(ef) } => Some((*ef).max(top_k)),
+            // Auto-approximate: a recall-trading ef below the exact ceiling.
+            SearchEffort::Approximate { hint: None } => {
+                Some((top_k * Self::APPROX_EF_TOPK_MULT).max(Self::APPROX_EF_FLOOR))
+            }
+        }
+    }
+
+    /// IVF per-query `nprobe` given the configured `nlist` (partition count).
+    pub fn ivf_nprobe(&self, nlist: usize) -> usize {
+        match self {
+            SearchEffort::Exact => nlist.max(1),
+            SearchEffort::Approximate { hint: Some(n) } => (*n).clamp(1, nlist.max(1)),
+            // LanceDB-style sqrt(nlist) default, matching `effective_nprobe`.
+            SearchEffort::Approximate { hint: None } => {
+                1.max((nlist as f32).sqrt().ceil() as usize)
+            }
+        }
+    }
 }
 
 /// Backward-compatibility alias for [`UnifiedSearchParams`].
@@ -719,7 +800,7 @@ pub mod json_comparison {
 
     /// Simple LIKE pattern matching for SQL-style patterns
     /// Supports % (any chars) and _ (single char) wildcards
-    fn like_pattern_match(text: &str, pattern: &str) -> bool {
+    pub fn like_pattern_match(text: &str, pattern: &str) -> bool {
         let mut text_chars = text.chars().peekable();
         let mut pattern_chars = pattern.chars().peekable();
 
@@ -770,144 +851,18 @@ pub mod json_comparison {
         expr: &crate::core::search::FilterExpression,
         metadata: &std::collections::HashMap<String, Value>,
     ) -> bool {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
-
-        match expr {
-            FilterExpression::And(exprs) => exprs.iter().all(|e| evaluate_filter(e, metadata)),
-            FilterExpression::Or(exprs) => exprs.iter().any(|e| evaluate_filter(e, metadata)),
-            FilterExpression::Not(e) => !evaluate_filter(e, metadata),
-            FilterExpression::Comparison {
-                field,
-                operator,
-                value,
-            } => {
-                let field_value = metadata.get(field);
-                match (field_value, operator) {
-                    (Some(field_val), ComparisonOperator::Equals) => {
-                        // Add debug output for filter evaluation
-                        #[cfg(feature = "debug-filters")]
-                        debug!(
-                            "    🔍 Evaluating filter: field={}, metadata_val={:?}, filter_val={:?}",
-                            field, field_val, value
-                        );
-
-                        // For numbers, use type-aware numeric comparison
-                        if let (Value::Number(n1), Value::Number(n2)) = (field_val, value) {
-                            let result = compare_json_numbers(n1, n2);
-                            #[cfg(feature = "debug-filters")]
-                            debug!("      Number comparison: {} vs {} = {}", n1, n2, result);
-                            result
-                        } else {
-                            let result = field_val == value;
-                            #[cfg(feature = "debug-filters")]
-                            debug!(
-                                "      Direct comparison: {:?} == {:?} = {}",
-                                field_val, value, result
-                            );
-                            result
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::NotEquals) => {
-                        if let (Value::Number(n1), Value::Number(n2)) = (field_val, value) {
-                            !compare_json_numbers(n1, n2)
-                        } else {
-                            field_val != value
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::LessThan) => {
-                        compare_json_values(field_val, value) == Ordering::Less
-                    }
-                    (Some(field_val), ComparisonOperator::LessThanOrEqual) => {
-                        let ord = compare_json_values(field_val, value);
-                        ord == Ordering::Less || ord == Ordering::Equal
-                    }
-                    (Some(field_val), ComparisonOperator::GreaterThan) => {
-                        compare_json_values(field_val, value) == Ordering::Greater
-                    }
-                    (Some(field_val), ComparisonOperator::GreaterThanOrEqual) => {
-                        let ord = compare_json_values(field_val, value);
-                        ord == Ordering::Greater || ord == Ordering::Equal
-                    }
-                    (Some(Value::Array(arr)), ComparisonOperator::In) => arr.contains(value),
-                    (Some(field_val), ComparisonOperator::In) => {
-                        if let Value::Array(values) = value {
-                            values.iter().any(|v| {
-                                if let (Value::Number(n1), Value::Number(n2)) = (field_val, v) {
-                                    compare_json_numbers(n1, n2)
-                                } else {
-                                    field_val == v
-                                }
-                            })
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::NotIn) => {
-                        if let Value::Array(values) = value {
-                            !values.iter().any(|v| {
-                                if let (Value::Number(n1), Value::Number(n2)) = (field_val, v) {
-                                    compare_json_numbers(n1, n2)
-                                } else {
-                                    field_val == v
-                                }
-                            })
-                        } else {
-                            true
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::Contains) => {
-                        if let Value::String(pattern) = value {
-                            s.contains(pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::StartsWith) => {
-                        if let Value::String(pattern) = value {
-                            s.starts_with(pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::EndsWith) => {
-                        if let Value::String(pattern) = value {
-                            s.ends_with(pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(Value::String(s)), ComparisonOperator::Like) => {
-                        if let Value::String(pattern) = value {
-                            // Simple LIKE implementation: % = any chars, _ = single char
-                            // Convert SQL LIKE pattern to simple pattern matching without regex for performance
-                            like_pattern_match(s, pattern)
-                        } else {
-                            false
-                        }
-                    }
-                    (Some(field_val), ComparisonOperator::Between) => {
-                        if let Value::Array(bounds) = value {
-                            if bounds.len() == 2 {
-                                let ge_lower =
-                                    compare_json_values(field_val, &bounds[0]) != Ordering::Less;
-                                let le_upper =
-                                    compare_json_values(field_val, &bounds[1]) != Ordering::Greater;
-                                ge_lower && le_upper
-                            } else {
-                                false
-                            }
-                        } else {
-                            false
-                        }
-                    }
-                    (None, ComparisonOperator::IsNull) => true,
-                    (Some(_), ComparisonOperator::IsNull) => false,
-                    (None, ComparisonOperator::IsNotNull) => false,
-                    (Some(_), ComparisonOperator::IsNotNull) => true,
-                    _ => false,
-                }
-            }
-        }
+        // Thin adapter over the canonical operator-semantics seam
+        // (`sql_value_filter::evaluate_filter_resolved` / `compare_json_op`): the
+        // field resolver is a plain json-map lookup, and ALL operator logic —
+        // including SQL null-on-absence, full ordering, rich array In/Contains,
+        // and full LIKE — lives in the seam. This guarantees json-map callers
+        // (search pipeline, ANN index, WAL) share identical semantics with the
+        // canonical ProximaTree path. The primitives below
+        // (`compare_json_numbers`/`compare_json_values`/`like_pattern_match`)
+        // remain the shared comparison source that the seam calls into.
+        crate::core::search::sql_value_filter::evaluate_filter_resolved(expr, &|field| {
+            metadata.get(field).cloned()
+        })
     }
 }
 
@@ -1704,6 +1659,85 @@ mod tests {
         let adaptive_above =
             SearchMode::Adaptive { threshold: 10_000 }.effective_nprobe(100, 50_000);
         assert_eq!(adaptive_above, 10); // sqrt(100) = 10
+    }
+
+    #[test]
+    fn test_search_mode_to_search_effort() {
+        // Exact maps to Exact effort (keeps the index recall-maximizing default).
+        assert_eq!(
+            SearchMode::Exact.to_search_effort(),
+            Some(SearchEffort::Exact)
+        );
+
+        // Approximate forwards the explicit/auto nprobe as the effort hint.
+        assert_eq!(
+            SearchMode::Approximate { nprobe: Some(8) }.to_search_effort(),
+            Some(SearchEffort::Approximate { hint: Some(8) })
+        );
+        assert_eq!(
+            SearchMode::Approximate { nprobe: None }.to_search_effort(),
+            Some(SearchEffort::Approximate { hint: None })
+        );
+
+        // Adaptive yields no per-query override (index self-adapts to N).
+        assert_eq!(
+            SearchMode::Adaptive { threshold: 10_000 }.to_search_effort(),
+            None
+        );
+    }
+
+    #[test]
+    fn test_search_effort_hnsw_ef_override() {
+        let top_k = 10;
+
+        // Exact keeps the index default (no override) so the warm path is
+        // byte-identical to pre-knob behavior.
+        assert_eq!(SearchEffort::Exact.hnsw_ef_override(top_k), None);
+
+        // Explicit hint is used directly as ef, floored at top_k.
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(32) }.hnsw_ef_override(top_k),
+            Some(32)
+        );
+        // A hint below top_k is floored to top_k (never return fewer than k).
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(3) }.hnsw_ef_override(top_k),
+            Some(10)
+        );
+
+        // Auto-approximate uses a recall-trading ef below the exact ceiling.
+        let auto = SearchEffort::Approximate { hint: None }
+            .hnsw_ef_override(top_k)
+            .unwrap();
+        assert!(
+            auto >= top_k && auto < 500,
+            "auto ef {auto} should trade recall, below the 500 clamp"
+        );
+    }
+
+    #[test]
+    fn test_search_effort_ivf_nprobe() {
+        let nlist = 100;
+        // Exact probes all partitions.
+        assert_eq!(SearchEffort::Exact.ivf_nprobe(nlist), 100);
+        // Explicit hint is clamped to [1, nlist].
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(8) }.ivf_nprobe(nlist),
+            8
+        );
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(999) }.ivf_nprobe(nlist),
+            100
+        );
+        assert_eq!(
+            SearchEffort::Approximate { hint: Some(0) }.ivf_nprobe(nlist),
+            1
+        );
+        // Auto = sqrt(nlist).
+        assert_eq!(
+            SearchEffort::Approximate { hint: None }.ivf_nprobe(nlist),
+            10
+        );
     }
 
     #[test]

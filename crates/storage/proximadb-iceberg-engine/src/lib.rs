@@ -51,7 +51,7 @@ use parquet::arrow::async_reader::ParquetObjectReader;
 use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
 use proximadb_records::ProximaRecord;
-use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
+use proximadb_storage_common::object_store_bridge::{CommitOutcome, ObjectStoreBridge};
 use proximadb_storage_common::proxima_arrow::infer_proxima_schema;
 use proximadb_storage_common::proxima_parquet::proxima_records_to_parquet_bytes;
 use proximadb_storage_common::proxima_schema::ProximaSchema;
@@ -94,40 +94,6 @@ impl IcebergObjectStoreBridge {
     /// object store. Range-based readers use this to avoid a full object GET.
     pub fn full_object_path(&self, path: &Path) -> Path {
         self.store.full_path(path)
-    }
-
-    /// Atomically publish the data objects currently under `data_prefix` as the next
-    /// snapshot in the manifest log at `manifest_prefix`.
-    ///
-    /// This is the warehouse base-tier commit: it composes [`list_objects`] (the data
-    /// files written via `write_records_to_parquet*`) with the
-    /// [`ManifestCommitter`](crate::manifest) `put_if_absent` protocol, so a snapshot
-    /// is published all-or-nothing and concurrent publishers cannot clobber each other
-    /// (the loser gets [`CommitOutcome::Conflict`](crate::manifest::CommitOutcome)).
-    ///
-    /// `manifest_prefix` MUST NOT be nested under `data_prefix`, or the manifest objects
-    /// would themselves be listed as data. The manifest body is the **v1 format**: the
-    /// sorted, newline-delimited, base-relative data-file keys — exactly the keys
-    /// `list_objects` yields, so they round-trip through `read_parquet_batches`. `parent`
-    /// is the snapshot being superseded (`None` for the first commit, version `0`).
-    ///
-    /// [`list_objects`]: ObjectStoreBridge::list_objects
-    pub async fn publish_snapshot(
-        &self,
-        data_prefix: &Path,
-        manifest_prefix: &str,
-        parent: Option<u64>,
-    ) -> Result<manifest::CommitOutcome, StorageError> {
-        let mut keys: Vec<String> = self
-            .list_objects(data_prefix)
-            .await?
-            .iter()
-            .map(|p| p.as_ref().to_string())
-            .collect();
-        keys.sort(); // deterministic manifest body regardless of list order
-        let body = keys.join("\n");
-        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
-        committer.commit(parent, Bytes::from(body)).await
     }
 
     /// Read the data-file keys recorded by snapshot `version` of the manifest log at
@@ -278,6 +244,32 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
                 }
             })
             .collect())
+    }
+
+    async fn latest_manifest_version(
+        &self,
+        manifest_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
+        committer.latest_version().await
+    }
+
+    async fn publish_snapshot(
+        &self,
+        data_prefix: &Path,
+        manifest_prefix: &str,
+        parent: Option<u64>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let mut keys: Vec<String> = self
+            .list_objects(data_prefix)
+            .await?
+            .iter()
+            .map(|p| p.as_ref().to_string())
+            .collect();
+        keys.sort(); // deterministic manifest body regardless of list order
+        let body = keys.join("\n");
+        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
+        committer.commit(parent, Bytes::from(body)).await
     }
 }
 

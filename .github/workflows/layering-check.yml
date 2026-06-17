@@ -25,6 +25,15 @@ jobs:
         chmod +x scripts/check-layering.sh
         ./scripts/check-layering.sh
 
+    - name: Run deterministic commit contract
+      run: python3 scripts/check_deterministic_commit_contract.py
+
+    # SaaS mandate (CLAUDE.md/AGENTS.md): object-store writes must go through
+    # DrPathBuilder. Fails on NEW raw `data/{tenant}/{ns}/...` construction;
+    # known, tracked bypasses warn but do not block (run with --strict to gate them).
+    - name: Run tenant-path guard (DrPathBuilder mandate)
+      run: python3 scripts/check_tenant_path_guard.py
+
     - name: Report violations
       if: failure()
       run: |

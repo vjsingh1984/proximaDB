@@ -145,6 +145,7 @@ pub trait TableRecordSourceReader: Send + Sync {
         source: &ReadSource,
         source_schema: Option<&CatalogTableSchema>,
         target_schema: &CatalogTableSchema,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
         cursor: &mut TableRecordSourceCursor,
     ) -> Result<Option<Vec<ProximaRecord>>>;
 }
@@ -203,6 +204,7 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
         source: &ReadSource,
         source_schema: Option<&CatalogTableSchema>,
         target_schema: &CatalogTableSchema,
+        tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
         cursor: &mut TableRecordSourceCursor,
     ) -> Result<Option<Vec<ProximaRecord>>> {
         let ReadSource::CatalogTable { table, .. } = source else {
@@ -239,7 +241,9 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
                         include_vector: true,
                         include_props: true,
                     },
-                    None,
+                    // TD-113 family: scope the SELECT-source scan to the tenant's
+                    // record partition (was `None` → unscoped/cross-tenant read).
+                    tenant_context,
                 )
                 .await?;
             cursor.buffered_records = Some(records);
@@ -312,7 +316,6 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
-        let _start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         if request.routed_plan.backend != ComputeBackend::Native {
             return Ok(TableWriteExecutionResult::planned(&request.routed_plan));
@@ -329,6 +332,7 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
                 &request.routed_plan.plan.source,
                 request.source_schema,
                 request.target_schema,
+                request.tenant_context,
                 &mut cursor,
             )
             .await?
@@ -384,9 +388,11 @@ impl TableWriteExecutor for NativeTableWriteExecutor {
                 .into_iter()
                 .map(|record| TableRecordMutation::new(mutation_kind, record))
                 .collect::<Vec<_>>();
+            // TD-113 family: thread the tenant so the bulk-append lands in the
+            // tenant's record partition (was `None` → unscoped/cross-tenant write).
             let result = self
                 .record_store
-                .write_mutations(request.target_schema, mutations, None)
+                .write_mutations(request.target_schema, mutations, request.tenant_context)
                 .await?;
             if !result.success {
                 return Err(anyhow!(
@@ -426,7 +432,6 @@ impl TableWriteExecutor for PlannedOnlyTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
-        let _start_time = std::time::Instant::now();
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         Ok(TableWriteExecutionResult::planned(&request.routed_plan))
     }
@@ -605,7 +610,7 @@ fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> 
         .or_else(|| schema.storage_layouts.first())
 }
 
-fn object_write_base_path(schema: &CatalogTableSchema) -> String {
+fn object_write_base_path(schema: &CatalogTableSchema, tenant: Option<&str>) -> String {
     primary_layout(schema)
         .and_then(|layout| match layout.physical_format {
             CatalogPhysicalFormat::Iceberg | CatalogPhysicalFormat::Parquet => {
@@ -616,7 +621,28 @@ fn object_write_base_path(schema: &CatalogTableSchema) -> String {
         .or(schema.location.as_deref())
         .map(normalize_object_path_prefix)
         .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| format!("tables/{}", sanitize_object_path_segment(&schema.name)))
+        .unwrap_or_else(|| {
+            // No explicit (materialize-set, already tenant-scoped) location → derive a
+            // fallback. Tenant-scope it (TD-113 family) so two tenants' same-named
+            // tables don't write/commit to a shared `tables/{name}` prefix. Route
+            // through DrPathBuilder (not a raw `data/{..}` literal) so the segments
+            // are validated and the path-resolver guard is satisfied; same shape
+            // (`data/{tenant}/tables/{name}`).
+            let table = sanitize_object_path_segment(&schema.name);
+            match tenant.filter(|t| !t.is_empty()) {
+                Some(t) => {
+                    crate::storage::trait_components::path_resolver::DrPathBuilder::build_from_parts(
+                        t,
+                        "tables",
+                        &table,
+                        Default::default(),
+                    )
+                    .map(|resolved| resolved.root_prefix().trim_end_matches('/').to_string())
+                    .unwrap_or_else(|_| format!("tables/{table}"))
+                }
+                None => format!("tables/{table}"),
+            }
+        })
 }
 
 fn normalize_object_path_prefix(location: &str) -> String {
@@ -653,15 +679,20 @@ fn write_mode_label(write_mode: &WriteMode) -> &'static str {
     }
 }
 
-fn object_write_path(schema: &CatalogTableSchema, routed_plan: &RoutedExecutionPlan) -> Path {
-    let base = object_write_base_path(schema);
+fn object_write_path(
+    schema: &CatalogTableSchema,
+    routed_plan: &RoutedExecutionPlan,
+    batch_index: usize,
+    tenant: Option<&str>,
+) -> Path {
+    let base = object_write_base_path(schema, tenant);
     let table = sanitize_object_path_segment(&schema.name);
     let sequence = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
     Path::from(format!(
-        "{base}/data/{table}-{}-{sequence}.parquet",
+        "{base}/data/{table}-{}-{sequence}-{batch_index:05}.parquet",
         write_mode_label(&routed_plan.plan.write_mode)
     ))
 }
@@ -669,6 +700,23 @@ fn object_write_path(schema: &CatalogTableSchema, routed_plan: &RoutedExecutionP
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn object_write_base_path_tenant_isolates_the_fallback() {
+        // No explicit location → fallback; the tenant scopes it so two tenants'
+        // same-named tables don't share a `tables/{name}` prefix (TD-113 family).
+        let schema = CatalogTableSchema::new("facts");
+        assert_eq!(object_write_base_path(&schema, None), "tables/facts");
+        assert_eq!(
+            object_write_base_path(&schema, Some("acmecorp")),
+            "data/acmecorp/tables/facts"
+        );
+        assert_ne!(
+            object_write_base_path(&schema, Some("acmecorp")),
+            object_write_base_path(&schema, Some("globexco")),
+        );
+    }
+
     use crate::query::table_write_plan::{
         CopyIntoPlan, CostEstimate, LogicalTableRef, TableWriteRouter, WriteIntentOverrides,
         WriteMode,
@@ -713,6 +761,7 @@ mod tests {
             _source: &ReadSource,
             _source_schema: Option<&CatalogTableSchema>,
             _target_schema: &CatalogTableSchema,
+            _tenant_context: Option<&crate::storage::tenant::context::TenantContext>,
             _cursor: &mut TableRecordSourceCursor,
         ) -> Result<Option<Vec<ProximaRecord>>> {
             Ok(self.batches.lock().unwrap().pop())
@@ -758,6 +807,10 @@ mod tests {
     struct CapturingObjectStoreBridge {
         store: Arc<dyn ObjectStore>,
         writes: Mutex<Vec<(Path, Vec<String>)>>,
+        commits: Mutex<Vec<(Path, String, Option<u64>)>>,
+        /// When set, `publish_snapshot` always reports a conflict (recording each
+        /// attempt in `commits`) so tests can exercise the bounded-retry ceiling.
+        always_conflict: bool,
     }
 
     impl CapturingObjectStoreBridge {
@@ -765,6 +818,15 @@ mod tests {
             Self {
                 store: Arc::new(InMemory::new()),
                 writes: Mutex::new(Vec::new()),
+                commits: Mutex::new(Vec::new()),
+                always_conflict: false,
+            }
+        }
+
+        fn new_always_conflict() -> Self {
+            Self {
+                always_conflict: true,
+                ..Self::new()
             }
         }
     }
@@ -816,6 +878,40 @@ mod tests {
             _tenant_id: Option<&str>,
         ) -> std::result::Result<(), StorageError> {
             Ok(())
+        }
+
+        async fn latest_manifest_version(
+            &self,
+            _manifest_prefix: &str,
+        ) -> std::result::Result<Option<u64>, StorageError> {
+            Ok(self.commits.lock().unwrap().last().and_then(|c| c.2))
+        }
+
+        async fn publish_snapshot(
+            &self,
+            data_prefix: &Path,
+            manifest_prefix: &str,
+            parent: Option<u64>,
+        ) -> std::result::Result<
+            proximadb_storage_common::object_store_bridge::CommitOutcome,
+            StorageError,
+        > {
+            use proximadb_storage_common::object_store_bridge::CommitOutcome;
+            if self.always_conflict {
+                self.commits.lock().unwrap().push((
+                    data_prefix.clone(),
+                    manifest_prefix.to_string(),
+                    parent,
+                ));
+                return Ok(CommitOutcome::Conflict { latest: parent });
+            }
+            let next = parent.map(|p| p + 1).unwrap_or(0);
+            self.commits.lock().unwrap().push((
+                data_prefix.clone(),
+                manifest_prefix.to_string(),
+                Some(next),
+            ));
+            Ok(CommitOutcome::Committed(next))
         }
     }
 
@@ -956,6 +1052,7 @@ mod tests {
                 &ReadSource::QuerySql("SELECT * FROM staging".to_string()),
                 None,
                 &schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -982,6 +1079,7 @@ mod tests {
                 },
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1334,6 +1432,7 @@ mod tests {
                 &read_source,
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1344,6 +1443,7 @@ mod tests {
                 &read_source,
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1354,6 +1454,7 @@ mod tests {
                 &read_source,
                 Some(&source_schema),
                 &target_schema,
+                None,
                 &mut cursor,
             )
             .await
@@ -1693,7 +1794,137 @@ mod tests {
 
         assert!(err.to_string().contains("ObjectStoreBridge"));
     }
+
+    #[tokio::test]
+    async fn datafusion_bulk_append_batches_parquet_and_commits_manifest() {
+        let schema = CatalogTableSchema::new("facts")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_layout(CatalogStorageLayout::projection_publication(
+                "primary",
+                CatalogPhysicalFormat::Iceberg,
+                "warehouse/facts",
+            ))
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("facts"), "SELECT * FROM staging");
+        let overrides = WriteIntentOverrides {
+            row_count_hint: Some(DEFAULT_BULK_ROW_THRESHOLD),
+            batch_local_constraints_sufficient: Some(true),
+            ..Default::default()
+        };
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: Some(&overrides),
+                plan: &plan,
+            });
+
+        // Two source batches
+        let source = Arc::new(VecSourceReader::new(vec![
+            vec![test_record("r1"), test_record("r2")],
+            vec![test_record("r3")],
+        ]));
+        let bridge = Arc::new(CapturingObjectStoreBridge::new());
+        let result = DataFusionTableWriteExecutor::new(
+            source,
+            Arc::new(CapturingRecordStore {
+                writes: Mutex::new(Vec::new()),
+            }),
+        )
+        .with_object_store_bridge(bridge.clone())
+        .execute(TableWriteExecutionRequest {
+            target_schema: &schema,
+            source_schema: None,
+            routed_plan: routed,
+            tenant_context: None,
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.status, TableWriteExecutionStatus::Completed);
+        assert_eq!(result.rows_written, 3);
+
+        // Verify multiple Parquet files were written with distinct paths (batch index)
+        let writes = bridge.writes.lock().unwrap();
+        assert_eq!(writes.len(), 2);
+        assert!(writes[0].0.as_ref().contains("-00000.parquet"));
+        assert!(writes[1].0.as_ref().contains("-00001.parquet"));
+        assert_eq!(writes[0].1, vec!["r1", "r2"]);
+        assert_eq!(writes[1].1, vec!["r3"]);
+
+        // Verify manifest was committed exactly once
+        let commits = bridge.commits.lock().unwrap();
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0].1, "warehouse/facts/_manifests");
+        assert_eq!(commits[0].2, Some(0)); // First version
+    }
+
+    #[tokio::test]
+    async fn datafusion_bulk_append_errors_on_persistent_manifest_conflict() {
+        let schema = CatalogTableSchema::new("facts")
+            .with_workload_profile(CatalogWorkloadProfile::Olap)
+            .with_storage_layout(CatalogStorageLayout::projection_publication(
+                "primary",
+                CatalogPhysicalFormat::Iceberg,
+                "warehouse/facts",
+            ))
+            .with_storage_specialization(CatalogStorageSpecialization::ColumnarAnalytics);
+        let plan =
+            CopyIntoPlan::insert_select(LogicalTableRef::new("facts"), "SELECT * FROM staging");
+        let overrides = WriteIntentOverrides {
+            row_count_hint: Some(DEFAULT_BULK_ROW_THRESHOLD),
+            batch_local_constraints_sufficient: Some(true),
+            ..Default::default()
+        };
+        let routed =
+            TableWriteRouter::default().route(crate::query::table_write_plan::RoutingContext {
+                target_schema: &schema,
+                target_stats: None,
+                source_schema: None,
+                source_stats: None,
+                write_intent_overrides: Some(&overrides),
+                plan: &plan,
+            });
+
+        let source = Arc::new(VecSourceReader::new(vec![vec![test_record("r1")]]));
+        // Bridge that never lets the writer win the CAS — the commit loop must give
+        // up after MAX_MANIFEST_COMMIT_ATTEMPTS instead of spinning forever.
+        let bridge = Arc::new(CapturingObjectStoreBridge::new_always_conflict());
+        let err = DataFusionTableWriteExecutor::new(
+            source,
+            Arc::new(CapturingRecordStore {
+                writes: Mutex::new(Vec::new()),
+            }),
+        )
+        .with_object_store_bridge(bridge.clone())
+        .execute(TableWriteExecutionRequest {
+            target_schema: &schema,
+            source_schema: None,
+            routed_plan: routed,
+            tenant_context: None,
+        })
+        .await
+        .unwrap_err();
+
+        assert!(err.to_string().contains("persistent snapshot conflict"));
+        // The data file was written, then exactly MAX attempts were made before bailing.
+        assert_eq!(bridge.writes.lock().unwrap().len(), 1);
+        assert_eq!(
+            bridge.commits.lock().unwrap().len(),
+            MAX_MANIFEST_COMMIT_ATTEMPTS
+        );
+    }
 }
+
+/// Upper bound on optimistic-concurrency manifest-commit retries. A healthy
+/// system rebases past a handful of concurrent committers within a few attempts;
+/// hitting this ceiling means the conflict is persistent (a wedged committer or a
+/// `latest` that never lets this writer win the CAS), which we surface as an error
+/// rather than spinning forever.
+const MAX_MANIFEST_COMMIT_ATTEMPTS: usize = 32;
 
 /// DataFusion-based executor for OLAP/table-to-table write workloads.
 ///
@@ -1731,7 +1962,8 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
         &self,
         request: TableWriteExecutionRequest<'_>,
     ) -> Result<TableWriteExecutionResult> {
-        let _start_time = std::time::Instant::now();
+        use proximadb_storage_common::object_store_bridge::CommitOutcome;
+
         validate_required_guards(request.target_schema, &request.routed_plan)?;
         if !is_datafusion_backend(&request.routed_plan.backend) {
             return Ok(TableWriteExecutionResult::planned(&request.routed_plan));
@@ -1741,15 +1973,10 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
         let mutation_kind = mutation_kind_for_write_mode(&request.routed_plan.plan.write_mode)?;
         let mut rows_written = 0;
         let mut cursor = TableRecordSourceCursor::default();
-        let object_write_path =
-            if request.routed_plan.write_lane_decision.lane == WriteLane::BulkAppendCommit {
-                Some(object_write_path(
-                    request.target_schema,
-                    &request.routed_plan,
-                ))
-            } else {
-                None
-            };
+        let is_bulk_append =
+            request.routed_plan.write_lane_decision.lane == WriteLane::BulkAppendCommit;
+        let mut batch_index = 0;
+        let mut wrote_any_parquet = false;
 
         while let Some(batch) = self
             .source_reader
@@ -1757,6 +1984,7 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                 &request.routed_plan.plan.source,
                 request.source_schema,
                 request.target_schema,
+                request.tenant_context,
                 &mut cursor,
             )
             .await?
@@ -1764,7 +1992,15 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
             if batch.is_empty() {
                 continue;
             }
-            if let Some(path) = object_write_path.as_ref() {
+            if is_bulk_append {
+                let path = object_write_path(
+                    request.target_schema,
+                    &request.routed_plan,
+                    batch_index,
+                    request.tenant_context.map(|tc| tc.tenant_id.as_str()),
+                );
+                batch_index += 1;
+
                 let bridge = self.object_store_bridge.as_ref().ok_or_else(|| {
                     anyhow!(
                         "DataFusion bulk append for '{}' requires an ObjectStoreBridge",
@@ -1773,7 +2009,7 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                 })?;
                 let tenant_id = request.tenant_context.map(|tc| tc.tenant_id.as_str());
                 bridge
-                    .write_records_to_parquet(path, &batch, tenant_id)
+                    .write_records_to_parquet(&path, &batch, tenant_id)
                     .await
                     .map_err(|err| {
                         anyhow!(
@@ -1783,6 +2019,7 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                         )
                     })?;
                 rows_written += batch.len() as u64;
+                wrote_any_parquet = true;
                 continue;
             }
 
@@ -1790,9 +2027,11 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
                 .into_iter()
                 .map(|record| TableRecordMutation::new(mutation_kind, record))
                 .collect::<Vec<_>>();
+            // TD-113 family: thread the tenant so the non-bulk-append DataFusion
+            // route writes into the tenant's record partition (was `None`).
             let result = self
                 .record_store
-                .write_mutations(request.target_schema, mutations, None)
+                .write_mutations(request.target_schema, mutations, request.tenant_context)
                 .await?;
             if !result.success {
                 return Err(anyhow!(
@@ -1804,12 +2043,55 @@ impl TableWriteExecutor for DataFusionTableWriteExecutor {
             rows_written += result.record_ids.len() as u64;
         }
 
+        if is_bulk_append && wrote_any_parquet {
+            let bridge = self.object_store_bridge.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "DataFusion bulk append for '{}' wrote Parquet without an ObjectStoreBridge",
+                    request.target_schema.name
+                )
+            })?;
+            let base = object_write_base_path(
+                request.target_schema,
+                request.tenant_context.map(|tc| tc.tenant_id.as_str()),
+            );
+            let data_prefix = format!("{base}/data");
+            let manifest_prefix = format!("{base}/_manifests");
+
+            // Optimistic-concurrency commit: rebase onto the latest snapshot and retry
+            // on conflict, bounded so a persistent conflict surfaces as an error instead
+            // of spinning forever.
+            let mut parent = bridge.latest_manifest_version(&manifest_prefix).await?;
+            let mut committed = false;
+            for _ in 0..MAX_MANIFEST_COMMIT_ATTEMPTS {
+                match bridge
+                    .publish_snapshot(&Path::from(data_prefix.as_str()), &manifest_prefix, parent)
+                    .await?
+                {
+                    CommitOutcome::Committed(_) => {
+                        committed = true;
+                        break;
+                    }
+                    CommitOutcome::Conflict { latest } => parent = latest,
+                }
+            }
+            if !committed {
+                return Err(anyhow!(
+                    "DataFusion manifest commit for '{}' failed after {} attempts due to \
+                     persistent snapshot conflict",
+                    request.target_schema.name,
+                    MAX_MANIFEST_COMMIT_ATTEMPTS
+                ));
+            }
+        }
+
         Ok(TableWriteExecutionResult {
             status: TableWriteExecutionStatus::Completed,
             rows_written,
             route_summary: format!(
-                "backend={:?}, access_method={:?}",
-                request.routed_plan.backend, request.routed_plan.selected_path.access_method
+                "backend={:?}, access_method={:?}, batches={}",
+                request.routed_plan.backend,
+                request.routed_plan.selected_path.access_method,
+                batch_index
             ),
             guards: request.routed_plan.required_guards,
         })

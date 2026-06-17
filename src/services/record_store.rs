@@ -216,7 +216,7 @@ fn record_id(record: &ProximaRecord) -> String {
     }
 }
 
-#[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
+#[allow(dead_code)] // pending wiring
 fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> {
     schema
         .storage_layouts
@@ -226,7 +226,7 @@ fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> 
         .or_else(|| schema.storage_layouts.first())
 }
 
-#[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
+#[allow(dead_code)] // pending wiring
 fn normalize_object_path_prefix(location: &str) -> String {
     let without_scheme = location
         .split_once("://")
@@ -255,9 +255,7 @@ fn sanitize_object_path_segment(value: &str) -> String {
     }
 }
 
-// DrPathBuilder::build is infallible for this internally-constructed namespace
-// (fixed tenant + namespace id), so expect() flags a programmer error, not input.
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // DrPathBuilder::build is infallible for this internally-constructed namespace
 fn object_store_write_base_path(
     schema: &CatalogTableSchema,
     tenant_context: Option<&TenantContext>,
@@ -482,26 +480,6 @@ pub trait TableRecordStore: Send + Sync {
             keep
         });
         Ok(all)
-    }
-
-    /// TD-110 Slice D: resolve the oids whose UNIQUE column `set` equals
-    /// `values`, via an index point-probe.
-    ///
-    /// `columns`/`values` are the unique set's columns and their equality-probe
-    /// texts (rendered like [`proxima_value_to_unique_text`] so they match the
-    /// index). Returns `Ok(None)` when this store has no point index for that set
-    /// (the caller should fall back to a scan); `Ok(Some(oids))` is the indexed
-    /// match set (possibly empty = no such row). Default = `Ok(None)`; index-backed
-    /// stores (e.g. `DirectWalTableRecordStore`) override it.
-    async fn lookup_unique_oids(
-        &self,
-        table_schema: &CatalogTableSchema,
-        columns: &[String],
-        values: &[String],
-        tenant_context: Option<&TenantContext>,
-    ) -> Result<Option<Vec<String>>> {
-        let _ = (table_schema, columns, values, tenant_context);
-        Ok(None)
     }
 
     /// TD-110 Slice C: detect a UNIQUE/PK conflict for a batch of candidate
@@ -1159,29 +1137,126 @@ impl TableUniqueIndex {
 }
 
 pub struct DirectWalTableRecordStore {
-    storage: Arc<dyn RecordStorage>,
+    /// Per-(tenant_id, collection) record partitions, created on demand via
+    /// `storage_factory`. TD-064: tenant + collection isolation is STRUCTURAL —
+    /// selecting the partition by the catalog-resolved (tenant, collection)
+    /// identity replaces per-record tenant/`variation_id` filtering on the hot
+    /// path, and scopes oid point-lookups/insert-conflicts per (tenant, table).
+    /// The empty tenant id (`""`) is just one more tenant key (single-tenant).
+    partitions:
+        parking_lot::RwLock<std::collections::HashMap<(String, String), Arc<dyn RecordStorage>>>,
+    /// Factory for a fresh per-partition record store (default: in-memory memtable).
+    storage_factory: Arc<dyn Fn() -> Arc<dyn RecordStorage> + Send + Sync>,
     wal_appender: Arc<dyn TableWalAppender>,
-    /// TD-110 Slice C: per-table UNIQUE/PK index (keyed by `table_schema.name`).
-    /// Presence of a table key == "index built". Lazily built on first
-    /// `check_unique_conflict`, then maintained on every `write_mutations`.
-    unique_index: parking_lot::RwLock<std::collections::HashMap<String, TableUniqueIndex>>,
+    /// TD-110 Slice C: UNIQUE/PK index keyed by `(tenant_id, collection)` so a
+    /// table's UNIQUE/PK enforcement is per-tenant. Presence of a key == "index
+    /// built". Lazily built on first `check_unique_conflict`, then maintained on
+    /// every `write_mutations`.
+    unique_index:
+        parking_lot::RwLock<std::collections::HashMap<(String, String), TableUniqueIndex>>,
 }
 
 impl DirectWalTableRecordStore {
-    /// Create a direct writer over canonical storage and WAL appender.
+    /// Create a direct writer that routes every `(tenant, collection)` partition
+    /// to the single supplied `storage`. This is the non-isolated shape used by
+    /// single-tenant unit tests and callers that intentionally share one store;
+    /// production multi-tenant paths use [`Self::new_partitioned`].
     pub fn new(storage: Arc<dyn RecordStorage>, wal_appender: Arc<dyn TableWalAppender>) -> Self {
+        Self::with_storage_factory(wal_appender, Arc::new(move || storage.clone()))
+    }
+
+    /// Create a direct writer with per-(tenant, collection) partitions backed by
+    /// in-memory memtables created on demand — the isolated production shape.
+    pub fn new_partitioned(wal_appender: Arc<dyn TableWalAppender>) -> Self {
+        Self::with_storage_factory(
+            wal_appender,
+            Arc::new(|| {
+                Arc::new(crate::services::MemtableRecordStorage::new()) as Arc<dyn RecordStorage>
+            }),
+        )
+    }
+
+    /// Create a direct writer with a custom per-partition storage factory.
+    pub fn with_storage_factory(
+        wal_appender: Arc<dyn TableWalAppender>,
+        storage_factory: Arc<dyn Fn() -> Arc<dyn RecordStorage> + Send + Sync>,
+    ) -> Self {
         Self {
-            storage,
+            partitions: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            storage_factory,
             wal_appender,
             unique_index: parking_lot::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
-    /// Build the UNIQUE/PK index for `table_schema` if not already built, by
-    /// scanning current visible state (which the WAL recovery has rebuilt). A
-    /// no-op when the table has no UNIQUE/PK sets.
-    async fn ensure_unique_index_built(&self, table_schema: &CatalogTableSchema) -> Result<()> {
-        if self.unique_index.read().contains_key(&table_schema.name) {
+    /// Resolve the tenant scope key from an optional tenant context.
+    fn tenant_key(tenant_context: Option<&TenantContext>) -> String {
+        tenant_context
+            .map(|tenant| tenant.tenant_id.clone())
+            .unwrap_or_default()
+    }
+
+    /// Select (creating on demand) the record partition for `(tenant_id, collection)`.
+    fn partition(&self, tenant_id: &str, collection: &str) -> Arc<dyn RecordStorage> {
+        let key = (tenant_id.to_string(), collection.to_string());
+        if let Some(partition) = self.partitions.read().get(&key) {
+            return partition.clone();
+        }
+        self.partitions
+            .write()
+            .entry(key)
+            .or_insert_with(|| (self.storage_factory)())
+            .clone()
+    }
+
+    /// Replay canonical WAL entries into the correct `(tenant, table)` partitions
+    /// on recovery, routing by the entry's `tenant_id` + the operation's
+    /// `collection_id`. Reuses the per-store `RecordStore` point ops.
+    pub async fn replay_wal_entries<I>(
+        &self,
+        entries: I,
+    ) -> Result<proximadb_records::RecordRecoverySummary>
+    where
+        I: IntoIterator<Item = CanonicalWalEntry>,
+    {
+        let mut summary = proximadb_records::RecordRecoverySummary::default();
+        for entry in entries {
+            let tenant_id = entry.tenant_id.clone().unwrap_or_default();
+            match entry.operation {
+                CanonicalOperation::RecordUpsert {
+                    collection_id,
+                    record,
+                    ..
+                } => {
+                    self.partition(&tenant_id, &collection_id)
+                        .upsert_record(*record)
+                        .await?;
+                    summary.upserts_replayed += 1;
+                }
+                CanonicalOperation::RecordDelete {
+                    collection_id, oid, ..
+                } => {
+                    self.partition(&tenant_id, &collection_id)
+                        .delete_record(&RecordKey::new(oid))
+                        .await?;
+                    summary.deletes_replayed += 1;
+                }
+                CanonicalOperation::Checkpoint(_) | CanonicalOperation::CdcBarrier { .. } => {}
+            }
+        }
+        Ok(summary)
+    }
+
+    /// Build the UNIQUE/PK index for `(tenant_id, table_schema)` if not already
+    /// built, by scanning the tenant's current visible state (WAL recovery has
+    /// rebuilt it). A no-op when the table has no UNIQUE/PK sets.
+    async fn ensure_unique_index_built(
+        &self,
+        table_schema: &CatalogTableSchema,
+        tenant_id: &str,
+    ) -> Result<()> {
+        let index_key = (tenant_id.to_string(), table_schema.name.clone());
+        if self.unique_index.read().contains_key(&index_key) {
             return Ok(());
         }
         let set_columns = schema_unique_column_sets(table_schema);
@@ -1189,27 +1264,25 @@ impl DirectWalTableRecordStore {
             return Ok(());
         }
         let primary_key = schema_primary_key_column(table_schema);
-        let existing = self
-            .scan_records(
-                table_schema,
-                TableRecordScanRequest {
-                    table_id: table_schema.name.clone(),
-                    limit: None,
-                    include_vector: false,
-                    include_props: true,
-                },
-                None,
-            )
-            .await?;
+        let existing =
+            RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
+                .scan_records(
+                    table_schema,
+                    TableRecordScanRequest {
+                        table_id: table_schema.name.clone(),
+                        limit: None,
+                        include_vector: false,
+                        include_props: true,
+                    },
+                    None,
+                )
+                .await?;
         let mut index = TableUniqueIndex::with_sets(&set_columns);
         for record in &existing {
             index.upsert(record, primary_key.as_deref());
         }
         // Double-checked insert: keep an index another writer built meanwhile.
-        self.unique_index
-            .write()
-            .entry(table_schema.name.clone())
-            .or_insert(index);
+        self.unique_index.write().entry(index_key).or_insert(index);
         Ok(())
     }
 }
@@ -1225,6 +1298,10 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let mut operations = Vec::with_capacity(mutations.len());
         let mut storage_actions = Vec::with_capacity(mutations.len());
         let projections = projection_directives_for_schema(table_schema);
+        // TD-064: structural per-(tenant, collection) partition selection.
+        let tenant_scope = Self::tenant_key(tenant_context);
+        let partition = self.partition(&tenant_scope, &table_schema.name);
+        let index_key = (tenant_scope.clone(), table_schema.name.clone());
 
         for mutation in mutations {
             let kind = mutation.kind;
@@ -1233,7 +1310,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
 
             match kind {
                 TableRecordMutationKind::Insert => {
-                    if self.storage.get_record(&key).await?.is_some() {
+                    if partition.get_record(&key).await?.is_some() {
                         return Ok(TableRecordWriteResult::failure(
                             format!(
                                 "Record '{}' already exists in table '{}'",
@@ -1250,7 +1327,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                     storage_actions.push((kind, record));
                 }
                 TableRecordMutationKind::Update => {
-                    if self.storage.get_record(&key).await?.is_none() {
+                    if partition.get_record(&key).await?.is_none() {
                         return Ok(TableRecordWriteResult::failure(
                             format!(
                                 "Record '{}' does not exist in table '{}'",
@@ -1305,7 +1382,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
         // safe; checking once avoids per-write work for tables never probed.
         let index_primary_key = schema_primary_key_column(table_schema);
         let maintain_index = !schema_unique_column_sets(table_schema).is_empty()
-            && self.unique_index.read().contains_key(&table_schema.name);
+            && self.unique_index.read().contains_key(&index_key);
 
         let mut record_ids = Vec::with_capacity(storage_actions.len());
         for (kind, record) in storage_actions {
@@ -1314,22 +1391,20 @@ impl TableRecordStore for DirectWalTableRecordStore {
                 | TableRecordMutationKind::Upsert
                 | TableRecordMutationKind::Update => {
                     if maintain_index {
-                        let written = self.storage.upsert_record(record.clone()).await?;
+                        let written = partition.upsert_record(record.clone()).await?;
                         record_ids.push(written.oid);
-                        if let Some(index) = self.unique_index.write().get_mut(&table_schema.name) {
+                        if let Some(index) = self.unique_index.write().get_mut(&index_key) {
                             index.upsert(&record, index_primary_key.as_deref());
                         }
                     } else {
-                        let written = self.storage.upsert_record(record).await?;
+                        let written = partition.upsert_record(record).await?;
                         record_ids.push(written.oid);
                     }
                 }
                 TableRecordMutationKind::Delete => {
-                    self.storage
-                        .delete_record(&RecordKey::from(&record))
-                        .await?;
+                    partition.delete_record(&RecordKey::from(&record)).await?;
                     if maintain_index
-                        && let Some(index) = self.unique_index.write().get_mut(&table_schema.name)
+                        && let Some(index) = self.unique_index.write().get_mut(&index_key)
                     {
                         index.delete(&record.oid);
                     }
@@ -1352,8 +1427,11 @@ impl TableRecordStore for DirectWalTableRecordStore {
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordGetResponse> {
-        RecordStorageTableRecordStore::new(self.storage.clone())
-            .get_by_key(table_schema, request, tenant_context)
+        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
+        // Pass `None`: the partition already scopes the tenant structurally, so
+        // no per-record tenant filter is needed (TD-064).
+        RecordStorageTableRecordStore::new(partition)
+            .get_by_key(table_schema, request, None)
             .await
     }
 
@@ -1363,8 +1441,9 @@ impl TableRecordStore for DirectWalTableRecordStore {
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        RecordStorageTableRecordStore::new(self.storage.clone())
-            .scan_records(table_schema, request, tenant_context)
+        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
+        RecordStorageTableRecordStore::new(partition)
+            .scan_records(table_schema, request, None)
             .await
     }
 
@@ -1375,8 +1454,9 @@ impl TableRecordStore for DirectWalTableRecordStore {
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        RecordStorageTableRecordStore::new(self.storage.clone())
-            .scan_records_filtered(table_schema, request, predicate, tenant_context)
+        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
+        RecordStorageTableRecordStore::new(partition)
+            .scan_records_filtered(table_schema, request, predicate, None)
             .await
     }
 
@@ -1390,11 +1470,14 @@ impl TableRecordStore for DirectWalTableRecordStore {
         _primary_key: Option<&str>,
         sets: &[UniqueCandidateSet],
         exclude_oids: &std::collections::HashSet<String>,
-        _tenant_context: Option<&TenantContext>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<Option<UniqueConflict>> {
-        self.ensure_unique_index_built(table_schema).await?;
+        let tenant_scope = Self::tenant_key(tenant_context);
+        self.ensure_unique_index_built(table_schema, &tenant_scope)
+            .await?;
+        let index_key = (tenant_scope, table_schema.name.clone());
         let index = self.unique_index.read();
-        let Some(table_index) = index.get(&table_schema.name) else {
+        let Some(table_index) = index.get(&index_key) else {
             return Ok(None); // table has no UNIQUE/PK sets
         };
         for set in sets {
@@ -1406,37 +1489,6 @@ impl TableRecordStore for DirectWalTableRecordStore {
             }
         }
         Ok(None)
-    }
-
-    /// TD-110 Slice D: O(1) index-backed point lookup. Builds the per-table index
-    /// on first use, then probes the set matching `columns` for the `values`
-    /// tuple. Returns `Ok(None)` when no index set matches `columns` (caller
-    /// scans); otherwise the (possibly empty) set of owning oids.
-    async fn lookup_unique_oids(
-        &self,
-        table_schema: &CatalogTableSchema,
-        columns: &[String],
-        values: &[String],
-        _tenant_context: Option<&TenantContext>,
-    ) -> Result<Option<Vec<String>>> {
-        self.ensure_unique_index_built(table_schema).await?;
-        let index = self.unique_index.read();
-        let Some(table_index) = index.get(&table_schema.name) else {
-            return Ok(None); // table has no UNIQUE/PK sets
-        };
-        let Some(set) = table_index
-            .sets
-            .iter()
-            .find(|set| set.columns.as_slice() == columns)
-        else {
-            return Ok(None); // this column set is not indexed
-        };
-        let oids = set
-            .tuple_to_oids
-            .get(values)
-            .map(|owners| owners.iter().cloned().collect())
-            .unwrap_or_default();
-        Ok(Some(oids))
     }
 }
 
@@ -1747,6 +1799,26 @@ mod tests {
                 .unwrap()
                 .push((path.clone(), data.to_vec()));
             Ok(())
+        }
+
+        async fn latest_manifest_version(
+            &self,
+            _manifest_prefix: &str,
+        ) -> std::result::Result<Option<u64>, StorageError> {
+            Ok(None)
+        }
+
+        async fn publish_snapshot(
+            &self,
+            _data_prefix: &ObjectPath,
+            _manifest_prefix: &str,
+            _parent: Option<u64>,
+        ) -> std::result::Result<
+            proximadb_storage_common::object_store_bridge::CommitOutcome,
+            StorageError,
+        > {
+            use proximadb_storage_common::object_store_bridge::CommitOutcome;
+            Ok(CommitOutcome::Committed(0))
         }
     }
 

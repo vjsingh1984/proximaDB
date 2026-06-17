@@ -53,7 +53,9 @@ DRIFT_RULES = {
     "graph_legacy_route_deprecation": {
         "doc_rules": [
             {
-                "path": "docs/api/graph.adoc",
+                # Relocated from docs/api/graph.adoc to docs/03-api-reference/ in the
+                # 2026-05 docs taxonomy reshuffle; all deprecation/redirect content moved with it.
+                "path": "docs/03-api-reference/graph.adoc",
                 "required_substrings": [
                     "Legacy Endpoint Deprecation And Migration",
                     "308 Permanent Redirect",
@@ -62,21 +64,10 @@ DRIFT_RULES = {
                     "`/api/v1/graph/graphs/default/nodes`",
                 ],
             },
-            {
-                "path": "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc",
-                "forbidden_substrings": [
-                    "http://localhost:5678/api/v1/graph/nodes",
-                    "http://localhost:5678/api/v1/graph/edges",
-                    "http://localhost:5678/api/v1/graph/query",
-                    "http://localhost:5678/api/v1/graph/stats?collection=",
-                    "http://localhost:5678/api/v1/graph/migrate",
-                ],
-                "required_substrings": [
-                    "http://localhost:5678/api/v1/graph/graphs/social_network/nodes",
-                    "http://localhost:5678/api/v1/graph/graphs/web_graph/pulsar/query",
-                    "http://localhost:5678/api/v1/graph/graphs/historical_events/quasar/migrate",
-                ],
-            },
+            # NOTE: the former GRAPH_ENGINES_GUIDE.adoc URL-example sub-rule was removed.
+            # That guide is now a conceptual runtime guide with no API examples; the
+            # multi-graph canonical-route requirement is covered by the graph.adoc rule
+            # above and the source-comment rule below.
             {
                 "path": "src/network/rest/v1/graph.rs",
                 "required_substrings": [
@@ -94,9 +85,12 @@ DRIFT_RULES = {
     "distributed_graph_engine_messaging": {
         "doc_rules": [
             {
+                # PULSAR/QUASAR moved past "experimental" to fully RETIRED (TD-001,
+                # Jun 2026); the guide now documents retirement, not experimentation.
                 "path": "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc",
                 "required_substrings": [
-                    "*WARNING*: PULSAR and QUASAR are experimental",
+                    "are retired graph engine names",
+                    "Do not document, demo, or release-note PULSAR or QUASAR as product engines",
                 ],
                 "forbidden_substrings": [
                     "PULSAR is production-ready",
@@ -117,6 +111,46 @@ DRIFT_RULES = {
         ],
     },
 }
+
+
+# Maturity-contract reconciliation guard. Unlike DRIFT_RULES, these are NOT tied to a
+# capability id -- they always run. They assert the doc-drift reconciliation between the
+# product support contract and the technical-debt register / PRD / VISION stays in place,
+# so a future edit cannot silently re-introduce "production-ready" claims that contradict
+# SUPPORTED_SURFACE. See docs/SUPPORTED_SURFACE.adoc "Authority Hierarchy".
+MATURITY_CONTRACT_RULES = [
+    {
+        "path": "docs/SUPPORTED_SURFACE.adoc",
+        "required_substrings": [
+            "== Authority Hierarchy",
+        ],
+    },
+    {
+        "path": "docs/10-quality/TECHNICAL_DEBT.adoc",
+        "required_substrings": [
+            # Banner: register tracks implementation state, not support level.
+            "This register tracks _implementation state_, not _product-support level_.",
+            # Relabeled contradiction cells, each cross-linked to its support tier.
+            "_Experimental in v0.2 (see SUPPORTED_SURFACE)_",  # external catalogs (TD-002)
+            "_Beta in v0.2 (see SUPPORTED_SURFACE)_",          # mTLS / TST / event (TD-006/009/010)
+            "Not a v0.2 supported surface (see SUPPORTED_SURFACE)",  # framework integrations (TD-011)
+        ],
+    },
+    {
+        "path": "docs/00-product/PRD.adoc",
+        "required_substrings": [
+            "shippable/supported surface for v0.2 is defined by",  # precedence banner
+            "v0.2 status: Beta",                  # TST + Event P0 notes
+            "v0.2 status: not a Supported surface",  # Framework integrations P0 note
+        ],
+    },
+    {
+        "path": "docs/00-product/VISION.adoc",
+        "required_substrings": [
+            "This document states the *broad, durable vision*",
+        ],
+    },
+]
 
 
 def parse_reference(ref: str) -> tuple[Path, int | None]:
@@ -230,6 +264,10 @@ def main() -> int:
             continue
 
         evaluate_doc_rule(cap_id, rule, errors)
+
+    # Maturity-contract reconciliation guard (always evaluated).
+    for rule in MATURITY_CONTRACT_RULES:
+        evaluate_doc_rule("maturity_contract", rule, errors)
 
     if errors:
         print("Capability matrix validation failed:")

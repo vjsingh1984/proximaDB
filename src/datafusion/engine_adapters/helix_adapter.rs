@@ -51,6 +51,8 @@
 //! }
 //! ```
 
+#![allow(dead_code)] // forward-scaffolding fields pending wiring
+
 use std::any::Any;
 use std::fmt::Debug;
 use std::pin::Pin;
@@ -177,10 +179,18 @@ impl HelixTableProvider {
             .get_filesystem(&self.base_path)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        let entries = filesystem
-            .list(&self.base_path)
-            .await
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let entries = match filesystem.list(&self.base_path).await {
+            Ok(entries) => entries,
+            Err(crate::storage::persistence::filesystem::FilesystemError::NotFound(_)) => {
+                Vec::new()
+            }
+            Err(crate::storage::persistence::filesystem::FilesystemError::Io(e))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Vec::new()
+            }
+            Err(e) => return Err(DataFusionError::External(Box::new(e))),
+        };
 
         let mut files = Vec::new();
         for entry in entries {
@@ -444,7 +454,6 @@ impl ProximaTableProvider for HelixTableProvider {
 /// Reads Hilbert-ordered blocks from HELIX files and returns RecordBatch streams.
 /// Supports spatial pruning based on Hilbert curve bounds.
 #[derive(Debug)]
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct HelixSplitReader {
     /// Arrow schema for records
     schema: SchemaRef,
@@ -531,7 +540,6 @@ impl SplitReader for HelixSplitReader {
 /// RecordBatch stream for reading HELIX blocks.
 ///
 /// Reads Hilbert-ordered blocks and yields RecordBatches.
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct HelixBlockStream {
     /// Output schema (after projection)
     schema: SchemaRef,

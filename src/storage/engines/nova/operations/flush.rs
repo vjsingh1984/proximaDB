@@ -4,7 +4,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use crate::proto::proximadb_v1::VectorRecord;
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -78,9 +78,17 @@ impl NovaFlushOperations {
             ),
         }
 
+        // Test/ops knob: force a smaller parquet row-group size so multi-row-group
+        // files (and thus TD-040 row-group pruning) can be exercised without
+        // writing 100k+ vectors. Unset ⇒ production defaults below.
+        let rg_override = std::env::var("PROXIMADB_NOVA_MAX_ROW_GROUP_SIZE")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0);
+
         // Configure writer with NOVA-specific optimizations
         let writer_config = ParquetWriterConfig {
-            row_group_size: 50000,
+            row_group_size: rg_override.unwrap_or(50000),
             page_size: 1024 * 1024,
             write_batch_size: 10000,
             compression: parquet::basic::Compression::ZSTD(Default::default()),
@@ -123,9 +131,9 @@ impl NovaFlushOperations {
             buffer_time_limit: std::time::Duration::from_secs(30),
             enable_concurrent_writes: false,
             max_concurrent_writers: 1,
-            optimize_row_group_size: true,
-            min_row_group_size: 1000,
-            max_row_group_size: 100000,
+            optimize_row_group_size: rg_override.is_none(),
+            min_row_group_size: rg_override.unwrap_or(1000),
+            max_row_group_size: rg_override.unwrap_or(100000),
         };
 
         // Use HybridParquetWriter with integrated disk cache and metadata collection
@@ -177,19 +185,62 @@ impl NovaFlushOperations {
             }
         };
 
-        // Extract NOVA-specific metadata if collector was returned
-        let nova_metadata: HashMap<String, serde_json::Value> = HashMap::new(); // Simplified for now
-
-        // Write sidecar metadata file
-        let metadata_path = full_path.replace(".parquet", ".nova_meta.json");
-        let metadata_json = serde_json::to_string_pretty(&nova_metadata)?;
-        debug!("📂 NOVA flush: Writing metadata to {}", metadata_path);
-        match fs
-            .write(&metadata_path, metadata_json.as_bytes(), None)
-            .await
+        // TD-040 NOVA: persist per-PHYSICAL-row-group vector bounds so the cold
+        // read path can skip whole row groups by their bounding box. Built from
+        // the written file's footer (real per-row-group row counts) + the
+        // in-memory records in write order — `sort_columns` is empty, so the
+        // parquet preserves input order and chunk `i` maps to physical row group
+        // `i`. This sidesteps the streaming collector, whose row groups track
+        // logical write-batches rather than physical parquet row groups.
+        // Canonical sidecar `{parquet}.nova_meta` (bincode `NovaMetadata`) — the
+        // exact format `NovaMetaReader::load_metadata` reads. Best-effort: a
+        // missing/failed sidecar just means the reader falls back to a full read.
+        match crate::storage::engines::nova::nova_ranged_reader::read_row_group_row_counts(
+            &full_path,
+        )
+        .await
         {
-            Ok(_) => debug!("✅ NOVA flush: Metadata file written successfully"),
-            Err(e) => debug!("❌ NOVA flush: Failed to write metadata: {:?}", e),
+            Ok(Some(counts)) if !counts.is_empty() => {
+                let mut row_group_vectors: Vec<Vec<Vec<f32>>> = Vec::with_capacity(counts.len());
+                let mut offset = 0usize;
+                for c in &counts {
+                    let end = (offset + c).min(canonical_records.len());
+                    let chunk: Vec<Vec<f32>> = canonical_records[offset..end]
+                        .iter()
+                        .map(|r| {
+                            r.embeddings
+                                .first()
+                                .map(|e| e.values.to_fp32_owned())
+                                .unwrap_or_default()
+                        })
+                        .collect();
+                    offset = end;
+                    row_group_vectors.push(chunk);
+                }
+                match crate::storage::engines::nova::nova_meta_collector::nova_sidecar_from_row_groups(
+                    dimension,
+                    &row_group_vectors,
+                ) {
+                    Ok(bytes) if !bytes.is_empty() => {
+                        let sidecar = format!("{}.nova_meta", full_path);
+                        match fs.write(&sidecar, &bytes, None).await {
+                            Ok(_) => debug!(
+                                "✅ NOVA flush: wrote vector-bounds sidecar {} ({} row groups)",
+                                sidecar,
+                                counts.len()
+                            ),
+                            Err(e) => warn!(
+                                "⚠️ NOVA flush: failed to write bounds sidecar {}: {:?}",
+                                sidecar, e
+                            ),
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => warn!("⚠️ NOVA flush: failed to build bounds metadata: {:?}", e),
+                }
+            }
+            Ok(_) => debug!("NOVA flush: no row groups / ranged reader unavailable; no sidecar"),
+            Err(e) => warn!("⚠️ NOVA flush: failed to read row-group counts: {:?}", e),
         }
 
         debug!("📂 NOVA flush: Verifying file exists: {}", full_path);
@@ -205,14 +256,11 @@ impl NovaFlushOperations {
 
         // Return file info
         let mut metadata = HashMap::new();
-        metadata.insert(
-            "super_blocks".to_string(),
-            serde_json::json!(nova_metadata.get("super_blocks")),
-        );
-        metadata.insert(
-            "hierarchical_stats".to_string(),
-            serde_json::json!(nova_metadata.get("hierarchical_stats")),
-        );
+        // super_blocks / hierarchical_stats were always absent here; the
+        // per-row-group bounds now live in the `{parquet}.nova_meta` sidecar
+        // written above.
+        metadata.insert("super_blocks".to_string(), serde_json::Value::Null);
+        metadata.insert("hierarchical_stats".to_string(), serde_json::Value::Null);
         metadata.insert(
             "compression_ratio".to_string(),
             serde_json::json!(stats.compression_ratio),

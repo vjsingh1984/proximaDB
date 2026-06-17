@@ -211,6 +211,13 @@ impl HmgiRouter {
             _ => return Ok(Vec::new()),
         };
 
+        // Map the caller's effort onto each partition's HNSW `ef` (None ⇒ the
+        // partition index's size-aware default). `k_per_partition` fan-out is a
+        // separate lever, untouched.
+        let ef_override = query
+            .search_effort
+            .and_then(|effort| effort.hnsw_ef_override(top_k));
+
         // Parallel search across partitions
         let mut join_set = JoinSet::new();
 
@@ -220,7 +227,14 @@ impl HmgiRouter {
             let k_per_partition = top_k * 2; // Fetch extra from each partition for better merging
 
             join_set.spawn(async move {
-                Self::search_single_partition_impl(registry, partition, &qv, k_per_partition).await
+                Self::search_single_partition_impl(
+                    registry,
+                    partition,
+                    &qv,
+                    k_per_partition,
+                    ef_override,
+                )
+                .await
             });
         }
 
@@ -259,11 +273,15 @@ impl HmgiRouter {
             _ => return Ok(Vec::new()),
         };
 
+        let ef_override = query
+            .search_effort
+            .and_then(|effort| effort.hnsw_ef_override(query.top_k));
         Self::search_single_partition_impl(
             self.registry.clone(),
             partition.clone(),
             query_vector.as_slice(),
             query.top_k,
+            ef_override,
         )
         .await
     }
@@ -287,6 +305,7 @@ impl HmgiRouter {
         partition: HmgiPartitionKey,
         query_vector: &[f32],
         k: usize,
+        ef_override: Option<usize>,
     ) -> Result<Vec<ScoredResult>> {
         // Get the HNSW index for this partition
         let index = registry
@@ -302,7 +321,12 @@ impl HmgiRouter {
         // similarity we must undo that negation for similarity
         // metrics — otherwise DotProduct similarity scores end up
         // mirrored.
-        let raw_distance_results = index.search_simple(query_vector, k).await?;
+        // `search_simple` is `search_with_filter_ef(.., None, None)`; thread the
+        // per-query `ef` override (from SearchMode) so each partition's HNSW
+        // walk honors the accuracy-vs-latency knob.
+        let raw_distance_results = index
+            .search_with_filter_ef(query_vector, k, ef_override, None)
+            .await?;
         let metric = index.distance_metric();
 
         use crate::compute::distance_computation::engine::{DistanceMetricExt, SimilarityResult};

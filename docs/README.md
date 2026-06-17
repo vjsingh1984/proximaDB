@@ -2,6 +2,11 @@
 
 **The context database** — Vectors, documents, graphs, and observability in one system.
 
+> **Support contract:** Code presence is broader than the supported product surface. Use
+> [`SUPPORTED_SURFACE.adoc`](./SUPPORTED_SURFACE.adoc) for supported/beta/experimental status and
+> [`12-design/SYSTEM_MAP_2026_05_30.adoc`](./12-design/SYSTEM_MAP_2026_05_30.adoc) for the current
+> solution architecture.
+
 ```mermaid
 %%{init: {"theme": "neutral"}}%%
 flowchart LR
@@ -141,16 +146,21 @@ For future-shaping architecture work, start with `docs/12-design/README.adoc`.
 
 ## Key Features
 
-### ✅ Unified API
+### Supported: Vector Record API
+- Canonical REST v2 and gRPC v2 record CRUD/search path
+- v1 vector-shaped APIs remain compatibility facades
+- Single-node scope for the v0.2 support contract
+
+### Beta: Unified API
 - Single port (5678) for REST, gRPC, and Arrow Flight
 - PostgreSQL wire protocol (5433) for SQL clients
 - Python SDK with async support
 
-### ✅ Cross-Model Queries
+### Beta: Cross-Model Queries
 - Join vectors with documents, graphs, and logs
 - SQL with extensions: `VECTOR_SEARCH()`, `GRAPH_QUERY()`, `DOCUMENT_QUERY()`
 
-### ✅ Production Ready
+### Release Packaging
 - Platform packages: RPM, DEB, MSI
 - Systemd service integration
 - Prometheus metrics + Grafana dashboards
@@ -163,6 +173,9 @@ For future-shaping architecture work, start with `docs/12-design/README.adoc`.
 ---
 
 ## Architecture Overview
+
+The diagram below is a compact overview only. The authoritative architecture map is
+[`12-design/SYSTEM_MAP_2026_05_30.adoc`](./12-design/SYSTEM_MAP_2026_05_30.adoc).
 
 ```mermaid
 %%{init: {"theme": "neutral"}}%%

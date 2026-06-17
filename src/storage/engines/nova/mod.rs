@@ -166,6 +166,9 @@ pub mod nova_meta_collector;
 // NOVA metadata reader for sidecar files
 pub mod nova_meta_reader;
 
+// TD-040: async ranged parquet row-group reader (reads only selected row groups)
+pub mod nova_ranged_reader;
+
 // Re-export main engine type and optimized components
 pub use engine::NovaEngine;
 pub use nova_meta_reader::{NovaMetaReader, QueryOptimizationHints};

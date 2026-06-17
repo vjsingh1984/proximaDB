@@ -1150,6 +1150,10 @@ impl SstableWriter {
             None
         };
 
+        // TD-040: per-dimension vector component bounds for L2 block pruning.
+        let (block_component_min, block_component_max) =
+            Self::compute_block_component_bounds(current_block);
+
         // Add enhanced index entry leveraging Proxima capabilities
         if let Some(first_record) = current_block.first() {
             let first_id = first_record.id.clone();
@@ -1202,6 +1206,8 @@ impl SstableWriter {
                     .and_then(|f| f.serialize().ok()),
                 vector_format,
                 zorder_code: None, // Will be populated during clustering
+                block_component_min,
+                block_component_max,
             });
         }
 
@@ -1279,6 +1285,39 @@ impl SstableWriter {
             return Vec::new();
         }
         sum.into_iter().map(|v| v / count).collect()
+    }
+
+    /// TD-040: per-dimension vector component bounds (min/max) across a block's
+    /// records, for L2 lower-bound block pruning. Returns `(None, None)` when the
+    /// block is empty, vectors are zero-dim, or dimensions are mixed (pruning then
+    /// conservatively scans the block).
+    fn compute_block_component_bounds(
+        block_records: &[VectorRecord],
+    ) -> (Option<Vec<f32>>, Option<Vec<f32>>) {
+        let first = match block_records.first() {
+            Some(f) => f,
+            None => return (None, None),
+        };
+        let dim = first.vector.len();
+        if dim == 0 {
+            return (None, None);
+        }
+        let mut min = vec![f32::INFINITY; dim];
+        let mut max = vec![f32::NEG_INFINITY; dim];
+        for record in block_records {
+            if record.vector.len() != dim {
+                return (None, None); // mixed dimensions — skip bounds
+            }
+            for (i, &v) in record.vector.iter().enumerate() {
+                if v < min[i] {
+                    min[i] = v;
+                }
+                if v > max[i] {
+                    max[i] = v;
+                }
+            }
+        }
+        (Some(min), Some(max))
     }
 
     // Quantization methods removed - now handled by unified compute module directly

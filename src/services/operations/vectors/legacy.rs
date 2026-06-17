@@ -48,7 +48,7 @@ use proximadb_records::conversions::sql_value_to_proxima;
 // into a collection while the schema-v2 feature flag is off.
 use proximadb_config::EmbeddingPrecisionConfig;
 use proximadb_records::validate_records_for_schema_v1;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
@@ -71,6 +71,10 @@ use super::search::executor::proto_results_to_vector_records;
 use super::search::pipeline::default_progressive_stages;
 use super::validation::{
     DefaultPseudoQueryGenerator, PseudoQueryGenerator, apply_pseudo_query_metadata,
+};
+use super::write::{
+    duplicate_insert_conflict_result, ensure_tenant_on_records,
+    insert_existing_record_conflict_result, insert_only_lock_key, tombstone_records_for_ids,
 };
 
 // Import vector query service contract (Phase 2.1)
@@ -254,71 +258,13 @@ fn cached_precision_config() -> &'static EmbeddingPrecisionConfig {
     EmbeddingPrecisionConfig::cached()
 }
 
+/// Lower a filter operand `ProximaValue` to JSON for `FilterExpression` literals.
+///
+/// Delegates to the canonical converter so a filter literal and a record's
+/// property value are lowered identically — the comparison in
+/// `evaluate_filter_proxima` then sees both sides in the same representation.
 fn proxima_value_to_json(value: &proximadb_data_model::ProximaValue) -> serde_json::Value {
-    use proximadb_data_model::ProximaValue;
-
-    match value {
-        ProximaValue::Boolean(value) => serde_json::Value::Bool(*value),
-        ProximaValue::Int8(value) => serde_json::Value::Number((*value as i64).into()),
-        ProximaValue::Int16(value) => serde_json::Value::Number((*value as i64).into()),
-        ProximaValue::Int32(value) => serde_json::Value::Number((*value as i64).into()),
-        ProximaValue::Int64(value) => serde_json::Value::Number((*value).into()),
-        ProximaValue::UInt8(value) => serde_json::Value::Number((*value as u64).into()),
-        ProximaValue::UInt16(value) => serde_json::Value::Number((*value as u64).into()),
-        ProximaValue::UInt32(value) => serde_json::Value::Number((*value as u64).into()),
-        ProximaValue::UInt64(value) => serde_json::Value::Number((*value).into()),
-        ProximaValue::Float16(value) | ProximaValue::Float32(value) => {
-            serde_json::Number::from_f64(*value as f64)
-                .map(serde_json::Value::Number)
-                .unwrap_or(serde_json::Value::Null)
-        }
-        ProximaValue::Float64(value) => serde_json::Number::from_f64(*value)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        ProximaValue::Decimal(value)
-        | ProximaValue::String(value)
-        | ProximaValue::Symbol(value) => serde_json::Value::String(value.clone()),
-        ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
-            serde_json::Value::Array(
-                value
-                    .iter()
-                    .map(|value| serde_json::Value::Number((*value as u64).into()))
-                    .collect(),
-            )
-        }
-        ProximaValue::Date(value) => serde_json::Value::Number((*value).into()),
-        ProximaValue::Time(value, _)
-        | ProximaValue::Timestamp(value, _)
-        | ProximaValue::TimestampTz(value, _) => serde_json::Value::Number((*value).into()),
-        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => {
-            serde_json::Value::String(hex::encode(value))
-        }
-        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.clone(),
-        ProximaValue::Array(values) => {
-            serde_json::Value::Array(values.iter().map(proxima_value_to_json).collect())
-        }
-        ProximaValue::Map(values) | ProximaValue::Struct(values) => serde_json::Value::Object(
-            values
-                .iter()
-                .map(|(key, value)| (key.clone(), proxima_value_to_json(value)))
-                .collect(),
-        ),
-        ProximaValue::DenseVector(values) => serde_json::Value::Array(
-            values
-                .iter()
-                .map(|value| {
-                    serde_json::Number::from_f64(*value as f64)
-                        .map(serde_json::Value::Number)
-                        .unwrap_or(serde_json::Value::Null)
-                })
-                .collect(),
-        ),
-        ProximaValue::SparseVector { indices, values } => serde_json::json!({
-            "indices": indices,
-            "values": values,
-        }),
-        ProximaValue::Null => serde_json::Value::Null,
-    }
+    crate::core::search::sql_value_filter::proxima_value_to_json(value)
 }
 
 fn v1_search_result_to_rich(
@@ -538,8 +484,8 @@ impl VectorOperationsService {
     /// Invalidate the collection cache entry for a specific collection
     /// Called after stats are updated to ensure fresh data is loaded
     pub fn invalidate_collection_cache(&self, collection_id: &str) {
-        self.collection_cache.remove(collection_id);
-        tracing::debug!("🗑️ Invalidated collection cache for '{}'", collection_id);
+        self.collection_resolver()
+            .invalidate_collection_cache(collection_id);
     }
 
     async fn validate_tenant_collection_access(
@@ -583,35 +529,6 @@ impl VectorOperationsService {
         }
 
         Ok(())
-    }
-
-    fn ensure_tenant_on_records(records: &mut [ProximaRecord], tenant_id: &str) -> Result<()> {
-        for record in records.iter_mut() {
-            if !record.tenant_id.is_empty() && record.tenant_id != tenant_id {
-                return Err(anyhow::anyhow!(
-                    "Record '{}' has tenant_id '{}' but request is scoped to tenant '{}'",
-                    record.oid,
-                    record.tenant_id,
-                    tenant_id
-                ));
-            }
-            record.tenant_id = tenant_id.to_string();
-        }
-        Ok(())
-    }
-
-    fn tombstone_records_for_ids(record_ids: &[String], now_ns: i64) -> Vec<ProximaRecord> {
-        record_ids
-            .iter()
-            .map(|id| ProximaRecord {
-                oid: id.clone(),
-                created_at_ns: now_ns,
-                updated_at_ns: now_ns,
-                valid_to_ns: Some(0),
-                origin: Some("delete".to_string()),
-                ..Default::default()
-            })
-            .collect()
     }
 
     /// Execute a v1 vector search after validating that the caller has access to the collection
@@ -808,10 +725,9 @@ impl VectorOperationsService {
     /// internal id that the write path keys WAL + storage under. Idempotent for
     /// already-canonical ids; falls back to the input if resolution fails.
     pub async fn resolve_collection_id(&self, identifier: &str) -> String {
-        match self.get_or_load_collection(identifier).await {
-            Ok(collection) => collection.id.clone(),
-            Err(_) => identifier.to_string(),
-        }
+        self.collection_resolver()
+            .resolve_collection_id(identifier)
+            .await
     }
 
     /// Reverse of [`resolve_collection_id`](Self::resolve_collection_id): resolve
@@ -820,8 +736,9 @@ impl VectorOperationsService {
     /// signal discovery by name (the discovery pipeline keys jobs/pins by name).
     /// Returns `None` if the collection can't be loaded or carries no config.
     pub async fn resolve_collection_name(&self, identifier: &str) -> Option<String> {
-        let collection = self.get_or_load_collection(identifier).await.ok()?;
-        collection.config.as_ref().map(|cfg| cfg.name.clone())
+        self.collection_resolver()
+            .resolve_collection_name(identifier)
+            .await
     }
 
     /// Enumerate ALL records of a collection, including flushed/storage-resident
@@ -908,9 +825,9 @@ impl VectorOperationsService {
 
         let start = std::time::Instant::now();
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-        let mut tombstones = Self::tombstone_records_for_ids(&record_ids, now_ns);
+        let mut tombstones = tombstone_records_for_ids(&record_ids, now_ns);
         if let Some(tenant_context) = tenant_context {
-            Self::ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
+            ensure_tenant_on_records(&mut tombstones, &tenant_context.tenant_id)?;
         }
 
         let result = self
@@ -1783,82 +1700,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        let start_time = std::time::Instant::now();
-        let vector_count = vectors.len();
-        let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
-        let decision = self.bulk_write_router.route_records(&vectors);
-
-        info!(
-            "📦 Bulk write: collection={}, vectors={}, estimated_size={} bytes, decision={}",
-            collection_id,
-            vector_count,
-            decision.estimated_size_bytes,
-            if decision.use_bulk_lane {
-                "BULK_WAL"
-            } else {
-                "WAL"
-            }
-        );
-
-        // If below thresholds, fall back to standard WAL path
-        if !decision.use_bulk_lane {
-            debug!(
-                "📝 Batch below bulk threshold ({}), using standard WAL path",
-                decision.reason
-            );
-            return self.insert_vectors_via_wal(collection_id, vectors).await;
-        }
-
-        // Large-batch path. It remains WAL-backed until direct segment commit
-        // has an accepted durability proof.
-        info!(
-            "🚀 Using WAL-backed bulk path for batch: {} vectors (reason: {})",
-            vector_count, decision.reason
-        );
-
-        // Write vectors via WAL for durability. A WAL-skipping engine path
-        // remains deferred because it needs atomic segment+manifest commit,
-        // replay or repair semantics, and idempotency.
-        // `vectors` is not used after this point — move it into the Arc rather
-        // than cloning. The non-bulk helper below already follows this pattern.
-        let vectors_arc = Arc::new(vectors);
-
-        match self
-            .wal_manager
-            .write_vector_batch_native_arc(collection_id, vectors_arc)
+        self.write_coordinator()
+            .bulk_write(collection_id, vectors)
             .await
-        {
-            Ok(_) => {
-                let duration = start_time.elapsed();
-                let vectors_per_sec = if duration.as_secs_f64() > 0.0 {
-                    (vector_count as f64 / duration.as_secs_f64()) as u64
-                } else {
-                    vector_count as u64
-                };
-
-                info!(
-                    "✅ WAL-backed bulk write completed: {} vectors in {:?} ({} vectors/sec)",
-                    vector_count, duration, vectors_per_sec
-                );
-
-                Ok(BatchOperationResult::success(
-                    vector_ids,
-                    OperationMetrics {
-                        total_processed: vector_count as i64,
-                        successful_count: vector_count as i64,
-                        failed_count: 0,
-                        updated_count: 0,
-                        processing_time_us: duration.as_micros() as i64,
-                        wal_write_time_us: duration.as_micros() as i64,
-                        index_update_time_us: 0,
-                    },
-                ))
-            }
-            Err(e) => {
-                error!("❌ Bulk write failed: {}", e);
-                Err(e)
-            }
-        }
     }
 
     /// Internal helper: insert records via standard WAL path
@@ -1867,7 +1711,8 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_with_mode(collection_id, vectors, false)
+        self.write_coordinator()
+            .insert_vectors_via_wal(collection_id, vectors)
             .await
     }
 
@@ -1876,77 +1721,9 @@ impl VectorOperationsService {
         collection_id: &str,
         vectors: Vec<ProximaRecord>,
     ) -> Result<BatchOperationResult> {
-        self.insert_vectors_via_wal_with_mode(collection_id, vectors, true)
+        self.write_coordinator()
+            .insert_vectors_via_wal_insert_only(collection_id, vectors)
             .await
-    }
-
-    async fn insert_vectors_via_wal_with_mode(
-        &self,
-        collection_id: &str,
-        vectors: Vec<ProximaRecord>,
-        insert_only: bool,
-    ) -> Result<BatchOperationResult> {
-        let mut vectors = vectors;
-        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
-
-        let start_time = std::time::Instant::now();
-        let vector_count = vectors.len();
-        let vector_ids: Vec<String> = vectors.iter().map(|v| v.oid.clone()).collect();
-
-        // Write vectors via WAL manager
-        let vectors_arc = Arc::new(vectors);
-
-        let wal_result = if insert_only {
-            self.wal_manager
-                .write_vector_batch_native_arc_insert_only(collection_id, vectors_arc)
-                .await
-        } else {
-            self.wal_manager
-                .write_vector_batch_native_arc(collection_id, vectors_arc)
-                .await
-        };
-
-        match wal_result {
-            Ok(_) => {
-                let duration = start_time.elapsed();
-                let _vectors_per_sec = if duration.as_secs_f64() > 0.0 {
-                    (vector_count as f64 / duration.as_secs_f64()) as u64
-                } else {
-                    vector_count as u64
-                };
-
-                debug!(
-                    "📝 WAL write completed: {} vectors in {:?}",
-                    vector_count, duration
-                );
-
-                Ok(BatchOperationResult::success(
-                    vector_ids,
-                    OperationMetrics {
-                        total_processed: vector_count as i64,
-                        successful_count: vector_count as i64,
-                        failed_count: 0,
-                        updated_count: 0,
-                        processing_time_us: duration.as_micros() as i64,
-                        wal_write_time_us: duration.as_micros() as i64,
-                        index_update_time_us: 0,
-                    },
-                ))
-            }
-            Err(e) => {
-                if insert_only && e.to_string().contains("INSERT_CONFLICT") {
-                    return Ok(BatchOperationResult::failure(
-                        format!("Record insert failed: {}", e),
-                        "INSERT_CONFLICT".to_string(),
-                    ));
-                }
-                warn!("WAL batch insert failed: {}", e);
-                Ok(BatchOperationResult::failure(
-                    format!("Batch insert failed: {}", e),
-                    "WAL_WRITE_ERROR".to_string(),
-                ))
-            }
-        }
     }
 
     /// Insert a batch of canonical records with smart routing.
@@ -1970,7 +1747,7 @@ impl VectorOperationsService {
             .await?;
 
         if let Some(tenant_ctx) = tenant_context {
-            Self::ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
+            ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
         // PR 3b follow-up: while the precision-schema-v2 feature flag is
@@ -1985,7 +1762,9 @@ impl VectorOperationsService {
             return Err(anyhow::anyhow!(e));
         }
 
-        self.insert_batch_internal(collection_id, records).await
+        self.write_coordinator()
+            .insert_batch_internal(collection_id, records)
+            .await
     }
 
     /// Alias kept for callers already using ProximaRecord envelopes.
@@ -2010,15 +1789,15 @@ impl VectorOperationsService {
             .await?;
 
         if let Some(tenant_ctx) = tenant_context {
-            Self::ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
+            ensure_tenant_on_records(&mut records, &tenant_ctx.tenant_id)?;
         }
 
-        if let Some(conflict) = Self::duplicate_insert_conflict_result(collection_id, &records) {
+        if let Some(conflict) = duplicate_insert_conflict_result(collection_id, &records) {
             return Ok(conflict);
         }
 
         let tenant_id = tenant_context.map(|t| t.tenant_id.as_str());
-        let lock_key = Self::insert_only_lock_key(collection_id, tenant_id);
+        let lock_key = insert_only_lock_key(collection_id, tenant_id);
         let lock = self
             .insert_only_locks
             .entry(lock_key)
@@ -2031,14 +1810,16 @@ impl VectorOperationsService {
                 .record_exists_unchecked(collection_id, &record.oid)
                 .await?
             {
-                return Ok(Self::insert_existing_record_conflict_result(
+                return Ok(insert_existing_record_conflict_result(
                     collection_id,
                     &record.oid,
                 ));
             }
         }
 
-        self.insert_batch_internal(collection_id, records).await
+        self.write_coordinator()
+            .insert_batch_internal(collection_id, records)
+            .await
     }
 
     /// Check whether a rich record ID already exists in WAL or the collection's
@@ -2077,88 +1858,6 @@ impl VectorOperationsService {
             .vector_by_id(collection_id, base_path, record_id)
             .await?
             .is_some())
-    }
-
-    fn duplicate_insert_conflict_result(
-        collection_id: &str,
-        records: &[ProximaRecord],
-    ) -> Option<BatchOperationResult> {
-        let mut seen_ids = HashSet::new();
-        for record in records {
-            if !seen_ids.insert(record.oid.as_str()) {
-                return Some(BatchOperationResult::failure(
-                    format!(
-                        "Record '{}' appears more than once in insert request for collection '{}'",
-                        record.oid, collection_id
-                    ),
-                    "INSERT_CONFLICT".to_string(),
-                ));
-            }
-        }
-
-        None
-    }
-
-    fn insert_existing_record_conflict_result(
-        collection_id: &str,
-        record_id: &str,
-    ) -> BatchOperationResult {
-        BatchOperationResult::failure(
-            format!(
-                "Record '{}' already exists in collection '{}'",
-                record_id, collection_id
-            ),
-            "INSERT_CONFLICT".to_string(),
-        )
-    }
-
-    fn insert_only_lock_key(collection_id: &str, tenant_id: Option<&str>) -> String {
-        match tenant_id {
-            Some(tenant_id) => format!("{tenant_id}:{collection_id}"),
-            None => collection_id.to_string(),
-        }
-    }
-
-    async fn insert_batch_internal(
-        &self,
-        collection_id: &str,
-        vectors: Vec<ProximaRecord>,
-    ) -> Result<BatchOperationResult> {
-        let mut vectors = vectors;
-        apply_pseudo_query_metadata(&mut vectors, &*self.pseudo_query_generator);
-
-        self.validate_records_for_insert(collection_id, &vectors)
-            .await?;
-
-        let decision = self.bulk_write_router.route_records(&vectors);
-
-        debug!(
-            "📦 insert_batch: collection={}, vectors={}, estimated_size={} bytes, path={}",
-            collection_id,
-            decision.vector_count,
-            decision.estimated_size_bytes,
-            if decision.use_bulk_lane {
-                "BULK_WAL"
-            } else {
-                "WAL"
-            }
-        );
-
-        if decision.use_bulk_lane {
-            // Large batch: use bulk write (optimized for throughput)
-            info!(
-                "🚀 Routing to bulk_write: {} (vectors: {}, size: {} bytes)",
-                decision.reason, decision.vector_count, decision.estimated_size_bytes
-            );
-            self.bulk_write(collection_id, vectors).await
-        } else {
-            // Small batch: use standard WAL path (optimized for durability)
-            debug!(
-                "📝 Routing to WAL path: {} (vectors: {}, size: {} bytes)",
-                decision.reason, decision.vector_count, decision.estimated_size_bytes
-            );
-            self.insert_vectors_via_wal(collection_id, vectors).await
-        }
     }
 
     /// Return lightweight, default planning/pruning hints without executing search.
@@ -2234,7 +1933,11 @@ impl VectorOperationsService {
 
         let config = config.clone();
         let collection = self.get_or_load_collection(collection_id).await?;
-        Self::validate_query_vector_for_search(collection_id, &collection, &query_vector)?;
+        super::input_validation::validate_query_vector_for_search(
+            collection_id,
+            &collection,
+            &query_vector,
+        )?;
 
         // Create cache key for unified result caching
         let filter_str = filter.as_ref().map(|f| format!("{:?}", f));
@@ -3588,70 +3291,25 @@ impl VectorOperationsService {
     // Helper methods (simplified for demonstration)
 
     /// Retrieve a collection from cache, or load it from the collection service and register with WAL.
+    /// Build the collection-resolution collaborator on demand (cheap `Arc`
+    /// clones; the metadata + engine caches are shared with the service). Phase
+    /// 2.1: resolution/engine-selection logic lives in
+    /// `super::resolver::CollectionResolver`; the service keeps the public
+    /// surface and its private `get_or_load_collection` (~17 callers) and
+    /// delegates.
+    fn collection_resolver(&self) -> super::resolver::CollectionResolver {
+        super::resolver::CollectionResolver::new(
+            self.collection_cache.clone(),
+            self.engine_cache.clone(),
+            self.collection_port.clone(),
+            self.wal_manager.clone(),
+        )
+    }
+
     async fn get_or_load_collection(&self, collection_id: &str) -> Result<Arc<Collection>> {
-        let collection_id_string = collection_id.to_string();
-        if let Some(cached) = self.collection_cache.get(&collection_id_string) {
-            Ok(cached.clone())
-        } else {
-            // Load from collection service
-            let collection = self
-                .collection_port
-                .get_collection(collection_id, None)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("Collection {} not found", collection_id))?;
-
-            // Register collection with WAL manager for persistence
-            if let Some(ref storage_assignment) = collection.storage_assignment
-                && let Some(ref config) = collection.config
-            {
-                // Build compression_config from storage_config if available
-                let compression_config = config.storage_config.as_ref().and_then(|sc| {
-                    sc.compression.map(|alg| {
-                        crate::proto::proximadb_v1::CompressionConfig {
-                            algorithm: alg,
-                            level: Some(3), // default level
-                            adaptive: false,
-                            min_ratio: None,
-                            enable_quantization: false,
-                            quantization_type: None,
-                            normalization_method: None,
-                            block_size_kb: 64,
-                            dynamic_block_sizing: false,
-                        }
-                    })
-                });
-
-                // Convert distance_metric from Option<i32> to DistanceMetric
-                let distance_metric = config
-                    .distance_metric
-                    .and_then(|m| crate::proto::proximadb_v1::DistanceMetric::try_from(m).ok())
-                    .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine);
-
-                let assignment =
-                    crate::storage::persistence::write_ahead_log::CollectionAssignment {
-                        base_location: storage_assignment.base_location.clone(),
-                        storage_engine: crate::proto::proximadb_v1::StorageEngine::try_from(
-                            storage_assignment.engine,
-                        )
-                        .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst),
-                        dimension: config.dimension as i32,
-                        compression_config,
-                        distance_metric,
-                    };
-                self.wal_manager
-                    .assign_collection(collection_id_string.clone(), assignment)
-                    .await;
-                tracing::debug!(
-                    "✅ Registered collection {} with WAL manager",
-                    collection_id
-                );
-            }
-
-            let arc_collection = Arc::new(collection);
-            self.collection_cache
-                .insert(collection_id_string, arc_collection.clone());
-            Ok(arc_collection)
-        }
+        self.collection_resolver()
+            .get_or_load_collection(collection_id)
+            .await
     }
 
     /// Get or create the correct storage engine for a collection.
@@ -3666,45 +3324,9 @@ impl VectorOperationsService {
         &self,
         collection_id: &str,
     ) -> Result<Arc<dyn UnifiedStorageFormat>> {
-        // Check cache first
-        if let Some(engine) = self.engine_cache.get(collection_id) {
-            return Ok(engine.clone());
-        }
-
-        // Get collection to determine engine type
-        let collection = self.get_or_load_collection(collection_id).await?;
-
-        // Determine engine type from storage_assignment
-        let engine_type = collection.storage_assignment.as_ref().map_or(
-            crate::proto::proximadb_v1::StorageEngine::Sst,
-            |sa| {
-                crate::proto::proximadb_v1::StorageEngine::try_from(sa.engine)
-                    .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst)
-            },
-        );
-
-        debug!(
-            "🔧 Creating storage engine {:?} for collection {}",
-            engine_type, collection_id
-        );
-
-        // Create the appropriate engine
-        let engine =
-            crate::storage::engines::factory::StorageFormatFactory::create_from_proto_async(
-                engine_type,
-            )
-            .await?;
-
-        // Cache it for future use
-        self.engine_cache
-            .insert(collection_id.to_string(), engine.clone());
-
-        info!(
-            "✅ Cached storage engine {:?} for collection {}",
-            engine_type, collection_id
-        );
-
-        Ok(engine)
+        self.collection_resolver()
+            .get_engine_for_collection(collection_id)
+            .await
     }
 
     // REMOVED: get_available_files - storage engines handle their own file listing
@@ -4059,169 +3681,18 @@ impl VectorOperationsService {
 
     /// Validate canonical records for insertion based on collection requirements.
     #[inline(always)]
+    /// Validate a batch of records for insert. Thin `&self` wrapper: resolve the
+    /// collection, then run the pure checks in `super::input_validation`.
+    /// Collection-name pattern validation belongs at CREATE time, not on every
+    /// INSERT — by here `collection_id` is the catalog-resolved internal id.
     async fn validate_records_for_insert(
         &self,
         collection_id: &str,
         records: &[ProximaRecord],
     ) -> Result<()> {
-        // Collection-name pattern validation belongs at CREATE time, not on every
-        // INSERT. By the time we get here, `collection_id` is the catalog-resolved
-        // internal identifier (typically a UUIDv4) — re-running the user-facing
-        // pattern validator rejects UUIDs that happen to start with a digit and
-        // gives a non-actionable error to the caller. Reconciled 2026-05-28 for
-        // the v0.2 v2 INSERT→SEARCH gap.
-
-        let collection = self.get_or_load_collection(collection_id).await?;
-
-        let config = match &collection.config {
-            Some(c) => c,
-            None => return Ok(()),
-        };
-
-        let has_indexes = !config.index_configs.is_empty();
-        let requires_id = has_indexes;
-        let expected_dimension = config.dimension;
-
-        if !requires_id && expected_dimension == 0 {
-            return Ok(());
-        }
-
-        let mut seen_ids = if requires_id {
-            Some(std::collections::HashSet::<&str>::with_capacity(
-                records.len(),
-            ))
-        } else {
-            None
-        };
-
-        let current_time_ns = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos() as i64)
-            .unwrap_or(0);
-
-        for (i, record) in records.iter().enumerate() {
-            let dim = record
-                .embeddings
-                .first()
-                .map(|e| e.values.len())
-                .unwrap_or(0);
-            let is_tombstone = dim == 0 && record.valid_to_ns.is_some_and(|v| v <= current_time_ns);
-
-            for (embedding_idx, embedding) in record.embeddings.iter().enumerate() {
-                if let Some((dimension_idx, value)) =
-                    Self::first_non_finite_embedding_value(&embedding.values)
-                {
-                    return Err(anyhow::anyhow!(
-                        "Record at index {} embedding {} contains non-finite value at dimension {}: {}",
-                        i,
-                        embedding_idx,
-                        dimension_idx,
-                        value
-                    ));
-                }
-            }
-
-            if !is_tombstone && expected_dimension > 0 && dim != expected_dimension as usize {
-                return Err(anyhow::anyhow!(
-                    "Record at index {} has dimension {} but collection '{}' expects dimension {}",
-                    i,
-                    dim,
-                    collection_id,
-                    expected_dimension
-                ));
-            }
-
-            if let Some(ref mut seen) = seen_ids {
-                if record.oid.is_empty() {
-                    return Err(anyhow::anyhow!(
-                        "Record at index {} has empty ID. Collection '{}' requires valid IDs",
-                        i,
-                        collection_id
-                    ));
-                }
-
-                if record.oid.len() > 256 {
-                    return Err(anyhow::anyhow!(
-                        "Record ID '{}' exceeds maximum length of 256 characters",
-                        record.oid
-                    ));
-                }
-
-                if !seen.insert(record.oid.as_str()) {
-                    return Err(anyhow::anyhow!(
-                        "Duplicate ID '{}' found in batch. All IDs must be unique",
-                        record.oid
-                    ));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    fn first_non_finite_embedding_value(
-        values: &proximadb_records::EmbeddingValues,
-    ) -> Option<(usize, f32)> {
-        match values {
-            proximadb_records::EmbeddingValues::Fp32(v) => v
-                .iter()
-                .copied()
-                .enumerate()
-                .find(|(_, value)| !value.is_finite()),
-            proximadb_records::EmbeddingValues::Fp16(v) => v
-                .iter()
-                .map(|value| value.to_f32())
-                .enumerate()
-                .find(|(_, value)| !value.is_finite()),
-            proximadb_records::EmbeddingValues::Bf16(v) => v
-                .iter()
-                .map(|value| value.to_f32())
-                .enumerate()
-                .find(|(_, value)| !value.is_finite()),
-            proximadb_records::EmbeddingValues::Int8Scalar { scale, .. }
-            | proximadb_records::EmbeddingValues::UInt8Scalar { scale, .. } => {
-                if scale.is_finite() {
-                    None
-                } else {
-                    Some((0, *scale))
-                }
-            }
-        }
-    }
-
-    fn validate_query_vector_for_search(
-        collection_id: &str,
-        collection: &Collection,
-        query_vector: &[f32],
-    ) -> Result<()> {
-        if let Some((i, value)) = query_vector
-            .iter()
-            .enumerate()
-            .find(|(_, value)| !value.is_finite())
-        {
-            return Err(anyhow::anyhow!(
-                "Query vector for collection '{}' contains non-finite value at dimension {}: {}",
-                collection_id,
-                i,
-                value
-            ));
-        }
-
-        let expected_dimension = collection
-            .config
-            .as_ref()
-            .map(|config| config.dimension)
-            .unwrap_or_default();
-        if expected_dimension > 0 && query_vector.len() != expected_dimension as usize {
-            return Err(anyhow::anyhow!(
-                "Query vector has dimension {} but collection '{}' expects dimension {}",
-                query_vector.len(),
-                collection_id,
-                expected_dimension
-            ));
-        }
-
-        Ok(())
+        self.write_coordinator()
+            .validate_records_for_insert(collection_id, records)
+            .await
     }
 
     /// Retrieve a single vector record by ID.
@@ -4321,192 +3792,71 @@ impl VectorOperationsService {
     }
 
     /// Flush all pending WAL entries across every collection to durable storage.
+    /// Force-flush all collections' WAL to storage + compact. Phase 2.1:
+    /// delegates to `super::flush::FlushCompactionCoordinator`.
     pub async fn force_flush_all(&self) -> Result<()> {
-        info!("🔄 Force flushing all collections");
-
-        // Flush the WAL manager
-        self.wal_manager.force_flush_all().await?;
-
-        // Trigger compaction in storage engine
-        // Note: compact_all is not available in UnifiedStorageFormat trait
-        // Instead, we need to compact each collection individually
-        let collections: Vec<String> = self
-            .collection_cache
-            .iter()
-            .map(|entry| entry.key().clone())
-            .collect();
-
-        for collection_id in collections {
-            if let Some(collection) = self.collection_cache.get(&collection_id) {
-                match self
-                    .unified_engine()
-                    .compact_collection(&collection_id, Some(&**collection))
-                    .await
-                {
-                    Ok(result) => {
-                        info!(
-                            "✅ Compacted collection {}: {} files processed",
-                            collection_id,
-                            result.output_files.unwrap_or(0)
-                        );
-                    }
-                    Err(e) => {
-                        debug!(
-                            "⚠️ Compaction failed for collection {}: {}",
-                            collection_id, e
-                        );
-                        // Continue with other collections
-                    }
-                }
-            }
-        }
-
-        debug!("Force flush all completed");
-        Ok(())
+        self.flush_coordinator().force_flush_all().await
     }
 
     /// Flush all pending WAL entries for a specific collection to durable storage.
     pub async fn force_flush_collection(&self, collection_id: &str) -> Result<()> {
-        info!("🔄 Force flushing collection: {}", collection_id);
+        self.flush_coordinator()
+            .force_flush_collection(collection_id)
+            .await
+    }
 
-        // Flush the WAL manager for this collection
-        self.wal_manager
-            .force_flush_collection(collection_id, None)
-            .await?;
+    /// Build the flush + compaction coordinator on demand (cheap `Arc` clones).
+    fn flush_coordinator(&self) -> super::flush::FlushCompactionCoordinator {
+        super::flush::FlushCompactionCoordinator::new(
+            self.wal_manager.clone(),
+            self.unified_engine(),
+            self.collection_cache.clone(),
+        )
+    }
 
-        // Trigger compaction for this collection
-        if let Some(collection) = self.collection_cache.get(collection_id) {
-            match self
-                .unified_engine()
-                .compact_collection(collection_id, Some(&**collection))
-                .await
-            {
-                Ok(result) => {
-                    info!(
-                        "✅ Compacted collection {}: {} files created, {} files processed",
-                        collection_id,
-                        result.output_files.unwrap_or(0),
-                        result.input_files.unwrap_or(0)
-                    );
-                }
-                Err(e) => {
-                    debug!(
-                        "⚠️ Compaction failed for collection {}: {}",
-                        collection_id, e
-                    );
-                    // Don't fail the entire flush operation due to compaction issues
-                }
-            }
-        } else {
-            debug!(
-                "⚠️ Collection {} not found in cache, skipping compaction",
-                collection_id
-            );
-        }
+    /// Build the WAL write-primitive coordinator on demand (cheap `Arc` clones;
+    /// `BulkWriteRouter` is a `Clone` config wrapper). Phase 2.1: the
+    /// bulk-vs-WAL routing + WAL-persist primitives live in
+    /// `super::write::VectorWriteCoordinator`; the service keeps the public
+    /// surface (`bulk_write`) and the private `insert_vectors_via_wal*` helpers
+    /// (delete + batch callers) and delegates.
+    fn write_coordinator(&self) -> super::write::VectorWriteCoordinator {
+        super::write::VectorWriteCoordinator::new(
+            self.wal_manager.clone(),
+            self.bulk_write_router.clone(),
+            self.pseudo_query_generator.clone(),
+            self.collection_resolver(),
+        )
+    }
 
-        debug!("Force flush for collection {} completed", collection_id);
-        Ok(())
+    /// Build the read-only diagnostics collaborator on demand (cheap `Arc`
+    /// clones). Phase 2.1: metrics/health/unflushed-inspection logic lives in
+    /// `super::diagnostics::VectorServiceDiagnostics`; the service keeps the
+    /// public surface and delegates.
+    fn diagnostics(&self) -> super::diagnostics::VectorServiceDiagnostics {
+        super::diagnostics::VectorServiceDiagnostics::new(
+            self.wal_manager.clone(),
+            self.storage_engine.clone(),
+            self.collection_cache.clone(),
+        )
     }
 
     /// Collect and return a JSON snapshot of key operational metrics (WAL, storage, query cache,
     /// and collection counts).
     pub async fn metrics(&self) -> Result<serde_json::Value> {
-        // Collect metrics from various components
-        let wal_stats = self.wal_manager.stats().await?;
-
-        // Get storage engine metrics
-        let storage_metrics = match self.storage_engine.health_check().await {
-            Ok(health) => serde_json::json!({
-                "status": health.status,
-                "response_time_ms": health.response_time_ms,
-                "healthy": health.healthy,
-                "warnings": health.warnings
-            }),
-            Err(e) => serde_json::json!({
-                "status": "error",
-                "error": e.to_string()
-            }),
-        };
-
-        // Get query cache metrics - not implemented yet
-        let cache_stats = serde_json::json!({
-            "hit_rate": 0.0,
-            "total_queries": 0,
-            "cache_hits": 0,
-            "cache_misses": 0
-        });
-
-        // Combine all metrics
-        Ok(serde_json::json!({
-            "wal": {
-                "total_entries": wal_stats.total_entries,
-                "memory_entries": wal_stats.memory_entries,
-                "disk_segments": wal_stats.disk_segments,
-                "total_disk_size_bytes": wal_stats.total_disk_size_bytes,
-                "memory_size_bytes": wal_stats.memory_size_bytes,
-            },
-            "storage": storage_metrics,
-            "query_cache": cache_stats,
-            "collections": self.collection_cache.len(),
-        }))
+        self.diagnostics().metrics().await
     }
 
     /// Perform a health check across all subsystems (WAL, storage engine, query cache) and return
     /// a JSON report.
     pub async fn health_check(&self) -> Result<serde_json::Value> {
-        let _status = "healthy";
-        let issues: Vec<String> = Vec::new();
-
-        // Check WAL health
-        let wal_health = match self.wal_manager.stats().await {
-            Ok(stats) => {
-                let memory_usage_mb = stats.memory_size_bytes as f64 / (1024.0 * 1024.0);
-                if memory_usage_mb > 500.0 {
-                    // More than 500MB in memory
-                    vec![format!("High WAL memory usage: {:.1}MB", memory_usage_mb)]
-                } else {
-                    vec![]
-                }
-            }
-            Err(e) => vec![format!("WAL stats error: {}", e)],
-        };
-
-        // Check storage engine health
-        let storage_health = match self.storage_engine.health_check().await {
-            Ok(engine_health) => match engine_health.status.as_str() {
-                "healthy" => vec![],
-                _ => vec![format!("Storage engine: {}", engine_health.status)],
-            },
-            Err(e) => vec![format!("Storage engine health check failed: {}", e)],
-        };
-
-        // Combine health issues
-        let mut all_issues = issues;
-        all_issues.extend(wal_health);
-        all_issues.extend(storage_health);
-
-        // Update status based on issues
-        let status = if all_issues.is_empty() {
-            "healthy"
-        } else {
-            "degraded"
-        };
-
-        Ok(serde_json::json!({
-            "status": status,
-            "issues": all_issues,
-            "timestamp": std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            "collections": self.collection_cache.len(),
-        }))
+        self.diagnostics().health_check().await
     }
 
     /// Get unflushed vectors for a collection from the WAL/memtable
     pub async fn get_unflushed_vectors(&self, collection_id: &str) -> Result<Vec<ProximaRecord>> {
-        self.wal_manager
-            .read_record_entries(collection_id, 0, None)
+        self.diagnostics()
+            .get_unflushed_vectors(collection_id)
             .await
     }
 
@@ -4742,7 +4092,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a").unwrap();
+        ensure_tenant_on_records(&mut records, "tenant_a").unwrap();
 
         assert_eq!(records[0].tenant_id, "tenant_a");
     }
@@ -4755,8 +4105,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err = VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
-            .unwrap_err();
+        let err = ensure_tenant_on_records(&mut records, "tenant_a").unwrap_err();
 
         assert!(
             err.to_string()
@@ -4772,7 +4121,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
+        ensure_tenant_on_records(&mut records, "tenant_a")
             .expect("matching tenant_id should succeed");
 
         assert_eq!(records[0].tenant_id, "tenant_a");
@@ -4786,8 +4135,7 @@ mod tenant_tests {
             ..Default::default()
         }];
 
-        let err = VectorOperationsService::ensure_tenant_on_records(&mut records, "tenant_a")
-            .unwrap_err();
+        let err = ensure_tenant_on_records(&mut records, "tenant_a").unwrap_err();
 
         assert!(
             err.to_string()
@@ -4948,8 +4296,7 @@ mod tenant_tests {
     #[test]
     fn tombstone_records_for_ids_use_delete_shape() {
         let now_ns = 1_234_000_000i64;
-        let tombstones =
-            VectorOperationsService::tombstone_records_for_ids(&["doc_3".to_string()], now_ns);
+        let tombstones = tombstone_records_for_ids(&["doc_3".to_string()], now_ns);
 
         assert_eq!(tombstones.len(), 1);
         assert_eq!(tombstones[0].oid, "doc_3");
@@ -5330,9 +4677,8 @@ mod index_first_search_tests {
             },
         ];
 
-        let result =
-            VectorOperationsService::duplicate_insert_conflict_result("collection-1", &vectors)
-                .expect("duplicate insert should return a conflict");
+        let result = duplicate_insert_conflict_result("collection-1", &vectors)
+            .expect("duplicate insert should return a conflict");
 
         assert!(!result.success);
         assert_eq!(result.error_code.as_deref(), Some("INSERT_CONFLICT"));
@@ -5347,12 +4693,9 @@ mod index_first_search_tests {
 
     #[test]
     fn test_insert_only_lock_key_scopes_by_tenant() {
+        assert_eq!(insert_only_lock_key("collection-1", None), "collection-1");
         assert_eq!(
-            VectorOperationsService::insert_only_lock_key("collection-1", None),
-            "collection-1"
-        );
-        assert_eq!(
-            VectorOperationsService::insert_only_lock_key("collection-1", Some("tenant-a")),
+            insert_only_lock_key("collection-1", Some("tenant-a")),
             "tenant-a:collection-1"
         );
     }

@@ -447,7 +447,12 @@ impl DdlResult {
 #[async_trait::async_trait]
 pub trait TableMaterializer: Send + Sync {
     /// Materialize `table_name`'s current rows; returns the published location.
-    async fn materialize(&self, table_name: &str) -> Result<String>;
+    ///
+    /// `tenant` is the request/connection tenant (TD-064). It scopes the table
+    /// snapshot and the tenant-isolated object prefix; `None` means single-tenant
+    /// / embedded mode. Threading it (vs the old hardcoded `None`) is what makes
+    /// warehouse materialization tenant-isolated (TD-113).
+    async fn materialize(&self, table_name: &str, tenant: Option<&str>) -> Result<String>;
 }
 
 pub struct DdlService {
@@ -524,7 +529,21 @@ impl DdlService {
     ///
     /// This is the main entry point for DDL operations. It dispatches to the appropriate
     /// handler based on the statement type.
+    /// Execute a DDL statement (single-tenant / unscoped).
     pub async fn execute(&self, statement: DdlStatement) -> Result<DdlResult> {
+        self.execute_scoped(statement, None).await
+    }
+
+    /// Execute a DDL statement within a tenant scope (TD-064). The tenant
+    /// scopes table-targeting DDL (CREATE/DROP/ALTER TABLE, CREATE/DROP INDEX)
+    /// onto the same tenant-prefixed catalog namespace the DML path resolves, so
+    /// a tenant's CREATE-then-INSERT address one schema row. `None` ⇒
+    /// single-tenant, identical to the legacy path.
+    pub async fn execute_scoped(
+        &self,
+        statement: DdlStatement,
+        tenant: Option<&str>,
+    ) -> Result<DdlResult> {
         match statement {
             DdlStatement::CreateTable {
                 table_name,
@@ -533,18 +552,25 @@ impl DdlService {
                 if_not_exists,
                 properties,
             } => {
-                self.create_table(&table_name, columns, constraints, if_not_exists, properties)
-                    .await
+                self.create_table(
+                    &table_name,
+                    columns,
+                    constraints,
+                    if_not_exists,
+                    properties,
+                    tenant,
+                )
+                .await
             }
             DdlStatement::DropTable {
                 table_name,
                 if_exists,
                 purge,
-            } => self.drop_table(&table_name, if_exists, purge).await,
+            } => self.drop_table(&table_name, if_exists, purge, tenant).await,
             DdlStatement::AlterTable {
                 table_name,
                 changes,
-            } => self.alter_table(&table_name, changes).await,
+            } => self.alter_table(&table_name, changes, tenant).await,
             DdlStatement::MaterializeTable { name } => {
                 let materializer = self.materializer.as_ref().ok_or_else(|| {
                     anyhow!(
@@ -552,7 +578,7 @@ impl DdlService {
                          store (no table materializer is wired)"
                     )
                 })?;
-                let location = materializer.materialize(&name).await?;
+                let location = materializer.materialize(&name, tenant).await?;
                 Ok(DdlResult::success(format!(
                     "Materialized table '{name}' to '{location}'"
                 )))
@@ -564,14 +590,24 @@ impl DdlService {
                 index_type,
                 if_not_exists,
             } => {
-                self.create_index(&index_name, &table_name, columns, index_type, if_not_exists)
-                    .await
+                self.create_index(
+                    &index_name,
+                    &table_name,
+                    columns,
+                    index_type,
+                    if_not_exists,
+                    tenant,
+                )
+                .await
             }
             DdlStatement::DropIndex {
                 index_name,
                 table_name,
                 if_exists,
-            } => self.drop_index(&index_name, &table_name, if_exists).await,
+            } => {
+                self.drop_index(&index_name, &table_name, if_exists, tenant)
+                    .await
+            }
             DdlStatement::CreateNamespace {
                 namespace,
                 if_not_exists,
@@ -767,8 +803,12 @@ impl DdlService {
         constraints: Vec<TableConstraint>,
         if_not_exists: bool,
         properties: HashMap<String, String>,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         // Check if table exists
         if catalog.table_exists(&table_id).await? {
@@ -786,8 +826,11 @@ impl DdlService {
         // explicitly creating a schema first. Keep the native catalog path
         // aligned with the OLTP catalog by materializing the resolved namespace.
         if !catalog.namespace_exists(&table_id.namespace).await? {
+            // Record the owning tenant on the auto-created namespace (TD-113) so it
+            // is DR-addressable and the warehouse path resolver can assert tenant
+            // ownership / route by storage pool.
             catalog
-                .create_namespace(&table_id.namespace, HashMap::new())
+                .create_namespace_for_tenant(&table_id.namespace, HashMap::new(), tenant)
                 .await?;
         }
 
@@ -807,8 +850,12 @@ impl DdlService {
         table_name: &str,
         if_exists: bool,
         purge: bool,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         // Check if table exists
         if !catalog.table_exists(&table_id).await? {
@@ -834,8 +881,12 @@ impl DdlService {
         &self,
         table_name: &str,
         changes: Vec<AlterTableChange>,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         // Check if table exists
         if !catalog.table_exists(&table_id).await? {
@@ -884,8 +935,12 @@ impl DdlService {
         columns: Vec<String>,
         index_type: IndexType,
         if_not_exists: bool,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         // Check if table exists
         if !catalog.table_exists(&table_id).await? {
@@ -948,8 +1003,12 @@ impl DdlService {
         index_name: &str,
         table_name: &str,
         if_exists: bool,
+        tenant: Option<&str>,
     ) -> Result<DdlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         // Check if table exists
         if !catalog.table_exists(&table_id).await? {

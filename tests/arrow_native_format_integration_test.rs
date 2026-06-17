@@ -22,8 +22,6 @@ use std::collections::HashMap;
 
 // Test imports - only compile when datafusion-integration feature is enabled
 #[cfg(feature = "datafusion-integration")]
-use arrow_array::{Float32Array, RecordBatch, StringArray};
-#[cfg(feature = "datafusion-integration")]
 use arrow_schema::{DataType, Field, Schema};
 
 use proximadb::proto::proximadb_v1::SqlValue;
@@ -643,7 +641,7 @@ fn test_vector_record_to_arrow_roundtrip() {
                     model_id: "test".to_string(),
                     modality: "dense_vector".to_string(),
                     dim: vector.len() as u32,
-                    values: vector,
+                    values: proximadb_records::EmbeddingValues::Fp32(vector),
                     ..Default::default()
                 }],
                 ..Default::default()
@@ -720,40 +718,63 @@ async fn test_smart_io_parallel_reader_concept() {
 #[cfg(feature = "datafusion-integration")]
 mod datafusion_tests {
     use super::*;
+    use datafusion::logical_expr::Expr;
     use proximadb::datafusion::{
         CollectionInfo, EngineType, NullProximaTableProvider, ProximaTableProvider,
     };
+    use std::sync::Arc;
 
-    #[test]
-    fn test_null_table_provider() {
-        // NullProximaTableProvider is a no-op implementation for testing
-        let provider = NullProximaTableProvider;
+    fn null_provider_collection_info() -> CollectionInfo {
+        CollectionInfo::new("test_collection".to_string(), 768, EngineType::Sst)
+            .with_base_path("/data/collections/test".to_string())
+    }
+
+    fn test_schema() -> Arc<Schema> {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new(
+                "vector",
+                DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), 768),
+                true,
+            ),
+        ]))
+    }
+
+    #[tokio::test]
+    async fn test_null_table_provider() {
+        // NullProximaTableProvider is a no-op implementation for testing.
+        let provider =
+            NullProximaTableProvider::new(test_schema(), null_provider_collection_info());
 
         let info = provider.collection_info();
-        assert_eq!(info.dimension, 0);
-        assert_eq!(info.total_rows, 0);
+        assert_eq!(info.dimension, 768);
+        assert_eq!(info.name, "test_collection");
 
-        let splits = provider.list_splits();
+        let filters: Vec<Expr> = Vec::new();
+        let splits = provider
+            .get_splits(&filters)
+            .await
+            .expect("null provider should return an empty split set");
         assert!(splits.is_empty());
 
-        // Pruning should always return all splits (no pruning)
-        let pruned = provider.prune_splits(&[], &[]);
-        assert!(pruned.is_empty());
+        assert_eq!(
+            provider
+                .pruning_stats()
+                .expect("null provider exposes empty pruning stats")
+                .total_splits,
+            0
+        );
+        assert!(provider.supports_vector_search());
     }
 
     #[test]
     fn test_collection_info() {
-        let info = CollectionInfo {
-            collection_id: "test_collection".to_string(),
-            dimension: 768,
-            total_rows: 1_000_000,
-            engine_type: EngineType::Sst,
-            base_path: "/data/collections/test".to_string(),
-        };
+        let info = null_provider_collection_info();
 
+        assert_eq!(info.name, "test_collection");
         assert_eq!(info.dimension, 768);
-        assert_eq!(info.total_rows, 1_000_000);
         assert!(matches!(info.engine_type, EngineType::Sst));
+        assert_eq!(info.base_path, "/data/collections/test");
     }
 }
 

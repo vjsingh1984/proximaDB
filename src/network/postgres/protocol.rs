@@ -26,6 +26,7 @@ use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::network::arrow_ipc::ArrowProtoCodec;
 use crate::observability::ObservabilityService;
+use crate::query::execution::{ExecutionControls, ExecutionPipelineResult, RowLimitMode};
 use crate::query::multimodal_router::{self, DataModel};
 use crate::query::sql_frontend::SqlFrontendParser;
 use crate::query::table_write_plan::WriteIntentOverrides;
@@ -35,11 +36,10 @@ use crate::services::dml::{
     RelationalSelectPredicateInput as SelectPredicate,
     RelationalSelectPredicateOperator as SelectPredicateOperator,
 };
-use crate::services::{DdlService, DmlService, TableWalAppender};
+use crate::services::{DdlService, DmlService};
 use crate::storage::document::DocumentService;
 use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
-use proximadb_records::RecordStorage;
 
 /// PostgreSQL protocol handler
 pub struct PostgresProtocol {
@@ -167,7 +167,6 @@ struct PreparedStatement {
 }
 
 /// Portal - a bound statement ready for execution
-#[derive(Clone)]
 struct Portal {
     /// Statement name this portal was bound from
     #[allow(dead_code)]
@@ -183,6 +182,14 @@ struct Portal {
     /// Max rows to return (0 = unlimited)
     #[allow(dead_code)]
     max_rows: i32,
+    /// Materialized result cursor for extended-protocol portal paging.
+    execution_state: Option<PortalExecutionState>,
+}
+
+/// Cached execution state for a portal.
+struct PortalExecutionState {
+    result: ExecutionPipelineResult,
+    next_row: usize,
 }
 
 // DataModel imported from crate::query::multimodal_router (canonical definition)
@@ -427,15 +434,13 @@ impl PostgresProtocol {
         collection_port: Arc<dyn proximadb_runtime::CollectionPort>,
         vector_ops: Arc<VectorOperationsService>,
         catalog_manager: Arc<CatalogManager>,
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
         let ddl_service = Arc::new(DdlService::new(catalog_manager.clone()));
         let dml_service = Arc::new(DmlService::with_direct_record_storage(
             catalog_manager.clone(),
             vector_ops.clone(),
-            record_storage,
-            wal_appender,
+            canonical_store,
         ));
 
         Self {
@@ -493,15 +498,13 @@ impl PostgresProtocol {
     pub fn with_direct_catalog_manager(
         mut self,
         catalog_manager: Arc<CatalogManager>,
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
         self.ddl_service = Some(Arc::new(DdlService::new(catalog_manager.clone())));
         self.dml_service = Some(Arc::new(DmlService::with_direct_record_storage(
             catalog_manager.clone(),
             self.vector_ops.clone(),
-            record_storage,
-            wal_appender,
+            canonical_store,
         )));
         self.catalog_manager = Some(catalog_manager);
         self
@@ -943,6 +946,16 @@ impl PostgresProtocol {
 
     /// Execute a translated query
     async fn execute_query(&mut self, query: &str) -> Result<()> {
+        self.execute_query_with_controls(query, ExecutionControls::default())
+            .await
+    }
+
+    /// Execute a translated query with request-scoped execution controls.
+    async fn execute_query_with_controls(
+        &mut self,
+        query: &str,
+        controls: ExecutionControls,
+    ) -> Result<()> {
         let upper = query.to_uppercase();
 
         // Transaction control. ProximaDB does not yet implement real
@@ -1112,14 +1125,10 @@ impl PostgresProtocol {
             // vector-collection path. Lowering failures fall
             // through (e.g. `SELECT current_schema()` and other
             // pg-specific queries the new frontend doesn't accept).
-            if let Some(result) = super::relational_pipeline::try_run_select(
-                query,
-                self.dml_service.as_ref(),
-                // F4: hand the OLAP route the live vector service so a cross-modal
-                // `... JOIN vector_search('coll','[..]',k)` resolves over pgwire.
-                Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
-            )
-            .await
+            // TD-064: scope relational-pipeline reads to the connection tenant.
+            if let Some(result) = self
+                .try_run_relational_select_pipeline(query, controls.clone())
+                .await
             {
                 return match result {
                     Ok(pr) => self.emit_pipeline_result(pr).await,
@@ -1179,13 +1188,22 @@ impl PostgresProtocol {
                         }
                         _ => None,
                     };
-                    match ddl_service.execute(statement).await {
+                    // TD-064: scope table-targeting DDL (CREATE/DROP/ALTER TABLE,
+                    // CREATE/DROP INDEX) onto the connection's tenant so a tenant's
+                    // CREATE-then-INSERT address one tenant-prefixed schema row.
+                    let ddl_tenant = self.pgwire_resolve_write_tenant().await;
+                    let ddl_scope = (!ddl_tenant.is_empty()).then_some(ddl_tenant);
+                    match ddl_service
+                        .execute_scoped(statement, ddl_scope.as_deref())
+                        .await
+                    {
                         Ok(result) => {
                             if upper.starts_with("CREATE TABLE")
                                 && let Some(table_name) = self.extract_create_table_name(query)
                             {
                                 self.ensure_relational_backing_collection(
                                     &table_name,
+                                    ddl_scope.as_deref(),
                                     backing_precision.as_deref(),
                                 )
                                 .await?;
@@ -1287,6 +1305,7 @@ impl PostgresProtocol {
     async fn ensure_relational_backing_collection(
         &self,
         table_name: &str,
+        tenant_id: Option<&str>,
         canonical_embedding_precision_label: Option<&str>,
     ) -> Result<()> {
         use crate::proto::proximadb_v1::{CollectionConfig, EmbeddingPrecision, StorageEngine};
@@ -1326,7 +1345,11 @@ impl PostgresProtocol {
             ..Default::default()
         };
 
-        match self.collection_port.create_collection(config, None).await {
+        match self
+            .collection_port
+            .create_collection(config, tenant_id)
+            .await
+        {
             Ok(_) => {
                 debug!(
                     "Created relational backing collection '{}' via PostgreSQL",
@@ -1403,8 +1426,8 @@ impl PostgresProtocol {
     /// format, then `CommandComplete("SELECT n")`.
     async fn emit_pipeline_result(
         &mut self,
-        result: super::relational_pipeline::PipelineResult,
-    ) -> Result<()> {
+        result: ExecutionPipelineResult,
+    ) -> anyhow::Result<()> {
         // RowDescription.
         let fields: Vec<crate::network::postgres::types::FieldDescription> = result
             .schema
@@ -1427,6 +1450,25 @@ impl PostgresProtocol {
         }
         // CommandComplete.
         self.send_command_complete(&format!("SELECT {n}")).await
+    }
+
+    /// Try to materialize a SELECT through the relational execution seam.
+    async fn try_run_relational_select_pipeline(
+        &self,
+        query: &str,
+        controls: ExecutionControls,
+    ) -> Option<Result<ExecutionPipelineResult, String>> {
+        let read_tenant = self.pgwire_resolve_read_tenant().await;
+        super::relational_pipeline::try_run_select(
+            query,
+            self.dml_service.as_ref(),
+            // F4: hand the OLAP route the live vector service so a cross-modal
+            // `... JOIN vector_search('coll','[..]',k)` resolves over pgwire.
+            Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
+            Some(read_tenant.as_str()),
+            controls,
+        )
+        .await
     }
 
     /// Send a DataRow that supports `NULL` (length = -1) cells.
@@ -1479,11 +1521,14 @@ impl PostgresProtocol {
             // PATH B queries, not just the route. EXPLAIN ANALYZE additionally executes
             // the (read-only) plan and reports measured rows + elapsed. Falls back to
             // route-only disclosure when no DmlService is available.
+            // TD-064: resolve EXPLAIN's schema/plan under the connection tenant.
+            let explain_tenant = self.pgwire_resolve_read_tenant().await;
             let routing = match self.dml_service.clone() {
                 Some(dml) if is_analyze => {
                     crate::network::postgres::relational_pipeline::explain_analyze_select_with_catalog(
                         inner_query,
                         &dml,
+                        Some(explain_tenant.as_str()),
                     )
                     .await
                 }
@@ -1491,6 +1536,7 @@ impl PostgresProtocol {
                     crate::network::postgres::relational_pipeline::explain_select_route_with_catalog(
                         inner_query,
                         &dml,
+                        Some(explain_tenant.as_str()),
                     )
                     .await
                 }
@@ -1623,6 +1669,16 @@ impl PostgresProtocol {
             return catalog;
         }
         self.pgwire_resolve_tenant_id().await
+    }
+
+    /// TD-064 (write-half): resolve the tenant/catalog scope used to authorize
+    /// and route WRITE/DDL statements. Identical to the read-half resolution —
+    /// the connection's catalog (startup `database`) is the tenant boundary,
+    /// falling back to the legacy `proximadb.write.tenant_id` var for clients
+    /// that sent no database. This converges writes onto the same tenant signal
+    /// reads use, replacing the pod-gate-only use of the var.
+    async fn pgwire_resolve_write_tenant(&self) -> String {
+        self.pgwire_resolve_read_tenant().await
     }
 
     fn write_intent_overrides_from_params(
@@ -2448,6 +2504,10 @@ impl PostgresProtocol {
         // machinery). If sqlparser can't parse the query (pg-specific syntax)
         // or its WHERE has an unsupported expression, fall back to the legacy
         // string-predicate path — over-inclusive full scan, never empty.
+        // TD-064: scope the legacy relational SELECT to the connection tenant.
+        let read_tenant = self.pgwire_resolve_read_tenant().await;
+        let read_tenant_ctx = (!read_tenant.is_empty())
+            .then(|| crate::storage::tenant::context::TenantContext::for_tenant_id(&read_tenant));
         let mut result = match SqlFrontendParser::new().parse_select_where_clause(query) {
             Ok(where_clause) => {
                 dml_service
@@ -2456,6 +2516,7 @@ impl PostgresProtocol {
                         &projection_column_names,
                         scan_limit,
                         where_clause.as_ref(),
+                        read_tenant_ctx.as_ref(),
                     )
                     .await?
             }
@@ -2471,6 +2532,7 @@ impl PostgresProtocol {
                         &projection_column_names,
                         scan_limit,
                         &predicates,
+                        read_tenant_ctx.as_ref(),
                     )
                     .await?
             }
@@ -3459,7 +3521,35 @@ impl PostgresProtocol {
                     }
                 }
 
-                match dml_service.execute(statement).await {
+                // TD-064 write-half: resolve the tenant scope (catalog/database
+                // binding) and authorize the target table within it. A
+                // cross-tenant target fails closed with 42P01 (never leaking
+                // existence); the scope is then threaded into execute_scoped so
+                // the write lands in the tenant's partition.
+                let write_tenant = self.pgwire_resolve_write_tenant().await;
+                let tenant_scope = (!write_tenant.is_empty()).then(|| write_tenant.clone());
+                if let Some(ref tenant) = tenant_scope
+                    && !dml_service
+                        .table_visible_for_tenant(&table, Some(tenant.as_str()))
+                        .await
+                        .unwrap_or(false)
+                {
+                    return self
+                        .send_error(
+                            "ERROR",
+                            "42P01",
+                            &format!("relation \"{}\" does not exist", table),
+                        )
+                        .await;
+                }
+                let tenant_ctx = tenant_scope.as_ref().map(|tenant| {
+                    crate::storage::tenant::context::TenantContext::for_tenant_id(tenant)
+                });
+
+                match dml_service
+                    .execute_scoped(statement, tenant_ctx.as_ref())
+                    .await
+                {
                     Ok(result) => {
                         info!(
                             rows_affected = result.rows_affected,
@@ -3538,7 +3628,31 @@ impl PostgresProtocol {
                     }
                 }
 
-                match dml_service.execute(statement).await {
+                // TD-064 write-half: tenant scope + cross-tenant 42P01 gate (see INSERT).
+                let write_tenant = self.pgwire_resolve_write_tenant().await;
+                let tenant_scope = (!write_tenant.is_empty()).then(|| write_tenant.clone());
+                if let Some(ref tenant) = tenant_scope
+                    && !dml_service
+                        .table_visible_for_tenant(&table, Some(tenant.as_str()))
+                        .await
+                        .unwrap_or(false)
+                {
+                    return self
+                        .send_error(
+                            "ERROR",
+                            "42P01",
+                            &format!("relation \"{}\" does not exist", table),
+                        )
+                        .await;
+                }
+                let tenant_ctx = tenant_scope.as_ref().map(|tenant| {
+                    crate::storage::tenant::context::TenantContext::for_tenant_id(tenant)
+                });
+
+                match dml_service
+                    .execute_scoped(statement, tenant_ctx.as_ref())
+                    .await
+                {
                     Ok(result) => {
                         info!(
                             rows_affected = result.rows_affected,
@@ -3611,7 +3725,31 @@ impl PostgresProtocol {
                     }
                 }
 
-                match dml_service.execute(statement).await {
+                // TD-064 write-half: tenant scope + cross-tenant 42P01 gate (see INSERT).
+                let write_tenant = self.pgwire_resolve_write_tenant().await;
+                let tenant_scope = (!write_tenant.is_empty()).then(|| write_tenant.clone());
+                if let Some(ref tenant) = tenant_scope
+                    && !dml_service
+                        .table_visible_for_tenant(&table, Some(tenant.as_str()))
+                        .await
+                        .unwrap_or(false)
+                {
+                    return self
+                        .send_error(
+                            "ERROR",
+                            "42P01",
+                            &format!("relation \"{}\" does not exist", table),
+                        )
+                        .await;
+                }
+                let tenant_ctx = tenant_scope.as_ref().map(|tenant| {
+                    crate::storage::tenant::context::TenantContext::for_tenant_id(tenant)
+                });
+
+                match dml_service
+                    .execute_scoped(statement, tenant_ctx.as_ref())
+                    .await
+                {
                     Ok(result) => {
                         info!(
                             rows_affected = result.rows_affected,
@@ -4289,6 +4427,7 @@ impl PostgresProtocol {
             translated: stmt_translated,
             param_values,
             max_rows: 0,
+            execution_state: None,
         };
 
         self.portals.insert(portal_name, portal);
@@ -4323,12 +4462,12 @@ impl PostgresProtocol {
         // Read portal name
         let portal_name = self.read_cstring(&mut cursor)?;
 
-        // Read max rows (0 = unlimited) - currently not enforced
-        let _max_rows = cursor.get_i32();
+        // Read max rows (0 = unlimited).
+        let max_rows = cursor.get_i32();
 
         // Get the portal
-        let portal = match self.portals.get(&portal_name) {
-            Some(p) => p.clone(),
+        let portal_bound_query = match self.portals.get(&portal_name) {
+            Some(p) => p.bound_query.clone(),
             None => {
                 // If unnamed portal (""), execute as simple query
                 if portal_name.is_empty() {
@@ -4347,7 +4486,7 @@ impl PostgresProtocol {
         // Execute the bound query
         debug!(
             "Executing portal '{}' with query: {}",
-            portal_name, portal.bound_query
+            portal_name, portal_bound_query
         );
 
         // Use the same query execution path as simple query, but suppress the
@@ -4355,9 +4494,119 @@ impl PostgresProtocol {
         // result columns at Describe(statement) time, so a second descriptor
         // here is a duplicate the client rejects (TD-102).
         self.suppress_row_description = true;
-        let result = self.execute_query(&portal.bound_query).await;
+        let result = self
+            .execute_portal_query(&portal_name, &portal_bound_query, max_rows)
+            .await;
         self.suppress_row_description = false;
         result
+    }
+
+    async fn execute_portal_query(
+        &mut self,
+        portal_name: &str,
+        query: &str,
+        max_rows: i32,
+    ) -> Result<()> {
+        if max_rows > 0 {
+            if self
+                .portals
+                .get(portal_name)
+                .is_some_and(|p| p.execution_state.is_some())
+            {
+                return self.emit_portal_page(portal_name, max_rows as usize).await;
+            }
+
+            if query.trim_start().to_uppercase().starts_with("SELECT")
+                && let Some(result) = self
+                    .try_run_relational_select_pipeline(query, ExecutionControls::default())
+                    .await
+            {
+                let result = match result {
+                    Ok(result) => result,
+                    Err(msg) => return self.send_error("ERROR", "XX000", &msg).await,
+                };
+                if let Some(portal) = self.portals.get_mut(portal_name) {
+                    portal.execution_state = Some(PortalExecutionState {
+                        result,
+                        next_row: 0,
+                    });
+                }
+                return self.emit_portal_page(portal_name, max_rows as usize).await;
+            }
+        }
+
+        self.execute_query_with_controls(
+            query,
+            Self::execution_controls_for_execute_max_rows(max_rows),
+        )
+        .await
+    }
+
+    async fn emit_portal_page(&mut self, portal_name: &str, max_rows: usize) -> Result<()> {
+        let (rows, finished) = {
+            let Some(portal) = self.portals.get_mut(portal_name) else {
+                return self
+                    .send_error(
+                        "ERROR",
+                        "34000",
+                        &format!("portal \"{}\" does not exist", portal_name),
+                    )
+                    .await;
+            };
+            let Some(state) = portal.execution_state.as_mut() else {
+                return self.send_command_complete("SELECT 0").await;
+            };
+
+            let start = state.next_row;
+            let (end, finished) =
+                Self::portal_page_bounds(state.result.rows.len(), state.next_row, max_rows);
+            let rows: Vec<Vec<Option<String>>> = state.result.rows[start..end]
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(super::relational_pipeline::text_encode)
+                        .collect()
+                })
+                .collect();
+            state.next_row = end;
+            (rows, finished)
+        };
+
+        for row in &rows {
+            self.send_data_row_nullable(row).await?;
+        }
+        if finished {
+            self.send_command_complete(&format!("SELECT {}", rows.len()))
+                .await
+        } else {
+            self.send_portal_suspended().await
+        }
+    }
+
+    fn portal_page_bounds(total_rows: usize, next_row: usize, max_rows: usize) -> (usize, bool) {
+        let end = if max_rows == 0 {
+            total_rows
+        } else {
+            total_rows.min(next_row.saturating_add(max_rows))
+        };
+        (end, end >= total_rows)
+    }
+
+    /// Convert PostgreSQL Execute.max_rows into ProximaDB execution controls.
+    ///
+    /// PostgreSQL defines `0` as "unlimited". Positive caps are portal row
+    /// budgets, so fallback execution uses truncation rather than a row-limit
+    /// error. Relational SELECT portals use materialized cursor state and emit
+    /// `PortalSuspended` when more rows remain.
+    fn execution_controls_for_execute_max_rows(max_rows: i32) -> ExecutionControls {
+        if max_rows <= 0 {
+            return ExecutionControls::default();
+        }
+        ExecutionControls {
+            max_rows: Some(max_rows as usize),
+            row_limit_mode: RowLimitMode::Truncate,
+            ..Default::default()
+        }
     }
 
     /// Handle Describe message
@@ -4430,6 +4679,8 @@ impl PostgresProtocol {
 
         if close_type == 'S' {
             self.prepared_statements.remove(&name);
+        } else if close_type == 'P' {
+            self.portals.remove(&name);
         }
 
         self.send_close_complete().await
@@ -4534,6 +4785,14 @@ impl PostgresProtocol {
         self.write_buffer.put_i32(len as i32);
         self.write_buffer.put_slice(tag.as_bytes());
         self.write_buffer.put_u8(0);
+        self.flush_write_buffer().await
+    }
+
+    /// Send PortalSuspended for an extended-protocol Execute that has more
+    /// portal rows available after satisfying the current max_rows budget.
+    async fn send_portal_suspended(&mut self) -> Result<()> {
+        self.write_buffer.put_u8(b's');
+        self.write_buffer.put_i32(4);
         self.flush_write_buffer().await
     }
 
@@ -4934,6 +5193,43 @@ mod tests {
         assert_eq!(FrontendMessage::Parse as u8, 0x50);
         assert_eq!(FrontendMessage::Bind as u8, 0x42);
         assert_eq!(FrontendMessage::Terminate as u8, 0x58);
+    }
+
+    #[test]
+    fn execute_max_rows_maps_to_truncating_execution_controls() {
+        let unlimited = PostgresProtocol::execution_controls_for_execute_max_rows(0);
+        assert_eq!(unlimited.max_rows, None);
+        assert_eq!(unlimited.row_limit_mode, RowLimitMode::Error);
+
+        let negative = PostgresProtocol::execution_controls_for_execute_max_rows(-1);
+        assert_eq!(negative.max_rows, None);
+        assert_eq!(negative.row_limit_mode, RowLimitMode::Error);
+
+        let capped = PostgresProtocol::execution_controls_for_execute_max_rows(5);
+        assert_eq!(capped.max_rows, Some(5));
+        assert_eq!(capped.row_limit_mode, RowLimitMode::Truncate);
+    }
+
+    #[test]
+    fn portal_page_bounds_reports_suspended_and_complete_pages() {
+        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 0, 2);
+        assert_eq!(end, 2);
+        assert!(!complete);
+
+        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 2, 3);
+        assert_eq!(end, 5);
+        assert!(complete);
+
+        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 5, 2);
+        assert_eq!(end, 5);
+        assert!(complete);
+    }
+
+    #[test]
+    fn portal_page_bounds_treats_zero_budget_as_unlimited() {
+        let (end, complete) = PostgresProtocol::portal_page_bounds(5, 1, 0);
+        assert_eq!(end, 5);
+        assert!(complete);
     }
 
     #[test]

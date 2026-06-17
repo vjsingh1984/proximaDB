@@ -7,6 +7,22 @@
 :revdate: March 2026
 :revnumber: 0.2.0
 
+[IMPORTANT]
+====
+This PRD describes the *product vision and roadmap-level priorities*. The
+*shippable/supported surface for v0.2 is defined by* link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc],
+which takes precedence for any "supported", "production", or "ready" claim. P0 / "Must
+Have" here means _roadmap-P0 toward the product vision_ -- it is decoupled from what v0.2
+actually ships as a Supported surface. Where a feature below is tagged Beta/Experimental in
+the support contract, that tier wins for customer and release-note claims.
+
+*Near-term wedge (2026-06-04 course correction):* the strategy leads with
+*pgwire/relational + vector/context over decoupled object storage* -- a broad context-database
+vision delivered through a narrow, reliable supported MVP surface. See
+link:../12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc[the Data
+Warehouse & Engineering course correction] for the active architectural direction.
+====
+
 == Product Overview
 
 === Vision
@@ -141,7 +157,10 @@ ProximaDB's unique differentiator is cross-model SQL joins in a single query -- 
 
 === Must Have (P0)
 
-These features are required for ProximaDB to reach production viability and fulfill the core value proposition of "The Context Database."
+These features are *roadmap-P0* toward the full "Context Database" product vision. P0 here
+denotes investment priority, *not* v0.2 shipped/supported state: several P0 foundations
+below are tagged Beta in link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] and must not
+be release-noted as production-ready until they graduate there.
 
 ==== Hybrid Search (BM25 + Vector)
 
@@ -174,6 +193,8 @@ a|
 
 ==== Time-Series Engine (TST)
 
+NOTE: *v0.2 status: Beta* (see link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] -- "Time-series and event foundations"). Engine implemented; product packaging and at-scale validation are in progress. Not a Supported v0.2 surface.
+
 [cols="1,3", options="header"]
 |===
 | Field | Detail
@@ -205,6 +226,8 @@ a|
 
 ==== Event Sourcing Engine
 
+NOTE: *v0.2 status: Beta* (see link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] -- "Time-series and event foundations"). Engine implemented; product packaging and at-scale validation are in progress. Not a Supported v0.2 surface.
+
 [cols="1,3", options="header"]
 |===
 | Field | Detail
@@ -234,6 +257,8 @@ a|
 |===
 
 ==== Framework Integrations
+
+NOTE: *v0.2 status: not a Supported surface* (see link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc]). Integrations ship in the Python SDK but are not part of the v0.2 product support contract.
 
 [cols="1,3", options="header"]
 |===

@@ -34,10 +34,8 @@ use self::session::SessionManager;
 use crate::catalog::CatalogManager;
 use crate::graph::GraphService;
 use crate::observability::ObservabilityService;
-use crate::services::TableWalAppender;
 use crate::services::VectorOperationsService;
 use crate::storage::document::DocumentService;
-use proximadb_records::RecordStorage;
 
 /// Optional canonical write dependencies for PostgreSQL wire DML.
 ///
@@ -46,20 +44,19 @@ use proximadb_records::RecordStorage;
 /// continue to use the compatibility route selected by xCatalog.
 #[derive(Clone)]
 pub struct DirectPgwireWriteServices {
-    record_storage: Arc<dyn RecordStorage>,
-    wal_appender: Arc<dyn TableWalAppender>,
+    /// The single shared canonical record store (per-(tenant, collection)
+    /// partitioned), built + WAL-recovered once at boot and shared across all
+    /// pgwire connections so their in-memory partitions hold one authoritative
+    /// state.
+    canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
 }
 
 impl DirectPgwireWriteServices {
-    /// Build direct pgwire write dependencies.
+    /// Build direct pgwire write dependencies from the shared canonical store.
     pub fn new(
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
-        Self {
-            record_storage,
-            wal_appender,
-        }
+        Self { canonical_store }
     }
 }
 
@@ -192,11 +189,9 @@ impl PostgresServer {
     /// pgwire DML while preserving legacy vector compatibility routing.
     pub fn with_direct_record_writes(
         mut self,
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<crate::services::record_store::DirectWalTableRecordStore>,
     ) -> Self {
-        self.direct_write_services =
-            Some(DirectPgwireWriteServices::new(record_storage, wal_appender));
+        self.direct_write_services = Some(DirectPgwireWriteServices::new(canonical_store));
         self
     }
 
@@ -306,11 +301,8 @@ impl PostgresServer {
             observability_service,
         );
         let mut protocol = if let Some(direct_write_services) = direct_write_services {
-            protocol.with_direct_catalog_manager(
-                catalog_manager,
-                direct_write_services.record_storage,
-                direct_write_services.wal_appender,
-            )
+            protocol
+                .with_direct_catalog_manager(catalog_manager, direct_write_services.canonical_store)
         } else {
             protocol.with_catalog_manager(catalog_manager)
         };

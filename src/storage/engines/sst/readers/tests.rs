@@ -22,7 +22,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "b".into(),
                 last_key: None,
@@ -40,7 +43,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "c".into(),
                 last_key: None,
@@ -58,7 +64,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "d".into(),
                 last_key: None,
@@ -76,7 +85,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
         ];
 
         let selected = select_blocks_by_centroid(
@@ -111,7 +123,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "b".into(),
                 last_key: None,
@@ -129,7 +144,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
         ];
 
         let prune_config = crate::core::search::BlockPruneConfig {
@@ -174,7 +192,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "b".into(),
                 last_key: None,
@@ -192,7 +213,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "c".into(),
                 last_key: None,
@@ -210,7 +234,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
         ];
 
         let prune_config = crate::core::search::BlockPruneConfig {
@@ -255,7 +282,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "b".into(),
                 last_key: None,
@@ -273,7 +303,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "c".into(),
                 last_key: None,
@@ -291,7 +324,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "d".into(),
                 last_key: None,
@@ -309,7 +345,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
         ];
 
         let prune_config = crate::core::search::BlockPruneConfig {
@@ -355,7 +394,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "b".into(),
                 last_key: None,
@@ -373,7 +415,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
             IndexEntry {
                 key: "c".into(),
                 last_key: None,
@@ -391,7 +436,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            },
+                block_component_min: None,
+                block_component_max: None,
+                }
+,
         ];
 
         let prune_config = crate::core::search::BlockPruneConfig {
@@ -441,7 +489,10 @@
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Variable,
                 zorder_code: None,
-            })
+                block_component_min: None,
+                block_component_max: None,
+                }
+)
             .collect::<Vec<_>>();
 
         let prune_config = crate::core::search::BlockPruneConfig {
@@ -662,7 +713,10 @@
             block_metadata_bloom: None,
             vector_format: VectorFormat::Variable,
             zorder_code: None,
-        }];
+            block_component_min: None,
+            block_component_max: None,
+            }
+];
 
         let query_code = SpatialCode::Code64(0);
         let epsilon = calculate_zorder_epsilon(&query_code, &entries);
@@ -1003,7 +1057,10 @@
             block_metadata_bloom: None,
             vector_format: VectorFormat::Variable,
             zorder_code: None,
-        }
+            block_component_min: None,
+            block_component_max: None,
+            }
+
     }
 
     #[test]

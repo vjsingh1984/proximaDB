@@ -582,6 +582,10 @@ impl From<SearchHybridQuery> for AxisHybridQueryImport {
             // yet; the legacy strategy enum already determined the mode above.
             ann_filtering_policy: None,
             estimated_selectivity: None,
+            // This legacy converter has no per-query effort signal; keep the
+            // index default (None). The SST search engine and the canonical
+            // axis_builder set this from the caller's SearchMode.
+            search_effort: None,
         }
     }
 }

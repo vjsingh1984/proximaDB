@@ -614,6 +614,28 @@ impl CatalogManager {
         }
     }
 
+    /// Resolve a table name within a tenant scope (TD-064). Delegates to
+    /// [`Self::resolve_table`] for the catalog + base identifier, then
+    /// tenant-prefixes the namespace so each tenant's schema row is distinct
+    /// (`orders` → namespace `[tenant, "default"]`). An empty/None tenant
+    /// resolves identically to [`Self::resolve_table`] (single-tenant).
+    pub async fn resolve_table_scoped(
+        &self,
+        fqn: &str,
+        tenant: Option<&str>,
+    ) -> Result<(Arc<dyn Catalog>, TableIdentifier)> {
+        let (catalog, id) = self.resolve_table(fqn).await?;
+        match tenant {
+            Some(tenant) if !tenant.is_empty() => {
+                let mut namespace = Vec::with_capacity(id.namespace.len() + 1);
+                namespace.push(tenant.to_string());
+                namespace.extend(id.namespace.iter().cloned());
+                Ok((catalog, TableIdentifier::new(namespace, id.name)))
+            }
+            _ => Ok((catalog, id)),
+        }
+    }
+
     /// Get cache reference for direct access
     pub fn cache(&self) -> Arc<CatalogCache> {
         self.cache.clone()

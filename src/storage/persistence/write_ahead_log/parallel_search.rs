@@ -16,7 +16,6 @@ use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::core::search::{FilterExpression, OptimizedSearchRecord};
 use crate::storage::memtable::specialized::wal_behavior::WALVectorBatch;
-use proximadb_data_model::ProximaValue;
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 /// Parallel WAL search coordinator
@@ -411,29 +410,10 @@ impl ParallelWALSearch {
         candidates
     }
 
-    /// Evaluate metadata filter on a record
+    /// Evaluate metadata filter on a record via the canonical evaluator (reads
+    /// the record's property tree directly — no intermediate json-map detour).
     fn evaluate_filter(&self, record: &ProximaRecord, filter: &FilterExpression) -> bool {
-        use crate::core::search::json_comparison::evaluate_filter;
-
-        // Convert canonical metadata to HashMap for evaluation.
-        let metadata = self.convert_metadata(record);
-        evaluate_filter(filter, &metadata)
-    }
-
-    /// Convert canonical metadata to HashMap.
-    fn convert_metadata(
-        &self,
-        record: &ProximaRecord,
-    ) -> std::collections::HashMap<String, serde_json::Value> {
-        let mut map = std::collections::HashMap::new();
-
-        for (key, node) in &record.props {
-            if let ProximaTreeNode::Value(value) = node {
-                map.insert(key.clone(), proxima_value_to_json(value));
-            }
-        }
-
-        map
+        crate::core::search::sql_value_filter::evaluate_filter_proxima(filter, &record.props)
     }
 }
 
@@ -481,10 +461,6 @@ impl WalSearchCandidate {
 
         result
     }
-}
-
-fn proxima_value_to_json(value: &ProximaValue) -> serde_json::Value {
-    serde_json::to_value(value).unwrap_or(serde_json::Value::Null)
 }
 
 /// Early termination support for large searches

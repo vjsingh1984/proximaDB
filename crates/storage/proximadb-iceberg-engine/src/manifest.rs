@@ -21,19 +21,7 @@ use bytes::Bytes;
 use object_store::path::Path;
 use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
-
-/// Outcome of an attempted [`ManifestCommitter::commit`].
-///
-/// `Conflict` is an expected control-flow result of optimistic concurrency, not an
-/// error — only genuine I/O failures surface as `Err(StorageError)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommitOutcome {
-    /// The manifest was atomically published as this new version.
-    Committed(u64),
-    /// Another committer already claimed the target slot. `latest` is the highest
-    /// version currently present — the snapshot to rebase onto and retry from.
-    Conflict { latest: Option<u64> },
-}
+pub use proximadb_storage_common::object_store_bridge::CommitOutcome;
 
 /// Atomic, optimistic-concurrency manifest committer over a [`ProximaObjectStore`].
 ///

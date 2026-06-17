@@ -4,13 +4,15 @@
 :icons: font
 :source-highlighter: rouge
 :sectnums:
-:last-updated: 2026-06-05
+:last-updated: 2026-06-16
 
 Status: Apex reference index (active baseline) +
-Date: 2026-06-05 +
+Date: 2026-06-16 +
 Scope: One recursive whole-system view — workspace layers, `src/` modules, storage/access-method
 families, the ORION graph runtime, write/read data paths, and the
-protocol-facade-to-canonical-authority convergence. +
+protocol-facade-to-canonical-authority convergence. This is also the solution-architecture
+map: it identifies the components, ownership boundaries, control points, and maturity gates for
+whole-system understanding. +
 Supersedes-as-front-door: this doc is the apex over the three pre-existing system maps; they are now
 feeders (see <<feeders>>).
 
@@ -34,10 +36,218 @@ link:CONVERGENCE_AUDIT_2026_05_30.adoc[CONVERGENCE_AUDIT_2026_05_30]).
 == How to use this map
 
 * Need the *system shape and ownership boundaries*? Start at <<workspace>> then <<feeders>>.
+* Need the *solution architecture in one view*? Start at <<solution>> then <<components>>.
 * Need *where a `src/` module lives and what it does*? <<srcmap>>.
 * Need *how a write or read flows end to end*? <<writepath>> / <<readpath>>.
-* Need *why four protocols don't mean four truths*? <<convergence>>.
+* Need *why many protocols don't mean many truths*? <<convergence>>.
 * Need *where the known divergent seams are*? <<seams>>.
+
+[#solution]
+== Solution Architecture at a glance
+
+ProximaDB is converging on a context-database architecture: many protocol and modality facades at the
+edge, one canonical durable authority in the core, and workload-aware execution behind a shared logical
+plane. The supported product surface is intentionally narrower than the code inventory; code presence
+does not imply support level.
+
+[source,mermaid]
+----
+%%{init: {"theme": "neutral"}}%%
+flowchart TB
+  classDef edge fill:#cfe2f7,stroke:#2e5c8a,color:#000;
+  classDef svc fill:#eaf2fb,stroke:#2e5c8a,color:#000;
+  classDef core fill:#4a90e2,stroke:#2e5c8a,color:#000;
+  classDef guard fill:#f6e6b4,stroke:#8a6d2e,color:#000;
+
+  subgraph CLIENTS[Clients and Embeddings]
+    PY[Python SDK / embedded]:::edge
+    RS[Rust SDK / apps]:::edge
+    JVM[Spark JNI / JVM]:::edge
+    HTTP[HTTP, gRPC, pgwire, Flight]:::edge
+  end
+
+  subgraph EDGE[Protocol Facades]
+    NET["network/<br/>REST v1/v2/v3, gRPC, pgwire, Arrow IPC/Flight"]:::edge
+    API["api_handlers/ + proximadb-api<br/>request lowering, tenant extraction, response shaping"]:::edge
+    RT["proximadb-runtime<br/>ports and composition boundary"]:::edge
+  end
+
+  subgraph PLANE[Logical Plane]
+    SVC["services/<br/>collection, DDL/DML, records, search, documents, graph, observability"]:::svc
+    QRY["query/ + query crates<br/>SQL/AQL/UQL, logical lowering, ComputeScheduler, RoutedReadPlan, EXPLAIN"]:::svc
+    CAT["xCatalog / proximadb-catalog<br/>schema, route knobs, projection metadata, policy"]:::core
+  end
+
+  subgraph EXEC[Physical Execution]
+    VOL["Native Volcano<br/>fresh relational / OLTP / WAL+RecordStorage"]:::svc
+    DF["DataFusionLocal<br/>OLAP/parquet path; vector_search UDTF; distributed adapter planned"]:::svc
+    VEC["Vector engines<br/>SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR"]:::svc
+    MOD["Modality runtimes<br/>document, ORION graph, observability, queue, rank"]:::svc
+    IDX["AXIS / DiskANN indexes<br/>HNSW, IVF, PQ, Annoy, LSH, geo"]:::svc
+    CMP["compute/<br/>distance, SIMD, quantization"]:::svc
+  end
+
+  subgraph AUTH[Durable Authority]
+    REC["ProximaRecord / ProximaValue<br/>canonical record model"]:::core
+    WAL["canonical WAL / logs / manifests"]:::core
+    PATH["DrPathBuilder<br/>tenant-isolated physical paths"]:::guard
+    FS["filesystem / object_store / open formats<br/>local, S3/Azure/GCS direction, Parquet/Iceberg"]:::core
+  end
+
+  subgraph OPS[Operations and SaaS Controls]
+    TEN["TenantContext<br/>request, storage, billing and isolation boundary"]:::guard
+    SEC["security/auth/audit"]:::guard
+    OBS["metrics/monitoring/observability"]:::guard
+    DEP["deployment/operations/backup"]:::guard
+  end
+
+  CLIENTS --> NET --> API --> RT --> SVC
+  API -. tenant .-> TEN
+  SVC --> QRY
+  SVC --> CAT
+  QRY --> VOL
+  QRY --> DF
+  QRY --> VEC
+  QRY --> MOD
+  VEC --> IDX --> CMP
+  VOL --> REC
+  DF --> REC
+  VEC --> REC
+  MOD --> REC
+  REC --> WAL --> PATH --> FS
+  CAT --> REC
+  TEN --> PATH
+  TEN --> OBS
+  SEC --> API
+  OBS --> SVC
+  DEP --> FS
+----
+
+Load-bearing invariants:
+
+* Protocols and modalities are facades. Durable truth converges on `ProximaRecord`, xCatalog,
+canonical WAL/log/manifest state, and tenant-isolated paths.
+* Routing happens in the logical plane. Native Volcano, DataFusionLocal, specialized vector engines,
+and modality runtimes are physical execution choices behind one contract. Standard and metered native
+physical plans execute through the query-layer `NativeVolcanoEngine` adapter; pgwire owns wire
+shaping, not executor construction.
+* `TenantContext` and `DrPathBuilder` are SaaS gates, not optional helpers. Any I/O or heavy compute
+boundary that bypasses tenant context or raw-builds paths is architectural debt.
+* Support level comes from link:../SUPPORTED_SURFACE.adoc[docs/SUPPORTED_SURFACE.adoc], not from the
+existence of modules, feature flags, or demos.
+
+=== ASCII architecture snapshot
+
+This text-only view is the quick terminal/agent map. The Mermaid diagram above is the canonical
+visual; this snapshot is kept in sync for reviews that cannot render diagrams.
+
+[source,text]
+----
+                         Clients / Embeddings / Tools
+        Python SDK + embedded | Rust SDK | Spark/JVM | HTTP/gRPC/pgwire/Flight
+                                      |
+                                      v
+        +--------------------- Protocol and API Edge ----------------------+
+        | network/ + api_handlers/ + proximadb-api                         |
+        | wire parsing, tenant extraction, auth, compatibility shaping      |
+        +-------------------------------+----------------------------------+
+                                        |
+                                        v
+        +--------------------- Runtime Composition ------------------------+
+        | proximadb-runtime + server/database wiring                        |
+        | lifecycle, ports, shared services, startup/shutdown               |
+        +-------------------------------+----------------------------------+
+                                        |
+                                        v
+        +----------------------- Logical Plane ----------------------------+
+        | services/               | query/ + query crates       | xCatalog  |
+        | DDL/DML/search/docs/... | SQL/AQL/UQL, routes, EXPLAIN| policy    |
+        +------------+------------+------------+----------------+-----------+
+                     |                         |
+                     v                         v
+        +---------------------- Physical Execution ------------------------+
+        | Native Volcano | DataFusionLocal | Vector engines | Modalities    |
+        | OLTP/fresh     | OLAP/Parquet +  | SST/HELIX/...  | document/     |
+        | record path    | vector_search   | AXIS/DiskANN   | ORION/obs     |
+        +------------+---+--------+--------+--------+-------+---------------+
+                     |            |                 |
+                     +------------+-----------------+
+                                  v
+        +----------------------- Durable Authority ------------------------+
+        | ProximaRecord / ProximaValue | canonical WAL/log/manifest         |
+        | DrPathBuilder tenant paths   | filesystem/object store/open format|
+        +------------------------------+------------------------------------+
+                                  ^
+                                  |
+        +----------------------- SaaS / Ops Guards ------------------------+
+        | TenantContext | billing metrics | security/audit | validation CI   |
+        +------------------------------------------------------------------+
+----
+
+[#components]
+== Component ownership and responsibilities
+
+[cols="2,2,3,3", options="header"]
+|===
+| Component family | Primary code locations | Owns | Must not own
+
+| Protocol edge
+| `src/network/`, `src/api_handlers/`, `crates/platform/proximadb-api`
+| Wire compatibility, request parsing, auth/tenant extraction, response shaping, compatibility
+facades, protocol-specific error mapping.
+| Durable schema truth, storage layout decisions, independent business logic per protocol.
+
+| Runtime composition
+| `src/server/`, `src/database.rs`, `crates/platform/proximadb-runtime`, `apps/proximadb-server`
+| Lifecycle, dependency wiring, port composition, startup/shutdown, health exposure.
+| Protocol-specific behavior or storage-engine policy that should live in services/catalog.
+
+| Service layer
+| `src/services/`, `src/core/record_store`, `src/search/`
+| Collection lifecycle, DDL/DML orchestration, record operations, search/hybrid orchestration,
+document/graph/observability service facades.
+| Raw physical paths, protocol DTO leakage, or duplicated query-planning rules.
+
+| Query and route planning
+| `src/query/`, `src/datafusion/`, `crates/query/*`, `crates/foundation/proximadb-functions`
+| Shared logical lowering, SQL/AQL/UQL semantics, function registry, compute-route selection,
+EXPLAIN, route-health signals, `ExecutionControls`, and the `ExecutionEngine` /
+`execute_sql_with_backend` / `NativeVolcanoEngine` physical engine seams.
+| Separate semantics per engine. Volcano and DataFusion should bind the same logical/function
+contract.
+
+| Durable catalog and authority
+| `crates/control/proximadb-catalog`, `src/catalog/`, `src/storage/persistence/`
+| xCatalog metadata, canonical WAL/log/manifest state, projection metadata, route knobs, replayable
+authority.
+| Customer-facing support claims or protocol-specific shortcuts.
+
+| Physical storage and indexing
+| `src/storage/`, `crates/storage/*`, `src/index/`, `src/compute/`
+| Storage engines, filesystem/object-store access, block formats, compaction/flush, ANN indexes,
+distance kernels, quantization.
+| Tenant identity inference from raw strings; path construction outside `DrPathBuilder`.
+
+| Modality runtimes
+| `src/storage/document`, `src/graph/`, `src/observability/`, `crates/modalities/*`
+| Document, ORION graph, observability, queue, rank and embedding behavior as product/modality
+facades or rebuildable projections.
+| A second durable truth that bypasses canonical records, catalog, WAL/log/manifest policy, or
+tenant isolation.
+
+| Integration and data movement
+| `src/connectors/`, `src/cdc/`, `src/streaming/`, `src/ingest/`, `src/embedded/`, `clients/`,
+`crates/binding/*`
+| External connectors, ingestion, CDC, SDKs, embedded surfaces, Spark/JVM bridges.
+| Claims of external-authoritative storage unless xCatalog and the supported-surface contract say so.
+
+| SaaS and operations controls
+| `src/security/`, `src/auth/`, `src/audit/`, `src/metrics/`, `src/monitoring/`, `src/deployment/`,
+`src/operations/`, `src/storage/tenant`
+| Identity, tenant context, billing/metrics hooks, auditability, deployment, backup/restore and
+operator visibility.
+| Best-effort add-ons after data paths are designed. These are cross-cutting release gates.
+|===
 
 [#workspace]
 == Layer 1 — Workspace (66 members, layered)
@@ -168,7 +378,7 @@ flowchart LR
 [#convergence]
 == Layer 4 — Protocol-facade → canonical-authority convergence
 
-Four wire protocols are *facades*, not authorities. They lower into the same canonical record + WAL +
+Wire protocols are *facades*, not authorities. They lower into the same canonical record + WAL +
 catalog chain. This is the load-bearing invariant the whole architecture rests on: proliferation is
 allowed at the edge, never in the durable core.
 
@@ -242,8 +452,13 @@ still TD-106/ADR-024 work.
 | Vector path
 | REST/gRPC v2 record CRUD and vector search are the supported product path. Multiple vector storage
 engines and AXIS index families exist; v1 vector APIs are compatibility facades.
+`bench_24_recall_at_k_engine` is registered as a real index-vs-ground-truth Recall@k benchmark with
+deterministic vectors, bounded search-readiness probing, and optional `PROXIMADB_BENCH_TOPK=K`
+single-K runs for isolating low-effort Recall@K/latency curves.
 | MVP-ready for single-node vector CRUD/search. Hybrid, filtered ANN policy, recall-gate enforcement,
-and object-economy claims stay Beta/Experimental unless explicitly scoped.
+and object-economy claims stay Beta/Experimental unless explicitly scoped. The real-engine recall
+benchmark is evidence plumbing, not a published recall SLA until run outputs are captured and
+reviewed.
 
 | Document / graph / observability
 | Document, ORION graph, and observability runtimes exist and are useful. ORION is the only graph
@@ -253,16 +468,47 @@ facades over canonical authority, not separate durable truths.
 
 | SQL / pgwire / relational
 | pgwire, relational frontend/algebra/executor, DML routing, `ComputeScheduler`, DataFusionLocal
-route decisions, and read-side `RoutedReadPlan` now exist. Full PostgreSQL parity, complete
+route decisions, read-side `RoutedReadPlan`, and query-layer execution seams now exist. pgwire no
+longer constructs DataFusion directly; it dispatches SQL through `execute_sql_with_backend`. Standard
+native physical plans execute through `NativeVolcanoEngine::execute_physical`, and EXPLAIN ANALYZE
+uses `NativeVolcanoEngine::execute_physical_metered`. DataFusion still executes only the all-Parquet
+local route. The execution layer exposes a schema-bearing `ExecutionStreamResult` contract with a
+materialized fallback for engines that have not implemented native row streaming; native Volcano can
+stream rows directly from the executor. pgwire extended `Execute.max_rows` is mapped into
+`ExecutionControls` truncate mode for fallback execution. Relational extended-query portals now keep
+materialized cursor state and emit `PortalSuspended` while rows remain, so clients can resume the
+same portal with another Execute.
+Full PostgreSQL parity, complete
 constraints, MVCC/index state, HTAP delta union, and distributed consistency gates remain in TD-110.
 | Not MVP as a PostgreSQL replacement. Useful Beta/Experimental surface for scoped relational and
-EXPLAIN work.
+EXPLAIN work. Engine-native streaming portal cursors and backpressure remain scalability work.
 
 | DataFusion / distributed execution
-| DataFusion integration and route vocabulary exist. `DataFusionDistributed` is now represented in
-the typed read route contract, but Ballista execution, split-aware readers, scheduler/executor
-deployment, and no-overlap tests are not complete.
-| Post-MVP / Experimental. Do not claim distributed execution support in v0.2.
+| DataFusion integration, local Parquet registration, shared relational lowering, typed
+`ExecutionError`, request-scoped `ExecutionControls` (cooperative cancellation, row-limit
+truncate/error modes, and pre-collect row-cap pushdown), and the `DataFusionLocal` execution seam
+exist. Live DataFusion contexts can register the `vector_search(collection, query, k)` table function
+when supplied a `VectorOpsPort`, making vector results joinable in SQL over the OLAP path. The
+production route requires the shared logical plane by default; direct DataFusion SQL fallback is an
+explicit context flag for controlled compatibility gaps. Embedded Python DataFrame sessions register
+collection schemas for DataFusion planning with a canonical vector-record fallback when no relational
+table schema exists; the Python facade exports the DataFrame expression helpers, supports sort
+expressions, exposes a DataFrame `vector_search()` bridge, makes table refresh idempotent for
+long-lived sessions, and returns typed empty PyArrow tables from `to_arrow()`. Blank SQL/table/column
+names, empty aggregate expression lists, keyless joins, and invalid vector-search arguments are
+rejected at the Python and/or DataFusion table-function boundary before execution. Scans still
+require embedded split discovery before collection reads can be claimed row-producing.
+| Local all-Parquet OLAP route is Beta. `DataFusionDistributed` remains route vocabulary only:
+Ballista execution, scheduler/executor deployment, engine-native streaming/backpressure,
+distributed cross-engine joins, embedded row-producing collection scans, and no-overlap/failure tests
+are not complete.
+
+| SaaS tenancy and billing boundaries
+| REST and pgwire surfaces propagate tenant identity into service/storage paths; storage has
+`TenantContext`; `DrPathBuilder` owns tenant-isolated physical path construction; telemetry/metrics
+modules provide the billing-observability substrate.
+| Mandatory architectural gate. New I/O and heavy-compute boundaries must accept or derive tenant
+context deliberately, and physical data paths must flow through `DrPathBuilder`.
 
 | Open formats and object economy
 | Object-store and Iceberg engine crates are in the workspace; Parquet/Arrow bridge work is the
@@ -276,6 +522,15 @@ authority.
 exist. Some admin/status APIs and production runbooks still need hardening.
 | Sufficient for developer/private deployments; enterprise production positioning should remain
 scoped.
+
+| Deterministic validation guardrails
+| `scripts/check_deterministic_commit_contract.py`, `make work-commit-check`, CI
+`deterministic-commit-contract`, `docs-claim-check`, capability-matrix validation, workspace
+boundary checks, tenant-path guard, panic-policy guard, and zero-retry nextest unit profile are now
+the documented fast guard chain.
+| Mandatory for commit hygiene. The guard chain validates that deterministic test policy, support
+claims, architecture invariants, SaaS path constraints, and conflict-marker absence stay wired as the
+codebase evolves.
 |===
 
 MVP posture: ProximaDB is ready to position as a **single-node context database foundation** with a
@@ -284,6 +539,42 @@ as a mature distributed database, full PostgreSQL-compatible OLTP/HTAP system, o
 MPP engine. The architecture is aligned for that aspiration through xCatalog, route-once planning,
 DataFusion/Ballista contracts, and canonical record convergence, but the implementation is still
 slice-based and must keep support claims narrow.
+
+[#validation]
+== Validation and guardrail map
+
+These checks keep the architecture map, support contract, and commit behavior synchronized. They are
+fast enough to run before commit/push; heavier release smokes remain in `make release-check`.
+
+[cols="2,2,3", options="header"]
+|===
+| Guard | Entry point | Protects
+
+| Deterministic commit contract
+| `python3 scripts/check_deterministic_commit_contract.py`; `make deterministic-commit-contract-check`
+| Zero-retry nextest unit policy, CI/Makefile wiring, support-vs-code-presence architecture text,
+`TenantContext` / `DrPathBuilder` visibility, and conflict-marker absence.
+
+| Work commit gate
+| `make work-commit-check`
+| Formatting, deterministic contract, docs/support claims, capability matrix, workspace boundaries,
+tenant-path guard, panic-policy module guard, and tracked-artifact hygiene.
+
+| Release gate
+| `make release-check`
+| `work-commit-check` plus protobuf/OpenAPI drift, focused release smokes, and release-server build.
+
+| SaaS path isolation
+| `python3 scripts/check_tenant_path_guard.py`; `.github/workflows/layering-check.yml`
+| Prevents new raw `data/{tenant}/...` path construction outside `DrPathBuilder`; known warehouse
+materialize bypass remains a tracked warning until namespace/tenant plumbing is reconciled.
+
+| Product claim discipline
+| `make docs-claim-check`; `scripts/validate_capability_matrix.py`;
+link:../SUPPORTED_SURFACE.adoc[docs/SUPPORTED_SURFACE.adoc]
+| Keeps public docs from claiming production/support status beyond the supported surface and maturity
+contract.
+|===
 
 [#feeders]
 == Feeder docs (subordinate to this map)

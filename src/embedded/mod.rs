@@ -1484,40 +1484,7 @@ impl EmbeddedProximaDB {
         let start = std::time::Instant::now();
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        let records: Vec<proximadb_records::ProximaRecord> = ids
-            .into_iter()
-            .zip(vectors)
-            .enumerate()
-            .map(|(i, (oid, values))| {
-                let mut props = proximadb_records::ProximaTree::new();
-                if let Some(meta_slice) = metadata.as_ref().and_then(|m| m.get(i)) {
-                    for (k, v) in meta_slice {
-                        props.insert(
-                            k.clone(),
-                            proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
-                                v.clone(),
-                            )),
-                        );
-                    }
-                }
-                let dim = values.len() as u32;
-                proximadb_records::ProximaRecord {
-                    oid,
-                    embeddings: vec![proximadb_records::EmbeddingCell {
-                        model_id: "default".to_string(),
-                        modality: "vector".to_string(),
-                        dim,
-                        values: proximadb_records::EmbeddingValues::Fp32(values),
-                        ..Default::default()
-                    }],
-                    props,
-                    created_at_ns: now_ns,
-                    updated_at_ns: now_ns,
-                    record_version: 1,
-                    ..Default::default()
-                }
-            })
-            .collect();
+        let records = Self::build_embedded_vector_records(ids, vectors, metadata, now_ns);
 
         let count = records.len();
 
@@ -1556,6 +1523,47 @@ impl EmbeddedProximaDB {
         }
 
         result
+    }
+
+    fn build_embedded_vector_records(
+        ids: Vec<String>,
+        vectors: Vec<Vec<f32>>,
+        metadata: Option<Vec<std::collections::HashMap<String, serde_json::Value>>>,
+        now_ns: i64,
+    ) -> Vec<proximadb_records::ProximaRecord> {
+        ids.into_iter()
+            .zip(vectors)
+            .enumerate()
+            .map(|(i, (oid, values))| {
+                let mut props = proximadb_records::ProximaTree::new();
+                if let Some(meta_slice) = metadata.as_ref().and_then(|m| m.get(i)) {
+                    for (k, v) in meta_slice {
+                        props.insert(
+                            k.clone(),
+                            proximadb_records::ProximaTreeNode::Value(json_to_proxima_value(
+                                v.clone(),
+                            )),
+                        );
+                    }
+                }
+                let dim = values.len() as u32;
+                proximadb_records::ProximaRecord {
+                    oid,
+                    embeddings: vec![proximadb_records::EmbeddingCell {
+                        model_id: "default".to_string(),
+                        modality: "vector".to_string(),
+                        dim,
+                        values: proximadb_records::EmbeddingValues::Fp32(values),
+                        ..Default::default()
+                    }],
+                    props,
+                    created_at_ns: now_ns,
+                    updated_at_ns: now_ns,
+                    record_version: 1,
+                    ..Default::default()
+                }
+            })
+            .collect()
     }
 
     /// Insert canonical records into a collection without lowering through
@@ -2724,10 +2732,31 @@ impl EmbeddedProximaDB {
             self.delete_vectors(collection, existing_ids)?;
         }
 
-        // Insert all vectors as new records
-        self.insert(collection, ids, vectors, metadata)?;
+        // Insert all vectors as new records. Some storage engines can detect
+        // insert-only conflicts for flushed records that the read-side
+        // vector_exists probe misses, so recover by tombstoning the requested
+        // IDs and retrying as a true upsert.
+        match self.insert(collection, ids.clone(), vectors.clone(), metadata.clone()) {
+            Ok(_) => Ok((inserted, updated)),
+            Err(err) if err.to_string().contains("INSERT_CONFLICT") => {
+                self.delete_vectors(collection, ids.clone())?;
+                let count = ids.len();
+                let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+                let records = Self::build_embedded_vector_records(ids, vectors, metadata, now_ns);
 
-        Ok((inserted, updated))
+                self.runtime.block_on(async {
+                    self.shared_services
+                        .vector_operations_service
+                        .insert_vectors_direct(collection, std::sync::Arc::new(records))
+                        .await
+                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                            Box::new(std::io::Error::other(e.to_string()))
+                        })?;
+                    Ok((0, count))
+                })
+            }
+            Err(err) => Err(err),
+        }
     }
 
     /// Get storage statistics

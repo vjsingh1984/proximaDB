@@ -93,7 +93,9 @@ ProximaDB uses a **Unified Storage Interface** allowing pluggable engines.
 ## 🚀 Research Frontier & Future Strategic Alignment
 ProximaDB is the **primary memory for agentic systems**. Current research focus:
 
-### Phase 5: Agentic Intelligence (Complete)
+### Phase 5: Agentic Intelligence & MLOps (In Progress)
+- **MLOps & Model Management:** ProximaDB serves as the single source of truth for the MLflow landscape. It natively maps MLflow experiments, model registries, and artifacts to `xCatalog`, enabling tight integration between data engineering (DataFusion) and model serving/training.
+- **PySpark-style Data Engineering:** A Rust-backed, Python DataFrame API (via PyO3) that compiles down into the same DataFusion/Rust logical plan, providing scalable distributed execution for ML/Monte Carlo workloads without JVM overhead.
 - **RUBICON / AQL (Stonebraker Design):** Auditable agentic query plans and Text-to-AQL.
 - **Modular Graph RAG (RGL):** Dynamic subgraph construction and retrieval.
 - **Projection-Based Fusion (B5):** Speed/diversity tradeoff (score or vector).

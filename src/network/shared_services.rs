@@ -40,6 +40,8 @@ use proximadb_kernel::uuid::Uuid;
 /// Responsibilities: business logic, metadata configuration, service coordination
 #[derive(Clone)]
 pub struct SharedServices {
+    /// Filesystem factory for reading blocks
+    pub filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     /// Shared xCatalog control plane for REST, gRPC, Arrow Flight, SQL, and query routing.
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
     /// PAX segment registry — bridges write path with Iceberg REST snapshot stats.
@@ -1747,6 +1749,7 @@ impl SharedServices {
 
         Ok((
             Self {
+                filesystem_factory,
                 catalog_manager,
                 segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
