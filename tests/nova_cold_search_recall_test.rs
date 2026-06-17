@@ -60,7 +60,9 @@ fn clustered_vectors() -> Vec<VectorRecord> {
         let center = c as f32 * 1000.0;
         for r in 0..PER_CLUSTER {
             let jitter = r as f32 * 0.001;
-            let vector: Vec<f32> = (0..DIMENSION).map(|d| center + jitter + d as f32 * 0.0001).collect();
+            let vector: Vec<f32> = (0..DIMENSION)
+                .map(|d| center + jitter + d as f32 * 0.0001)
+                .collect();
             let global = c * PER_CLUSTER + r;
             out.push(VectorRecord {
                 id: format!("vec_{global:05}"),
@@ -94,7 +96,11 @@ fn search_params(query: Vec<f32>, metric: DistanceMetric, force_exact: bool) -> 
     })
 }
 
-async fn flush_collection(engine: &NovaEngine, collection: &Collection, vectors: Vec<VectorRecord>) {
+async fn flush_collection(
+    engine: &NovaEngine,
+    collection: &Collection,
+    vectors: Vec<VectorRecord>,
+) {
     let flush_params = FlushParameters {
         collection_id: Some(collection.id.clone()),
         vector_records: vectors.into_iter().map(|v| v.into()).collect(),
@@ -107,7 +113,10 @@ async fn flush_collection(engine: &NovaEngine, collection: &Collection, vectors:
         collection_config: Some(collection.clone()),
         estimated_size: 0,
     };
-    let result = engine.do_flush(&flush_params).await.expect("flush succeeds");
+    let result = engine
+        .do_flush(&flush_params)
+        .await
+        .expect("flush succeeds");
     assert!(result.success, "flush should succeed");
 }
 
@@ -149,7 +158,10 @@ async fn search_collect(
 async fn nova_vector_bounds_prune_recall_and_guards() {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();
     unsafe {
-        std::env::set_var("PROXIMADB_NOVA_MAX_ROW_GROUP_SIZE", ROW_GROUP_SIZE.to_string());
+        std::env::set_var(
+            "PROXIMADB_NOVA_MAX_ROW_GROUP_SIZE",
+            ROW_GROUP_SIZE.to_string(),
+        );
         std::env::remove_var("PROXIMADB_VECTOR_BOUNDS_PRUNE_DISABLE");
     }
 
@@ -165,16 +177,28 @@ async fn nova_vector_bounds_prune_recall_and_guards() {
         let query = vectors[0].vector.clone();
         flush_collection(&engine, &collection, vectors).await;
 
-        let (pruned, pruned_count) =
-            search_collect(&engine, &collection, query.clone(), DistanceMetric::Euclidean, false)
-                .await;
+        let (pruned, pruned_count) = search_collect(
+            &engine,
+            &collection,
+            query.clone(),
+            DistanceMetric::Euclidean,
+            false,
+        )
+        .await;
         let (exact, _) =
             search_collect(&engine, &collection, query, DistanceMetric::Euclidean, true).await;
 
         assert!(!exact.is_empty(), "exact search returned no results");
-        assert_eq!(pruned.len(), exact.len(), "pruned top-k size must match exact");
+        assert_eq!(
+            pruned.len(),
+            exact.len(),
+            "pruned top-k size must match exact"
+        );
         for (i, ((p_id, p_score), (e_id, e_score))) in pruned.iter().zip(exact.iter()).enumerate() {
-            assert_eq!(p_id, e_id, "rank {i}: id mismatch (pruned={p_id}, exact={e_id})");
+            assert_eq!(
+                p_id, e_id,
+                "rank {i}: id mismatch (pruned={p_id}, exact={e_id})"
+            );
             assert!(
                 (p_score - e_score).abs() < f32::EPSILON,
                 "rank {i}: score mismatch (pruned={p_score}, exact={e_score})"
@@ -197,7 +221,10 @@ async fn nova_vector_bounds_prune_recall_and_guards() {
 
         let (_, pruned_count) =
             search_collect(&engine, &collection, query, DistanceMetric::Cosine, false).await;
-        assert_eq!(pruned_count, 0, "cosine search must not engage L2 bounds pruning");
+        assert_eq!(
+            pruned_count, 0,
+            "cosine search must not engage L2 bounds pruning"
+        );
     }
 
     // ── Scenario 3: kill-switch ⇒ full-read path even for exact-L2 ──────────
@@ -206,15 +233,24 @@ async fn nova_vector_bounds_prune_recall_and_guards() {
             std::env::set_var("PROXIMADB_VECTOR_BOUNDS_PRUNE_DISABLE", "1");
         }
         let temp_dir = TempDir::new().unwrap();
-        let collection =
-            collection_config("td040_nova_killswitch", &temp_dir, DistanceMetric::Euclidean);
+        let collection = collection_config(
+            "td040_nova_killswitch",
+            &temp_dir,
+            DistanceMetric::Euclidean,
+        );
         let engine = NovaEngine::new().await.unwrap();
         let vectors = clustered_vectors();
         let query = vectors[0].vector.clone();
         flush_collection(&engine, &collection, vectors).await;
 
-        let (results, pruned_count) =
-            search_collect(&engine, &collection, query, DistanceMetric::Euclidean, false).await;
+        let (results, pruned_count) = search_collect(
+            &engine,
+            &collection,
+            query,
+            DistanceMetric::Euclidean,
+            false,
+        )
+        .await;
         unsafe {
             std::env::remove_var("PROXIMADB_VECTOR_BOUNDS_PRUNE_DISABLE");
         }

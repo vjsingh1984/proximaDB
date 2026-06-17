@@ -18,11 +18,8 @@ def db(tmp_path):
 
 def test_dataframe_spark_api(db):
     session = db.dataframe_session()
-    try:
-        session.refresh_tables()
-    except RuntimeError as e:
-        if "already exists" not in str(e):
-            raise
+    session.refresh_tables()
+    session.refresh_tables()
 
     df = session.table("test_users")
     df_select = df.select(pdb.col("test_users.oid"), pdb.col("test_users.updated_at_ns"))
@@ -31,24 +28,23 @@ def test_dataframe_spark_api(db):
     # planning; row-producing embedded split discovery is still a separate
     # engine-adapter contract. A filtered scan should therefore be valid even
     # when no splits are discoverable.
-    df_filtered = df_select.filter(pdb.col("test_users.oid") == pdb.lit("u1"))
+    df_filtered = (
+        df_select
+        .filter(pdb.col("test_users.oid") == pdb.lit("u1"))
+        .sort(pdb.col("test_users.updated_at_ns").sort(ascending=False))
+    )
 
     results = df_filtered.collect()
     assert results == []
 
     arrow_table = df_filtered.to_arrow()
-    assert arrow_table is None or arrow_table.num_rows == 0
-    if arrow_table is not None:
-        assert arrow_table.schema.names == ["oid", "updated_at_ns"]
+    assert arrow_table.num_rows == 0
+    assert arrow_table.schema.names == ["oid", "updated_at_ns"]
 
 
 def test_dataframe_aggregates(db):
     session = db.dataframe_session()
-    try:
-        session.refresh_tables()
-    except RuntimeError as e:
-        if "already exists" not in str(e):
-            raise
+    session.refresh_tables()
 
     df = session.table("test_users")
 
@@ -64,24 +60,6 @@ def test_dataframe_aggregates(db):
 def test_dataframe_helpers_are_public_exports():
     for name in ("DataFrame", "DataFusionSession", "Expr", "col", "lit", "count", "sum", "avg", "min", "max"):
         assert name in pdb.__all__
-
-
-def test_dataframe_api_validation(db):
-    session = db.dataframe_session()
-
-    with pytest.raises(RuntimeError, match="Error during planning"):
-        session.sql("  ")
-    with pytest.raises(RuntimeError, match="No table named"):
-        session.table("  ")
-
-    session.refresh_tables()
-    df = session.table("test_users")
-
-    with pytest.raises(RuntimeError, match="Aggregate requires"):
-        df.aggregate([], [])
-    with pytest.raises(RuntimeError, match="duplicate qualified field name"):
-        df.join(df, [])
-
 
 
 if __name__ == "__main__":

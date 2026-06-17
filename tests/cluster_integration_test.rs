@@ -1594,16 +1594,22 @@ impl ConsensusTransport for InMemoryTransport {
             .clone();
         drop(hub);
 
-        // Convert RPC LogEntry to consensus module's LogEntry type.
+        // Mirror the production gRPC server: decode the serialized command
+        // bytes and return the accepted match index on successful appends so
+        // leaders can advance commit for pending proposals.
         let entries: Vec<proximadb::cluster::consensus::LogEntry> = req
             .entries
             .iter()
-            .map(|e| proximadb::cluster::consensus::LogEntry {
-                term: e.term,
-                index: e.index,
-                command: Command::Noop,
+            .filter_map(|e| {
+                let command = serde_json::from_slice(&e.command).ok()?;
+                Some(proximadb::cluster::consensus::LogEntry {
+                    term: e.term,
+                    index: e.index,
+                    command,
+                })
             })
             .collect();
+        let match_index = req.prev_log_index + entries.len() as u64;
 
         let consensus = node.read().await;
         let (term, success) = consensus
@@ -1619,7 +1625,7 @@ impl ConsensusTransport for InMemoryTransport {
         Ok(AppendEntriesResponse {
             term,
             success,
-            match_index: None,
+            match_index: success.then_some(match_index),
             conflict_term: None,
             conflict_index: None,
         })

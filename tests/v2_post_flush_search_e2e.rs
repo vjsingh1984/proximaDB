@@ -204,7 +204,11 @@ async fn v2_vector_search_survives_flush() {
                 .send()
                 .await
                 .expect("search");
-            assert!(resp.status().is_success(), "search status {}", resp.status());
+            assert!(
+                resp.status().is_success(),
+                "search status {}",
+                resp.status()
+            );
             let body: serde_json::Value = resp.json().await.expect("search json");
             let hits = body
                 .get("results")
@@ -224,7 +228,10 @@ async fn v2_vector_search_survives_flush() {
         .and_then(|h| h.get("id").or_else(|| h.get("record_id")))
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    assert_eq!(pre_top, "rec-2", "pre-flush top-1 should be rec-2: {pre_body}");
+    assert_eq!(
+        pre_top, "rec-2",
+        "pre-flush top-1 should be rec-2: {pre_body}"
+    );
 
     // Force the WAL→storage flush, then re-run the identical search.
     server.force_flush(&name).await.expect("force flush");

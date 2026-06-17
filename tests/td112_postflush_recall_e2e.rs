@@ -219,11 +219,11 @@ async fn postflush_recall_within_band_after_multi_flush_and_compaction() {
     );
 }
 
-/// TD-112 acceptance #4 (post-restart reload): when the in-memory AXIS index is
-/// lost — simulated here via `drop_collection`, which is exactly the post-restart
-/// state (the index is in-memory and HNSW/small-IVF batches are not persisted) —
-/// the next search must rebuild it from the durable SST segments and recover
-/// recall, rather than silently degrading to a brute-force scan.
+/// TD-112 local post-loss recovery: when the in-memory AXIS index is lost —
+/// simulated here via `drop_collection`, matching the empty-index side of a
+/// restart without asserting boot-time prewarm — the next search must rebuild it
+/// from durable local SST segments and recover recall, rather than silently
+/// degrading to a brute-force scan.
 #[tokio::test]
 async fn axis_index_rebuilt_from_sst_after_loss() {
     let _ = proximadb::core::hardware_capabilities::initialize_hardware_capabilities_default();

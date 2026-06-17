@@ -18,12 +18,7 @@ mod schema_tests {
     use proximadb::storage::schema::{ProximaColumn, ProximaSchema};
     use proximadb_data_model::{ProximaType, VectorElement};
 
-    fn make_column(
-        id: i32,
-        name: &str,
-        data_type: ProximaType,
-        nullable: bool,
-    ) -> ProximaColumn {
+    fn make_column(id: i32, name: &str, data_type: ProximaType, nullable: bool) -> ProximaColumn {
         ProximaColumn {
             id,
             name: name.to_string(),
@@ -516,6 +511,7 @@ mod trino_tests {
 mod duckdb_tests {
     use super::*;
     use arrow::datatypes::Schema as ArrowSchema;
+    use httpmock::{Method, MockServer};
     use proximadb::connectors::{
         DuckDBColumnRef, DuckDBConnectorConfig, DuckDBFilter, DuckDBFilterType, DuckDBGlobalState,
         DuckDBInitData, DuckDBLocalState, DuckDBTableScan, DuckDBVectorSearchParams,
@@ -535,14 +531,29 @@ mod duckdb_tests {
 
     #[tokio::test]
     async fn test_duckdb_table_scan_bind() {
-        let config = DuckDBConnectorConfig::default();
+        let server = MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(Method::GET)
+                    .path("/api/v2/collections/test_collection/schema");
+                then.status(200)
+                    .header("content-type", "application/json")
+                    .body(r#"{"name":"test_collection","columns":[]}"#);
+            })
+            .await;
+
+        let config = DuckDBConnectorConfig {
+            server_url: server.base_url(),
+            ..DuckDBConnectorConfig::default()
+        };
         let mut scan = DuckDBTableScan::new(config);
 
         let result = scan.bind("test_collection").await;
-        assert!(result.is_ok());
+        assert!(result.is_ok(), "bind() must succeed: {result:?}");
 
         let bind_data = result.unwrap();
         assert_eq!(bind_data.collection, "test_collection");
+        mock.assert_async().await;
     }
 
     #[test]

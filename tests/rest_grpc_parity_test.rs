@@ -231,7 +231,7 @@ struct ParityTestHarness {
     vector_client: Option<VectorServiceClient<Channel>>,
     collection_client: Option<CollectionServiceClient<Channel>>,
     graph_client: Option<GraphServiceClient<Channel>>,
-    sql_client: Option<SqlServiceClient<Channel>>,
+    sql_client: Option<QueryServiceClient<Channel>>,
     test_collection_name: String,
     test_graph_name: String,
 }
@@ -261,7 +261,7 @@ impl ParityTestHarness {
                 let vector_client = VectorServiceClient::new(channel.clone());
                 let collection_client = CollectionServiceClient::new(channel.clone());
                 let graph_client = GraphServiceClient::new(channel.clone());
-                let sql_client = SqlServiceClient::new(channel);
+                let sql_client = QueryServiceClient::new(channel);
 
                 Some((vector_client, collection_client, graph_client, sql_client))
             }
@@ -576,7 +576,7 @@ impl ParityTestHarness {
             offset: None,
         };
 
-        let response = client.execute_sql(request).await?;
+        let response = client.execute_query(request).await?;
         Ok(NormalizedSqlResult::from_grpc(&response.into_inner()))
     }
 

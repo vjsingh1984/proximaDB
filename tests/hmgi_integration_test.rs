@@ -377,6 +377,7 @@ async fn test_axismanager_hmgi_single_modality_query_without_manual_enable() {
             ann_filtering_mode: Default::default(),
             ann_filtering_policy: None,
             estimated_selectivity: None,
+            search_effort: None,
         })
         .await
         .unwrap();
@@ -419,6 +420,7 @@ async fn test_axismanager_hmgi_delete_removes_partition_vector() {
             ann_filtering_mode: Default::default(),
             ann_filtering_policy: None,
             estimated_selectivity: None,
+            search_effort: None,
         })
         .await
         .unwrap();
@@ -511,6 +513,7 @@ async fn test_axismanager_hmgi_query_routes_to_modality_partition() {
             ann_filtering_mode: Default::default(),
             ann_filtering_policy: None,
             estimated_selectivity: None,
+            search_effort: None,
         })
         .await
         .unwrap();
@@ -567,6 +570,7 @@ async fn test_hmgi_query_routing() {
         ann_filtering_mode: Default::default(),
         ann_filtering_policy: None,
         estimated_selectivity: None,
+        search_effort: None,
     };
 
     use proximadb::index::axis::hmgi::PartitionSet;

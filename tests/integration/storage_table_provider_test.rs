@@ -19,6 +19,7 @@ use arrow_schema::{DataType, Field, Schema, SchemaRef};
 use datafusion::catalog::Session;
 use datafusion::datasource::TableProvider;
 use datafusion::execution::context::SessionState;
+use datafusion::physical_plan::ExecutionPlan;
 use datafusion::prelude::*;
 
 use proximadb::datafusion::{
@@ -96,7 +97,7 @@ fn test_file_split_creation() {
 
     assert_eq!(split.split_id, "/data/file.sst:block:0");
     assert_eq!(split.file_path, "/data/file.sst");
-    assert_eq!(split.start, 0);
+    assert_eq!(split.offset, 0);
     assert_eq!(split.length, 1024);
     assert_eq!(split.statistics.row_count, Some(100));
 }
@@ -114,14 +115,8 @@ fn test_file_split_row_group() {
 
 #[test]
 fn test_file_split_hilbert_range() {
-    let split = FileSplit::new_hilbert_range(
-        "/data/file.helix".to_string(),
-        0,
-        1000,
-        100,
-        1000,
-        Some(vec![0.5, 0.5, 0.5]),
-    );
+    let split =
+        FileSplit::new_hilbert_range("/data/file.helix".to_string(), 0, 1000, 10, 100, 1000);
 
     assert!(matches!(
         split.split_type,

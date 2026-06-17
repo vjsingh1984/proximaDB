@@ -132,32 +132,43 @@ fn row_count(messages: &[SimpleQueryMessage]) -> usize {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pgwire_relational_writes_and_reads_are_tenant_isolated() {
     let server = PgwireTestServer::start().await.expect("server start");
+    let acme_tenant = format!("acmecorp_{}", server.pg_port);
+    let globex_tenant = format!("globexco_{}", server.pg_port);
+    let table = format!("orders_tbl_{}", server.pg_port);
 
     // Two tenants, distinguished only by the startup `database` (catalog) name.
-    let acme = connect(&server, "acmecorp").await;
-    let globex = connect(&server, "globexco").await;
+    let acme = connect(&server, &acme_tenant).await;
+    let globex = connect(&server, &globex_tenant).await;
 
     // Shared, identical table name across both tenants. Each CREATE addresses
     // its own tenant-prefixed catalog schema row (no cross-tenant collision).
-    let ddl =
-        "CREATE TABLE orders_tbl (id TEXT NOT NULL, note TEXT, PRIMARY KEY (id));";
-    acme.batch_execute(ddl).await.expect("acmecorp CREATE TABLE");
-    globex.batch_execute(ddl).await.expect("globexco CREATE TABLE");
+    let ddl = format!("CREATE TABLE {table} (id TEXT NOT NULL, note TEXT, PRIMARY KEY (id));");
+    acme.batch_execute(&ddl)
+        .await
+        .expect("acmecorp CREATE TABLE");
+    globex
+        .batch_execute(&ddl)
+        .await
+        .expect("globexco CREATE TABLE");
 
     // Same primary key value `1` inserted by BOTH tenants — must succeed
     // independently (distinct record partitions), not collide.
-    acme.batch_execute("INSERT INTO orders_tbl (id, note) VALUES ('1', 'acmecorp-one'), ('2', 'acmecorp-two');")
-        .await
-        .expect("acmecorp INSERT");
+    acme.batch_execute(&format!(
+        "INSERT INTO {table} (id, note) VALUES ('1', 'acmecorp-one'), ('2', 'acmecorp-two');"
+    ))
+    .await
+    .expect("acmecorp INSERT");
     globex
-        .batch_execute("INSERT INTO orders_tbl (id, note) VALUES ('1', 'globexco-one');")
+        .batch_execute(&format!(
+            "INSERT INTO {table} (id, note) VALUES ('1', 'globexco-one');"
+        ))
         .await
         .expect("globexco INSERT (same PK as acme, different tenant)");
 
     // COUNT(*) (aggregate → relational pipeline) is tenant-scoped: each tenant
     // sees ONLY its own rows.
     let acme_count = acme
-        .simple_query("SELECT COUNT(*) AS c FROM orders_tbl;")
+        .simple_query(&format!("SELECT COUNT(*) AS c FROM {table};"))
         .await
         .expect("acmecorp count");
     assert_eq!(
@@ -166,7 +177,7 @@ async fn pgwire_relational_writes_and_reads_are_tenant_isolated() {
         "acmecorp must see exactly its 2 rows"
     );
     let globex_count = globex
-        .simple_query("SELECT COUNT(*) AS c FROM orders_tbl;")
+        .simple_query(&format!("SELECT COUNT(*) AS c FROM {table};"))
         .await
         .expect("globexco count");
     assert_eq!(
@@ -177,35 +188,43 @@ async fn pgwire_relational_writes_and_reads_are_tenant_isolated() {
 
     // Same PK `1` resolves to each tenant's OWN row (no cross-tenant bleed).
     let acme_one = acme
-        .simple_query("SELECT note FROM orders_tbl WHERE id = '1';")
+        .simple_query(&format!("SELECT note FROM {table} WHERE id = '1';"))
         .await
         .expect("acmecorp point read");
     assert_eq!(scalar(&acme_one, "note").as_deref(), Some("acmecorp-one"));
     let globex_one = globex
-        .simple_query("SELECT note FROM orders_tbl WHERE id = '1';")
+        .simple_query(&format!("SELECT note FROM {table} WHERE id = '1';"))
         .await
         .expect("globexco point read");
     assert_eq!(scalar(&globex_one, "note").as_deref(), Some("globexco-one"));
 
     // A full scan returns only the connecting tenant's rows.
     let acme_all = acme
-        .simple_query("SELECT id FROM orders_tbl;")
+        .simple_query(&format!("SELECT id FROM {table};"))
         .await
         .expect("acmecorp scan");
-    assert_eq!(row_count(&acme_all), 2, "acmecorp scan sees only acmecorp rows");
+    assert_eq!(
+        row_count(&acme_all),
+        2,
+        "acmecorp scan sees only acmecorp rows"
+    );
     let globex_all = globex
-        .simple_query("SELECT id FROM orders_tbl;")
+        .simple_query(&format!("SELECT id FROM {table};"))
         .await
         .expect("globexco scan");
-    assert_eq!(row_count(&globex_all), 1, "globexco scan sees only globexco rows");
+    assert_eq!(
+        row_count(&globex_all),
+        1,
+        "globexco scan sees only globexco rows"
+    );
 
     // DELETE is tenant-scoped: globex deleting its `1` must NOT affect acme's `1`.
     globex
-        .batch_execute("DELETE FROM orders_tbl WHERE id = '1';")
+        .batch_execute(&format!("DELETE FROM {table} WHERE id = '1';"))
         .await
         .expect("globexco DELETE");
     let acme_after = acme
-        .simple_query("SELECT note FROM orders_tbl WHERE id = '1';")
+        .simple_query(&format!("SELECT note FROM {table} WHERE id = '1';"))
         .await
         .expect("acmecorp read after globexco delete");
     assert_eq!(

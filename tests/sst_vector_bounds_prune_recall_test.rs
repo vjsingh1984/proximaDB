@@ -138,7 +138,10 @@ async fn flush_collection(engine: &SstEngine, collection: &Collection, vectors: 
         collection_config: Some(collection.clone()),
         estimated_size: 0,
     };
-    let result = engine.do_flush(&flush_params).await.expect("flush succeeds");
+    let result = engine
+        .do_flush(&flush_params)
+        .await
+        .expect("flush succeeds");
     assert!(result.success, "flush should succeed");
     assert!(
         result.entries_flushed.unwrap_or(0) > 0,
@@ -161,7 +164,14 @@ async fn vector_bounds_prune_preserves_topk_vs_exact() {
     let query = vectors[0].vector.clone();
     flush_collection(&engine, &collection, vectors).await;
 
-    let pruned = search(&engine, &collection, query.clone(), DistanceMetric::Euclidean, false).await;
+    let pruned = search(
+        &engine,
+        &collection,
+        query.clone(),
+        DistanceMetric::Euclidean,
+        false,
+    )
+    .await;
     let exact = search(&engine, &collection, query, DistanceMetric::Euclidean, true).await;
 
     assert!(!exact.is_empty(), "exact search returned no results");
@@ -171,7 +181,10 @@ async fn vector_bounds_prune_preserves_topk_vs_exact() {
         "bounds-pruned top-k size must match exact"
     );
     for (i, ((p_id, p_score), (e_id, e_score))) in pruned.iter().zip(exact.iter()).enumerate() {
-        assert_eq!(p_id, e_id, "rank {i}: id mismatch (pruned={p_id}, exact={e_id})");
+        assert_eq!(
+            p_id, e_id,
+            "rank {i}: id mismatch (pruned={p_id}, exact={e_id})"
+        );
         assert!(
             (p_score - e_score).abs() < f32::EPSILON,
             "rank {i}: score mismatch (pruned={p_score}, exact={e_score})"
@@ -193,10 +206,21 @@ async fn cosine_search_is_unaffected_by_vector_bounds_prune() {
     let query = vectors[0].vector.clone();
     flush_collection(&engine, &collection, vectors).await;
 
-    let pruned = search(&engine, &collection, query.clone(), DistanceMetric::Cosine, false).await;
+    let pruned = search(
+        &engine,
+        &collection,
+        query.clone(),
+        DistanceMetric::Cosine,
+        false,
+    )
+    .await;
     let exact = search(&engine, &collection, query, DistanceMetric::Cosine, true).await;
 
-    assert_eq!(pruned.len(), exact.len(), "cosine top-k size must match exact");
+    assert_eq!(
+        pruned.len(),
+        exact.len(),
+        "cosine top-k size must match exact"
+    );
     for (i, ((p_id, _), (e_id, _))) in pruned.iter().zip(exact.iter()).enumerate() {
         assert_eq!(p_id, e_id, "cosine rank {i}: id mismatch");
     }
