@@ -7493,6 +7493,7 @@ dependencies = [
  "parking_lot",
  "parquet",
  "proximadb-block-format",
+ "proximadb-cache",
  "proximadb-catalog",
  "proximadb-compression-types",
  "proximadb-data-model",

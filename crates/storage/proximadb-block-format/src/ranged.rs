@@ -120,6 +120,22 @@ impl BlockLayout {
         self.footer.n_rows
     }
 
+    /// Approximate in-memory byte size of this metadata view — used as the
+    /// weight for a byte-budgeted footer cache. Counts the column footer, the
+    /// vector-param block (incl. RaBitQ centroids), and the row-group index.
+    pub fn approx_bytes(&self) -> usize {
+        let cols = self.columns.len() * COLUMN_META_SIZE;
+        let vparam: usize = self.vparams.entries.len() * crate::vparam::ENTRY_SIZE
+            + self
+                .vparams
+                .rabitq
+                .iter()
+                .map(|r| 16 + r.centroid.len() * 4)
+                .sum::<usize>();
+        let rg = 12 + self.rowgroups.entries.len() * crate::rowgroup::ENTRY_SIZE;
+        BLOCK_FOOTER_SIZE + cols + vparam + rg
+    }
+
     pub fn column_metas(&self) -> &[ColumnMeta] {
         &self.columns
     }

@@ -14,18 +14,28 @@
 //! port (which an object-store backend implements with true `get_range`s). The
 //! `tenant_id` is threaded to every fetch for billing attribution.
 
+use std::sync::Arc;
+
 use object_store::path::Path;
 use proximadb_block_format::{
     BLOCK_FOOTER_SIZE, BlockFooter, BlockZoneSource, FlatRow, PaxBlockReader, PruneResult,
     evaluate_block,
     ranged::{BlockLayout, metadata_ranges},
 };
+use proximadb_cache::{CacheKey, CacheKind, TenantCache};
 use proximadb_filter_expression::FilterExpression;
 use proximadb_kernel::error::StorageError;
 use proximadb_records::ProximaRecord;
 
 use crate::object_store_bridge::ObjectStoreBridge;
 use crate::pax_block::SegmentIndex;
+
+/// Per-(tenant,segment,block) cache of parsed [`BlockLayout`] metadata — skips the
+/// footer + column-meta + vparam + rgdir ranged reads on a hit.
+pub type FooterCache = TenantCache<Arc<BlockLayout>>;
+/// Per-(tenant,segment) cache of the parsed segment index — skips the tail
+/// suffix GET + index locate on a hit.
+pub type SegmentIndexCache = TenantCache<Arc<SegmentIndex>>;
 
 /// Initial tail suffix to read when locating the segment index. Large enough to
 /// hold the index of a typical multi-block segment in one GET; grown on miss.
@@ -35,36 +45,99 @@ fn fs_err(ctx: &str, e: impl std::fmt::Display) -> StorageError {
     StorageError::Corruption(format!("ranged segment {ctx}: {e}"))
 }
 
-/// A PAX segment opened for ranged, projected reads.
+/// A PAX segment opened for ranged, projected reads, with optional multitenant
+/// footer/index caching (segments are immutable/write-once, so path-keyed cache
+/// entries need no TTL or etag for correctness).
 pub struct RangedSegmentReader<'b> {
     bridge: &'b dyn ObjectStoreBridge,
     path: Path,
     tenant_id: Option<String>,
-    index: SegmentIndex,
+    /// Tenant cache-key namespace (empty string when no tenant).
+    tenant_key: Arc<str>,
+    index: Arc<SegmentIndex>,
     size: u64,
+    footer_cache: Option<Arc<FooterCache>>,
 }
 
 impl<'b> RangedSegmentReader<'b> {
-    /// Open a segment: HEAD for its size, then read a tail suffix and locate the
-    /// segment index (re-reading a larger suffix if the index doesn't fit).
+    /// Open a segment with no caching (HEAD for size, suffix GET to locate the
+    /// index).
     pub async fn open(
         bridge: &'b dyn ObjectStoreBridge,
         path: Path,
         tenant_id: Option<&str>,
     ) -> Result<RangedSegmentReader<'b>, StorageError> {
+        Self::open_inner(bridge, path, tenant_id, None, None).await
+    }
+
+    /// Open a segment using the multitenant footer + index caches: a cached
+    /// segment index skips the tail suffix GET, and cached per-block layouts skip
+    /// the footer/metadata ranged reads.
+    pub async fn open_with_cache(
+        bridge: &'b dyn ObjectStoreBridge,
+        path: Path,
+        tenant_id: Option<&str>,
+        footer_cache: Option<Arc<FooterCache>>,
+        index_cache: Option<Arc<SegmentIndexCache>>,
+    ) -> Result<RangedSegmentReader<'b>, StorageError> {
+        Self::open_inner(bridge, path, tenant_id, footer_cache, index_cache).await
+    }
+
+    async fn open_inner(
+        bridge: &'b dyn ObjectStoreBridge,
+        path: Path,
+        tenant_id: Option<&str>,
+        footer_cache: Option<Arc<FooterCache>>,
+        index_cache: Option<Arc<SegmentIndexCache>>,
+    ) -> Result<RangedSegmentReader<'b>, StorageError> {
+        let tenant_key: Arc<str> = Arc::from(tenant_id.unwrap_or(""));
         let size = bridge.vector_segment_size(&path, tenant_id).await?;
         if size < BLOCK_FOOTER_SIZE as u64 {
             return Err(fs_err("open", format!("segment too small: {size} bytes")));
         }
 
+        let path_str = path.to_string();
+        let index: Arc<SegmentIndex> = if let Some(ic) = &index_cache {
+            let key = CacheKey::new(&tenant_key, CacheKind::SegmentIndex, &path_str);
+            if let Some(idx) = ic.get(&key).await {
+                idx
+            } else {
+                let idx = Arc::new(Self::locate_index(bridge, &path, tenant_id, size).await?);
+                let weight = (12 + idx.blocks.len() * 12) as u32;
+                ic.insert(key, weight, idx.clone()).await;
+                idx
+            }
+        } else {
+            Arc::new(Self::locate_index(bridge, &path, tenant_id, size).await?)
+        };
+
+        Ok(Self {
+            bridge,
+            path,
+            tenant_id: tenant_id.map(str::to_owned),
+            tenant_key,
+            index,
+            size,
+            footer_cache,
+        })
+    }
+
+    /// Range-read the tail suffix and locate the segment index (growing the
+    /// suffix if the index does not fit).
+    async fn locate_index(
+        bridge: &dyn ObjectStoreBridge,
+        path: &Path,
+        tenant_id: Option<&str>,
+        size: u64,
+    ) -> Result<SegmentIndex, StorageError> {
         let mut suffix_len = INITIAL_SUFFIX.min(size);
-        let index = loop {
+        loop {
             let offset = size - suffix_len;
             let suffix = bridge
-                .fetch_vector_segment_range(&path, offset, suffix_len, tenant_id)
+                .fetch_vector_segment_range(path, offset, suffix_len, tenant_id)
                 .await?;
             match SegmentIndex::locate_in_suffix(&suffix).map_err(|e| fs_err("locate index", e))? {
-                Some(idx) => break idx,
+                Some(idx) => return Ok(idx),
                 None => {
                     if suffix_len >= size {
                         return Err(fs_err("locate index", "index not found in full segment"));
@@ -72,15 +145,7 @@ impl<'b> RangedSegmentReader<'b> {
                     suffix_len = (suffix_len * 4).min(size);
                 }
             }
-        };
-
-        Ok(Self {
-            bridge,
-            path,
-            tenant_id: tenant_id.map(str::to_owned),
-            index,
-            size,
-        })
+        }
     }
 
     pub fn block_count(&self) -> usize {
@@ -97,9 +162,37 @@ impl<'b> RangedSegmentReader<'b> {
             .await
     }
 
+    /// Assemble a block's [`BlockLayout`], consulting the footer cache first
+    /// (a hit skips all footer/metadata ranged reads). Segments are immutable, so
+    /// the `(tenant, segment#offset)` key needs no TTL/etag.
+    async fn block_layout(
+        &self,
+        block_offset: u64,
+        block_size: u64,
+    ) -> Result<Arc<BlockLayout>, StorageError> {
+        if let Some(fc) = &self.footer_cache {
+            let key = CacheKey::new(
+                &self.tenant_key,
+                CacheKind::Footer,
+                format!("{}#{}", self.path, block_offset),
+            );
+            if let Some(layout) = fc.get(&key).await {
+                return Ok(layout);
+            }
+            let layout = Arc::new(self.build_block_layout(block_offset, block_size).await?);
+            fc.insert(key, layout.approx_bytes() as u32, layout.clone()).await;
+            return Ok(layout);
+        }
+        Ok(Arc::new(self.build_block_layout(block_offset, block_size).await?))
+    }
+
     /// Range-read one block's footer + metadata regions and assemble its
     /// [`BlockLayout`] — no stripe bytes are fetched.
-    async fn block_layout(&self, block_offset: u64, block_size: u64) -> Result<BlockLayout, StorageError> {
+    async fn build_block_layout(
+        &self,
+        block_offset: u64,
+        block_size: u64,
+    ) -> Result<BlockLayout, StorageError> {
         // 1. trailing block footer.
         let tail = self
             .fetch(block_offset + block_size - BLOCK_FOOTER_SIZE as u64, BLOCK_FOOTER_SIZE as u64)
@@ -169,7 +262,7 @@ impl<'b> RangedSegmentReader<'b> {
             let layout = self.block_layout(off, bsz).await?;
 
             // Block-level prune from metadata alone — no block body fetched.
-            if evaluate_block(&layout as &dyn BlockZoneSource, filter, field_to_col)
+            if evaluate_block(&*layout as &dyn BlockZoneSource, filter, field_to_col)
                 == PruneResult::Skip
             {
                 continue;
@@ -407,6 +500,89 @@ mod tests {
             fetched < total,
             "pruned read fetched {fetched} not < segment {total}"
         );
+    }
+
+    #[tokio::test]
+    async fn footer_cache_hit_skips_metadata_reads() {
+        // Second read of the same segment must skip footer/metadata ranged reads
+        // (served from the footer cache) and fetch strictly fewer bytes.
+        let bytes = build_segment_bytes(2000, 32);
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+        };
+        let footer_cache: Arc<FooterCache> =
+            Arc::new(FooterCache::new(proximadb_cache::CacheBudget::new(1 << 30, 1 << 30)));
+
+        // First read populates the footer cache for every block.
+        let r1 = RangedSegmentReader::open_with_cache(
+            &bridge,
+            Path::from("seg.pax"),
+            Some("t"),
+            Some(footer_cache.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        let c1 = r1.read_i64_column(col_id::CREATED_AT).await.unwrap();
+        assert_eq!(c1.len(), 2000);
+        let after_first = bridge.ranged_bytes.load(Ordering::Relaxed);
+        footer_cache.sync().await;
+
+        // Second read: footers come from cache → only stripe bytes are fetched.
+        let r2 = RangedSegmentReader::open_with_cache(
+            &bridge,
+            Path::from("seg.pax"),
+            Some("t"),
+            Some(footer_cache.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        let c2 = r2.read_i64_column(col_id::CREATED_AT).await.unwrap();
+        assert_eq!(c2, c1, "cached read must decode identically");
+        let delta2 = bridge.ranged_bytes.load(Ordering::Relaxed) - after_first;
+
+        assert!(delta2 > 0, "second read still fetches stripe bytes");
+        assert!(
+            delta2 < after_first,
+            "second read {delta2} not < first {after_first} (footer reads not skipped)"
+        );
+    }
+
+    #[tokio::test]
+    async fn footer_cache_is_tenant_namespaced() {
+        // Tenant B must NOT be served from tenant A's footer entries — keys are
+        // tenant-namespaced, so B's first read still fetches footer bytes.
+        let bytes = build_segment_bytes(1000, 32);
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+        };
+        let footer_cache: Arc<FooterCache> =
+            Arc::new(FooterCache::new(proximadb_cache::CacheBudget::new(1 << 30, 1 << 30)));
+
+        let ra = RangedSegmentReader::open_with_cache(
+            &bridge, Path::from("seg.pax"), Some("tenantA"), Some(footer_cache.clone()), None,
+        ).await.unwrap();
+        ra.read_i64_column(col_id::CREATED_AT).await.unwrap();
+        footer_cache.sync().await;
+        let after_a = bridge.ranged_bytes.load(Ordering::Relaxed);
+
+        // Tenant B, same path: must do its own footer reads (A's entries are isolated).
+        let rb = RangedSegmentReader::open_with_cache(
+            &bridge, Path::from("seg.pax"), Some("tenantB"), Some(footer_cache.clone()), None,
+        ).await.unwrap();
+        rb.read_i64_column(col_id::CREATED_AT).await.unwrap();
+        let delta_b = bridge.ranged_bytes.load(Ordering::Relaxed) - after_a;
+
+        // B re-reads footers (not served from A) → fetched bytes ≈ A's footer+stripe.
+        assert!(delta_b >= after_a / 2, "tenant B {delta_b} unexpectedly served from tenant A's cache");
+        // Per-tenant stats reflect both tenants.
+        footer_cache.sync().await;
+        let stats = footer_cache.tenant_stats();
+        assert!(stats.iter().any(|s| s.tenant == "tenantA"));
+        assert!(stats.iter().any(|s| s.tenant == "tenantB"));
     }
 
     #[tokio::test]
