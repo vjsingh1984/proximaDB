@@ -5,10 +5,11 @@
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 
-//! Prometheus metrics for SaaS MVP Billing and Consumption Telemetry.
+//! Prometheus consumption telemetry: request/byte-level operational counters
 //!
-//! Exposes exact request/byte-level telemetry required for consumption-based pricing.
-//! Metrics are attributed by `tenant_id` to enforce the SaaS multi-tenancy mandates.
+//! Generic per-tenant usage counters (object-store ops, storage byte-seconds,
+//! task time). Pricing/billing is an operator/control-plane concern — this OSS
+//! module only emits neutral telemetry attributed by `tenant_id`.
 
 use lazy_static::lazy_static;
 use prometheus::{CounterVec, GaugeVec, Opts, register_counter_vec, register_gauge_vec};

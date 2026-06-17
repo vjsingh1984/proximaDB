@@ -57,10 +57,10 @@ CREATE TABLE IF NOT EXISTS xcatalog_collection_dr_policies (
     replicate_deletes               BOOLEAN NOT NULL DEFAULT FALSE,
     destination_retention_days      INTEGER NOT NULL,
 
-    billing_sku                     TEXT NOT NULL,
+    cost_binding_ref                     TEXT NOT NULL,
     cost_owner_tenant_id            TEXT NOT NULL,
     billing_approval_id             TEXT,
-    estimated_monthly_cost_cents    BIGINT,
+    operator_estimate_cents    BIGINT,
 
     provider_policy_id              TEXT,
     provider_rule_id                TEXT,
@@ -280,18 +280,25 @@ impl Default for DrReplicationBehavior {
     }
 }
 
-/// Billing binding that the engine requires before provisioning a
-/// provider rule. `billing_sku` and `cost_owner_tenant_id` are
-/// mandatory at row creation; `billing_approval_id` must be set before
-/// transitioning out of `PendingBillingApproval`.
+/// Opaque operator cost/governance binding the engine requires before
+/// provisioning a provider rule. The engine treats these as pass-through values
+/// (no pricing logic in OSS — chargeback/billing is the operator's concern):
+/// `cost_binding_ref` and `cost_owner_tenant_id` are mandatory at row creation;
+/// `approval_id` must be set before transitioning out of `PendingApproval`.
+/// serde aliases preserve the pre-neutralization wire names.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrBillingBinding {
-    pub billing_sku: String,
+    #[serde(alias = "billing_sku")]
+    pub cost_binding_ref: String,
     pub cost_owner_tenant_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "billing_approval_id", skip_serializing_if = "Option::is_none")]
     pub billing_approval_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub estimated_monthly_cost_cents: Option<i64>,
+    #[serde(
+        default,
+        alias = "estimated_monthly_cost_cents",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub operator_estimate_cents: Option<i64>,
 }
 
 impl DrBillingBinding {
@@ -743,10 +750,10 @@ mod tests {
             "replicate_existing_objects",
             "replicate_deletes",
             "destination_retention_days",
-            "billing_sku",
+            "cost_binding_ref",
             "cost_owner_tenant_id",
             "billing_approval_id",
-            "estimated_monthly_cost_cents",
+            "operator_estimate_cents",
             "provider_policy_id",
             "provider_rule_id",
             "provider_role_arn",
@@ -935,10 +942,10 @@ mod tests {
             },
             replication: DrReplicationBehavior::default(),
             billing: DrBillingBinding {
-                billing_sku: "collection-dr-business".into(),
+                cost_binding_ref: "dr-standard-binding".into(),
                 cost_owner_tenant_id: "tnt_acme".into(),
                 billing_approval_id: Some("appr_01HX...".into()),
-                estimated_monthly_cost_cents: Some(18_400),
+                operator_estimate_cents: Some(18_400),
             },
             provider_binding: Some(ProviderReplicationBinding {
                 provider_policy_id: None,
@@ -979,10 +986,10 @@ mod tests {
     #[test]
     fn billing_binding_is_approved_requires_approval_id() {
         let mut b = DrBillingBinding {
-            billing_sku: "collection-dr-business".into(),
+            cost_binding_ref: "dr-standard-binding".into(),
             cost_owner_tenant_id: "tnt_acme".into(),
             billing_approval_id: None,
-            estimated_monthly_cost_cents: None,
+            operator_estimate_cents: None,
         };
         assert!(!b.is_approved());
         b.billing_approval_id = Some("appr_x".into());

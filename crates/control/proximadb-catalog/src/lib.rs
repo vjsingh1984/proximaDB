@@ -2753,20 +2753,27 @@ mod tests {
 
     #[test]
     fn storage_pool_class_serde_uses_snake_case() {
+        // Serialization uses the neutral capability-class names; legacy commercial
+        // wire values still deserialize via serde aliases (back-compat).
         let classes = [
-            (StoragePoolClass::Pooled, "\"pooled\""),
-            (StoragePoolClass::Standard, "\"business\""),
-            (StoragePoolClass::Premium, "\"enterprise\""),
+            (StoragePoolClass::Pooled, "\"pooled\"", None),
+            (StoragePoolClass::Standard, "\"standard\"", Some("\"business\"")),
+            (StoragePoolClass::Premium, "\"premium\"", Some("\"enterprise\"")),
             (
                 StoragePoolClass::Dedicated,
-                "\"enterprise_dedicated\"",
+                "\"dedicated\"",
+                Some("\"enterprise_dedicated\""),
             ),
         ];
-        for (variant, expected_json) in classes {
+        for (variant, expected_json, legacy_alias) in classes {
             let s = serde_json::to_string(&variant).unwrap();
             assert_eq!(s, expected_json, "variant {variant:?}");
             let back: StoragePoolClass = serde_json::from_str(expected_json).unwrap();
             assert_eq!(back, variant);
+            if let Some(alias) = legacy_alias {
+                let from_alias: StoragePoolClass = serde_json::from_str(alias).unwrap();
+                assert_eq!(from_alias, variant, "legacy alias {alias} must still read");
+            }
         }
     }
 

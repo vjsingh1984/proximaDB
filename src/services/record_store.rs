@@ -36,7 +36,7 @@ use proximadb_storage_common::{
     ranged_segment::RangedSegmentReader,
 };
 
-use crate::metrics::saas_billing_metrics::record_object_store_op;
+use crate::metrics::consumption_metrics::record_object_store_op;
 use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
 use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};

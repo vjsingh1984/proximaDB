@@ -52,22 +52,15 @@ EXEMPT_DIR_PARTS = {
     "target",
 }
 
-# Known, not-yet-remediated leaks — tracked bypasses (WARN, do not fail), each
-# scheduled in the boundary spec. Remove entries as the phases land.
-#
-# GLOBAL: the DR "billing binding" (SKU + monthly cost) is a single enterprise
-# feature spread across the catalog DR subsystem — tracked until B2 feature-gates
-# it behind `billing-binding` (default OFF). Tracking the terms (not per-file) keeps
-# the allowlist robust as the feature moves.
-TRACKED_TERMS_GLOBAL = {
-    "billing_sku",
-    "monthly_cost",
-    "estimated_monthly_cost",
-    "collection-dr-business",
-}
+# Known, not-yet-remediated leaks — tracked bypasses (WARN, do not fail). All
+# remediation phases B1–B3 have LANDED (StoragePoolClass neutralized; DR billing
+# fields → neutral cost_binding_ref/operator_estimate_cents; saas_billing_metrics
+# → consumption_metrics), so this is empty and the guard is fully strict: any new
+# commercial leak is a hard error. Add an entry only as a deliberate, scheduled
+# temporary bypass.
+TRACKED_TERMS_GLOBAL: set[str] = set()
 
 # Per-file tracked bypasses (path suffix → allowed substrings).
-# (B1 done: StoragePoolClass variants renamed neutral with serde aliases.)
 TRACKED_BYPASS: dict[str, set[str]] = {}
 
 

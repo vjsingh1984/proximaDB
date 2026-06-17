@@ -593,10 +593,10 @@ mod tests {
                 ..DrReplicationBehavior::default()
             },
             billing: DrBillingBinding {
-                billing_sku: "collection-dr-business".into(),
+                cost_binding_ref: "dr-standard-binding".into(),
                 cost_owner_tenant_id: "tnt_acme".into(),
                 billing_approval_id: Some("appr_1".into()),
-                estimated_monthly_cost_cents: None,
+                operator_estimate_cents: None,
             },
             provider_binding: None,
             health: DrHealth::default(),

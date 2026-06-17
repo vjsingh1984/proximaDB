@@ -1738,10 +1738,10 @@ mod tests {
             },
             replication: DrReplicationBehavior::default(),
             billing: DrBillingBinding {
-                billing_sku: "collection-dr-business".into(),
+                cost_binding_ref: "dr-standard-binding".into(),
                 cost_owner_tenant_id: "tnt_acme".into(),
                 billing_approval_id: Some("appr_1".into()),
-                estimated_monthly_cost_cents: Some(10_000),
+                operator_estimate_cents: Some(10_000),
             },
             provider_binding: Some(ProviderReplicationBinding {
                 provider_policy_id: None,

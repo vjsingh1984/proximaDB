@@ -270,9 +270,9 @@ impl CollectionDrPolicyStore for InMemoryCollectionDrPolicyStore {
             ));
         }
         // Billing: SKU + cost owner must be set at create time.
-        if req.billing.billing_sku.is_empty() {
+        if req.billing.cost_binding_ref.is_empty() {
             return Err(DrApiError::ValidationFailed(
-                "billing.billing_sku is empty".into(),
+                "billing.cost_binding_ref is empty".into(),
             ));
         }
         if req.billing.cost_owner_tenant_id.is_empty() {
@@ -355,7 +355,7 @@ impl CollectionDrPolicyStore for InMemoryCollectionDrPolicyStore {
             });
         }
         policy.billing.billing_approval_id = Some(approval.accepted_approval_id);
-        policy.billing.estimated_monthly_cost_cents = approval.accepted_estimate_cents;
+        policy.billing.operator_estimate_cents = approval.accepted_estimate_cents;
         policy.approved_by = Some(approval.accepted_by);
         policy.state = next;
         policy.policy_version = policy.policy_version.saturating_add(1);
@@ -511,10 +511,10 @@ mod tests {
             },
             replication: DrReplicationBehavior::default(),
             billing: DrBillingBinding {
-                billing_sku: "collection-dr-business".into(),
+                cost_binding_ref: "dr-standard-binding".into(),
                 cost_owner_tenant_id: "tnt_acme".into(),
                 billing_approval_id: None,
-                estimated_monthly_cost_cents: None,
+                operator_estimate_cents: None,
             },
             requested_by: "user_1".into(),
             collection_authority_mode: CatalogAuthorityMode::InternalCanonical,
@@ -595,7 +595,7 @@ mod tests {
     async fn create_refuses_missing_billing_fields() {
         let store = make_store();
         let mut req = valid_request();
-        req.billing.billing_sku = String::new();
+        req.billing.cost_binding_ref = String::new();
         let err = store.create(req).await.unwrap_err();
         assert!(matches!(err, DrApiError::ValidationFailed(_)));
 
@@ -636,7 +636,7 @@ mod tests {
         let p2 = store.approve_billing(&p.policy_id, approval).await.unwrap();
         assert_eq!(p2.state, DrState::PendingProviderProvisioning);
         assert_eq!(p2.billing.billing_approval_id.as_deref(), Some("appr_001"));
-        assert_eq!(p2.billing.estimated_monthly_cost_cents, Some(18_400));
+        assert_eq!(p2.billing.operator_estimate_cents, Some(18_400));
         assert_eq!(p2.approved_by.as_deref(), Some("user_2"));
         // Version bumps on transition.
         assert_eq!(p2.policy_version, p.policy_version + 1);
