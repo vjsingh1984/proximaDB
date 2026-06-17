@@ -155,3 +155,10 @@ pub use sq8::{
     Sq8Params, decode as sq8_decode, decode_into as sq8_decode_into, encode as sq8_encode,
     fit_params as sq8_fit_params,
 };
+
+pub mod rabitq;
+pub use rabitq::{
+    RaBitQCode, RaBitQParams, build_rotation as rabitq_build_rotation,
+    encode as rabitq_encode, encode_column as rabitq_encode_column, fit_params as rabitq_fit_params,
+    rotate_query as rabitq_rotate_query,
+};

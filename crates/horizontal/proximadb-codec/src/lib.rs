@@ -20,6 +20,7 @@ pub mod types;
 // Top-level re-exports
 pub use baseline::functions;
 pub use baseline::functions::Sq8Params;
+pub use baseline::functions::{RaBitQCode, RaBitQParams};
 pub use profiling::{
     CompressionBenchmarkRecord, CompressionExplainFields, CompressionStatsProfile,
     CompressionStatsRejectedCandidate,
