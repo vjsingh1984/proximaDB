@@ -15,26 +15,14 @@
 name: Infrastructure Deploy (DISABLED)
 
 on:
-  workflow_dispatch:  # Manual trigger only
+  # Manual trigger only (single workflow_dispatch — GitHub rejects duplicate keys).
+  workflow_dispatch:
     inputs:
       enable_infrastructure_deploy:
         description: 'Enable infrastructure deployment (not needed for library release)'
         required: true
         type: boolean
         default: false
-  push:
-    branches:
-      - main
-    paths:
-      - 'infrastructure/**'
-      - '.github/workflows/infrastructure-deploy.yml'
-  pull_request:
-    branches:
-      - main
-    paths:
-      - 'infrastructure/**'
-  workflow_dispatch:
-    inputs:
       environment:
         description: 'Environment to deploy'
         required: true
@@ -53,6 +41,17 @@ on:
           - plan
           - apply
           - destroy
+  push:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
+      - '.github/workflows/infrastructure-deploy.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'infrastructure/**'
 
 env:
   AWS_REGION: us-east-1
@@ -161,7 +160,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [terraform-validate, helm-validate]
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Checkout
@@ -235,7 +233,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: terraform-plan-dev
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     environment:
       name: dev
       url: https://proximadb-dev.example.com
@@ -308,7 +305,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [terraform-validate, helm-validate]
-    if: github.event.inputs.environment == 'staging'
 
     steps:
       - name: Checkout
@@ -360,7 +356,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: terraform-plan-staging
-    if: github.event.inputs.environment == 'staging' && github.event.inputs.action == 'apply'
     environment:
       name: staging
       url: https://proximadb-staging.example.com
@@ -420,7 +415,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     needs: [terraform-validate, helm-validate]
-    if: github.event.inputs.environment == 'production'
 
     steps:
       - name: Checkout
@@ -472,7 +466,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: terraform-plan-production
-    if: github.event.inputs.environment == 'production' && github.event.inputs.action == 'apply'
     environment:
       name: production
       url: https://proximadb.example.com
@@ -550,7 +543,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: [terraform-apply-dev]
-    if: always() && needs.terraform-apply-dev.result == 'success'
 
     steps:
       - name: Checkout

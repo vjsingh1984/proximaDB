@@ -63,7 +63,7 @@ jobs:
             **What to check:**
             - Run \`./scripts/check-layering.sh\` locally
             - Run \`python3 scripts/check_workspace_boundaries.py --strict\` directly for the canonical checker
-            - Review [Workspace Refactor Plan](https://github.com/${{ context.repo.owner }}/${{ context.repo.name }}/blob/main/roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc)
+            - Review [Workspace Refactor Plan](https://github.com/${context.repo.owner}/${context.repo.name}/blob/main/roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc)
             **Golden Rule:** Lower layers must not depend on higher layers.
 
             This check enforces the workspace boundary table used by the refactor plan.`
