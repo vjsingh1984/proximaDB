@@ -75,6 +75,7 @@ pub mod reader;
 pub mod record;
 pub mod row_dir;
 pub mod stripe;
+pub mod vparam;
 pub mod writer;
 
 // ---- Top-level re-exports ----
@@ -90,4 +91,7 @@ pub use record::{
 };
 pub use row_dir::{ROW_ENTRY_SIZE, RowDirectory, RowEntry, row_flags};
 pub use stripe::{BlockStats, COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe};
+pub use vparam::{
+    QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock, VectorParamEntry,
+};
 pub use writer::{BLOCK_FOOTER_SIZE, BlockFooter, PaxBlockWriter};

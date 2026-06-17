@@ -621,10 +621,23 @@ mod tests {
         let mut labels: Vec<String> = r1.labels.iter().map(|s| s.to_string()).collect();
         labels.sort();
         assert_eq!(labels, vec!["a".to_string(), "b".to_string()]);
-        assert_eq!(
-            r1.embeddings.first().map(|e| e.values.to_fp32_owned()),
-            Some(vec![1.0, 2.0, 3.0])
-        );
+        // Vectors are SQ8-quantized in PAX v2 (lossy, 4× smaller): assert the
+        // embedding reconstructs within the per-column quantization error rather
+        // than bit-exactly. For [1,2,3] the step is (3-1)/255 ≈ 0.0078, so the
+        // bound is ~0.004 — well under 0.01.
+        let recon = r1
+            .embeddings
+            .first()
+            .map(|e| e.values.to_fp32_owned())
+            .expect("embedding present");
+        let expected = [1.0f32, 2.0, 3.0];
+        assert_eq!(recon.len(), expected.len());
+        for (got, exp) in recon.iter().zip(expected.iter()) {
+            assert!(
+                (got - exp).abs() <= 0.01,
+                "SQ8 embedding {got} not within 0.01 of {exp}"
+            );
+        }
     }
 
     #[test]

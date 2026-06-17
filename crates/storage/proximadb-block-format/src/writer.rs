@@ -30,9 +30,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     header::{BlockCompression, BlockHeader, BlockMode, HEADER_SIZE, flags, fnv1a_hash},
-    record::{FlatRow, col_id, encode_f32_vec_col, encode_str_col, update_i64_bounds},
+    record::{FlatRow, col_id, encode_str_col, update_i64_bounds},
     row_dir::{RowDirectory, RowEntry},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
+    vparam::{QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock, VectorParamEntry},
 };
 
 /// Size of the trailing `BlockFooter` in bytes.
@@ -269,6 +270,8 @@ impl PaxBlockWriter {
 
         // ---- Build column stripes (OLAP/PAX) ----
         let mut stripes: Vec<ColumnStripe> = Vec::new();
+        // One entry per vector column, serialized into the footer's VectorParamBlock.
+        let mut vparam_entries: Vec<VectorParamEntry> = Vec::new();
 
         if mode.has_column_stripes() {
             stripes.push(
@@ -370,7 +373,10 @@ impl PaxBlockWriter {
 
             for (i, col) in self.embeddings.iter().enumerate() {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
-                stripes.push(self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?);
+                let (stripe, entry) =
+                    self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
+                stripes.push(stripe);
+                vparam_entries.push(entry);
             }
         }
 
@@ -403,17 +409,32 @@ impl PaxBlockWriter {
         }
         col_footer_bytes.extend_from_slice(&footer_extra_bytes);
 
+        // ---- Build the VectorParamBlock side region (after the column footer) ----
+        let (vparam_bytes, vparam_offset, vparam_len) = if vparam_entries.is_empty() {
+            (Vec::new(), 0u32, 0u32)
+        } else {
+            let block = VectorParamBlock {
+                entries: vparam_entries,
+            };
+            let bytes = block.to_bytes();
+            let offset = col_footer_offset + col_footer_bytes.len() as u32;
+            let len = bytes.len() as u32;
+            (bytes, offset, len)
+        };
+
         // ---- Build block footer ----
-        let block_footer_offset = col_footer_offset + col_footer_bytes.len() as u32;
+        let block_footer_offset =
+            col_footer_offset + col_footer_bytes.len() as u32 + vparam_bytes.len() as u32;
         let block_footer = BlockFooter {
             col_footer_offset,
             row_dir_offset,
             stripe_start,
             n_columns: stripes.len() as u32,
             n_rows: n as u32,
-            // Populated by the SQ8 vector-stripe (VectorParamBlock) and
-            // row-group sub-index passes; 0 = absent.
-            ..BlockFooter::default()
+            vparam_offset,
+            vparam_len,
+            // Row-group sub-index pointer is populated by the next pass; 0 = absent.
+            rgdir_offset: 0,
         };
 
         let total_size = block_footer_offset + BLOCK_FOOTER_SIZE as u32;
@@ -425,6 +446,7 @@ impl PaxBlockWriter {
             body.extend_from_slice(&s.data);
         }
         body.extend_from_slice(&col_footer_bytes);
+        body.extend_from_slice(&vparam_bytes);
         body.extend_from_slice(&block_footer.to_bytes());
 
         // ---- Compute checksum ----
@@ -531,9 +553,45 @@ impl PaxBlockWriter {
         ColumnStripe::new(meta, data).with_bloom(stats.bloom)
     }
 
-    fn build_f32_vec_stripe(&self, id: i32, vals: &[Option<&[f32]>]) -> Result<ColumnStripe> {
-        let scheme = select_f32_vec_scheme(vals);
-        let (data, null_count) = encode_f32_vec_with_scheme(vals, &scheme)?;
+    /// Build an f32 vector stripe (v2 fixed-stride layout) plus its
+    /// [`VectorParamEntry`].
+    ///
+    /// The stripe is `[validity bitmap: ceil(n/8)][fixed-stride payload]`. By
+    /// default the payload is SQ8-quantized (1 byte/value, 4× smaller); set
+    /// `PROXIMADB_VECTOR_SQ8_DISABLE` to fall back to raw fixed-stride f32. The
+    /// per-row dimension prefix of v1 is gone — `dim` and the SQ8 params live
+    /// once in the returned entry. Null rows still occupy a full (zeroed) row
+    /// slot so any row is seekable by `offset + i * stride` (row-group reads).
+    fn build_f32_vec_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<&[f32]>],
+    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+        let dim = vector_column_dim(vals)?;
+        let flat: Vec<f32> = vals
+            .iter()
+            .flatten()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        // Always derive exact bounds (vmin/vmax) for the entry, even for raw.
+        let params = functions::sq8::fit_params(&flat);
+
+        let use_sq8 = dim > 0 && !flat.is_empty() && !sq8_disabled();
+        let (data, scheme, quant_kind) = if use_sq8 {
+            (
+                encode_f32_vec_sq8(vals, dim, &params),
+                ProximaScheme::Sq8,
+                QUANT_SQ8,
+            )
+        } else {
+            (
+                encode_f32_vec_raw_v2(vals, dim),
+                ProximaScheme::Raw,
+                QUANT_RAW_F32,
+            )
+        };
+
+        let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
         let meta = ColumnMeta {
             column_id: id,
             role: ColumnRole::Vector,
@@ -555,7 +613,13 @@ impl PaxBlockWriter {
             bloom_offset: 0,
             bloom_len: 0,
         };
-        Ok(ColumnStripe::new(meta, data))
+        let entry = VectorParamEntry {
+            column_id: id,
+            dim,
+            quant_kind,
+            params,
+        };
+        Ok((ColumnStripe::new(meta, data), entry))
     }
 
     fn build_f64_stripe(
@@ -1011,41 +1075,76 @@ fn encode_str_dictionary_col(values: &[Option<&str>]) -> (Vec<u8>, u32) {
     (buf, null_count)
 }
 
-fn select_f32_vec_scheme(values: &[Option<&[f32]>]) -> ProximaScheme {
-    let flattened: Vec<f32> = values
-        .iter()
-        .flatten()
-        .flat_map(|v| v.iter().copied())
-        .collect();
-    if flattened.is_empty() {
-        return ProximaScheme::Raw;
-    }
-
-    let analysis = DataAnalysis::from_f32_values(&flattened);
-    let mut context = SelectionContext::for_pax_stripe(TypeId::F32, DataDomain::MlEmbeddings);
-    context.target_compression = None;
-
-    let mut profile = CompressionProfile::from_selection_context(&context);
-    profile.target_compression_ratio = None;
-    profile.hotness = AccessTemperature::Warm;
-    profile.workload_profile = WorkloadProfile::Htap;
-
-    let hints = context.layout_hints();
-    let decision = StrategyRegistry::default()
-        .select_decision(&analysis, &context, &profile, &hints)
-        .scheme;
-    debug_assert!(matches!(decision, ProximaScheme::Raw));
-    ProximaScheme::Raw
+/// Kill-switch: when set, vector stripes fall back to raw fixed-stride f32
+/// instead of SQ8. Mirrors the project's other `PROXIMADB_*_DISABLE` toggles.
+fn sq8_disabled() -> bool {
+    std::env::var_os("PROXIMADB_VECTOR_SQ8_DISABLE").is_some()
 }
 
-fn encode_f32_vec_with_scheme(
-    values: &[Option<&[f32]>],
-    scheme: &ProximaScheme,
-) -> Result<(Vec<u8>, u32)> {
-    match scheme {
-        ProximaScheme::Raw => Ok(encode_f32_vec_col(values)),
-        other => anyhow::bail!("unsupported exact PAX f32 vector scheme: {}", other.name()),
+/// Fixed dimensionality of a vector column = the length of its first non-null
+/// row. Returns 0 when every row is null. Errors if two non-null rows disagree
+/// (embedding columns are fixed-width by construction).
+fn vector_column_dim(vals: &[Option<&[f32]>]) -> Result<u32> {
+    let mut dim: Option<usize> = None;
+    for v in vals.iter().flatten() {
+        match dim {
+            None => dim = Some(v.len()),
+            Some(d) if d != v.len() => {
+                anyhow::bail!("inconsistent vector dimension: {d} vs {}", v.len())
+            }
+            _ => {}
+        }
     }
+    Ok(dim.unwrap_or(0) as u32)
+}
+
+/// Validity bitmap prefix: bit `i` set ⇒ row `i` is present (non-null).
+fn vector_validity_bitmap(vals: &[Option<&[f32]>]) -> Vec<u8> {
+    let mut bm = vec![0u8; vals.len().div_ceil(8)];
+    for (i, v) in vals.iter().enumerate() {
+        if v.is_some() {
+            bm[i / 8] |= 1u8 << (i % 8);
+        }
+    }
+    bm
+}
+
+/// Encode an SQ8 vector stripe: validity bitmap + `n_rows * dim` u8 codes.
+/// Null rows occupy `dim` zero bytes so every row stays seekable.
+fn encode_f32_vec_sq8(vals: &[Option<&[f32]>], dim: u32, params: &functions::Sq8Params) -> Vec<u8> {
+    let dim = dim as usize;
+    let mut buf = vector_validity_bitmap(vals);
+    buf.reserve(vals.len() * dim);
+    for v in vals {
+        match v {
+            Some(floats) => {
+                for &f in *floats {
+                    buf.push(functions::sq8::quantize_one(f, params));
+                }
+            }
+            None => buf.extend(std::iter::repeat_n(0u8, dim)),
+        }
+    }
+    buf
+}
+
+/// Encode a raw fixed-stride f32 vector stripe: validity bitmap + `n_rows *
+/// dim * 4` little-endian f32 bytes. Null rows occupy a zeroed row slot.
+pub(crate) fn encode_f32_vec_raw_v2(vals: &[Option<&[f32]>], dim: u32) -> Vec<u8> {
+    let dim = dim as usize;
+    let mut buf = vector_validity_bitmap(vals);
+    buf.reserve(vals.len() * dim * 4);
+    for v in vals {
+        match v {
+            Some(floats) => {
+                for &f in *floats {
+                    buf.extend_from_slice(&f.to_le_bytes());
+                }
+            }
+            None => buf.extend(std::iter::repeat_n(0u8, dim * 4)),
+        }
+    }
+    buf
 }
 
 fn encode_i64_with_scheme(values: &[i64], scheme: &ProximaScheme) -> Result<Vec<u8>> {

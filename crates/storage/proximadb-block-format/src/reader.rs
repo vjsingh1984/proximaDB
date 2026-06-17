@@ -22,8 +22,10 @@ use crate::{
     header::{BlockHeader, HEADER_SIZE, fnv1a_hash},
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     stripe::{COLUMN_META_SIZE, ColumnMeta},
+    vparam::{QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
+use proximadb_codec::functions::sq8;
 
 /// A parsed but not yet decoded PAX block.
 ///
@@ -34,6 +36,8 @@ pub struct PaxBlockReader<'a> {
     header: BlockHeader,
     footer: BlockFooter,
     columns: Vec<ColumnMeta>,
+    /// Per-vector-column quantization params (dim, quant_kind, SQ8 scale/offset).
+    vparams: VectorParamBlock,
 }
 
 impl<'a> PaxBlockReader<'a> {
@@ -62,11 +66,26 @@ impl<'a> PaxBlockReader<'a> {
             columns.push(ColumnMeta::from_bytes(&data[off..])?);
         }
 
+        // Parse the VectorParamBlock side region (footer-first read path).
+        let vparams = if footer.vparam_offset != 0 && footer.vparam_len != 0 {
+            let start = footer.vparam_offset as usize;
+            let end = start
+                .checked_add(footer.vparam_len as usize)
+                .ok_or_else(|| anyhow::anyhow!("vparam offset/len overflow"))?;
+            if end > footer_start {
+                bail!("vector param block overlaps block footer");
+            }
+            VectorParamBlock::from_bytes(&data[start..end])?
+        } else {
+            VectorParamBlock::default()
+        };
+
         Ok(Self {
             data,
             header,
             footer,
             columns,
+            vparams,
         })
     }
 
@@ -233,12 +252,21 @@ impl<'a> PaxBlockReader<'a> {
         )
     }
 
+    /// The parsed vector-param side region (dim/quant_kind/SQ8 params per column).
+    pub fn vector_params(&self) -> &VectorParamBlock {
+        &self.vparams
+    }
+
     /// Decode f32 vector values from an embedding stripe.
+    ///
+    /// v2 vector stripes are fixed-stride (`[validity bitmap][payload]`); the
+    /// dimension, quant kind, and SQ8 params come from the block's
+    /// [`VectorParamBlock`]. SQ8 stripes reconstruct lossily (within `scale/2`).
     pub fn decode_f32_vec_stripe(&self, column_id: i32) -> Option<Vec<Option<Vec<f32>>>> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
-        let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
-        decode_f32_vec_with_encoding(raw, meta.encoding_id, n).ok()
+        let entry = self.vparams.get(column_id)?;
+        decode_f32_vec_v2(raw, n, entry).ok()
     }
 
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
@@ -417,45 +445,64 @@ fn decode_dictionary_str_col(data: &[u8], count: usize) -> Result<Vec<Option<Str
     Ok(values)
 }
 
-fn decode_f32_vec_with_encoding(
+/// Decode a v2 fixed-stride f32 vector stripe (`[validity bitmap][payload]`).
+///
+/// `entry` supplies the dimension, the quant kind, and (for SQ8) the affine
+/// params. Each present row is a fixed-size slice at `i * stride`; absent rows
+/// (validity bit clear) are returned as `None` regardless of their zeroed slot.
+fn decode_f32_vec_v2(
     data: &[u8],
-    encoding_id: u8,
     count: usize,
+    entry: &crate::vparam::VectorParamEntry,
 ) -> Result<Vec<Option<Vec<f32>>>> {
-    let scheme = scheme_from_encoding_id(encoding_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown PAX f32 vector encoding id: {encoding_id}"))?;
-    match scheme {
-        ProximaScheme::Raw => decode_raw_f32_vec_col(data, count),
-        other => bail!("unsupported PAX f32 vector encoding: {}", other.name()),
+    let dim = entry.dim as usize;
+    let bm_len = count.div_ceil(8);
+    if data.len() < bm_len {
+        bail!("vector stripe shorter than validity bitmap");
     }
-}
+    let bitmap = &data[..bm_len];
+    let payload = &data[bm_len..];
+    let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
 
-fn decode_raw_f32_vec_col(data: &[u8], count: usize) -> Result<Vec<Option<Vec<f32>>>> {
-    let mut values = Vec::with_capacity(count);
-    let mut pos = 0;
-    for _ in 0..count {
-        if pos + 4 > data.len() {
-            bail!("raw f32 vector stripe ended before {count} values");
-        }
-        let dim = u32::from_le_bytes(data[pos..pos + 4].try_into()?);
-        pos += 4;
-        if dim == u32::MAX {
-            values.push(None);
-        } else {
-            let byte_len = dim as usize * 4;
-            if pos + byte_len > data.len() {
-                bail!("raw f32 vector value exceeds stripe length");
+    let mut out = Vec::with_capacity(count);
+    match entry.quant_kind {
+        QUANT_SQ8 => {
+            let stride = dim; // one u8 code per dimension
+            for i in 0..count {
+                if !is_present(i) {
+                    out.push(None);
+                    continue;
+                }
+                let off = i * stride;
+                let end = off + stride;
+                if end > payload.len() {
+                    bail!("SQ8 vector row {i} exceeds stripe length");
+                }
+                out.push(Some(sq8::decode(&payload[off..end], &entry.params)));
             }
-            let mut floats = Vec::with_capacity(dim as usize);
-            for i in 0..dim as usize {
-                let f = f32::from_le_bytes(data[pos + i * 4..pos + i * 4 + 4].try_into()?);
-                floats.push(f);
-            }
-            values.push(Some(floats));
-            pos += byte_len;
         }
+        QUANT_RAW_F32 => {
+            let stride = dim * 4; // 4 bytes per f32 dimension
+            for i in 0..count {
+                if !is_present(i) {
+                    out.push(None);
+                    continue;
+                }
+                let off = i * stride;
+                let end = off + stride;
+                if end > payload.len() {
+                    bail!("raw f32 vector row {i} exceeds stripe length");
+                }
+                let mut floats = Vec::with_capacity(dim);
+                for c in payload[off..end].chunks_exact(4) {
+                    floats.push(f32::from_le_bytes(c.try_into()?));
+                }
+                out.push(Some(floats));
+            }
+        }
+        other => bail!("unknown vector quant_kind: {other}"),
     }
-    Ok(values)
+    Ok(out)
 }
 
 const PAX_BLOOM_SALTS: [u64; 3] = [
@@ -699,7 +746,10 @@ mod tests {
     }
 
     #[test]
-    fn reader_decode_exact_f32_vec_raw_stripe() {
+    fn sq8_vector_stripe_write_read() {
+        // Default v2 path: vectors are SQ8-quantized and reconstruct within the
+        // per-column error bound (scale/2). The stripe carries an SQ8 marker and
+        // a VectorParamBlock entry with the correct dim.
         let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1);
         writer
             .add_record(&make_record_with_embedding(
@@ -725,11 +775,77 @@ mod tests {
             .iter()
             .find(|m| m.column_id == col_id::EMBED_BASE)
             .unwrap();
-        assert_eq!(embed_meta.encoding_id, ProximaScheme::Raw.to_marker());
+        assert_eq!(embed_meta.encoding_id, ProximaScheme::Sq8.to_marker());
+
+        let entry = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
+        assert_eq!(entry.dim, 3);
+        assert_eq!(entry.quant_kind, crate::vparam::QUANT_SQ8);
+        let bound = entry.params.max_abs_error();
 
         let embeddings = reader.decode_f32_vec_stripe(col_id::EMBED_BASE).unwrap();
-        assert_eq!(embeddings[0], Some(vec![0.1, 0.2, 0.3]));
-        assert_eq!(embeddings[1], Some(vec![0.4, 0.5, 0.6]));
+        let originals = [[0.1f32, 0.2, 0.3], [0.4, 0.5, 0.6]];
+        for (row, orig) in embeddings.iter().zip(originals.iter()) {
+            let got = row.as_ref().expect("present row");
+            for (g, o) in got.iter().zip(orig.iter()) {
+                assert!((g - o).abs() <= bound + 1e-6, "got {g}, orig {o}");
+            }
+        }
+    }
+
+    #[test]
+    fn f32_vec_stripe_no_per_row_dim_header() {
+        // v2 vector stripes are fixed-stride with no per-row dim prefix: an SQ8
+        // stripe is exactly ceil(n/8) validity bytes + n*dim code bytes.
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1);
+        for i in 0..10 {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i,
+                    vec![i as f32 * 0.1, i as f32 * 0.2, i as f32 * 0.3, i as f32 * 0.4],
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+        let meta = reader
+            .column_metas()
+            .iter()
+            .find(|m| m.column_id == col_id::EMBED_BASE)
+            .unwrap();
+        let n = 10usize;
+        let dim = 4usize;
+        let expected = n.div_ceil(8) + n * dim; // SQ8: 1 byte/value, no dim prefix
+        assert_eq!(meta.stripe_len as usize, expected);
+    }
+
+    #[test]
+    fn raw_fallback_vector_stripe_round_trips_exactly() {
+        // The raw fixed-stride path (quant_kind = RAW_F32) is exact. Exercise the
+        // decoder directly so the test does not depend on a process-global env
+        // kill-switch.
+        use crate::vparam::{QUANT_RAW_F32, VectorParamEntry};
+        use proximadb_codec::Sq8Params;
+        let rows: Vec<Option<&[f32]>> = vec![Some(&[0.1, 0.2][..]), None, Some(&[0.3, 0.4][..])];
+        let dim = 2u32;
+        // build raw stripe via the writer's encoder
+        let data = crate::writer::encode_f32_vec_raw_v2(&rows, dim);
+        let entry = VectorParamEntry {
+            column_id: 20,
+            dim,
+            quant_kind: QUANT_RAW_F32,
+            params: Sq8Params {
+                scale: 0.0,
+                offset: 0.0,
+                vmin: 0.1,
+                vmax: 0.4,
+            },
+        };
+        let decoded = decode_f32_vec_v2(&data, rows.len(), &entry).unwrap();
+        assert_eq!(decoded[0], Some(vec![0.1, 0.2]));
+        assert_eq!(decoded[1], None);
+        assert_eq!(decoded[2], Some(vec![0.3, 0.4]));
     }
 
     #[test]
