@@ -67,10 +67,8 @@ TRACKED_TERMS_GLOBAL = {
 }
 
 # Per-file tracked bypasses (path suffix → allowed substrings).
-TRACKED_BYPASS = {
-    # B1: rename StoragePoolClass variants neutral + serde aliases.
-    "crates/control/proximadb-catalog/src/lib.rs": {"EnterpriseDedicated"},
-}
+# (B1 done: StoragePoolClass variants renamed neutral with serde aliases.)
+TRACKED_BYPASS: dict[str, set[str]] = {}
 
 
 def is_comment(line: str) -> bool:

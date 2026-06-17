@@ -1727,8 +1727,8 @@ mod tests {
             destination_region: "us-west-2".into(),
             region_pair_id: "aws:us-east-1:us-west-2".into(),
             placement: DrPlacement {
-                source_pool_class: StoragePoolClass::Business,
-                destination_pool_class: StoragePoolClass::Business,
+                source_pool_class: StoragePoolClass::Standard,
+                destination_pool_class: StoragePoolClass::Standard,
                 source_bucket_or_account: "src-bucket".into(),
                 destination_bucket_or_account: "dst-bucket".into(),
                 source_container: None,

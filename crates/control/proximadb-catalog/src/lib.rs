@@ -56,12 +56,17 @@ pub enum StoragePoolClass {
     /// Default for legacy rows backfilled by the P0.5 migration.
     #[default]
     Pooled,
-    /// Shared Business pool — prefix-scoped CRR allowed.
-    Business,
-    /// Shared Enterprise pool — stricter KMS, monitoring, and rule budgeting.
-    Enterprise,
+    /// Shared standard pool — prefix-scoped CRR allowed. (Commercial tier names
+    /// are an operator/control-plane concern; the OSS engine uses neutral
+    /// capability classes and reads legacy wire values via serde aliases.)
+    #[serde(alias = "business")]
+    Standard,
+    /// Shared premium pool — stricter KMS, monitoring, and rule budgeting.
+    #[serde(alias = "enterprise")]
+    Premium,
     /// Dedicated bucket/storage-account pair per tenant per region pair.
-    EnterpriseDedicated,
+    #[serde(alias = "enterprise_dedicated")]
+    Dedicated,
 }
 
 /// Namespace metadata.
@@ -2699,7 +2704,7 @@ mod tests {
             .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
             .with_region_home("us-east-1")
             .with_default_dr_region_pair("aws:us-east-1:us-west-2")
-            .with_storage_pool_class(StoragePoolClass::Business);
+            .with_storage_pool_class(StoragePoolClass::Standard);
 
         assert_eq!(ns.tenant_id.as_deref(), Some("tnt_acme"));
         assert_eq!(
@@ -2711,7 +2716,7 @@ mod tests {
             ns.default_dr_region_pair_id.as_deref(),
             Some("aws:us-east-1:us-west-2"),
         );
-        assert_eq!(ns.storage_pool_class, StoragePoolClass::Business);
+        assert_eq!(ns.storage_pool_class, StoragePoolClass::Standard);
         assert!(ns.is_dr_addressable());
     }
 
@@ -2750,10 +2755,10 @@ mod tests {
     fn storage_pool_class_serde_uses_snake_case() {
         let classes = [
             (StoragePoolClass::Pooled, "\"pooled\""),
-            (StoragePoolClass::Business, "\"business\""),
-            (StoragePoolClass::Enterprise, "\"enterprise\""),
+            (StoragePoolClass::Standard, "\"business\""),
+            (StoragePoolClass::Premium, "\"enterprise\""),
             (
-                StoragePoolClass::EnterpriseDedicated,
+                StoragePoolClass::Dedicated,
                 "\"enterprise_dedicated\"",
             ),
         ];

@@ -739,7 +739,7 @@ mod tests {
             .with_tenant("tnt_acme")
             .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
             .with_region_home("us-east-1")
-            .with_storage_pool_class(StoragePoolClass::Business)
+            .with_storage_pool_class(StoragePoolClass::Standard)
     }
 
     #[test]
@@ -775,7 +775,7 @@ mod tests {
             path.restore_checkpoints_subprefix(),
             "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/restore-checkpoints/"
         );
-        assert_eq!(path.storage_pool_class, StoragePoolClass::Business);
+        assert_eq!(path.storage_pool_class, StoragePoolClass::Standard);
     }
 
     #[test]
@@ -886,8 +886,8 @@ mod tests {
     fn dr_builder_for_pool_accepts_matching_class() {
         let ns = dr_addressable_namespace();
         let path =
-            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Business).unwrap();
-        assert_eq!(path.storage_pool_class, StoragePoolClass::Business);
+            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Standard).unwrap();
+        assert_eq!(path.storage_pool_class, StoragePoolClass::Standard);
     }
 
     #[test]
@@ -899,7 +899,7 @@ mod tests {
             DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Pooled).unwrap_err();
         match err {
             PathResolverError::PoolClassMismatch { expected, got } => {
-                assert_eq!(expected, StoragePoolClass::Business);
+                assert_eq!(expected, StoragePoolClass::Standard);
                 assert_eq!(got, StoragePoolClass::Pooled);
             }
             other => panic!("expected PoolClassMismatch, got {other:?}"),
