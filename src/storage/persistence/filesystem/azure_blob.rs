@@ -370,7 +370,7 @@ mod tests {
     #[tokio::test]
     async fn store_for_builds_with_workload_identity_no_secret() {
         let cfg = AzureBlobConfig {
-            account: "anvaiopsmvp".to_string(),
+            account: "teststorageacct".to_string(),
             access_key: None,
             use_emulator: false,
             endpoint: None,
@@ -391,7 +391,7 @@ mod tests {
     #[tokio::test]
     async fn store_for_builds_with_user_assigned_managed_identity() {
         let cfg = AzureBlobConfig {
-            account: "anvaiopsmvp".to_string(),
+            account: "teststorageacct".to_string(),
             access_key: None,
             use_emulator: false,
             client_id: Some("00000000-0000-0000-0000-000000000003".to_string()),

@@ -36,7 +36,7 @@ impl ByoClient {
         for chunk in texts.chunks(self.batch_size) {
             let body = serde_json::json!({
                 "texts": chunk,
-                "model_hint": "anvaiops-byo",
+                "model_hint": "proximadb-byo",
             });
             let mut req = client.post(&self.url).json(&body);
             req = match &self.auth {
