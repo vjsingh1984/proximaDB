@@ -23,10 +23,11 @@ use crate::{
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
     stripe::{COLUMN_META_SIZE, ColumnMeta},
     rowgroup::RowGroupBlock,
-    vparam::{QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock},
+    vparam::{QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
-use proximadb_codec::functions::sq8;
+use proximadb_codec::functions::{rabitq, sq8};
+use proximadb_codec::{RaBitQCode, RaBitQParams};
 
 /// A parsed but not yet decoded PAX block.
 ///
@@ -286,7 +287,37 @@ impl<'a> PaxBlockReader<'a> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
         let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind == QUANT_RABITQ_RESERVED {
+            // RaBitQ is a search representation; reconstruction is coarse (direction
+            // preserved, magnitude approximate). Exact rerank uses a full-f32 tier.
+            let col = self.vparams.rabitq_column(column_id)?;
+            return decode_rabitq_reconstruct(raw, n, entry, col).ok();
+        }
         decode_f32_vec_v2(raw, n, entry).ok()
+    }
+
+    /// Return the per-row RaBitQ codes for a binary-quantized vector column,
+    /// together with the [`RaBitQParams`] needed to rotate a query and run the
+    /// distance estimator. `None` if the column is absent or not RaBitQ-encoded.
+    /// This is the candidate-scan path (rank by codes, then rerank full vectors).
+    pub fn decode_rabitq_codes(
+        &self,
+        column_id: i32,
+    ) -> Option<(RaBitQParams, Vec<Option<RaBitQCode>>)> {
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_RABITQ_RESERVED {
+            return None;
+        }
+        let col = self.vparams.rabitq_column(column_id)?;
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let codes = parse_rabitq_codes(raw, n, entry.dim as usize).ok()?;
+        let params = RaBitQParams {
+            dim: entry.dim as usize,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        Some((params, codes))
     }
 
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
@@ -369,7 +400,9 @@ pub(crate) fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usiz
                 )
             }
         }
-        ProximaScheme::Sq8 => bail!("SQ8 is a vector-only scheme; not valid for i64 columns"),
+        ProximaScheme::Sq8 | ProximaScheme::RaBitQ => {
+            bail!("quantized vector scheme not valid for i64 columns")
+        }
         ProximaScheme::Adaptive => functions::adaptive::decode_i64(data, count),
     }
 }
@@ -470,6 +503,65 @@ fn decode_dictionary_str_col(data: &[u8], count: usize) -> Result<Vec<Option<Str
 /// `entry` supplies the dimension, the quant kind, and (for SQ8) the affine
 /// params. Each present row is a fixed-size slice at `i * stride`; absent rows
 /// (validity bit clear) are returned as `None` regardless of their zeroed slot.
+/// Parse the per-row RaBitQ codes from a stripe (validity bitmap + per row
+/// `[dist f32][inv_factor f32][bits ceil(dim/8)]`). Absent rows → `None`.
+fn parse_rabitq_codes(
+    data: &[u8],
+    count: usize,
+    dim: usize,
+) -> Result<Vec<Option<RaBitQCode>>> {
+    let bits_len = dim.div_ceil(8);
+    let stride = 8 + bits_len;
+    let bm_len = count.div_ceil(8);
+    if data.len() < bm_len {
+        bail!("RaBitQ stripe shorter than validity bitmap");
+    }
+    let bitmap = &data[..bm_len];
+    let payload = &data[bm_len..];
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        if bitmap[i / 8] & (1u8 << (i % 8)) == 0 {
+            out.push(None);
+            continue;
+        }
+        let off = i * stride;
+        if off + stride > payload.len() {
+            bail!("RaBitQ row {i} exceeds stripe length");
+        }
+        let dist = f32::from_le_bytes(payload[off..off + 4].try_into()?);
+        let inv = f32::from_le_bytes(payload[off + 4..off + 8].try_into()?);
+        let bits = payload[off + 8..off + stride].to_vec();
+        out.push(Some(RaBitQCode {
+            bits,
+            dist_to_centroid: dist,
+            inv_factor: inv,
+        }));
+    }
+    Ok(out)
+}
+
+/// Decode a RaBitQ stripe to coarse reconstructed f32 vectors (lossy; for the
+/// uniform decode API). Rebuilds the rotation from the column seed once.
+fn decode_rabitq_reconstruct(
+    data: &[u8],
+    count: usize,
+    entry: &crate::vparam::VectorParamEntry,
+    col: &RaBitQColumn,
+) -> Result<Vec<Option<Vec<f32>>>> {
+    let dim = entry.dim as usize;
+    let codes = parse_rabitq_codes(data, count, dim)?;
+    let params = RaBitQParams {
+        dim,
+        seed: col.seed,
+        centroid: col.centroid.clone(),
+    };
+    let rotation = rabitq::build_rotation(dim, col.seed);
+    Ok(codes
+        .into_iter()
+        .map(|c| c.map(|code| rabitq::reconstruct(&code, &params, &rotation)))
+        .collect())
+}
+
 pub(crate) fn decode_f32_vec_v2(
     data: &[u8],
     count: usize,
@@ -838,6 +930,47 @@ mod tests {
         let dim = 4usize;
         let expected = n.div_ceil(8) + n * dim; // SQ8: 1 byte/value, no dim prefix
         assert_eq!(meta.stripe_len as usize, expected);
+    }
+
+    #[test]
+    fn rabitq_stripe_codes_and_reconstruction() {
+        // Exercise the RaBitQ stripe format + decode without the env-gated writer
+        // path: encode a stripe, parse its codes, run the estimator, and check the
+        // coarse reconstruction preserves direction.
+        use proximadb_codec::functions::rabitq;
+        let dim = 32u32;
+        let dimu = dim as usize;
+        let near: Vec<f32> = (0..dimu).map(|i| (i as f32 * 0.07).sin()).collect();
+        let mut far = near.clone();
+        for (i, f) in far.iter_mut().enumerate() {
+            *f += if i % 2 == 0 { 2.5 } else { -2.5 };
+        }
+        let vals: Vec<Option<&[f32]>> = vec![Some(near.as_slice()), None, Some(far.as_slice())];
+
+        let (stripe, col) = crate::writer::encode_f32_vec_rabitq(&vals, dim, col_id::EMBED_BASE);
+        let codes = parse_rabitq_codes(&stripe, vals.len(), dimu).unwrap();
+        assert!(codes[0].is_some() && codes[1].is_none() && codes[2].is_some());
+
+        let params = RaBitQParams {
+            dim: dimu,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        let rotation = rabitq::build_rotation(dimu, col.seed);
+
+        // Estimator: query == near ⇒ near scores lower (closer) than far.
+        let q = rabitq::rotate_query(&near, &params, &rotation);
+        let near_score = codes[0].as_ref().unwrap().l2_rank_score(&q);
+        let far_score = codes[2].as_ref().unwrap().l2_rank_score(&q);
+        assert!(near_score < far_score, "near {near_score} !< far {far_score}");
+
+        // Coarse reconstruction preserves direction (positive cosine).
+        let recon = rabitq::reconstruct(codes[0].as_ref().unwrap(), &params, &rotation);
+        let dot: f32 = recon.iter().zip(near.iter()).map(|(a, b)| a * b).sum();
+        let nr: f32 = recon.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nn: f32 = near.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let cos = dot / (nr * nn + 1e-9);
+        assert!(cos > 0.3, "reconstruction cosine {cos} too low");
     }
 
     #[test]

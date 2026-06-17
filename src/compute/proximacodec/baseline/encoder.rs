@@ -66,8 +66,8 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::VByte => functions::vbyte::encode_f32(values),
             ProximaScheme::Dictionary => functions::dictionary::encode_f32(values),
             ProximaScheme::Simple8b => functions::simple8b::encode_f32(values),
-            ProximaScheme::Sq8 => Err(anyhow::anyhow!(
-                "SQ8 is a vector-only scheme with per-column params; use the PAX block path"
+            ProximaScheme::Sq8 | ProximaScheme::RaBitQ => Err(anyhow::anyhow!(
+                "quantized vector scheme needs per-column params; use the PAX block path"
             )),
             ProximaScheme::Adaptive => functions::adaptive::encode_f32(values),
         }
@@ -96,8 +96,8 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::VByte => functions::vbyte::encode_i64(values),
             ProximaScheme::Dictionary => functions::dictionary::encode_i64(values),
             ProximaScheme::Simple8b => functions::simple8b::encode_i64(values),
-            ProximaScheme::Sq8 => Err(anyhow::anyhow!(
-                "SQ8 is a vector-only scheme with per-column params; use the PAX block path"
+            ProximaScheme::Sq8 | ProximaScheme::RaBitQ => Err(anyhow::anyhow!(
+                "quantized vector scheme needs per-column params; use the PAX block path"
             )),
             ProximaScheme::Adaptive => functions::adaptive::encode_i64(values),
         }
@@ -126,8 +126,8 @@ impl RawEncoder for BaselineEncoder {
             ProximaScheme::VByte => functions::vbyte::encode_i32(values),
             ProximaScheme::Dictionary => functions::dictionary::encode_i32(values),
             ProximaScheme::Simple8b => functions::simple8b::encode_i32(values),
-            ProximaScheme::Sq8 => Err(anyhow::anyhow!(
-                "SQ8 is a vector-only scheme with per-column params; use the PAX block path"
+            ProximaScheme::Sq8 | ProximaScheme::RaBitQ => Err(anyhow::anyhow!(
+                "quantized vector scheme needs per-column params; use the PAX block path"
             )),
             ProximaScheme::Adaptive => functions::adaptive::encode_i32(values),
         }

@@ -34,7 +34,7 @@ use crate::{
     row_dir::{RowDirectory, RowEntry},
     rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
-    vparam::{QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock, VectorParamEntry},
+    vparam::{QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock, VectorParamEntry},
 };
 
 /// Size of the trailing `BlockFooter` in bytes.
@@ -273,6 +273,8 @@ impl PaxBlockWriter {
         let mut stripes: Vec<ColumnStripe> = Vec::new();
         // One entry per vector column, serialized into the footer's VectorParamBlock.
         let mut vparam_entries: Vec<VectorParamEntry> = Vec::new();
+        // RaBitQ side data (centroid + seed) for any binary-quantized columns.
+        let mut vparam_rabitq: Vec<RaBitQColumn> = Vec::new();
 
         if mode.has_column_stripes() {
             stripes.push(
@@ -374,10 +376,13 @@ impl PaxBlockWriter {
 
             for (i, col) in self.embeddings.iter().enumerate() {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
-                let (stripe, entry) =
+                let (stripe, entry, rabitq_col) =
                     self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
                 stripes.push(stripe);
                 vparam_entries.push(entry);
+                if let Some(rc) = rabitq_col {
+                    vparam_rabitq.push(rc);
+                }
             }
         }
 
@@ -416,6 +421,7 @@ impl PaxBlockWriter {
         } else {
             let block = VectorParamBlock {
                 entries: vparam_entries,
+                rabitq: vparam_rabitq,
             };
             let bytes = block.to_bytes();
             let offset = col_footer_offset + col_footer_bytes.len() as u32;
@@ -582,7 +588,7 @@ impl PaxBlockWriter {
         &self,
         id: i32,
         vals: &[Option<&[f32]>],
-    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+    ) -> Result<(ColumnStripe, VectorParamEntry, Option<RaBitQColumn>)> {
         let dim = vector_column_dim(vals)?;
         let flat: Vec<f32> = vals
             .iter()
@@ -592,18 +598,25 @@ impl PaxBlockWriter {
         // Always derive exact bounds (vmin/vmax) for the entry, even for raw.
         let params = functions::sq8::fit_params(&flat);
 
-        let use_sq8 = dim > 0 && !flat.is_empty() && !sq8_disabled();
-        let (data, scheme, quant_kind) = if use_sq8 {
+        let has_data = dim > 0 && !flat.is_empty();
+        let use_rabitq = has_data && rabitq_enabled();
+        let use_sq8 = has_data && !use_rabitq && !sq8_disabled();
+        let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
+            let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
+            (bytes, ProximaScheme::RaBitQ, QUANT_RABITQ_RESERVED, Some(col))
+        } else if use_sq8 {
             (
                 encode_f32_vec_sq8(vals, dim, &params),
                 ProximaScheme::Sq8,
                 QUANT_SQ8,
+                None,
             )
         } else {
             (
                 encode_f32_vec_raw_v2(vals, dim),
                 ProximaScheme::Raw,
                 QUANT_RAW_F32,
+                None,
             )
         };
 
@@ -635,7 +648,7 @@ impl PaxBlockWriter {
             quant_kind,
             params,
         };
-        Ok((ColumnStripe::new(meta, data), entry))
+        Ok((ColumnStripe::new(meta, data), entry, rabitq_col))
     }
 
     fn build_f64_stripe(
@@ -1183,6 +1196,55 @@ fn sq8_disabled() -> bool {
     std::env::var_os("PROXIMADB_VECTOR_SQ8_DISABLE").is_some()
 }
 
+/// Opt-in: when set, vector stripes use RaBitQ binary quantization (1 bit/dim)
+/// instead of SQ8 — ~30× smaller, search-by-estimator + rerank. Off by default
+/// (SQ8 reconstructs more faithfully without a rerank tier).
+fn rabitq_enabled() -> bool {
+    std::env::var_os("PROXIMADB_VECTOR_RABITQ").is_some()
+}
+
+/// Encode a RaBitQ vector stripe: validity bitmap + per row
+/// `[dist_to_centroid f32][inv_factor f32][sign bits ceil(dim/8)]` (fixed
+/// stride, null rows zeroed). Returns the stripe bytes and the per-column
+/// [`RaBitQColumn`] side data (centroid + rotation seed) for the
+/// `VectorParamBlock` trailer.
+pub(crate) fn encode_f32_vec_rabitq(
+    vals: &[Option<&[f32]>],
+    dim: u32,
+    column_id: i32,
+) -> (Vec<u8>, RaBitQColumn) {
+    let dim_us = dim as usize;
+    let refs: Vec<&[f32]> = vals.iter().filter_map(|o| *o).collect();
+    // Deterministic per-column seed so decode reproduces the same rotation.
+    let seed = 0x9E37_79B9_7F4A_7C15u64 ^ (column_id as u64);
+    let params = functions::rabitq::fit_params(&refs, dim_us, seed);
+    let rotation = functions::rabitq::build_rotation(dim_us, seed);
+    let bits_len = dim_us.div_ceil(8);
+    let stride = 8 + bits_len; // dist(4) + inv_factor(4) + bits
+
+    let mut buf = vector_validity_bitmap(vals);
+    buf.reserve(vals.len() * stride);
+    for v in vals {
+        match v {
+            Some(vec) => {
+                let code = functions::rabitq::encode(vec, &params, &rotation);
+                buf.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                buf.extend_from_slice(&code.inv_factor.to_le_bytes());
+                buf.extend_from_slice(&code.bits);
+            }
+            None => buf.extend(std::iter::repeat_n(0u8, stride)),
+        }
+    }
+    (
+        buf,
+        RaBitQColumn {
+            column_id,
+            seed,
+            centroid: params.centroid,
+        },
+    )
+}
+
 /// Fixed dimensionality of a vector column = the length of its first non-null
 /// row. Returns 0 when every row is null. Errors if two non-null rows disagree
 /// (embedding columns are fixed-width by construction).
@@ -1270,8 +1332,8 @@ fn encode_i64_with_scheme(values: &[i64], scheme: &ProximaScheme) -> Result<Vec<
         ProximaScheme::SparseCOO => functions::sparse_coo::encode_i64(values),
         ProximaScheme::Dictionary => functions::dictionary::encode_i64(values),
         ProximaScheme::RunLength => functions::run_length::encode_i64(values),
-        ProximaScheme::Sq8 => {
-            anyhow::bail!("SQ8 is a vector-only scheme; not valid for i64 columns")
+        ProximaScheme::Sq8 | ProximaScheme::RaBitQ => {
+            anyhow::bail!("quantized vector scheme not valid for i64 columns")
         }
         ProximaScheme::Adaptive => functions::adaptive::encode_i64(values),
     }

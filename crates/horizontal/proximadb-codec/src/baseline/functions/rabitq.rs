@@ -110,6 +110,41 @@ pub fn apply_rotation(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
         .collect()
 }
 
+/// Apply the inverse (transpose) rotation: `out = Pᵀ · v`. For an orthonormal
+/// `P`, `Pᵀ = P⁻¹`, so this maps a rotated vector back to the original basis.
+pub fn apply_rotation_transpose(rotation: &[Vec<f32>], v: &[f32]) -> Vec<f32> {
+    let dim = v.len();
+    let mut out = vec![0.0f32; dim];
+    for (i, &vi) in v.iter().enumerate() {
+        // row i of P contributes vi to every output column (Pᵀ column i = P row i).
+        for (o, &r) in out.iter_mut().zip(rotation[i].iter()) {
+            *o += vi * r;
+        }
+    }
+    out
+}
+
+/// Coarse full-vector reconstruction from a binary code (lossy — RaBitQ is a
+/// search representation, not an exact codec). Rebuilds `centroid + ‖r‖ · Pᵀx̄`
+/// where `x̄ᵢ = ±1/√D`. Direction is preserved far better than magnitude.
+pub fn reconstruct(code: &RaBitQCode, params: &RaBitQParams, rotation: &[Vec<f32>]) -> Vec<f32> {
+    let dim = params.dim;
+    let inv_sqrt_d = 1.0 / (dim as f32).sqrt();
+    let x_rotated: Vec<f32> = (0..dim)
+        .map(|i| {
+            let set = code.bits[i / 8] & (1u8 << (i % 8)) != 0;
+            if set { inv_sqrt_d } else { -inv_sqrt_d }
+        })
+        .collect();
+    let x_unit = apply_rotation_transpose(rotation, &x_rotated);
+    params
+        .centroid
+        .iter()
+        .zip(x_unit.iter())
+        .map(|(&c, &u)| c + code.dist_to_centroid * u)
+        .collect()
+}
+
 /// Fit per-column params: centroid = mean of `vectors`; `seed` chosen by caller
 /// (stored in the block so decode reproduces the rotation).
 pub fn fit_params(vectors: &[&[f32]], dim: usize, seed: u64) -> RaBitQParams {

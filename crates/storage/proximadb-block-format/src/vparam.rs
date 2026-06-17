@@ -83,10 +83,63 @@ impl VectorParamEntry {
     }
 }
 
-/// The full block — one entry per vector column.
+/// Per-column RaBitQ side data: the centroid all vectors are centered by and the
+/// `u64` seed that regenerates the orthonormal rotation. Stored in the
+/// [`VectorParamBlock`] trailer for `quant_kind == QUANT_RABITQ` columns (the
+/// per-row sign bits + corrective scalars live in the stripe, not here).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RaBitQColumn {
+    pub column_id: i32,
+    pub seed: u64,
+    pub centroid: Vec<f32>,
+}
+
+impl RaBitQColumn {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(16 + self.centroid.len() * 4);
+        b.extend_from_slice(&self.column_id.to_le_bytes());
+        b.extend_from_slice(&self.seed.to_le_bytes());
+        b.extend_from_slice(&(self.centroid.len() as u32).to_le_bytes());
+        for &c in &self.centroid {
+            b.extend_from_slice(&c.to_le_bytes());
+        }
+        b
+    }
+
+    /// Parse one entry, returning it and the number of bytes consumed.
+    fn from_bytes(b: &[u8]) -> Result<(Self, usize)> {
+        if b.len() < 16 {
+            bail!("RaBitQColumn header too short: {}", b.len());
+        }
+        let column_id = i32::from_le_bytes(b[0..4].try_into()?);
+        let seed = u64::from_le_bytes(b[4..12].try_into()?);
+        let dim = u32::from_le_bytes(b[12..16].try_into()?) as usize;
+        let need = 16 + dim * 4;
+        if b.len() < need {
+            bail!("RaBitQColumn truncated: have {}, need {need}", b.len());
+        }
+        let mut centroid = Vec::with_capacity(dim);
+        for i in 0..dim {
+            let off = 16 + i * 4;
+            centroid.push(f32::from_le_bytes(b[off..off + 4].try_into()?));
+        }
+        Ok((
+            Self {
+                column_id,
+                seed,
+                centroid,
+            },
+            need,
+        ))
+    }
+}
+
+/// The full block — one entry per vector column, plus RaBitQ side data for any
+/// binary-quantized columns (a trailer after the fixed entries array).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct VectorParamBlock {
     pub entries: Vec<VectorParamEntry>,
+    pub rabitq: Vec<RaBitQColumn>,
 }
 
 impl VectorParamBlock {
@@ -95,10 +148,15 @@ impl VectorParamBlock {
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = Vec::with_capacity(4 + self.entries.len() * ENTRY_SIZE);
+        let mut buf = Vec::with_capacity(4 + self.entries.len() * ENTRY_SIZE + 4);
         buf.extend_from_slice(&(self.entries.len() as u32).to_le_bytes());
         for e in &self.entries {
             buf.extend_from_slice(&e.to_bytes());
+        }
+        // RaBitQ trailer (always written; count 0 when none).
+        buf.extend_from_slice(&(self.rabitq.len() as u32).to_le_bytes());
+        for r in &self.rabitq {
+            buf.extend_from_slice(&r.to_bytes());
         }
         buf
     }
@@ -117,12 +175,30 @@ impl VectorParamBlock {
             let off = 4 + i * ENTRY_SIZE;
             entries.push(VectorParamEntry::from_bytes(&b[off..off + ENTRY_SIZE])?);
         }
-        Ok(Self { entries })
+        // Parse the RaBitQ trailer if present (clean-break v2 always writes it,
+        // but tolerate its absence for forward-compatible callers).
+        let mut rabitq = Vec::new();
+        let mut cur = need;
+        if b.len() >= cur + 4 {
+            let nr = u32::from_le_bytes(b[cur..cur + 4].try_into()?) as usize;
+            cur += 4;
+            for _ in 0..nr {
+                let (col, consumed) = RaBitQColumn::from_bytes(&b[cur..])?;
+                rabitq.push(col);
+                cur += consumed;
+            }
+        }
+        Ok(Self { entries, rabitq })
     }
 
     /// Find the entry for `column_id`, if present.
     pub fn get(&self, column_id: i32) -> Option<&VectorParamEntry> {
         self.entries.iter().find(|e| e.column_id == column_id)
+    }
+
+    /// Find the RaBitQ side data for `column_id`, if present.
+    pub fn rabitq_column(&self, column_id: i32) -> Option<&RaBitQColumn> {
+        self.rabitq.iter().find(|r| r.column_id == column_id)
     }
 }
 
@@ -157,9 +233,11 @@ mod tests {
                     },
                 },
             ],
+            rabitq: Vec::new(),
         };
         let bytes = block.to_bytes();
-        assert_eq!(bytes.len(), 4 + 2 * ENTRY_SIZE);
+        // entries + the (empty) RaBitQ trailer count.
+        assert_eq!(bytes.len(), 4 + 2 * ENTRY_SIZE + 4);
         let back = VectorParamBlock::from_bytes(&bytes).unwrap();
         assert_eq!(back, block);
         assert_eq!(back.get(20).unwrap().dim, 384);
@@ -169,10 +247,39 @@ mod tests {
     }
 
     #[test]
+    fn vparam_block_with_rabitq_trailer_round_trips() {
+        let block = VectorParamBlock {
+            entries: vec![VectorParamEntry {
+                column_id: 20,
+                dim: 4,
+                quant_kind: QUANT_RABITQ_RESERVED,
+                params: Sq8Params {
+                    scale: 0.0,
+                    offset: 0.0,
+                    vmin: -1.0,
+                    vmax: 1.0,
+                },
+            }],
+            rabitq: vec![RaBitQColumn {
+                column_id: 20,
+                seed: 0xDEAD_BEEF_1234_5678,
+                centroid: vec![0.1, -0.2, 0.3, -0.4],
+            }],
+        };
+        let back = VectorParamBlock::from_bytes(&block.to_bytes()).unwrap();
+        assert_eq!(back, block);
+        let rq = back.rabitq_column(20).unwrap();
+        assert_eq!(rq.seed, 0xDEAD_BEEF_1234_5678);
+        assert_eq!(rq.centroid, vec![0.1, -0.2, 0.3, -0.4]);
+        assert!(back.rabitq_column(99).is_none());
+    }
+
+    #[test]
     fn empty_vparam_block_round_trips() {
         let block = VectorParamBlock::default();
         let bytes = block.to_bytes();
-        assert_eq!(bytes.len(), 4);
+        // entries count (0) + RaBitQ trailer count (0).
+        assert_eq!(bytes.len(), 8);
         assert!(VectorParamBlock::from_bytes(&bytes).unwrap().is_empty());
     }
 }

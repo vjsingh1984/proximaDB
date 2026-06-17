@@ -100,6 +100,7 @@ pub use row_dir::{ROW_ENTRY_SIZE, RowDirectory, RowEntry, row_flags};
 pub use stripe::{BlockStats, COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe};
 pub use rowgroup::{ROW_GROUP_SIZE, RowGroupBlock, RowGroupEntry};
 pub use vparam::{
-    QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, VectorParamBlock, VectorParamEntry,
+    QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+    VectorParamEntry,
 };
 pub use writer::{BLOCK_FOOTER_SIZE, BlockFooter, PaxBlockWriter};
