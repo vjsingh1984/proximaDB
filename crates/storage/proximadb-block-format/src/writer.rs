@@ -38,7 +38,8 @@ use crate::{
 /// Size of the trailing `BlockFooter` in bytes.
 pub const BLOCK_FOOTER_SIZE: usize = 32;
 
-/// Trailing block footer: encodes offsets for the column meta and row directory.
+/// Trailing block footer: encodes offsets for the column meta, row directory,
+/// and the v2 footer-resident side regions (vector params + row-group index).
 ///
 /// Layout (little-endian, 32 bytes):
 /// ```text
@@ -47,15 +48,29 @@ pub const BLOCK_FOOTER_SIZE: usize = 32;
 /// [8..12]  stripe_start       u32  byte offset from block start
 /// [12..16] n_columns          u32
 /// [16..20] n_rows             u32
-/// [20..32] _reserved          [u8;12]
+/// [20..24] vparam_offset      u32  byte offset of VectorParamBlock (0 = none)
+/// [24..28] vparam_len         u32  byte length of VectorParamBlock (0 = none)
+/// [28..32] rgdir_offset       u32  byte offset of RowGroupBlock (0 = none)
 /// ```
-#[derive(Debug, Clone, Copy)]
+///
+/// `vparam_*` and `rgdir_offset` reclaim what were 12 reserved bytes in v1.
+/// A reader fetches the trailing 32 bytes first, then range-reads the column
+/// footer, the VectorParamBlock, and the RowGroupBlock from these offsets —
+/// the footer-first object-store read path.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BlockFooter {
     pub col_footer_offset: u32,
     pub row_dir_offset: u32,
     pub stripe_start: u32,
     pub n_columns: u32,
     pub n_rows: u32,
+    /// Byte offset of the [`VectorParamBlock`] from block start (0 = none).
+    pub vparam_offset: u32,
+    /// Byte length of the [`VectorParamBlock`] (0 = none).
+    pub vparam_len: u32,
+    /// Byte offset of the row-group sub-index (`RowGroupBlock`) from block
+    /// start (0 = none). Its length is derivable from its own header.
+    pub rgdir_offset: u32,
 }
 
 impl BlockFooter {
@@ -66,6 +81,9 @@ impl BlockFooter {
         b[8..12].copy_from_slice(&self.stripe_start.to_le_bytes());
         b[12..16].copy_from_slice(&self.n_columns.to_le_bytes());
         b[16..20].copy_from_slice(&self.n_rows.to_le_bytes());
+        b[20..24].copy_from_slice(&self.vparam_offset.to_le_bytes());
+        b[24..28].copy_from_slice(&self.vparam_len.to_le_bytes());
+        b[28..32].copy_from_slice(&self.rgdir_offset.to_le_bytes());
         b
     }
 
@@ -80,6 +98,9 @@ impl BlockFooter {
             stripe_start: u32::from_le_bytes(b[8..12].try_into()?),
             n_columns: u32::from_le_bytes(b[12..16].try_into()?),
             n_rows: u32::from_le_bytes(b[16..20].try_into()?),
+            vparam_offset: u32::from_le_bytes(b[20..24].try_into()?),
+            vparam_len: u32::from_le_bytes(b[24..28].try_into()?),
+            rgdir_offset: u32::from_le_bytes(b[28..32].try_into()?),
         })
     }
 }
@@ -390,6 +411,9 @@ impl PaxBlockWriter {
             stripe_start,
             n_columns: stripes.len() as u32,
             n_rows: n as u32,
+            // Populated by the SQ8 vector-stripe (VectorParamBlock) and
+            // row-group sub-index passes; 0 = absent.
+            ..BlockFooter::default()
         };
 
         let total_size = block_footer_offset + BLOCK_FOOTER_SIZE as u32;
@@ -1124,6 +1148,28 @@ mod tests {
         assert_eq!(header.max_timestamp_ns, 2000);
         assert!(header.tenant_matches(fnv1a_hash("tenant_a")));
         assert!(!header.tenant_matches(fnv1a_hash("tenant_b")));
+    }
+
+    #[test]
+    fn block_footer_carries_vparam_and_rgdir_offsets() {
+        // v2 BlockFooter reclaims the old 12 reserved bytes for the
+        // VectorParamBlock + RowGroupBlock pointers; they must round-trip.
+        let f = BlockFooter {
+            col_footer_offset: 1024,
+            row_dir_offset: 64,
+            stripe_start: 128,
+            n_columns: 5,
+            n_rows: 42,
+            vparam_offset: 2048,
+            vparam_len: 96,
+            rgdir_offset: 2144,
+        };
+        let f2 = BlockFooter::from_bytes(&f.to_bytes()).unwrap();
+        assert_eq!(f2.vparam_offset, 2048);
+        assert_eq!(f2.vparam_len, 96);
+        assert_eq!(f2.rgdir_offset, 2144);
+        assert_eq!(f2.col_footer_offset, 1024);
+        assert_eq!(f2.n_rows, 42);
     }
 
     #[test]
