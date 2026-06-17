@@ -64,6 +64,9 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::VByte => functions::vbyte::decode_f32(data, count),
             ProximaScheme::Dictionary => functions::dictionary::decode_f32(data, count),
             ProximaScheme::Simple8b => functions::simple8b::decode_f32(data, count),
+            ProximaScheme::Sq8 => Err(anyhow::anyhow!(
+                "SQ8 is a vector-only scheme with per-column params; use the PAX block path"
+            )),
             ProximaScheme::Adaptive => functions::adaptive::decode_f32(data, count),
         }
     }
@@ -89,6 +92,9 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::VByte => functions::vbyte::decode_i64(data, count),
             ProximaScheme::Dictionary => functions::dictionary::decode_i64(data, count),
             ProximaScheme::Simple8b => functions::simple8b::decode_i64(data, count),
+            ProximaScheme::Sq8 => Err(anyhow::anyhow!(
+                "SQ8 is a vector-only scheme with per-column params; use the PAX block path"
+            )),
             ProximaScheme::Adaptive => functions::adaptive::decode_i64(data, count),
         }
     }
@@ -114,6 +120,9 @@ impl RawDecoder for BaselineDecoder {
             ProximaScheme::VByte => functions::vbyte::decode_i32(data, count),
             ProximaScheme::Dictionary => functions::dictionary::decode_i32(data, count),
             ProximaScheme::Simple8b => functions::simple8b::decode_i32(data, count),
+            ProximaScheme::Sq8 => Err(anyhow::anyhow!(
+                "SQ8 is a vector-only scheme with per-column params; use the PAX block path"
+            )),
             ProximaScheme::Adaptive => functions::adaptive::decode_i32(data, count),
         }
     }

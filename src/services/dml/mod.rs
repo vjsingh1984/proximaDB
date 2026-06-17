@@ -837,7 +837,7 @@ impl DmlService {
                     .record_store
                     .scan_records_filtered(
                         &table_schema,
-                        TableRecordScanRequest {
+                        TableRecordScanRequest { filter: None,
                             table_id: table_id_name.clone(),
                             limit,
                             include_vector: true,
@@ -928,7 +928,7 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 &table_schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: table_id_name.clone(),
                     limit,
                     include_vector: true,
@@ -1192,7 +1192,7 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 table_schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: table_id_name.to_string(),
                     limit,
                     include_vector: true,
@@ -1303,7 +1303,7 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 table_schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: table_id_name.to_string(),
                     limit,
                     include_vector: true,
@@ -3508,7 +3508,7 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 table_schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: table_id_name.to_string(),
                     limit: None,
                     include_vector: true,

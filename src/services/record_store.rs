@@ -17,7 +17,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::Schema as ArrowSchema;
 use async_trait::async_trait;
 use futures::StreamExt;
-use proximadb_block_format::{BlockCompression, BlockMode};
+use proximadb_block_format::{BlockCompression, BlockMode, col_id};
 use proximadb_catalog::{
     CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization, CatalogTableSchema,
     CatalogWorkloadProfile,
@@ -33,6 +33,7 @@ use proximadb_storage_common::{
     CanonicalOpenTableFormat, CanonicalOperation, CanonicalWalEntry, ProjectionDirective,
     pax_block::{PAX_SEGMENT_EXT, PaxSegmentScanner, PaxSegmentWriter, ScanPredicate},
     proxima_arrow,
+    ranged_segment::RangedSegmentReader,
 };
 
 use crate::metrics::saas_billing_metrics::record_object_store_op;
@@ -95,7 +96,7 @@ pub struct TableRecordGetRequest {
 pub type TableRecordGetResponse = Option<RichSearchResult>;
 
 /// Scan request against a cataloged table/collection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TableRecordScanRequest {
     /// xCatalog table or current compatibility collection identifier.
     pub table_id: String,
@@ -105,6 +106,13 @@ pub struct TableRecordScanRequest {
     pub include_vector: bool,
     /// Whether scalar/document props should be included.
     pub include_props: bool,
+    /// Optional structured predicate for **block/row-group pushdown** on stores
+    /// that read PAX segments from object storage (e.g.
+    /// [`ObjectStoreVectorRecordStore`]). When set, the store skips segment
+    /// blocks the filter provably excludes before fetching their bodies; the
+    /// row-exact `predicate` closure of `scan_records_filtered` is still applied
+    /// on top. `None` ⇒ whole-segment read, preserving prior caller behavior.
+    pub filter: Option<proximadb_filter_expression::FilterExpression>,
 }
 
 /// Scan result shape for canonical table-record reads.
@@ -517,7 +525,7 @@ pub trait TableRecordStore: Send + Sync {
             let hits = self
                 .scan_records_filtered(
                     table_schema,
-                    TableRecordScanRequest {
+                    TableRecordScanRequest { filter: None,
                         table_id: table_id.to_string(),
                         limit: Some(1),
                         include_vector: false,
@@ -1268,7 +1276,7 @@ impl DirectWalTableRecordStore {
             RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
                 .scan_records(
                     table_schema,
-                    TableRecordScanRequest {
+                    TableRecordScanRequest { filter: None,
                         table_id: table_schema.name.clone(),
                         limit: None,
                         include_vector: false,
@@ -1887,7 +1895,7 @@ mod tests {
         let got = store
             .scan_records_filtered(
                 &schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: "orders".to_string(),
                     limit: None,
                     include_vector: true,
@@ -1967,7 +1975,7 @@ mod tests {
         let scanned = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: "orders".to_string(),
                     limit: Some(10),
                     include_vector: true,
@@ -2173,7 +2181,7 @@ mod tests {
         let rows = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: "events".to_string(),
                     limit: Some(10),
                     include_vector: true,
@@ -2658,7 +2666,7 @@ mod tests {
         let mut scanned = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: "orders".to_string(),
                     limit: None,
                     include_vector: true,
@@ -2753,7 +2761,7 @@ mod tests {
         let scanned = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest {
+                TableRecordScanRequest { filter: None,
                     table_id: "vectors".to_string(),
                     limit: None,
                     include_vector: true,
@@ -3187,5 +3195,91 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             }
         }
         Ok(records)
+    }
+    /// Override: when a structured `request.filter` is present, read segments via
+    /// footer-first **ranged** reads and skip whole blocks the filter provably
+    /// excludes (predicate pushdown) before fetching their bodies. The row-exact
+    /// `predicate` closure is still applied on top (block pruning is coarse), and
+    /// the scan stops at `request.limit`. With no structured filter, this falls
+    /// back to the default materialize-then-filter behavior.
+    async fn scan_records_filtered(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        predicate: Option<&RecordScanPredicate<'_>>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        let Some(filter) = request.filter.clone() else {
+            let limit = request.limit.unwrap_or(usize::MAX);
+            let mut req = request;
+            req.limit = None;
+            let mut all = self.scan_records(table_schema, req, tenant_context).await?;
+            let mut kept = 0usize;
+            all.retain(|record| {
+                if kept >= limit {
+                    return false;
+                }
+                let keep = predicate.is_none_or(|p| p(record));
+                if keep {
+                    kept += 1;
+                }
+                keep
+            });
+            return Ok(all);
+        };
+
+        let limit = request.limit.unwrap_or(usize::MAX);
+        let base = object_store_write_base_path(table_schema, tenant_context);
+        let prefix = ObjectPath::from(format!("{base}segments"));
+        let segment_paths =
+            list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
+        let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
+        record_object_store_op(tenant_id, "list_pax");
+        let field_to_col: &(dyn Fn(&str) -> Option<i32> + Sync) = &pax_field_to_col;
+
+        let mut out = Vec::new();
+        'segments: for path in segment_paths {
+            record_object_store_op(tenant_id, "fetch_pax_ranged");
+            let reader = RangedSegmentReader::open(self.bridge.as_ref(), path.clone(), tenant_id)
+                .await
+                .map_err(|err| anyhow!("ranged open '{path}': {err}"))?;
+            let recs = reader
+                .read_records_pruned(&filter, field_to_col, &[], &[])
+                .await
+                .map_err(|err| anyhow!("ranged pruned read '{path}': {err}"))?;
+            for mut record in recs {
+                record.variation_id = Some(table_schema.name.clone());
+                if predicate.is_none_or(|p| p(&record)) {
+                    if !request.include_vector {
+                        record.embeddings.clear();
+                    }
+                    if !request.include_props {
+                        record.props.clear();
+                    }
+                    out.push(record);
+                    if out.len() >= limit {
+                        break 'segments;
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+}
+
+
+/// Map a filter field name to its canonical PAX column id for block/row-group
+/// pruning. Only the fixed canonical columns carry zone-map stripes; user
+/// metadata lives in opaque `props` (not prunable), so unknown fields return
+/// `None` and the pruner conservatively keeps the block (no false negatives).
+fn pax_field_to_col(field: &str) -> Option<i32> {
+    match field {
+        "id" | "oid" => Some(col_id::OID),
+        "tenant_id" => Some(col_id::TENANT_ID),
+        "created_at" | "created_at_ns" => Some(col_id::CREATED_AT),
+        "updated_at" | "updated_at_ns" => Some(col_id::UPDATED_AT),
+        "valid_from" | "valid_from_ns" => Some(col_id::VALID_FROM),
+        "valid_to" | "valid_to_ns" => Some(col_id::VALID_TO),
+        _ => None,
     }
 }
