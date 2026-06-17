@@ -291,7 +291,11 @@ pub struct DrBillingBinding {
     #[serde(alias = "billing_sku")]
     pub cost_binding_ref: String,
     pub cost_owner_tenant_id: String,
-    #[serde(default, alias = "billing_approval_id", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "billing_approval_id",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub billing_approval_id: Option<String>,
     #[serde(
         default,

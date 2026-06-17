@@ -199,9 +199,7 @@ pub fn evaluate_row_groups(
         return (0..count.max(1)).collect();
     }
     (0..n)
-        .filter(|&rg| {
-            eval_rg(source, filter, rg as u32, field_to_col) == PruneResult::MayMatch
-        })
+        .filter(|&rg| eval_rg(source, filter, rg as u32, field_to_col) == PruneResult::MayMatch)
         .collect()
 }
 
@@ -285,7 +283,11 @@ fn prune_i64_bounds(
                     .iter()
                     .filter_map(as_i64)
                     .any(|v| entry.i64_range_overlaps(v, v));
-                if had_ints { keep_if(any) } else { PruneResult::MayMatch }
+                if had_ints {
+                    keep_if(any)
+                } else {
+                    PruneResult::MayMatch
+                }
             }
             None => PruneResult::MayMatch,
         },
@@ -339,8 +341,10 @@ fn evaluate_leaf(
         DT_I64 => prune_i64(source, col, op, value),
         DT_F64 => prune_f64(source, col, op, value),
         DT_BYTES_OR_STR => prune_str(source, col, op, value),
-        // Vectors and anything else: not a scalar zone-map-prunable column.
-        DT_F32_VECTOR | _ => PruneResult::MayMatch,
+        // Vectors are not a scalar zone-map-prunable column.
+        DT_F32_VECTOR => PruneResult::MayMatch,
+        // Anything else: unknown/non-prunable column type — conservative.
+        _ => PruneResult::MayMatch,
     }
 }
 
@@ -382,21 +386,22 @@ fn prune_i64(
             None => PruneResult::MayMatch,
         },
         ComparisonOperator::Between => match between_bounds(value) {
-            Some((lo, hi)) => keep_if(source.range_overlaps_i64(
-                col,
-                lo as i64,
-                hi.ceil() as i64,
-            )),
+            Some((lo, hi)) => keep_if(source.range_overlaps_i64(col, lo as i64, hi.ceil() as i64)),
             None => PruneResult::MayMatch,
         },
         ComparisonOperator::In => match value.as_array() {
             // Keep if ANY listed value may be present; skip only if none can.
             Some(arr) => {
-                let any = arr.iter().filter_map(as_i64).any(|v| {
-                    source.may_contain_i64(col, v)
-                });
+                let any = arr
+                    .iter()
+                    .filter_map(as_i64)
+                    .any(|v| source.may_contain_i64(col, v));
                 let had_ints = arr.iter().any(|v| as_i64(v).is_some());
-                if had_ints { keep_if(any) } else { PruneResult::MayMatch }
+                if had_ints {
+                    keep_if(any)
+                } else {
+                    PruneResult::MayMatch
+                }
             }
             None => PruneResult::MayMatch,
         },
@@ -517,7 +522,10 @@ mod tests {
             operator: ComparisonOperator::GreaterThan,
             value: json!(1200),
         };
-        assert_eq!(evaluate_block(&reader, &gt2, &field_map), PruneResult::MayMatch);
+        assert_eq!(
+            evaluate_block(&reader, &gt2, &field_map),
+            PruneResult::MayMatch
+        );
 
         // AND(empty, overlap) → Skip (any conjunct prunes).
         let and = FilterExpression::And(vec![gt.clone(), gt2.clone()]);
@@ -525,7 +533,10 @@ mod tests {
 
         // OR(empty, overlap) → MayMatch (not all disjuncts prune).
         let or = FilterExpression::Or(vec![gt.clone(), gt2.clone()]);
-        assert_eq!(evaluate_block(&reader, &or, &field_map), PruneResult::MayMatch);
+        assert_eq!(
+            evaluate_block(&reader, &or, &field_map),
+            PruneResult::MayMatch
+        );
 
         // OR(empty, empty) → Skip.
         let gt3 = FilterExpression::Comparison {
@@ -538,7 +549,10 @@ mod tests {
 
         // NOT(empty) → never prune.
         let not = FilterExpression::Not(Box::new(gt));
-        assert_eq!(evaluate_block(&reader, &not, &field_map), PruneResult::MayMatch);
+        assert_eq!(
+            evaluate_block(&reader, &not, &field_map),
+            PruneResult::MayMatch
+        );
 
         // Unknown column → never prune.
         let unknown = FilterExpression::Comparison {
@@ -588,7 +602,8 @@ mod tests {
         let n = (rgs + 1000) as usize; // two row groups
         let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 0);
         for i in 0..n {
-            w.add_record(&rec(&format!("r{i}"), 1000 + i as i64)).unwrap();
+            w.add_record(&rec(&format!("r{i}"), 1000 + i as i64))
+                .unwrap();
         }
         let block = w.flush().unwrap();
         let reader = PaxBlockReader::open(&block).unwrap();
@@ -651,6 +666,9 @@ mod tests {
             operator: ComparisonOperator::In,
             value: json!([7000, 8000]),
         };
-        assert_eq!(evaluate_block(&reader, &in_out, &field_map), PruneResult::Skip);
+        assert_eq!(
+            evaluate_block(&reader, &in_out, &field_map),
+            PruneResult::Skip
+        );
     }
 }

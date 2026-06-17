@@ -525,7 +525,8 @@ pub trait TableRecordStore: Send + Sync {
             let hits = self
                 .scan_records_filtered(
                     table_schema,
-                    TableRecordScanRequest { filter: None,
+                    TableRecordScanRequest {
+                        filter: None,
                         table_id: table_id.to_string(),
                         limit: Some(1),
                         include_vector: false,
@@ -1276,7 +1277,8 @@ impl DirectWalTableRecordStore {
             RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
                 .scan_records(
                     table_schema,
-                    TableRecordScanRequest { filter: None,
+                    TableRecordScanRequest {
+                        filter: None,
                         table_id: table_schema.name.clone(),
                         limit: None,
                         include_vector: false,
@@ -1895,7 +1897,8 @@ mod tests {
         let got = store
             .scan_records_filtered(
                 &schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: None,
                     table_id: "orders".to_string(),
                     limit: None,
                     include_vector: true,
@@ -1975,7 +1978,8 @@ mod tests {
         let scanned = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: None,
                     table_id: "orders".to_string(),
                     limit: Some(10),
                     include_vector: true,
@@ -2181,7 +2185,8 @@ mod tests {
         let rows = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: None,
                     table_id: "events".to_string(),
                     limit: Some(10),
                     include_vector: true,
@@ -2666,7 +2671,8 @@ mod tests {
         let mut scanned = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: None,
                     table_id: "orders".to_string(),
                     limit: None,
                     include_vector: true,
@@ -2761,7 +2767,8 @@ mod tests {
         let scanned = store
             .scan_records(
                 &schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: None,
                     table_id: "vectors".to_string(),
                     limit: None,
                     include_vector: true,
@@ -3325,7 +3332,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
                 self.index_cache.clone(),
             )
             .await
-                .map_err(|err| anyhow!("ranged open '{path}': {err}"))?;
+            .map_err(|err| anyhow!("ranged open '{path}': {err}"))?;
             let recs = reader
                 .read_records_pruned(&filter, field_to_col, &[], &[])
                 .await
@@ -3349,7 +3356,6 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         Ok(out)
     }
 }
-
 
 /// Map a filter field name to its canonical PAX column id for block/row-group
 /// pruning. Only the fixed canonical columns carry zone-map stripes; user

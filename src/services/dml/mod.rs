@@ -253,7 +253,9 @@ fn predicate_tree_to_filter_expression(
                 } => Some(Fx::Comparison {
                     field,
                     operator: FxOp::In,
-                    value: serde_json::Value::Array(literals.iter().map(|l| literal_to_json(l)).collect()),
+                    value: serde_json::Value::Array(
+                        literals.iter().map(|l| literal_to_json(l)).collect(),
+                    ),
                 }),
                 _ => None,
             }
@@ -263,7 +265,11 @@ fn predicate_tree_to_filter_expression(
                 .iter()
                 .filter_map(predicate_tree_to_filter_expression)
                 .collect();
-            if parts.is_empty() { None } else { Some(Fx::And(parts)) }
+            if parts.is_empty() {
+                None
+            } else {
+                Some(Fx::And(parts))
+            }
         }
         RelationalPredicateTree::Or(children) => {
             // Every disjunct must convert, else a block matching the dropped
@@ -916,7 +922,8 @@ impl DmlService {
                     .record_store
                     .scan_records_filtered(
                         &table_schema,
-                        TableRecordScanRequest { filter: None,
+                        TableRecordScanRequest {
+                            filter: None,
                             table_id: table_id_name.clone(),
                             limit,
                             include_vector: true,
@@ -1007,7 +1014,8 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 &table_schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: None,
                     table_id: table_id_name.clone(),
                     limit,
                     include_vector: true,
@@ -1385,7 +1393,8 @@ impl DmlService {
             .record_store
             .scan_records_filtered(
                 table_schema,
-                TableRecordScanRequest { filter: None,
+                TableRecordScanRequest {
+                    filter: None,
                     table_id: table_id_name.to_string(),
                     limit,
                     include_vector: true,

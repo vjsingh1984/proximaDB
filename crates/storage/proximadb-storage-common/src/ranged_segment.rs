@@ -180,10 +180,13 @@ impl<'b> RangedSegmentReader<'b> {
                 return Ok(layout);
             }
             let layout = Arc::new(self.build_block_layout(block_offset, block_size).await?);
-            fc.insert(key, layout.approx_bytes() as u32, layout.clone()).await;
+            fc.insert(key, layout.approx_bytes() as u32, layout.clone())
+                .await;
             return Ok(layout);
         }
-        Ok(Arc::new(self.build_block_layout(block_offset, block_size).await?))
+        Ok(Arc::new(
+            self.build_block_layout(block_offset, block_size).await?,
+        ))
     }
 
     /// Range-read one block's footer + metadata regions and assemble its
@@ -195,14 +198,20 @@ impl<'b> RangedSegmentReader<'b> {
     ) -> Result<BlockLayout, StorageError> {
         // 1. trailing block footer.
         let tail = self
-            .fetch(block_offset + block_size - BLOCK_FOOTER_SIZE as u64, BLOCK_FOOTER_SIZE as u64)
+            .fetch(
+                block_offset + block_size - BLOCK_FOOTER_SIZE as u64,
+                BLOCK_FOOTER_SIZE as u64,
+            )
             .await?;
         let footer = BlockFooter::from_bytes(&tail).map_err(|e| fs_err("block footer", e))?;
 
         // 2. metadata regions (offsets are block-relative; add block_offset).
         let mr = metadata_ranges(&footer, block_size);
         let col_meta = self
-            .fetch(block_offset + mr.col_meta.start, mr.col_meta.end - mr.col_meta.start)
+            .fetch(
+                block_offset + mr.col_meta.start,
+                mr.col_meta.end - mr.col_meta.start,
+            )
             .await?;
         let vparam = match mr.vparam {
             Some(r) => Some(self.fetch(block_offset + r.start, r.end - r.start).await?),
@@ -416,7 +425,8 @@ mod tests {
         );
         for i in 0..n {
             let v: Vec<f32> = (0..dim).map(|d| (i * dim + d) as f32 * 0.001).collect();
-            w.add_record(&rec(&format!("r{i}"), 1000 + i as i64, v)).unwrap();
+            w.add_record(&rec(&format!("r{i}"), 1000 + i as i64, v))
+                .unwrap();
         }
         let meta = w.finish().unwrap();
         std::fs::read(&meta.path).unwrap()
@@ -437,8 +447,9 @@ mod tests {
             bytes,
             ranged_bytes: AtomicU64::new(0),
         };
-        let footer_cache: Arc<FooterCache> =
-            Arc::new(FooterCache::new(proximadb_cache::CacheBudget::new(1 << 30, 1 << 30)));
+        let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
+            proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
+        ));
 
         // created_at = 1000 + i; keep only the upper portion.
         let threshold = 1000 + 1500i64;
@@ -454,30 +465,63 @@ mod tests {
 
         // Pass 1 — populates the footer cache, prunes low blocks.
         let r1 = RangedSegmentReader::open_with_cache(
-            &bridge, Path::from("seg.pax"), Some("t"), Some(footer_cache.clone()), None,
-        ).await.unwrap();
-        let recs1 = r1.read_records_pruned(&filter, &field_to_col, &[], &[]).await.unwrap();
+            &bridge,
+            Path::from("seg.pax"),
+            Some("t"),
+            Some(footer_cache.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        let recs1 = r1
+            .read_records_pruned(&filter, &field_to_col, &[], &[])
+            .await
+            .unwrap();
         let after_1 = bridge.ranged_bytes.load(Ordering::Relaxed);
 
         // (1) correctness: every returned row is in a surviving block (block-
         // granular pruning) and at least the true matches are present.
-        assert!(!recs1.is_empty() && recs1.len() < 2000, "pruned to a subset");
+        assert!(
+            !recs1.is_empty() && recs1.len() < 2000,
+            "pruned to a subset"
+        );
         assert!(recs1.iter().all(|r| r.created_at_ns >= threshold - 8192));
-        assert!(recs1.iter().filter(|r| r.created_at_ns >= threshold).count() > 0);
+        assert!(
+            recs1
+                .iter()
+                .filter(|r| r.created_at_ns >= threshold)
+                .count()
+                > 0
+        );
         // (2) pruning: low block bodies skipped → less than the whole segment.
-        assert!(after_1 < total, "pass 1 {after_1} not < whole segment {total}");
+        assert!(
+            after_1 < total,
+            "pass 1 {after_1} not < whole segment {total}"
+        );
         footer_cache.sync().await;
 
         // Pass 2 — same query, footer cache hot.
         let r2 = RangedSegmentReader::open_with_cache(
-            &bridge, Path::from("seg.pax"), Some("t"), Some(footer_cache.clone()), None,
-        ).await.unwrap();
-        let recs2 = r2.read_records_pruned(&filter, &field_to_col, &[], &[]).await.unwrap();
+            &bridge,
+            Path::from("seg.pax"),
+            Some("t"),
+            Some(footer_cache.clone()),
+            None,
+        )
+        .await
+        .unwrap();
+        let recs2 = r2
+            .read_records_pruned(&filter, &field_to_col, &[], &[])
+            .await
+            .unwrap();
         let delta_2 = bridge.ranged_bytes.load(Ordering::Relaxed) - after_1;
 
         // (3) cache: identical results, fewer bytes (footers served from cache).
         assert_eq!(recs2.len(), recs1.len(), "cached pass must match");
-        assert!(delta_2 < after_1, "pass 2 {delta_2} not < pass 1 {after_1} (cache miss)");
+        assert!(
+            delta_2 < after_1,
+            "pass 2 {delta_2} not < pass 1 {after_1} (cache miss)"
+        );
     }
 
     #[tokio::test]
@@ -493,11 +537,13 @@ mod tests {
             .await
             .unwrap();
         assert!(reader.block_count() >= 1);
-        let ranged = reader.read_f32_vec_column(col_id::EMBED_BASE).await.unwrap();
+        let ranged = reader
+            .read_f32_vec_column(col_id::EMBED_BASE)
+            .await
+            .unwrap();
 
         // Whole-segment reference decode.
-        let mut scanner =
-            PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()).unwrap();
+        let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()).unwrap();
         let records = scanner.read_records(&[], &[]).unwrap();
         let expected: Vec<Option<Vec<f32>>> = records
             .iter()
@@ -569,8 +615,9 @@ mod tests {
             bytes,
             ranged_bytes: AtomicU64::new(0),
         };
-        let footer_cache: Arc<FooterCache> =
-            Arc::new(FooterCache::new(proximadb_cache::CacheBudget::new(1 << 30, 1 << 30)));
+        let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
+            proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
+        ));
 
         // First read populates the footer cache for every block.
         let r1 = RangedSegmentReader::open_with_cache(
@@ -617,25 +664,41 @@ mod tests {
             bytes,
             ranged_bytes: AtomicU64::new(0),
         };
-        let footer_cache: Arc<FooterCache> =
-            Arc::new(FooterCache::new(proximadb_cache::CacheBudget::new(1 << 30, 1 << 30)));
+        let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
+            proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
+        ));
 
         let ra = RangedSegmentReader::open_with_cache(
-            &bridge, Path::from("seg.pax"), Some("tenantA"), Some(footer_cache.clone()), None,
-        ).await.unwrap();
+            &bridge,
+            Path::from("seg.pax"),
+            Some("tenantA"),
+            Some(footer_cache.clone()),
+            None,
+        )
+        .await
+        .unwrap();
         ra.read_i64_column(col_id::CREATED_AT).await.unwrap();
         footer_cache.sync().await;
         let after_a = bridge.ranged_bytes.load(Ordering::Relaxed);
 
         // Tenant B, same path: must do its own footer reads (A's entries are isolated).
         let rb = RangedSegmentReader::open_with_cache(
-            &bridge, Path::from("seg.pax"), Some("tenantB"), Some(footer_cache.clone()), None,
-        ).await.unwrap();
+            &bridge,
+            Path::from("seg.pax"),
+            Some("tenantB"),
+            Some(footer_cache.clone()),
+            None,
+        )
+        .await
+        .unwrap();
         rb.read_i64_column(col_id::CREATED_AT).await.unwrap();
         let delta_b = bridge.ranged_bytes.load(Ordering::Relaxed) - after_a;
 
         // B re-reads footers (not served from A) → fetched bytes ≈ A's footer+stripe.
-        assert!(delta_b >= after_a / 2, "tenant B {delta_b} unexpectedly served from tenant A's cache");
+        assert!(
+            delta_b >= after_a / 2,
+            "tenant B {delta_b} unexpectedly served from tenant A's cache"
+        );
         // Per-tenant stats reflect both tenants.
         footer_cache.sync().await;
         let stats = footer_cache.tenant_stats();

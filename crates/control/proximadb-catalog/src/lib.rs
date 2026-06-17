@@ -2757,8 +2757,16 @@ mod tests {
         // wire values still deserialize via serde aliases (back-compat).
         let classes = [
             (StoragePoolClass::Pooled, "\"pooled\"", None),
-            (StoragePoolClass::Standard, "\"standard\"", Some("\"business\"")),
-            (StoragePoolClass::Premium, "\"premium\"", Some("\"enterprise\"")),
+            (
+                StoragePoolClass::Standard,
+                "\"standard\"",
+                Some("\"business\""),
+            ),
+            (
+                StoragePoolClass::Premium,
+                "\"premium\"",
+                Some("\"enterprise\""),
+            ),
             (
                 StoragePoolClass::Dedicated,
                 "\"dedicated\"",

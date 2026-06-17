@@ -235,7 +235,8 @@ impl TableRecordSourceReader for TableRecordStoreSourceReader {
                 .record_store
                 .scan_records(
                     scan_schema,
-                    TableRecordScanRequest { filter: None,
+                    TableRecordScanRequest {
+                        filter: None,
                         table_id: table.qualified_name(),
                         limit: None,
                         include_vector: true,

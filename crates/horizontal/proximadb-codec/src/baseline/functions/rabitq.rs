@@ -164,7 +164,11 @@ pub fn fit_params(vectors: &[&[f32]], dim: usize, seed: u64) -> RaBitQParams {
             *c *= inv;
         }
     }
-    RaBitQParams { dim, seed, centroid }
+    RaBitQParams {
+        dim,
+        seed,
+        centroid,
+    }
 }
 
 fn packed_len(dim: usize) -> usize {
@@ -259,7 +263,10 @@ pub fn encode_column(vectors: &[&[f32]], params: &RaBitQParams) -> Result<Vec<Ra
         bail!("RaBitQ requires dim > 0");
     }
     let rotation = build_rotation(params.dim, params.seed);
-    Ok(vectors.iter().map(|v| encode(v, params, &rotation)).collect())
+    Ok(vectors
+        .iter()
+        .map(|v| encode(v, params, &rotation))
+        .collect())
 }
 
 #[cfg(test)]
@@ -286,7 +293,10 @@ mod tests {
         let rv = apply_rotation(&rot, &v);
         let nv: f32 = v.iter().map(|x| x * x).sum();
         let nrv: f32 = rv.iter().map(|x| x * x).sum();
-        assert!((nv - nrv).abs() / nv < 1e-2, "norm not preserved: {nv} vs {nrv}");
+        assert!(
+            (nv - nrv).abs() / nv < 1e-2,
+            "norm not preserved: {nv} vs {nrv}"
+        );
     }
 
     #[test]
@@ -294,7 +304,9 @@ mod tests {
         let dim = 20;
         let params = fit_params(&[], dim, 7); // zero centroid
         let rot = build_rotation(dim, 7);
-        let v: Vec<f32> = (0..dim).map(|i| if i % 3 == 0 { 1.0 } else { -0.5 }).collect();
+        let v: Vec<f32> = (0..dim)
+            .map(|i| if i % 3 == 0 { 1.0 } else { -0.5 })
+            .collect();
         let code = encode(&v, &params, &rot);
         assert_eq!(code.bits.len(), dim.div_ceil(8));
         // recompute expected signs from the rotated unit residual
@@ -354,8 +366,11 @@ mod tests {
         let refs: Vec<&[f32]> = corpus.iter().map(|v| v.as_slice()).collect();
 
         // exact top-10
-        let mut exact: Vec<(usize, f32)> =
-            corpus.iter().enumerate().map(|(i, v)| (i, l2(&query, v))).collect();
+        let mut exact: Vec<(usize, f32)> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (i, l2(&query, v)))
+            .collect();
         exact.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let exact_top: std::collections::HashSet<usize> =
             exact.iter().take(10).map(|(i, _)| *i).collect();
@@ -365,15 +380,25 @@ mod tests {
         let rot = build_rotation(dim, seed);
         let q = rotate_query(&query, &params, &rot);
         let codes: Vec<RaBitQCode> = refs.iter().map(|v| encode(v, &params, &rot)).collect();
-        let mut approx: Vec<(usize, f32)> =
-            codes.iter().enumerate().map(|(i, c)| (i, c.l2_rank_score(&q))).collect();
+        let mut approx: Vec<(usize, f32)> = codes
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i, c.l2_rank_score(&q)))
+            .collect();
         approx.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let mut cand: Vec<usize> = approx.iter().take(30).map(|(i, _)| *i).collect();
-        cand.sort_by(|&a, &b| l2(&query, &corpus[a]).partial_cmp(&l2(&query, &corpus[b])).unwrap());
+        cand.sort_by(|&a, &b| {
+            l2(&query, &corpus[a])
+                .partial_cmp(&l2(&query, &corpus[b]))
+                .unwrap()
+        });
         let got: std::collections::HashSet<usize> = cand.into_iter().take(10).collect();
 
         let hits = got.iter().filter(|i| exact_top.contains(i)).count();
         let recall = hits as f32 / 10.0;
-        assert!(recall >= 0.8, "RaBitQ recall@10 with rerank = {recall} (< 0.8)");
+        assert!(
+            recall >= 0.8,
+            "RaBitQ recall@10 with rerank = {recall} (< 0.8)"
+        );
     }
 }

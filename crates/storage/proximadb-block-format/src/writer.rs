@@ -34,7 +34,10 @@ use crate::{
     row_dir::{RowDirectory, RowEntry},
     rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
-    vparam::{QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock, VectorParamEntry},
+    vparam::{
+        QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+        VectorParamEntry,
+    },
 };
 
 /// Size of the trailing `BlockFooter` in bytes.
@@ -438,7 +441,8 @@ impl PaxBlockWriter {
             &self.valid_to,
             &self.edge_weight,
         );
-        let vparam_end = col_footer_offset + col_footer_bytes.len() as u32 + vparam_bytes.len() as u32;
+        let vparam_end =
+            col_footer_offset + col_footer_bytes.len() as u32 + vparam_bytes.len() as u32;
         let (rgdir_bytes, rgdir_offset) = if rg_index.is_empty() {
             (Vec::new(), 0u32)
         } else {
@@ -603,7 +607,12 @@ impl PaxBlockWriter {
         let use_sq8 = has_data && !use_rabitq && !sq8_disabled();
         let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
             let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
-            (bytes, ProximaScheme::RaBitQ, QUANT_RABITQ_RESERVED, Some(col))
+            (
+                bytes,
+                ProximaScheme::RaBitQ,
+                QUANT_RABITQ_RESERVED,
+                Some(col),
+            )
         } else if use_sq8 {
             (
                 encode_f32_vec_sq8(vals, dim, &params),
@@ -1104,6 +1113,9 @@ fn encode_str_dictionary_col(values: &[Option<&str>]) -> (Vec<u8>, u32) {
     (buf, null_count)
 }
 
+/// `(column id, per-row i64 accessor)` pair for the prunable timestamp columns.
+type I64ColAccessor<'a> = (i32, &'a dyn Fn(usize) -> Option<i64>);
+
 /// Build the row-group sub-index from the writer's in-memory scalar columns.
 ///
 /// For each row group, records per-column `[min, max]` for the prunable i64
@@ -1123,10 +1135,12 @@ fn build_row_group_index(
     let size = crate::rowgroup::ROW_GROUP_SIZE;
     let mut entries: Vec<RowGroupEntry> = Vec::new();
 
-    let i64_cols: [(i32, &dyn Fn(usize) -> Option<i64>); 4] = [
+    let i64_cols: [I64ColAccessor; 4] = [
         (col_id::CREATED_AT, &|i| created_at.get(i).copied()),
         (col_id::UPDATED_AT, &|i| updated_at.get(i).copied()),
-        (col_id::VALID_FROM, &|i| valid_from.get(i).copied().flatten()),
+        (col_id::VALID_FROM, &|i| {
+            valid_from.get(i).copied().flatten()
+        }),
         (col_id::VALID_TO, &|i| valid_to.get(i).copied().flatten()),
     ];
 

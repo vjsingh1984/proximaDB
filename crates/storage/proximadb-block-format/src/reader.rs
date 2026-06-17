@@ -21,8 +21,8 @@ use proximadb_codec::{ProximaScheme, functions};
 use crate::{
     header::{BlockHeader, HEADER_SIZE, fnv1a_hash},
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
-    stripe::{COLUMN_META_SIZE, ColumnMeta},
     rowgroup::RowGroupBlock,
+    stripe::{COLUMN_META_SIZE, ColumnMeta},
     vparam::{QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
@@ -367,7 +367,11 @@ fn i64_scheme_from_encoding_id(encoding_id: u8) -> Option<ProximaScheme> {
     }
 }
 
-pub(crate) fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Result<Vec<i64>> {
+pub(crate) fn decode_i64_with_encoding(
+    data: &[u8],
+    encoding_id: u8,
+    count: usize,
+) -> Result<Vec<i64>> {
     let scheme = i64_scheme_from_encoding_id(encoding_id)
         .ok_or_else(|| anyhow::anyhow!("unknown PAX i64 encoding id: {encoding_id}"))?;
     match scheme {
@@ -505,11 +509,7 @@ fn decode_dictionary_str_col(data: &[u8], count: usize) -> Result<Vec<Option<Str
 /// (validity bit clear) are returned as `None` regardless of their zeroed slot.
 /// Parse the per-row RaBitQ codes from a stripe (validity bitmap + per row
 /// `[dist f32][inv_factor f32][bits ceil(dim/8)]`). Absent rows → `None`.
-fn parse_rabitq_codes(
-    data: &[u8],
-    count: usize,
-    dim: usize,
-) -> Result<Vec<Option<RaBitQCode>>> {
+fn parse_rabitq_codes(data: &[u8], count: usize, dim: usize) -> Result<Vec<Option<RaBitQCode>>> {
     let bits_len = dim.div_ceil(8);
     let stride = 8 + bits_len;
     let bm_len = count.div_ceil(8);
@@ -915,7 +915,12 @@ mod tests {
                     &format!("r{i}"),
                     "t",
                     1000 + i,
-                    vec![i as f32 * 0.1, i as f32 * 0.2, i as f32 * 0.3, i as f32 * 0.4],
+                    vec![
+                        i as f32 * 0.1,
+                        i as f32 * 0.2,
+                        i as f32 * 0.3,
+                        i as f32 * 0.4,
+                    ],
                 ))
                 .unwrap();
         }
@@ -962,7 +967,10 @@ mod tests {
         let q = rabitq::rotate_query(&near, &params, &rotation);
         let near_score = codes[0].as_ref().unwrap().l2_rank_score(&q);
         let far_score = codes[2].as_ref().unwrap().l2_rank_score(&q);
-        assert!(near_score < far_score, "near {near_score} !< far {far_score}");
+        assert!(
+            near_score < far_score,
+            "near {near_score} !< far {far_score}"
+        );
 
         // Coarse reconstruction preserves direction (positive cosine).
         let recon = rabitq::reconstruct(codes[0].as_ref().unwrap(), &params, &rotation);

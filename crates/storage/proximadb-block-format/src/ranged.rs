@@ -98,7 +98,9 @@ impl BlockLayout {
         }
         let mut columns = Vec::with_capacity(n);
         for i in 0..n {
-            columns.push(ColumnMeta::from_bytes(&col_meta_bytes[i * COLUMN_META_SIZE..])?);
+            columns.push(ColumnMeta::from_bytes(
+                &col_meta_bytes[i * COLUMN_META_SIZE..],
+            )?);
         }
         let vparams = match vparam_bytes {
             Some(b) => VectorParamBlock::from_bytes(b)?,
@@ -165,7 +167,12 @@ impl BlockLayout {
     /// Returns `None` for non-vector columns or out-of-range rows. The caller
     /// must ALSO fetch the stripe's validity bitmap prefix (the first
     /// `ceil(n_rows/8)` bytes of the stripe) to know which rows are null.
-    pub fn vector_row_range(&self, column_id: i32, start_row: u32, end_row: u32) -> Option<Range<u64>> {
+    pub fn vector_row_range(
+        &self,
+        column_id: i32,
+        start_row: u32,
+        end_row: u32,
+    ) -> Option<Range<u64>> {
         let entry = self.vparams.get(column_id)?;
         let m = self.meta(column_id)?;
         let n = self.footer.n_rows;
@@ -230,7 +237,8 @@ mod tests {
             self.data.len() as u64
         }
         fn read(&self, r: Range<u64>) -> Vec<u8> {
-            self.bytes_read.set(self.bytes_read.get() + (r.end - r.start));
+            self.bytes_read
+                .set(self.bytes_read.get() + (r.end - r.start));
             self.data[r.start as usize..r.end as usize].to_vec()
         }
     }
@@ -310,8 +318,8 @@ mod tests {
         let block = build_block(256, 256); // big vector stripe
         let src = CountingSource::new(block.clone());
 
-        let footer = BlockFooter::from_bytes(&src.read(footer_tail_range(src.size()).unwrap()))
-            .unwrap();
+        let footer =
+            BlockFooter::from_bytes(&src.read(footer_tail_range(src.size()).unwrap())).unwrap();
         let mr = metadata_ranges(&footer, src.size());
         let col_meta = src.read(mr.col_meta);
         let vparam = mr.vparam.map(|r| src.read(r));
@@ -321,7 +329,9 @@ mod tests {
 
         let stripe_r = layout.column_stripe_range(col_id::CREATED_AT).unwrap();
         let stripe = src.read(stripe_r);
-        let created = layout.decode_i64_column(col_id::CREATED_AT, &stripe).unwrap();
+        let created = layout
+            .decode_i64_column(col_id::CREATED_AT, &stripe)
+            .unwrap();
         assert_eq!(created.len(), 256);
         assert_eq!(created[0], 1000);
 

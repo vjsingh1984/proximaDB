@@ -202,13 +202,15 @@ mod tests {
         let query = gen_vec(7);
         let candidates: Vec<Vec<f32>> = (0..n).map(gen_vec).collect();
 
-        let l2 = |a: &[f32], b: &[f32]| -> f32 {
-            a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum()
-        };
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
 
         // exact top-10
-        let mut exact: Vec<(usize, f32)> =
-            candidates.iter().enumerate().map(|(i, c)| (i, l2(&query, c))).collect();
+        let mut exact: Vec<(usize, f32)> = candidates
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i, l2(&query, c)))
+            .collect();
         exact.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let exact_top: std::collections::HashSet<usize> =
             exact.iter().take(10).map(|(i, _)| *i).collect();
@@ -222,8 +224,11 @@ mod tests {
             .map(|c| round_trip(c, &params).unwrap())
             .collect();
 
-        let mut approx: Vec<(usize, f32)> =
-            recon.iter().enumerate().map(|(i, c)| (i, l2(&query, c))).collect();
+        let mut approx: Vec<(usize, f32)> = recon
+            .iter()
+            .enumerate()
+            .map(|(i, c)| (i, l2(&query, c)))
+            .collect();
         approx.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap());
         let approx_top: Vec<usize> = approx.iter().take(10).map(|(i, _)| *i).collect();
 

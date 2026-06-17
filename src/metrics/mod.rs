@@ -190,6 +190,7 @@ pub mod cache;
 pub mod collection_pin_metrics;
 pub mod collectors;
 pub mod compression;
+pub mod consumption_metrics;
 /// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.
 pub mod dr_metrics;
 pub mod exporters;
@@ -201,7 +202,6 @@ pub mod query_service;
 /// gauge + observation / hot-swap counters for /route-health +
 /// /recall-tune.
 pub mod recall_drift_metrics;
-pub mod consumption_metrics;
 pub mod schema;
 pub mod store;
 /// TD-064 predicate-aware vector search shortfall counters.

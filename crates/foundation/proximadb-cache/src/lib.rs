@@ -123,9 +123,16 @@ impl TierPolicy {
         let mut tiers = HashMap::new();
         tiers.insert(
             "default".into(),
-            TierSpec { weight: 1, floor_frac: 0.0, ceiling_frac: 1.0 },
+            TierSpec {
+                weight: 1,
+                floor_frac: 0.0,
+                ceiling_frac: 1.0,
+            },
         );
-        Self { default_tier: "default".into(), tiers }
+        Self {
+            default_tier: "default".into(),
+            tiers,
+        }
     }
 
     /// Absolute [`TenantLimits`] for `tier` at a given pool `total_bytes`
@@ -279,16 +286,18 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         let mut builder = Cache::builder()
             .max_capacity(budget.total_bytes)
             .weigher(|_k: &CacheKey, v: &CachedValue<V>| v.weight)
-            .eviction_listener(move |k: Arc<CacheKey>, v: CachedValue<V>, cause: RemovalCause| {
-                listener_global.fetch_sub(v.weight as u64, Ordering::Relaxed);
-                if let Some(u) = listener_usage.get(&k.tenant) {
-                    u.bytes.fetch_sub(v.weight as u64, Ordering::Relaxed);
-                    // Count true capacity/expiry evictions (not explicit removals).
-                    if matches!(cause, RemovalCause::Size | RemovalCause::Expired) {
-                        u.evictions.fetch_add(1, Ordering::Relaxed);
+            .eviction_listener(
+                move |k: Arc<CacheKey>, v: CachedValue<V>, cause: RemovalCause| {
+                    listener_global.fetch_sub(v.weight as u64, Ordering::Relaxed);
+                    if let Some(u) = listener_usage.get(&k.tenant) {
+                        u.bytes.fetch_sub(v.weight as u64, Ordering::Relaxed);
+                        // Count true capacity/expiry evictions (not explicit removals).
+                        if matches!(cause, RemovalCause::Size | RemovalCause::Expired) {
+                            u.evictions.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
-                }
-            });
+                },
+            );
         if let Some(ttl) = budget.ttl {
             builder = builder.time_to_live(ttl);
         }
@@ -329,11 +338,14 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         if let Some(resolver) = &self.limits_resolver {
             return resolver(tenant);
         }
-        self.per_tenant.get(tenant).copied().unwrap_or(TenantLimits {
-            floor_bytes: self.default_floor,
-            hard_ceiling_bytes: self.default_hard_ceiling,
-            weight: 1,
-        })
+        self.per_tenant
+            .get(tenant)
+            .copied()
+            .unwrap_or(TenantLimits {
+                floor_bytes: self.default_floor,
+                hard_ceiling_bytes: self.default_hard_ceiling,
+                weight: 1,
+            })
     }
 
     /// Sum of weights over tenants currently holding bytes (for the contended
@@ -438,7 +450,8 @@ impl<V: Clone + Send + Sync + 'static> TenantCache<V> {
         let u = self.usage_for(tenant);
         u.bytes.fetch_add(weight as u64, Ordering::Relaxed);
         u.inserts.fetch_add(1, Ordering::Relaxed);
-        self.global_bytes.fetch_add(weight as u64, Ordering::Relaxed);
+        self.global_bytes
+            .fetch_add(weight as u64, Ordering::Relaxed);
     }
 
     /// Drain moka's pending maintenance (eviction listener, etc.). Call before
@@ -530,20 +543,31 @@ mod tests {
     #[tokio::test]
     async fn per_tenant_ceiling_caps_one_tenant() {
         // Big global pool, tiny per-tenant ceiling.
-        let c: TenantCache<u64> =
-            TenantCache::new(CacheBudget::new(1 << 30, /*ceiling*/ 100));
+        let c: TenantCache<u64> = TenantCache::new(CacheBudget::new(1 << 30, /*ceiling*/ 100));
         // Tenant A floods past its 100-byte ceiling.
         for i in 0..50u64 {
-            c.insert(CacheKey::new("A", CacheKind::Footer, format!("k{i}")), 10, i)
-                .await;
+            c.insert(
+                CacheKey::new("A", CacheKind::Footer, format!("k{i}")),
+                10,
+                i,
+            )
+            .await;
         }
         c.sync().await;
         // A is capped at/around the ceiling, NOT all 500 bytes.
-        assert!(c.tenant_bytes("A") <= 100, "A bytes {} > ceiling", c.tenant_bytes("A"));
+        assert!(
+            c.tenant_bytes("A") <= 100,
+            "A bytes {} > ceiling",
+            c.tenant_bytes("A")
+        );
         // Tenant B (separate ceiling) is unaffected by A's flood.
-        c.insert(CacheKey::new("B", CacheKind::Footer, "b1"), 10, 7).await;
+        c.insert(CacheKey::new("B", CacheKind::Footer, "b1"), 10, 7)
+            .await;
         c.sync().await;
-        assert_eq!(c.get(&CacheKey::new("B", CacheKind::Footer, "b1")).await, Some(7));
+        assert_eq!(
+            c.get(&CacheKey::new("B", CacheKind::Footer, "b1")).await,
+            Some(7)
+        );
     }
 
     #[tokio::test]
@@ -553,12 +577,19 @@ mod tests {
         let budget = CacheBudget::new(1000, /*hard*/ 800).with_high_watermark(0.5); // hwm=500
         let c: TenantCache<u64> = TenantCache::new(budget);
         for i in 0..200u64 {
-            c.insert(CacheKey::new("A", CacheKind::Footer, format!("k{i}")), 10, i)
-                .await;
+            c.insert(
+                CacheKey::new("A", CacheKind::Footer, format!("k{i}")),
+                10,
+                i,
+            )
+            .await;
         }
         c.sync().await;
         let a = c.tenant_bytes("A");
-        assert!(a > 500, "solo tenant {a} did not borrow past watermark (500)");
+        assert!(
+            a > 500,
+            "solo tenant {a} did not borrow past watermark (500)"
+        );
         assert!(a <= 800, "solo tenant {a} exceeded hard ceiling (800)");
     }
 
@@ -572,8 +603,12 @@ mod tests {
         // Round-robin so no tenant gets a head start.
         for round in 0..60u64 {
             for t in tenants {
-                c.insert(CacheKey::new(t, CacheKind::Footer, format!("k{round}")), 10, round)
-                    .await;
+                c.insert(
+                    CacheKey::new(t, CacheKind::Footer, format!("k{round}")),
+                    10,
+                    round,
+                )
+                .await;
             }
         }
         c.sync().await;
@@ -593,8 +628,12 @@ mod tests {
         // Global pool 100 bytes; ceiling high so the GLOBAL budget is what bites.
         let c: TenantCache<u64> = TenantCache::new(CacheBudget::new(100, 1 << 30));
         for i in 0..40u64 {
-            c.insert(CacheKey::new("A", CacheKind::Footer, format!("k{i}")), 10, i)
-                .await;
+            c.insert(
+                CacheKey::new("A", CacheKind::Footer, format!("k{i}")),
+                10,
+                i,
+            )
+            .await;
         }
         c.sync().await;
         // moka holds total weight ≈ max_capacity, not all 400 bytes.
@@ -620,8 +659,13 @@ mod tests {
         }"#;
         let policy = Arc::new(TierPolicy::from_json(json).unwrap());
         // Host-supplied tenant→tier authority (in prod: TenantContext.tier).
-        let tenant_to_tier: Arc<dyn Fn(&str) -> String + Send + Sync> =
-            Arc::new(|t: &str| if t == "ent" { "enterprise".into() } else { "free_trial".into() });
+        let tenant_to_tier: Arc<dyn Fn(&str) -> String + Send + Sync> = Arc::new(|t: &str| {
+            if t == "ent" {
+                "enterprise".into()
+            } else {
+                "free_trial".into()
+            }
+        });
         let resolver = policy.resolver(total, tenant_to_tier);
 
         let budget = CacheBudget::new(total, total).with_high_watermark(0.5); // hwm=800
@@ -629,8 +673,12 @@ mod tests {
 
         for round in 0..200u64 {
             for t in ["ent", "free"] {
-                c.insert(CacheKey::new(t, CacheKind::Footer, format!("k{round}")), 10, round)
-                    .await;
+                c.insert(
+                    CacheKey::new(t, CacheKind::Footer, format!("k{round}")),
+                    10,
+                    round,
+                )
+                .await;
             }
         }
         c.sync().await;
@@ -643,7 +691,10 @@ mod tests {
         // Free is bounded by its tier ceiling (total/16 = 100).
         assert!(free <= 100 + 20, "free {free} exceeded its tier ceiling");
         // Enterprise bounded by its tier ceiling (total/2 = 800).
-        assert!(ent <= 800 + 20, "enterprise {ent} exceeded its tier ceiling");
+        assert!(
+            ent <= 800 + 20,
+            "enterprise {ent} exceeded its tier ceiling"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

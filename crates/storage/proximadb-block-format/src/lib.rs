@@ -87,9 +87,7 @@ pub use header::{
     BLOCK_MAGIC, BlockCompression, BlockHeader, BlockMode, FORMAT_VERSION, HEADER_SIZE, flags,
     fnv1a_hash,
 };
-pub use prune::{
-    BlockZoneSource, FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups,
-};
+pub use prune::{BlockZoneSource, FieldToColumn, PruneResult, evaluate_block, evaluate_row_groups};
 pub use ranged::{BlockLayout, MetadataRanges, footer_tail_range, metadata_ranges};
 pub use reader::PaxBlockReader;
 pub use record::{
@@ -97,8 +95,8 @@ pub use record::{
     encode_str_col, update_i64_bounds,
 };
 pub use row_dir::{ROW_ENTRY_SIZE, RowDirectory, RowEntry, row_flags};
-pub use stripe::{BlockStats, COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe};
 pub use rowgroup::{ROW_GROUP_SIZE, RowGroupBlock, RowGroupEntry};
+pub use stripe::{BlockStats, COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe};
 pub use vparam::{
     QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
     VectorParamEntry,
