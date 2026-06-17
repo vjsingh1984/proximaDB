@@ -1848,8 +1848,14 @@ impl AxisManager {
         }
         .max(query.top_k);
 
+        // Map the caller's effort onto the predicate traversal `ef` (recall vs
+        // latency). `oversample_k` above is the orthogonal post-filter pool and
+        // is left to the filtering policy.
+        let ef_override = query
+            .search_effort
+            .and_then(|effort| effort.hnsw_ef_override(query.top_k));
         let raw = index
-            .search_with_predicate_fn(vector, oversample_k, predicate)
+            .search_with_predicate_fn(vector, oversample_k, predicate, ef_override)
             .await?;
 
         // See query_hnsw for the score-units rationale — raw values
@@ -2200,12 +2206,18 @@ impl AxisManager {
                     // via the per-request diagnostics bus (no-op outside a scope).
                     crate::observability::predicate_diagnostics::record_quantized_downgrade();
                 }
+                // Map the caller's accuracy-vs-latency effort onto IVF `nprobe`
+                // (cells probed). `None` ⇒ the index's configured default;
+                // Exact ⇒ all `nlist` cells; Approximate ⇒ fewer cells, faster.
+                let nprobe = query
+                    .search_effort
+                    .map(|effort| effort.ivf_nprobe(index.nlist()));
                 let results = if use_quantized {
                     index
-                        .search_with_quantized_acceleration(vector, query.top_k, None)
+                        .search_with_quantized_acceleration(vector, query.top_k, nprobe)
                         .await?
                 } else {
-                    index.search(vector, query.top_k, None).await?
+                    index.search(vector, query.top_k, nprobe).await?
                 };
                 let search_time = start.elapsed();
 
@@ -4163,6 +4175,10 @@ pub struct ScoredResult {
 }
 
 impl AxisManager {
+    /// ADR-011 PreFilter: evaluate scalar predicates first, then score the
+    /// surviving candidates EXACTLY. `query.search_effort` is intentionally not
+    /// consulted here — exact scoring has no ANN approximation to trade; the
+    /// only recall/latency lever on this path is predicate selectivity.
     async fn execute_exact_filtered_query(
         &self,
         collection_id: &str,

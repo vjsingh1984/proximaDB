@@ -2499,6 +2499,13 @@ impl UnifiedIvfIndex {
         self.config.dimension
     }
 
+    /// Number of IVF coarse-quantizer cells (`nlist`). Used to map a per-query
+    /// [`crate::core::search::SearchEffort`] onto an effective `nprobe`
+    /// (`nprobe == nlist` ⇒ exact; fewer cells ⇒ faster, lower recall).
+    pub fn nlist(&self) -> usize {
+        self.config.n_clusters
+    }
+
     /// Whether the binary tier is populated (recorded in serialized metadata).
     pub fn has_binary_tier(&self) -> bool {
         !self.binary_codes.is_empty()
@@ -3356,6 +3363,91 @@ mod tests {
                  baseline {r1:.3} — the estimator must not let multi-probe degrade"
             );
         }
+    }
+
+    /// Proves the per-query `SearchEffort` knob controls IVF recall through the
+    /// warm `search` path: `Exact` probes all `nlist` cells (ground truth) while
+    /// `Approximate{hint:Some(1)}` maps (via `SearchEffort::ivf_nprobe`) to a
+    /// single probed cell, which on interleaved blobs leaves boundary-spanning
+    /// neighbours unprobed → strictly lower recall.
+    ///
+    /// Regression guard for the follow-slice that threads `query.search_effort`
+    /// → `ivf_nprobe(index.nlist())` into `query_ivf`'s `search(.., nprobe)`
+    /// calls (previously `None`, so the knob was ignored on the IVF path).
+    #[tokio::test]
+    async fn test_ivf_search_effort_nprobe_controls_recall() {
+        use crate::core::search::SearchEffort;
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let dim = 64;
+        let n_clusters = 16;
+        let per_cluster = 50;
+        // Interleaved blobs (center_amp << noise) so IVF Voronoi cells cut
+        // through dense regions and a query's true top-k straddle partitions.
+        let data = synth_corpus_amp(dim, n_clusters, per_cluster, 0.4, 3.0);
+
+        let mut index = UnifiedIvfIndex::new(
+            "effort_nprobe".to_string(),
+            binary_ivf_config(dim, n_clusters),
+        )
+        .unwrap();
+        index
+            .train(data.iter().map(|(_, v)| v.clone()).collect())
+            .await
+            .unwrap();
+        for (id, v) in &data {
+            index.add_vector(id.clone(), v.clone(), None).await.unwrap();
+        }
+        assert_eq!(index.nlist(), n_clusters);
+
+        // The effort→nprobe mapping that query_ivf applies.
+        let nprobe_exact = SearchEffort::Exact.ivf_nprobe(index.nlist());
+        let nprobe_one = SearchEffort::Approximate { hint: Some(1) }.ivf_nprobe(index.nlist());
+        assert_eq!(nprobe_exact, n_clusters);
+        assert_eq!(nprobe_one, 1);
+
+        let k = 10;
+        let n_queries = 60;
+        let mut qstate: u64 = 0x0BAD_F00D_1357_9BDF;
+        let mut jitter = move || {
+            qstate = qstate.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = qstate;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z ^= z >> 31;
+            ((z >> 40) as f32 / (1u32 << 24) as f32) * 2.0 - 1.0
+        };
+        let queries: Vec<Vec<f32>> = (0..n_queries)
+            .map(|qi| {
+                let base = &data[(qi * 13) % data.len()].1;
+                base.iter().map(|&x| x + jitter() * 0.3).collect()
+            })
+            .collect();
+
+        let mut recall_one = 0.0f64;
+        for query in &queries {
+            // Ground truth = probe all cells (Exact effort).
+            let truth: std::collections::HashSet<String> = index
+                .search(query, k, Some(nprobe_exact))
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
+            // Single-probe approximate (Approximate{Some(1)} effort).
+            let approx = index.search(query, k, Some(nprobe_one)).await.unwrap();
+            let hit = approx.iter().filter(|(id, _)| truth.contains(id)).count();
+            recall_one += hit as f64 / k as f64;
+        }
+        recall_one /= n_queries as f64;
+
+        // Single-probe must miss boundary neighbours that probing all cells
+        // recovers — i.e. the effort knob genuinely changes recall on the IVF
+        // path. (Exact-vs-Exact is 1.0 by construction.)
+        assert!(
+            recall_one < 1.0,
+            "Approximate{{Some(1)}}→nprobe=1 should miss boundary neighbours on \
+             interleaved data, but recall was {recall_one:.3} (knob ignored?)"
+        );
     }
 
     /// Loads a real-vector corpus from a `[u32 n][u32 dim][f32; n·dim]`
