@@ -6710,6 +6710,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-cache"
+version = "0.2.0"
+dependencies = [
+ "dashmap",
+ "moka",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "proximadb-catalog"
 version = "0.2.0"
 dependencies = [
