@@ -3009,13 +3009,60 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
 }
 
 /// Specialized Vector/ANN Target: PAX block formats.
+/// Process-global multitenant footer/index caches for the PAX v2 ranged read
+/// path. The cache is inherently a process singleton; `SharedServices` calls
+/// [`init_segment_caches`] once at boot, and every `ObjectStoreVectorRecordStore`
+/// auto-picks them up — no threading through every constructor.
+static GLOBAL_SEGMENT_CACHES: std::sync::OnceLock<(
+    Arc<proximadb_storage_common::ranged_segment::FooterCache>,
+    Arc<proximadb_storage_common::ranged_segment::SegmentIndexCache>,
+)> = std::sync::OnceLock::new();
+
+/// Initialize the global footer/index caches from `budget` (idempotent — first
+/// call wins). Call once during server boot.
+pub fn init_segment_caches(budget: proximadb_cache::CacheBudget) {
+    let _ = GLOBAL_SEGMENT_CACHES.set((
+        Arc::new(proximadb_storage_common::ranged_segment::FooterCache::new(
+            budget.clone(),
+        )),
+        Arc::new(proximadb_storage_common::ranged_segment::SegmentIndexCache::new(budget)),
+    ));
+}
+
+/// Per-tenant stats snapshot for the global footer cache (for metrics emission).
+/// Empty when caches are not initialized.
+pub fn segment_cache_tenant_stats() -> Vec<proximadb_cache::TenantCacheStat> {
+    GLOBAL_SEGMENT_CACHES
+        .get()
+        .map(|(fc, _)| fc.tenant_stats())
+        .unwrap_or_default()
+}
+
+fn segment_caches() -> (
+    Option<Arc<proximadb_storage_common::ranged_segment::FooterCache>>,
+    Option<Arc<proximadb_storage_common::ranged_segment::SegmentIndexCache>>,
+) {
+    match GLOBAL_SEGMENT_CACHES.get() {
+        Some((fc, ic)) => (Some(fc.clone()), Some(ic.clone())),
+        None => (None, None),
+    }
+}
+
 pub struct ObjectStoreVectorRecordStore {
     bridge: Arc<dyn ObjectStoreBridge>,
+    footer_cache: Option<Arc<proximadb_storage_common::ranged_segment::FooterCache>>,
+    index_cache: Option<Arc<proximadb_storage_common::ranged_segment::SegmentIndexCache>>,
 }
 
 impl ObjectStoreVectorRecordStore {
     pub fn new(bridge: Arc<dyn ObjectStoreBridge>) -> Self {
-        Self { bridge }
+        // Auto-pick up the process-global caches if SharedServices initialized them.
+        let (footer_cache, index_cache) = segment_caches();
+        Self {
+            bridge,
+            footer_cache,
+            index_cache,
+        }
     }
 
     /// Read every current record for `schema` by listing the PAX segment objects
@@ -3240,8 +3287,14 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         let mut out = Vec::new();
         'segments: for path in segment_paths {
             record_object_store_op(tenant_id, "fetch_pax_ranged");
-            let reader = RangedSegmentReader::open(self.bridge.as_ref(), path.clone(), tenant_id)
-                .await
+            let reader = RangedSegmentReader::open_with_cache(
+                self.bridge.as_ref(),
+                path.clone(),
+                tenant_id,
+                self.footer_cache.clone(),
+                self.index_cache.clone(),
+            )
+            .await
                 .map_err(|err| anyhow!("ranged open '{path}': {err}"))?;
             let recs = reader
                 .read_records_pruned(&filter, field_to_col, &[], &[])

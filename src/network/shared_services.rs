@@ -349,6 +349,14 @@ impl SharedServices {
             storage_config
         );
 
+        // Initialize the process-global multitenant footer/index caches for the
+        // PAX v2 ranged read path (pooled 256 MiB, 64 MiB/tenant ceiling).
+        // ObjectStoreVectorRecordStore auto-picks these up.
+        crate::services::record_store::init_segment_caches(proximadb_cache::CacheBudget::new(
+            256 * 1024 * 1024,
+            64 * 1024 * 1024,
+        ));
+
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 
         // SharedServices owns metadata configuration logic

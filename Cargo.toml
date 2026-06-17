@@ -273,6 +273,7 @@ proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
+proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-graph = { path = "crates/modalities/proximadb-graph" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
