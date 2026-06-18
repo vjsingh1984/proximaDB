@@ -15,79 +15,47 @@ use lazy_static::lazy_static;
 use prometheus::{CounterVec, GaugeVec, Opts, register_counter_vec, register_gauge_vec};
 use tracing::error;
 
+// Register-or-fallback helpers. Static registration is infallible / fail-fast at
+// startup (see module-level allow); centralizing the fallback keeps the single
+// sanctioned panic site per vec type instead of repeating it at every metric.
+fn registered_counter_vec(name: &'static str, help: &'static str, labels: &[&str]) -> CounterVec {
+    register_counter_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
+        error!("failed to register {}: {}", name, err);
+        CounterVec::new(Opts::new(name, ""), labels).unwrap()
+    })
+}
+
+fn registered_gauge_vec(name: &'static str, help: &'static str, labels: &[&str]) -> GaugeVec {
+    register_gauge_vec!(Opts::new(name, help), labels).unwrap_or_else(|err| {
+        error!("failed to register {}: {}", name, err);
+        GaugeVec::new(Opts::new(name, ""), labels).unwrap()
+    })
+}
+
 lazy_static! {
-    pub static ref OBJECT_STORE_OPS_TOTAL: CounterVec = register_counter_vec!(
-        Opts::new(
-            "proximadb_object_store_ops_total",
-            "Total number of object store I/O operations (put, get, list, delete)"
-        ),
+    pub static ref OBJECT_STORE_OPS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_object_store_ops_total",
+        "Total number of object store I/O operations (put, get, list, delete)",
         &["tenant_id", "operation"]
-    )
-    .unwrap_or_else(|err| {
-        error!(
-            "failed to register proximadb_object_store_ops_total: {}",
-            err
-        );
-        CounterVec::new(
-            Opts::new("proximadb_object_store_ops_total", ""),
-            &["tenant_id", "operation"],
-        )
-        .unwrap()
-    });
-    pub static ref STORAGE_BYTES_SECONDS: GaugeVec = register_gauge_vec!(
-        Opts::new(
-            "proximadb_storage_bytes_seconds",
-            "GB-seconds or raw bytes stored per tenant"
-        ),
+    );
+    pub static ref STORAGE_BYTES_SECONDS: GaugeVec = registered_gauge_vec(
+        "proximadb_storage_bytes_seconds",
+        "GB-seconds or raw bytes stored per tenant",
         &["tenant_id", "storage_type"]
-    )
-    .unwrap_or_else(|err| {
-        error!(
-            "failed to register proximadb_storage_bytes_seconds: {}",
-            err
-        );
-        GaugeVec::new(
-            Opts::new("proximadb_storage_bytes_seconds", ""),
-            &["tenant_id", "storage_type"],
-        )
-        .unwrap()
-    });
-    pub static ref TASK_EXECUTION_TIME_MS: CounterVec = register_counter_vec!(
-        Opts::new(
-            "proximadb_task_execution_time_ms",
-            "Total analytical task execution time in milliseconds (DataFusion/Polars compute)"
-        ),
+    );
+    pub static ref TASK_EXECUTION_TIME_MS: CounterVec = registered_counter_vec(
+        "proximadb_task_execution_time_ms",
+        "Total analytical task execution time in milliseconds (DataFusion/Polars compute)",
         &["tenant_id", "engine"]
-    )
-    .unwrap_or_else(|err| {
-        error!(
-            "failed to register proximadb_task_execution_time_ms: {}",
-            err
-        );
-        CounterVec::new(
-            Opts::new("proximadb_task_execution_time_ms", ""),
-            &["tenant_id", "engine"],
-        )
-        .unwrap()
-    });
+    );
     /// Per-tenant cache footprint + hit/miss snapshot (the multitenant cache
     /// observability for fairness/noisy-neighbor + chargeback). Gauges carry the
     /// current cumulative totals per tenant from `TenantCache::tenant_stats`.
-    pub static ref CACHE_TENANT_STATS: GaugeVec = register_gauge_vec!(
-        Opts::new(
-            "proximadb_cache_tenant",
-            "Per-tenant cache stats snapshot (metric label selects bytes/hits/misses/hit_ratio/evictions)"
-        ),
+    pub static ref CACHE_TENANT_STATS: GaugeVec = registered_gauge_vec(
+        "proximadb_cache_tenant",
+        "Per-tenant cache stats snapshot (metric label selects bytes/hits/misses/hit_ratio/evictions)",
         &["tenant_id", "cache", "metric"]
-    )
-    .unwrap_or_else(|err| {
-        error!("failed to register proximadb_cache_tenant: {}", err);
-        GaugeVec::new(
-            Opts::new("proximadb_cache_tenant", ""),
-            &["tenant_id", "cache", "metric"],
-        )
-        .unwrap()
-    });
+    );
 }
 
 /// Helper to record an object store operation.
