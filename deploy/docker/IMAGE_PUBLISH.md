@@ -1,13 +1,25 @@
 # Publishing the ProximaDB OSS image to Docker Hub
 
 `.github/workflows/publish-image.yml` builds the OSS server image
-(`deploy/docker/Dockerfile`, target `runtime`) and pushes it to **Docker Hub**
-as `vjsingh1984/proximadb`.
+(`deploy/docker/Dockerfile`, target `runtime`) and pushes a **multi-arch
+manifest (`linux/amd64` + `linux/arm64`)** to **Docker Hub** as
+`vjsingh1984/proximadb`.
 
 This is the **public OSS image**. AnvaiOps' *commercial* pipeline
 (`anvaiops/.github/workflows/build-commercial-image.yml`) consumes it as a
 `FROM` base, bakes pricing tiers in, and pushes the result to **ACR** — the OSS
 image itself is on Docker Hub, not ACR.
+
+## Architectures
+
+Built for both **amd64** and **arm64** so the same tag runs on x86 clouds,
+Graviton/Ampere, Apple-Silicon dev, and anvaiops' arm64 node pool (ADR-0016 /
+`proximadb_node_arch = "arm64"`). Each arch builds **natively** on its own
+hosted runner (free for public repos: `ubuntu-latest` = amd64,
+`ubuntu-24.04-arm` = arm64), is pushed **by digest**, and a final `merge` job
+combines both digests into one multi-arch manifest list that carries the tags.
+QEMU emulation is intentionally avoided — the heavy Rust release build would be
+far too slow under it.
 
 ## What gets published
 
