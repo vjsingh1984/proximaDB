@@ -5,7 +5,7 @@
 # ============================================================================
 # Stage 1: Builder
 # ============================================================================
-FROM rust:1.88-slim-bookworm AS builder
+FROM rust:1.95-slim-bookworm AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -61,9 +61,12 @@ RUN apt-get update && apt-get install -y \
 # Create non-root user for security
 RUN groupadd -r proximadb && useradd -r -g proximadb proximadb
 
-# Create data directories
-RUN mkdir -p /data/proximadb /config && \
-    chown -R proximadb:proximadb /data /config
+# Create data + writable runtime directories. /log and /var/lib/proximadb are
+# default paths the server writes (log appender + model/tokenizer dirs); they
+# must exist and be owned by the non-root user or the server panics creating
+# them on first boot.
+RUN mkdir -p /data/proximadb /config /log /var/lib/proximadb && \
+    chown -R proximadb:proximadb /data /config /log /var/lib/proximadb
 
 # Copy binary from builder
 COPY --from=builder /build/target/release/proximadb-server /usr/local/bin/proximadb-server
@@ -111,7 +114,9 @@ WORKDIR /data/proximadb
 # network blips. See deploy/docker/entrypoint.sh for the full fetch +
 # fallback logic; engine reads /config/tier-config.json at startup
 # (Phase B-5; src/catalog/tenant_tier.rs::resolve_tier_config_source).
-COPY deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN chmod +x /usr/local/bin/entrypoint.sh
+# COPY with the exec bit set at copy time. A separate `RUN chmod` here would
+# run as the non-root `proximadb` user (set above) against a root-owned file
+# and fail — so set the mode during COPY instead.
+COPY --chmod=0755 deploy/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["--config", "/config/config.toml"]
