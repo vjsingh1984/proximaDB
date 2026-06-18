@@ -1181,9 +1181,14 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Build Docker Image
+        # Build the image we actually publish (deploy/docker/Dockerfile,
+        # target `runtime`) so CI exercises the shipped OSS server, not the
+        # demo image. The published artifact comes from publish-image.yml.
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: deploy/docker/Dockerfile
+          target: runtime
           push: false
           load: true
           tags: proximadb:test
