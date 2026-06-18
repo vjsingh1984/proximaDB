@@ -76,7 +76,13 @@ Read these in order for future-shaping architecture work:
    for external engines.
 14. `COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` +
    Engine contract for collection-level disaster recovery and cross-region object replication.
-15. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
+15. `PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md` +
+   Architecture review + comparative study (PostgreSQL internals, Neon, Databricks Lakebase, Supabase,
+   DuckLake/pg_lake, OrioleDB, and HTAP engines) proposing a single pgwire server with cost-based
+   multi-engine dispatch over decoupled lakehouse storage, an LSM/WAL hot tier for OLTP read-after-write,
+   and object-store-metadata agent branching. Spawns TD-114…TD-120 (see
+   `docs/10-quality/TECHNICAL_DEBT.adoc`). Subordinate to the 2026-06-04 course correction above.
+16. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
    Legacy foundational mandate. Superseded by the Data Warehouse course correction on 2026-06-04.
 
 == Stable Reference Docs
