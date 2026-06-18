@@ -869,9 +869,7 @@ impl CatalogIntrospectionService {
                 "typtype",
                 "typcategory",
             ]),
-            column_types: str_cols(&[
-                "int4", "text", "int4", "int2", "bool", "text", "text",
-            ]),
+            column_types: str_cols(&["int4", "text", "int4", "int2", "bool", "text", "text"]),
             rows,
         }
     }
@@ -894,11 +892,7 @@ impl CatalogIntrospectionService {
             if ns == "public" || !seen.insert(ns.clone()) {
                 continue;
             }
-            rows.push(vec![
-                namespace_oid(&ns).to_string(),
-                ns,
-                "10".to_string(),
-            ]);
+            rows.push(vec![namespace_oid(&ns).to_string(), ns, "10".to_string()]);
         }
         Ok(CatalogIntrospectionResult {
             columns: str_cols(&["oid", "nspname", "nspowner"]),
@@ -1005,11 +999,7 @@ impl CatalogIntrospectionService {
                 ]);
             };
             if !schema.primary_key.is_empty() {
-                push(
-                    format!("{}_pkey", table_id.name),
-                    "p",
-                    &schema.primary_key,
-                );
+                push(format!("{}_pkey", table_id.name), "p", &schema.primary_key);
             }
             for constraint in &schema.relational_capabilities.constraints {
                 match constraint {
@@ -1262,11 +1252,7 @@ const INFORMATION_SCHEMA_NAMESPACE_OID: i32 = 13000;
 
 /// PostgreSQL text-format boolean encoding (`t`/`f`), not `true`/`false`.
 fn bool_str(value: bool) -> &'static str {
-    if value {
-        "t"
-    } else {
-        "f"
-    }
+    if value { "t" } else { "f" }
 }
 
 fn str_cols(cols: &[&str]) -> Vec<String> {
@@ -1563,9 +1549,7 @@ mod tests {
 
         let parser = SqlFrontendParser::new();
         let create = parser
-            .parse_ddl(
-                "CREATE TABLE pg_demo (id TEXT NOT NULL, score INT, PRIMARY KEY (id))",
-            )
+            .parse_ddl("CREATE TABLE pg_demo (id TEXT NOT NULL, score INT, PRIMARY KEY (id))")
             .expect("parse")
             .expect("ddl");
         ddl.execute(create).await.expect("create table");
