@@ -821,8 +821,9 @@ def test_resource_pool_destroy_exception_handled():
         # _destroy_resource swallows the exception
         pool._destroy_resource(PooledResource(_Widget()))
     finally:
-        pool._shutdown = True  # avoid clear() re-raising
-        pool._executor.shutdown(wait=True)
+        pool._shutdown = True  # stop maintenance loop; avoid clear() re-raising
+        if pool._maintenance_thread is not None:
+            pool._maintenance_thread.join(timeout=5.0)
 
 
 def test_object_pool_from_class():

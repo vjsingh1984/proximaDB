@@ -988,6 +988,10 @@ jobs:
   python-test:
     name: Python SDK Tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Defense-in-depth: the suite runs in ~5min. If a future test leaks a
+    # non-daemon thread / unshutdown pool, the interpreter's atexit join can hang
+    # the job for hours. Cap it so a leak fails fast instead of stalling CI.
+    timeout-minutes: 20
     needs: changes
     strategy:
       matrix:
