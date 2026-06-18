@@ -20,6 +20,8 @@ PROTO_SRC= \
 	$(PROTO_DIR)/proximadb/v1/sql.proto \
 	$(PROTO_DIR)/proximadb/v1/collection.proto \
 	$(PROTO_DIR)/proximadb/v1/entity.proto \
+	$(PROTO_DIR)/proximadb/v1/relations.proto \
+	$(PROTO_DIR)/proximadb/v1/context.proto \
 	$(PROTO_DIR)/proximadb/v1/graph.proto \
 	$(PROTO_DIR)/proximadb/v1/graph_collection.proto \
 	$(PROTO_DIR)/proximadb/v2/record.proto
@@ -28,9 +30,9 @@ PROTO_SRC= \
 # (e.g. document_pb2 / hybrid_pb2) is hand-maintained outside the
 # regenerator and left alone.
 SDK_SYNCED=collection_pb2 collection_pb2_grpc collection_types_pb2 \
-	collection_types_pb2_grpc entity_pb2 \
+	collection_types_pb2_grpc context_pb2 context_pb2_grpc entity_pb2 \
 	entity_pb2_grpc graph_pb2 graph_pb2_grpc graph_collection_pb2 \
-	graph_collection_pb2_grpc sql_pb2 \
+	graph_collection_pb2_grpc relations_pb2 relations_pb2_grpc sql_pb2 \
 	sql_pb2_grpc types_pb2 types_pb2_grpc vector_pb2 vector_pb2_grpc \
 	vector_types_pb2 vector_types_pb2_grpc
 SDK_SYNCED_V2=record_pb2 record_pb2_grpc
