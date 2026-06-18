@@ -59,6 +59,12 @@ env:
   HELM_VERSION: '3.12.0'
   KUBECTL_VERSION: '1.29.0'
 
+concurrency:
+  # Dedup push+PR of the same branch into one group; cancel superseded
+  # runs on feature/PR branches, but let protected-branch runs finish.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'develop' && github.ref_name != 'development' }}
+
 jobs:
   # ============================================================================
   # NOTE: All infrastructure deployment jobs are DISABLED for v0.2.0 release

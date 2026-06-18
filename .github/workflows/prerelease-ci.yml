@@ -64,6 +64,12 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  # Dedup push+PR of the same branch into one group; cancel superseded
+  # runs on feature/PR branches, but let protected-branch runs finish.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'develop' && github.ref_name != 'development' }}
+
 jobs:
   # ============================================================================
   # VERSION CHECK - Validate version consistency across codebase
