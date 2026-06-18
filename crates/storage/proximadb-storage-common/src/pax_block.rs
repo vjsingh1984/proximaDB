@@ -486,6 +486,77 @@ impl PaxSegmentScanner {
     }
 }
 
+// ── Compaction (TD-114) ─────────────────────────────────────────────────────────
+
+/// Statistics from a PAX segment compaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionStats {
+    /// Number of input segment files merged.
+    pub inputs: usize,
+    /// Total records read across all inputs.
+    pub records_in: u64,
+    /// Records written to the output (survivors, after dropping tombstones).
+    pub records_out: u64,
+    /// Records dropped because they were tombstones at `now_ns` (merge-on-read deletes).
+    pub tombstones_dropped: u64,
+}
+
+/// Merge several L0 PAX segments into one L1 segment, dropping records that are
+/// tombstones as of `now_ns` (merge-on-read deletes; TD-114).
+///
+/// `embedding_model_ids` and `user_column_keys` are the collection's schema keys
+/// used to reconstruct records (see [`PaxSegmentScanner::read_records`]). Inputs are
+/// read in order; surviving records are written to `output` via a fresh
+/// [`PaxSegmentWriter`]. This is a pure, engine-agnostic primitive: the caller owns
+/// L0 discovery (the input paths) and manifest registration of the output.
+#[allow(clippy::too_many_arguments)]
+pub fn compact_pax_segments(
+    inputs: &[PathBuf],
+    output: &Path,
+    mode: BlockMode,
+    compression: BlockCompression,
+    collection_id: &str,
+    schema_fingerprint: u64,
+    embedding_count: usize,
+    embedding_model_ids: &[String],
+    user_column_keys: &[String],
+    now_ns: i64,
+) -> Result<CompactionStats> {
+    let mut writer = PaxSegmentWriter::new(
+        output,
+        mode,
+        compression,
+        collection_id,
+        schema_fingerprint,
+        embedding_count,
+        None,
+    );
+    let mut records_in = 0u64;
+    let mut records_out = 0u64;
+    let mut tombstones_dropped = 0u64;
+
+    for input in inputs {
+        let mut scanner = PaxSegmentScanner::open(input, ScanPredicate::default())?;
+        for record in scanner.read_records(embedding_model_ids, user_column_keys)? {
+            records_in += 1;
+            if record.is_tombstone_at(now_ns) {
+                tombstones_dropped += 1;
+                continue;
+            }
+            writer.add_record(&record)?;
+            records_out += 1;
+        }
+    }
+    writer.finish()?;
+
+    Ok(CompactionStats {
+        inputs: inputs.len(),
+        records_in,
+        records_out,
+        tombstones_dropped,
+    })
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -522,6 +593,76 @@ mod tests {
         assert_eq!(idx2.blocks.len(), 2);
         assert_eq!(idx2.blocks[0].size, 4096);
         assert_eq!(idx2.blocks[1].offset, 4096);
+    }
+
+    #[test]
+    fn compact_drops_tombstones_and_merges() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg0 = dir.path().join("L0_0.pax");
+        let seg1 = dir.path().join("L0_1.pax");
+        let out = dir.path().join("L1.pax");
+
+        // L0 segment 0: two live records.
+        let mut w0 = PaxSegmentWriter::new(
+            &seg0,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            0,
+            Some(1),
+        );
+        w0.add_record(&make_record("a", "t", 100)).unwrap();
+        w0.add_record(&make_record("b", "t", 200)).unwrap();
+        w0.finish().unwrap();
+
+        // L0 segment 1: one live record + a tombstone (deleted at ts=500).
+        let mut w1 = PaxSegmentWriter::new(
+            &seg1,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            0,
+            Some(1),
+        );
+        w1.add_record(&make_record("c", "t", 300)).unwrap();
+        let mut tombstone = make_record("a", "t", 500);
+        tombstone.valid_to_ns = Some(500);
+        tombstone.origin = Some("delete".to_string());
+        w1.add_record(&tombstone).unwrap();
+        w1.finish().unwrap();
+
+        // Compact as of now=1000 (after the delete) → the tombstone is dropped.
+        let stats = compact_pax_segments(
+            &[seg0, seg1],
+            &out,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            0,
+            &[],
+            &[],
+            1000,
+        )
+        .unwrap();
+
+        assert_eq!(stats.inputs, 2);
+        assert_eq!(stats.records_in, 4);
+        assert_eq!(stats.tombstones_dropped, 1);
+        assert_eq!(stats.records_out, 3);
+
+        // The merged L1 segment holds exactly the 3 survivors; no tombstone remains.
+        let mut scanner = PaxSegmentScanner::open(&out, ScanPredicate::default()).unwrap();
+        let survivors = scanner.read_records(&[], &[]).unwrap();
+        assert_eq!(survivors.len(), 3);
+        assert!(
+            survivors
+                .iter()
+                .all(|r| r.origin.as_deref() != Some("delete")),
+            "the delete tombstone must not survive compaction"
+        );
     }
 
     #[test]

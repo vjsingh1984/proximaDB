@@ -533,12 +533,35 @@ impl SstEngine {
         })
     }
 
-    /// Check if compaction should be triggered
-    async fn should_trigger_compaction(&self, _storage_url: &str) -> Result<bool> {
-        // Simple heuristic: trigger compaction based on file count
-        // In a real implementation, this would check actual file metrics
-        Ok(false) // Simplified for now
+    /// Whether L0→base compaction should be triggered after this flush (TD-114).
+    ///
+    /// Default-OFF: the trigger only arms when `PROXIMADB_L0_COMPACTION_ENABLED`
+    /// is set, so the live flush path is byte-for-byte unchanged unless an
+    /// operator opts in. When armed, it reuses the existing segment discovery to
+    /// count L0 segments and arms once the orchestrator threshold is reached.
+    /// Discovery errors are treated as "not yet" (best-effort, never fails flush).
+    async fn should_trigger_compaction(&self, storage_url: &str) -> Result<bool> {
+        if !l0_compaction_enabled() {
+            return Ok(false);
+        }
+        let l0_count = self
+            .discover_sstable_files(storage_url)
+            .await
+            .map(|files| files.len())
+            .unwrap_or(0);
+        Ok(l0_count >= L0_COMPACTION_THRESHOLD)
     }
+}
+
+/// L0 segment count at which compaction arms. Mirrors
+/// `OrchestratorCompactionConfig::level0_threshold` (default 5).
+const L0_COMPACTION_THRESHOLD: usize = 5;
+
+/// Reads the `PROXIMADB_L0_COMPACTION_ENABLED` opt-in flag (default OFF).
+fn l0_compaction_enabled() -> bool {
+    std::env::var("PROXIMADB_L0_COMPACTION_ENABLED")
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "yes"))
+        .unwrap_or(false)
 }
 
 /// Statistics from vector sorting operation

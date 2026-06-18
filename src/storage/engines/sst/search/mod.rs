@@ -971,8 +971,11 @@ impl SstEngine {
         }
     }
 
-    /// Discover SSTable files for a collection
-    async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
+    /// Discover SSTable files for a collection.
+    ///
+    /// `pub(crate)` so the flush path can reuse it for the L0 compaction
+    /// trigger (TD-114) without duplicating segment discovery.
+    pub(crate) async fn discover_sstable_files(&self, storage_url: &str) -> Result<Vec<String>> {
         tracing::debug!(
             "[SST] discover_sstable_files called with storage_url: {}",
             storage_url
