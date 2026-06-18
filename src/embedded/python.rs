@@ -49,7 +49,7 @@ use super::{
 use crate::core::config::{AdvancedPruneConfig, PruneModeConfig};
 
 /// Python wrapper for disk configuration
-#[pyclass(name = "DiskConfig")]
+#[pyclass(name = "DiskConfig", from_py_object)]
 #[derive(Clone)]
 pub struct PyDiskConfig {
     /// Path to storage directory
@@ -188,7 +188,7 @@ pub struct PyStorageStats {
 // ============================================================================
 
 /// Python wrapper for checkpoint information
-#[pyclass(name = "CheckpointInfo")]
+#[pyclass(name = "CheckpointInfo", from_py_object)]
 #[derive(Clone)]
 pub struct PyCheckpointInfo {
     /// Name of the checkpoint
@@ -231,7 +231,7 @@ impl From<super::CheckpointInfo> for PyCheckpointInfo {
 }
 
 /// Python wrapper for delta save information
-#[pyclass(name = "DeltaInfo")]
+#[pyclass(name = "DeltaInfo", from_py_object)]
 #[derive(Clone)]
 pub struct PyDeltaInfo {
     /// Path where delta was saved
@@ -304,7 +304,7 @@ impl From<super::DeltaInfo> for PyDeltaInfo {
 ///
 ///     # For a social network:
 ///     node = GraphNode("user_123", labels=["Person"], properties={"name": "Alice"})
-#[pyclass(name = "GraphNode")]
+#[pyclass(name = "GraphNode", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraphNode {
     /// Unique node ID
@@ -410,7 +410,7 @@ impl From<PyGraphNode> for super::GraphNode {
 }
 
 /// Generic graph edge with flexible property storage
-#[pyclass(name = "GraphEdge")]
+#[pyclass(name = "GraphEdge", from_py_object)]
 #[derive(Clone)]
 pub struct PyGraphEdge {
     /// Optional edge ID
@@ -535,7 +535,7 @@ pub struct PyGraphStats {
 // ============================================================================
 
 /// Latency statistics for an operation type
-#[pyclass(name = "LatencyStats")]
+#[pyclass(name = "LatencyStats", from_py_object)]
 #[derive(Clone)]
 pub struct PyLatencyStats {
     /// Number of operations recorded
@@ -597,7 +597,7 @@ impl From<super::LatencyStats> for PyLatencyStats {
 ///     print(f"Cache hit rate: {metrics.cache_hit_rate * 100}%")
 ///     print(f"Total searches: {metrics.total_searches}")
 ///     ```
-#[pyclass(name = "EmbeddedMetrics")]
+#[pyclass(name = "EmbeddedMetrics", from_py_object)]
 #[derive(Clone)]
 pub struct PyEmbeddedMetrics {
     // Latency histograms
@@ -775,7 +775,7 @@ impl From<super::GraphStats> for PyGraphStats {
 }
 
 /// Python wrapper for streaming search results
-#[pyclass(name = "StreamingSearchResult")]
+#[pyclass(name = "StreamingSearchResult", from_py_object)]
 #[derive(Clone)]
 pub struct PyStreamingSearchResult {
     /// Vector ID
@@ -1066,7 +1066,7 @@ impl PyProximaDB {
                         1,
                     )?;
                 }
-            } else if let Ok(dict) = mode_arg.downcast::<PyDict>() {
+            } else if let Ok(dict) = mode_arg.cast::<PyDict>() {
                 let prune_type = dict
                     .get_item("type")?
                     .and_then(|t| t.extract::<String>().ok())
@@ -1356,7 +1356,7 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict = item.downcast::<PyDict>()?;
+                    let dict = item.cast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
@@ -1502,7 +1502,7 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict = item.downcast::<PyDict>()?;
+                    let dict = item.cast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
@@ -1530,7 +1530,7 @@ impl PyProximaDB {
         collection: &str,
         records: &Bound<'_, PyAny>,
     ) -> PyResult<usize> {
-        let record_list = records.downcast::<PyList>()?;
+        let record_list = records.cast::<PyList>()?;
         let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
         let rust_records = record_list
             .iter()
@@ -2162,7 +2162,7 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict = item.downcast::<PyDict>()?;
+                    let dict = item.cast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
@@ -2227,7 +2227,7 @@ impl PyProximaDB {
             if let Some(meta_list) = metadata {
                 let mut result = Vec::with_capacity(meta_list.len());
                 for item in meta_list.iter() {
-                    let dict = item.downcast::<PyDict>()?;
+                    let dict = item.cast::<PyDict>()?;
                     let mut map = HashMap::new();
                     for (k, v) in dict.iter() {
                         let key: String = k.extract()?;
@@ -3111,7 +3111,7 @@ impl PyProximaDB {
 
         let mut rust_logs = Vec::with_capacity(logs.len());
         for item in logs.iter() {
-            let dict = item.downcast::<PyDict>()?;
+            let dict = item.cast::<PyDict>()?;
 
             let timestamp_ns: i64 = dict
                 .get_item("timestamp_ns")?
@@ -3136,7 +3136,7 @@ impl PyProximaDB {
 
             let mut fields = std::collections::HashMap::new();
             if let Some(fields_dict) = dict.get_item("fields")? {
-                if let Ok(d) = fields_dict.downcast::<PyDict>() {
+                if let Ok(d) = fields_dict.cast::<PyDict>() {
                     for (k, v) in d.iter() {
                         let key: String = k.extract()?;
                         let value = python_to_json(&v)?;
@@ -3253,7 +3253,7 @@ impl PyProximaDB {
 
         let mut rust_samples = Vec::with_capacity(samples.len());
         for item in samples.iter() {
-            let dict = item.downcast::<PyDict>()?;
+            let dict = item.cast::<PyDict>()?;
 
             let metric_name: String = dict
                 .get_item("metric_name")?
@@ -3270,7 +3270,7 @@ impl PyProximaDB {
 
             let mut labels = HashMap::new();
             if let Some(labels_dict) = dict.get_item("labels")? {
-                if let Ok(d) = labels_dict.downcast::<PyDict>() {
+                if let Ok(d) = labels_dict.cast::<PyDict>() {
                     for (k, v) in d.iter() {
                         let key: String = k.extract()?;
                         let val: String = v
@@ -3340,7 +3340,7 @@ impl PyProximaDB {
 
         let mut rust_traces = Vec::with_capacity(traces.len());
         for item in traces.iter() {
-            let dict = item.downcast::<PyDict>()?;
+            let dict = item.cast::<PyDict>()?;
             let trace_id: String = dict
                 .get_item("trace_id")?
                 .ok_or_else(|| PyValueError::new_err("Trace span missing 'trace_id'"))?
@@ -3381,7 +3381,7 @@ impl PyProximaDB {
 
             let mut attributes = HashMap::new();
             if let Some(attr_dict) = dict.get_item("attributes")?
-                && let Ok(py_dict) = attr_dict.downcast::<PyDict>()
+                && let Ok(py_dict) = attr_dict.cast::<PyDict>()
             {
                 for (k, v) in py_dict.iter() {
                     let key: String = k.extract()?;
@@ -3832,13 +3832,13 @@ fn python_to_json(value: &Bound<'_, PyAny>) -> PyResult<serde_json::Value> {
         Ok(serde_json::json!(f))
     } else if let Ok(s) = value.extract::<String>() {
         Ok(serde_json::Value::String(s))
-    } else if let Ok(list) = value.downcast::<PyList>() {
+    } else if let Ok(list) = value.cast::<PyList>() {
         let arr: Vec<serde_json::Value> = list
             .iter()
             .map(|item| python_to_json(&item))
             .collect::<PyResult<_>>()?;
         Ok(serde_json::Value::Array(arr))
-    } else if let Ok(dict) = value.downcast::<PyDict>() {
+    } else if let Ok(dict) = value.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
@@ -3862,19 +3862,19 @@ fn python_to_json_record_value(value: &Bound<'_, PyAny>) -> PyResult<serde_json:
         Ok(serde_json::json!(f))
     } else if let Ok(s) = value.extract::<String>() {
         Ok(serde_json::Value::String(s))
-    } else if let Ok(list) = value.downcast::<PyList>() {
+    } else if let Ok(list) = value.cast::<PyList>() {
         let arr: Vec<serde_json::Value> = list
             .iter()
             .map(|item| python_to_json_record_value(&item))
             .collect::<PyResult<_>>()?;
         Ok(serde_json::Value::Array(arr))
-    } else if let Ok(tuple) = value.downcast::<PyTuple>() {
+    } else if let Ok(tuple) = value.cast::<PyTuple>() {
         let arr: Vec<serde_json::Value> = tuple
             .iter()
             .map(|item| python_to_json_record_value(&item))
             .collect::<PyResult<_>>()?;
         Ok(serde_json::Value::Array(arr))
-    } else if let Ok(dict) = value.downcast::<PyDict>() {
+    } else if let Ok(dict) = value.cast::<PyDict>() {
         let mut map = serde_json::Map::new();
         for (k, v) in dict.iter() {
             let key: String = k.extract()?;
@@ -3893,7 +3893,7 @@ fn python_record_field<'py>(
     record: &Bound<'py, PyAny>,
     name: &str,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
-    if let Ok(dict) = record.downcast::<PyDict>() {
+    if let Ok(dict) = record.cast::<PyDict>() {
         dict.get_item(name)
     } else if record.hasattr(name)? {
         Ok(Some(record.getattr(name)?))
@@ -3923,7 +3923,7 @@ fn python_record_props(record: &Bound<'_, PyAny>) -> PyResult<proximadb_records:
     if let Some(props_value) = python_record_field(record, "props")?
         && !props_value.is_none()
     {
-        let props_dict = props_value.downcast::<PyDict>()?;
+        let props_dict = props_value.cast::<PyDict>()?;
         for (key, value) in props_dict.iter() {
             let key: String = key.extract()?;
             props.insert(
@@ -3977,7 +3977,7 @@ fn python_props_list_item(
 ) -> PyResult<proximadb_records::ProximaTree> {
     if let Some(prop_list) = props {
         let item = prop_list.get_item(index)?;
-        let dict = item.downcast::<PyDict>()?;
+        let dict = item.cast::<PyDict>()?;
         python_dict_to_proxima_tree(dict)
     } else {
         Ok(proximadb_records::ProximaTree::new())

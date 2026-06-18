@@ -23,7 +23,7 @@ fn require_non_blank(label: &str, value: &str) -> PyResult<()> {
     }
 }
 
-#[pyclass]
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 pub struct PyExpr {
     pub expr: Expr,
@@ -686,7 +686,7 @@ impl PyDataFrame {
         for batch in batches {
             let py_batch = batch.to_pyarrow(py)?;
             let pylist = py_batch.call_method0("to_pylist")?;
-            for item in pylist.downcast::<PyList>()?.iter() {
+            for item in pylist.cast::<PyList>()?.iter() {
                 list.append(item)?;
             }
         }
