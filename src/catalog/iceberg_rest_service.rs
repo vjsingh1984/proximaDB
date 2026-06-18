@@ -815,18 +815,16 @@ impl IcebergRestService {
 
         // If a persisted metadata.json already reflects the current manifest log, serve it
         // as-is — repeated reads must not keep appending metadata versions.
-        if let Some(mv) = existing_version {
-            if let Ok(bytes) = bridge.read_table_metadata(&metadata_prefix, mv).await {
-                if let Ok(existing) = serde_json::from_slice::<IcebergTableMetadata>(&bytes) {
-                    if existing.snapshots.len() == expected_snapshots {
-                        let loc = format!(
-                            "{}/namespaces/{}/tables/{}/metadata/v{}.metadata.json",
-                            self.server_base_url, ns, identifier.name, mv
-                        );
-                        return Ok((existing, loc));
-                    }
-                }
-            }
+        if let Some(mv) = existing_version
+            && let Ok(bytes) = bridge.read_table_metadata(&metadata_prefix, mv).await
+            && let Ok(existing) = serde_json::from_slice::<IcebergTableMetadata>(&bytes)
+            && existing.snapshots.len() == expected_snapshots
+        {
+            let loc = format!(
+                "{}/namespaces/{}/tables/{}/metadata/v{}.metadata.json",
+                self.server_base_url, ns, identifier.name, mv
+            );
+            return Ok((existing, loc));
         }
 
         // Stale or absent → commit a fresh metadata version (fail-soft).
