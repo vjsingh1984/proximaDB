@@ -216,6 +216,8 @@ pub struct IcebergSnapshot {
     pub snapshot_id: i64,
     #[serde(rename = "parent-snapshot-id", skip_serializing_if = "Option::is_none")]
     pub parent_snapshot_id: Option<i64>,
+    #[serde(rename = "sequence-number")]
+    pub sequence_number: i64,
     #[serde(rename = "timestamp-ms")]
     pub timestamp_ms: i64,
     #[serde(rename = "manifest-list")]
@@ -223,6 +225,29 @@ pub struct IcebergSnapshot {
     pub summary: IcebergSnapshotSummary,
     #[serde(rename = "schema-id", skip_serializing_if = "Option::is_none")]
     pub schema_id: Option<i32>,
+}
+
+/// A named snapshot reference (`refs` map entry): a branch or tag pointing at a snapshot.
+///
+/// This is the Iceberg-native substrate for git-style branching (TD-117): a branch is a
+/// mutable named pointer to a snapshot id; a tag is an immutable one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IcebergSnapshotRef {
+    #[serde(rename = "snapshot-id")]
+    pub snapshot_id: i64,
+    /// `"branch"` or `"tag"`.
+    #[serde(rename = "type")]
+    pub ref_type: String,
+}
+
+impl IcebergSnapshotRef {
+    /// A `branch`-type ref pointing at `snapshot_id`.
+    pub fn branch(snapshot_id: i64) -> Self {
+        Self {
+            snapshot_id,
+            ref_type: "branch".to_string(),
+        }
+    }
 }
 
 /// Full Iceberg table metadata (returned by load-table)
@@ -270,6 +295,10 @@ pub struct IcebergTableMetadata {
         default
     )]
     pub metadata_log: Vec<HashMap<String, serde_json::Value>>,
+    /// Named snapshot references (branches/tags). `main` always points at the current
+    /// snapshot; this is the substrate for git-style agent branching (TD-117).
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub refs: HashMap<String, IcebergSnapshotRef>,
 }
 
 /// Response for loading a table (GET /v1/namespaces/{ns}/tables/{table})
@@ -920,6 +949,7 @@ impl IcebergRestService {
         let snapshot = IcebergSnapshot {
             snapshot_id,
             parent_snapshot_id: None,
+            sequence_number: 1,
             timestamp_ms: now_ms,
             manifest_list: manifest_list_url,
             summary: IcebergSnapshotSummary {
@@ -988,8 +1018,15 @@ impl IcebergRestService {
             properties,
             current_snapshot_id: Some(snapshot_id),
             snapshots: vec![snapshot],
-            snapshot_log: vec![],
+            snapshot_log: vec![HashMap::from([
+                ("timestamp-ms".to_string(), serde_json::json!(now_ms)),
+                ("snapshot-id".to_string(), serde_json::json!(snapshot_id)),
+            ])],
             metadata_log: vec![],
+            refs: HashMap::from([(
+                "main".to_string(),
+                IcebergSnapshotRef::branch(snapshot_id),
+            )]),
         }
     }
 
@@ -1161,5 +1198,40 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("NoSuchTableException"));
         assert!(json.contains("404"));
+    }
+
+    #[test]
+    fn metadata_has_main_ref_and_v2_snapshot_fields() {
+        use crate::catalog::CatalogColumn;
+        let svc = IcebergRestService::new(
+            Arc::new(CatalogManager::new()),
+            "wh",
+            "grpc://localhost:5680",
+            "http://localhost:5678/iceberg/v1",
+        );
+        let schema = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String))
+            .with_column(CatalogColumn::new(2, "score", ProximaType::Int64))
+            .with_primary_key(vec!["id".to_string()]);
+        let id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
+
+        let md = svc.catalog_schema_to_iceberg_metadata(&id, &schema);
+
+        // refs.main is the git-style branch pointer at the current snapshot (TD-117 substrate).
+        let main = md.refs.get("main").expect("main ref present");
+        assert_eq!(main.ref_type, "branch");
+        assert_eq!(Some(main.snapshot_id), md.current_snapshot_id);
+
+        // The snapshot carries a v2 sequence number and is recorded in the snapshot log.
+        assert_eq!(md.snapshots.len(), 1);
+        assert_eq!(md.snapshots[0].sequence_number, 1);
+        assert_eq!(md.snapshot_log.len(), 1);
+
+        // Serializes with Iceberg-spec field names so external readers parse it.
+        let json = serde_json::to_string(&md).unwrap();
+        assert!(json.contains("\"refs\""), "refs map present: {json}");
+        assert!(json.contains("\"sequence-number\""));
+        assert!(json.contains("\"format-version\":2"));
+        assert!(json.contains("\"current-snapshot-id\""));
     }
 }
