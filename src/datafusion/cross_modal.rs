@@ -21,7 +21,6 @@
 //! `logical_lowering`) into the shared logical plane so the join is reachable from
 //! pgwire SQL. Both reuse [`vector_matches_to_batch`] below.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use arrow_array::{Float32Array, RecordBatch, StringArray};
@@ -107,10 +106,6 @@ impl std::fmt::Debug for VectorSearchTableProvider {
 
 #[async_trait]
 impl TableProvider for VectorSearchTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         vector_matches_schema()
     }

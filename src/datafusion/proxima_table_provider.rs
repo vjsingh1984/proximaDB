@@ -33,7 +33,6 @@
 //! - **I (Interface Segregation)**: Separate traits for table metadata and split reading
 //! - **D (Dependency Inversion)**: ExecutionPlan depends on abstract SplitReader trait
 
-use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -418,10 +417,6 @@ impl NullProximaTableProvider {
 
 #[async_trait]
 impl TableProvider for NullProximaTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

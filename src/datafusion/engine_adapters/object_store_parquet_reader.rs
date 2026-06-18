@@ -4,7 +4,6 @@
 //! `IcebergObjectStoreBridge` for base-prefix discovery and Parquet's
 //! `ParquetObjectReader` for range-based footer and row-group reads.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -21,6 +20,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::prelude::SessionContext;
 use futures::StreamExt;
 use object_store::ObjectStore;
+use object_store::ObjectStoreExt;
 use object_store::path::Path;
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use parquet::file::metadata::ParquetMetaData;
@@ -295,10 +295,6 @@ impl ObjectStoreParquetTable {
 
 #[async_trait]
 impl TableProvider for ObjectStoreParquetTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -563,7 +559,7 @@ mod tests {
         )
         .unwrap();
         let props = WriterProperties::builder()
-            .set_max_row_group_size(2)
+            .set_max_row_group_row_count(Some(2))
             .build();
         let file = std::fs::File::create(path).unwrap();
         let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();

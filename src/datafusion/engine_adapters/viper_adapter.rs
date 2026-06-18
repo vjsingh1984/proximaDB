@@ -52,7 +52,6 @@
 
 #![allow(dead_code)] // forward-scaffolding fields pending wiring
 
-use std::any::Any;
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -324,10 +323,6 @@ impl ViperTableProvider {
 
 #[async_trait]
 impl TableProvider for ViperTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

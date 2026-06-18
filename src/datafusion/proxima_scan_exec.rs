@@ -45,7 +45,6 @@
 //! let stream = scan_exec.execute(0, context)?;
 //! ```
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -138,7 +137,7 @@ pub struct ProximaScanExec {
     /// Collection name for logging
     collection_name: String,
     /// Plan properties
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
     /// Cached statistics
     statistics: Option<Statistics>,
 }
@@ -257,11 +256,7 @@ impl ExecutionPlan for ProximaScanExec {
         "ProximaScanExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
@@ -350,8 +345,8 @@ impl ExecutionPlan for ProximaScanExec {
         Ok(Box::pin(RecordBatchStreamAdapter::new(schema, limited)))
     }
 
-    fn statistics(&self) -> DFResult<Statistics> {
-        Ok(self.statistics.clone().unwrap_or_default())
+    fn partition_statistics(&self, _partition: Option<usize>) -> DFResult<Arc<Statistics>> {
+        Ok(Arc::new(self.statistics.clone().unwrap_or_default()))
     }
 }
 
@@ -483,7 +478,7 @@ impl ProximaScanExecBuilder {
             reader,
             batch_size,
             collection_name: self.collection_name,
-            properties,
+            properties: Arc::new(properties),
             statistics: self.statistics,
         })
     }

@@ -597,7 +597,7 @@ impl UnifiedColumnarWriter {
             } else {
                 parquet::file::properties::EnabledStatistics::None
             })
-            .set_max_row_group_size(self.config.row_group_size)
+            .set_max_row_group_row_count(Some(self.config.row_group_size))
             .set_data_page_size_limit(self.config.page_size);
 
         // Configure bloom filters for specific columns

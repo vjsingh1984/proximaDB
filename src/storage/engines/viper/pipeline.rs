@@ -2165,7 +2165,7 @@ impl ParquetFlusher {
             .set_compression(compression)
             .set_encoding(Encoding::DELTA_BINARY_PACKED)
             .set_dictionary_enabled(self.config.enable_dictionary_encoding)
-            .set_max_row_group_size(self.config.row_group_size)
+            .set_max_row_group_row_count(Some(self.config.row_group_size))
             .set_write_batch_size(self.config.write_batch_size)
             .build();
 
