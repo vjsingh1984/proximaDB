@@ -1035,14 +1035,38 @@ jobs:
           PROXIMADB_EMBEDDED: "0"
           HF_HUB_DOWNLOAD_TIMEOUT: "30"
         run: |
-          # test_integrations_victor_cov imports the internal, unpublished
-          # `victor` package which isn't installable in CI; skip its collection.
-          # test_integrations_victor_cov imports the internal, unpublished
-          # `victor` package; test_chunking_code_cov needs tree-sitter language
-          # grammars that are intentionally not installed in CI. Skip both.
-          pytest tests/unit/ -v --tb=short --timeout=120 \
-            --ignore=tests/unit/test_integrations_victor_cov.py \
-            --ignore=tests/unit/test_chunking_code_cov.py
+          # Per-file process isolation for the SDK unit suite.
+          #
+          # Several *_cov tests stub heavy optional deps (sentence_transformers,
+          # torch, openai, ...) into sys.modules — some at MODULE/collection level,
+          # some via monkeypatch. These leak across files in a shared interpreter
+          # and break later REAL tests (e.g. test_embedding_providers_v2 getting a
+          # fake sentence_transformers). The leak is MULTI-FILE emergent (not
+          # pairwise-reducible) and collection-time, so neither xdist/forked nor
+          # excluding a known subset is airtight. Running EACH file in its own
+          # process is the only guaranteed fix — a file's stubs cannot escape its
+          # process. Parallelized for speed; failures print with ::error::.
+          #
+          # Permanently skipped (not isolation-related):
+          #   victor_cov     -> imports the internal, unpublished `victor` package
+          #   chunking_code  -> needs tree-sitter grammars not installed in CI
+          set -u
+          SKIP_RE='test_integrations_victor_cov|test_chunking_code_cov'
+          # Run one file in its own process. exit 0 = ok, 5 = no tests collected
+          # (e.g. a whole module importorskip-skipped) -> ok; anything else fails.
+          test_one() {
+            o=$(pytest "$1" -q --timeout=120 -p no:cacheprovider 2>&1); r=$?
+            if [ "$r" -ne 0 ] && [ "$r" -ne 5 ]; then
+              echo "::error::FAILED $1 (exit $r)"; echo "$o" | tail -25; return 1
+            fi
+            echo "ok: $1"; return 0
+          }
+          export -f test_one
+          # `xargs -n1 bash -c 'test_one "$0"'` passes each file as $0 (no -I
+          # substitution, so no BSD/GNU command-length quirk). xargs exits non-zero
+          # (123) if any invocation failed -> the step fails.
+          find tests/unit -name 'test_*.py' | sort | grep -vE "$SKIP_RE" | \
+            xargs -P 4 -n 1 bash -c 'test_one "$0"'
 
   # ============================================================================
   # INTEGRATION TESTS - Server + Python SDK
