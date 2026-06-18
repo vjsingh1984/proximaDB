@@ -34,7 +34,7 @@ COPY . .
 # Build the wheel against the repo-root manifest with the embedded package's
 # [tool.maturin] config (features = python,pylib; bindings = pyo3).
 RUN cd clients/python-embedded \
- && maturin build --release -m ../../Cargo.toml --features python,pylib --out /wheels \
+ && maturin build --release -m ../../Cargo.toml --features python,pylib --compatibility linux --out /wheels \
  && ls -la /wheels && sha256sum /wheels/*.whl
 
 # Export-only stage: `-o type=local,dest=./wheels` copies just the wheel out.
