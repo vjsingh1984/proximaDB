@@ -145,20 +145,23 @@ class ClientConfig(BaseModel):
         if not v:
             raise ValueError("URL cannot be empty")
 
-        parsed = urlparse(v)
-        if not parsed.scheme:
-            # For gRPC format like "localhost:5679", keep as-is
-            if ":" in v and not v.startswith(("http://", "https://", "grpc://")):
-                # This looks like host:port format for gRPC
+        # Detect an explicit scheme by the "://" separator rather than
+        # urlparse().scheme: urlparse mis-parses a bare host:port like
+        # "127.0.0.1:5679" as scheme="127.0.0.1" on some Python/urllib
+        # versions and as scheme="" on others, which made this validator
+        # (and test_url_grpc_hostport_kept_asis) flap between 3.10/3.11/3.12.
+        if "://" not in v:
+            # No explicit scheme. A "host:port" form is the gRPC / Arrow
+            # Flight endpoint shorthand — keep it as-is.
+            if ":" in v:
                 return v
-            # Otherwise add https as default scheme
-            v = f"https://{v}"
-            parsed = urlparse(v)
+            # Bare hostname -> default to https.
+            return f"https://{v}"
 
-        if parsed.scheme and parsed.scheme not in ("http", "https", "grpc", "embedded"):
+        parsed = urlparse(v)
+        if parsed.scheme not in ("http", "https", "grpc", "embedded"):
             raise ValueError("URL must use http, https, grpc, or embedded scheme")
-
-        if parsed.scheme and not parsed.netloc:
+        if not parsed.netloc:
             raise ValueError("URL must include hostname")
 
         return v
