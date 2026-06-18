@@ -1,0 +1,196 @@
+# Publish the ProximaDB OSS server container image to Docker Hub.
+#
+# This is the public OSS image (`vjsingh1984/proximadb`). It is the base that
+# AnvaiOps' *commercial* pipeline overlays pricing tiers onto and pushes to ACR
+# (anvaiops/.github/workflows/build-commercial-image.yml) — the OSS image
+# itself lives on Docker Hub, not ACR.
+#
+# Image built: deploy/docker/Dockerfile, target `runtime` — the minimal,
+# Python-free, non-root debian-slim OSS server (glibc). Tag scheme is
+# version + sha + latest (latest only on release tags / promoted builds).
+#
+# Auth: docker/login-action with DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets.
+# See deploy/docker/IMAGE_PUBLISH.md for the one-time setup.
+name: Publish OSS Image (Docker Hub)
+
+on:
+  push:
+    # Release tags publish the immutable version + latest.
+    tags:
+      - "v*"
+    # Pushes to the integration branch publish a rolling sha-tagged image
+    # (no `latest`) so downstream environments can pin a known-good build.
+    branches:
+      - develop
+    paths:
+      - "src/**"
+      - "crates/**"
+      - "apps/**"
+      - "clients/**"
+      - "proto/**"
+      - "config/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "deploy/docker/**"
+      - ".github/workflows/publish-image.yml"
+  workflow_dispatch:
+    inputs:
+      tag_latest:
+        description: "Also tag :latest (use for a promoted build)"
+        type: boolean
+        default: false
+      target:
+        description: "Dockerfile runtime target"
+        type: choice
+        options: [runtime, runtime-full]
+        default: runtime
+
+concurrency:
+  # One publish per ref at a time; never cancel an in-flight push (a partially
+  # pushed manifest is worse than a queued one).
+  group: publish-image-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-push:
+    name: Build & push to Docker Hub
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Only the canonical repo publishes — forks / OSS contributors skip cleanly
+    # (they lack the Docker Hub credentials anyway).
+    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+      version: ${{ steps.vars.outputs.version }}
+    env:
+      IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
+      TARGET: ${{ github.event.inputs.target || 'runtime' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version + tags
+        id: vars
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+
+          # Tag list per trigger:
+          #  - release tag v*  -> <version>, sha-<sha>, latest
+          #  - develop push    -> develop, sha-<sha>            (rolling, no latest)
+          #  - manual dispatch -> <version>, sha-<sha> [, latest if requested]
+          # The `-full` target gets a parallel suffixed tag namespace.
+          SUFFIX=""
+          if [ "${TARGET}" = "runtime-full" ]; then SUFFIX="-full"; fi
+          TAGS=""
+          add() { TAGS="${TAGS}${TAGS:+,}${IMAGE_REPO}:$1"; }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            add "${VERSION}${SUFFIX}"
+            add "sha-${SHORT_SHA}${SUFFIX}"
+            add "latest${SUFFIX}"
+          elif [ "${GITHUB_REF_NAME}" = "develop" ]; then
+            add "develop${SUFFIX}"
+            add "sha-${SHORT_SHA}${SUFFIX}"
+          else
+            add "${VERSION}${SUFFIX}"
+            add "sha-${SHORT_SHA}${SUFFIX}"
+            if [ "${{ github.event.inputs.tag_latest }}" = "true" ]; then
+              add "latest${SUFFIX}"
+            fi
+          fi
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+          echo "Resolved tags: ${TAGS}"
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          target: ${{ env.TARGET }}
+          push: true
+          tags: ${{ steps.vars.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=proximadb
+            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          provenance: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Summary
+        run: |
+          {
+            echo "### Published \`${TARGET}\` OSS image to Docker Hub"
+            echo ""
+            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo ""
+            echo "Tags:"
+            echo '```'
+            echo "${{ steps.vars.outputs.tags }}" | tr ',' '\n'
+            echo '```'
+            echo ""
+            echo "> AnvaiOps' commercial overlay pins this base by digest"
+            echo "> (ADR-0016): set \`PROXIMADB_OSS_BASE=${IMAGE_REPO}\` and"
+            echo "> \`proximadb_version=@${{ steps.build.outputs.digest }}\` in"
+            echo "> anvaiops build-commercial-image.yml."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # Reclaim Docker Hub storage: delete superseded rolling `sha-*` tags, keeping
+  # only the most recent N. Never touches semver, `latest`, or `develop`.
+  prune:
+    name: Prune old sha- tags
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
+    env:
+      IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
+      KEEP: ${{ vars.DOCKERHUB_PRUNE_KEEP || '10' }}
+    steps:
+      - name: Delete stale sha- tags via Docker Hub API
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Exchange the PAT for a Hub JWT.
+          JWT="$(curl -fsSL -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login | jq -r .token)"
+          [ -n "$JWT" ] && [ "$JWT" != "null" ] || { echo "Hub login failed"; exit 1; }
+
+          # Newest-first list of mutable rolling tags only (sha-* and sha-*-full).
+          # Semver / latest / develop are intentionally excluded — never pruned.
+          mapfile -t SHA_TAGS < <(
+            curl -fsSL -H "Authorization: JWT ${JWT}" \
+              "https://hub.docker.com/v2/repositories/${IMAGE_REPO}/tags?page_size=100&ordering=last_updated" \
+            | jq -r '.results[].name' | grep -E '^sha-' || true)
+
+          echo "Found ${#SHA_TAGS[@]} sha- tags; keeping newest ${KEEP}."
+          i=0
+          for tag in "${SHA_TAGS[@]}"; do
+            i=$((i+1))
+            if [ "$i" -le "${KEEP}" ]; then
+              echo "keep   ${tag}"
+              continue
+            fi
+            echo "delete ${tag}"
+            curl -fsSL -X DELETE -H "Authorization: JWT ${JWT}" \
+              "https://hub.docker.com/v2/repositories/${IMAGE_REPO}/tags/${tag}/" || \
+              echo "  (delete failed for ${tag}, continuing)"
+          done
