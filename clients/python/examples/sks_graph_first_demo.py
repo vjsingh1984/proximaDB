@@ -34,7 +34,7 @@ def check_server_available(url: str) -> bool:
     import httpx
 
     try:
-        r = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
+        r = httpx.get(url.rstrip("/") + "/api/v2/health", timeout=2.0)
         return r.status_code < 500
     except Exception:
         return False

@@ -500,7 +500,9 @@ impl RestServer {
         // Add V3 API router with native server-side embedding
         let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
         base_router = base_router.nest("/api/v3", v3_router);
-        tracing::info!("✅ V3 API enabled at /api/v3 (native server-side embedding)");
+        tracing::info!(
+            "✅ V3 API now an alias -> /api/v2 (document ingest 308-redirects to /api/v2/collections/:id/documents)"
+        );
 
         // Unmatched routes (incl. the removed v1 surfaces) return the canonical
         // error envelope with a migration hint pointing at the v2 replacement.
@@ -796,7 +798,9 @@ impl RestServer {
         // Add V3 API router with native server-side embedding
         let v3_router = super::v3::create_v3_router().with_state(state_for_v3);
         base_router = base_router.nest("/api/v3", v3_router);
-        tracing::info!("✅ V3 API enabled at /api/v3 (native embedding, unified mode)");
+        tracing::info!(
+            "✅ V3 API now an alias -> /api/v2 (unified mode; document ingest 308-redirects to /api/v2/collections/:id/documents)"
+        );
 
         // Unmatched routes (incl. removed v1 surfaces) → canonical 404 + hint.
         base_router = base_router.fallback(not_found_fallback);

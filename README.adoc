@@ -184,14 +184,13 @@ Logs and metrics with WAL‑backed ingestion, partitioned storage, and aggregati
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/search \
+curl -X POST http://localhost:5678/api/v2/collections/docs/search \
   -H "Content-Type: application/json" \
   -d '{
-    "collection_id": "docs",
     "query_vector": [0.1, 0.2, 0.3],
     "top_k": 10,
-    "metadata_filters": [
-      {"field": "category", "operator": "EQUALS", "value": {"stringValue": "tech"}}
+    "filters": [
+      {"field": "category", "op": "eq", "value": "tech"}
     ]
   }'
 ----
@@ -200,7 +199,7 @@ curl -X POST http://localhost:5678/api/v1/search \
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/documents/collections/docs/documents \
+curl -X POST http://localhost:5678/api/v2/document-collections/docs/documents \
   -H "Content-Type: application/json" \
   -d '{
     "document": {"title": "Runbook", "service": "api", "severity": "warn"}
@@ -211,7 +210,7 @@ curl -X POST http://localhost:5678/api/v1/documents/collections/docs/documents \
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/graph/graphs/topology/traverse \
+curl -X POST http://localhost:5678/api/v2/graphs/topology/traverse \
   -H "Content-Type: application/json" \
   -d '{
     "start_node_id": "service-api",
@@ -223,7 +222,7 @@ curl -X POST http://localhost:5678/api/v1/graph/graphs/topology/traverse \
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/observability/namespaces/prod/logs \
+curl -X POST http://localhost:5678/api/v2/observability/namespaces/prod/logs \
   -H "Content-Type: application/json" \
   -d '{
     "message": "request failed",
@@ -236,10 +235,10 @@ curl -X POST http://localhost:5678/api/v1/observability/namespaces/prod/logs \
 
 [source,bash]
 ----
-curl -X POST http://localhost:5678/api/v1/unified/federated \
+curl -X POST http://localhost:5678/api/v2/unified/federated \
   -H "Content-Type: application/json" \
   -d '{
-    "query": "SELECT * FROM VECTOR_SEARCH('products', '[0.1, 0.2, 0.3]', 10)"
+    "query": "SELECT * FROM VECTOR_SEARCH('\''products'\'', '\''[0.1, 0.2, 0.3]'\'', 10)"
   }'
 ----
 

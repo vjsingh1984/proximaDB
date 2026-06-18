@@ -144,7 +144,7 @@ class DashboardMetricsDemo:
 
         try:
             response = self.session.get(
-                f"{self.base_url}/api/v1/collections", timeout=5
+                f"{self.base_url}/api/v2/collections", timeout=5
             )
             response.raise_for_status()
             collections = response.json()
@@ -300,7 +300,7 @@ class DashboardMetricsDemo:
         print(f"📊 Metrics (JSON):   {self.base_url}/metrics/json")
         print(f"📈 Metrics (Prom):   {self.base_url}/metrics")
         print(f"🏥 Health:           {self.base_url}/health")
-        print(f"📁 Collections:      {self.base_url}/api/v1/collections")
+        print(f"📁 Collections:      {self.base_url}/api/v2/collections")
         print("=" * 60)
 
         return True

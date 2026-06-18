@@ -232,7 +232,7 @@ What they demonstrate:
 - Vector similarity + typed filters improve relevance and latency
 - Business‑aligned fields (price, churn_risk, region, etc.)
 - Optional graph context where it adds value (fraud PoV)
-- Hybrid entity API under /api/v1/collections/<id>/entities demonstrates the unified store
+- Hybrid entity API under /api/v2/collections/<id>/entities demonstrates the unified store
 
 ---
 

@@ -144,7 +144,7 @@ def main():
             print(f"      - Uptime: {metrics.get('uptime_seconds', 0):.1f}s")
 
         # Verify collection appears in API
-        response = requests.get(f"{base_url}/api/v1/collections", timeout=5)
+        response = requests.get(f"{base_url}/api/v2/collections", timeout=5)
         if response.status_code == 200:
             collections = response.json()
             # Collections are Collection objects with config.name
@@ -201,7 +201,7 @@ def main():
     print(f"\n📱 Next Steps:")
     print(f"   • View dashboard: http://localhost:5678/dashboard")
     print(f"   • Check metrics: http://localhost:5678/metrics/json")
-    print(f"   • View collections: http://localhost:5678/api/v1/collections")
+    print(f"   • View collections: http://localhost:5678/api/v2/collections")
 
     print(f"\n🧹 Cleanup:")
     print(f"   Collection '{collection_name}' left for dashboard inspection")

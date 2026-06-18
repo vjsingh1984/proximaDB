@@ -534,30 +534,37 @@ impl MultiServer {
                 );
             let proxima_record_service = proxima_record_service_impl.into_server();
 
-            // Build server with all services
-            warn!(
-                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-            );
-
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (health_reporter, standard_health_server) = tonic_health::server::health_reporter();
             health_reporter
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
+            // Canonical surfaces are always registered: proximadb.v2.ProximaRecordService
+            // + grpc.health.v1.Health (+ optional reflection below).
             let mut server = server_builder
-                .add_service(vector_service)
-                .add_service(sql_service)
-                .add_service(col_service)
-                .add_service(graph_service)
-                .add_service(hybrid_search_service)
-                .add_service(security_service)
-                .add_service(document_service)
-                .add_service(entity_service)
-                .add_service(observability_service)
-                .add_service(streaming_service)
                 .add_service(proxima_record_service)
                 .add_service(standard_health_server);
+
+            // Deprecated gRPC v1 compatibility adapters are gated behind
+            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
+            // Post-sunset these service impls are removed entirely.
+            if self.config.grpc_config.enable_grpc_v1_compat {
+                warn!(
+                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+                );
+                server = server
+                    .add_service(vector_service)
+                    .add_service(sql_service)
+                    .add_service(col_service)
+                    .add_service(graph_service)
+                    .add_service(hybrid_search_service)
+                    .add_service(security_service)
+                    .add_service(document_service)
+                    .add_service(entity_service)
+                    .add_service(observability_service)
+                    .add_service(streaming_service);
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -1006,9 +1013,6 @@ impl MultiServer {
                     .max_encoding_message_size(512 * 1024 * 1024)
                     .max_decoding_message_size(512 * 1024 * 1024);
 
-            warn!(
-                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-            );
             let mut server_builder = tonic::transport::Server::builder().layer(
                 tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator
@@ -1025,16 +1029,27 @@ impl MultiServer {
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
+            // Canonical surfaces always on: proximadb.v2.ProximaRecordService,
+            // Arrow Flight, and grpc.health.v1.Health (+ optional reflection below).
             let mut server = server_builder
-                .add_service(vector_service)
-                .add_service(sql_service)
-                .add_service(col_service)
-                .add_service(graph_service)
-                .add_service(hybrid_search_service)
-                .add_service(security_service)
                 .add_service(proxima_record_service)
                 .add_service(flight_server)
                 .add_service(standard_health_server);
+
+            // Deprecated gRPC v1 compatibility adapters are gated behind
+            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
+            if self.config.grpc_config.enable_grpc_v1_compat {
+                warn!(
+                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+                );
+                server = server
+                    .add_service(vector_service)
+                    .add_service(sql_service)
+                    .add_service(col_service)
+                    .add_service(graph_service)
+                    .add_service(hybrid_search_service)
+                    .add_service(security_service);
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -1391,11 +1406,6 @@ impl MultiServer {
             )
             .into_server();
 
-            // Build cluster services
-            warn!(
-                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-            );
-
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (mut std_health_reporter, standard_health_server) =
                 tonic_health::server::health_reporter();
@@ -1403,15 +1413,26 @@ impl MultiServer {
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
+            // Canonical surfaces always on: proximadb.v2.ProximaRecordService +
+            // grpc.health.v1.Health (+ optional reflection / cluster services below).
             let mut server = server_builder
-                .add_service(vector_service)
-                .add_service(sql_service)
-                .add_service(col_service)
-                .add_service(graph_service)
-                .add_service(hybrid_search_service)
-                .add_service(security_service)
                 .add_service(proxima_record_service)
                 .add_service(standard_health_server);
+
+            // Deprecated gRPC v1 compatibility adapters are gated behind
+            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
+            if self.config.grpc_config.enable_grpc_v1_compat {
+                warn!(
+                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+                );
+                server = server
+                    .add_service(vector_service)
+                    .add_service(sql_service)
+                    .add_service(col_service)
+                    .add_service(graph_service)
+                    .add_service(hybrid_search_service)
+                    .add_service(security_service);
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {

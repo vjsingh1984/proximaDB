@@ -44,7 +44,7 @@ def check_server_available(url: str) -> bool:
     import httpx
 
     try:
-        response = httpx.get(url.rstrip("/") + "/api/v1/health", timeout=2.0)
+        response = httpx.get(url.rstrip("/") + "/api/v2/health", timeout=2.0)
         return response.status_code < 500
     except Exception:
         return False
@@ -301,7 +301,7 @@ def demo_3_create_citation_graph(client: ProximaDBClient, papers: List[Dict]):
 
         base_url = "http://localhost:5678"
         response = httpx.post(
-            f"{base_url}/api/v1/graph/graphs",
+            f"{base_url}/api/v2/graphs",
             json={"graph_id": "default", "name": "Default Graph"},
             timeout=5.0,
         )
