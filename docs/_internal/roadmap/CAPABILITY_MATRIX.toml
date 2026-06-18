@@ -90,3 +90,73 @@ evidence = [
   "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc:105",
   "docs/_internal/roadmap/STRATEGIC_ROADMAP.adoc:152",
 ]
+
+# Lakehouse-native pgwire architecture (TD-114..TD-120), spawned by
+# docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md.
+# Statuses advance to `partial` as foundation slices land (2026-06-17).
+
+[[capabilities]]
+id = "lakehouse_storage_spine_compaction"
+status = "partial"
+notes = "L0->base compaction (TD-114). Tested PAX merge-on-read core (compact_pax_segments, drops tombstones) + flag-gated trigger (default off) shipped 2026-06-17; live auto-invoke from flush still open."
+evidence = [
+  "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "crates/storage/proximadb-storage-common/src/pax_block.rs:1",
+  "src/storage/engines/sst/flush/mod.rs:1",
+]
+
+[[capabilities]]
+id = "cost_based_engine_dispatch"
+status = "planned"
+notes = "Cost-based multi-engine routing (TD-115). ComputeScheduler::route_select always returns Native today; cost model + QueryShape stats not wired."
+evidence = [
+  "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "src/query/compute_scheduler.rs:1",
+]
+
+[[capabilities]]
+id = "wal_tiering_time_travel"
+status = "planned"
+notes = "WAL offload to object storage + read-as-of-LSN time travel (TD-116). WAL is local-only; SnapshotPin captures LSN ranges but no time-travel read path exists."
+evidence = [
+  "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "src/services/snapshot/coordinator.rs:1",
+]
+
+[[capabilities]]
+id = "agent_branching_branchref"
+status = "partial"
+notes = "Object-store-metadata copy-on-write branching for agents (TD-117). BranchRef type + branches_subprefix + ManifestCommitter::commit_fenced generation writer-fence shipped + tested 2026-06-17; ancestor read fall-through, live CAS fencing, and branch GC still open."
+evidence = [
+  "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "src/services/snapshot/branch_ref.rs:1",
+  "crates/storage/proximadb-iceberg-engine/src/manifest.rs:1",
+]
+
+[[capabilities]]
+id = "unified_paging_tier_policy"
+status = "planned"
+notes = "Unify cache eviction and tier demotion under one policy; split cache out of the FileSystem mechanism (TD-118)."
+evidence = [
+  "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "src/storage/persistence/filesystem/caching_filesystem.rs:1",
+]
+
+[[capabilities]]
+id = "real_iceberg_snapshots"
+status = "planned"
+notes = "Promote the v1 key-list manifest to real Iceberg snapshots (metadata.json + manifest lists + refs) (TD-119). REST service returns stub snapshots today."
+evidence = [
+  "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "src/catalog/iceberg_rest_service.rs:1",
+]
+
+[[capabilities]]
+id = "pg_catalog_completeness"
+status = "partial"
+notes = "Catalog-backed pg_catalog views for ORM/driver compatibility (TD-120). Canonical pg_type/pg_namespace/pg_class/pg_attribute/pg_constraint views shipped + tested 2026-06-17; pg_index canonical view + full live ORM round-trip still open."
+evidence = [
+  "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "src/services/catalog_introspection.rs:1",
+  "src/network/postgres/translator.rs:1",
+]
