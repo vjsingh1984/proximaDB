@@ -144,10 +144,12 @@ evidence = [
 
 [[capabilities]]
 id = "real_iceberg_snapshots"
-status = "planned"
-notes = "Promote the v1 key-list manifest to real Iceberg snapshots (metadata.json + manifest lists + refs) (TD-119). REST service returns stub snapshots today."
+status = "partial"
+notes = "TD-119 Phase 1 (2026-06-18): real persisted metadata.json + manifest-log-driven snapshot history (parent chain, v2 sequence numbers, refs.main) + resolvable metadata-location, via MetadataCommitter + ensure_table_metadata. Avro manifest-list/manifest files for Spark/Trino data scans remain (Phase 2)."
 evidence = [
   "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
+  "crates/storage/proximadb-iceberg-engine/src/metadata.rs:1",
+  "src/catalog/iceberg_rest_service.rs:1",
   "src/catalog/iceberg_rest_service.rs:1",
 ]
 
