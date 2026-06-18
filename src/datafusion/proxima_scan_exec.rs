@@ -45,7 +45,6 @@
 //! let stream = scan_exec.execute(0, context)?;
 //! ```
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;

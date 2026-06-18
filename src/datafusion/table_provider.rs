@@ -18,7 +18,6 @@
 //! let provider = ProximaDataFusionTable::new(collection, schema, reader);
 //! ```
 
-use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 

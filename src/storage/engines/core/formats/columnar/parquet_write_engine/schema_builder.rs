@@ -167,7 +167,7 @@ impl ParquetSchemaBuilder {
 /// Create writer properties with comprehensive optimizations
 pub fn create_writer_properties(config: &ParquetWriterConfig) -> Result<WriterProperties> {
     let mut builder = WriterProperties::builder()
-        .set_max_row_group_size(config.row_group_size)
+        .set_max_row_group_row_count(Some(config.row_group_size))
         .set_data_page_size_limit(config.page_size)
         .set_write_batch_size(config.write_batch_size);
 

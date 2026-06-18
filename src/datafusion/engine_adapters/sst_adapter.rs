@@ -45,7 +45,6 @@
 
 #![allow(dead_code)] // forward-scaffolding fields pending wiring
 
-use std::any::Any;
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;

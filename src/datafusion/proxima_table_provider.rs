@@ -33,7 +33,6 @@
 //! - **I (Interface Segregation)**: Separate traits for table metadata and split reading
 //! - **D (Dependency Inversion)**: ExecutionPlan depends on abstract SplitReader trait
 
-use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 

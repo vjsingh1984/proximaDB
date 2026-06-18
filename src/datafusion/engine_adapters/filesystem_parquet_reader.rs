@@ -12,7 +12,6 @@
 //! reference-counted [`Bytes`]; per-row-group ranged reads are a future optimization the
 //! blueprint already tracks.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use arrow_schema::{Schema, SchemaRef};

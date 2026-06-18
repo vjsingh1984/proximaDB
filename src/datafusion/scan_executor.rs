@@ -3,7 +3,6 @@
 //! Implements DataFusion's ExecutionPlan for scanning ProximaDB collections.
 //! Supports parallel partition scanning with filter and projection pushdown.
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;

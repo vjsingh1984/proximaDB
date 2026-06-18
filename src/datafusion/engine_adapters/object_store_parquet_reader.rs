@@ -4,7 +4,6 @@
 //! `IcebergObjectStoreBridge` for base-prefix discovery and Parquet's
 //! `ParquetObjectReader` for range-based footer and row-group reads.
 
-use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -560,7 +559,7 @@ mod tests {
         )
         .unwrap();
         let props = WriterProperties::builder()
-            .set_max_row_group_size(2)
+            .set_max_row_group_row_count(Some(2))
             .build();
         let file = std::fs::File::create(path).unwrap();
         let mut writer = ArrowWriter::try_new(file, schema.clone(), Some(props)).unwrap();
