@@ -1,25 +1,26 @@
-# Publish the ProximaDB OSS server container image to Docker Hub.
+# Publish the ProximaDB OSS server container image to Docker Hub (multi-arch).
 #
-# This is the public OSS image (`vjsingh1984/proximadb`). It is the base that
-# AnvaiOps' *commercial* pipeline overlays pricing tiers onto and pushes to ACR
-# (anvaiops/.github/workflows/build-commercial-image.yml) — the OSS image
-# itself lives on Docker Hub, not ACR.
+# This is the public OSS image (`vjsingh1984/proximadb`), the base AnvaiOps'
+# *commercial* pipeline overlays pricing onto and pushes to ACR. It is built for
+# BOTH linux/amd64 and linux/arm64 — anvaiops pins ProximaDB to an arm64 node
+# pool (ADR-0016 / proximadb_node_arch = "arm64"), and arm64 also covers
+# Graviton/Ampere + Apple-Silicon dev.
 #
-# Image built: deploy/docker/Dockerfile, target `runtime` — the minimal,
-# Python-free, non-root debian-slim OSS server (glibc). Tag scheme is
-# version + sha + latest (latest only on release tags / promoted builds).
+# Strategy: each arch builds natively on its own hosted runner (free for public
+# repos: ubuntu-latest = amd64, ubuntu-24.04-arm = arm64), pushes BY DIGEST, and
+# a final job merges both digests into one multi-arch manifest carrying the tags.
+# Native beats QEMU here — emulating the heavy Rust release build would crawl.
 #
+# Image built: deploy/docker/Dockerfile, target `runtime` (minimal, non-root,
+# Python-free debian-slim glibc OSS server). Tag scheme version + sha + latest.
 # Auth: docker/login-action with DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets.
-# See deploy/docker/IMAGE_PUBLISH.md for the one-time setup.
+# See deploy/docker/IMAGE_PUBLISH.md for setup.
 name: Publish OSS Image (Docker Hub)
 
 on:
   push:
-    # Release tags publish the immutable version + latest.
     tags:
       - "v*"
-    # Pushes to the integration branch publish a rolling sha-tagged image
-    # (no `latest`) so downstream environments can pin a known-good build.
     branches:
       - develop
     paths:
@@ -46,8 +47,7 @@ on:
         default: runtime
 
 concurrency:
-  # One publish per ref at a time; never cancel an in-flight push (a partially
-  # pushed manifest is worse than a queued one).
+  # One publish per ref at a time; never cancel an in-flight push.
   group: publish-image-${{ github.ref }}
   cancel-in-progress: false
 
@@ -55,57 +55,31 @@ permissions:
   contents: read
 
 jobs:
-  build-and-push:
-    name: Build & push to Docker Hub
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    # Only the canonical repo publishes — forks / OSS contributors skip cleanly
-    # (they lack the Docker Hub credentials anyway).
+  build:
+    name: Build ${{ matrix.platform }}
+    # Only the canonical repo publishes — forks lack the credentials anyway.
     if: ${{ github.repository == 'vjsingh1984/proximadb' }}
-    outputs:
-      digest: ${{ steps.build.outputs.digest }}
-      version: ${{ steps.vars.outputs.version }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
     env:
       IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
       TARGET: ${{ github.event.inputs.target || 'runtime' }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Derive version + tags
-        id: vars
+      - name: Prepare platform pair
+        id: prep
         run: |
-          set -euo pipefail
-          VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
-          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "short_sha=${SHORT_SHA}" >> "$GITHUB_OUTPUT"
-
-          # Tag list per trigger:
-          #  - release tag v*  -> <version>, sha-<sha>, latest
-          #  - develop push    -> develop, sha-<sha>            (rolling, no latest)
-          #  - manual dispatch -> <version>, sha-<sha> [, latest if requested]
-          # The `-full` target gets a parallel suffixed tag namespace.
-          SUFFIX=""
-          if [ "${TARGET}" = "runtime-full" ]; then SUFFIX="-full"; fi
-          TAGS=""
-          add() { TAGS="${TAGS}${TAGS:+,}${IMAGE_REPO}:$1"; }
-
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            add "${VERSION}${SUFFIX}"
-            add "sha-${SHORT_SHA}${SUFFIX}"
-            add "latest${SUFFIX}"
-          elif [ "${GITHUB_REF_NAME}" = "develop" ]; then
-            add "develop${SUFFIX}"
-            add "sha-${SHORT_SHA}${SUFFIX}"
-          else
-            add "${VERSION}${SUFFIX}"
-            add "sha-${SHORT_SHA}${SUFFIX}"
-            if [ "${{ github.event.inputs.tag_latest }}" = "true" ]; then
-              add "latest${SUFFIX}"
-            fi
-          fi
-          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
-          echo "Resolved tags: ${TAGS}"
+          platform="${{ matrix.platform }}"
+          echo "pair=${platform//\//-}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -115,49 +89,132 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build & push
+      - name: Build & push by digest
         id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: deploy/docker/Dockerfile
           target: ${{ env.TARGET }}
-          push: true
-          tags: ${{ steps.vars.outputs.tags }}
+          platforms: ${{ matrix.platform }}
           labels: |
             org.opencontainers.image.title=proximadb
-            org.opencontainers.image.version=${{ steps.vars.outputs.version }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
           provenance: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # Push by digest only; tags are applied when the manifest is merged.
+          outputs: type=image,name=${{ env.IMAGE_REPO }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ steps.prep.outputs.pair }}
+          cache-to: type=gha,mode=max,scope=${{ steps.prep.outputs.pair }}
 
-      - name: Summary
+      - name: Export digest
         run: |
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.build.outputs.digest }}"
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ steps.prep.outputs.pair }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: Merge multi-arch manifest
+    needs: build
+    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.tags.outputs.version }}
+      primary: ${{ steps.tags.outputs.primary }}
+    env:
+      IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
+      TARGET: ${{ github.event.inputs.target || 'runtime' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-*
+          merge-multiple: true
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Derive tags
+        id: tags
+        run: |
+          set -euo pipefail
+          VERSION="$(grep -m1 '^version' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')"
+          SHORT_SHA="$(git rev-parse --short=12 HEAD)"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+          # Tag list per trigger (same scheme as single-arch):
+          #  - release tag v*  -> <version>, sha-<sha>, latest
+          #  - develop push    -> develop, sha-<sha>            (rolling, no latest)
+          #  - manual dispatch -> <version>, sha-<sha> [, latest if requested]
+          SUFFIX=""
+          if [ "${TARGET}" = "runtime-full" ]; then SUFFIX="-full"; fi
+          ARGS=""; PRIMARY=""
+          add() { ARGS="${ARGS} -t ${IMAGE_REPO}:$1"; [ -z "$PRIMARY" ] && PRIMARY="$1" || true; }
+
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            add "${VERSION}${SUFFIX}"; add "sha-${SHORT_SHA}${SUFFIX}"; add "latest${SUFFIX}"
+          elif [ "${GITHUB_REF_NAME}" = "develop" ]; then
+            add "develop${SUFFIX}"; add "sha-${SHORT_SHA}${SUFFIX}"
+          else
+            add "${VERSION}${SUFFIX}"; add "sha-${SHORT_SHA}${SUFFIX}"
+            if [ "${{ github.event.inputs.tag_latest }}" = "true" ]; then add "latest${SUFFIX}"; fi
+          fi
+          echo "tag_args=${ARGS}" >> "$GITHUB_OUTPUT"
+          echo "primary=${PRIMARY}" >> "$GITHUB_OUTPUT"
+          echo "Tags:${ARGS}"
+
+      - name: Create multi-arch manifest
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          # One manifest list carrying all tags, referencing both arch digests.
+          # Word-splitting is intentional: tag_args expands to multiple `-t …`
+          # flags and printf emits one `repo@sha256:…` source per digest file.
+          # shellcheck disable=SC2046,SC2086
+          docker buildx imagetools create ${{ steps.tags.outputs.tag_args }} \
+            $(printf "${IMAGE_REPO}@sha256:%s " *)
+
+      - name: Inspect + summary
+        run: |
+          set -euo pipefail
+          REF="${IMAGE_REPO}:${{ steps.tags.outputs.primary }}"
+          docker buildx imagetools inspect "$REF"
           {
-            echo "### Published \`${TARGET}\` OSS image to Docker Hub"
+            echo "### Published multi-arch \`${TARGET}\` image"
             echo ""
-            echo "Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "Platforms: linux/amd64 + linux/arm64"
             echo ""
             echo "Tags:"
             echo '```'
-            echo "${{ steps.vars.outputs.tags }}" | tr ',' '\n'
+            echo "${{ steps.tags.outputs.tag_args }}" | tr ' ' '\n' | grep "^${IMAGE_REPO}" || true
             echo '```'
             echo ""
-            echo "> AnvaiOps' commercial overlay pins this base by digest"
-            echo "> (ADR-0016): set \`PROXIMADB_OSS_BASE=${IMAGE_REPO}\` and"
-            echo "> \`proximadb_version=@${{ steps.build.outputs.digest }}\` in"
-            echo "> anvaiops build-commercial-image.yml."
+            echo "Pin downstream (anvaiops, ADR-0016) by the manifest-list digest from the inspect output above."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # Reclaim Docker Hub storage: delete superseded rolling `sha-*` tags, keeping
   # only the most recent N. Never touches semver, `latest`, or `develop`.
   prune:
     name: Prune old sha- tags
-    needs: build-and-push
-    runs-on: ubuntu-latest
+    needs: merge
     if: ${{ github.repository == 'vjsingh1984/proximadb' }}
+    runs-on: ubuntu-latest
     env:
       IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
       KEEP: ${{ vars.DOCKERHUB_PRUNE_KEEP || '10' }}
@@ -168,14 +225,11 @@ jobs:
           DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Exchange the PAT for a Hub JWT.
           JWT="$(curl -fsSL -H "Content-Type: application/json" \
             -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
             https://hub.docker.com/v2/users/login | jq -r .token)"
           [ -n "$JWT" ] && [ "$JWT" != "null" ] || { echo "Hub login failed"; exit 1; }
 
-          # Newest-first list of mutable rolling tags only (sha-* and sha-*-full).
-          # Semver / latest / develop are intentionally excluded — never pruned.
           mapfile -t SHA_TAGS < <(
             curl -fsSL -H "Authorization: JWT ${JWT}" \
               "https://hub.docker.com/v2/repositories/${IMAGE_REPO}/tags?page_size=100&ordering=last_updated" \
