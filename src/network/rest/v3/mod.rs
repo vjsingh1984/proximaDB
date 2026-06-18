@@ -33,10 +33,10 @@
 pub mod documents;
 
 use axum::{
-    extract::Path,
-    http::{header, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
     Router,
+    extract::Path,
+    http::{HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use tracing::warn;
 

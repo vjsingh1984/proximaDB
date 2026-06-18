@@ -17,7 +17,11 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
     let na: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
     let nb: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-    if na == 0.0 || nb == 0.0 { 0.0 } else { dot / (na * nb) }
+    if na == 0.0 || nb == 0.0 {
+        0.0
+    } else {
+        dot / (na * nb)
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -34,9 +38,18 @@ async fn bge_clusters_cats_apart_from_finance() {
     });
 
     let texts = [
-        ("cat", "A cat is sleeping peacefully on the warm sunny windowsill"),
-        ("kitten", "Kittens are baby cats that love to play and chase balls of yarn"),
-        ("finance", "The stock market crashed today amid recession fears and rising inflation"),
+        (
+            "cat",
+            "A cat is sleeping peacefully on the warm sunny windowsill",
+        ),
+        (
+            "kitten",
+            "Kittens are baby cats that love to play and chase balls of yarn",
+        ),
+        (
+            "finance",
+            "The stock market crashed today amid recession fears and rising inflation",
+        ),
     ];
     let batch = EmbedBatch {
         records: texts
@@ -53,7 +66,9 @@ async fn bge_clusters_cats_apart_from_finance() {
     let result = match svc.embed_sync(batch).await {
         Ok(r) => r,
         Err(EmbeddingError::ModelUnavailable(m)) => {
-            panic!("BGE model unavailable — run with --features onnx and PROXIMADB_EMBED_MODEL_DIR pointing at the staged model: {m}");
+            panic!(
+                "BGE model unavailable — run with --features onnx and PROXIMADB_EMBED_MODEL_DIR pointing at the staged model: {m}"
+            );
         }
         Err(e) => panic!("embed error: {e}"),
     };
