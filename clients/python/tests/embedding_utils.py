@@ -101,7 +101,13 @@ def _base_encode(text: str) -> list[float]:
     """Encode at the model's base dimension, real model or deterministic fallback."""
     model = _get_model()
     if model is not None:
-        return model.encode([text], convert_to_tensor=False)[0].tolist()
+        try:
+            return model.encode([text], convert_to_tensor=False)[0].tolist()
+        except Exception:
+            # A stubbed / incompatible SentenceTransformer may be present in
+            # sys.modules (e.g. a test fake whose encode() lacks convert_to_tensor).
+            # Don't crash unrelated tests — fall back to deterministic embeddings.
+            pass
     return _fallback_embedding(text, _BASE_DIM)
 
 
