@@ -150,6 +150,51 @@ MATURITY_CONTRACT_RULES = [
             "This document states the *broad, durable vision*",
         ],
     },
+    # REST /api/v3 is a 308 alias to /api/v2/collections/{id}/documents.
+    # These checks ensure the alias relationship and redirect behaviour remain
+    # in place and that v3 is not re-promoted to an independent API surface.
+    {
+        "path": "src/network/rest/v3/mod.rs",
+        "required_substrings": [
+            # v3 returns a 308 to the canonical v2 path.
+            "308 Permanent Redirect",
+            # Redirect target comment must reference the canonical v2 path template.
+            "/api/v2/collections/{id}/documents",
+            # Sunset header constant must be referenced (not hard-coded inline).
+            "V3_DOCUMENTS_SUNSET_DATE",
+        ],
+        "forbidden_substrings": [
+            # v3 must not be re-promoted to a stable independent surface.
+            "v3 is a stable API surface",
+            "v3 production-ready",
+        ],
+    },
+    # gRPC v1 compatibility services must remain OFF by default and must carry
+    # Sunset documentation noting post-sunset hard-deletion (see TD-121).
+    {
+        "path": "crates/platform/proximadb-runtime/src/bootstrap_config.rs",
+        "required_substrings": [
+            # Default value of the env-var helper must be false (opt-in, not opt-out).
+            "unwrap_or(false)",
+            # Env-var override name is documented in the field comment.
+            "PROXIMADB_GRPC_V1_COMPAT",
+            # Hard-deletion intent after Sunset must be stated in the struct field doc.
+            "Post-sunset these v1 services are removed entirely",
+        ],
+        "forbidden_substrings": [
+            # v1 compat must not default to enabled.
+            "unwrap_or(true)",
+        ],
+    },
+    {
+        "path": "src/network/multi_server.rs",
+        "required_substrings": [
+            # Runtime registration comment must note post-sunset removal.
+            "Post-sunset these service impls are removed entirely",
+            # v1 services must be behind the flag check, not unconditionally registered.
+            "enable_grpc_v1_compat",
+        ],
+    },
 ]
 
 

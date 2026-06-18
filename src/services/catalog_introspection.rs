@@ -58,6 +58,14 @@ impl CatalogIntrospectionService {
             // Bare `FROM pg_class` (no qualifier) — common shape from
             // psql `\dt` and lightweight ORM connection probes.
             || normalized.contains(" from pg_class")
+            // Canonical pg_catalog views (TD-120). These are caught only
+            // when the more specific ORM-shaped joins above do not match,
+            // so existing JDBC/SQLAlchemy routes are unaffected.
+            || normalized.contains(" from pg_catalog.pg_type")
+            || normalized.contains(" from pg_catalog.pg_namespace")
+            || normalized.contains(" from pg_catalog.pg_class")
+            || normalized.contains(" from pg_catalog.pg_attribute")
+            || normalized.contains(" from pg_catalog.pg_constraint")
     }
 
     pub async fn execute_select(&self, sql: &str) -> Result<Option<CatalogIntrospectionResult>> {
@@ -155,6 +163,28 @@ impl CatalogIntrospectionService {
         {
             let relname_filter = extract_string_filter(sql, "c.relname").or(table_filter);
             return Ok(Some(self.jdbc_tables(relname_filter.as_deref()).await?));
+        }
+
+        // --- Canonical pg_catalog views (TD-120) ---
+        // Placed last so the ORM-specific routes above keep precedence;
+        // these only fire for forms that would otherwise return `None`.
+        if normalized.contains(" from pg_catalog.pg_type") {
+            return Ok(Some(Self::pg_type()));
+        }
+        if normalized.contains(" from pg_catalog.pg_namespace") {
+            return Ok(Some(self.pg_namespace().await?));
+        }
+        if normalized.contains(" from pg_catalog.pg_class") {
+            let relname = extract_string_filter(sql, "relname").or(table_filter);
+            return Ok(Some(self.pg_class(relname.as_deref()).await?));
+        }
+        if normalized.contains(" from pg_catalog.pg_attribute") {
+            let relname = extract_string_filter(sql, "relname").or(table_filter);
+            return Ok(Some(self.pg_attribute(relname.as_deref()).await?));
+        }
+        if normalized.contains(" from pg_catalog.pg_constraint") {
+            let relname = extract_string_filter(sql, "conrelid").or(table_filter);
+            return Ok(Some(self.pg_constraint(relname.as_deref()).await?));
         }
 
         Ok(None)
@@ -793,6 +823,211 @@ impl CatalogIntrospectionService {
         })
     }
 
+    /// `pg_catalog.pg_type` — the supported base types with their canonical
+    /// PostgreSQL OIDs. Static; ORMs read this to resolve column type OIDs.
+    fn pg_type() -> CatalogIntrospectionResult {
+        // (oid, typname, typlen, typbyval, typcategory)
+        const TYPES: &[(i32, &str, i32, bool, &str)] = &[
+            (16, "bool", 1, true, "B"),
+            (17, "bytea", -1, false, "U"),
+            (20, "int8", 8, true, "N"),
+            (21, "int2", 2, true, "N"),
+            (23, "int4", 4, true, "N"),
+            (25, "text", -1, false, "S"),
+            (114, "json", -1, false, "U"),
+            (700, "float4", 4, true, "N"),
+            (701, "float8", 8, true, "N"),
+            (1043, "varchar", -1, false, "S"),
+            (1082, "date", 4, true, "D"),
+            (1114, "timestamp", 8, true, "D"),
+            (1184, "timestamptz", 8, true, "D"),
+            (1700, "numeric", -1, false, "N"),
+            (2950, "uuid", 16, false, "U"),
+            (3802, "jsonb", -1, false, "U"),
+        ];
+        let rows = TYPES
+            .iter()
+            .map(|(oid, name, len, byval, category)| {
+                vec![
+                    oid.to_string(),
+                    name.to_string(),
+                    PG_CATALOG_NAMESPACE_OID.to_string(),
+                    len.to_string(),
+                    bool_str(*byval).to_string(),
+                    "b".to_string(),
+                    category.to_string(),
+                ]
+            })
+            .collect();
+        CatalogIntrospectionResult {
+            columns: str_cols(&[
+                "oid",
+                "typname",
+                "typnamespace",
+                "typlen",
+                "typbyval",
+                "typtype",
+                "typcategory",
+            ]),
+            column_types: str_cols(&["int4", "text", "int4", "int2", "bool", "text", "text"]),
+            rows,
+        }
+    }
+
+    /// `pg_catalog.pg_namespace` — schemas. Includes the fixed system
+    /// namespaces plus every distinct namespace present in the catalog.
+    async fn pg_namespace(&self) -> Result<CatalogIntrospectionResult> {
+        let mut seen: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let mut rows: Vec<Vec<String>> = vec![
+            vec!["11".to_string(), "pg_catalog".to_string(), "10".to_string()],
+            vec!["2200".to_string(), "public".to_string(), "10".to_string()],
+            vec![
+                INFORMATION_SCHEMA_NAMESPACE_OID.to_string(),
+                "information_schema".to_string(),
+                "10".to_string(),
+            ],
+        ];
+        for (_catalog, table_id, _schema) in self.cataloged_tables().await? {
+            let ns = namespace_name(&table_id);
+            if ns == "public" || !seen.insert(ns.clone()) {
+                continue;
+            }
+            rows.push(vec![namespace_oid(&ns).to_string(), ns, "10".to_string()]);
+        }
+        Ok(CatalogIntrospectionResult {
+            columns: str_cols(&["oid", "nspname", "nspowner"]),
+            column_types: str_cols(&["int4", "text", "int4"]),
+            rows,
+        })
+    }
+
+    /// `pg_catalog.pg_class` — relations (tables) backed by the catalog.
+    async fn pg_class(&self, relname_filter: Option<&str>) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+        for (catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, relname_filter) {
+                continue;
+            }
+            let ns = namespace_name(&table_id);
+            rows.push(vec![
+                table_oid(&catalog_name, &table_id).to_string(),
+                table_id.name.clone(),
+                namespace_oid(&ns).to_string(),
+                "r".to_string(),
+                schema.columns.len().to_string(),
+                "0".to_string(),
+                bool_str(!schema.indexes.is_empty()).to_string(),
+            ]);
+        }
+        Ok(CatalogIntrospectionResult {
+            columns: str_cols(&[
+                "oid",
+                "relname",
+                "relnamespace",
+                "relkind",
+                "relnatts",
+                "reltype",
+                "relhasindex",
+            ]),
+            column_types: str_cols(&["int4", "text", "int4", "text", "int2", "int4", "bool"]),
+            rows,
+        })
+    }
+
+    /// `pg_catalog.pg_attribute` — columns. `attnum` is 1-based per
+    /// PostgreSQL convention; `atttypid` is the canonical type OID.
+    async fn pg_attribute(
+        &self,
+        relname_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+        for (catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, relname_filter) {
+                continue;
+            }
+            let attrelid = table_oid(&catalog_name, &table_id);
+            for (idx, column) in schema.columns.iter().enumerate() {
+                rows.push(vec![
+                    attrelid.to_string(),
+                    column.name.clone(),
+                    proxima_type_oid(&column.data_type).to_string(),
+                    proxima_type_len(&column.data_type).to_string(),
+                    (idx as i32 + 1).to_string(),
+                    bool_str(!column.nullable).to_string(),
+                    "f".to_string(),
+                    "f".to_string(),
+                ]);
+            }
+        }
+        Ok(CatalogIntrospectionResult {
+            columns: str_cols(&[
+                "attrelid",
+                "attname",
+                "atttypid",
+                "attlen",
+                "attnum",
+                "attnotnull",
+                "atthasdef",
+                "attisdropped",
+            ]),
+            column_types: str_cols(&[
+                "int4", "text", "int4", "int2", "int2", "bool", "bool", "bool",
+            ]),
+            rows,
+        })
+    }
+
+    /// `pg_catalog.pg_constraint` — primary-key, unique, foreign-key and
+    /// check constraints, synthesized from the catalog's relational metadata.
+    async fn pg_constraint(
+        &self,
+        relname_filter: Option<&str>,
+    ) -> Result<CatalogIntrospectionResult> {
+        let mut rows = Vec::new();
+        for (catalog_name, table_id, schema) in self.cataloged_tables().await? {
+            if !matches_filter(&table_id.name, relname_filter) {
+                continue;
+            }
+            let conrelid = table_oid(&catalog_name, &table_id);
+            let mut push = |conname: String, contype: &str, cols: &[String]| {
+                rows.push(vec![
+                    stable_oid(&[&table_id.name, &conname]).to_string(),
+                    conname,
+                    contype.to_string(),
+                    conrelid.to_string(),
+                    cols.join(","),
+                ]);
+            };
+            if !schema.primary_key.is_empty() {
+                push(format!("{}_pkey", table_id.name), "p", &schema.primary_key);
+            }
+            for constraint in &schema.relational_capabilities.constraints {
+                match constraint {
+                    crate::catalog::ColumnConstraint::Unique { columns } => push(
+                        format!("{}_{}_key", table_id.name, columns.join("_")),
+                        "u",
+                        columns,
+                    ),
+                    crate::catalog::ColumnConstraint::Check { expression } => push(
+                        format!("{}_check", table_id.name),
+                        "c",
+                        std::slice::from_ref(expression),
+                    ),
+                    crate::catalog::ColumnConstraint::ForeignKey { columns, .. } => push(
+                        format!("{}_{}_fkey", table_id.name, columns.join("_")),
+                        "f",
+                        columns,
+                    ),
+                }
+            }
+        }
+        Ok(CatalogIntrospectionResult {
+            columns: str_cols(&["oid", "conname", "contype", "conrelid", "conkey"]),
+            column_types: str_cols(&["int4", "text", "text", "int4", "text"]),
+            rows,
+        })
+    }
+
     async fn cataloged_tables(&self) -> Result<Vec<(String, TableIdentifier, CatalogTableSchema)>> {
         let mut tables = Vec::new();
 
@@ -1008,6 +1243,90 @@ fn catalog_index_type_name(index_type: CatalogIndexType) -> &'static str {
     }
 }
 
+// --- pg_catalog view helpers (TD-120) ---
+
+/// `pg_catalog` schema OID (fixed in PostgreSQL).
+const PG_CATALOG_NAMESPACE_OID: i32 = 11;
+/// Stable synthetic OID for the `information_schema` namespace.
+const INFORMATION_SCHEMA_NAMESPACE_OID: i32 = 13000;
+
+/// PostgreSQL text-format boolean encoding (`t`/`f`), not `true`/`false`.
+fn bool_str(value: bool) -> &'static str {
+    if value { "t" } else { "f" }
+}
+
+fn str_cols(cols: &[&str]) -> Vec<String> {
+    cols.iter().map(|c| c.to_string()).collect()
+}
+
+/// Deterministic, restart-stable OID in the user range (≥ 16384) derived from
+/// `parts` via FNV-1a. ORMs join on these so they must be stable, not random.
+fn stable_oid(parts: &[&str]) -> i32 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for part in parts {
+        for byte in part.as_bytes() {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash ^= u64::from(b'.');
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    // Land in [16384, 16384 + 0x3FFF_FFFF] so it is always a positive i32
+    // above PostgreSQL's reserved system-OID range.
+    (((hash & 0x3FFF_FFFF) as i32).wrapping_add(16384)).max(16384)
+}
+
+fn namespace_oid(ns_name: &str) -> i32 {
+    match ns_name {
+        "pg_catalog" => PG_CATALOG_NAMESPACE_OID,
+        "public" | "default" => 2200,
+        "information_schema" => INFORMATION_SCHEMA_NAMESPACE_OID,
+        other => stable_oid(&["ns", other]),
+    }
+}
+
+fn table_oid(catalog_name: &str, table_id: &TableIdentifier) -> i32 {
+    stable_oid(&[catalog_name, &table_id.namespace.join("."), &table_id.name])
+}
+
+/// Canonical PostgreSQL type OID for a ProximaDB logical type.
+fn proxima_type_oid(data_type: &ProximaType) -> i32 {
+    match data_type {
+        ProximaType::Boolean => 16,
+        ProximaType::Int8 | ProximaType::Int16 => 21,
+        ProximaType::Int32 => 23,
+        ProximaType::Int64 => 20,
+        ProximaType::Float32 => 700,
+        ProximaType::Float64 => 701,
+        ProximaType::String => 25,
+        ProximaType::Binary => 17,
+        ProximaType::Date => 1082,
+        ProximaType::Time(_) => 1083,
+        ProximaType::Timestamp(_) => 1114,
+        ProximaType::TimestampTz(_) => 1184,
+        ProximaType::Decimal { .. } => 1700,
+        ProximaType::Uuid => 2950,
+        ProximaType::Json => 3802,
+        // Vector/other types have no standard pg OID.
+        _ => 0,
+    }
+}
+
+/// Physical length for a type OID (`-1` for variable-length).
+fn proxima_type_len(data_type: &ProximaType) -> i32 {
+    match data_type {
+        ProximaType::Boolean => 1,
+        ProximaType::Int8 | ProximaType::Int16 => 2,
+        ProximaType::Int32 | ProximaType::Float32 | ProximaType::Date => 4,
+        ProximaType::Int64
+        | ProximaType::Float64
+        | ProximaType::Timestamp(_)
+        | ProximaType::TimestampTz(_) => 8,
+        ProximaType::Uuid => 16,
+        _ => -1,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -1208,5 +1527,107 @@ mod tests {
         assert_eq!(promoted[2], "props__user_id");
         assert_eq!(promoted[3], "true");
         assert_eq!(promoted[6], "promoted");
+    }
+
+    #[tokio::test]
+    async fn pg_catalog_views_project_catalog_metadata() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("namespace");
+
+        let parser = SqlFrontendParser::new();
+        let create = parser
+            .parse_ddl("CREATE TABLE pg_demo (id TEXT NOT NULL, score INT, PRIMARY KEY (id))")
+            .expect("parse")
+            .expect("ddl");
+        ddl.execute(create).await.expect("create table");
+
+        let introspection = CatalogIntrospectionService::new(manager);
+
+        // Detection routes all canonical pg_catalog views.
+        for sql in [
+            "SELECT * FROM pg_catalog.pg_type",
+            "SELECT * FROM pg_catalog.pg_namespace",
+            "SELECT * FROM pg_catalog.pg_class WHERE relname = 'pg_demo'",
+            "SELECT * FROM pg_catalog.pg_attribute WHERE relname = 'pg_demo'",
+            "SELECT * FROM pg_catalog.pg_constraint",
+        ] {
+            assert!(
+                CatalogIntrospectionService::is_catalog_query(sql),
+                "should detect: {sql}"
+            );
+        }
+
+        // pg_type: canonical OIDs for the base types ORMs resolve against.
+        let types = introspection
+            .execute_select("SELECT * FROM pg_catalog.pg_type")
+            .await
+            .expect("pg_type query")
+            .expect("pg_type result");
+        assert!(types.rows.iter().any(|r| r[0] == "23" && r[1] == "int4"));
+        assert!(types.rows.iter().any(|r| r[0] == "25" && r[1] == "text"));
+
+        // pg_namespace: fixed system schemas present.
+        let namespaces = introspection
+            .execute_select("SELECT * FROM pg_catalog.pg_namespace")
+            .await
+            .expect("pg_namespace query")
+            .expect("pg_namespace result");
+        assert!(namespaces.rows.iter().any(|r| r[1] == "pg_catalog"));
+        assert!(namespaces.rows.iter().any(|r| r[1] == "public"));
+
+        // pg_class: one relation row for the table, relkind 'r', 2 attrs.
+        let classes = introspection
+            .execute_select("SELECT * FROM pg_catalog.pg_class WHERE relname = 'pg_demo'")
+            .await
+            .expect("pg_class query")
+            .expect("pg_class result");
+        assert_eq!(classes.rows.len(), 1);
+        assert_eq!(classes.rows[0][1], "pg_demo");
+        assert_eq!(classes.rows[0][3], "r");
+        assert_eq!(classes.rows[0][4], "2");
+        let table_oid = classes.rows[0][0].clone();
+
+        // pg_attribute: 1-based attnum, NOT NULL surfaced as 't', typed by OID.
+        let attrs = introspection
+            .execute_select("SELECT * FROM pg_catalog.pg_attribute WHERE relname = 'pg_demo'")
+            .await
+            .expect("pg_attribute query")
+            .expect("pg_attribute result");
+        let id_attr = attrs
+            .rows
+            .iter()
+            .find(|r| r[1] == "id")
+            .expect("id attribute");
+        assert_eq!(id_attr[0], table_oid, "attrelid matches pg_class.oid");
+        assert_eq!(id_attr[2], "25", "id is text (oid 25)");
+        assert_eq!(id_attr[4], "1", "attnum is 1-based");
+        assert_eq!(id_attr[5], "t", "NOT NULL → attnotnull 't'");
+
+        // pg_constraint: the primary key surfaces as contype 'p'.
+        let constraints = introspection
+            .execute_select("SELECT * FROM pg_catalog.pg_constraint")
+            .await
+            .expect("pg_constraint query")
+            .expect("pg_constraint result");
+        let pk = constraints
+            .rows
+            .iter()
+            .find(|r| r[1] == "pg_demo_pkey")
+            .expect("primary key constraint");
+        assert_eq!(pk[2], "p");
+        assert_eq!(pk[4], "id");
     }
 }

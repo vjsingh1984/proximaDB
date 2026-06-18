@@ -476,6 +476,14 @@ impl DrResolvedPath {
     pub fn restore_checkpoints_subprefix(&self) -> String {
         format!("{}restore-checkpoints/", self.root_prefix())
     }
+
+    /// Branches subprefix `<root>_branches/`. Holds the object-store branch
+    /// refs (`<id>.json`) used for agent copy-on-write branching (TD-117). The
+    /// leading underscore keeps branch metadata lexically separate from data
+    /// subprefixes (`segments/`, `wal/`, …) in a `list`.
+    pub fn branches_subprefix(&self) -> String {
+        format!("{}_branches/", self.root_prefix())
+    }
 }
 
 /// Errors returned by [`DrPathBuilder::build`]. The reconciler and engine

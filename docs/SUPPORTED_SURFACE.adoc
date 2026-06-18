@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 2
 :icons: font
-:last-updated: 2026-06-15
+:last-updated: 2026-06-17
 
 [.lead]
 Canonical product support contract for the ProximaDB working tree. This document separates customer-safe defaults from beta and experimental surfaces.
@@ -46,6 +46,25 @@ marking themselves historical, aspirational, or implementation-only:
 The Technical Debt Register tracks _implementation state_, which can run ahead of support
 level; this contract wins on any disagreement about what is customer-facing.
 
+== Canonical API Surface
+
+REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of 2026-06-17.
+
+[IMPORTANT]
+====
+* *REST /api/v2* — canonical; all new clients and integrations must target this prefix.
+* *REST /api/v1* — deprecated compatibility adapter. Requests are still accepted but must
+  lower into v2 handlers internally. The v1 prefix will be retired; do not document or
+  advertise it in new collateral.
+* *REST /api/v3* — folded back into v2 as a permanent *308 Redirect* alias. `POST
+  /api/v3/collections/{id}/documents` redirects to `POST
+  /api/v2/collections/{id}/documents`. No additional v3 surface is defined.
+* *gRPC v1 (`proximadb.v1.*`)* — deprecated-compat; **OFF by default**. Enable only for
+  transitional client compatibility via config flag `enable_grpc_v1_compat: true` or
+  environment variable `PROXIMADB_GRPC_V1_COMPAT=1`. This compat layer is scheduled for
+  **Sunset 2026-06-30**; clients must migrate to `proximadb.v2.*` before that date.
+====
+
 == Status Tiers
 
 |===
@@ -75,8 +94,8 @@ level; this contract wins on any disagreement about what is customer-facing.
 
 | Vector CRUD and search
 | Supported
-| Canonical REST v2 record batch/search/get/scan flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST/gRPC v1 vector-shaped flows remain compatibility adapters for existing clients and must lower into canonical records. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership.
-| Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients should not target v1 `VectorRecord`/`SqlValue` payloads.
+| Canonical REST `/api/v2` record batch/search/get/scan flows and gRPC `proximadb.v2.ProximaRecordService` record operations. REST `/api/v1` and gRPC v1 vector-shaped flows are deprecated compatibility adapters for existing clients only (see Canonical API Surface above); they lower into canonical v2 handlers and will be retired. Record metadata filters are enforced on typed `/search` (`filters:[{field,op,value}]`) and `/records/scan` (`filter`) across the supported ops (`eq,neq,gt,gte,lt,lte,in,contains,between,starts_with,ends_with`), including tenant/account scoping; array-valued props support `in`/`contains` membership.
+| Keep hybrid retrieval and distributed search claims separate from the supported vector surface. New clients must not target v1 `VectorRecord`/`SqlValue` payloads.
 
 | Federated SQL over function-backed sources
 | Beta
@@ -105,8 +124,8 @@ level; this contract wins on any disagreement about what is customer-facing.
 
 | Hybrid retrieval
 | Beta
-| tantivy BM25 integration, RRF/weighted fusion, and compatibility REST `/api/v1/hybrid/search` facade (TD-008 resolved). Request `filters` are enforced on both fusion legs: the vector candidates are filtered server-side, and the text (BM25) candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
-| Backend integration improved; REST v1 remains a deprecated compatibility surface and gRPC path parity is still in progress. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
+| tantivy BM25 integration, RRF/weighted fusion, and canonical REST `/api/v2/collections/{id}/search` hybrid path (TD-008 resolved). The former `/api/v1/hybrid/search` facade is a deprecated compat alias only. Request `filters` are enforced on both fusion legs: the vector candidates are filtered server-side, and the text (BM25) candidates are gated to that filtered id set so a scoped filter cannot leak through the text leg.
+| Backend integration improved; REST v1 hybrid alias is a deprecated compatibility surface (see Canonical API Surface above) and gRPC path parity is still in progress. A BM25-only match that passes the filter but falls outside the vector leg's `top_k` (or a hybrid request with no query vector) is dropped rather than risk a leak — safe, but it can under-return; keeping that tail needs a resolving metadata fetch (follow-up). Projection Fusion is a shared planner contract only until runtime implementation, explain output, and benchmarks are complete.
 
 | PULSAR and QUASAR graph engine names
 | Retired / Not supported

@@ -17,4 +17,4 @@ Notes
 - Scripts auto‑clean collections on start and exit.
 - Graph usage (fraud PoV) is attempted via REST; if unavailable, the demo still shows vector‑side risk surfacing.
 - All data is synthetic and generated in‑memory for quick runs (<5s each).
-- Hybrid PoV uses entity endpoints under `/api/v1/collections/<id>/entities` and `/entities/search` for unified vector+relation workflows.
+- Hybrid PoV uses entity endpoints under `/api/v2/collections/<id>/entities` and `/entities/search` for unified vector+relation workflows.

@@ -121,7 +121,7 @@ anyhow = "1.0"
 # dep at the workspace level. Same pin as the root `[dependencies]`
 # entry.
 sqlparser = "0.59"
-arrow = { version = "57.1", features = ["prettyprint", "pyarrow"] }
+arrow = { version = "57.1", features = ["prettyprint"] }
 arrow-array = { version = "57.1", default-features = false }
 bincode = "1.3"
 arrow-flight = { version = "57.1", features = ["flight-sql-experimental"] }
@@ -343,7 +343,7 @@ rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
 parquet = { version = "57.1", default-features = false, features = ["arrow", "zstd", "lz4", "snap", "brotli", "flate2", "flate2-rust_backened"] }
 # Arrow dependencies matching parquet v57
-arrow = { version = "57.1", features = ["prettyprint", "pyarrow"] }
+arrow = { version = "57.1", features = ["prettyprint"] }
 arrow-array = { version = "57.1", default-features = false }
 arrow-buffer = { version = "57.1", default-features = false }
 arrow-schema = { version = "57.1", default-features = false }
@@ -680,7 +680,7 @@ experimental-cdc-connectors = ["dep:tokio-postgres"]
 # Enable language-specific bindings for embedded database mode
 
 # Python embedded mode (PyO3 bindings with zero-copy numpy support)
-python = ["dep:pyo3", "dep:numpy"]  # Enable Python bindings with zero-copy numpy support
+python = ["dep:pyo3", "dep:numpy", "arrow/pyarrow"]  # Enable Python bindings with zero-copy numpy support (arrow/pyarrow pulls pyo3 → gated here so the OSS server build stays Python-free)
 
 # Python cdylib output (for PyO3/FFI builds)
 # When enabled, changes crate-type to include cdylib for Python shared library generation
