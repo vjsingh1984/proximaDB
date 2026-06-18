@@ -164,10 +164,6 @@ impl std::fmt::Debug for ProximaDBTableProvider {
 
 #[async_trait]
 impl TableProvider for ProximaDBTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -457,10 +453,6 @@ impl Debug for ProximaDataFusionTable {
 
 #[async_trait]
 impl TableProvider for ProximaDataFusionTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

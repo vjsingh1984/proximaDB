@@ -75,6 +75,7 @@ fn modality_query(modality: &str) -> HybridQuery {
         ann_filtering_mode: Default::default(),
         ann_filtering_policy: None,
         estimated_selectivity: None,
+        search_effort: None,
     }
 }
 

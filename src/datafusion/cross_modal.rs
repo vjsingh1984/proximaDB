@@ -107,10 +107,6 @@ impl std::fmt::Debug for VectorSearchTableProvider {
 
 #[async_trait]
 impl TableProvider for VectorSearchTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         vector_matches_schema()
     }

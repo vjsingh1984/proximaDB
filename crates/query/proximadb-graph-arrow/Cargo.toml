@@ -14,7 +14,7 @@ name = "proximadb_graph_arrow"
 path = "src/lib.rs"
 
 [dependencies]
-arrow = { version = "57.1", features = ["prettyprint"] }
+arrow = { version = "58", features = ["prettyprint"] }
 async-trait.workspace = true
 futures = "0.3"
 proximadb-graph-query = { path = "../proximadb-graph-query" }

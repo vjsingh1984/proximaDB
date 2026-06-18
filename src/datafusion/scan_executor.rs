@@ -57,7 +57,7 @@ pub struct ProximaDBScanExec {
     /// Batch size for reading
     batch_size: usize,
     /// Plan properties
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
 }
 
 impl ProximaDBScanExec {
@@ -111,7 +111,7 @@ impl ProximaDBScanExec {
             limit,
             partitions,
             batch_size,
-            properties,
+            properties: Arc::new(properties),
         })
     }
 
@@ -163,11 +163,7 @@ impl ExecutionPlan for ProximaDBScanExec {
         "ProximaDBScanExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 

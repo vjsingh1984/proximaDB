@@ -19,6 +19,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use futures::StreamExt;
 use object_store::ObjectStore;
+use object_store::ObjectStoreExt;
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use proximadb_records::ProximaRecord;
 use url::Url;

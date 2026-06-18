@@ -21,6 +21,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::prelude::SessionContext;
 use futures::StreamExt;
 use object_store::ObjectStore;
+use object_store::ObjectStoreExt;
 use object_store::path::Path;
 use parquet::arrow::async_reader::{ParquetObjectReader, ParquetRecordBatchStreamBuilder};
 use parquet::file::metadata::ParquetMetaData;
@@ -295,10 +296,6 @@ impl ObjectStoreParquetTable {
 
 #[async_trait]
 impl TableProvider for ObjectStoreParquetTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

@@ -190,10 +190,6 @@ impl FilesystemParquetTable {
 
 #[async_trait]
 impl TableProvider for FilesystemParquetTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
