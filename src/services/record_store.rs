@@ -2780,14 +2780,21 @@ mod tests {
             .unwrap();
         assert_eq!(scanned.len(), 1, "the persisted record must read back");
         assert_eq!(scanned[0].oid, "v1", "oid must round-trip through PAX");
-        assert_eq!(
-            scanned[0]
-                .embeddings
-                .first()
-                .map(|e| e.values.to_fp32_owned()),
-            Some(vec![0.1, 0.2, 0.3, 0.4]),
-            "dense embedding must round-trip through the PAX segment"
-        );
+        // PAX v2 stores dense vectors with SQ8 scalar quantization (lossy, 4x), so
+        // the embedding reconstructs within one quantization step rather than bit-exactly.
+        let got = scanned[0]
+            .embeddings
+            .first()
+            .map(|e| e.values.to_fp32_owned())
+            .expect("dense embedding must round-trip through the PAX segment");
+        let expected = [0.1_f32, 0.2, 0.3, 0.4];
+        assert_eq!(got.len(), expected.len(), "embedding dim must round-trip");
+        for (g, e) in got.iter().zip(expected.iter()) {
+            assert!(
+                (g - e).abs() <= 0.02,
+                "dense embedding must round-trip within SQ8 tolerance: got {got:?} vs {expected:?}"
+            );
+        }
         // Phase B: props + timestamps now round-trip (was oid+embedding only).
         assert_eq!(
             proximadb_records::tree_get(&scanned[0].props, "category"),
@@ -2813,7 +2820,20 @@ mod tests {
             .await
             .unwrap()
             .expect("get_by_key must find the persisted vector record");
-        assert_eq!(fetched.vector, vec![0.1, 0.2, 0.3, 0.4]);
+        // SQ8-quantized reconstruction: compare within one quantization step.
+        let expected = [0.1_f32, 0.2, 0.3, 0.4];
+        assert_eq!(
+            fetched.vector.len(),
+            expected.len(),
+            "vector dim must round-trip"
+        );
+        for (g, e) in fetched.vector.iter().zip(expected.iter()) {
+            assert!(
+                (g - e).abs() <= 0.02,
+                "get_by_key vector must round-trip within SQ8 tolerance: got {:?} vs {expected:?}",
+                fetched.vector
+            );
+        }
     }
 
     /// Phase D: the recovered `oid` byte-matches the catalog's canonical
