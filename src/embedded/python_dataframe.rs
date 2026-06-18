@@ -649,7 +649,7 @@ impl PyDataFrame {
     }
 
     /// Convert results to a PyArrow Table (Zero-Copy)
-    fn to_arrow(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn to_arrow(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let batches = self
             .db
             .runtime()
@@ -675,7 +675,7 @@ impl PyDataFrame {
     }
 
     /// Collect results as a list of dictionaries
-    fn collect(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn collect(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let batches = self
             .db
             .runtime()

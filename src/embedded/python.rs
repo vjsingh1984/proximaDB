@@ -116,7 +116,7 @@ pub struct PySearchResult {
 impl PySearchResult {
     /// Get metadata as a Python dictionary
     #[getter]
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.metadata_map {
             dict.set_item(k, v)?;
@@ -364,7 +364,7 @@ impl PyGraphNode {
 
     /// Get properties as a dictionary
     #[getter]
-    fn properties(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn properties(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.properties_map {
             dict.set_item(k, v)?;
@@ -477,7 +477,7 @@ impl PyGraphEdge {
 
     /// Get properties as a dictionary
     #[getter]
-    fn properties(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn properties(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.properties_map {
             dict.set_item(k, v)?;
@@ -792,7 +792,7 @@ pub struct PyStreamingSearchResult {
 impl PyStreamingSearchResult {
     /// Get metadata as a Python dictionary
     #[getter]
-    fn metadata(&self, py: Python<'_>) -> PyResult<PyObject> {
+    fn metadata(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let dict = PyDict::new(py);
         for (k, v) in &self.metadata_map {
             dict.set_item(k, v)?;
@@ -1266,7 +1266,7 @@ impl PyProximaDB {
         py: Python<'_>,
         collection: &str,
         requested_partitions: u32,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let requested = requested_partitions.max(1);
         let partitions = self
             .db()?
@@ -1371,7 +1371,7 @@ impl PyProximaDB {
             };
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
+        py.detach(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
 
@@ -1424,20 +1424,18 @@ impl PyProximaDB {
         };
 
         let inner = self.db()?;
-        py.allow_threads(move || {
-            inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
-        })
-        .map(|results| {
-            results
-                .into_iter()
-                .map(|r| PySearchResult {
-                    id: r.id,
-                    score: r.score,
-                    metadata_map: r.metadata,
-                })
-                .collect()
-        })
-        .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+        py.detach(move || inner.search_with_mode(collection, query_vec, top_k, filter, search_mode))
+            .map(|results| {
+                results
+                    .into_iter()
+                    .map(|r| PySearchResult {
+                        id: r.id,
+                        score: r.score,
+                        metadata_map: r.metadata,
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
     }
 
     /// Insert vectors from a NumPy array with ZERO-COPY transfer
@@ -1519,7 +1517,7 @@ impl PyProximaDB {
             };
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
+        py.detach(move || inner.insert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Insert failed: {}", e)))
     }
 
@@ -1540,7 +1538,7 @@ impl PyProximaDB {
             .collect::<PyResult<Vec<_>>>()?;
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.insert_proxima_records(collection, rust_records))
+        py.detach(move || inner.insert_proxima_records(collection, rust_records))
             .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))
     }
 
@@ -1603,7 +1601,7 @@ impl PyProximaDB {
         }
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.insert_proxima_records(collection, records))
+        py.detach(move || inner.insert_proxima_records(collection, records))
             .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))
     }
 
@@ -1617,7 +1615,7 @@ impl PyProximaDB {
         ids: Vec<String>,
         vectors: PyReadonlyArray2<f32>,
         props: Option<&Bound<'_, PyList>>,
-    ) -> PyResult<(usize, PyObject)> {
+    ) -> PyResult<(usize, Py<PyAny>)> {
         let total_started = std::time::Instant::now();
         let array = vectors.as_array();
         let shape = array.shape();
@@ -1690,7 +1688,7 @@ impl PyProximaDB {
         let inner = self.db()?;
         let insert_started = std::time::Instant::now();
         let result = py
-            .allow_threads(move || inner.insert_proxima_records(collection, records))
+            .detach(move || inner.insert_proxima_records(collection, records))
             .map_err(|e| PyRuntimeError::new_err(format!("Record insert failed: {}", e)))?;
         let insert_elapsed = insert_started.elapsed();
         let total_elapsed = total_started.elapsed();
@@ -1746,20 +1744,18 @@ impl PyProximaDB {
             .unwrap_or_else(|_| query.as_array().to_vec());
 
         let inner = self.db()?;
-        py.allow_threads(move || {
-            inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
-        })
-        .map(|results| {
-            results
-                .into_iter()
-                .map(|r| PySearchResult {
-                    id: r.id,
-                    score: r.score,
-                    metadata_map: r.metadata,
-                })
-                .collect()
-        })
-        .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
+        py.detach(move || inner.search_with_mode(collection, query_vec, top_k, filter, search_mode))
+            .map(|results| {
+                results
+                    .into_iter()
+                    .map(|r| PySearchResult {
+                        id: r.id,
+                        score: r.score,
+                        metadata_map: r.metadata,
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))
     }
 
     /// Profiled variant of `search_numpy` used by the benchmark harness to
@@ -1773,7 +1769,7 @@ impl PyProximaDB {
         top_k: usize,
         filter: Option<&str>,
         search_mode: Option<&str>,
-    ) -> PyResult<(Vec<PySearchResult>, PyObject)> {
+    ) -> PyResult<(Vec<PySearchResult>, Py<PyAny>)> {
         let total_started = std::time::Instant::now();
         let copy_started = std::time::Instant::now();
         let query_vec: Vec<f32> = query
@@ -1785,7 +1781,7 @@ impl PyProximaDB {
         let inner = self.db()?;
         let search_started = std::time::Instant::now();
         let results = py
-            .allow_threads(move || {
+            .detach(move || {
                 inner.search_with_mode(collection, query_vec, top_k, filter, search_mode)
             })
             .map_err(|e| PyRuntimeError::new_err(format!("Search failed: {}", e)))?;
@@ -2010,7 +2006,7 @@ impl PyProximaDB {
         py: Python<'_>,
         collection: &str,
         vector_id: &str,
-    ) -> PyResult<Option<PyObject>> {
+    ) -> PyResult<Option<Py<PyAny>>> {
         match self.db()?.get_vector(collection, vector_id) {
             Ok(Some(record)) => {
                 let dict = PyDict::new(py);
@@ -2181,7 +2177,7 @@ impl PyProximaDB {
             };
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
+        py.detach(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
 
@@ -2246,7 +2242,7 @@ impl PyProximaDB {
             };
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
+        py.detach(move || inner.upsert(collection, ids, rust_vectors, rust_metadata))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert vectors: {}", e)))
     }
 
@@ -2826,7 +2822,7 @@ impl PyProximaDB {
         max_depth: u32,
         edge_types: Option<Vec<String>>,
         limit: Option<u32>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let result = self
             .db()?
             .traverse_graph(graph_id, start_node_id, max_depth, edge_types, limit)
@@ -2862,7 +2858,7 @@ impl PyProximaDB {
         py: Python<'_>,
         cypher: &str,
         graph_id: Option<&str>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let cypher = inject_graph_target_into_cypher(graph_id, cypher);
         let sql = format!(
             "SELECT * FROM GRAPH_QUERY('{}')",
@@ -2963,7 +2959,7 @@ impl PyProximaDB {
         py: Python<'_>,
         collection: &str,
         doc_id: &str,
-    ) -> PyResult<Option<PyObject>> {
+    ) -> PyResult<Option<Py<PyAny>>> {
         match self.db()?.get_document(collection, doc_id) {
             Ok(Some(doc)) => json_to_python(py, &doc).map(Some),
             Ok(None) => Ok(None),
@@ -2997,7 +2993,7 @@ impl PyProximaDB {
         collection: &str,
         filter: Option<&str>,
         limit: u32,
-    ) -> PyResult<Vec<(String, PyObject)>> {
+    ) -> PyResult<Vec<(String, Py<PyAny>)>> {
         self.db()?
             .query_documents(collection, filter, limit)
             .map(|results| {
@@ -3160,7 +3156,7 @@ impl PyProximaDB {
         }
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.ingest_logs(namespace, rust_logs))
+        py.detach(move || inner.ingest_logs(namespace, rust_logs))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest logs: {}", e)))
     }
 
@@ -3192,44 +3188,42 @@ impl PyProximaDB {
         end_time_ns: i64,
         query: Option<&str>,
         limit: u32,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<Vec<Py<PyAny>>> {
         let inner = self.db()?;
-        py.allow_threads(move || {
-            inner.query_logs(namespace, start_time_ns, end_time_ns, query, limit)
-        })
-        .map(|logs| {
-            logs.into_iter()
-                .map(|log| {
-                    let dict = PyDict::new(py);
-                    dict.set_item("timestamp_ns", log.timestamp_ns).ok();
-                    dict.set_item("severity", &log.severity).ok();
-                    dict.set_item("message", &log.message).ok();
-                    // Handle Option<String> for source and service
-                    if let Some(ref source) = log.source {
-                        dict.set_item("source", source).ok();
-                    } else {
-                        dict.set_item("source", py.None()).ok();
-                    }
-                    if let Some(ref service) = log.service {
-                        dict.set_item("service", service).ok();
-                    } else {
-                        dict.set_item("service", py.None()).ok();
-                    }
-
-                    let fields_dict = PyDict::new(py);
-                    for (k, v) in &log.fields {
-                        // Convert serde_json::Value to Python
-                        if let Ok(py_val) = json_to_python(py, v) {
-                            fields_dict.set_item(k, py_val).ok();
+        py.detach(move || inner.query_logs(namespace, start_time_ns, end_time_ns, query, limit))
+            .map(|logs| {
+                logs.into_iter()
+                    .map(|log| {
+                        let dict = PyDict::new(py);
+                        dict.set_item("timestamp_ns", log.timestamp_ns).ok();
+                        dict.set_item("severity", &log.severity).ok();
+                        dict.set_item("message", &log.message).ok();
+                        // Handle Option<String> for source and service
+                        if let Some(ref source) = log.source {
+                            dict.set_item("source", source).ok();
+                        } else {
+                            dict.set_item("source", py.None()).ok();
                         }
-                    }
-                    dict.set_item("fields", fields_dict).ok();
+                        if let Some(ref service) = log.service {
+                            dict.set_item("service", service).ok();
+                        } else {
+                            dict.set_item("service", py.None()).ok();
+                        }
 
-                    dict.into()
-                })
-                .collect()
-        })
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
+                        let fields_dict = PyDict::new(py);
+                        for (k, v) in &log.fields {
+                            // Convert serde_json::Value to Python
+                            if let Ok(py_val) = json_to_python(py, v) {
+                                fields_dict.set_item(k, py_val).ok();
+                            }
+                        }
+                        dict.set_item("fields", fields_dict).ok();
+
+                        dict.into()
+                    })
+                    .collect()
+            })
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to query logs: {}", e)))
     }
 
     /// Ingest metric samples
@@ -3296,7 +3290,7 @@ impl PyProximaDB {
         }
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.ingest_metrics(namespace, rust_samples))
+        py.detach(move || inner.ingest_metrics(namespace, rust_samples))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest metrics: {}", e)))
     }
 
@@ -3310,9 +3304,9 @@ impl PyProximaDB {
         start_time: Option<&str>,
         end_time: Option<&str>,
         step_seconds: u32,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<Vec<Py<PyAny>>> {
         let inner = self.db()?;
-        py.allow_threads(move || {
+        py.detach(move || {
             inner.aggregate_metrics(
                 namespace,
                 metric_name,
@@ -3411,7 +3405,7 @@ impl PyProximaDB {
         }
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.ingest_traces(namespace, rust_traces))
+        py.detach(move || inner.ingest_traces(namespace, rust_traces))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to ingest traces: {}", e)))
     }
 
@@ -3428,9 +3422,9 @@ impl PyProximaDB {
         min_duration_ns: Option<i64>,
         status: Option<&str>,
         limit: u32,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<Vec<Py<PyAny>>> {
         let inner = self.db()?;
-        py.allow_threads(move || {
+        py.detach(move || {
             inner.query_traces(
                 namespace,
                 start_time_ns,
@@ -3452,12 +3446,12 @@ impl PyProximaDB {
         })
     }
 
-    fn get_trace(&self, py: Python<'_>, namespace: &str, trace_id: &str) -> PyResult<PyObject> {
+    fn get_trace(&self, py: Python<'_>, namespace: &str, trace_id: &str) -> PyResult<Py<PyAny>> {
         let inner = self.db()?;
-        py.allow_threads(move || inner.get_trace(namespace, trace_id))
+        py.detach(move || inner.get_trace(namespace, trace_id))
             .and_then(|trace| {
                 let dict = PyDict::new(py);
-                let spans: Vec<PyObject> = trace
+                let spans: Vec<Py<PyAny>> = trace
                     .spans
                     .into_iter()
                     .map(|span| trace_span_to_python(py, span))
@@ -3480,7 +3474,7 @@ impl PyProximaDB {
         query: &str,
         parameters: Option<&Bound<'_, PyAny>>,
         collection: Option<&str>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let rust_params = if let Some(params) = parameters {
             let json_value = python_to_json(params)?;
             Some(match json_value {
@@ -3492,7 +3486,7 @@ impl PyProximaDB {
         };
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.execute_sql(query, rust_params, collection))
+        py.detach(move || inner.execute_sql(query, rust_params, collection))
             .and_then(|result| {
                 let dict = PyDict::new(py);
                 let rows = PyList::empty(py);
@@ -3529,12 +3523,16 @@ impl PyProximaDB {
         };
 
         let inner = self.db()?;
-        py.allow_threads(move || inner.execute_sql(query, rust_params, collection))
+        py.detach(move || inner.execute_sql(query, rust_params, collection))
             .and_then(|result| sql_result_to_arrow_ipc(&result))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to execute SQL as Arrow: {}", e)))
     }
 
-    fn explain_notebook_plan(&self, py: Python<'_>, plan: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    fn explain_notebook_plan(
+        &self,
+        py: Python<'_>,
+        plan: &Bound<'_, PyAny>,
+    ) -> PyResult<Py<PyAny>> {
         let plan_json = python_to_json(plan)?;
         let explanation = notebook_plan_explain(self.db()?.as_ref(), &plan_json)
             .map_err(|e| PyValueError::new_err(format!("Invalid notebook plan: {}", e)))?;
@@ -3550,7 +3548,7 @@ impl PyProximaDB {
         let sql = compile_notebook_plan_sql(&plan_json)
             .map_err(|e| PyValueError::new_err(format!("Invalid notebook plan: {}", e)))?;
         let inner = self.db()?;
-        py.allow_threads(move || inner.execute_sql(&sql, None, None))
+        py.detach(move || inner.execute_sql(&sql, None, None))
             .and_then(|result| sql_result_to_arrow_ipc(&result))
             .map_err(|e| {
                 PyRuntimeError::new_err(format!("Failed to execute notebook plan as Arrow: {}", e))
@@ -3596,10 +3594,8 @@ impl PyProximaDB {
         };
 
         let inner = self.db()?;
-        py.allow_threads(move || {
-            inner.insert_arrow_ipc(collection, &ipc_stream, insert_only, tenant_id)
-        })
-        .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert Arrow batch: {}", e)))
+        py.detach(move || inner.insert_arrow_ipc(collection, &ipc_stream, insert_only, tenant_id))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert Arrow batch: {}", e)))
     }
 
     #[pyo3(signature = (collection, ipc_stream, tenant_id=None))]
@@ -3611,7 +3607,7 @@ impl PyProximaDB {
         tenant_id: Option<&str>,
     ) -> PyResult<u64> {
         let inner = self.db()?;
-        py.allow_threads(move || inner.insert_arrow_ipc(collection, &ipc_stream, false, tenant_id))
+        py.detach(move || inner.insert_arrow_ipc(collection, &ipc_stream, false, tenant_id))
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert Arrow batch: {}", e)))
     }
 
@@ -3646,9 +3642,9 @@ impl PyProximaDB {
         query: &str,
         query_vector: Option<Vec<f32>>,
         fusion_strategy: Option<&str>,
-    ) -> PyResult<Vec<PyObject>> {
+    ) -> PyResult<Vec<Py<PyAny>>> {
         let inner = self.db()?;
-        py.allow_threads(move || inner.execute_unified_query(query, query_vector, fusion_strategy))
+        py.detach(move || inner.execute_unified_query(query, query_vector, fusion_strategy))
             .map(|records| {
                 records
                     .into_iter()
@@ -3702,7 +3698,7 @@ impl PyProximaDB {
     ///     for comp in plan['components']:
     ///         print(f"  {comp['model']}: cost={comp['estimated_cost']}")
     ///     ```
-    fn explain_unified_query(&self, py: Python<'_>, query: &str) -> PyResult<PyObject> {
+    fn explain_unified_query(&self, py: Python<'_>, query: &str) -> PyResult<Py<PyAny>> {
         self.db()?
             .explain_unified_query(query)
             .map(|plan| {
@@ -4076,7 +4072,7 @@ fn proxima_tree_node_to_json(node: &proximadb_records::ProximaTreeNode) -> serde
     }
 }
 
-fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<PyObject> {
+fn json_to_python(py: Python<'_>, value: &serde_json::Value) -> PyResult<Py<PyAny>> {
     match value {
         serde_json::Value::Null => Ok(py.None()),
         serde_json::Value::Bool(b) => Ok((*b).into_pyobject(py)?.to_owned().into_any().unbind()),
@@ -4568,7 +4564,7 @@ fn json_f64_value(value: &serde_json::Value) -> Option<f64> {
     }
 }
 
-fn trace_span_to_python(py: Python<'_>, span: super::EmbeddedTraceSpan) -> PyResult<PyObject> {
+fn trace_span_to_python(py: Python<'_>, span: super::EmbeddedTraceSpan) -> PyResult<Py<PyAny>> {
     let dict = PyDict::new(py);
     dict.set_item("trace_id", span.trace_id)?;
     dict.set_item("span_id", span.span_id)?;
