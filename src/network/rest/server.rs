@@ -995,10 +995,9 @@ impl RestServer {
 
         Self::log_endpoints(&self.bind_addr, false);
 
-        // For axum 0.6, use axum::Server
-        axum::Server::bind(&self.bind_addr)
-            .serve(self.router.into_make_service())
-            .await?;
+        // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+        let listener = tokio::net::TcpListener::bind(&self.bind_addr).await?;
+        axum::serve(listener, self.router.into_make_service()).await?;
 
         Ok(())
     }

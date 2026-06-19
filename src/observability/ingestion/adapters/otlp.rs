@@ -505,8 +505,6 @@ impl OtlpAdapter {
     async fn start_http(&self) -> Result<()> {
         use axum::routing::post;
 
-        use hyper::Server;
-
         let app = Router::new()
             .route("/v1/traces", post(otlp_traces_handler))
             .layer(ServiceBuilder::new().layer(TraceLayer::new_for_http()))
@@ -525,18 +523,16 @@ impl OtlpAdapter {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         *self.shutdown_tx.lock().await = Some(shutdown_tx);
 
-        // Create server with graceful shutdown
+        // axum 0.8 / hyper 1.0: bind a tokio listener, serve with graceful shutdown.
         let addr = self.config.bind_address;
-        let server = Server::bind(&addr).serve(app.into_make_service());
-
-        // Spawn graceful shutdown task
-        let graceful = server.with_graceful_shutdown(async move {
-            shutdown_rx.await.ok();
-            tracing::info!("OTLP HTTP adapter shutting down");
-        });
-
-        // Wait for server to complete
-        graceful
+        let listener = tokio::net::TcpListener::bind(&addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("OTLP HTTP bind error: {}", e))?;
+        axum::serve(listener, app.into_make_service())
+            .with_graceful_shutdown(async move {
+                shutdown_rx.await.ok();
+                tracing::info!("OTLP HTTP adapter shutting down");
+            })
             .await
             .map_err(|e| anyhow::anyhow!("OTLP HTTP server error: {}", e))
     }

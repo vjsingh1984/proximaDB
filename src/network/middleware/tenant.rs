@@ -230,7 +230,7 @@ impl TenantExtractor {
     /// Extract tenant ID from request
     fn extract_tenant_id(
         &self,
-        req: &Request<Body>,
+        req: &Request,
     ) -> Result<Option<(String, TenantIdSource)>, TenantExtractionError> {
         let requested_tenant = req
             .headers()
@@ -272,7 +272,7 @@ impl TenantExtractor {
         Ok(None)
     }
 
-    fn authenticated_tenant_id(req: &Request<Body>) -> Option<(String, TenantIdSource)> {
+    fn authenticated_tenant_id(req: &Request) -> Option<(String, TenantIdSource)> {
         if let Some(user_context) = req
             .extensions()
             .get::<crate::security::UnifiedUserContext>()
@@ -345,7 +345,7 @@ impl Default for TenantExtractor {
 /// MiddlewareTenantContext into request extensions.
 pub async fn tenant_middleware(
     axum::extract::State(extractor): axum::extract::State<TenantExtractor>,
-    mut req: Request<Body>,
+    mut req: Request,
     next: Next,
 ) -> Response {
     // Extract tenant ID
