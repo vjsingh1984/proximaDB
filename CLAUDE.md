@@ -20,8 +20,9 @@ You must also strictly enforce SaaS Operational constraints:
 ====
 
 ### Core Directives
-1.  **Architecture Source Of Truth:** Use `docs/12-design/README.adoc` as the architecture index. Pay special attention to the `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` document.
-2.  **Safety First:** NO `.unwrap()`, `.expect()`, or `panic!()` in production code. Use `Result` and `?`.
-3.  **Token Efficiency:** When running long-output commands, use `grep` with context flags.
+1.  **Workspace Isolation (MANDATORY — this repo is worked on by multiple concurrent sessions):** NEVER edit, commit, `checkout`, `reset`, `stash`, or `branch -f` in the main checkout, and NEVER touch another worktree's branch or uncommitted WIP. Every task gets its own git worktree + branch off `origin/develop`: run `eval "$(scripts/worktree.sh new <type/topic>)"` to create one and `cd` into it. Run `scripts/worktree.sh guard` before editing — if it fails, you are in the shared checkout; stop and make a worktree. Clean up with `scripts/worktree.sh rm <type/topic>` once your PR merges. Full rationale + commands: `docs/10-quality/WORKSPACE_ISOLATION.md`.
+2.  **Architecture Source Of Truth:** Use `docs/12-design/README.adoc` as the architecture index. Pay special attention to the `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` document.
+3.  **Safety First:** NO `.unwrap()`, `.expect()`, or `panic!()` in production code. Use `Result` and `?`.
+4.  **Token Efficiency:** When running long-output commands, use `grep` with context flags.
 
 *See `GEMINI.md` for the comprehensive list of engineering mandates.*
