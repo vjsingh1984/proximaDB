@@ -2782,7 +2782,8 @@ mod tests {
             result.error_code
         );
 
-        // Test short name (less than 8 characters)
+        // Short names are valid SQL/ANSI identifiers — the vestigial 8-char floor was
+        // removed (TPC-H `part`/`orders` etc. need short table names). "short" now succeeds.
         let short_name = CollectionConfig {
             name: "short".to_string(),
             ..valid_config.clone()
@@ -2791,14 +2792,9 @@ mod tests {
             .create_collection(&short_name)
             .await
             .context("Failed to create collection with short name")?;
-        assert!(!result.success);
         assert!(
-            result
-                .error_code
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
-                .contains("INVALID_NAME_LENGTH"),
-            "Error code should contain INVALID_NAME_LENGTH, got: {:?}",
+            result.success,
+            "short names are now valid; got error: {:?}",
             result.error_code
         );
 
