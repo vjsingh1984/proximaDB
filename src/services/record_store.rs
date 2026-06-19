@@ -134,6 +134,13 @@ pub trait TableWalAppender: Send + Sync {
         operations: Vec<CanonicalOperation>,
         tenant_id: Option<String>,
     ) -> Result<Vec<CanonicalWalEntry>>;
+
+    /// Read every canonical WAL entry this appender has durably recorded, oldest first.
+    /// The default returns nothing (appenders without a readable log opt out); the framed
+    /// appender overrides it. Used by the CDC change-feed to surface row-level changes.
+    async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Physical writer route selected from xCatalog table metadata.
@@ -422,6 +429,18 @@ async fn list_objects_with_suffix(
 }
 
 /// Canonical table-record store API.
+/// One row-level change surfaced by the CDC change-feed (P2). `lsn` is the WAL sequence
+/// number (monotonic), `op` is `"upsert"` or `"delete"`, `key` is the canonical OID, and
+/// `props` carries the after-image (JSON) for upserts. Serializable for the REST surface.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChangeRow {
+    pub lsn: u64,
+    pub op: String,
+    pub collection: String,
+    pub key: String,
+    pub props: Option<serde_json::Value>,
+}
+
 #[async_trait]
 pub trait TableRecordStore: Send + Sync {
     /// Write catalog-validated record mutations.
@@ -547,6 +566,18 @@ pub trait TableRecordStore: Send + Sync {
             }
         }
         Ok(None)
+    }
+
+    /// CDC change-feed: return row-level changes for `collection_id` with WAL sequence
+    /// number strictly greater than `since_lsn`, oldest first. The default returns nothing
+    /// (stores without a readable change log opt out); the WAL-backed store overrides it.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let _ = (collection_id, since_lsn);
+        Ok(Vec::new())
     }
 }
 
@@ -1300,6 +1331,53 @@ impl DirectWalTableRecordStore {
 
 #[async_trait]
 impl TableRecordStore for DirectWalTableRecordStore {
+    /// CDC change-feed over the canonical WAL: surface every RecordUpsert/RecordDelete for
+    /// `collection_id` (the table name) with sequence number > `since_lsn`, oldest first.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let entries = self.wal_appender.read_all_entries().await?;
+        let mut out = Vec::new();
+        for e in entries {
+            if e.sequence_number <= since_lsn {
+                continue;
+            }
+            match e.operation {
+                CanonicalOperation::RecordUpsert {
+                    collection_id: c,
+                    record,
+                    ..
+                } if c == collection_id => {
+                    out.push(ChangeRow {
+                        lsn: e.sequence_number,
+                        op: "upsert".to_string(),
+                        collection: c,
+                        key: record.oid.clone(),
+                        props: serde_json::to_value(&record.props).ok(),
+                    });
+                }
+                CanonicalOperation::RecordDelete {
+                    collection_id: c,
+                    oid,
+                    ..
+                } if c == collection_id => {
+                    out.push(ChangeRow {
+                        lsn: e.sequence_number,
+                        op: "delete".to_string(),
+                        collection: c,
+                        key: oid,
+                        props: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+        out.sort_by_key(|r| r.lsn);
+        Ok(out)
+    }
+
     async fn write_mutations(
         &self,
         table_schema: &CatalogTableSchema,

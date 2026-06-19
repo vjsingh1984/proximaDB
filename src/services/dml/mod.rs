@@ -877,6 +877,20 @@ impl DmlService {
             .await
     }
 
+    /// CDC change-feed (P2): row-level changes for `table_name` with WAL sequence number
+    /// strictly greater than `since_lsn`, oldest first. Backed by the canonical WAL via the
+    /// record store; returns empty for stores without a readable change log. The REST
+    /// change-feed surface and (later) the pgwire `table_changes()` TVF call this.
+    pub async fn changes_since(
+        &self,
+        table_name: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<crate::services::record_store::ChangeRow>> {
+        self.record_store
+            .read_changes_since(table_name, since_lsn)
+            .await
+    }
+
     /// Select current visible records and resolve projection columns inside the
     /// DML/catalog boundary.
     pub async fn select_table_records_with_projection(
@@ -5417,6 +5431,84 @@ mod tests {
             1,
             "replayed memtable must hold the record"
         );
+    }
+
+    /// CDC change-feed (P2): INSERT → UPDATE → DELETE produce ordered change rows over the
+    /// canonical WAL; `changes_since` filters by table + lsn and reports correct op tags.
+    #[tokio::test]
+    async fn cdc_change_feed_reports_ops_since_lsn() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("cdc.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE acct (id TEXT NOT NULL, bal INT, PRIMARY KEY (id));")
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender =
+            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL"));
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let run = |sql: &str| {
+            let parser = &parser;
+            let dml = &dml;
+            let sql = sql.to_string();
+            async move {
+                let stmt = parser.parse_dml(&sql).expect("parse dml").expect("dml");
+                dml.execute(stmt).await.expect("execute dml")
+            }
+        };
+        run("INSERT INTO acct (id, bal) VALUES ('a', 100);").await;
+        run("UPDATE acct SET bal = 150 WHERE id = 'a';").await;
+        run("DELETE FROM acct WHERE id = 'a';").await;
+
+        // Full feed from the beginning: upsert, upsert (update), delete — lsn-ordered.
+        let changes = dml.changes_since("acct", 0).await.expect("changes");
+        assert_eq!(changes.len(), 3, "three changes: insert, update, delete");
+        assert_eq!(changes[0].op, "upsert");
+        assert_eq!(changes[1].op, "upsert");
+        assert_eq!(changes[2].op, "delete");
+        assert!(
+            changes[0].lsn < changes[1].lsn && changes[1].lsn < changes[2].lsn,
+            "changes are lsn-ordered"
+        );
+        assert_eq!(changes[2].key, "a", "delete carries the key");
+
+        // Incremental: only changes after the first lsn (the two later ops).
+        let tail = dml
+            .changes_since("acct", changes[0].lsn)
+            .await
+            .expect("tail");
+        assert_eq!(tail.len(), 2, "since first lsn → update + delete only");
+
+        // A different table sees nothing.
+        assert!(dml.changes_since("other", 0).await.expect("other").is_empty());
     }
 
     #[tokio::test]

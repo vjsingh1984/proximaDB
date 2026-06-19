@@ -77,6 +77,10 @@ impl FramedTableWalAppender {
 
 #[async_trait]
 impl TableWalAppender for FramedTableWalAppender {
+    async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
+        self.read_entries().await
+    }
+
     async fn append_operations(
         &self,
         operations: Vec<CanonicalOperation>,
