@@ -53,4 +53,30 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
 5.  **Token Efficiency:** When running long-output commands, use `grep` with context flags.
 6.  **Measure, Don't Assert:** Gate performance claims on the evidence ledger (`BENCHMARK_EVIDENCE.toml`); reject "indicative" kernel benchmarks masquerading as end-to-end metrics.
 
+### Mandate: Full ANSI SQL over pgwire
+ProximaDB is driving toward **full ANSI/standard SQL support over the PostgreSQL
+wire protocol (pgwire)**. Treat **TPC-H and TPC-DS over pgwire as the conformance
+driver** (first cuts live in the qa-gate integration suites). As you implement or
+touch query paths:
+
+- **Submit queries to ProximaDB and let it route** — the engine owns engine
+  selection. The pgwire SELECT path lowers SQL and calls
+  `ComputeScheduler::route_select` → **DataFusion (OLAP) for parquet-backed
+  tables, Volcano/native otherwise** (`src/network/postgres/relational_pipeline.rs`,
+  `src/query/compute_scheduler.rs`). Never bypass pgwire/the router in product
+  code or end-to-end tests to call an engine directly.
+- A table reaches the DataFusion OLAP engine when it is **parquet-backed** — via
+  `ALTER TABLE … MATERIALIZE` (warehouse materializer, auto-wired from `data_dir`)
+  or a federated/external Parquet storage layout.
+- **Fix SQL wiring/lowering gaps incrementally as you find them** — relax
+  vector-collection-era constraints that leak into relational DDL (e.g. the former
+  8-char collection-name minimum blocked `part`/`orders`/`region`), extend the
+  relational frontend/planner/executor and DataFusion lowering, and prefer real
+  ANSI semantics over ad-hoc shortcuts. Each TPC-H/TPC-DS query that starts passing
+  is the ratchet of progress.
+- **Diagnostics:** the pgwire client surfaces failures as a generic `db error`;
+  the real cause is in the server `DbError` (code/message) — inspect via
+  `e.as_db_error()` and run with `RUST_LOG=proximadb=debug`. Keep server-side error
+  messages specific and actionable.
+
 *See `GEMINI.md` for the comprehensive list of engineering mandates.*
