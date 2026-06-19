@@ -42,6 +42,23 @@ worktree_root() {
 
 sanitize() { printf '%s' "$1" | tr '/' '-' | tr -cs 'A-Za-z0-9._-' '-'; }
 
+# Emit (to stdout, eval-able) the shared-compilation-cache env so EVERY worktree
+# reuses compiled artifacts despite separate target/ dirs — this is what turns
+# N concurrent worktrees from N× cold compiles into ~1× compile cost. Opt-in:
+# only emitted when sccache is installed, so machines/CI without it are
+# unaffected (CI keeps Swatinem/rust-cache). RUSTC_WRAPPER does not conflict
+# with the repo's .cargo/config.toml rustflags; CARGO_INCREMENTAL=0 is required
+# for sccache to cache at all.
+emit_cache_env() {
+  if command -v sccache >/dev/null 2>&1; then
+    printf 'export RUSTC_WRAPPER=%q\n' "$(command -v sccache)"
+    printf 'export SCCACHE_DIR=%q\n' "${SCCACHE_DIR:-$HOME/.cache/sccache}"
+    printf 'export CARGO_INCREMENTAL=0\n'
+  else
+    printf 'worktree: sccache not installed — worktrees will cold-compile. Share the cache with: cargo install sccache (or brew install sccache)\n' >&2
+  fi
+}
+
 cmd_new() {
   local branch="${1:-}" base="${2:-$BASE_DEFAULT}"
   [ -n "$branch" ] || die "usage: new <type/topic> [base]   (e.g. feat/cloud-full)"
@@ -53,8 +70,10 @@ cmd_new() {
   git -C "$(repo_main)" fetch --quiet "$REMOTE" "$base" || die "cannot fetch $REMOTE/$base"
   mkdir -p "$(worktree_root)"
   git -C "$(repo_main)" worktree add -b "$branch" "$dir" "$REMOTE/$base" >&2
-  # Emit a `cd` so callers can `eval "$(... new ...)"` to land in the worktree.
+  # Emit a `cd` + the shared-cache env so `eval "$(... new ...)"` lands in the
+  # worktree AND wires up sccache for fast, dedup'd compilation across worktrees.
   printf 'cd %q\n' "$dir"
+  emit_cache_env
   printf 'worktree: %s  (branch %s off %s/%s)\n' "$dir" "$branch" "$REMOTE" "$base" >&2
 }
 
@@ -134,13 +153,15 @@ case "${1:-}" in
   rm)    shift; cmd_rm "$@" ;;
   clean) shift; cmd_clean "$@" ;;
   guard) shift; cmd_guard "$@" ;;
+  cache-env) shift; emit_cache_env ;;
   *) cat >&2 <<'USAGE'
 worktree: one task = one worktree = one branch (isolated by construction)
-  scripts/worktree.sh new   <type/topic> [base]   create + print `cd` (eval it)
+  scripts/worktree.sh new   <type/topic> [base]   create + print `cd` + cache env (eval it)
   scripts/worktree.sh list                          list worktrees + dirty state
   scripts/worktree.sh rm    <type/topic> [--force]  remove (guards dirty)
   scripts/worktree.sh clean                         drop worktrees merged to develop
   scripts/worktree.sh guard                         fail if run in the main checkout
+  scripts/worktree.sh cache-env                     print sccache env for an existing worktree (eval it)
 USAGE
      exit 2 ;;
 esac
