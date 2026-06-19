@@ -346,7 +346,18 @@ impl ExecutionPlan for ProximaScanExec {
     }
 
     fn partition_statistics(&self, _partition: Option<usize>) -> DFResult<Arc<Statistics>> {
-        Ok(Arc::new(self.statistics.clone().unwrap_or_default()))
+        // DataFusion 54 indexes `column_statistics[col.index()]` when a parent
+        // (e.g. AggregateExec) derives its own statistics. A bare
+        // `Statistics::default()` carries an EMPTY `column_statistics`, so any
+        // aggregate planned over this scan panics with "index out of bounds".
+        // Always hand back a schema-sized Statistics: use the provided stats only
+        // when their column count matches the schema, else an unknown-but-sized one.
+        let schema = self.schema();
+        let stats = match &self.statistics {
+            Some(s) if s.column_statistics.len() == schema.fields().len() => s.clone(),
+            _ => Statistics::new_unknown(&schema),
+        };
+        Ok(Arc::new(stats))
     }
 }
 
