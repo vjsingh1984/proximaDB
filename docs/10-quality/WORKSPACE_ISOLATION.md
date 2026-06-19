@@ -78,6 +78,12 @@ new feat/x  ──▶  edit · commit · push · open PR  ──▶  PR merges  
   out files are duplicated. Cheap relative to the safety.
 - **Builds?** Each worktree has its own `target/` (no cross-contamination of
   feature flags). That's a feature — a `--features cloud-full` build can't
-  poison a default build.
+  poison a default build. To avoid paying N× cold compiles across N worktrees,
+  install **sccache** — `worktree.sh new` (and `worktree.sh cache-env` for an
+  existing worktree) then emits `RUSTC_WRAPPER`/`SCCACHE_DIR`/`CARGO_INCREMENTAL=0`
+  so every worktree shares one content-addressed compilation cache. Setup:
+  `cargo install sccache` (or `brew install sccache`); it's opt-in — without it,
+  builds work unchanged. (mold linker is a further win but isn't auto-wired yet,
+  since setting `RUSTFLAGS` for it would clobber the repo's `codegen-units=4`.)
 - **`/tmp` worktrees?** Fine for throwaway/CI, but prefer the sibling root so
   work survives reboots and is discoverable via `worktree.sh list`.
