@@ -72,6 +72,32 @@ new feat/x  ──▶  edit · commit · push · open PR  ──▶  PR merges  
    ever in a shared tree, fall back to `git commit -o <file>`).
 4. Clean up (`rm`) once your PR merges.
 
+## Runtime isolation (beyond git)
+
+Git worktrees isolate *source*, but two agents running servers/tests in parallel
+also share **runtime** state — TCP ports, data dirs, the Docker daemon,
+registries. Isolate those too:
+
+- **Server ports.** The default server binds 5678 (REST) / 5679 (gRPC) / 5680
+  (Flight) / 5433 (pgwire); two servers on the same port collide. Give each
+  agent's server its own ports via `PROXIMADB_REST_PORT` / `PROXIMADB_GRPC_PORT`
+  / `PROXIMADB_ARROW_IPC_PORT` (or `0` for an OS-assigned ephemeral port).
+- **Point tests at your server.** Integration tests honor `REST_API_URL`
+  (default `http://127.0.0.1:5678`) — set it to your agent's server so suites in
+  different worktrees don't hit one shared instance. (A few legacy tests still
+  hardcode the URL; standardizing them onto `REST_API_URL` is a tracked follow-up.)
+- **Data dirs.** Use a per-agent `PROXIMADB_DATA_DIR` (tests already use
+  `tempfile::TempDir`); never share `/data/proximadb`.
+- **Docker.** Use a unique Compose **project name** (`docker compose -p
+  pdb-<branch>`) and don't publish fixed host ports — let Docker assign them or
+  map to the agent's ephemeral ports, so containers/networks/volumes don't
+  collide across agents.
+- **Registries / tags.** Use per-PR image tags (`pr-<n>-<sha>`) so concurrent
+  publishes don't clobber each other.
+
+Rule of thumb: anything with a *fixed* global name (port, path, container, tag)
+needs a per-agent value before two agents can use it at once.
+
 ## FAQ
 
 - **Disk cost?** Worktrees share the one `.git` object store; only the checked-
