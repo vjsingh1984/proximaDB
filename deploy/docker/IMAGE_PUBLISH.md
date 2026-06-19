@@ -75,3 +75,25 @@ docker build -f deploy/docker/Dockerfile --target runtime -t proximadb:local .
 # full image with ONNX + baked bge-small-en-v1.5
 docker build -f deploy/docker/Dockerfile --target runtime-full -t proximadb:local-full .
 ```
+
+## Fast prebuilt image (decoupled compile vs. bake)
+
+`deploy/docker/Dockerfile.prebuilt` bakes an **already-built** cloud-full server
+binary into the same hardened, non-root, Python-free runtime — **no in-Docker
+Rust compile**. Compile once (host/CI, with sccache), then bake in seconds:
+
+```bash
+# Linux host / CI — the binary is COPY'd, so it must be a Linux binary for the
+# target arch (a macOS host binary will NOT run; use the multi-stage Dockerfile
+# locally on Mac).
+cargo build --release --features cloud-full -p proximadb-server
+docker build -f deploy/docker/Dockerfile.prebuilt \
+  --build-arg BIN=target/release/proximadb-server -t proximadb:preview .
+```
+
+Measured ~13s to bake vs. minutes for the in-Docker compile. This is the
+foundation for cheap **per-PR preview images** (build the binary once in CI,
+reuse it across the bake + smoke deploy). Wiring per-PR `pr-<n>-<sha>` tags
+with auto-prune-on-merge into `publish-image.yml` is a tracked follow-up —
+deliberately on-demand rather than auto-building every PR push (4 native Rust
+builds per push is too costly, and fork PRs can't access the registry secrets).
