@@ -222,15 +222,15 @@ impl MultiServer {
         // pgwire and the REST/gRPC `DmlService` then operate on ONE instance — a write on
         // any protocol is visible to reads + the CDC change-feed on every protocol — and the
         // WAL is replayed exactly once. A custom WAL path opts out (builds its own below).
-        if wal_path == default_wal_path {
-            if let Some(store) = self.shared_services.canonical_record_store.clone() {
-                info!(
-                    "🐘 pgwire reusing shared canonical record store (unified cross-surface relational state)"
-                );
-                return Ok(Some(
-                    crate::network::postgres::DirectPgwireWriteServices::new(store),
-                ));
-            }
+        if wal_path == default_wal_path
+            && let Some(store) = self.shared_services.canonical_record_store.clone()
+        {
+            info!(
+                "🐘 pgwire reusing shared canonical record store (unified cross-surface relational state)"
+            );
+            return Ok(Some(
+                crate::network::postgres::DirectPgwireWriteServices::new(store),
+            ));
         }
 
         // T2.3 / TD-066 production wiring: prefer the shared canonical WAL
