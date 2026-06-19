@@ -181,4 +181,46 @@ pub trait ObjectStoreBridge: Send + Sync {
             "publish_snapshot not supported".into(),
         ))
     }
+
+    /// Latest committed Iceberg `metadata.json` version in the table metadata log at
+    /// `metadata_prefix` (companion to [`latest_manifest_version`]; TD-119).
+    ///
+    /// [`latest_manifest_version`]: ObjectStoreBridge::latest_manifest_version
+    async fn latest_metadata_version(
+        &self,
+        metadata_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let _ = metadata_prefix;
+        Err(StorageError::Serialization(
+            "latest_metadata_version not supported".into(),
+        ))
+    }
+
+    /// Read the raw bytes of the Iceberg `metadata.json` at `version` under `metadata_prefix`.
+    async fn read_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<u8>, StorageError> {
+        let _ = (metadata_prefix, version);
+        Err(StorageError::Serialization(
+            "read_table_metadata not supported".into(),
+        ))
+    }
+
+    /// Atomically publish `metadata` as the successor of `parent` in the table metadata log
+    /// at `metadata_prefix` (optimistic-concurrency CAS, like [`publish_snapshot`]).
+    ///
+    /// [`publish_snapshot`]: ObjectStoreBridge::publish_snapshot
+    async fn commit_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        parent: Option<u64>,
+        metadata: Vec<u8>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let _ = (metadata_prefix, parent, metadata);
+        Err(StorageError::Serialization(
+            "commit_table_metadata not supported".into(),
+        ))
+    }
 }

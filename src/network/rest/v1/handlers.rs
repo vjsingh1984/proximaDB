@@ -1461,8 +1461,24 @@ pub fn create_router(state: AppState) -> axum::Router {
         use crate::network::rest::v1::iceberg_rest_catalog::{
             IcebergRestState, create_iceberg_rest_router,
         };
-        let iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone())
+        let mut iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone())
             .with_segment_registry(state.segment_registry.clone());
+        // TD-119: persist/serve a real metadata.json from the SAME warehouse root the
+        // materialize/write path uses (`file://{data_dir}/warehouse`), so the manifest log
+        // drives snapshot history and `metadata-location` resolves. Best-effort: if the
+        // store is unavailable, metadata is still served inline (synthesized, no persistence).
+        let warehouse_root_url = format!("file://{}/warehouse", state.data_dir.display());
+        match proximadb_iceberg_engine::IcebergObjectStoreBridge::from_url(&warehouse_root_url) {
+            Ok(bridge) => {
+                iceberg_state = iceberg_state.with_object_store_bridge(std::sync::Arc::new(bridge));
+            }
+            Err(e) => {
+                info!(
+                    "Iceberg REST: warehouse object store unavailable at {warehouse_root_url}: \
+                     {e}; metadata served inline without persistence"
+                );
+            }
+        }
         router = router.nest(
             "/iceberg/v1",
             create_iceberg_rest_router().with_state(iceberg_state),

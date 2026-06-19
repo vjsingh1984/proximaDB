@@ -58,6 +58,7 @@ use proximadb_storage_common::proxima_schema::ProximaSchema;
 
 /// Iceberg-style atomic manifest commits (optimistic concurrency via `put_if_absent`).
 pub mod manifest;
+pub mod metadata;
 
 /// Map a Parquet read/decode failure into a [`StorageError`] with operation context.
 fn read_err(context: &str, e: impl std::fmt::Display) -> StorageError {
@@ -297,6 +298,33 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         let body = keys.join("\n");
         let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
         committer.commit(parent, Bytes::from(body)).await
+    }
+
+    async fn latest_metadata_version(
+        &self,
+        metadata_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        committer.latest_version().await
+    }
+
+    async fn read_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<u8>, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        Ok(committer.read_metadata(version).await?.to_vec())
+    }
+
+    async fn commit_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        parent: Option<u64>,
+        metadata: Vec<u8>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        committer.commit(parent, Bytes::from(metadata)).await
     }
 }
 
