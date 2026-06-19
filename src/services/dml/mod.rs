@@ -3967,11 +3967,34 @@ impl DmlService {
             SqlValueLiteral::Null => Ok(None),
             SqlValueLiteral::Integer(i) => Ok(Some(*i)),
             SqlValueLiteral::String(s) => {
-                // Parse ISO 8601 timestamp
-                use chrono::DateTime;
-                let dt = DateTime::parse_from_rfc3339(s)
-                    .map_err(|e| anyhow!("Invalid timestamp format: {e}"))?;
-                Ok(Some(dt.timestamp_millis()))
+                // Accept RFC3339 (with TZ) first, then standard SQL naive timestamp
+                // spellings (`YYYY-MM-DD HH:MM:SS[.fff]` or with a `T` separator,
+                // treated as UTC) and a bare date. `TIMESTAMP '2016-01-01 00:00:00'`
+                // literals (no TZ) are standard SQL and dense in time-series data.
+                use chrono::{DateTime, NaiveDate, NaiveDateTime};
+                let s = s.trim();
+                if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+                    return Ok(Some(dt.timestamp_millis()));
+                }
+                for fmt in [
+                    "%Y-%m-%d %H:%M:%S%.f",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M:%S%.f",
+                    "%Y-%m-%dT%H:%M:%S",
+                ] {
+                    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, fmt) {
+                        return Ok(Some(ndt.and_utc().timestamp_millis()));
+                    }
+                }
+                if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                    return Ok(Some(
+                        d.and_hms_opt(0, 0, 0)
+                            .ok_or_else(|| anyhow!("internal: bad midnight"))?
+                            .and_utc()
+                            .timestamp_millis(),
+                    ));
+                }
+                Err(anyhow!("Invalid timestamp format: {s}"))
             }
             SqlValueLiteral::Function { name, .. } if name.eq_ignore_ascii_case("NOW") => {
                 Ok(Some(chrono::Utc::now().timestamp_millis()))
