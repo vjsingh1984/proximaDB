@@ -154,8 +154,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ${{ runner.temp }}/digests
-          # Only this target's per-arch digests (digests-<target>-linux-<arch>).
-          pattern: digests-${{ matrix.target }}-*
+          # Only THIS target's per-arch digests. The `-linux-` anchor is load-
+          # bearing: a bare `digests-${{ matrix.target }}-*` for target=runtime
+          # also matches `digests-runtime-full-*` (prefix collision), which
+          # merged the runtime-full images into the runtime manifest. Platform
+          # pairs are always linux-<arch>, so anchoring on `-linux-` disambiguates
+          # `digests-runtime-linux-*` from `digests-runtime-full-linux-*`.
+          pattern: digests-${{ matrix.target }}-linux-*
           merge-multiple: true
 
       - name: Log in to Docker Hub
