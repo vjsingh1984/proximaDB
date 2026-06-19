@@ -301,24 +301,24 @@ pub fn create_observability_router() -> Router<ObservabilityApiState> {
         // Namespace management
         .route("/namespaces", post(create_namespace))
         // Log ingestion
-        .route("/namespaces/:namespace/logs/bulk", post(ingest_logs))
-        .route("/namespaces/:namespace/logs", post(ingest_log))
+        .route("/namespaces/{namespace}/logs/bulk", post(ingest_logs))
+        .route("/namespaces/{namespace}/logs", post(ingest_log))
         // Log queries
-        .route("/namespaces/:namespace/logs/search", post(query_logs))
+        .route("/namespaces/{namespace}/logs/search", post(query_logs))
         // Metric ingestion
-        .route("/namespaces/:namespace/metrics/bulk", post(ingest_metrics))
-        .route("/namespaces/:namespace/metrics", post(ingest_metric))
+        .route("/namespaces/{namespace}/metrics/bulk", post(ingest_metrics))
+        .route("/namespaces/{namespace}/metrics", post(ingest_metric))
         // Metric queries
         .route(
             "/namespaces/:namespace/metrics/aggregate",
             post(aggregate_metrics),
         )
         // PromQL endpoint
-        .route("/namespaces/:namespace/metrics/promql", post(query_promql))
+        .route("/namespaces/{namespace}/metrics/promql", post(query_promql))
         // Trace ingestion
-        .route("/namespaces/:namespace/traces/bulk", post(ingest_traces))
+        .route("/namespaces/{namespace}/traces/bulk", post(ingest_traces))
         // Trace queries
-        .route("/namespaces/:namespace/traces/search", post(query_traces))
+        .route("/namespaces/{namespace}/traces/search", post(query_traces))
 }
 
 /// Create a namespace

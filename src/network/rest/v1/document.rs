@@ -168,12 +168,12 @@ pub fn create_document_router() -> Router<DocumentApiState> {
         // Collection operations
         .route("/collections", post(create_collection))
         .route("/collections", get(list_collections))
-        .route("/collections/:collection", get(get_collection_info))
-        .route("/collections/:collection", delete(delete_collection))
+        .route("/collections/{collection}", get(get_collection_info))
+        .route("/collections/{collection}", delete(delete_collection))
         // Document CRUD
-        .route("/collections/:collection/documents", post(insert_document))
-        .route("/collections/:collection/documents", get(query_documents))
-        .route("/collections/:collection/documents/:id", get(get_document))
+        .route("/collections/{collection}/documents", post(insert_document))
+        .route("/collections/{collection}/documents", get(query_documents))
+        .route("/collections/{collection}/documents/{id}", get(get_document))
         .route(
             "/collections/:collection/documents/:id",
             delete(delete_document),
@@ -192,8 +192,8 @@ pub fn create_document_router() -> Router<DocumentApiState> {
             post(aggregate_documents),
         )
         // Index operations
-        .route("/collections/:collection/indexes", post(create_index))
-        .route("/collections/:collection/indexes", get(list_indexes))
+        .route("/collections/{collection}/indexes", post(create_index))
+        .route("/collections/{collection}/indexes", get(list_indexes))
 }
 
 /// Create a document collection

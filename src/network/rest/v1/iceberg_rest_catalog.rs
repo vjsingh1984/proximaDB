@@ -153,9 +153,9 @@ pub fn create_iceberg_rest_router() -> Router<IcebergRestState> {
             get(load_table_metadata_file),
         )
         // Register existing table
-        .route("/namespaces/:namespace/register", post(register_table))
+        .route("/namespaces/{namespace}/register", post(register_table))
         // Views (v2 stub — returns empty list)
-        .route("/namespaces/:namespace/views", get(list_views))
+        .route("/namespaces/{namespace}/views", get(list_views))
 }
 
 // ============================================================================

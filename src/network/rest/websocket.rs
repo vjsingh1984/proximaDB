@@ -140,12 +140,12 @@ impl Default for WebSocketState {
 /// Returns an Axum router with WebSocket endpoints for vector streaming.
 pub fn websocket_routes(state: WebSocketState) -> Router {
     Router::new()
-        .route("/v1/stream/insert/:collection", get(ws_insert_handler))
+        .route("/v1/stream/insert/{collection}", get(ws_insert_handler))
         .route(
             "/v1/stream/subscribe/:collection",
             get(ws_subscribe_handler),
         )
-        .route("/v1/stream/status/:session_id", get(ws_status_handler))
+        .route("/v1/stream/status/{session_id}", get(ws_status_handler))
         .with_state(state)
 }
 

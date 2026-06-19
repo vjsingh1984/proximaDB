@@ -346,7 +346,7 @@ impl Default for TenantExtractor {
 pub async fn tenant_middleware(
     axum::extract::State(extractor): axum::extract::State<TenantExtractor>,
     mut req: Request<Body>,
-    next: Next<Body>,
+    next: Next,
 ) -> Response {
     // Extract tenant ID
     match extractor.extract_tenant_id(&req) {
