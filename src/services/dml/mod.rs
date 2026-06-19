@@ -1242,14 +1242,14 @@ impl DmlService {
             .fields()
             .iter()
             .enumerate()
-            .map(|(i, f)| {
-                proximadb_storage_common::object_store_bridge::IcebergSnapshotField {
+            .map(
+                |(i, f)| proximadb_storage_common::object_store_bridge::IcebergSnapshotField {
                     id: (i + 1) as i32,
                     name: f.name().clone(),
                     type_name: iceberg_type_for(f.data_type()).to_string(),
                     required: !f.is_nullable(),
-                }
-            })
+                },
+            )
             .collect();
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -5463,8 +5463,11 @@ mod tests {
             .expect("ddl");
         ddl.execute(ddl_stmt).await.expect("create table");
 
-        let wal_appender =
-            Arc::new(FramedTableWalAppender::open(&wal_path).await.expect("open WAL"));
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(&wal_path)
+                .await
+                .expect("open WAL"),
+        );
         let record_store = Arc::new(DirectWalTableRecordStore::new(
             Arc::new(MemtableRecordStorage::new()),
             wal_appender,
@@ -5508,7 +5511,12 @@ mod tests {
         assert_eq!(tail.len(), 2, "since first lsn → update + delete only");
 
         // A different table sees nothing.
-        assert!(dml.changes_since("other", 0).await.expect("other").is_empty());
+        assert!(
+            dml.changes_since("other", 0)
+                .await
+                .expect("other")
+                .is_empty()
+        );
     }
 
     #[tokio::test]

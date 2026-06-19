@@ -133,7 +133,11 @@ async fn pgwire_write_is_visible_on_the_shared_canonical_store() {
         "pgwire INSERT of 2 rows must be visible on the shared store the REST/gRPC \
          DmlService reads from; got {changes:?}"
     );
-    assert!(changes.iter().all(|c| c.op == "upsert" && c.collection == "uacct"));
+    assert!(
+        changes
+            .iter()
+            .all(|c| c.op == "upsert" && c.collection == "uacct")
+    );
     let keys: Vec<&str> = changes.iter().map(|c| c.key.as_str()).collect();
     assert!(keys.contains(&"1") && keys.contains(&"2"), "keys: {keys:?}");
     eprintln!("✓ cross-surface unified: pgwire write visible on the shared REST/gRPC store");

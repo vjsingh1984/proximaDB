@@ -140,8 +140,8 @@ struct AvroManifestFile {
 /// Serialize a manifest (one `manifest_entry` per data file) as Iceberg v2 Avro.
 /// `status` is ADDED (1), `content` is DATA (0), format is PARQUET, unpartitioned.
 pub fn write_manifest(files: &[DataFileMeta], snapshot_id: i64) -> Result<Vec<u8>, StorageError> {
-    let schema = Schema::parse_str(MANIFEST_SCHEMA_JSON)
-        .map_err(|e| ser_err("parse manifest schema", e))?;
+    let schema =
+        Schema::parse_str(MANIFEST_SCHEMA_JSON).map_err(|e| ser_err("parse manifest schema", e))?;
     let mut writer = Writer::new(&schema, Vec::new());
     for f in files {
         let entry = AvroManifestEntry {
@@ -162,13 +162,15 @@ pub fn write_manifest(files: &[DataFileMeta], snapshot_id: i64) -> Result<Vec<u8
             .append_ser(&entry)
             .map_err(|e| ser_err("append manifest entry", e))?;
     }
-    writer.into_inner().map_err(|e| ser_err("finish manifest", e))
+    writer
+        .into_inner()
+        .map_err(|e| ser_err("finish manifest", e))
 }
 
 /// Read an Iceberg v2 manifest Avro back into the data-file list.
 pub fn read_manifest(bytes: &[u8]) -> Result<Vec<DataFileMeta>, StorageError> {
-    let schema = Schema::parse_str(MANIFEST_SCHEMA_JSON)
-        .map_err(|e| ser_err("parse manifest schema", e))?;
+    let schema =
+        Schema::parse_str(MANIFEST_SCHEMA_JSON).map_err(|e| ser_err("parse manifest schema", e))?;
     let reader =
         Reader::with_schema(&schema, bytes).map_err(|e| ser_err("open manifest reader", e))?;
     let mut out = Vec::new();
@@ -410,8 +412,18 @@ mod tests {
     #[test]
     fn table_metadata_points_at_manifest_list() {
         let fields = vec![
-            IcebergField { id: 1, name: "id".into(), type_name: "long".into(), required: true },
-            IcebergField { id: 2, name: "name".into(), type_name: "string".into(), required: false },
+            IcebergField {
+                id: 1,
+                name: "id".into(),
+                type_name: "long".into(),
+                required: true,
+            },
+            IcebergField {
+                id: 2,
+                name: "name".into(),
+                type_name: "string".into(),
+                required: false,
+            },
         ];
         let json = build_table_metadata(
             FormatVersion::V2,
@@ -471,7 +483,12 @@ mod tests {
             FormatVersion::V2,
             "uuid-1",
             "loc",
-            &[IcebergField { id: 1, name: "id".into(), type_name: "long".into(), required: true }],
+            &[IcebergField {
+                id: 1,
+                name: "id".into(),
+                type_name: "long".into(),
+                required: true,
+            }],
             777,
             1,
             "snap-777-list.avro",

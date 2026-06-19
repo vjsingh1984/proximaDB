@@ -56,11 +56,11 @@ use proximadb_storage_common::proxima_arrow::infer_proxima_schema;
 use proximadb_storage_common::proxima_parquet::proxima_records_to_parquet_bytes;
 use proximadb_storage_common::proxima_schema::ProximaSchema;
 
+/// Spec-shaped Iceberg v2 manifest / manifest-list (Avro) + TableMetadata (JSON) content.
+pub mod iceberg;
 /// Iceberg-style atomic manifest commits (optimistic concurrency via `put_if_absent`).
 pub mod manifest;
 pub mod metadata;
-/// Spec-shaped Iceberg v2 manifest / manifest-list (Avro) + TableMetadata (JSON) content.
-pub mod iceberg;
 
 /// Map a Parquet read/decode failure into a [`StorageError`] with operation context.
 fn read_err(context: &str, e: impl std::fmt::Display) -> StorageError {
@@ -180,9 +180,7 @@ impl IcebergObjectStoreBridge {
         }];
         let list_bytes = iceberg::write_manifest_list(&manifest_list)?;
         let list_path = Path::from(format!("{metadata_prefix}/snap-{snapshot_id}-list.avro"));
-        self.store
-            .put(&list_path, Bytes::from(list_bytes))
-            .await?;
+        self.store.put(&list_path, Bytes::from(list_bytes)).await?;
 
         // 3. Build + atomically commit the TableMetadata.
         let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);

@@ -116,7 +116,9 @@ async fn materialize_emits_readable_iceberg_v3_table() {
 
     let _ = client.simple_query("DROP TABLE IF EXISTS region").await;
     client
-        .simple_query("CREATE TABLE region (r_regionkey INT PRIMARY KEY, r_name VARCHAR, r_comment VARCHAR)")
+        .simple_query(
+            "CREATE TABLE region (r_regionkey INT PRIMARY KEY, r_name VARCHAR, r_comment VARCHAR)",
+        )
         .await
         .expect("create");
     client
@@ -157,7 +159,10 @@ async fn materialize_emits_readable_iceberg_v3_table() {
         !metadata_json.is_empty(),
         "materialize wrote an Iceberg TableMetadata json; files={names:?}"
     );
-    assert!(has_manifest_list, "wrote an Avro manifest list; files={names:?}");
+    assert!(
+        has_manifest_list,
+        "wrote an Avro manifest list; files={names:?}"
+    );
     assert!(has_manifest, "wrote an Avro manifest; files={names:?}");
 
     // The metadata is Iceberg format-version 3 and references a manifest list.
