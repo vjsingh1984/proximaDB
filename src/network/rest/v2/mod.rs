@@ -123,6 +123,11 @@ pub fn create_v2_router() -> Router<AppState> {
             "/collections/{collection_id}/search",
             post(records::search_with_typed_filters),
         )
+        // CDC change-feed: row-level changes since an LSN cursor (unified across surfaces).
+        .route(
+            "/collections/{collection_id}/changes",
+            get(records::get_changes),
+        )
         // Document ingest (text-only / native server-side embedding). Folded in
         // from the former v3 surface; v3 now 308-redirects here. The handler is
         // re-exported from `crate::network::rest::v3::documents::ingest_documents`.
