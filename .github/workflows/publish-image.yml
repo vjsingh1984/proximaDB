@@ -46,10 +46,9 @@ on:
         options: [runtime, runtime-full]
         default: runtime
 
-concurrency:
-  # One publish per ref at a time; never cancel an in-flight push.
-  group: publish-image-${{ github.ref }}
-  cancel-in-progress: false
+# NOTE: concurrency is set per-job (build/merge) so it can include the matrix
+# `target` — runtime and runtime-full publish independently and must not
+# serialize against each other. A workflow-level group can't see the matrix.
 
 permissions:
   contents: read
@@ -61,9 +60,19 @@ jobs:
     if: ${{ github.repository == 'vjsingh1984/proximadb' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
+    # Per (target,platform) cell: never cancel an in-flight push; a new run's
+    # same cell queues behind the old one. target is in the group so the two
+    # targets publish in parallel.
+    concurrency:
+      group: publish-image-${{ github.ref }}-${{ matrix.target }}-${{ matrix.platform }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
+        # Cross-product: {runtime,runtime-full} × {amd64,arm64} = 4 native builds.
+        # `include` attaches the right runner to each platform.
+        target: [runtime, runtime-full]
+        platform: [linux/amd64, linux/arm64]
         include:
           - platform: linux/amd64
             runner: ubuntu-latest
@@ -71,7 +80,7 @@ jobs:
             runner: ubuntu-24.04-arm
     env:
       IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
-      TARGET: ${{ github.event.inputs.target || 'runtime' }}
+      TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
 
@@ -116,22 +125,28 @@ jobs:
       - name: Upload digest
         uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ steps.prep.outputs.pair }}
+          name: digests-${{ matrix.target }}-${{ steps.prep.outputs.pair }}
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
 
   merge:
-    name: Merge multi-arch manifest
+    name: Merge ${{ matrix.target }} manifest
     needs: build
     if: ${{ github.repository == 'vjsingh1984/proximadb' }}
     runs-on: ubuntu-latest
-    outputs:
-      version: ${{ steps.tags.outputs.version }}
-      primary: ${{ steps.tags.outputs.primary }}
+    # One merge per target → two manifest lists (runtime, runtime-full), each
+    # carrying its own tag set (the -full suffix is applied in "Derive tags").
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [runtime, runtime-full]
+    concurrency:
+      group: publish-image-merge-${{ github.ref }}-${{ matrix.target }}
+      cancel-in-progress: false
     env:
       IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
-      TARGET: ${{ github.event.inputs.target || 'runtime' }}
+      TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v4
 
@@ -139,7 +154,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: ${{ runner.temp }}/digests
-          pattern: digests-*
+          # Only this target's per-arch digests (digests-<target>-linux-<arch>).
+          pattern: digests-${{ matrix.target }}-*
           merge-multiple: true
 
       - name: Log in to Docker Hub
