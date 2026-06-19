@@ -256,7 +256,13 @@ pub async fn try_run_select(
             parquet_tables,
             vector_ops,
             tenant_id: tenant.map(str::to_string),
-            allow_engine_sql_fallback: false,
+            // Full ANSI SQL over pgwire: when the shared relational frontend can't
+            // yet lower a query (e.g. typed DATE literals, certain subquery/window
+            // shapes), execute it through DataFusion's own ANSI SQL planner over the
+            // same registered Parquet tables. The query still routes through pgwire →
+            // ComputeScheduler → the DataFusion engine; only the lowering frontend
+            // differs. The shared logical plane stays the fast path where it works.
+            allow_engine_sql_fallback: true,
             controls: controls.clone(),
         };
         return Some(

@@ -1319,6 +1319,13 @@ impl SqlFrontendParser {
                 Ok(SqlValueLiteral::Function { name, args })
             }
             SqlExpr::Cast { expr, .. } => self.convert_expr_to_dml_literal(expr),
+            SqlExpr::TypedString(typed) => {
+                // Typed string literals: DATE '1995-02-15', TIMESTAMP '...',
+                // TIME '...'. Carry the inner string; the target column's declared
+                // type drives coercion, and ISO-8601 values sort chronologically as
+                // strings. (TPC-H is dense with DATE literals in INSERT ... VALUES.)
+                self.convert_value_to_dml_literal(&typed.value.value)
+            }
             SqlExpr::Identifier(ident) => {
                 // Could be DEFAULT or a column reference
                 if ident.value.eq_ignore_ascii_case("DEFAULT") {

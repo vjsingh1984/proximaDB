@@ -4077,8 +4077,7 @@ impl DmlService {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
-                self.literal_to_i64(val)
-                    .map(|value| ProximaValue::Date(value as i32))
+                self.literal_to_date_days(val).map(ProximaValue::Date)
             }
             ProximaType::Time(_) => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
@@ -4172,6 +4171,29 @@ impl DmlService {
                 .map_err(|e| anyhow!("Invalid integer literal '{}': {}", value, e)),
             SqlValueLiteral::Null => Err(anyhow!("Cannot convert NULL to integer")),
             _ => Err(anyhow!("Expected integer literal")),
+        }
+    }
+
+    /// Coerce a DML literal to a DATE stored as days since the Unix epoch.
+    /// Accepts an integer (already a day count) or an ISO-8601 `YYYY-MM-DD`
+    /// string (the form `DATE '1995-02-15'` literals lower to). Parsing to a
+    /// real day count — rather than stuffing the string in — keeps the column a
+    /// true Date32 through materialization, so DataFusion compares it correctly
+    /// against `DATE '...'` predicates.
+    fn literal_to_date_days(&self, val: &SqlValueLiteral) -> Result<i32> {
+        match val {
+            SqlValueLiteral::Integer(value) => Ok(*value as i32),
+            SqlValueLiteral::String(value) => {
+                let date = chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+                    .map_err(|e| anyhow!("Invalid DATE literal '{}': {}", value, e))?;
+                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .ok_or_else(|| anyhow!("internal: bad epoch date"))?;
+                Ok(date.signed_duration_since(epoch).num_days() as i32)
+            }
+            SqlValueLiteral::Null => Err(anyhow!("Cannot convert NULL to date")),
+            _ => Err(anyhow!(
+                "Expected date literal (integer days or 'YYYY-MM-DD')"
+            )),
         }
     }
 
