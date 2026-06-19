@@ -1,0 +1,83 @@
+# Workspace Isolation — one task = one worktree = one branch
+
+> **Mandate:** Never edit or commit in the main checkout
+> (`/…/proximaDB`). Every unit of work gets its own isolated git **worktree**.
+> Use `scripts/worktree.sh`. This is enforced for AI agents (see `CLAUDE.md`)
+> and strongly recommended for humans running concurrent sessions.
+
+## Why this exists
+
+ProximaDB is frequently worked on by **several sessions at once** — multiple AI
+agents and/or a human, in parallel. When they all share a single git checkout
+they also share one **HEAD, index, and working tree** — a single piece of
+mutable state that they fight over. Observed failure modes (all real):
+
+| Symptom | Cause |
+|---|---|
+| A commit lands on the **wrong branch** | Another session ran `git checkout` and moved the shared HEAD between your `checkout -b` and your `commit`. |
+| Edits silently clobber someone's work | The shared tree held another session's **uncommitted WIP**. |
+| `git stash`/`checkout` destroys WIP | Same shared tree; defensive `git commit -o <file>` was the only safe write. |
+| CI head-of-line stalls | Everyone pushes the same shared branches; superseded runs pile up. |
+
+The fix is to **eliminate the shared mutable state**: give every task its own
+worktree (its own directory + branch + HEAD + index), branched from a
+known-good base. Isolation is then structural, not a matter of discipline.
+
+## The model
+
+- **One task = one worktree = one branch = one PR.** A session may own several.
+- Worktrees live in a **sibling** directory next to the repo, so they're
+  outside it (no `.gitignore`, no tooling scans them):
+  ```
+  /…/code/proximaDB/                      ← main checkout (read/run only; never edit)
+  /…/code/proximaDB.worktrees/
+      feat-cloud-full/                    ← branch feat/cloud-full
+      fix-adls-scheme/                    ← branch fix/adls-scheme
+  ```
+  Override the root with `PROXIMADB_WORKTREE_ROOT`.
+- Every branch is cut from **`origin/develop`** (freshly fetched), the
+  integration base.
+
+## Commands (`scripts/worktree.sh`)
+
+```bash
+# Start a task — creates the worktree + branch off origin/develop and
+# prints a `cd`. eval it to land inside:
+eval "$(scripts/worktree.sh new feat/my-thing)"
+
+scripts/worktree.sh list                 # all worktrees + which are dirty
+scripts/worktree.sh guard                # exits non-zero if run in the main checkout
+scripts/worktree.sh rm feat/my-thing     # remove after the PR merges (guards dirty)
+scripts/worktree.sh clean                # drop every worktree already merged to develop
+```
+
+`new` refuses to clobber an existing branch/path; `rm` refuses to delete a
+dirty worktree (pass `--force` to discard) and only deletes the branch if it's
+merged; `clean` is the periodic housekeeping pass.
+
+## Lifecycle
+
+```
+new feat/x  ──▶  edit · commit · push · open PR  ──▶  PR merges  ──▶  rm feat/x
+                 (inside the worktree only)                          (or: clean)
+```
+
+## Agent mandate (also in `CLAUDE.md`)
+
+1. **Before editing anything, run `scripts/worktree.sh guard`.** If it fails,
+   you are in the main checkout — stop and create a worktree.
+2. **Never** `checkout`, `reset`, `stash`, or `branch -f` in a tree you don't
+   own; never touch another worktree's branch or WIP.
+3. Commit only files you created/changed (the worktree makes this natural; if
+   ever in a shared tree, fall back to `git commit -o <file>`).
+4. Clean up (`rm`) once your PR merges.
+
+## FAQ
+
+- **Disk cost?** Worktrees share the one `.git` object store; only the checked-
+  out files are duplicated. Cheap relative to the safety.
+- **Builds?** Each worktree has its own `target/` (no cross-contamination of
+  feature flags). That's a feature — a `--features cloud-full` build can't
+  poison a default build.
+- **`/tmp` worktrees?** Fine for throwaway/CI, but prefer the sibling root so
+  work survives reboots and is discoverable via `worktree.sh list`.
