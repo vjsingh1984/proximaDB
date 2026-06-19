@@ -97,13 +97,32 @@ the manifest, so TPC-H 22/22 stays green.
 REMAINING: serve the current `TableMetadata` via the native Iceberg REST catalog
 (`load_table` discovery); partitioned layout; column statistics in manifests.
 
-=== P2 — CDC change-feed (`since_lsn` + `table_changes`)  [PLANNED]
+=== P2 — CDC change-feed (`since_lsn` + surfaces)  [CORE SHIPPED; surfaces pending]
 
-Outbound CDC already exists (`src/cdc/outbound`: `WalSubscriber`, `PositionTracker`,
-exactly-once; `GlobalLsnAllocator`). Add `load_entries_since(lsn)` incremental read and a
-pgwire `table_changes('<table>', <since_lsn>)` table-valued function returning
-`(op, lsn, <row cols>)`. v3 alignment: model the feed on *row lineage* and later emit the
-Iceberg `_row_id`/`_last_updated_sequence_number` columns so external engines do the same
+*Core (shipped):* the change-feed read primitive over the canonical WAL —
+`TableWalAppender::read_all_entries` (framed appender), `TableRecordStore::read_changes_since`
+(WAL-backed store: filter by `collection_id` == table + `sequence_number > since_lsn`,
+map RecordUpsert→`upsert` / RecordDelete→`delete` with oid + after-image JSON, lsn-ordered),
+and `DmlService::changes_since(table, since_lsn) -> Vec<ChangeRow>`. Verified: a service test
+(INSERT→UPDATE→DELETE → 3 lsn-ordered changes; `since_lsn` tail; table isolation).
+
+*Surface wiring (the remaining work, and why it's deliberate):* the REST/gRPC
+`UnifiedHandlers` holds `DmlService::new(catalog, vector_ops)` (shared_services.rs:1589),
+a *different* instance than the pgwire direct-write path's WAL-backed `DmlService`
+(`build_direct_pgwire_write_services`, multi_server.rs). So a change-feed surfaced through
+`UnifiedHandlers` returns empty for pgwire-written tables. Both surfaces therefore require
+threading the WAL-backed record store (or a dedicated change-feed reader handle) into the
+serving layer at boot:
+
+* *REST* `GET /collections/:id/changes?since_lsn=N` — add a change-feed reader to `AppState`
+  wired from the same WAL-backed store; handler calls `changes_since`.
+* *pgwire* `table_changes('<table>', <since_lsn>)` TVF — register like `vector_search`, and
+  teach the router to route TVF-only `SELECT`s (today a standalone TVF select has no
+  parquet-backed table, so it doesn't reach the DataFusion engine).
+* *north star* Postgres logical replication (`pgoutput`) — Debezium-compatible streaming.
+
+v3 alignment: model the feed on *row lineage* and later emit the Iceberg
+`_row_id`/`_last_updated_sequence_number` columns so external engines do the same
 incremental read.
 
 === P3 — Wire RaBitQ into ANN search + f32 rerank  [PLANNED]
