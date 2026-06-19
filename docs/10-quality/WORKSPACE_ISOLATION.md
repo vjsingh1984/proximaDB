@@ -47,6 +47,8 @@ eval "$(scripts/worktree.sh new feat/my-thing)"
 
 scripts/worktree.sh list                 # all worktrees + which are dirty
 scripts/worktree.sh guard                # exits non-zero if run in the main checkout
+scripts/worktree.sh check                # cargo check ONLY the crates changed vs develop
+scripts/worktree.sh test                 # cargo nextest ONLY the crates changed vs develop
 scripts/worktree.sh rm feat/my-thing     # remove after the PR merges (guards dirty)
 scripts/worktree.sh clean                # drop every worktree already merged to develop
 ```
@@ -54,6 +56,17 @@ scripts/worktree.sh clean                # drop every worktree already merged to
 `new` refuses to clobber an existing branch/path; `rm` refuses to delete a
 dirty worktree (pass `--force` to discard) and only deletes the branch if it's
 merged; `clean` is the periodic housekeeping pass.
+
+**Affected-only feedback.** `check`/`test` map your diff vs `develop` to the
+owning crates (via `scripts/affected_crates.py` + `cargo metadata`) and build/
+test only those — so editing one crate doesn't compile the 66-crate workspace.
+It's direct crates only; for a change to a low-level/foundation crate, also run
+the full `make test` (a dependent in another crate won't be picked up).
+
+**Pre-push hook.** `new` activates a fast `.githooks/pre-push` (repo-wide, via
+`core.hooksPath`) that blocks pushing from the main checkout and on rustfmt
+drift — no compile, so it stays quick. Activate manually in an existing clone
+with `git config core.hooksPath .githooks`; bypass once with `git push --no-verify`.
 
 ## Lifecycle
 
