@@ -106,13 +106,17 @@ map RecordUpsert→`upsert` / RecordDelete→`delete` with oid + after-image JSO
 and `DmlService::changes_since(table, since_lsn) -> Vec<ChangeRow>`. Verified: a service test
 (INSERT→UPDATE→DELETE → 3 lsn-ordered changes; `since_lsn` tail; table isolation).
 
-*Surface wiring (the remaining work, and why it's deliberate):* the REST/gRPC
-`UnifiedHandlers` holds `DmlService::new(catalog, vector_ops)` (shared_services.rs:1589),
-a *different* instance than the pgwire direct-write path's WAL-backed `DmlService`
-(`build_direct_pgwire_write_services`, multi_server.rs). So a change-feed surfaced through
-`UnifiedHandlers` returns empty for pgwire-written tables. Both surfaces therefore require
-threading the WAL-backed record store (or a dedicated change-feed reader handle) into the
-serving layer at boot:
+*Cross-surface convergence (DONE — prerequisite, shipped):* REST/gRPC and pgwire
+previously ran on *divergent* record stores (REST/gRPC `DmlService::new` →
+`with_vector_compatibility` stub; pgwire → WAL-backed `DirectWalTableRecordStore`), so a
+change-feed surfaced through `UnifiedHandlers` returned empty for pgwire writes.
+`SharedServices::new` now builds the canonical WAL-backed store ONCE and shares the single
+instance across both the REST/gRPC `DmlService` (`with_direct_record_storage`) and the
+pgwire path (reuse short-circuit). Proven by `tests/cross_surface_unification_e2e.rs`
+(pgwire INSERT visible on the shared store) with full modality regression green. This
+unblocks the surfaces below — they now read the same state any protocol wrote.
+
+*Surface wiring (remaining):* with the store unified, the surfaces are thin adapters:
 
 * *REST* `GET /collections/:id/changes?since_lsn=N` — add a change-feed reader to `AppState`
   wired from the same WAL-backed store; handler calls `changes_since`.
