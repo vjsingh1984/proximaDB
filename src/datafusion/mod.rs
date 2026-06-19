@@ -182,6 +182,12 @@ fn build_session_context(
     // Deferred: cosine_distance, euclidean_distance, etc.
     ctx.register_udf(udf::mc_price_udf());
 
+    // JSON extraction UDFs — the analytical (DataFusion) counterpart of the pgwire
+    // JSON operator translation, so GROUP BY / aggregate queries over JSON document
+    // columns (`doc->'a'->>'b'`) work on the OLAP route, not just the legacy path.
+    ctx.register_udf(udf::json_extract_udf());
+    ctx.register_udf(udf::json_extract_text_udf());
+
     // F2: bind every NON-native registry scalar as a DataFusion ScalarUDF (the consolidated
     // engine-neutral functions defined once in proximadb-functions). DataFusion's own
     // vectorized builtins (UPPER/ABS/…) stay the fast path; this covers registry/custom
