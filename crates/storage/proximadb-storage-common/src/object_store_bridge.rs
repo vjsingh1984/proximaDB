@@ -223,4 +223,59 @@ pub trait ObjectStoreBridge: Send + Sync {
             "commit_table_metadata not supported".into(),
         ))
     }
+
+    /// Publish the `*.parquet` data files under `data_prefix` as a **spec-shaped Iceberg
+    /// snapshot** (Avro manifest + manifest list + `TableMetadata`) committed atomically
+    /// through the metadata log at `metadata_prefix`, so external Iceberg engines can read
+    /// the table. `v3` selects Iceberg format-version 3 (ProximaDB's default) vs v2. The
+    /// field descriptors are storage-common-local (this trait can't depend on the Iceberg
+    /// engine crate); the Iceberg bridge maps them to its own types. Default: unsupported.
+    #[allow(clippy::too_many_arguments)]
+    async fn publish_iceberg_table(
+        &self,
+        data_prefix: &Path,
+        metadata_prefix: &str,
+        table_uuid: &str,
+        table_location: &str,
+        fields: &[IcebergSnapshotField],
+        snapshot_id: i64,
+        timestamp_ms: i64,
+        v3: bool,
+    ) -> Result<CommitOutcome, StorageError> {
+        let _ = (
+            data_prefix,
+            metadata_prefix,
+            table_uuid,
+            table_location,
+            fields,
+            snapshot_id,
+            timestamp_ms,
+            v3,
+        );
+        Err(StorageError::Serialization(
+            "publish_iceberg_table not supported".into(),
+        ))
+    }
+
+    /// Resolve the current snapshot's data-file paths from the Iceberg metadata log at
+    /// `metadata_prefix` (decodes `TableMetadata` → manifest list → manifests). Default: empty.
+    async fn read_iceberg_table(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<Path>, StorageError> {
+        let _ = (metadata_prefix, version);
+        Ok(Vec::new())
+    }
+}
+
+/// Storage-common-local descriptor of one Iceberg schema field (the trait can't reference
+/// the Iceberg engine's own type). The Iceberg bridge maps `type_name` to an Iceberg
+/// primitive type ("long", "int", "string", "double", "boolean", "date", "timestamp", …).
+#[derive(Debug, Clone)]
+pub struct IcebergSnapshotField {
+    pub id: i32,
+    pub name: String,
+    pub type_name: String,
+    pub required: bool,
 }

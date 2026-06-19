@@ -200,6 +200,49 @@ impl RelationalPredicateTree {
     }
 }
 
+/// Map an Arrow column type (the materialized Parquet's physical type) to the Iceberg
+/// primitive type name for the published `TableMetadata` schema. Kept in lock-step with
+/// the Parquet physical types so an external Iceberg reader's schema matches the file.
+/// Timestamps map to the v3 nanosecond types (ProximaDB is nanosecond-native).
+fn iceberg_type_for(arrow: &arrow_schema::DataType) -> &'static str {
+    use arrow_schema::DataType as D;
+    match arrow {
+        D::Boolean => "boolean",
+        D::Int8 | D::Int16 | D::Int32 => "int",
+        D::Int64 | D::UInt8 | D::UInt16 | D::UInt32 | D::UInt64 => "long",
+        D::Float16 | D::Float32 => "float",
+        D::Float64 => "double",
+        D::Date32 | D::Date64 => "date",
+        D::Timestamp(_, Some(_)) => "timestamptz_ns",
+        D::Timestamp(_, None) => "timestamp_ns",
+        D::Utf8 | D::LargeUtf8 => "string",
+        D::Binary | D::LargeBinary | D::FixedSizeBinary(_) => "binary",
+        // JSON columns materialize as Utf8 today; v3 `variant` is a follow-up.
+        _ => "string",
+    }
+}
+
+/// A stable, well-formed UUID string derived deterministically from the table's object
+/// prefix, so an Iceberg table keeps the same `table-uuid` across re-materializations
+/// (no `uuid` v5 dependency; two seeded hashes fill the 16 bytes).
+fn deterministic_table_uuid(prefix: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h1 = std::collections::hash_map::DefaultHasher::new();
+    prefix.hash(&mut h1);
+    let a = h1.finish();
+    let mut h2 = std::collections::hash_map::DefaultHasher::new();
+    (prefix, 0x50524f58_4944425fu64).hash(&mut h2); // "PROX_IDB_" salt
+    let b = h2.finish();
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        (a >> 32) as u32,
+        (a >> 16) as u16,
+        a as u16,
+        (b >> 48) as u16,
+        b & 0x0000_ffff_ffff_ffff
+    )
+}
+
 /// Parse a SQL literal into a JSON value for the pushdown filter: integers and
 /// floats become JSON numbers (so i64/f64 zone-map pruning fires); everything
 /// else stays a string (string-equality hash pruning).
@@ -1173,6 +1216,54 @@ impl DmlService {
         };
         catalog.set_storage_layouts(&table_id, vec![layout]).await?;
 
+        // 6. Best-effort: also publish a spec-shaped Iceberg snapshot (v3) — Avro manifest
+        //    + manifest list + TableMetadata under `{prefix}/metadata` — so EXTERNAL Iceberg
+        //    engines (Spark/Trino/DuckDB/PyIceberg) can read the table. This is purely
+        //    additive interop: ProximaDB's own SELECT path reads via the catalog storage
+        //    layout above, not the manifest, so a failure here never breaks materialize.
+        let iceberg_fields: Vec<
+            proximadb_storage_common::object_store_bridge::IcebergSnapshotField,
+        > = schema
+            .to_arrow_schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .map(|(i, f)| {
+                proximadb_storage_common::object_store_bridge::IcebergSnapshotField {
+                    id: (i + 1) as i32,
+                    name: f.name().clone(),
+                    type_name: iceberg_type_for(f.data_type()).to_string(),
+                    required: !f.is_nullable(),
+                }
+            })
+            .collect();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let table_uuid = deterministic_table_uuid(&prefix);
+        let data_prefix = object_store::path::Path::from(format!("{prefix}/data"));
+        let metadata_prefix = format!("{prefix}/metadata");
+        if let Err(e) = bridge
+            .publish_iceberg_table(
+                &data_prefix,
+                &metadata_prefix,
+                &table_uuid,
+                &location,
+                &iceberg_fields,
+                now_ms, // snapshot id (unique per materialize)
+                now_ms, // timestamp ms
+                true,   // v3 (ProximaDB default)
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "proximadb::warehouse::iceberg",
+                table = %table_name,
+                "Iceberg snapshot publish failed (non-fatal, interop only): {e}"
+            );
+        }
+
         Ok(location)
     }
 
@@ -1774,6 +1865,13 @@ impl DmlService {
         );
     }
 
+    /// Strip a leading table qualifier (`t.col` / alias `k.col` → `col`). On a
+    /// single-table SELECT the qualifier is unambiguous, so the unqualified suffix
+    /// is the column name to resolve against the schema.
+    fn unqualified_column(name: &str) -> &str {
+        name.rsplit('.').next().unwrap_or(name)
+    }
+
     fn resolve_select_predicates(
         table_schema: &CatalogTableSchema,
         predicates: &[RelationalSelectPredicateInput],
@@ -1781,10 +1879,11 @@ impl DmlService {
         predicates
             .iter()
             .map(|predicate| {
+                let bare = Self::unqualified_column(&predicate.column_name);
                 let column = table_schema
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(&predicate.column_name))
+                    .find(|column| column.name.eq_ignore_ascii_case(bare))
                     .cloned()
                     .ok_or_else(|| {
                         anyhow!(
@@ -1812,10 +1911,11 @@ impl DmlService {
         projection_column_names
             .iter()
             .map(|column_name| {
+                let bare = Self::unqualified_column(column_name);
                 table_schema
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(column_name))
+                    .find(|column| column.name.eq_ignore_ascii_case(bare))
                     .cloned()
                     .ok_or_else(|| {
                         anyhow!(

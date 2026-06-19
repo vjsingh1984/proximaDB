@@ -439,6 +439,54 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
         committer.commit(parent, Bytes::from(metadata)).await
     }
+
+    /// Map the storage-common field descriptors to Iceberg fields and delegate to the
+    /// inherent [`publish_iceberg_snapshot`](IcebergObjectStoreBridge::publish_iceberg_snapshot).
+    async fn publish_iceberg_table(
+        &self,
+        data_prefix: &Path,
+        metadata_prefix: &str,
+        table_uuid: &str,
+        table_location: &str,
+        fields: &[proximadb_storage_common::object_store_bridge::IcebergSnapshotField],
+        snapshot_id: i64,
+        timestamp_ms: i64,
+        v3: bool,
+    ) -> Result<CommitOutcome, StorageError> {
+        let mapped: Vec<iceberg::IcebergField> = fields
+            .iter()
+            .map(|f| iceberg::IcebergField {
+                id: f.id,
+                name: f.name.clone(),
+                type_name: f.type_name.clone(),
+                required: f.required,
+            })
+            .collect();
+        let format_version = if v3 {
+            iceberg::FormatVersion::V3
+        } else {
+            iceberg::FormatVersion::V2
+        };
+        self.publish_iceberg_snapshot(
+            data_prefix,
+            metadata_prefix,
+            table_uuid,
+            table_location,
+            &mapped,
+            snapshot_id,
+            timestamp_ms,
+            format_version,
+        )
+        .await
+    }
+
+    async fn read_iceberg_table(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<Path>, StorageError> {
+        self.read_iceberg_snapshot(metadata_prefix, version).await
+    }
 }
 
 #[cfg(test)]
