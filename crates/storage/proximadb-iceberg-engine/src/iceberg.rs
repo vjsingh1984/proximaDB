@@ -251,15 +251,20 @@ pub struct IcebergField {
     pub required: bool,
 }
 
-/// Iceberg table format version. v2 is the interop default (broadest external-reader
-/// support); v3 is opt-in and aligns with ProximaDB's differentiators (row lineage ↔ CDC,
-/// deletion vectors, `variant` ↔ documents, nanosecond timestamps). Callers negotiate the
-/// version; v3-only data-file features (DVs, row-lineage columns) are layered separately.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Iceberg table format version.
+///
+/// **v3 is ProximaDB's target and default** — its headline features map onto ProximaDB's
+/// differentiators (row lineage ↔ CDC, deletion vectors ↔ dedup, `variant` ↔ documents,
+/// `timestamp_ns` ↔ our nanosecond-native format), so building toward v3 directly avoids
+/// double-spending on v2-only mechanisms (positional/equality deletes, microsecond-only
+/// timestamps) that v3 supersedes. v2 stays reachable for the subset of external readers
+/// that are still v2-only (capability negotiation).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FormatVersion {
-    /// format-version 2 — the interop default.
+    /// format-version 2 — reachable for legacy external readers.
     V2,
-    /// format-version 3 — opt-in; standardizes lineage / DV / variant / ns-timestamps.
+    /// format-version 3 — ProximaDB's target (lineage / DV / variant / ns-timestamps).
+    #[default]
     V3,
 }
 
@@ -269,10 +274,6 @@ impl FormatVersion {
             FormatVersion::V2 => 2,
             FormatVersion::V3 => 3,
         }
-    }
-    /// The interop default.
-    pub fn default_for_interop() -> Self {
-        FormatVersion::V2
     }
 }
 
