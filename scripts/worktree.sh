@@ -70,6 +70,9 @@ cmd_new() {
   git -C "$(repo_main)" fetch --quiet "$REMOTE" "$base" || die "cannot fetch $REMOTE/$base"
   mkdir -p "$(worktree_root)"
   git -C "$(repo_main)" worktree add -b "$branch" "$dir" "$REMOTE/$base" >&2
+  # Activate the repo's fast pre-push hook (idempotent + repo-wide; each
+  # worktree resolves .githooks/ from its own checkout).
+  git -C "$(repo_main)" config core.hooksPath .githooks 2>/dev/null || true
   # Emit a `cd` + the shared-cache env so `eval "$(... new ...)"` lands in the
   # worktree AND wires up sccache for fast, dedup'd compilation across worktrees.
   printf 'cd %q\n' "$dir"
@@ -147,6 +150,29 @@ cmd_guard() {
   printf 'worktree: OK — isolated workspace %s (branch %s)\n' "$here" "$(git rev-parse --abbrev-ref HEAD)"
 }
 
+# Affected-only feedback: build/test ONLY the crates whose source changed vs
+# develop (mirrors CI change-detection locally), so an agent touching one crate
+# doesn't compile the whole 66-crate workspace. Direct crates only — for a
+# low-level/foundation change, run the full `make test` too.
+_affected() { python3 "$(repo_main)/scripts/affected_crates.py" "$REMOTE/$BASE_DEFAULT"; }
+_pkg_args() { local a=""; for p in $1; do a="$a -p $p"; done; printf '%s' "$a"; }
+
+cmd_check() {
+  local pkgs; pkgs="$(_affected)"
+  [ -n "$pkgs" ] || { printf 'worktree: no crate source changed vs %s — nothing to check\n' "$BASE_DEFAULT" >&2; return 0; }
+  printf 'worktree: cargo check%s\n' "$(_pkg_args "$pkgs")" >&2
+  # shellcheck disable=SC2046
+  cargo check $(_pkg_args "$pkgs")
+}
+
+cmd_test() {
+  local pkgs; pkgs="$(_affected)"
+  [ -n "$pkgs" ] || { printf 'worktree: no crate source changed vs %s — nothing to test\n' "$BASE_DEFAULT" >&2; return 0; }
+  printf 'worktree: cargo nextest run%s (affected crates)\n' "$(_pkg_args "$pkgs")" >&2
+  # shellcheck disable=SC2046
+  cargo nextest run $(_pkg_args "$pkgs") || cargo test $(_pkg_args "$pkgs")
+}
+
 case "${1:-}" in
   new)   shift; cmd_new "$@" ;;
   list)  shift; cmd_list "$@" ;;
@@ -154,6 +180,8 @@ case "${1:-}" in
   clean) shift; cmd_clean "$@" ;;
   guard) shift; cmd_guard "$@" ;;
   cache-env) shift; emit_cache_env ;;
+  check) shift; cmd_check "$@" ;;
+  test)  shift; cmd_test "$@" ;;
   *) cat >&2 <<'USAGE'
 worktree: one task = one worktree = one branch (isolated by construction)
   scripts/worktree.sh new   <type/topic> [base]   create + print `cd` + cache env (eval it)
@@ -162,6 +190,8 @@ worktree: one task = one worktree = one branch (isolated by construction)
   scripts/worktree.sh clean                         drop worktrees merged to develop
   scripts/worktree.sh guard                         fail if run in the main checkout
   scripts/worktree.sh cache-env                     print sccache env for an existing worktree (eval it)
+  scripts/worktree.sh check                         cargo check ONLY the crates changed vs develop
+  scripts/worktree.sh test                          cargo nextest ONLY the crates changed vs develop
 USAGE
      exit 2 ;;
 esac
