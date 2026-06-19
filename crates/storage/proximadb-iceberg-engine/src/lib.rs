@@ -118,6 +118,117 @@ impl IcebergObjectStoreBridge {
             .map(Path::from)
             .collect())
     }
+
+    /// Row count of a Parquet object, read from the footer metadata only (no row data).
+    async fn parquet_num_rows(&self, path: &Path) -> Result<i64, StorageError> {
+        let reader = ParquetObjectReader::new(self.store.store(), self.full_object_path(path));
+        let builder = ParquetRecordBatchStreamBuilder::new(reader)
+            .await
+            .map_err(|e| read_err("open parquet footer", e))?;
+        Ok(builder.metadata().file_metadata().num_rows())
+    }
+
+    /// Publish a snapshot as **spec-shaped Iceberg** (v3 by default): write an Avro manifest
+    /// for the `*.parquet` data files under `data_prefix`, an Avro manifest list, and a
+    /// `TableMetadata` JSON referencing it, committed atomically through the metadata log at
+    /// `metadata_prefix`. External Iceberg engines can then read the table. `snapshot_id` and
+    /// `timestamp_ms` are caller-supplied (no wall-clock here, for determinism). Returns the
+    /// committed metadata version (or a `Conflict` to rebase onto).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn publish_iceberg_snapshot(
+        &self,
+        data_prefix: &Path,
+        metadata_prefix: &str,
+        table_uuid: &str,
+        table_location: &str,
+        fields: &[iceberg::IcebergField],
+        snapshot_id: i64,
+        timestamp_ms: i64,
+        format_version: iceberg::FormatVersion,
+    ) -> Result<CommitOutcome, StorageError> {
+        // 1. Enumerate data files with size (HEAD) + record count (footer).
+        let mut keys: Vec<Path> = self.list_objects(data_prefix).await?;
+        keys.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+        let mut data_files = Vec::new();
+        for key in &keys {
+            if !key.as_ref().ends_with(".parquet") {
+                continue;
+            }
+            let size = self.store.object_size(key).await?;
+            let record_count = self.parquet_num_rows(key).await.unwrap_or(0);
+            data_files.push(iceberg::DataFileMeta {
+                file_path: key.as_ref().to_string(),
+                record_count,
+                file_size_in_bytes: size as i64,
+            });
+        }
+        let added_records: i64 = data_files.iter().map(|f| f.record_count).sum();
+        let added_files = data_files.len() as i64;
+
+        // 2. Write the Avro manifest + manifest list.
+        let manifest_bytes = iceberg::write_manifest(&data_files, snapshot_id)?;
+        let manifest_path = Path::from(format!("{metadata_prefix}/{snapshot_id}-m0.avro"));
+        self.store
+            .put(&manifest_path, Bytes::from(manifest_bytes.clone()))
+            .await?;
+        let manifest_list = vec![iceberg::ManifestFileMeta {
+            manifest_path: manifest_path.as_ref().to_string(),
+            manifest_length: manifest_bytes.len() as i64,
+            added_files_count: added_files as i32,
+            added_rows_count: added_records,
+            added_snapshot_id: snapshot_id,
+        }];
+        let list_bytes = iceberg::write_manifest_list(&manifest_list)?;
+        let list_path = Path::from(format!("{metadata_prefix}/snap-{snapshot_id}-list.avro"));
+        self.store
+            .put(&list_path, Bytes::from(list_bytes))
+            .await?;
+
+        // 3. Build + atomically commit the TableMetadata.
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        let parent = committer.latest_version().await?;
+        let sequence_number = parent.map(|p| p as i64 + 1).unwrap_or(1);
+        let json = iceberg::build_table_metadata(
+            format_version,
+            table_uuid,
+            table_location,
+            fields,
+            snapshot_id,
+            sequence_number,
+            list_path.as_ref(),
+            timestamp_ms,
+            added_files,
+            added_records,
+        )?;
+        committer.commit(parent, Bytes::from(json)).await
+    }
+
+    /// Resolve the data-file keys of the current snapshot in the Iceberg metadata log at
+    /// `metadata_prefix` (decodes `TableMetadata` → manifest list → manifests). Each returned
+    /// path is consumable by [`read_parquet_batches`](ObjectStoreBridge::read_parquet_batches).
+    pub async fn read_iceberg_snapshot(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<Path>, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        let meta_bytes = committer.read_metadata(version).await?;
+        let meta_json =
+            std::str::from_utf8(&meta_bytes).map_err(|e| read_err("metadata utf8", e))?;
+        let Some(list_loc) = iceberg::current_manifest_list(meta_json)? else {
+            return Ok(Vec::new());
+        };
+        let list_bytes = self.store.get(&Path::from(list_loc)).await?;
+        let manifests = iceberg::read_manifest_list(&list_bytes)?;
+        let mut out = Vec::new();
+        for m in manifests {
+            let mbytes = self.store.get(&Path::from(m.manifest_path)).await?;
+            for df in iceberg::read_manifest(&mbytes)? {
+                out.push(Path::from(df.file_path));
+            }
+        }
+        Ok(out)
+    }
 }
 
 #[async_trait]
@@ -413,6 +524,85 @@ mod tests {
         assert_eq!(ages.value(1), 41);
         // The inferred dense-vector column round-tripped as a column too.
         assert!(batch.column_by_name("vector").is_some());
+    }
+
+    /// End-to-end Iceberg publish: write a Parquet data file, publish a v3 snapshot
+    /// (manifest + manifest list + TableMetadata), then resolve the snapshot back to its
+    /// data files and read their rows. Proves ProximaDB emits a readable Iceberg table.
+    #[tokio::test]
+    async fn iceberg_snapshot_publishes_and_reads_back_v3() {
+        let b = bridge();
+        let data_prefix = Path::from("wh/t/ns/tbl/data");
+        let metadata_prefix = "wh/t/ns/tbl/metadata";
+
+        let r0 = record(
+            "r0",
+            vec![
+                ("name", ProximaValue::String("alice".into())),
+                ("age", ProximaValue::Int64(30)),
+            ],
+        );
+        let r1 = record(
+            "r1",
+            vec![
+                ("name", ProximaValue::String("bob".into())),
+                ("age", ProximaValue::Int64(41)),
+            ],
+        );
+        b.write_records_to_parquet(
+            &Path::from("wh/t/ns/tbl/data/part-0.parquet"),
+            &[r0, r1],
+            None,
+        )
+        .await
+        .unwrap();
+
+        let fields = vec![
+            iceberg::IcebergField {
+                id: 1,
+                name: "name".into(),
+                type_name: "string".into(),
+                required: false,
+            },
+            iceberg::IcebergField {
+                id: 2,
+                name: "age".into(),
+                type_name: "long".into(),
+                required: false,
+            },
+        ];
+        let out = b
+            .publish_iceberg_snapshot(
+                &data_prefix,
+                metadata_prefix,
+                "uuid-1",
+                "wh/t/ns/tbl",
+                &fields,
+                1001,
+                1_700_000_000_000,
+                iceberg::FormatVersion::V3,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, CommitOutcome::Committed(0));
+
+        // The committed metadata is Iceberg format-version 3.
+        let meta = b.read_table_metadata(metadata_prefix, 0).await.unwrap();
+        let mj: serde_json::Value = serde_json::from_slice(&meta).unwrap();
+        assert_eq!(mj["format-version"], 3);
+
+        // Resolve the snapshot back to its data file(s) and read the rows.
+        let files = b.read_iceberg_snapshot(metadata_prefix, 0).await.unwrap();
+        assert_eq!(files.len(), 1, "one data file in the snapshot");
+        let mut stream = b
+            .read_parquet_batches(&files[0], Arc::new(ArrowSchema::empty()), 1024, None)
+            .await
+            .unwrap();
+        let mut total = 0;
+        while let Some(batch) = stream.next().await {
+            total += batch.unwrap().num_rows();
+        }
+        assert_eq!(total, 2, "snapshot data files carry all rows");
     }
 
     /// A non-empty `schema` arg projects the read to only the named columns (by name),
