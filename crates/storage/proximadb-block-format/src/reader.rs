@@ -981,6 +981,107 @@ mod tests {
         assert!(cos > 0.3, "reconstruction cosine {cos} too low");
     }
 
+    /// RaBitQ recall@k with f32 rerank, through the on-disk stripe scoring path — the
+    /// contract the ANN search executor will rely on: rank candidates by the binary
+    /// estimator over decoded codes, then rerank the top candidates against full f32.
+    /// Proves recall is preserved at ~16-30x compression. Uses `encode_f32_vec_rabitq`
+    /// directly to avoid the process-global env kill-switch (same reason as the test above).
+    #[test]
+    fn rabitq_block_scoring_preserves_recall_at_k_with_rerank() {
+        use proximadb_codec::functions::rabitq;
+
+        const DIM: usize = 64;
+        const N: usize = 200;
+        const Q: usize = 20;
+        const K: usize = 10;
+        const REFINE: usize = 40; // candidate pool before f32 rerank
+
+        // Deterministic splitmix-seeded corpus (distinct directions → real ranking).
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+
+        // Encode the corpus to a RaBitQ stripe, then decode the codes back.
+        let refs: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (stripe, col) =
+            crate::writer::encode_f32_vec_rabitq(&refs, DIM as u32, col_id::EMBED_BASE);
+        let codes = parse_rabitq_codes(&stripe, N, DIM).unwrap();
+        let params = RaBitQParams {
+            dim: DIM,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        let rotation = rabitq::build_rotation(DIM, col.seed);
+
+        // ~Compression: RaBitQ stride (8 + ceil(dim/8)) vs raw f32 (dim*4).
+        let stride = 8 + DIM.div_ceil(8);
+        let raw = DIM * 4;
+        assert!(
+            raw / stride >= 10,
+            "RaBitQ compression {}x below 10x (stride={stride}, raw={raw})",
+            raw / stride
+        );
+
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let exact_topk = |q: &[f32]| -> Vec<usize> {
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], q)
+                    .partial_cmp(&l2(&corpus[b], q))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(K).collect()
+        };
+
+        let mut recalls = Vec::new();
+        for qi in 0..Q {
+            // Query = a corpus vector + small perturbation.
+            let base = (qi * (N / Q)) % N;
+            let noise = gen_vec((qi as u64).wrapping_add(1_000_000));
+            let query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, n)| v + n * 0.01)
+                .collect();
+
+            // Stage 1: rank ALL candidates by the binary estimator over codes.
+            let q_rot = rabitq::rotate_query(&query, &params, &rotation);
+            let mut scored: Vec<(usize, f32)> = (0..N)
+                .filter_map(|i| codes[i].as_ref().map(|c| (i, c.l2_rank_score(&q_rot))))
+                .collect();
+            scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+            // Stage 2: f32 rerank the top-REFINE candidates → final top-K.
+            let mut refine: Vec<usize> = scored.iter().take(REFINE).map(|(i, _)| *i).collect();
+            refine.sort_by(|&a, &b| {
+                l2(&corpus[a], &query)
+                    .partial_cmp(&l2(&corpus[b], &query))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let got: std::collections::HashSet<usize> = refine.into_iter().take(K).collect();
+
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / K as f32);
+        }
+        let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
+        assert!(
+            mean >= 0.80,
+            "RaBitQ recall@{K} with rerank = {mean:.3} < 0.80 (compression {}x)",
+            raw / stride
+        );
+    }
+
     #[test]
     fn raw_fallback_vector_stripe_round_trips_exactly() {
         // The raw fixed-stride path (quant_kind = RAW_F32) is exact. Exercise the
