@@ -47,7 +47,7 @@ const EXPECTED_ORIGIN: &str = "branch_merge:a:b";
 fn router_for_test(data_dir: PathBuf) -> Router {
     Router::new()
         .route(
-            "/api/v1/collections/:collection/branches/:branch/merge",
+            "/api/v1/collections/{collection}/branches/{branch}/merge",
             post(test_merge_handler),
         )
         .with_state(data_dir)

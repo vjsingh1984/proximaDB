@@ -152,6 +152,8 @@ impl TlsConfig {
 
     /// Build rustls ServerConfig for the server
     pub async fn build_server_config(&self) -> Result<Arc<ServerConfig>> {
+        // rustls 0.23 requires a process-default CryptoProvider before builder(); idempotent.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
         let (cert_path, key_path) = self
             .get_certificate_paths()
             .ok_or_else(|| anyhow::anyhow!("No certificate paths configured"))?;

@@ -936,6 +936,9 @@ impl RestServer {
         use rustls::{RootCertStore, ServerConfig};
         use std::sync::Arc;
 
+        // rustls 0.23 requires a process-default CryptoProvider before builder(); idempotent.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
         tracing::info!("Configuring mTLS with client certificate verification");
 
         // Load server certificate and key
