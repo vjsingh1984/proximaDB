@@ -187,12 +187,18 @@ pub fn create_document_router() -> Router<DocumentRestState> {
                     .delete(delete_document)
                     .patch(update_document),
             )
-            .route("/{collection}/documents/batch", post(batch_insert_documents))
+            .route(
+                "/{collection}/documents/batch",
+                post(batch_insert_documents),
+            )
             .route(
                 "/{collection}/documents/aggregate",
                 post(aggregate_documents),
             )
-            .route("/{collection}/indexes", post(create_index).get(list_indexes)),
+            .route(
+                "/{collection}/indexes",
+                post(create_index).get(list_indexes),
+            ),
     )
 }
 
