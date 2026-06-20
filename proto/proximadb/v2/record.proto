@@ -678,6 +678,70 @@ enum BackpressureLevel {
 }
 
 // =============================================================================
+// Collection management (v2 — parity with v1 CollectionService).
+// Self-contained: distance_metric/storage_engine are lowercase strings mapped
+// to the internal enums server-side (avoids importing the v1 proto package).
+// =============================================================================
+message V2CollectionConfig {
+  string name = 1;
+  uint32 dimension = 2;
+  string distance_metric = 3;  // "cosine" (default) | "euclidean" | "dot_product" | ...
+  string storage_engine = 4;   // "sst" (default) | "viper" | ...
+  repeated string filterable_columns = 5;
+  string description = 6;
+}
+
+message V2Collection {
+  string id = 1;
+  V2CollectionConfig config = 2;
+  int64 created_at = 3;
+  int64 updated_at = 4;
+}
+
+message V2GetCollectionRequest {
+  string collection_id = 1;  // name or id
+}
+
+message V2ListCollectionsRequest {
+  optional uint32 limit = 1;
+  optional uint32 offset = 2;
+}
+
+message V2ListCollectionsResponse {
+  repeated V2Collection collections = 1;
+}
+
+message V2DeleteCollectionRequest {
+  string collection_id = 1;
+}
+
+message V2DeleteCollectionResponse {
+  bool success = 1;
+}
+
+// =============================================================================
+// SQL query (v2 — parity with v1 QueryService.ExecuteQuery).
+// Rows reuse the v2 TypedValue so the SDK's existing decoders apply.
+// =============================================================================
+message V2QueryRequest {
+  string query = 1;
+  string collection_id = 2;
+  optional uint32 limit = 3;
+  optional uint32 offset = 4;
+}
+
+message V2QueryRow {
+  map<string, TypedValue> values = 1;
+}
+
+message V2QueryResponse {
+  repeated V2QueryRow rows = 1;
+  repeated string columns = 2;
+  uint64 rows_returned = 3;
+  uint64 execution_time_ms = 4;
+}
+
+// =============================================================================
 // gRPC Service definition
 // =============================================================================
 service ProximaRecordService {
@@ -700,4 +764,13 @@ service ProximaRecordService {
   rpc GetSchema(GetSchemaRequest) returns (GetSchemaResponse);
   rpc ListSchemas(ListSchemasRequest) returns (ListSchemasResponse);
   rpc EvolveSchema(EvolveSchemaRequest) returns (EvolveSchemaResponse);
+
+  // Collection management (v2 parity with v1 CollectionService)
+  rpc CreateCollection(V2CollectionConfig) returns (V2Collection);
+  rpc GetCollection(V2GetCollectionRequest) returns (V2Collection);
+  rpc ListCollections(V2ListCollectionsRequest) returns (V2ListCollectionsResponse);
+  rpc DeleteCollection(V2DeleteCollectionRequest) returns (V2DeleteCollectionResponse);
+
+  // SQL query (v2 parity with v1 QueryService)
+  rpc ExecuteQuery(V2QueryRequest) returns (V2QueryResponse);
 }
