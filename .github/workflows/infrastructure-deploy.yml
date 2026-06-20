@@ -65,6 +65,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'development' }}
 
+# Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
+# Default read-only; jobs that assume an AWS role via OIDC or comment on a PR
+# elevate only the specific scope they need at the job level.
+permissions:
+  contents: read
+
 jobs:
   # ============================================================================
   # NOTE: All infrastructure deployment jobs are DISABLED for v0.2.0 release
@@ -165,6 +171,10 @@ jobs:
     name: Terraform Plan (Dev)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read        # checkout
+      id-token: write       # assume AWS role via OIDC (configure-aws-credentials)
+      pull-requests: write  # post the plan as a PR comment (actions/github-script)
     needs: [terraform-validate, helm-validate]
 
     steps:
@@ -238,6 +248,9 @@ jobs:
     name: Terraform Apply (Dev)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read   # checkout
+      id-token: write  # assume AWS role via OIDC (configure-aws-credentials)
     needs: terraform-plan-dev
     environment:
       name: dev
@@ -310,6 +323,9 @@ jobs:
     name: Terraform Plan (Staging)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read   # checkout
+      id-token: write  # assume AWS role via OIDC (configure-aws-credentials)
     needs: [terraform-validate, helm-validate]
 
     steps:
@@ -361,6 +377,9 @@ jobs:
     name: Terraform Apply (Staging)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read   # checkout
+      id-token: write  # assume AWS role via OIDC (configure-aws-credentials)
     needs: terraform-plan-staging
     environment:
       name: staging
@@ -420,6 +439,9 @@ jobs:
     name: Terraform Plan (Production)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read   # checkout
+      id-token: write  # assume AWS role via OIDC (configure-aws-credentials)
     needs: [terraform-validate, helm-validate]
 
     steps:
@@ -471,6 +493,9 @@ jobs:
     name: Terraform Apply (Production)
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read   # checkout
+      id-token: write  # assume AWS role via OIDC (configure-aws-credentials)
     needs: terraform-plan-production
     environment:
       name: production
@@ -548,6 +573,9 @@ jobs:
     name: Post-Deploy Monitoring
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read   # checkout
+      id-token: write  # assume AWS role via OIDC (configure-aws-credentials)
     needs: [terraform-apply-dev]
 
     steps:
