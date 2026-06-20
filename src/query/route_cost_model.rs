@@ -37,11 +37,28 @@
 //! tunable. They are deliberately *not* calibrated dollar figures.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{LazyLock, Mutex};
 
 use crate::observability::io_trace::IoTraceSnapshot;
 use crate::query::compute_scheduler::{QueryShape, backend_label};
 use crate::query::table_write_plan::ComputeBackend;
+
+/// Process-global trace-driven route cost model. Fed by completed routed queries
+/// (via [`install_route_cost_observer`]) and consulted at the route decision.
+pub static GLOBAL_ROUTE_COST_MODEL: LazyLock<RouteCostModel> = LazyLock::new(RouteCostModel::new);
+
+/// Wire the io_trace flush to feed [`GLOBAL_ROUTE_COST_MODEL`]: every completed
+/// query that stamped a route (via `ComputeScheduler`) folds its measured
+/// snapshot into the model. Call once at startup. This is the query-layer half
+/// of the dependency-inversion seam — io_trace defines the observer type and
+/// never depends on this module.
+pub fn install_route_cost_observer() {
+    crate::observability::io_trace::set_route_observer(Some(Box::new(
+        |snap, shape_class, backend_label| {
+            GLOBAL_ROUTE_COST_MODEL.observe_by_label(shape_class, backend_label, snap);
+        },
+    )));
+}
 
 /// Stable shape-class key the model aggregates under. Coarse on purpose at C4 —
 /// it mirrors today's scheduler signals (`engages_relational` × `parquet_backed`);
@@ -194,7 +211,14 @@ impl RouteCostModel {
     /// cell. `compute_ms` is the snapshot's total across engines (the query was
     /// served by `backend`, so its compute is attributed there).
     pub fn observe(&self, shape_class: &str, backend: &ComputeBackend, snap: &IoTraceSnapshot) {
-        let key = (shape_class.to_string(), backend_label(backend));
+        self.observe_by_label(shape_class, &backend_label(backend), snap);
+    }
+
+    /// Like [`Self::observe`] but keyed by the backend's label string directly —
+    /// the form the io_trace ingestion observer uses, since io_trace stamps a
+    /// neutral label, not a `ComputeBackend` (no layer-up dependency).
+    pub fn observe_by_label(&self, shape_class: &str, backend_label: &str, snap: &IoTraceSnapshot) {
+        let key = (shape_class.to_string(), backend_label.to_string());
         let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
         cells.entry(key).or_default().fold(
             self.alpha,
@@ -368,5 +392,33 @@ mod tests {
         // EWMA of a constant series converges to that constant.
         assert!((est.range_gets - 2.0).abs() < 1e-6);
         assert!(est.score > 0.0);
+    }
+
+    #[test]
+    fn observe_by_label_matches_typed_observe() {
+        // The label-keyed ingestion form (used by the io_trace observer) lands in
+        // the same cell as the typed observe.
+        let m = RouteCostModel::new();
+        m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 16 << 20, 50));
+        let by_label = m
+            .estimate("olap/parquet", &ComputeBackend::DataFusionLocal)
+            .expect("label-keyed observation is visible to typed estimate");
+        assert_eq!(by_label.samples, 1);
+        assert!((by_label.range_gets - 4.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn global_model_is_usable() {
+        // Feed the process-global model directly under a unique key (avoids the
+        // observer global, so no cross-test race) and read it back.
+        let key = "test/global-usable-unique";
+        for _ in 0..3 {
+            GLOBAL_ROUTE_COST_MODEL.observe_by_label(key, "Native(Volcano)", &snap(2, 4096, 1));
+        }
+        assert!(
+            GLOBAL_ROUTE_COST_MODEL
+                .estimate(key, &ComputeBackend::Native)
+                .is_some()
+        );
     }
 }

@@ -111,6 +111,12 @@ impl ProximaDB {
         }
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
+        // Co-design C4: wire the io_trace flush to feed the trace-driven route
+        // cost model, so completed routed queries teach the ComputeScheduler the
+        // measured cost of each (shape-class, backend). Observe-mode today —
+        // routing is unchanged until a later flag-gated slice.
+        crate::query::route_cost_model::install_route_cost_observer();
+
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
             Some(metrics_collector.clone()),
             &config.storage,

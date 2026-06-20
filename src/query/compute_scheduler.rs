@@ -202,7 +202,7 @@ impl ComputeScheduler {
     /// classification and reason vary, so the contract is locked before any
     /// second physical executor exists.
     pub fn route_select(&self, shape: QueryShape) -> SelectRouteDecision {
-        match (shape.engages_relational, shape.parquet_backed) {
+        let decision = match (shape.engages_relational, shape.parquet_backed) {
             // P1: OLAP shape over Parquet-backed (object-store) table(s) → DataFusion.
             (true, true) => SelectRouteDecision {
                 backend: ComputeBackend::DataFusionLocal,
@@ -223,7 +223,16 @@ impl ComputeScheduler {
                 workload_profile: CatalogWorkloadProfile::Oltp,
                 reason: "OLTP shape (point/simple select) — Volcano".to_string(),
             },
-        }
+        };
+        // C4 ingestion: stamp the chosen route onto the active io_trace scope (a
+        // no-op when unscoped, e.g. unit tests / EXPLAIN-only). The completed
+        // query's measured snapshot then feeds the trace-driven cost model at
+        // flush; empty traces are skipped, so EXPLAIN-only calls cost nothing.
+        crate::observability::io_trace::record_route(
+            &crate::query::route_cost_model::shape_class(&shape),
+            &backend_label(&decision.backend),
+        );
+        decision
     }
 
     /// Route a relational `SELECT` and materialize the typed read-route plan.
