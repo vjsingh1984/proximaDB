@@ -190,3 +190,17 @@ hardware = ""
 date = ""
 version = ""
 notes = "PRD acceptance criterion for the Beta TST engine; no ASOF-join benchmark exists."
+
+[[claims]]
+id = "cloud_latency"
+claim = "Cold vs warm object-store (S3) query latency for the vector object-economy route"
+metric = "query_latency_ms"
+status = "unverified"
+asserted_in = ["docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc:327"]
+bench_source = "benches/bench_vector_object_economy_e2e.rs"
+bench_command = "BENCH_VECTORS=1000000 BENCH_DIM=768 cargo bench --bench bench_vector_object_economy_e2e"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Co-design C0 §4.3. The e2e bench currently runs over a tempdir-backed LOCAL filesystem (object_economy_e2e measured local-FS cold p50 20.83 ms / warm 19.97 ms @10K, 2026-06-16) — the S3 first-byte floor (~tens of ms cold; turbopuffer reports ~444 ms p90 cold to ~10-18 ms warm) that DOMINATES real cold ANN is NOT captured. To promote to measured: point the bench's FilesystemFactory at an S3-compatible backend (MinIO/Wasabi/real S3) and check in a dated artifact. The per-query GET-count + bytes half of the bench's own stated gap is now captured by the io_trace substrate (src/observability/io_trace.rs); the remaining half is real cloud latency."

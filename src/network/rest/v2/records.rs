@@ -1573,7 +1573,10 @@ pub async fn search_with_typed_filters(
         cold_stage1_only,
         turboquant_hints,
         vector_bounds_pruned_blocks,
-    ) = crate::observability::predicate_diagnostics::scope(async {
+    ) = crate::observability::io_trace::instrument(
+        Some(tenant.tenant_id.clone()),
+        "rest.v2.records.search",
+        crate::observability::predicate_diagnostics::scope(async {
         let outcome = state
             .request_handlers
             .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
@@ -1595,7 +1598,8 @@ pub async fn search_with_typed_filters(
         // `VectorHints.turboquant` (Phase F).
         let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
         (outcome, downgraded, cold_stage1, tq_hints, vb_pruned)
-    })
+    }),
+    )
     .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 

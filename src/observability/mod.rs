@@ -75,6 +75,12 @@ pub mod metering_event;
 /// Embedding-precision metrics — Prometheus gauges/counters per
 /// EMBEDDING_PRECISION_LLD_2026_05_22 §"Observability (Q11)" (PR 7b).
 pub mod precision_metrics;
+/// Per-query I/O trace bus (C0 — co-design trace substrate). Task-local
+/// accumulator of the physical-dimension quantities (object-store ops, bytes
+/// moved, footer-cache outcomes, cross-AZ egress, compute-ms by engine) the
+/// co-design cost model minimizes. See
+/// `docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` §4.1.
+pub mod io_trace;
 /// TD-064 predicate diagnostics bus — task-local channel that carries
 /// recall-shortfall events from AxisManager-deep search paths to the
 /// REST/gRPC handler that builds the SearchPlanTrace.
