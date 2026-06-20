@@ -37,6 +37,7 @@
 //! tunable. They are deliberately *not* calibrated dollar figures.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use crate::observability::io_trace::IoTraceSnapshot;
@@ -58,6 +59,13 @@ pub fn install_route_cost_observer() {
             GLOBAL_ROUTE_COST_MODEL.observe_by_label(shape_class, backend_label, snap);
         },
     )));
+    // Flag-gated live override (default OFF). When PROXIMADB_ROUTE_COST_OVERRIDE
+    // is truthy, the warmed model may flip freshness-safe routes to the cheaper
+    // backend (slice 4); otherwise the model stays observe-only.
+    let on = std::env::var("PROXIMADB_ROUTE_COST_OVERRIDE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    GLOBAL_ROUTE_COST_MODEL.set_override_enabled(on);
 }
 
 /// Stable shape-class key the model aggregates under. Coarse on purpose at C4 —
@@ -176,6 +184,13 @@ pub struct RouteCostModel {
     weights: CostWeights,
     /// Minimum samples before a backend's estimate is trusted enough to compare.
     min_samples: u64,
+    /// Live route override (flag-gated; default OFF → observe-only). Interior
+    /// mutability so the process-global model can be toggled at startup.
+    override_enabled: AtomicBool,
+    /// Minimum fractional cost advantage the recommended backend must beat the
+    /// static choice by before a live override fires — guards against flapping
+    /// on marginal/noisy differences.
+    min_advantage: f64,
 }
 
 impl Default for RouteCostModel {
@@ -185,13 +200,16 @@ impl Default for RouteCostModel {
 }
 
 impl RouteCostModel {
-    /// EWMA α=0.2, default neutral weights, 3-sample warmup before a cell counts.
+    /// EWMA α=0.2, default neutral weights, 3-sample warmup, override OFF,
+    /// 15% min advantage before an override fires.
     pub fn new() -> Self {
         Self {
             cells: Mutex::new(HashMap::new()),
             alpha: 0.2,
             weights: CostWeights::default(),
             min_samples: 3,
+            override_enabled: AtomicBool::new(false),
+            min_advantage: 0.15,
         }
     }
 
@@ -199,6 +217,22 @@ impl RouteCostModel {
     pub fn with_min_samples(mut self, n: u64) -> Self {
         self.min_samples = n.max(1);
         self
+    }
+
+    /// Tune the minimum cost advantage (fraction in [0,1)) required to override.
+    pub fn with_min_advantage(mut self, frac: f64) -> Self {
+        self.min_advantage = frac.clamp(0.0, 0.99);
+        self
+    }
+
+    /// Enable/disable live route override (flag-gated; default OFF).
+    pub fn set_override_enabled(&self, on: bool) {
+        self.override_enabled.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether live override is currently enabled.
+    pub fn override_active(&self) -> bool {
+        self.override_enabled.load(Ordering::Relaxed)
     }
 
     fn score(&self, range_gets: f64, bytes_read: f64, compute_ms: f64) -> f64 {
@@ -281,6 +315,38 @@ impl RouteCostModel {
             samples: cost.samples,
             ranked,
         })
+    }
+
+    /// Live-override recommendation. Returns `Some(better)` ONLY when ALL hold:
+    /// override is enabled; a candidate other than `static_backend` is the
+    /// cheapest with warmed history; the static choice itself has warmed history
+    /// (so we have evidence to beat, not a cold guess); and the challenger is
+    /// cheaper by at least `min_advantage`. Otherwise `None` — the scheduler
+    /// keeps its static route. The freshness-safe `candidates` set is chosen by
+    /// the scheduler; this method only ranks cost, so it can never propose a
+    /// backend the caller didn't deem correct for the query.
+    pub fn recommend_override(
+        &self,
+        shape_class: &str,
+        static_backend: &ComputeBackend,
+        candidates: &[ComputeBackend],
+    ) -> Option<RouteRecommendation> {
+        if !self.override_active() {
+            return None;
+        }
+        let rec = self.recommend(shape_class, candidates)?;
+        if backend_label(&rec.backend) == backend_label(static_backend) {
+            return None; // the model already agrees with the static choice
+        }
+        let static_cost = self.estimate(shape_class, static_backend)?;
+        if static_cost.samples < self.min_samples {
+            return None; // not enough evidence about the static route to beat it
+        }
+        if rec.score < static_cost.score * (1.0 - self.min_advantage) {
+            Some(rec)
+        } else {
+            None // advantage too small — don't flap
+        }
     }
 }
 
@@ -419,6 +485,79 @@ mod tests {
             GLOBAL_ROUTE_COST_MODEL
                 .estimate(key, &ComputeBackend::Native)
                 .is_some()
+        );
+    }
+
+    /// Warm a model so DataFusion is much cheaper than Native for "olap/parquet".
+    fn warm_df_cheaper(m: &RouteCostModel) {
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 16 << 20, 50));
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(400, 16 << 20, 20));
+        }
+    }
+
+    #[test]
+    fn override_respects_the_enable_flag() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        warm_df_cheaper(&m);
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        // Default OFF → no override even with a huge advantage.
+        assert!(
+            m.recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
+                .is_none()
+        );
+        m.set_override_enabled(true);
+        let rec = m
+            .recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
+            .expect("confident, enabled → override");
+        assert_eq!(rec.backend, ComputeBackend::DataFusionLocal);
+    }
+
+    #[test]
+    fn override_requires_min_advantage() {
+        // DataFusion only ~5% cheaper than Native → below the 15% gate → no flip.
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_min_advantage(0.15);
+        m.set_override_enabled(true);
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(95, 1 << 20, 10));
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(100, 1 << 20, 10));
+        }
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        assert!(
+            m.recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
+                .is_none(),
+            "marginal advantage must not flip the route"
+        );
+    }
+
+    #[test]
+    fn override_none_when_static_is_already_cheapest() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        m.set_override_enabled(true);
+        warm_df_cheaper(&m); // DataFusion cheapest
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        // Static already DataFusion → nothing cheaper to flip to.
+        assert!(
+            m.recommend_override("olap/parquet", &ComputeBackend::DataFusionLocal, &cands)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn override_needs_warmed_history_for_the_static_route() {
+        // Challenger has history but the static route does not → can't prove the
+        // override beats it, so no flip.
+        let m = RouteCostModel::new().with_min_samples(3);
+        m.set_override_enabled(true);
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 1 << 20, 5));
+        }
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        assert!(
+            m.recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
+                .is_none()
         );
     }
 }
