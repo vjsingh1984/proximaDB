@@ -43,7 +43,7 @@
 
 use axum::{
     body::Body,
-    http::{Request, StatusCode},
+    extract::Request, http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -441,7 +441,7 @@ pub trait TenantContextExt {
     fn tenant_id_or_default(&self) -> String;
 }
 
-impl<B> TenantContextExt for Request<B> {
+impl TenantContextExt for Request {
     fn tenant_context(&self) -> Option<&MiddlewareTenantContext> {
         self.extensions().get::<MiddlewareTenantContext>()
     }

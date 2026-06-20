@@ -792,7 +792,7 @@ impl ProtocolHandler for RestHandler {
 
             // API routing - need to extract body for POST/PUT/DELETE
             let (parts, body) = request.into_parts();
-            let body_bytes: Vec<u8> = match hyper::body::to_bytes(body).await {
+            let body_bytes: Vec<u8> = match axum::body::to_bytes(body, usize::MAX).await {
                 Ok(bytes) => bytes.to_vec(),
                 Err(e) => {
                     return Response::builder()

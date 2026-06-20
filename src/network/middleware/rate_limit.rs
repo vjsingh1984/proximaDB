@@ -18,7 +18,7 @@
 
 use axum::{
     extract::State,
-    http::{Request, StatusCode},
+    extract::Request, http::StatusCode,
     middleware::Next,
     response::{Json, Response},
 };
@@ -245,10 +245,10 @@ impl RateLimitLayer {
 }
 
 /// Rate limiting middleware function
-pub async fn rate_limit_middleware<B>(
+pub async fn rate_limit_middleware(
     State(rate_limit_state): State<Arc<RateLimitState>>,
-    request: Request<B>,
-    next: Next<B>,
+    request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<RateLimitErrorResponse>)> {
     // Skip rate limiting if disabled
     if !rate_limit_state.config.enabled {
@@ -316,7 +316,7 @@ pub async fn rate_limit_middleware<B>(
 }
 
 /// Extract client IP from request
-fn get_client_ip<B>(request: &Request<B>) -> IpAddr {
+fn get_client_ip(request: &Request) -> IpAddr {
     // Try to get IP from X-Forwarded-For header first (for proxies)
     if let Some(forwarded_for) = request.headers().get("X-Forwarded-For")
         && let Ok(forwarded_str) = forwarded_for.to_str()

@@ -9,7 +9,7 @@
 
 use axum::body::Body;
 use axum::extract::MatchedPath;
-use axum::http::Request;
+use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
 use std::time::Instant;

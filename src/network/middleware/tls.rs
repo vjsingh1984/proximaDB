@@ -45,7 +45,7 @@
 use crate::network::tls::ClientCertificateInfo;
 use axum::{
     extract::State,
-    http::{Request, StatusCode},
+    extract::Request, http::StatusCode,
     middleware::Next,
     response::{Json, Response},
 };
@@ -197,10 +197,10 @@ impl TlsClientCertState {
 /// 2. Validates the certificate against configured policies
 /// 3. Maps certificate CN to user identity
 /// 4. Adds TlsAuthenticatedUser to request extensions for downstream handlers
-pub async fn tls_client_cert_middleware<B>(
+pub async fn tls_client_cert_middleware(
     State(state): State<TlsClientCertState>,
-    mut request: Request<B>,
-    next: Next<B>,
+    mut request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<TlsCertErrorResponse>)> {
     let config = &state.config;
     let path = request.uri().path();
