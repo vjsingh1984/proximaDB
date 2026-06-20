@@ -94,7 +94,15 @@ Read these in order for future-shaping architecture work:
    minimize, the per-query trace substrate that must feed it, the TAM/billing meter for each dimension,
    and the trace-before-tune mandate. Subordinate to the 2026-06-04 course correction; consolidates the
    caching recalibration, vector object economy, and OSS/enterprise boundary docs.
-17. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
+17. `IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc` +
+   Co-design refinement of the Network dimension: collapse the reverse-proxy / load-balancer /
+   API-gateway L7 tier *into the process* as a `proximadb-edge` cargo crate — one canonical request
+   envelope and one policy plane (TLS, authn, ABAC authz, tenant, rate-limit, trace) across the full
+   surface area (pgwire + REST + gRPC + Arrow Flight). Closes the live consistency gap (pgwire bypasses
+   the multiplexer/middleware today), removes the mesh tax + per-hop LB/gateway cost, and makes
+   cross-surface security policy structural. Keeps a thin L4 front (mirrors the industry's ambient-mesh
+   shift). Subordinate to `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
+18. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
    Legacy foundational mandate. Superseded by the Data Warehouse course correction on 2026-06-04.
 
 == Stable Reference Docs

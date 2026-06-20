@@ -173,6 +173,18 @@ $0.02/GB is justified. The frontier (RDMA-disaggregated ANN — d-HNSW, 117× lo
 memory, arXiv 2505.11783) is the closest external analogue to ProximaDB's ANN-over-object-storage
 thesis and the long-horizon target.
 
+*Edge collapse (the inbound half of this dimension):* the reverse-proxy / load-balancer / API-gateway
+tier in front of the database is *pure boundary cost* — each L7 hop re-terminates TLS, re-parses the
+protocol, and re-derives identity/routing/policy the database already owns. The industry is itself
+dismantling the per-pod L7 sidecar (Istio Ambient GA Nov 2024, Cilium eBPF, Cloudflare's one-process
+model) toward "thin shared L4 front + L7 where the data context lives." For a database that *is* where
+the data context lives, the co-design move is to collapse the L7 edge *into the process* as a library
+(`proximadb-edge`), running *one* policy plane (TLS, authn, ABAC authz, tenant, rate-limit, trace) over
+*one* canonical envelope across the full surface area (pgwire + REST + gRPC + Flight) — removing the
+mesh tax (a sidecar ~halves throughput / doubles p99; ~70 GB RAM across 1000 pods) and the per-hop
+ALB-LCU / API-GW-per-request / cross-AZ cost, while making cross-surface policy consistency *structural*.
+Full HLD: link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19].
+
 *Billing meter:* presently *unmetered* — a gap. Add an egress/bytes-moved counter keyed by
 `(tenant, az_locality)` so cross-AZ and result-egress become a billable, optimizable dimension
 (→ *KEU*, the egress unit already named in the OSS boundary doc but not yet sourced from a trace).
@@ -358,6 +370,9 @@ enforcement; Arrow Flight SQL bulk-egress GA. | TENANT_COLLECTION_POD_AFFINITY, 
 retire static heuristics; seed the RL-planner cost model. | compute_scheduler.rs, course-correction P7
 | C5 — Governance SKUs | Tier-entitlement multiplier in the cost model; per-tier cache floor/ceiling;
 anvaiops authors tier→limit + pricing via claims. | OSS_ENTERPRISE_BOUNDARY, LimitsResolver
+| C6 — Edge collapse | Collapse the L7 proxy/LB/gateway into `proximadb-edge`: one canonical envelope +
+one policy plane (TLS/authn/ABAC/tenant/rate-limit/trace) across pgwire+REST+gRPC+Flight; E0 closes the
+live pgwire-bypasses-middleware consistency gap. | network/multiplex+middleware, proximadb-security, io_trace; see link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[edge HLD]
 |===
 
 == 6. TAM Summary (per dimension)
@@ -395,3 +410,9 @@ predicate.
 policy boundary, freshness behavior, and maturity (P8).
 . *Meter every dimension.* Storage, read, egress, compute, and cache are each metered per-tenant;
 egress (KEU) is the open gap to close. Governance is metered as tier entitlement.
+. *One edge plane across all surfaces.* Authn/authz, rate-limiting, tenant extraction, and tracing run
+*once* over a canonical request envelope for *every* surface (pgwire, REST, gRPC, Arrow Flight) — never
+per-protocol and never in a separate gateway box that re-derives state the database owns. New surfaces
+or policies attach to the one `EdgePolicyPlane` stage, not a parallel path. Collapse L7 in-process;
+keep only a thin L4 front (P2, P8, P10; see
+link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[the edge HLD]).
