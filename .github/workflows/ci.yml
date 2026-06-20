@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, development, develop]
+    branches: [main, development, develop, qa]
   pull_request:
-    branches: [main, development, develop]
+    branches: [main, development, develop, qa]
   workflow_dispatch:
     inputs:
       skip_tests:
