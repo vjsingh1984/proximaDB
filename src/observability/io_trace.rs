@@ -139,12 +139,30 @@ pub struct IoTrace {
     /// in a small map so a single query that touches multiple engines (e.g. a
     /// Volcano point lookup plus a DataFusion aggregate) attributes each.
     compute_ms: Mutex<BTreeMap<String, u64>>,
+    /// The route this query was served on, as `(shape_class, backend_label)`
+    /// strings (co-design C4). Stamped by the `ComputeScheduler` so the flush can
+    /// feed the trace-driven cost model the cost of *this kind of query on that
+    /// engine* — without io_trace depending on any query-layer type. `None` until
+    /// a route is chosen.
+    route: Mutex<Option<(String, String)>>,
 }
 
 impl IoTrace {
     /// Create an empty trace.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Stamp the route this query is served on (`shape_class`, `backend_label`).
+    /// Last write wins (a query is served by one engine). Neutral strings only.
+    pub fn record_route(&self, shape_class: &str, backend_label: &str) {
+        *self.route.lock().unwrap_or_else(|p| p.into_inner()) =
+            Some((shape_class.to_string(), backend_label.to_string()));
+    }
+
+    /// The stamped route, if any.
+    pub fn route(&self) -> Option<(String, String)> {
+        self.route.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 
     /// Record one classified object-store operation.
@@ -368,9 +386,41 @@ pub fn record_compute_ms(engine: &str, ms: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_compute_ms(engine, ms));
 }
 
+/// Stamp the route (`shape_class`, `backend_label`) onto the active query trace.
+/// Silently no-ops outside an active scope. Neutral strings — io_trace never
+/// depends on a query-layer type.
+pub fn record_route(shape_class: &str, backend_label: &str) {
+    let _ = IO_TRACE.try_with(|t| t.record_route(shape_class, backend_label));
+}
+
 /// Snapshot the active query trace, if any.
 pub fn snapshot() -> Option<IoTraceSnapshot> {
     IO_TRACE.try_with(|t| t.snapshot()).ok()
+}
+
+/// Observer invoked at trace flush with `(snapshot, shape_class, backend_label)`
+/// when the query stamped a route. This is the dependency-inversion seam: the
+/// query layer registers a sink that feeds the trace-driven route cost model
+/// (C4), so io_trace ingests into routing *without depending on it*.
+type RouteObserver = dyn Fn(&IoTraceSnapshot, &str, &str) + Send + Sync;
+
+static ROUTE_OBSERVER: Mutex<Option<Box<RouteObserver>>> = Mutex::new(None);
+
+/// Install (or clear with `None`) the route-trace observer. Called once at
+/// startup by the query layer; replaceable in tests.
+pub fn set_route_observer(observer: Option<Box<RouteObserver>>) {
+    *ROUTE_OBSERVER.lock().unwrap_or_else(|p| p.into_inner()) = observer;
+}
+
+/// Feed the registered observer, if any, with a completed query's route trace.
+fn notify_route_observer(snap: &IoTraceSnapshot, shape_class: &str, backend_label: &str) {
+    if let Some(obs) = ROUTE_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        obs(snap, shape_class, backend_label);
+    }
 }
 
 /// Bind a fresh [`IoTrace`] to `future` and await it. Lower-level than
@@ -393,8 +443,15 @@ where
         .scope(IoTrace::new(), async move {
             let out = future.await;
             // Still inside the scope: read and emit before the binding drops.
-            if let Ok(snap) = IO_TRACE.try_with(|t| t.snapshot()) {
+            if let Ok((snap, stamped_route)) = IO_TRACE.try_with(|t| (t.snapshot(), t.route())) {
                 snap.emit(tenant_id.as_deref(), &route);
+                // C4 ingestion: if a route was stamped, feed the cost model the
+                // measured cost of this (shape-class, backend). Skip empty traces.
+                if !snap.is_empty()
+                    && let Some((shape_class, backend_label)) = stamped_route
+                {
+                    notify_route_observer(&snap, &shape_class, &backend_label);
+                }
             }
             out
         })
@@ -498,6 +555,62 @@ mod tests {
         assert_eq!(s.footer_hits, 8);
         assert_eq!(s.footer_misses, 3);
         assert_eq!(s.footer_hit_ratio(), Some(8.0 / 11.0));
+    }
+
+    #[tokio::test]
+    async fn record_route_round_trips_in_scope_and_noops_outside() {
+        record_route("olap/parquet", "DataFusionLocal"); // outside scope: no-op
+        let r = scope(async {
+            record_route("olap/parquet", "DataFusionLocal");
+            IO_TRACE.try_with(|t| t.route()).ok().flatten()
+        })
+        .await;
+        assert_eq!(
+            r,
+            Some(("olap/parquet".to_string(), "DataFusionLocal".to_string()))
+        );
+    }
+
+    // Both flush→observer cases live in ONE test: the route observer is a
+    // process-global, so running the set/clear cases sequentially here avoids a
+    // race with a parallel sibling test. (Other instrument tests stamp no route,
+    // so they never invoke the observer regardless of install order.)
+    #[tokio::test]
+    async fn flush_feeds_route_observer_only_when_route_is_stamped() {
+        use std::sync::Arc;
+        let seen: Arc<Mutex<Vec<(IoTraceSnapshot, String, String)>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        set_route_observer(Some(Box::new(move |snap, class, backend| {
+            sink.lock()
+                .unwrap()
+                .push((snap.clone(), class.to_string(), backend.to_string()));
+        })));
+
+        // (1) Stamped route → observer fires with the measured snapshot.
+        instrument(Some("t".to_string()), "pgwire.query", async {
+            record_op_str("fetch_pax_ranged");
+            record_bytes_read(8 << 20);
+            record_range_gets(2);
+            record_route("olap/parquet", "DataFusionLocal");
+        })
+        .await;
+
+        // (2) I/O but NO route stamped → observer must NOT fire.
+        instrument(None, "rest.v2.records.search", async {
+            record_op_str("fetch_pax");
+        })
+        .await;
+
+        set_route_observer(None); // reset global so other tests are unaffected
+
+        let got = seen.lock().unwrap();
+        assert_eq!(got.len(), 1, "observer fired exactly once (only the routed query)");
+        let (snap, class, backend) = &got[0];
+        assert_eq!(class, "olap/parquet");
+        assert_eq!(backend, "DataFusionLocal");
+        assert_eq!(snap.range_gets, 2);
+        assert_eq!(snap.bytes_read, 8 << 20);
     }
 
     #[test]

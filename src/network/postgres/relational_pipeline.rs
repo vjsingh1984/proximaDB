@@ -222,11 +222,14 @@ pub async fn try_run_select(
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
 
-    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
             parquet_backed,
         },
+        // C4: observe-mode advisory from the trace-driven cost model — augments
+        // the reason for telemetry/EXPLAIN, never changes the backend.
+        Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
     );
     tracing::debug!(
         target: "proximadb::compute_route",
@@ -738,11 +741,12 @@ pub fn classify_select_route(
     };
     let engages = query_engages_relational_engine(query);
     Some(
-        crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+        crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
             crate::query::compute_scheduler::QueryShape {
                 engages_relational: engages,
                 parquet_backed: false,
             },
+            Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
         ),
     )
 }
@@ -933,11 +937,12 @@ async fn route_and_plan_select(
             }
         }
     }
-    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: engages,
             parquet_backed,
         },
+        Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
     );
     let mut explanation = decision_to_explanation(&decision);
     // For the DataFusion route, disclose the concrete Parquet row-group split
@@ -1098,6 +1103,33 @@ mod route_explain_tests {
         assert!(
             !json.contains("execution_rows") && !json.contains("execution_elapsed_us"),
             "None ANALYZE metrics are skipped in JSON: {json}"
+        );
+    }
+
+    #[test]
+    fn explain_surfaces_cost_model_advisory_once_warm() {
+        // C4 slice 3: once the trace-driven cost model has warmed history for a
+        // shape-class, the EXPLAIN reason discloses its (observe-mode) advisory.
+        use crate::observability::io_trace::IoTraceSnapshot;
+        use crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL;
+        let snap = IoTraceSnapshot {
+            range_gets: 5,
+            bytes_read: 1 << 20,
+            ..Default::default()
+        };
+        // The GROUP BY query classifies as "olap/native"; warm Native there.
+        for _ in 0..3 {
+            GLOBAL_ROUTE_COST_MODEL.observe_by_label("olap/native", "Native(Volcano)", &snap);
+        }
+        let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
+            .expect("routable");
+        // Observe-mode: the chosen engine is unchanged ...
+        assert_eq!(expl.compute_route, "Native(Volcano)");
+        // ... but the cost-model advisory is now visible in the EXPLAIN reason.
+        assert!(
+            expl.reason.contains("cost-model"),
+            "advisory surfaced in EXPLAIN reason: {}",
+            expl.reason
         );
     }
 }
