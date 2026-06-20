@@ -960,7 +960,38 @@ impl PostgresProtocol {
     }
 
     /// Execute a translated query with request-scoped execution controls.
+    ///
+    /// E0 (in-process edge — `IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19`): every
+    /// pgwire query is scoped in a per-query `io_trace` span with tenant
+    /// attribution, so the pgwire surface emits the *same* per-query I/O trace
+    /// (object-store GETs/bytes, footer-cache outcomes, engine-ms) as REST/gRPC
+    /// — closing the consistency gap where pgwire bypassed the edge middleware
+    /// entirely. The tenant is the one already resolved for read routing
+    /// (TD-064); no new identity source is introduced. The wrapper is a thin
+    /// scope around the unchanged body in `_inner`.
     async fn execute_query_with_controls(
+        &mut self,
+        query: &str,
+        controls: ExecutionControls,
+    ) -> Result<()> {
+        let tenant = self.pgwire_resolve_read_tenant().await;
+        // E0 (edge consistency): give every pgwire query a request-id correlation
+        // scope — matching REST's request_id middleware — so logs and error
+        // envelopes carry it; then the per-query io_trace span (tenant-attributed).
+        let request_id = crate::network::middleware::request_id::RequestId::generate();
+        proximadb_api::rest::errors::REQUEST_ID
+            .scope(
+                request_id.0,
+                crate::observability::io_trace::instrument(
+                    Some(tenant),
+                    "pgwire.query",
+                    self.execute_query_with_controls_inner(query, controls),
+                ),
+            )
+            .await
+    }
+
+    async fn execute_query_with_controls_inner(
         &mut self,
         query: &str,
         controls: ExecutionControls,
@@ -4525,6 +4556,11 @@ impl PostgresProtocol {
                 return self.emit_portal_page(portal_name, max_rows as usize).await;
             }
 
+            // E0 follow-up: this portal-SELECT fast-path returns before reaching
+            // `execute_query_with_controls`, so it is the one pgwire query path
+            // not yet under the per-query `io_trace` span. Bring it under the
+            // same scope in the next slice (kept out here to avoid restructuring
+            // the borrow in this `&&` let-chain).
             if query.trim_start().to_uppercase().starts_with("SELECT")
                 && let Some(result) = self
                     .try_run_relational_select_pipeline(query, ExecutionControls::default())
