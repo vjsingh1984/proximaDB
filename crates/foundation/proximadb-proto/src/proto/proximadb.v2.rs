@@ -108,8 +108,10 @@ pub mod typed_value {
         Float32Value(f32),
         #[prost(string, tag = "68")]
         SymbolValue(::prost::alloc::string::String),
+        /// MessagePack-encoded JSONB
         #[prost(bytes, tag = "69")]
         JsonbValue(::prost::alloc::vec::Vec<u8>),
+        /// 16-byte ULID
         #[prost(bytes, tag = "70")]
         UlidValue(::prost::alloc::vec::Vec<u8>),
         #[prost(message, tag = "71")]
@@ -193,10 +195,7 @@ pub struct TypedValueArray {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedValueMap {
     #[prost(map = "string, message", tag = "1")]
-    pub entries: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        TypedValue,
-    >,
+    pub entries: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
 }
 /// Map types
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -430,10 +429,7 @@ pub struct ProximaRecord {
     pub sparse_vector: ::core::option::Option<SparseVector>,
     /// Canonical NF2 property map (schema-validated where a schema is attached)
     #[prost(map = "string, message", tag = "5")]
-    pub props: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        TypedValue,
-    >,
+    pub props: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
     /// TEXT content - dedicated columnar storage
     /// These are stored separately to avoid metadata scanning
     #[prost(message, repeated, tag = "10")]
@@ -619,10 +615,7 @@ pub struct TypedSearchResult {
     pub score: f64,
     /// Fields (based on projection)
     #[prost(map = "string, message", tag = "3")]
-    pub props: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        TypedValue,
-    >,
+    pub props: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
     #[prost(float, repeated, tag = "4")]
     pub vector: ::prost::alloc::vec::Vec<f32>,
     #[prost(message, repeated, tag = "5")]
