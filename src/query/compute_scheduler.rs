@@ -116,8 +116,10 @@ impl SelectRouteDecision {
     }
 }
 
-/// Short, stable label for a backend in EXPLAIN/telemetry output.
-fn backend_label(backend: &ComputeBackend) -> String {
+/// Short, stable label for a backend in EXPLAIN/telemetry output. Also the
+/// canonical key the trace-driven [`crate::query::route_cost_model`] aggregates
+/// observations under, so labels and cost-model keys never diverge.
+pub(crate) fn backend_label(backend: &ComputeBackend) -> String {
     match backend {
         ComputeBackend::Native => "Native(Volcano)".to_string(),
         ComputeBackend::DataFusionLocal => "DataFusionLocal".to_string(),
@@ -228,6 +230,44 @@ impl ComputeScheduler {
     pub fn route_select_plan(&self, shape: QueryShape) -> RoutedReadPlan {
         self.route_select(shape).routed_read_plan()
     }
+
+    /// Route a `SELECT`, then — if a trace-driven cost model is supplied —
+    /// **observe-mode** advise: consult the measured per-(shape-class, backend)
+    /// cost (co-design C4) and fold its recommendation into the decision's
+    /// `reason` for EXPLAIN/telemetry, *without changing the backend*.
+    ///
+    /// This closes the co-design loop (C0 trace → cost model → router) at the
+    /// lowest-risk altitude: the scheduler discloses what the trace *would*
+    /// recommend and whether it diverges from the static rule, so the
+    /// recommendation can be validated against real workloads before a later,
+    /// flag-gated slice flips live routing onto it. When the model has no warmed
+    /// history for the shape-class, the static decision is returned unchanged.
+    pub fn route_select_advised(
+        &self,
+        shape: QueryShape,
+        model: Option<&crate::query::route_cost_model::RouteCostModel>,
+    ) -> SelectRouteDecision {
+        let mut decision = self.route_select(shape);
+        let Some(model) = model else {
+            return decision;
+        };
+        let class = crate::query::route_cost_model::shape_class(&shape);
+        // Candidate engines the read path can actually serve this shape on today.
+        let candidates = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        if let Some(rec) = model.recommend(&class, &candidates) {
+            let advisory = if rec.backend == decision.backend {
+                format!("cost-model concurs ({})", rec.reason())
+            } else {
+                format!(
+                    "cost-model would prefer {} ({}) — observe-mode, route unchanged",
+                    backend_label(&rec.backend),
+                    rec.reason()
+                )
+            };
+            decision.reason = format!("{} | {advisory}", decision.reason);
+        }
+        decision
+    }
 }
 
 #[cfg(test)]
@@ -308,6 +348,76 @@ mod tests {
             })
             .explain_line();
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));
+    }
+
+    fn io_snap(range_gets: u64, bytes_read: u64) -> crate::observability::io_trace::IoTraceSnapshot {
+        crate::observability::io_trace::IoTraceSnapshot {
+            range_gets,
+            bytes_read,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn advised_without_model_is_identical_to_static() {
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+        };
+        let s = ComputeScheduler::new();
+        let plain = s.route_select(shape);
+        let advised = s.route_select_advised(shape, None);
+        assert_eq!(advised.backend, plain.backend);
+        assert_eq!(advised.reason, plain.reason);
+    }
+
+    #[test]
+    fn advised_is_observe_mode_never_overrides_backend() {
+        use crate::query::route_cost_model::RouteCostModel;
+        // OLAP-on-native shape: static rule => Native(Volcano).
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+        };
+        let model = RouteCostModel::new().with_min_samples(1);
+        // Teach the model that DataFusion is far cheaper for this shape-class
+        // (few coalesced GETs vs Native's many small GETs).
+        for _ in 0..4 {
+            model.observe(
+                "olap/native",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/native",
+                &ComputeBackend::Native,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        // Backend is UNCHANGED (observe-mode) ...
+        assert_eq!(advised.backend, ComputeBackend::Native);
+        // ... but the divergence is disclosed for EXPLAIN/validation.
+        assert!(advised.reason.contains("would prefer DataFusionLocal"));
+        assert!(advised.reason.contains("observe-mode"));
+    }
+
+    #[test]
+    fn advised_notes_when_cost_model_concurs() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: false,
+            parquet_backed: false,
+        };
+        let model = RouteCostModel::new().with_min_samples(1);
+        // Only Native has history for this shape-class → it is the min, concurring
+        // with the static OLTP→Native rule.
+        for _ in 0..3 {
+            model.observe("oltp/native", &ComputeBackend::Native, &io_snap(2, 8192));
+        }
+        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(advised.backend, ComputeBackend::Native);
+        assert!(advised.reason.contains("cost-model concurs"));
     }
 
     #[test]

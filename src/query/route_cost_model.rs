@@ -1,0 +1,372 @@
+// Copyright 2026 ProximaDB
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+
+//! Trace-driven route cost model (co-design C4 — the keystone of the loop).
+//!
+//! The `ComputeScheduler` ([`crate::query::compute_scheduler`]) chooses a
+//! physical engine from *static* shape heuristics. C4 closes the co-design loop
+//! the C0 trace substrate was built for: feed the *measured* per-query
+//! [`IoTraceSnapshot`] back so the scheduler can cost candidate routes from what
+//! they *actually paid* (object-store GETs, bytes moved, compute-ms) rather than
+//! a fixed rule — the Policy→RL evolution named in the course correction §5.2.
+//!
+//! ## How the loop works
+//!
+//! 1. A query runs under an `io_trace` scope (C0) and, at completion, yields an
+//!    [`IoTraceSnapshot`] of the physical quantities it paid.
+//! 2. [`RouteCostModel::observe`] folds that snapshot into a per-(shape-class,
+//!    backend) EWMA — the running cost of serving *this kind of query* on *that
+//!    engine*.
+//! 3. At the next route decision for the same shape-class,
+//!    [`RouteCostModel::recommend`] compares the learned cost of each candidate
+//!    backend and names the cheapest. The scheduler surfaces this as an
+//!    EXPLAIN/telemetry advisory (**observe-mode** — see
+//!    `ComputeScheduler::route_select_advised`); flipping live routing onto the
+//!    recommendation is a later, flag-gated slice.
+//!
+//! ## OSS boundary — neutral cost, not pricing
+//!
+//! The score combines *neutral relative I/O/compute units*, NOT currency. Per
+//! the OSS/enterprise boundary, *pricing* (KSU/KRU/KEU $ weights, tenant
+//! tiers) belongs to the commercial control plane; *routing* is OSS mechanism.
+//! The default [`CostWeights`] only encode the co-design ordering — an
+//! object-store round-trip dominates bandwidth, which dominates CPU (P5: the
+//! dominant cost term for a cloud DB is I/O round-trips, not compute) — and are
+//! tunable. They are deliberately *not* calibrated dollar figures.
+
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+use crate::observability::io_trace::IoTraceSnapshot;
+use crate::query::compute_scheduler::{QueryShape, backend_label};
+use crate::query::table_write_plan::ComputeBackend;
+
+/// Stable shape-class key the model aggregates under. Coarse on purpose at C4 —
+/// it mirrors today's scheduler signals (`engages_relational` × `parquet_backed`);
+/// finer classes (cardinality, partition count, point-lookup) arrive with the
+/// §5.2 Phase-1 shape inputs and slot in here without changing the model.
+pub fn shape_class(shape: &QueryShape) -> String {
+    let workload = if shape.engages_relational {
+        "olap"
+    } else {
+        "oltp"
+    };
+    let base = if shape.parquet_backed {
+        "parquet"
+    } else {
+        "native"
+    };
+    format!("{workload}/{base}")
+}
+
+/// Neutral relative weights for the route cost score. NOT dollars (see module
+/// docs). They encode only the co-design cost ordering: a GET's fixed
+/// first-byte latency dominates a MiB of bandwidth, which dominates a ms of CPU.
+#[derive(Debug, Clone, Copy)]
+pub struct CostWeights {
+    /// Per ranged GET — the fixed-latency, per-request term (the dominant cost
+    /// for object-store-served reads).
+    pub per_get: f64,
+    /// Per MiB read — the bandwidth term.
+    pub per_mib_read: f64,
+    /// Per compute-millisecond — the CPU term (smallest for I/O-bound DB work).
+    pub per_compute_ms: f64,
+}
+
+impl Default for CostWeights {
+    fn default() -> Self {
+        // Illustrative neutral ordering (round-trip ≫ bandwidth ≫ CPU), tunable.
+        Self {
+            per_get: 20.0,
+            per_mib_read: 5.0,
+            per_compute_ms: 1.0,
+        }
+    }
+}
+
+/// One (shape-class, backend) cell: EWMA means of the cost-bearing quantities.
+#[derive(Debug, Clone, Copy, Default)]
+struct Cell {
+    range_gets: f64,
+    bytes_read: f64,
+    compute_ms: f64,
+    samples: u64,
+}
+
+impl Cell {
+    fn fold(&mut self, alpha: f64, range_gets: f64, bytes_read: f64, compute_ms: f64) {
+        if self.samples == 0 {
+            self.range_gets = range_gets;
+            self.bytes_read = bytes_read;
+            self.compute_ms = compute_ms;
+        } else {
+            self.range_gets = alpha * range_gets + (1.0 - alpha) * self.range_gets;
+            self.bytes_read = alpha * bytes_read + (1.0 - alpha) * self.bytes_read;
+            self.compute_ms = alpha * compute_ms + (1.0 - alpha) * self.compute_ms;
+        }
+        self.samples += 1;
+    }
+}
+
+/// Learned cost estimate for serving a shape-class on one backend.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RouteCost {
+    pub samples: u64,
+    pub range_gets: f64,
+    pub bytes_read: f64,
+    pub compute_ms: f64,
+    /// Weighted neutral score (lower is cheaper).
+    pub score: f64,
+}
+
+/// The scheduler-facing recommendation: the cheapest candidate that has enough
+/// history, plus the runners-up for EXPLAIN.
+#[derive(Debug, Clone)]
+pub struct RouteRecommendation {
+    pub backend: ComputeBackend,
+    pub score: f64,
+    pub samples: u64,
+    /// `(backend_label, score)` for every candidate with history, cheapest first.
+    pub ranked: Vec<(String, f64)>,
+}
+
+impl RouteRecommendation {
+    /// Compact reason string for the EXPLAIN/telemetry advisory.
+    pub fn reason(&self) -> String {
+        let ranked = self
+            .ranked
+            .iter()
+            .map(|(b, s)| format!("{b}={s:.1}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "min-cost over {} sample(s): {} [{}]",
+            self.samples,
+            backend_label(&self.backend),
+            ranked
+        )
+    }
+}
+
+/// Trace-driven, thread-safe route cost model. One instance is consulted at the
+/// route decision and fed by completed-query traces.
+#[derive(Debug)]
+pub struct RouteCostModel {
+    cells: Mutex<HashMap<(String, String), Cell>>,
+    alpha: f64,
+    weights: CostWeights,
+    /// Minimum samples before a backend's estimate is trusted enough to compare.
+    min_samples: u64,
+}
+
+impl Default for RouteCostModel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl RouteCostModel {
+    /// EWMA α=0.2, default neutral weights, 3-sample warmup before a cell counts.
+    pub fn new() -> Self {
+        Self {
+            cells: Mutex::new(HashMap::new()),
+            alpha: 0.2,
+            weights: CostWeights::default(),
+            min_samples: 3,
+        }
+    }
+
+    /// Override the warmup threshold (samples required before a cell is trusted).
+    pub fn with_min_samples(mut self, n: u64) -> Self {
+        self.min_samples = n.max(1);
+        self
+    }
+
+    fn score(&self, range_gets: f64, bytes_read: f64, compute_ms: f64) -> f64 {
+        self.weights.per_get * range_gets
+            + self.weights.per_mib_read * (bytes_read / (1024.0 * 1024.0))
+            + self.weights.per_compute_ms * compute_ms
+    }
+
+    /// Fold a completed query's measured trace into the (shape-class, backend)
+    /// cell. `compute_ms` is the snapshot's total across engines (the query was
+    /// served by `backend`, so its compute is attributed there).
+    pub fn observe(&self, shape_class: &str, backend: &ComputeBackend, snap: &IoTraceSnapshot) {
+        let key = (shape_class.to_string(), backend_label(backend));
+        let mut cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+        cells.entry(key).or_default().fold(
+            self.alpha,
+            snap.range_gets as f64,
+            snap.bytes_read as f64,
+            snap.total_compute_ms() as f64,
+        );
+    }
+
+    /// Current learned estimate for one (shape-class, backend), if any history.
+    pub fn estimate(&self, shape_class: &str, backend: &ComputeBackend) -> Option<RouteCost> {
+        let key = (shape_class.to_string(), backend_label(backend));
+        let cells = self.cells.lock().unwrap_or_else(|p| p.into_inner());
+        let c = cells.get(&key)?;
+        if c.samples == 0 {
+            return None;
+        }
+        Some(RouteCost {
+            samples: c.samples,
+            range_gets: c.range_gets,
+            bytes_read: c.bytes_read,
+            compute_ms: c.compute_ms,
+            score: self.score(c.range_gets, c.bytes_read, c.compute_ms),
+        })
+    }
+
+    /// Among `candidates`, recommend the cheapest backend whose cell has reached
+    /// the warmup threshold. Returns `None` when no candidate has enough history
+    /// (the scheduler then keeps its static decision). Ties keep candidate order.
+    pub fn recommend(
+        &self,
+        shape_class: &str,
+        candidates: &[ComputeBackend],
+    ) -> Option<RouteRecommendation> {
+        let mut scored: Vec<(ComputeBackend, RouteCost)> = candidates
+            .iter()
+            .filter_map(|b| {
+                self.estimate(shape_class, b)
+                    .filter(|c| c.samples >= self.min_samples)
+                    .map(|c| (b.clone(), c))
+            })
+            .collect();
+        if scored.is_empty() {
+            return None;
+        }
+        // Stable: sort by score, ties keep input order (sort_by is stable).
+        scored.sort_by(|a, b| {
+            a.1.score
+                .partial_cmp(&b.1.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+        let ranked = scored
+            .iter()
+            .map(|(b, c)| (backend_label(b), c.score))
+            .collect::<Vec<_>>();
+        let (backend, cost) = scored.into_iter().next()?;
+        Some(RouteRecommendation {
+            backend,
+            score: cost.score,
+            samples: cost.samples,
+            ranked,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snap(range_gets: u64, bytes_read: u64, compute_ms: u64) -> IoTraceSnapshot {
+        let mut s = IoTraceSnapshot {
+            range_gets,
+            bytes_read,
+            ..Default::default()
+        };
+        if compute_ms > 0 {
+            s.compute_ms.insert("engine".to_string(), compute_ms);
+        }
+        s
+    }
+
+    #[test]
+    fn shape_class_mirrors_scheduler_signals() {
+        assert_eq!(
+            shape_class(&QueryShape {
+                engages_relational: true,
+                parquet_backed: true
+            }),
+            "olap/parquet"
+        );
+        assert_eq!(
+            shape_class(&QueryShape {
+                engages_relational: false,
+                parquet_backed: false
+            }),
+            "oltp/native"
+        );
+    }
+
+    #[test]
+    fn no_history_yields_no_estimate_or_recommendation() {
+        let m = RouteCostModel::new();
+        assert!(m.estimate("olap/parquet", &ComputeBackend::Native).is_none());
+        assert!(
+            m.recommend(
+                "olap/parquet",
+                &[ComputeBackend::Native, ComputeBackend::DataFusionLocal]
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn warmup_threshold_gates_recommendation() {
+        let m = RouteCostModel::new().with_min_samples(3);
+        // Two observations — below the 3-sample warmup → not yet trusted.
+        m.observe("olap/parquet", &ComputeBackend::Native, &snap(100, 1 << 20, 5));
+        m.observe("olap/parquet", &ComputeBackend::Native, &snap(100, 1 << 20, 5));
+        assert!(
+            m.recommend("olap/parquet", &[ComputeBackend::Native])
+                .is_none()
+        );
+        m.observe("olap/parquet", &ComputeBackend::Native, &snap(100, 1 << 20, 5));
+        assert!(
+            m.recommend("olap/parquet", &[ComputeBackend::Native])
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn recommends_the_cheaper_backend_from_measured_traces() {
+        let m = RouteCostModel::new().with_min_samples(1);
+        // DataFusion route pays FEW big coalesced GETs; Native pays MANY small
+        // GETs for the same shape — the trace says DataFusion is cheaper here.
+        for _ in 0..5 {
+            m.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &snap(4, 16 << 20, 50),
+            );
+            m.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &snap(400, 16 << 20, 20),
+            );
+        }
+        let rec = m
+            .recommend(
+                "olap/parquet",
+                &[ComputeBackend::Native, ComputeBackend::DataFusionLocal],
+            )
+            .expect("history exists");
+        // GET-dominated score → DataFusion (4 GETs) beats Native (400 GETs).
+        assert_eq!(rec.backend, ComputeBackend::DataFusionLocal);
+        assert_eq!(rec.ranked.len(), 2);
+        assert_eq!(rec.ranked[0].0, "DataFusionLocal");
+        // Cheapest-first ordering.
+        assert!(rec.ranked[0].1 < rec.ranked[1].1);
+    }
+
+    #[test]
+    fn estimate_reflects_ewma_of_observations() {
+        let m = RouteCostModel::new();
+        for _ in 0..10 {
+            m.observe("oltp/native", &ComputeBackend::Native, &snap(2, 8192, 1));
+        }
+        let est = m
+            .estimate("oltp/native", &ComputeBackend::Native)
+            .expect("history");
+        assert_eq!(est.samples, 10);
+        // EWMA of a constant series converges to that constant.
+        assert!((est.range_gets - 2.0).abs() < 1e-6);
+        assert!(est.score > 0.0);
+    }
+}
