@@ -397,7 +397,10 @@ mod tests {
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));
     }
 
-    fn io_snap(range_gets: u64, bytes_read: u64) -> crate::observability::io_trace::IoTraceSnapshot {
+    fn io_snap(
+        range_gets: u64,
+        bytes_read: u64,
+    ) -> crate::observability::io_trace::IoTraceSnapshot {
         crate::observability::io_trace::IoTraceSnapshot {
             range_gets,
             bytes_read,
@@ -476,7 +479,11 @@ mod tests {
         }; // static => DataFusionLocal
         let model = RouteCostModel::new().with_min_samples(1); // override OFF (default)
         for _ in 0..5 {
-            model.observe("olap/parquet", &ComputeBackend::Native, &io_snap(3, 16 << 20));
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
             model.observe(
                 "olap/parquet",
                 &ComputeBackend::DataFusionLocal,
@@ -499,7 +506,11 @@ mod tests {
         let model = RouteCostModel::new().with_min_samples(1);
         model.set_override_enabled(true);
         for _ in 0..5 {
-            model.observe("olap/parquet", &ComputeBackend::Native, &io_snap(3, 16 << 20));
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
             model.observe(
                 "olap/parquet",
                 &ComputeBackend::DataFusionLocal,
@@ -526,7 +537,11 @@ mod tests {
         // Even if DataFusion looks absurdly cheap for this class, it is not a
         // freshness-safe candidate for OLTP, so it can never be chosen.
         for _ in 0..5 {
-            model.observe("oltp/parquet", &ComputeBackend::Native, &io_snap(500, 16 << 20));
+            model.observe(
+                "oltp/parquet",
+                &ComputeBackend::Native,
+                &io_snap(500, 16 << 20),
+            );
             model.observe(
                 "oltp/parquet",
                 &ComputeBackend::DataFusionLocal,

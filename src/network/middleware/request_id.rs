@@ -28,7 +28,6 @@
 //! - Creates a tracing span for the request
 
 use axum::{
-    body::Body,
     http::{HeaderValue, Request},
     middleware::Next,
     response::Response,
@@ -80,7 +79,7 @@ impl std::fmt::Display for RequestId {
 ///     .route("/api/v1/...", ...)
 ///     .layer(middleware::from_fn(request_id_middleware));
 /// ```
-pub async fn request_id_middleware(mut request: Request<Body>, next: Next<Body>) -> Response {
+pub async fn request_id_middleware(mut request: axum::extract::Request, next: Next) -> Response {
     // Extract or generate request ID
     let request_id = request
         .headers()

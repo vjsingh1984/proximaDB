@@ -426,7 +426,7 @@ fn test_load_private_key_from_pem() {
     let cert = manager.generate_self_signed().unwrap();
     let key = load_private_key_from_pem(cert.key_pem.as_bytes()).unwrap();
 
-    assert!(!key.0.is_empty());
+    assert!(!key.secret_der().is_empty());
 }
 
 #[test]

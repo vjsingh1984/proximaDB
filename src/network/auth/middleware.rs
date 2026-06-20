@@ -22,8 +22,8 @@ use crate::network::auth::{
 use crate::network::tls::ClientCertificateInfo;
 use crate::security::{AuthenticationData, SecurityCoordinator, UnifiedUserContext};
 use axum::{
-    extract::State,
-    http::{Request, StatusCode},
+    extract::{Request, State},
+    http::StatusCode,
     middleware::Next,
     response::{Json, Response},
 };
@@ -113,10 +113,10 @@ impl DataPlaneCapability {
 }
 
 /// Unified auth middleware using SecurityCoordinator
-pub async fn auth_middleware_unified<B>(
+pub async fn auth_middleware_unified(
     State(security_coordinator): State<Arc<SecurityCoordinator>>,
-    mut request: Request<B>,
-    next: Next<B>,
+    mut request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
     let path = request.uri().path();
 
@@ -182,10 +182,10 @@ pub async fn auth_middleware_unified<B>(
 /// Existing routes use `auth_middleware_unified` (just above) which
 /// stores the rich `UnifiedUserContext` directly. That path is the
 /// production surface for v0.3.
-pub async fn auth_middleware_unified_port<B>(
+pub async fn auth_middleware_unified_port(
     State(security_port): State<Arc<dyn proximadb_runtime::SecurityPort>>,
-    mut request: Request<B>,
-    next: Next<B>,
+    mut request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
     let path = request.uri().path();
 
@@ -238,10 +238,10 @@ fn map_header_to_port_credential(
 }
 
 /// Middleware to authenticate and authorize requests
-pub async fn auth_middleware<B>(
+pub async fn auth_middleware(
     State(auth_state): State<AuthMiddlewareState>,
-    mut request: Request<B>,
-    next: Next<B>,
+    mut request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
     let uri = request.uri();
     let method = request.method();
@@ -285,9 +285,7 @@ pub async fn auth_middleware<B>(
 }
 
 /// Extract authorization header from request
-fn extract_auth_header<B>(
-    request: &Request<B>,
-) -> Result<String, (StatusCode, Json<AuthErrorResponse>)> {
+fn extract_auth_header(request: &Request) -> Result<String, (StatusCode, Json<AuthErrorResponse>)> {
     let auth_header = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)
@@ -333,9 +331,9 @@ fn map_header_to_auth_data(
     Ok(AuthenticationData::ApiKey(auth_header.to_string()))
 }
 
-fn validate_rest_data_plane_capability<B>(
+fn validate_rest_data_plane_capability(
     capability: &DataPlaneCapability,
-    request: &Request<B>,
+    request: &Request,
 ) -> Result<(), (StatusCode, Json<AuthErrorResponse>)> {
     if capability.protocol.as_deref() != Some("rest") {
         return Err(authz_response(
@@ -657,7 +655,7 @@ pub trait RequestAuthExt {
     fn tenant_id(&self) -> Option<&str>;
 }
 
-impl<B> RequestAuthExt for Request<B> {
+impl RequestAuthExt for Request {
     fn auth_result(&self) -> Option<&AuthResult> {
         self.extensions().get::<AuthResult>()
     }
@@ -767,10 +765,10 @@ pub struct MtlsAuthenticatedUser {
 ///     .route("/api/v1/secure", get(handler))
 ///     .layer(middleware::from_fn_with_state(mtls_state, mtls_auth_middleware));
 /// ```
-pub async fn mtls_auth_middleware<B>(
+pub async fn mtls_auth_middleware(
     State(mtls_state): State<Arc<MtlsAuthState>>,
-    mut request: Request<B>,
-    next: Next<B>,
+    mut request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
     // Skip if mTLS is not enabled
     if !mtls_state.config.enabled {
@@ -911,13 +909,13 @@ pub fn matches_cn_pattern(cn: &str, pattern: &str) -> bool {
 ///
 /// This middleware provides flexibility for services that want to accept both
 /// mTLS and token-based authentication.
-pub async fn hybrid_auth_middleware<B>(
+pub async fn hybrid_auth_middleware(
     State((mtls_state, security_coordinator)): State<(
         Option<Arc<MtlsAuthState>>,
         Arc<SecurityCoordinator>,
     )>,
-    mut request: Request<B>,
-    next: Next<B>,
+    mut request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
     let path = request.uri().path();
 
@@ -990,11 +988,11 @@ mod tests {
     use super::*;
     use axum::Router;
     use axum::body::Body;
+    use axum::body::to_bytes;
     use axum::extract::Extension;
-    use axum::http::Request;
+    use axum::extract::Request;
     use axum::middleware;
     use axum::routing::get;
-    use hyper::body::to_bytes;
     use std::collections::HashMap;
     use tower::ServiceExt;
 
@@ -1219,7 +1217,7 @@ mod tests {
             .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body())
+        let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("Failed to read response body");
         assert_eq!(&body[..], b"ok");
@@ -1251,7 +1249,7 @@ mod tests {
             .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let body = to_bytes(response.into_body())
+        let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("Authorization header is required"));
@@ -1312,7 +1310,7 @@ mod tests {
             .await
             .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body())
+        let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("jwt-user"));

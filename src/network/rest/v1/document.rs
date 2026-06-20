@@ -168,32 +168,35 @@ pub fn create_document_router() -> Router<DocumentApiState> {
         // Collection operations
         .route("/collections", post(create_collection))
         .route("/collections", get(list_collections))
-        .route("/collections/:collection", get(get_collection_info))
-        .route("/collections/:collection", delete(delete_collection))
+        .route("/collections/{collection}", get(get_collection_info))
+        .route("/collections/{collection}", delete(delete_collection))
         // Document CRUD
-        .route("/collections/:collection/documents", post(insert_document))
-        .route("/collections/:collection/documents", get(query_documents))
-        .route("/collections/:collection/documents/:id", get(get_document))
+        .route("/collections/{collection}/documents", post(insert_document))
+        .route("/collections/{collection}/documents", get(query_documents))
         .route(
-            "/collections/:collection/documents/:id",
+            "/collections/{collection}/documents/{id}",
+            get(get_document),
+        )
+        .route(
+            "/collections/{collection}/documents/{id}",
             delete(delete_document),
         )
         .route(
-            "/collections/:collection/documents/:id",
+            "/collections/{collection}/documents/{id}",
             patch(update_document),
         )
         // Batch and aggregate operations
         .route(
-            "/collections/:collection/documents/_batch",
+            "/collections/{collection}/documents/_batch",
             post(batch_insert_documents),
         )
         .route(
-            "/collections/:collection/documents/_aggregate",
+            "/collections/{collection}/documents/_aggregate",
             post(aggregate_documents),
         )
         // Index operations
-        .route("/collections/:collection/indexes", post(create_index))
-        .route("/collections/:collection/indexes", get(list_indexes))
+        .route("/collections/{collection}/indexes", post(create_index))
+        .route("/collections/{collection}/indexes", get(list_indexes))
 }
 
 /// Create a document collection

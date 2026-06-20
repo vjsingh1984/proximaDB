@@ -126,22 +126,22 @@ pub fn create_iceberg_rest_router() -> Router<IcebergRestState> {
         // Namespaces
         .route("/namespaces", get(list_namespaces).post(create_namespace))
         .route(
-            "/namespaces/:namespace",
+            "/namespaces/{namespace}",
             get(get_namespace)
                 .head(namespace_exists)
                 .delete(drop_namespace),
         )
         .route(
-            "/namespaces/:namespace/properties",
+            "/namespaces/{namespace}/properties",
             post(update_namespace_properties),
         )
         // Tables
         .route(
-            "/namespaces/:namespace/tables",
+            "/namespaces/{namespace}/tables",
             get(list_tables).post(create_table),
         )
         .route(
-            "/namespaces/:namespace/tables/:table",
+            "/namespaces/{namespace}/tables/{table}",
             get(load_table)
                 .head(table_exists)
                 .delete(drop_table)
@@ -149,13 +149,13 @@ pub fn create_iceberg_rest_router() -> Router<IcebergRestState> {
         )
         // Serve a persisted metadata.json so `metadata-location` resolves (TD-119)
         .route(
-            "/namespaces/:namespace/tables/:table/metadata/:file",
+            "/namespaces/{namespace}/tables/{table}/metadata/{file}",
             get(load_table_metadata_file),
         )
         // Register existing table
-        .route("/namespaces/:namespace/register", post(register_table))
+        .route("/namespaces/{namespace}/register", post(register_table))
         // Views (v2 stub — returns empty list)
-        .route("/namespaces/:namespace/views", get(list_views))
+        .route("/namespaces/{namespace}/views", get(list_views))
 }
 
 // ============================================================================

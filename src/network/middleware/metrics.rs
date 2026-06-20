@@ -6,10 +6,8 @@
 //! error-rate visibility per endpoint. Labels use the *matched route pattern*
 //! (e.g. `/api/v2/collections/:collection_id`), not the raw path, to keep label
 //! cardinality bounded. Scraped via the existing `/metrics/prometheus` surface.
-
-use axum::body::Body;
 use axum::extract::MatchedPath;
-use axum::http::Request;
+use axum::extract::Request;
 use axum::middleware::Next;
 use axum::response::Response;
 use std::time::Instant;
@@ -33,7 +31,7 @@ lazy_static! {
 }
 
 /// Records latency + count for each request, labelled by matched route.
-pub async fn metrics_middleware(request: Request<Body>, next: Next<Body>) -> Response {
+pub async fn metrics_middleware(request: Request, next: Next) -> Response {
     let method = request.method().as_str().to_owned();
     // Matched route pattern bounds cardinality; unmatched (fallback) requests
     // share a single `<unmatched>` bucket so random 404 paths can't explode it.

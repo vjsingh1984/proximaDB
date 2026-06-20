@@ -31,7 +31,7 @@ impl AqlApiState {
 pub fn create_router() -> Router<AqlApiState> {
     Router::new()
         .route("/execute", post(execute_aql))
-        .route("/audit/:query_id", get(get_audit_trail))
+        .route("/audit/{query_id}", get(get_audit_trail))
 }
 
 /// Request for AQL execution.

@@ -93,13 +93,13 @@ impl From<anyhow::Error> for RestError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hyper::body::to_bytes;
+    use axum::body::to_bytes;
     use serde_json::Value;
 
     async fn response_parts(error: RestError) -> (StatusCode, Value) {
         let response = error.into_response();
         let status = response.status();
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json = serde_json::from_slice(&body).unwrap();
         (status, json)
     }

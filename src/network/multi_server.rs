@@ -926,11 +926,14 @@ impl MultiServer {
             );
 
             let handle = tokio::spawn(async move {
-                if let Err(e) = axum::Server::bind(&internal_rest_addr)
-                    .serve(router.into_make_service())
-                    .await
-                {
-                    tracing::error!("Internal REST server error: {}", e);
+                // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+                match tokio::net::TcpListener::bind(&internal_rest_addr).await {
+                    Ok(listener) => {
+                        if let Err(e) = axum::serve(listener, router.into_make_service()).await {
+                            tracing::error!("Internal REST server error: {}", e);
+                        }
+                    }
+                    Err(e) => tracing::error!("Internal REST bind error: {}", e),
                 }
             });
             handles.push(handle);

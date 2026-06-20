@@ -42,8 +42,8 @@
 //! ```
 
 use axum::{
-    body::Body,
-    http::{Request, StatusCode},
+    extract::Request,
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -230,7 +230,7 @@ impl TenantExtractor {
     /// Extract tenant ID from request
     fn extract_tenant_id(
         &self,
-        req: &Request<Body>,
+        req: &Request,
     ) -> Result<Option<(String, TenantIdSource)>, TenantExtractionError> {
         let requested_tenant = req
             .headers()
@@ -272,7 +272,7 @@ impl TenantExtractor {
         Ok(None)
     }
 
-    fn authenticated_tenant_id(req: &Request<Body>) -> Option<(String, TenantIdSource)> {
+    fn authenticated_tenant_id(req: &Request) -> Option<(String, TenantIdSource)> {
         if let Some(user_context) = req
             .extensions()
             .get::<crate::security::UnifiedUserContext>()
@@ -345,8 +345,8 @@ impl Default for TenantExtractor {
 /// MiddlewareTenantContext into request extensions.
 pub async fn tenant_middleware(
     axum::extract::State(extractor): axum::extract::State<TenantExtractor>,
-    mut req: Request<Body>,
-    next: Next<Body>,
+    mut req: Request,
+    next: Next,
 ) -> Response {
     // Extract tenant ID
     match extractor.extract_tenant_id(&req) {
@@ -441,7 +441,7 @@ pub trait TenantContextExt {
     fn tenant_id_or_default(&self) -> String;
 }
 
-impl<B> TenantContextExt for Request<B> {
+impl TenantContextExt for Request {
     fn tenant_context(&self) -> Option<&MiddlewareTenantContext> {
         self.extensions().get::<MiddlewareTenantContext>()
     }

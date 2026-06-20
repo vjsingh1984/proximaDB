@@ -434,7 +434,11 @@ pub async fn scope<F: std::future::Future>(future: F) -> F::Output {
 /// snapshot as a [`TARGET`] event labelled by `tenant_id`/`route`. This is the
 /// one call a request handler adds at the query boundary — co-locate it with
 /// the existing `predicate_diagnostics::scope`.
-pub async fn instrument<F>(tenant_id: Option<String>, route: impl Into<String>, future: F) -> F::Output
+pub async fn instrument<F>(
+    tenant_id: Option<String>,
+    route: impl Into<String>,
+    future: F,
+) -> F::Output
 where
     F: std::future::Future,
 {
@@ -605,7 +609,11 @@ mod tests {
         set_route_observer(None); // reset global so other tests are unaffected
 
         let got = seen.lock().unwrap();
-        assert_eq!(got.len(), 1, "observer fired exactly once (only the routed query)");
+        assert_eq!(
+            got.len(),
+            1,
+            "observer fired exactly once (only the routed query)"
+        );
         let (snap, class, backend) = &got[0];
         assert_eq!(class, "olap/parquet");
         assert_eq!(backend, "DataFusionLocal");
@@ -639,11 +647,15 @@ mod tests {
 
     #[tokio::test]
     async fn instrument_runs_and_returns_output() {
-        let out = instrument(Some("tenant-a".to_string()), "rest.v2.records.scan", async {
-            record_op_str("fetch_pax");
-            record_bytes_read(2_048);
-            42
-        })
+        let out = instrument(
+            Some("tenant-a".to_string()),
+            "rest.v2.records.scan",
+            async {
+                record_op_str("fetch_pax");
+                record_bytes_read(2_048);
+                42
+            },
+        )
         .await;
         assert_eq!(out, 42);
     }

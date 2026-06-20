@@ -174,25 +174,31 @@ pub fn create_document_router() -> Router<DocumentRestState> {
             // doubling, and no Elasticsearch `_batch`/`_aggregate` underscores.
             .route("/", post(create_collection).get(list_collections))
             .route(
-                "/:collection",
+                "/{collection}",
                 get(get_collection_info).delete(delete_collection),
             )
             .route(
-                "/:collection/documents",
+                "/{collection}/documents",
                 post(insert_document).get(query_documents),
             )
             .route(
-                "/:collection/documents/:id",
+                "/{collection}/documents/{id}",
                 get(get_document)
                     .delete(delete_document)
                     .patch(update_document),
             )
-            .route("/:collection/documents/batch", post(batch_insert_documents))
             .route(
-                "/:collection/documents/aggregate",
+                "/{collection}/documents/batch",
+                post(batch_insert_documents),
+            )
+            .route(
+                "/{collection}/documents/aggregate",
                 post(aggregate_documents),
             )
-            .route("/:collection/indexes", post(create_index).get(list_indexes)),
+            .route(
+                "/{collection}/indexes",
+                post(create_index).get(list_indexes),
+            ),
     )
 }
 

@@ -526,8 +526,8 @@ mod tests {
     use super::*;
     use axum::Router;
     use axum::body::Body;
+    use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
-    use hyper::body::to_bytes;
     use tower::ServiceExt;
 
     #[test]
@@ -594,7 +594,7 @@ mod tests {
             .expect("Should get response successfully");
         assert_eq!(response.status(), StatusCode::OK);
 
-        let body = to_bytes(response.into_body())
+        let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("Should read response body successfully");
         let payload: serde_json::Value =
