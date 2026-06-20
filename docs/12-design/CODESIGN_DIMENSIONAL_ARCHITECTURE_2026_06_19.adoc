@@ -317,19 +317,27 @@ granularity is per-query (not per-tenant-aggregate)*.
 
 Before tuning any dimension, capture the trace. Sequenced, low-risk, additive:
 
-. *Query-scoped I/O span.* Extend the existing `tracing` spans (request_id middleware) with a
-per-query `IoTrace` recording, per dimension: GET/PUT count, bytes read/written, footer-cache
-hit/miss, bytes moved cross-AZ, engine-ms by backend. Emit as an OTel span *and* fold into the
-`consumption_metrics` counters (no new authority — same sinks, finer source).
-. *I/O-scheduler trace.* Instrument outstanding-request depth, byte backpressure, and tail-hedge
-fires in the ranged-reader path (corroborates the Durner 200–250-outstanding / 8–16 MiB model against
-*our* workload).
-. *Cold-object-store evidence.* Add a `cloud_latency` claim to `BENCHMARK_EVIDENCE.toml` backed by a
-real S3-compatible (MinIO/Wasabi) run of `bench_vector_object_economy_e2e.rs` — today only local-FS
-cold/warm is MEASURED, so the S3 latency floor that dominates cold ANN is unverified.
-. *Wire OTel to a backend.* `src/monitoring/opentelemetry.rs` exists but exports nowhere; point it at
-an OTLP collector so traces are *persisted* and the distribution is analyzable (P12: verify the
-integrated system).
+. *Query-scoped I/O span.* [*DONE*] `src/observability/io_trace.rs` — a per-query `IoTrace`
+task-local recording, per dimension: GET/PUT/LIST/DELETE count, bytes read/written, footer-cache
+hit/miss, bytes moved cross-AZ, engine-ms by backend. Emitted as a structured `tracing` event
+(`proximadb::io_trace`); wired at the PAX read paths + the search handler. No new authority — the
+per-tenant counters stay the chargeback source of truth; this is the finer per-query source.
+. *I/O-scheduler trace.* [*PARTIAL*] `range_gets` + `avg_get_bytes` (the read-granularity signal vs the
+8–16 MiB optimum) are captured via `RangedSegmentReader::read_stats`. Outstanding-request *depth*,
+byte backpressure, and tail-hedge fires are *deferred* until the reader issues GETs concurrently —
+today it awaits them serially (depth 1); they corroborate the Durner 200–250-outstanding model only
+once the concurrent fetch scheduler lands.
+. *Cold-object-store evidence.* [*DONE (claim) / pending artifact*] `cloud_latency` registered in
+`BENCHMARK_EVIDENCE.toml` as `unverified` with the reproduction recipe. Promotion to `measured` needs
+a real S3-compatible (MinIO/Wasabi) run of `bench_vector_object_economy_e2e.rs` — today only local-FS
+cold/warm is MEASURED, so the S3 latency floor that dominates cold ANN stays unverified.
+. *Wire OTel to a backend.* [*DEP-GATED*] `IoTraceSnapshot` is `serde`-serializable (export-ready
+payload). Full OTLP-collector export is a deliberate dependency decision not yet taken — the tree
+lacks `opentelemetry`/`opentelemetry-otlp`/`tracing-opentelemetry`. When approved: attach a
+`tracing_opentelemetry::layer()` to the `src/bin/server.rs` subscriber registry gated on
+`OTEL_EXPORTER_OTLP_ENDPOINT` and point `src/monitoring/opentelemetry.rs` at the collector. Interim
+persistence needs zero new deps (route the `proximadb::io_trace` target to a `tracing-appender` JSON
+sink).
 
 These four are the prerequisite for trusting §3's cost model and every §2 lever. *No dimension is
 tuned on intuition.*

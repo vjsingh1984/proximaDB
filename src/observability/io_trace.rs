@@ -36,6 +36,27 @@
 //! grep-able structured logs. This module adds **no new billing authority** —
 //! the per-tenant counters stay the source of truth for chargeback; this is the
 //! finer, per-query *source* the spec calls for.
+//!
+//! ## OpenTelemetry export (§4.4 — dependency-gated follow-up)
+//!
+//! Today the snapshot is emitted as a structured [`tracing`] event under
+//! [`TARGET`] and is routable by any subscriber layer. Full export to an OTLP
+//! collector (so these become persisted, queryable spans on a trace backend) is
+//! a deliberate **dependency decision** not yet taken: the tree has
+//! `tracing-subscriber` + `tracing-appender` but none of `opentelemetry`,
+//! `opentelemetry_sdk`, `opentelemetry-otlp`, or `tracing-opentelemetry`. When
+//! that stack is approved the wiring is small and already enabled here:
+//!
+//! 1. [`IoTraceSnapshot`] is `serde`-serializable, so it maps directly to OTLP
+//!    span attributes (or a JSON sink) with no further plumbing.
+//! 2. Attach a `tracing_opentelemetry::layer()` to the subscriber registry in
+//!    `src/bin/server.rs` (beside the existing console/file `fmt` layers, at the
+//!    `tracing_subscriber::registry()` call), gated on `OTEL_EXPORTER_OTLP_ENDPOINT`.
+//! 3. Point the existing `crate::monitoring::opentelemetry` config's
+//!    `otlp_endpoint` at the collector.
+//!
+//! Until then, persistence is available with zero new deps by routing [`TARGET`]
+//! to a `tracing-appender` JSON file sink.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -204,7 +225,11 @@ impl IoTrace {
 
 /// Immutable, plain-value view of an [`IoTrace`] at a point in time — what gets
 /// emitted as a `tracing` event and what a future cost-model reader consumes.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+///
+/// Serde-serializable so an export layer (OTLP span attributes, a JSON sink, or
+/// a cost-model reader) can consume the snapshot directly — the data-shape half
+/// of §4.4. See the module docs for the OTLP-collector wiring plan.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct IoTraceSnapshot {
     pub get_ops: u64,
     pub put_ops: u64,
@@ -473,6 +498,30 @@ mod tests {
         assert_eq!(s.footer_hits, 8);
         assert_eq!(s.footer_misses, 3);
         assert_eq!(s.footer_hit_ratio(), Some(8.0 / 11.0));
+    }
+
+    #[test]
+    fn snapshot_json_round_trips_for_export() {
+        // §4.4 enabler: the snapshot is the export payload (OTLP attrs / JSON
+        // sink / cost-model reader), so it must serde round-trip losslessly.
+        let mut compute = BTreeMap::new();
+        compute.insert("datafusion".to_string(), 12u64);
+        let s = IoTraceSnapshot {
+            get_ops: 5,
+            list_ops: 1,
+            bytes_read: 8_388_608,
+            range_gets: 2,
+            footer_hits: 3,
+            footer_misses: 1,
+            bytes_cross_az: 4_096,
+            compute_ms: compute,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&s).expect("serialize");
+        let back: IoTraceSnapshot = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(s, back);
+        // Spot-check a derived field survives the data it depends on.
+        assert_eq!(back.avg_get_bytes(), Some(8_388_608.0 / 2.0));
     }
 
     #[tokio::test]
