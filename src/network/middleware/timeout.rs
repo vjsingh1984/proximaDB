@@ -42,9 +42,9 @@
 //! };
 //! ```
 
+use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
-use axum::http::StatusCode;
 use tower_http::timeout::TimeoutLayer;
 
 /// Request timeout configuration.
@@ -140,7 +140,10 @@ pub fn create_timeout_layer(config: &TimeoutConfig) -> Option<TimeoutLayer> {
         config.request_timeout_secs
     );
 
-    Some(TimeoutLayer::with_status_code(StatusCode::REQUEST_TIMEOUT, timeout))
+    Some(TimeoutLayer::with_status_code(
+        StatusCode::REQUEST_TIMEOUT,
+        timeout,
+    ))
 }
 
 #[cfg(test)]
