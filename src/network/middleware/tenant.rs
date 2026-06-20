@@ -42,7 +42,6 @@
 //! ```
 
 use axum::{
-    body::Body,
     extract::Request,
     http::StatusCode,
     middleware::Next,

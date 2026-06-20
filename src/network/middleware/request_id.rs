@@ -28,7 +28,6 @@
 //! - Creates a tracing span for the request
 
 use axum::{
-    body::Body,
     http::{HeaderValue, Request},
     middleware::Next,
     response::Response,

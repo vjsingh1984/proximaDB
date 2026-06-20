@@ -6,8 +6,6 @@
 //! error-rate visibility per endpoint. Labels use the *matched route pattern*
 //! (e.g. `/api/v2/collections/:collection_id`), not the raw path, to keep label
 //! cardinality bounded. Scraped via the existing `/metrics/prometheus` surface.
-
-use axum::body::Body;
 use axum::extract::MatchedPath;
 use axum::extract::Request;
 use axum::middleware::Next;
