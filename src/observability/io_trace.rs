@@ -101,6 +101,11 @@ pub struct IoTrace {
     delete_ops: AtomicU64,
     /// Bytes fetched from object storage (Dimension 1 — the read term of KRU).
     bytes_read: AtomicU64,
+    /// Number of ranged GET requests issued. With `bytes_read` yields the
+    /// average GET size — the read-granularity signal (§2.1): coalesced toward
+    /// the ~8-16 MiB S3 optimum, or fragmented into per-request-fee-dominated
+    /// small GETs?
+    range_gets: AtomicU64,
     /// Bytes written to object storage (ingest/flush — KIU).
     bytes_written: AtomicU64,
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
@@ -135,6 +140,11 @@ impl IoTrace {
     /// Add to bytes fetched from object storage.
     pub fn record_bytes_read(&self, bytes: u64) {
         self.bytes_read.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    /// Add to the count of ranged GET requests issued.
+    pub fn record_range_gets(&self, gets: u64) {
+        self.range_gets.fetch_add(gets, Ordering::Relaxed);
     }
 
     /// Add to bytes written to object storage.
@@ -178,6 +188,7 @@ impl IoTrace {
             list_ops: self.list_ops.load(Ordering::Relaxed),
             delete_ops: self.delete_ops.load(Ordering::Relaxed),
             bytes_read: self.bytes_read.load(Ordering::Relaxed),
+            range_gets: self.range_gets.load(Ordering::Relaxed),
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
@@ -200,6 +211,7 @@ pub struct IoTraceSnapshot {
     pub list_ops: u64,
     pub delete_ops: u64,
     pub bytes_read: u64,
+    pub range_gets: u64,
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
@@ -229,10 +241,23 @@ impl IoTraceSnapshot {
         self.compute_ms.values().copied().sum()
     }
 
+    /// Average bytes per ranged GET — the read-granularity signal (§2.1).
+    /// `None` when no ranged GETs were issued. A value far below the ~8-16 MiB
+    /// S3 cost-throughput optimum means reads are fragmented and the per-GET fee
+    /// dominates; this is the number the storage co-design lever moves.
+    pub fn avg_get_bytes(&self) -> Option<f64> {
+        if self.range_gets == 0 {
+            None
+        } else {
+            Some(self.bytes_read as f64 / self.range_gets as f64)
+        }
+    }
+
     /// `true` when nothing was recorded — used to suppress empty trace events.
     pub fn is_empty(&self) -> bool {
         self.total_ops() == 0
             && self.bytes_read == 0
+            && self.range_gets == 0
             && self.bytes_written == 0
             && self.footer_hits == 0
             && self.footer_misses == 0
@@ -256,6 +281,8 @@ impl IoTraceSnapshot {
             list_ops = self.list_ops,
             delete_ops = self.delete_ops,
             bytes_read = self.bytes_read,
+            range_gets = self.range_gets,
+            avg_get_bytes = self.avg_get_bytes().unwrap_or(0.0),
             bytes_written = self.bytes_written,
             footer_hits = self.footer_hits,
             footer_misses = self.footer_misses,
@@ -284,6 +311,11 @@ pub fn record_op_str(operation: &str) {
 /// Add to bytes fetched from object storage for the active query.
 pub fn record_bytes_read(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_bytes_read(bytes));
+}
+
+/// Add to the count of ranged GET requests for the active query.
+pub fn record_range_gets(gets: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_range_gets(gets));
 }
 
 /// Add to bytes written to object storage for the active query.
@@ -368,6 +400,7 @@ mod tests {
         t.record_op(IoOp::Get);
         t.record_bytes_read(1_024);
         t.record_bytes_read(512);
+        t.record_range_gets(3);
         t.record_footer(true);
         t.record_footer(true);
         t.record_footer(false);
@@ -381,6 +414,8 @@ mod tests {
         assert_eq!(s.list_ops, 1);
         assert_eq!(s.total_ops(), 3);
         assert_eq!(s.bytes_read, 1_536);
+        assert_eq!(s.range_gets, 3);
+        assert_eq!(s.avg_get_bytes(), Some(1_536.0 / 3.0));
         assert_eq!(s.bytes_cross_az, 2_048);
         assert_eq!(s.footer_hit_ratio(), Some(2.0 / 3.0));
         assert_eq!(s.total_compute_ms(), 17);
@@ -392,6 +427,7 @@ mod tests {
     fn empty_snapshot_is_empty() {
         assert!(IoTrace::new().snapshot().is_empty());
         assert_eq!(IoTraceSnapshot::default().footer_hit_ratio(), None);
+        assert_eq!(IoTraceSnapshot::default().avg_get_bytes(), None);
     }
 
     #[tokio::test]

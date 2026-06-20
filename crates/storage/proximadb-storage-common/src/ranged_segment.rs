@@ -65,6 +65,7 @@ pub struct RangedSegmentReader<'b> {
     bytes_read: AtomicU64,
     footer_hits: AtomicU64,
     footer_misses: AtomicU64,
+    range_gets: AtomicU64,
 }
 
 /// Snapshot of one [`RangedSegmentReader`] open's physical read accounting.
@@ -80,6 +81,14 @@ pub struct SegmentReadStats {
     pub footer_hits: u64,
     /// Block-layout footer/metadata cache misses (built from ranged GETs).
     pub footer_misses: u64,
+    /// Number of ranged GET requests issued (each `fetch`). With `bytes_read`
+    /// this yields the average GET size — the co-design read-granularity signal
+    /// (§2.1): are reads coalesced toward the ~8-16 MiB S3 cost-throughput
+    /// optimum, or fragmented into many small, per-request-fee-dominated GETs?
+    /// (Outstanding-request *depth*, byte backpressure, and tail-hedging are
+    /// deferred until the reader issues these concurrently — today it awaits
+    /// them serially, so depth is 1.)
+    pub range_gets: u64,
 }
 
 impl<'b> RangedSegmentReader<'b> {
@@ -145,18 +154,20 @@ impl<'b> RangedSegmentReader<'b> {
             bytes_read: AtomicU64::new(0),
             footer_hits: AtomicU64::new(0),
             footer_misses: AtomicU64::new(0),
+            range_gets: AtomicU64::new(0),
         })
     }
 
     /// Physical read accounting accumulated by this open (co-design C0 trace
-    /// substrate). `bytes_read` excludes the one-time index-locate suffix read
-    /// done before construction. Callers forward this into the per-query
-    /// `IoTrace`.
+    /// substrate). `bytes_read` / `range_gets` exclude the one-time index-locate
+    /// suffix read done before construction. Callers forward this into the
+    /// per-query `IoTrace`.
     pub fn read_stats(&self) -> SegmentReadStats {
         SegmentReadStats {
             bytes_read: self.bytes_read.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
+            range_gets: self.range_gets.load(Ordering::Relaxed),
         }
     }
 
@@ -201,6 +212,7 @@ impl<'b> RangedSegmentReader<'b> {
             .await?;
         self.bytes_read
             .fetch_add(out.len() as u64, Ordering::Relaxed);
+        self.range_gets.fetch_add(1, Ordering::Relaxed);
         Ok(out)
     }
 
@@ -692,6 +704,13 @@ mod tests {
             s1.bytes_read > 0 && s1.bytes_read <= after_first,
             "reader byte accounting {} within bridge total {after_first}",
             s1.bytes_read
+        );
+        // Read-granularity signal: a cold open issues multiple ranged GETs, and
+        // average GET size = bytes_read / range_gets is well-defined.
+        assert!(s1.range_gets > 0, "cold open issued ranged GETs");
+        assert!(
+            (s1.bytes_read / s1.range_gets) > 0,
+            "average GET size is well-defined and positive"
         );
 
         // Second read: footers come from cache → only stripe bytes are fetched.

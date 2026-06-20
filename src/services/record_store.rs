@@ -3368,6 +3368,7 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             // effectiveness, Dimensions 1 & 3).
             let st = reader.read_stats();
             io_trace::record_bytes_read(st.bytes_read);
+            io_trace::record_range_gets(st.range_gets);
             io_trace::record_footers(st.footer_hits, st.footer_misses);
             for mut record in recs {
                 record.variation_id = Some(table_schema.name.clone());
