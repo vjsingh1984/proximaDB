@@ -387,7 +387,10 @@ mod tests {
     #[test]
     fn no_history_yields_no_estimate_or_recommendation() {
         let m = RouteCostModel::new();
-        assert!(m.estimate("olap/parquet", &ComputeBackend::Native).is_none());
+        assert!(
+            m.estimate("olap/parquet", &ComputeBackend::Native)
+                .is_none()
+        );
         assert!(
             m.recommend(
                 "olap/parquet",
@@ -401,13 +404,25 @@ mod tests {
     fn warmup_threshold_gates_recommendation() {
         let m = RouteCostModel::new().with_min_samples(3);
         // Two observations — below the 3-sample warmup → not yet trusted.
-        m.observe("olap/parquet", &ComputeBackend::Native, &snap(100, 1 << 20, 5));
-        m.observe("olap/parquet", &ComputeBackend::Native, &snap(100, 1 << 20, 5));
+        m.observe(
+            "olap/parquet",
+            &ComputeBackend::Native,
+            &snap(100, 1 << 20, 5),
+        );
+        m.observe(
+            "olap/parquet",
+            &ComputeBackend::Native,
+            &snap(100, 1 << 20, 5),
+        );
         assert!(
             m.recommend("olap/parquet", &[ComputeBackend::Native])
                 .is_none()
         );
-        m.observe("olap/parquet", &ComputeBackend::Native, &snap(100, 1 << 20, 5));
+        m.observe(
+            "olap/parquet",
+            &ComputeBackend::Native,
+            &snap(100, 1 << 20, 5),
+        );
         assert!(
             m.recommend("olap/parquet", &[ComputeBackend::Native])
                 .is_some()

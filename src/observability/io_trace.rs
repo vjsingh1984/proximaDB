@@ -609,7 +609,11 @@ mod tests {
         set_route_observer(None); // reset global so other tests are unaffected
 
         let got = seen.lock().unwrap();
-        assert_eq!(got.len(), 1, "observer fired exactly once (only the routed query)");
+        assert_eq!(
+            got.len(),
+            1,
+            "observer fired exactly once (only the routed query)"
+        );
         let (snap, class, backend) = &got[0];
         assert_eq!(class, "olap/parquet");
         assert_eq!(backend, "DataFusionLocal");

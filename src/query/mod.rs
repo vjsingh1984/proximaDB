@@ -120,7 +120,6 @@ pub mod cache; // C2: Query result caching for agentic AI workloads with repetit
 pub mod capability; // Capability registry for query validation and API parity
 pub mod columnar; // M2: Dual Columnar Execution - ColumnarReadProvider abstraction
 pub mod compute_scheduler; // Course-correction §5 P0: read-side multi-engine route selection
-pub mod route_cost_model; // Co-design C4: trace-driven route cost model (feeds the scheduler)
 pub mod ddl_dml; // DDL/DML execution (CREATE TABLE, INSERT, UPDATE, DELETE)
 pub mod distributed; // Distributed query coordination across cluster nodes
 pub mod execution; // New unified execution engine
@@ -143,6 +142,7 @@ pub mod prepared; // Prepared statements for parse-once-execute-many pattern
 pub mod query_optimizer;
 pub mod query_router; // Query routing (Issue #46, SB-16)
 pub mod read_route; // Read-side route/explain contract for DataFusion/Ballista execution
+pub mod route_cost_model; // Co-design C4: trace-driven route cost model (feeds the scheduler)
 pub mod unified_query_port_impl; // Root-crate implementation of UnifiedQueryPort
 pub use unified_query_port_impl::UnifiedQueryPortImpl;
 pub mod repair; // LLD §9 — repair controller primitives (SURE-RAG aggregator + decision)
