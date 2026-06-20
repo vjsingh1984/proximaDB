@@ -31,6 +31,11 @@ OLTP row/delta storage for PostgreSQL-style freshness and constraints, Parquet/I
 for DataFusion analytics, and PAX/specialized layouts as cataloged access methods/projections.
 Always prioritize `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` plus
 `RELATIONAL_STORAGE_FORMAT_AND_INTEROPERABILITY_2026_05_19.adoc` for current mandates.
+
+For the first-principles **co-design** spine over this pivot — how object storage, network, local
+cache, compute-per-modality, and governance are co-optimized against the measured trace distribution
+toward each dimension's dominant cost term, and metered as TAM surfaces — see
+link:CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc[CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19].
 ====
 
 Read these in order for future-shaping architecture work:
@@ -82,7 +87,14 @@ Read these in order for future-shaping architecture work:
    multi-engine dispatch over decoupled lakehouse storage, an LSM/WAL hot tier for OLTP read-after-write,
    and object-store-metadata agent branching. Spawns TD-114…TD-120 (see
    `docs/10-quality/TECHNICAL_DEBT.adoc`). Subordinate to the 2026-06-04 course correction above.
-16. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
+16. `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` +
+   Cross-cutting co-design mandate (Huang "extreme co-design" + Hennessy/Patterson) applied to the five
+   physical dimensions — object storage, network, local disk/cache, compute-per-modality, and
+   governance/security. Names the unified cost objective the `ComputeScheduler` and cache policy must
+   minimize, the per-query trace substrate that must feed it, the TAM/billing meter for each dimension,
+   and the trace-before-tune mandate. Subordinate to the 2026-06-04 course correction; consolidates the
+   caching recalibration, vector object economy, and OSS/enterprise boundary docs.
+17. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
    Legacy foundational mandate. Superseded by the Data Warehouse course correction on 2026-06-04.
 
 == Stable Reference Docs

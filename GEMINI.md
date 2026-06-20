@@ -19,6 +19,30 @@ You must also strictly enforce SaaS Operational constraints:
 - **Financial Telemetry:** Plumb `TenantContext` to all I/O boundaries to emit accurate billing metrics.
 ====
 
+[IMPORTANT]
+====
+**🧬 CO-DESIGN MANDATE (2026-06-19)**
+The five physical dimensions — **object storage, network, local disk/cache, compute-per-modality, and
+governance/security** — are co-optimized as one system against the **measured trace distribution**,
+toward each dimension's **dominant cost term** (for a cloud DB that is I/O round-trips and egress, not
+CPU), the way NVIDIA co-designs silicon+compilers and RISC co-designed the ISA+compiler. See
+`docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
+
+When changing a storage format, reader, codec, cache, or engine you MUST:
+1. **Co-design, don't locally optimize** — state which *dimensional cost term* the change moves (a 4×
+   codec is irrelevant if you still pay N footer round-trips); optimize across the storage↔compute
+   boundary, not within one layer.
+2. **Trace before you tune** — justify with a *measured per-query trace*, never a kernel microbench;
+   new routes/readers/writers emit the query-scoped I/O trace and the `ComputeScheduler` costs routes
+   from measured quantities.
+3. **Boundary is the contract** — every I/O boundary carries `TenantContext` (isolation + billing,
+   fail-closed) and writes under `DrPathBuilder`; isolation is structural, never a per-query predicate.
+4. **Vertical inside, standard outside** — co-design internals freely; expose only at stable seams
+   (pgwire, Arrow Flight, Iceberg, REST v2).
+5. **Meter every dimension as a TAM surface** — storage (KSU), read/compute (KRU/KIU), egress (KEU —
+   open gap), cache per-tenant; governance as tier entitlement.
+====
+
 ### Key Technologies
 - **Rust (2024 Edition):** Core implementation.
 - **Tokio & Axum/Tonic:** Asynchronous runtime and networking (REST/gRPC).
