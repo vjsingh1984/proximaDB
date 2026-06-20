@@ -975,12 +975,20 @@ impl PostgresProtocol {
         controls: ExecutionControls,
     ) -> Result<()> {
         let tenant = self.pgwire_resolve_read_tenant().await;
-        crate::observability::io_trace::instrument(
-            Some(tenant),
-            "pgwire.query",
-            self.execute_query_with_controls_inner(query, controls),
-        )
-        .await
+        // E0 (edge consistency): give every pgwire query a request-id correlation
+        // scope — matching REST's request_id middleware — so logs and error
+        // envelopes carry it; then the per-query io_trace span (tenant-attributed).
+        let request_id = crate::network::middleware::request_id::RequestId::generate();
+        proximadb_api::rest::errors::REQUEST_ID
+            .scope(
+                request_id.0,
+                crate::observability::io_trace::instrument(
+                    Some(tenant),
+                    "pgwire.query",
+                    self.execute_query_with_controls_inner(query, controls),
+                ),
+            )
+            .await
     }
 
     async fn execute_query_with_controls_inner(
