@@ -200,6 +200,49 @@ impl RelationalPredicateTree {
     }
 }
 
+/// Map an Arrow column type (the materialized Parquet's physical type) to the Iceberg
+/// primitive type name for the published `TableMetadata` schema. Kept in lock-step with
+/// the Parquet physical types so an external Iceberg reader's schema matches the file.
+/// Timestamps map to the v3 nanosecond types (ProximaDB is nanosecond-native).
+fn iceberg_type_for(arrow: &arrow_schema::DataType) -> &'static str {
+    use arrow_schema::DataType as D;
+    match arrow {
+        D::Boolean => "boolean",
+        D::Int8 | D::Int16 | D::Int32 => "int",
+        D::Int64 | D::UInt8 | D::UInt16 | D::UInt32 | D::UInt64 => "long",
+        D::Float16 | D::Float32 => "float",
+        D::Float64 => "double",
+        D::Date32 | D::Date64 => "date",
+        D::Timestamp(_, Some(_)) => "timestamptz_ns",
+        D::Timestamp(_, None) => "timestamp_ns",
+        D::Utf8 | D::LargeUtf8 => "string",
+        D::Binary | D::LargeBinary | D::FixedSizeBinary(_) => "binary",
+        // JSON columns materialize as Utf8 today; v3 `variant` is a follow-up.
+        _ => "string",
+    }
+}
+
+/// A stable, well-formed UUID string derived deterministically from the table's object
+/// prefix, so an Iceberg table keeps the same `table-uuid` across re-materializations
+/// (no `uuid` v5 dependency; two seeded hashes fill the 16 bytes).
+fn deterministic_table_uuid(prefix: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h1 = std::collections::hash_map::DefaultHasher::new();
+    prefix.hash(&mut h1);
+    let a = h1.finish();
+    let mut h2 = std::collections::hash_map::DefaultHasher::new();
+    (prefix, 0x50524f58_4944425fu64).hash(&mut h2); // "PROX_IDB_" salt
+    let b = h2.finish();
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        (a >> 32) as u32,
+        (a >> 16) as u16,
+        a as u16,
+        (b >> 48) as u16,
+        b & 0x0000_ffff_ffff_ffff
+    )
+}
+
 /// Parse a SQL literal into a JSON value for the pushdown filter: integers and
 /// floats become JSON numbers (so i64/f64 zone-map pruning fires); everything
 /// else stays a string (string-equality hash pruning).
@@ -834,6 +877,20 @@ impl DmlService {
             .await
     }
 
+    /// CDC change-feed (P2): row-level changes for `table_name` with WAL sequence number
+    /// strictly greater than `since_lsn`, oldest first. Backed by the canonical WAL via the
+    /// record store; returns empty for stores without a readable change log. The REST
+    /// change-feed surface and (later) the pgwire `table_changes()` TVF call this.
+    pub async fn changes_since(
+        &self,
+        table_name: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<crate::services::record_store::ChangeRow>> {
+        self.record_store
+            .read_changes_since(table_name, since_lsn)
+            .await
+    }
+
     /// Select current visible records and resolve projection columns inside the
     /// DML/catalog boundary.
     pub async fn select_table_records_with_projection(
@@ -1172,6 +1229,54 @@ impl DmlService {
             ..Default::default()
         };
         catalog.set_storage_layouts(&table_id, vec![layout]).await?;
+
+        // 6. Best-effort: also publish a spec-shaped Iceberg snapshot (v3) — Avro manifest
+        //    + manifest list + TableMetadata under `{prefix}/metadata` — so EXTERNAL Iceberg
+        //    engines (Spark/Trino/DuckDB/PyIceberg) can read the table. This is purely
+        //    additive interop: ProximaDB's own SELECT path reads via the catalog storage
+        //    layout above, not the manifest, so a failure here never breaks materialize.
+        let iceberg_fields: Vec<
+            proximadb_storage_common::object_store_bridge::IcebergSnapshotField,
+        > = schema
+            .to_arrow_schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .map(
+                |(i, f)| proximadb_storage_common::object_store_bridge::IcebergSnapshotField {
+                    id: (i + 1) as i32,
+                    name: f.name().clone(),
+                    type_name: iceberg_type_for(f.data_type()).to_string(),
+                    required: !f.is_nullable(),
+                },
+            )
+            .collect();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let table_uuid = deterministic_table_uuid(&prefix);
+        let data_prefix = object_store::path::Path::from(format!("{prefix}/data"));
+        let metadata_prefix = format!("{prefix}/metadata");
+        if let Err(e) = bridge
+            .publish_iceberg_table(
+                &data_prefix,
+                &metadata_prefix,
+                &table_uuid,
+                &location,
+                &iceberg_fields,
+                now_ms, // snapshot id (unique per materialize)
+                now_ms, // timestamp ms
+                true,   // v3 (ProximaDB default)
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "proximadb::warehouse::iceberg",
+                table = %table_name,
+                "Iceberg snapshot publish failed (non-fatal, interop only): {e}"
+            );
+        }
 
         Ok(location)
     }
@@ -1774,6 +1879,13 @@ impl DmlService {
         );
     }
 
+    /// Strip a leading table qualifier (`t.col` / alias `k.col` → `col`). On a
+    /// single-table SELECT the qualifier is unambiguous, so the unqualified suffix
+    /// is the column name to resolve against the schema.
+    fn unqualified_column(name: &str) -> &str {
+        name.rsplit('.').next().unwrap_or(name)
+    }
+
     fn resolve_select_predicates(
         table_schema: &CatalogTableSchema,
         predicates: &[RelationalSelectPredicateInput],
@@ -1781,10 +1893,11 @@ impl DmlService {
         predicates
             .iter()
             .map(|predicate| {
+                let bare = Self::unqualified_column(&predicate.column_name);
                 let column = table_schema
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(&predicate.column_name))
+                    .find(|column| column.name.eq_ignore_ascii_case(bare))
                     .cloned()
                     .ok_or_else(|| {
                         anyhow!(
@@ -1812,10 +1925,11 @@ impl DmlService {
         projection_column_names
             .iter()
             .map(|column_name| {
+                let bare = Self::unqualified_column(column_name);
                 table_schema
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(column_name))
+                    .find(|column| column.name.eq_ignore_ascii_case(bare))
                     .cloned()
                     .ok_or_else(|| {
                         anyhow!(
@@ -3967,11 +4081,34 @@ impl DmlService {
             SqlValueLiteral::Null => Ok(None),
             SqlValueLiteral::Integer(i) => Ok(Some(*i)),
             SqlValueLiteral::String(s) => {
-                // Parse ISO 8601 timestamp
-                use chrono::DateTime;
-                let dt = DateTime::parse_from_rfc3339(s)
-                    .map_err(|e| anyhow!("Invalid timestamp format: {e}"))?;
-                Ok(Some(dt.timestamp_millis()))
+                // Accept RFC3339 (with TZ) first, then standard SQL naive timestamp
+                // spellings (`YYYY-MM-DD HH:MM:SS[.fff]` or with a `T` separator,
+                // treated as UTC) and a bare date. `TIMESTAMP '2016-01-01 00:00:00'`
+                // literals (no TZ) are standard SQL and dense in time-series data.
+                use chrono::{DateTime, NaiveDate, NaiveDateTime};
+                let s = s.trim();
+                if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+                    return Ok(Some(dt.timestamp_millis()));
+                }
+                for fmt in [
+                    "%Y-%m-%d %H:%M:%S%.f",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M:%S%.f",
+                    "%Y-%m-%dT%H:%M:%S",
+                ] {
+                    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, fmt) {
+                        return Ok(Some(ndt.and_utc().timestamp_millis()));
+                    }
+                }
+                if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                    return Ok(Some(
+                        d.and_hms_opt(0, 0, 0)
+                            .ok_or_else(|| anyhow!("internal: bad midnight"))?
+                            .and_utc()
+                            .timestamp_millis(),
+                    ));
+                }
+                Err(anyhow!("Invalid timestamp format: {s}"))
             }
             SqlValueLiteral::Function { name, .. } if name.eq_ignore_ascii_case("NOW") => {
                 Ok(Some(chrono::Utc::now().timestamp_millis()))
@@ -4077,8 +4214,7 @@ impl DmlService {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
-                self.literal_to_i64(val)
-                    .map(|value| ProximaValue::Date(value as i32))
+                self.literal_to_date_days(val).map(ProximaValue::Date)
             }
             ProximaType::Time(_) => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
@@ -4172,6 +4308,29 @@ impl DmlService {
                 .map_err(|e| anyhow!("Invalid integer literal '{}': {}", value, e)),
             SqlValueLiteral::Null => Err(anyhow!("Cannot convert NULL to integer")),
             _ => Err(anyhow!("Expected integer literal")),
+        }
+    }
+
+    /// Coerce a DML literal to a DATE stored as days since the Unix epoch.
+    /// Accepts an integer (already a day count) or an ISO-8601 `YYYY-MM-DD`
+    /// string (the form `DATE '1995-02-15'` literals lower to). Parsing to a
+    /// real day count — rather than stuffing the string in — keeps the column a
+    /// true Date32 through materialization, so DataFusion compares it correctly
+    /// against `DATE '...'` predicates.
+    fn literal_to_date_days(&self, val: &SqlValueLiteral) -> Result<i32> {
+        match val {
+            SqlValueLiteral::Integer(value) => Ok(*value as i32),
+            SqlValueLiteral::String(value) => {
+                let date = chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+                    .map_err(|e| anyhow!("Invalid DATE literal '{}': {}", value, e))?;
+                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .ok_or_else(|| anyhow!("internal: bad epoch date"))?;
+                Ok(date.signed_duration_since(epoch).num_days() as i32)
+            }
+            SqlValueLiteral::Null => Err(anyhow!("Cannot convert NULL to date")),
+            _ => Err(anyhow!(
+                "Expected date literal (integer days or 'YYYY-MM-DD')"
+            )),
         }
     }
 
@@ -5271,6 +5430,92 @@ mod tests {
             replay_storage.len(),
             1,
             "replayed memtable must hold the record"
+        );
+    }
+
+    /// CDC change-feed (P2): INSERT → UPDATE → DELETE produce ordered change rows over the
+    /// canonical WAL; `changes_since` filters by table + lsn and reports correct op tags.
+    #[tokio::test]
+    async fn cdc_change_feed_reports_ops_since_lsn() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("cdc.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE acct (id TEXT NOT NULL, bal INT, PRIMARY KEY (id));")
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(&wal_path)
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let run = |sql: &str| {
+            let parser = &parser;
+            let dml = &dml;
+            let sql = sql.to_string();
+            async move {
+                let stmt = parser.parse_dml(&sql).expect("parse dml").expect("dml");
+                dml.execute(stmt).await.expect("execute dml")
+            }
+        };
+        run("INSERT INTO acct (id, bal) VALUES ('a', 100);").await;
+        run("UPDATE acct SET bal = 150 WHERE id = 'a';").await;
+        run("DELETE FROM acct WHERE id = 'a';").await;
+
+        // Full feed from the beginning: upsert, upsert (update), delete — lsn-ordered.
+        let changes = dml.changes_since("acct", 0).await.expect("changes");
+        assert_eq!(changes.len(), 3, "three changes: insert, update, delete");
+        assert_eq!(changes[0].op, "upsert");
+        assert_eq!(changes[1].op, "upsert");
+        assert_eq!(changes[2].op, "delete");
+        assert!(
+            changes[0].lsn < changes[1].lsn && changes[1].lsn < changes[2].lsn,
+            "changes are lsn-ordered"
+        );
+        assert_eq!(changes[2].key, "a", "delete carries the key");
+
+        // Incremental: only changes after the first lsn (the two later ops).
+        let tail = dml
+            .changes_since("acct", changes[0].lsn)
+            .await
+            .expect("tail");
+        assert_eq!(tail.len(), 2, "since first lsn → update + delete only");
+
+        // A different table sees nothing.
+        assert!(
+            dml.changes_since("other", 0)
+                .await
+                .expect("other")
+                .is_empty()
         );
     }
 

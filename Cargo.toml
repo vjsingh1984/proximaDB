@@ -355,7 +355,7 @@ arrow-flight = { version = "58", features = ["flight-sql-experimental"] }
 arrow-cast = { version = "58", default-features = false }
 
 # DataFusion for SQL and compute engine compatibility (Arrow 57 compatible)
-datafusion = { version = "54.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions"], optional = true }
+datafusion = { version = "54.0", default-features = false, features = ["sql", "regex_expressions", "unicode_expressions", "datetime_expressions", "math_expressions"], optional = true }
 datafusion-common = { version = "54.0", optional = true }
 
 # Advanced compression for recovery-optimized WAL

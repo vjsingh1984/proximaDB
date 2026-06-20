@@ -2,9 +2,9 @@ name: Workspace Layering Check
 
 on:
   push:
-    branches: [ main, develop, 'feature/**' ]
+    branches: [ main, develop, qa, 'feature/**' ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, qa ]
 
 concurrency:
   # Dedup push+PR of the same branch into one group; cancel superseded

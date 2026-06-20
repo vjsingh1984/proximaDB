@@ -256,7 +256,13 @@ pub async fn try_run_select(
             parquet_tables,
             vector_ops,
             tenant_id: tenant.map(str::to_string),
-            allow_engine_sql_fallback: false,
+            // Full ANSI SQL over pgwire: when the shared relational frontend can't
+            // yet lower a query (e.g. typed DATE literals, certain subquery/window
+            // shapes), execute it through DataFusion's own ANSI SQL planner over the
+            // same registered Parquet tables. The query still routes through pgwire →
+            // ComputeScheduler → the DataFusion engine; only the lowering frontend
+            // differs. The shared logical plane stays the fast path where it works.
+            allow_engine_sql_fallback: true,
             controls: controls.clone(),
         };
         return Some(
@@ -1168,12 +1174,18 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // JOIN; the legacy single-table path can't serve it. Same safety as the
             // WHERE case — an unliftable shape declines back to legacy.
             let has_projection_subquery = select.projection.iter().any(select_item_has_subquery);
+            // A derived table (subquery in FROM, e.g. `FROM (SELECT … row_number()
+            // OVER …) t WHERE rn = 1`, the TSBS last-point shape) is not something
+            // the legacy single-table path can serve — engage the relational/OLAP
+            // route so it reaches DataFusion.
+            let has_derived = select.from.iter().any(table_with_joins_has_derived);
             has_join
                 || has_group_by
                 || select.having.is_some()
                 || has_aggregate
                 || has_where_subquery
                 || has_projection_subquery
+                || has_derived
         }
         _ => false,
     }
@@ -1288,6 +1300,17 @@ fn collect_subquery_tables_in_expr(expr: &SqlExpr, out: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+/// True if the FROM item (or any of its joins) is a derived table — a subquery in
+/// FROM. Such a shape must engage the relational/OLAP route (the legacy single-table
+/// path can't serve it).
+fn table_with_joins_has_derived(twj: &TableWithJoins) -> bool {
+    matches!(twj.relation, TableFactor::Derived { .. })
+        || twj
+            .joins
+            .iter()
+            .any(|j| matches!(j.relation, TableFactor::Derived { .. }))
 }
 
 fn collect_from_table_with_joins(twj: &TableWithJoins, out: &mut Vec<String>) {

@@ -835,14 +835,11 @@ impl CollectionService {
             ));
         }
 
-        // Validate collection name length to prevent collision with IDs
-        if config.name.len() < 8 {
-            return Ok(CollectionServiceResponse::error(
-                "INVALID_NAME_LENGTH: Collection name must be at least 8 characters long"
-                    .to_string(),
-                start_time.elapsed().as_micros() as i64,
-            ));
-        }
+        // No artificial minimum name length. SQL/ANSI identifiers — and hence
+        // relational tables created over pgwire (e.g. TPC-H `part`, `orders`,
+        // `region`) — are routinely short. Name shape is validated elsewhere
+        // (CollectionNameValidator: non-empty, valid pattern, not reserved); a
+        // length floor here only blocked legitimate short table names.
 
         if config.dimension == 0 || config.dimension > 1_000_000 {
             return Ok(CollectionServiceResponse::error(
@@ -1028,10 +1025,12 @@ impl CollectionService {
     pub async fn resolve_collection_id(&self, identifier: &str) -> Result<Option<String>> {
         tracing::debug!("🔍 Resolving collection identifier: '{}'", identifier);
 
-        // Check if this looks like a base62 collection ID (short alphanumeric)
-        let _is_likely_id =
-            identifier.len() <= 12 && identifier.chars().all(|c| c.is_alphanumeric());
-
+        // Resolution is NAME-AUTHORITATIVE and shape-independent: `collection()`
+        // looks up the catalog asset (by name) first, then the metadata backend
+        // (by id). The historical base62-id "looks like an id" length heuristic is
+        // gone — IDs are now opaque UUIDs (no overlap with user names), so name
+        // length carries no meaning here. This is why short SQL/ANSI table names
+        // are safe (TPC-H `part`/`orders`/`region`) and the 8-char floor was dropped.
         if let Some(collection) = self.collection(identifier).await? {
             let collection_id = collection.id;
             tracing::debug!(
@@ -2783,7 +2782,8 @@ mod tests {
             result.error_code
         );
 
-        // Test short name (less than 8 characters)
+        // Short names are valid SQL/ANSI identifiers — the vestigial 8-char floor was
+        // removed (TPC-H `part`/`orders` etc. need short table names). "short" now succeeds.
         let short_name = CollectionConfig {
             name: "short".to_string(),
             ..valid_config.clone()
@@ -2792,14 +2792,9 @@ mod tests {
             .create_collection(&short_name)
             .await
             .context("Failed to create collection with short name")?;
-        assert!(!result.success);
         assert!(
-            result
-                .error_code
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Error code missing"))?
-                .contains("INVALID_NAME_LENGTH"),
-            "Error code should contain INVALID_NAME_LENGTH, got: {:?}",
+            result.success,
+            "short names are now valid; got error: {:?}",
             result.error_code
         );
 
@@ -2880,10 +2875,12 @@ mod tests {
 
         // Test cases for collection name length
         let test_cases = vec![
-            ("", false, "INVALID_NAME"),                  // Empty name
-            ("a", false, "INVALID_NAME_LENGTH"),          // 1 char
-            ("abc", false, "INVALID_NAME_LENGTH"),        // 3 chars
-            ("seven77", false, "INVALID_NAME_LENGTH"),    // 7 chars
+            ("", false, "INVALID_NAME"), // Empty name
+            // Short names are valid SQL/ANSI identifiers (no artificial 8-char floor);
+            // required for relational tables over pgwire (TPC-H `part`, `orders`, ...).
+            ("a", true, ""),                              // 1 char
+            ("abc", true, ""),                            // 3 chars
+            ("seven77", true, ""),                        // 7 chars
             ("exactly8", true, ""),                       // 8 chars (valid)
             ("ninechars", true, ""),                      // 9 chars (valid)
             ("this_is_a_long_collection_name", true, ""), // Long name (valid)
@@ -2938,6 +2935,95 @@ mod tests {
                 );
             }
         }
+
+        Ok(())
+    }
+
+    /// TDD: short SQL/ANSI table names (e.g. TPC-H `part`) create successfully,
+    /// resolve to a DISTINCT opaque UUID id (not the name), and round-trip
+    /// name<->id. Proves the redesign: name and id are separate, unambiguous
+    /// namespaces with NO length dependence (the old 8-char floor is gone), and
+    /// resolution is name-authoritative.
+    #[tokio::test]
+    async fn test_short_name_resolves_name_authoritative() -> Result<()> {
+        use crate::storage::metadata::backends::universal_backend::{
+            UniversalMetadataBackend, UniversalMetadataConfig,
+        };
+        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().context("temp dir")?;
+        let temp_path = format!("file://{}", temp_dir.path().display());
+        let filestore_config = UniversalMetadataConfig {
+            storage_url: temp_path,
+            compression: false,
+            enable_snapshots: false,
+            snapshot_threshold: 1000,
+            keep_snapshots: 3,
+            backup_url: None,
+            temp_dir: None,
+        };
+        let filesystem_factory = Arc::new(
+            FilesystemFactory::create(FilesystemConfig::default())
+                .await
+                .context("fs factory")?,
+        );
+        let backend = Arc::new(
+            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
+                .await
+                .context("metadata backend")?,
+        );
+        let service = CollectionService::new(backend, StorageConfig::default())
+            .await
+            .context("collection service")?;
+
+        // A short, standard SQL identifier (4 chars) — would have been rejected by
+        // the old 8-char floor.
+        let name = "part";
+        let config = CollectionConfig {
+            name: name.to_string(),
+            dimension: 16,
+            distance_metric: Some(1),
+            storage_engine: Some(1),
+            filterable_columns: vec![],
+            index_configs: vec![],
+            quantization: None,
+            primary_index: Some("default".to_string()),
+            auto_index_selection: Some(false),
+            description: None,
+            tags: vec![],
+            owner: None,
+            embedding_models: vec![],
+            storage_config: None,
+            record_schema: None,
+            enable_proxima_record: None,
+            text_columns: vec![],
+            text_storage_configs: vec![],
+            enable_dual_use_embeddings: None,
+            canonical_embedding_precision: None,
+        };
+        let created = service.create_collection(&config).await.context("create")?;
+        assert!(
+            created.success,
+            "short name should create: {:?}",
+            created.error_code
+        );
+
+        // Resolve name -> id: must yield an opaque id DISTINCT from the name.
+        let id = service
+            .resolve_collection_id(name)
+            .await
+            .context("resolve id")?
+            .ok_or_else(|| anyhow::anyhow!("name did not resolve to an id"))?;
+        assert_ne!(id, name, "id must be opaque, not the name");
+
+        // Round-trip id -> name.
+        let back = service
+            .resolve_collection_name(&id)
+            .await
+            .context("resolve name")?
+            .ok_or_else(|| anyhow::anyhow!("id did not resolve back to a name"))?;
+        assert_eq!(back, name, "id must round-trip to the original name");
 
         Ok(())
     }

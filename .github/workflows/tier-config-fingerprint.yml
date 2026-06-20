@@ -20,9 +20,9 @@ name: Tier Config Fingerprint
 
 on:
   push:
-    branches: [main, develop, 'feature/**', 'proximadb-**']
+    branches: [main, develop, qa, 'feature/**', 'proximadb-**']
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, qa]
   workflow_dispatch:
 
 concurrency:
