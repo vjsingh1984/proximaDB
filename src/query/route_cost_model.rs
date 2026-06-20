@@ -37,7 +37,7 @@
 //! tunable. They are deliberately *not* calibrated dollar figures.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 use crate::observability::io_trace::IoTraceSnapshot;
@@ -191,6 +191,10 @@ pub struct RouteCostModel {
     /// static choice by before a live override fires — guards against flapping
     /// on marginal/noisy differences.
     min_advantage: f64,
+    /// Phase-2 exploration: counter rate-limiting how often an under-explored
+    /// freshness-safe candidate is sampled (~1 in `exploration_interval`).
+    explore_tick: AtomicU64,
+    exploration_interval: u64,
 }
 
 impl Default for RouteCostModel {
@@ -210,7 +214,16 @@ impl RouteCostModel {
             min_samples: 3,
             override_enabled: AtomicBool::new(false),
             min_advantage: 0.15,
+            explore_tick: AtomicU64::new(0),
+            exploration_interval: 16,
         }
+    }
+
+    /// Tune how often exploration samples an under-explored candidate (~1 in N
+    /// eligible decisions). Lower = warms faster but costs more; min 1.
+    pub fn with_exploration_interval(mut self, n: u64) -> Self {
+        self.exploration_interval = n.max(1);
+        self
     }
 
     /// Override the warmup threshold (samples required before a cell is trusted).
@@ -346,6 +359,49 @@ impl RouteCostModel {
             Some(rec)
         } else {
             None // advantage too small — don't flap
+        }
+    }
+
+    /// Phase-2 exploration pick (warm-up). When override is enabled and a
+    /// freshness-safe candidate is still under-explored (`< min_samples`),
+    /// occasionally route to the LEAST-sampled candidate so it accrues cost
+    /// history — otherwise the static rule always picks one engine, the other
+    /// never warms, and `recommend_override` could never fire. Properties:
+    ///
+    /// * **Bounded** — returns `None` once every candidate is warm (exploration
+    ///   then yields to exploitation).
+    /// * **Rate-limited** — fires ~1 in `exploration_interval` eligible
+    ///   decisions, so the cost of probing a non-optimal engine stays small.
+    /// * **Freshness-safe** — the caller passes the freshness-safe candidate set,
+    ///   so exploration can never target an engine that would serve the query
+    ///   incorrectly (OLTP gets a single-candidate set → always `None`).
+    /// * **Flag-gated** — `None` unless override is enabled.
+    pub fn exploration_choice(
+        &self,
+        shape_class: &str,
+        candidates: &[ComputeBackend],
+    ) -> Option<ComputeBackend> {
+        if !self.override_active() || candidates.len() < 2 {
+            return None;
+        }
+        let (cand, samples) = candidates
+            .iter()
+            .map(|c| {
+                let s = self
+                    .estimate(shape_class, c)
+                    .map(|e| e.samples)
+                    .unwrap_or(0);
+                (c.clone(), s)
+            })
+            .min_by_key(|(_, s)| *s)?;
+        if samples >= self.min_samples {
+            return None; // all candidates warm — exploit, don't explore
+        }
+        let tick = self.explore_tick.fetch_add(1, Ordering::Relaxed);
+        if tick % self.exploration_interval == 0 {
+            Some(cand)
+        } else {
+            None
         }
     }
 }
@@ -557,6 +613,70 @@ mod tests {
         let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
         assert!(
             m.recommend_override("olap/parquet", &ComputeBackend::Native, &cands)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn exploration_is_off_unless_override_enabled() {
+        let m = RouteCostModel::new().with_exploration_interval(1);
+        // Native warm, DataFusion unexplored — but override flag is OFF.
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 4096, 1));
+        }
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        assert!(m.exploration_choice("olap/parquet", &cands).is_none());
+    }
+
+    #[test]
+    fn exploration_targets_the_least_sampled_candidate() {
+        let m = RouteCostModel::new().with_exploration_interval(1);
+        m.set_override_enabled(true);
+        // Native warm; DataFusion has no history → it is the under-explored one.
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 4096, 1));
+        }
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        assert_eq!(
+            m.exploration_choice("olap/parquet", &cands),
+            Some(ComputeBackend::DataFusionLocal)
+        );
+    }
+
+    #[test]
+    fn exploration_stops_once_every_candidate_is_warm() {
+        let m = RouteCostModel::new().with_exploration_interval(1);
+        m.set_override_enabled(true);
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 4096, 1));
+            m.observe_by_label("olap/parquet", "DataFusionLocal", &snap(4, 8192, 2));
+        }
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        assert!(m.exploration_choice("olap/parquet", &cands).is_none());
+    }
+
+    #[test]
+    fn exploration_is_rate_limited_by_interval() {
+        let m = RouteCostModel::new().with_exploration_interval(3);
+        m.set_override_enabled(true);
+        for _ in 0..5 {
+            m.observe_by_label("olap/parquet", "Native(Volcano)", &snap(2, 4096, 1));
+        }
+        let cands = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        // ticks 0,3 explore; 1,2,4,5 do not (1-in-3).
+        let fired: Vec<bool> = (0..6)
+            .map(|_| m.exploration_choice("olap/parquet", &cands).is_some())
+            .collect();
+        assert_eq!(fired, vec![true, false, false, true, false, false]);
+    }
+
+    #[test]
+    fn exploration_never_fires_with_a_single_candidate() {
+        // OLTP gets a single freshness-safe candidate → nothing to explore.
+        let m = RouteCostModel::new().with_exploration_interval(1);
+        m.set_override_enabled(true);
+        assert!(
+            m.exploration_choice("oltp/native", &[ComputeBackend::Native])
                 .is_none()
         );
     }

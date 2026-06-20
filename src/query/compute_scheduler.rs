@@ -269,6 +269,22 @@ impl ComputeScheduler {
         // it incorrectly (e.g. a point/OLTP query onto a stale base snapshot).
         if model.override_active() {
             let safe = override_candidates(shape, &decision.backend);
+            // Exploration (Phase 2) first: warm an under-explored freshness-safe
+            // candidate so it accrues history the override can later act on.
+            // Bounded + rate-limited + freshness-safe (see `exploration_choice`).
+            if let Some(explore) = model.exploration_choice(&class, &safe)
+                && backend_label(&explore) != backend_label(&decision.backend)
+            {
+                let prev = backend_label(&decision.backend);
+                decision.reason = format!(
+                    "{} | cost-model EXPLORE {prev}→{} (gathering cost history)",
+                    decision.reason,
+                    backend_label(&explore)
+                );
+                decision.backend = explore;
+                return decision;
+            }
+            // Exploitation: override to the confidently-cheaper backend.
             if let Some(rec) = model.recommend_override(&class, &decision.backend, &safe) {
                 let prev = backend_label(&decision.backend);
                 decision.reason = format!(
@@ -510,6 +526,59 @@ mod tests {
         // Override fires: the route is flipped to the measured-cheaper engine.
         assert_eq!(d.backend, ComputeBackend::Native);
         assert!(d.reason.contains("OVERRIDE"));
+    }
+
+    #[test]
+    fn override_on_explores_under_explored_olap_parquet_candidate() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1);
+        model.set_override_enabled(true);
+        // DataFusion (the static route) is warm; Native is unexplored → explore it.
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(4, 8192),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(
+            d.backend,
+            ComputeBackend::Native,
+            "exploration routes to the under-explored freshness-safe candidate"
+        );
+        assert!(d.reason.contains("EXPLORE"));
+    }
+
+    #[test]
+    fn exploration_never_targets_freshness_critical_oltp() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: false,
+            parquet_backed: true,
+        }; // static => Native (OLTP)
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1);
+        model.set_override_enabled(true);
+        // Even with DataFusion history for this class, OLTP's freshness-safe set
+        // is just [Native], so exploration has nothing to probe.
+        for _ in 0..5 {
+            model.observe(
+                "oltp/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(1, 4096),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert!(!d.reason.contains("EXPLORE"));
     }
 
     #[test]
