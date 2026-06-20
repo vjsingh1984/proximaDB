@@ -310,7 +310,7 @@ pub fn create_observability_router() -> Router<ObservabilityApiState> {
         .route("/namespaces/{namespace}/metrics", post(ingest_metric))
         // Metric queries
         .route(
-            "/namespaces/:namespace/metrics/aggregate",
+            "/namespaces/{namespace}/metrics/aggregate",
             post(aggregate_metrics),
         )
         // PromQL endpoint

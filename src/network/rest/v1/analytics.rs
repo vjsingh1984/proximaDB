@@ -44,7 +44,7 @@ pub fn create_router() -> Router<AnalyticsApiState> {
     Router::new()
         .route("/entanglement", post(compute_entanglement))
         .route(
-            "/collections/:collection_id/entanglement",
+            "/collections/{collection_id}/entanglement",
             get(get_collection_entanglement),
         )
 }

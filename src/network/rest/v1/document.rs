@@ -178,20 +178,20 @@ pub fn create_document_router() -> Router<DocumentApiState> {
             get(get_document),
         )
         .route(
-            "/collections/:collection/documents/:id",
+            "/collections/{collection}/documents/{id}",
             delete(delete_document),
         )
         .route(
-            "/collections/:collection/documents/:id",
+            "/collections/{collection}/documents/{id}",
             patch(update_document),
         )
         // Batch and aggregate operations
         .route(
-            "/collections/:collection/documents/_batch",
+            "/collections/{collection}/documents/_batch",
             post(batch_insert_documents),
         )
         .route(
-            "/collections/:collection/documents/_aggregate",
+            "/collections/{collection}/documents/_aggregate",
             post(aggregate_documents),
         )
         // Index operations

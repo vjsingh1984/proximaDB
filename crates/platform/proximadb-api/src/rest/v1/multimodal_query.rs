@@ -403,8 +403,8 @@ pub fn create_multimodal_router() -> Router<UnifiedQueryRestState> {
             .route("/distributed", post(execute_distributed_query))
             .route("/explain", post(explain_query))
             .route("/prepare", post(prepare_statement))
-            .route("/execute/:statement_id", post(execute_prepared_statement))
-            .route("/prepared/:statement_id", delete(delete_prepared_statement))
+            .route("/execute/{statement_id}", post(execute_prepared_statement))
+            .route("/prepared/{statement_id}", delete(delete_prepared_statement))
             .route("/prepared/stats", post(get_prepared_stats)),
     )
 }

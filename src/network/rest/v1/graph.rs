@@ -830,7 +830,7 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/{graph_id}/nodes/{id}", put(update_node))
         .route("/graphs/{graph_id}/nodes/{id}", delete(delete_node))
         .route(
-            "/graphs/:graph_id/nodes/:id/neighbors",
+            "/graphs/{graph_id}/nodes/{id}/neighbors",
             get(get_node_neighbors),
         )
         // Multi-graph edge operations
@@ -857,16 +857,16 @@ pub fn create_graph_router() -> Router<AppState> {
         .route("/graphs/{graph_id}/stats", get(get_graph_stats))
         // Multi-graph constraints DDL
         .route(
-            "/graphs/:graph_id/constraints/unique",
+            "/graphs/{graph_id}/constraints/unique",
             post(add_unique_constraint),
         )
         .route(
-            "/graphs/:graph_id/constraints/unique",
+            "/graphs/{graph_id}/constraints/unique",
             delete(remove_unique_constraint),
         )
         // Multi-graph analysis
         .route(
-            "/graphs/:graph_id/components",
+            "/graphs/{graph_id}/components",
             get(get_connected_components),
         )
         .route("/graphs/{graph_id}/cycles", get(check_cycles))
