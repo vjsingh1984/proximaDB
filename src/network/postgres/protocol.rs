@@ -89,6 +89,11 @@ pub struct PostgresProtocol {
     /// Set only around the extended Execute call; the simple-query path leaves
     /// it false and emits RowDescription as before.
     suppress_row_description: bool,
+    /// E0 rate-limiting: shared per-IP limiter (None = disabled), checked once at
+    /// query entry. Converged with the REST limiter via `RateLimitState`.
+    rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
+    /// This connection's peer IP — the rate-limit subject.
+    peer_ip: std::net::IpAddr,
 }
 
 /// Slice 6.3 gate-input bundle. Distinct type per surface for module
@@ -387,7 +392,22 @@ impl PostgresProtocol {
             observability_service,
             primary_pod_gate: None,
             suppress_row_description: false,
+            rate_limiter: None,
+            peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         }
+    }
+
+    /// Attach a shared per-IP rate limiter (and this connection's peer IP) so the
+    /// pgwire query path is rate-limited consistently with REST (E0). When unset
+    /// or disabled, queries are not rate-limited (default).
+    pub fn with_rate_limiter(
+        mut self,
+        limiter: Arc<crate::network::middleware::rate_limit::RateLimitState>,
+        peer_ip: std::net::IpAddr,
+    ) -> Self {
+        self.rate_limiter = Some(limiter);
+        self.peer_ip = peer_ip;
+        self
     }
 
     /// Create a new protocol handler with DDL/DML services for catalog integration
@@ -419,6 +439,8 @@ impl PostgresProtocol {
             observability_service: None,
             primary_pod_gate: None,
             suppress_row_description: false,
+            rate_limiter: None,
+            peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         }
     }
 
@@ -461,6 +483,8 @@ impl PostgresProtocol {
             observability_service: None,
             primary_pod_gate: None,
             suppress_row_description: false,
+            rate_limiter: None,
+            peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         }
     }
 
@@ -974,6 +998,21 @@ impl PostgresProtocol {
         query: &str,
         controls: ExecutionControls,
     ) -> Result<()> {
+        // E0 rate-limiting: reject over-quota queries up front with a pgwire
+        // error, using the SAME converged RateLimitState check REST uses (no
+        // duplicate limiter). No-op when unset/disabled.
+        if let Some(limiter) = self.rate_limiter.clone()
+            && limiter.enabled()
+            && let Err(retry_after) = limiter.check_and_consume(self.peer_ip).await
+        {
+            return self
+                .send_error(
+                    "ERROR",
+                    "53400",
+                    &format!("rate limit exceeded; retry after {retry_after}s"),
+                )
+                .await;
+        }
         let tenant = self.pgwire_resolve_read_tenant().await;
         // E0 (edge consistency): give every pgwire query a request-id correlation
         // scope — matching REST's request_id middleware — so logs and error

@@ -744,6 +744,23 @@ impl MultiServer {
             // the server data dir the same way document/observability roots are.
             let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
 
+            // E0: env-gated per-IP rate limiter for the pgwire query path
+            // (PROXIMADB_PGWIRE_RATE_LIMIT_RPM=<n>). Unset/0 → no limiting, so
+            // default behavior is unchanged. Uses the converged RateLimitState
+            // the REST middleware also checks against.
+            let pgwire_rate_limiter = std::env::var("PROXIMADB_PGWIRE_RATE_LIMIT_RPM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|rpm| *rpm > 0)
+                .map(|rpm| {
+                    std::sync::Arc::new(
+                        crate::network::middleware::rate_limit::RateLimitState::new(
+                            crate::network::middleware::RateLimitConfig::production(rpm, rpm)
+                                .to_middleware_config(),
+                        ),
+                    )
+                });
+
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
                 let mut server = PostgresServer::new(
@@ -762,6 +779,9 @@ impl MultiServer {
                     server.with_rank_pipeline(rank_services, rank_profile_store, function_store);
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
                 server = server.with_warehouse_materialization(warehouse_root_url);
+                if let Some(limiter) = pgwire_rate_limiter {
+                    server = server.with_rate_limiter(limiter);
+                }
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
                 }

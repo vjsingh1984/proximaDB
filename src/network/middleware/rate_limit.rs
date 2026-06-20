@@ -201,6 +201,42 @@ impl RateLimitState {
             global_bucket: Arc::new(RwLock::new(RateLimitBucket::new())),
         }
     }
+
+    /// Whether limiting is enabled (callers can skip the check cheaply).
+    pub fn enabled(&self) -> bool {
+        self.config.enabled
+    }
+
+    /// Check-and-consume one request for rate-limit subject `key` (the client
+    /// IP). Returns `Err(retry_after_secs)` when the global or per-key window
+    /// limit is exceeded, `Ok(())` otherwise. This is the *single* check used by
+    /// both the REST middleware and the pgwire query path, so the surfaces share
+    /// one limiter implementation (converge, don't duplicate). `Ok` immediately
+    /// when limiting is disabled.
+    pub async fn check_and_consume(&self, key: IpAddr) -> Result<(), u64> {
+        if !self.config.enabled {
+            return Ok(());
+        }
+        let retry_after = self.config.window_duration.as_secs();
+
+        // Global window first (if configured).
+        if let Some(global_max) = self.config.global_max_requests {
+            let mut global_bucket = self.global_bucket.write().await;
+            global_bucket.increment(self.config.window_duration);
+            if !global_bucket.is_within_limit(global_max, self.config.window_duration) {
+                return Err(retry_after);
+            }
+        }
+
+        // Per-key window.
+        let mut buckets = self.buckets.write().await;
+        let bucket = buckets.entry(key).or_insert_with(RateLimitBucket::new);
+        bucket.increment(self.config.window_duration);
+        if !bucket.is_within_limit(self.config.max_requests, self.config.window_duration) {
+            return Err(retry_after);
+        }
+        Ok(())
+    }
 }
 
 /// Rate limit error response
@@ -266,54 +302,23 @@ pub async fn rate_limit_middleware(
     // Extract client IP
     let client_ip = get_client_ip(&request);
 
-    // Check global rate limit first (if configured)
-    if let Some(global_max) = rate_limit_state.config.global_max_requests {
-        let mut global_bucket = rate_limit_state.global_bucket.write().await;
-        global_bucket.increment(rate_limit_state.config.window_duration);
-
-        if !global_bucket.is_within_limit(global_max, rate_limit_state.config.window_duration) {
-            let retry_after = rate_limit_state.config.window_duration.as_secs();
-            return Err((
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(RateLimitErrorResponse {
-                    error: "global_rate_limit_exceeded".to_string(),
-                    message: "Global rate limit exceeded. Please try again later.".to_string(),
-                    retry_after,
-                }),
-            ));
-        }
+    // Single converged check (shared with the pgwire path). Map the limiter's
+    // retry-after into the HTTP 429 envelope this surface returns.
+    match rate_limit_state.check_and_consume(client_ip).await {
+        Ok(()) => Ok(next.run(request).await),
+        Err(retry_after) => Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(RateLimitErrorResponse {
+                error: "rate_limit_exceeded".to_string(),
+                message: format!(
+                    "Rate limit exceeded. Maximum {} requests per {} seconds.",
+                    rate_limit_state.config.max_requests,
+                    rate_limit_state.config.window_duration.as_secs()
+                ),
+                retry_after,
+            }),
+        )),
     }
-
-    // Check per-IP rate limit
-    {
-        let mut buckets = rate_limit_state.buckets.write().await;
-        let bucket = buckets
-            .entry(client_ip)
-            .or_insert_with(RateLimitBucket::new);
-
-        bucket.increment(rate_limit_state.config.window_duration);
-
-        if !bucket.is_within_limit(
-            rate_limit_state.config.max_requests,
-            rate_limit_state.config.window_duration,
-        ) {
-            let retry_after = rate_limit_state.config.window_duration.as_secs();
-            return Err((
-                StatusCode::TOO_MANY_REQUESTS,
-                Json(RateLimitErrorResponse {
-                    error: "rate_limit_exceeded".to_string(),
-                    message: format!(
-                        "Rate limit exceeded. Maximum {} requests per {} seconds.",
-                        rate_limit_state.config.max_requests,
-                        rate_limit_state.config.window_duration.as_secs()
-                    ),
-                    retry_after,
-                }),
-            ));
-        }
-    }
-
-    Ok(next.run(request).await)
 }
 
 /// Extract client IP from request
@@ -350,6 +355,40 @@ fn is_health_endpoint(path: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn check_and_consume_enforces_per_key_window() {
+        let state = RateLimitState::new(MiddlewareRateLimitConfig {
+            enabled: true,
+            max_requests: 2,
+            window_duration: Duration::from_secs(60),
+            limit_health_endpoints: false,
+            global_max_requests: None,
+        });
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        assert!(state.check_and_consume(ip).await.is_ok());
+        assert!(state.check_and_consume(ip).await.is_ok());
+        // Third request in the window exceeds max_requests=2.
+        assert!(state.check_and_consume(ip).await.is_err());
+        // A different key keeps its own bucket.
+        let ip2: IpAddr = "10.0.0.2".parse().unwrap();
+        assert!(state.check_and_consume(ip2).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn check_and_consume_is_ok_when_disabled() {
+        let state = RateLimitState::new(MiddlewareRateLimitConfig {
+            enabled: false,
+            max_requests: 1,
+            window_duration: Duration::from_secs(60),
+            limit_health_endpoints: false,
+            global_max_requests: None,
+        });
+        let ip: IpAddr = "10.0.0.1".parse().unwrap();
+        for _ in 0..10 {
+            assert!(state.check_and_consume(ip).await.is_ok());
+        }
+    }
 
     #[test]
     fn test_rate_limit_bucket() {
