@@ -89,6 +89,43 @@ impl ReadFreshnessSla {
             Self::CatalogValue(value) => value.clone(),
         }
     }
+
+    /// Whether a read under this SLA must merge the unflushed memtable delta on top of the
+    /// materialized snapshot to satisfy freshness, given how stale the snapshot is
+    /// (`snapshot_age_ms` = now − snapshot timestamp). The relational analog of the vector
+    /// path's `VectorFreshnessMode::should_scan_delta`; drives freshness-aware routing (P4):
+    /// `Synchronous` always merges (→ the fresh Native path); `BoundedAsync` merges only once
+    /// the snapshot exceeds its lag budget; `StaleOk` never merges (→ the DataFusion snapshot
+    /// route); `RebuildOnDemand`/`CatalogValue` are conservative (merge) until parsed. Pure.
+    pub fn should_scan_delta(&self, snapshot_age_ms: u64) -> bool {
+        match self {
+            Self::Synchronous => true,
+            Self::BoundedAsync { max_lag_ms } => snapshot_age_ms > *max_lag_ms,
+            Self::StaleOk => false,
+            Self::RebuildOnDemand | Self::CatalogValue(_) => true,
+        }
+    }
+}
+
+#[cfg(test)]
+mod freshness_sla_tests {
+    use super::ReadFreshnessSla;
+
+    #[test]
+    fn should_scan_delta_matrix() {
+        assert!(ReadFreshnessSla::Synchronous.should_scan_delta(0));
+        assert!(ReadFreshnessSla::Synchronous.should_scan_delta(10_000));
+        assert!(!ReadFreshnessSla::StaleOk.should_scan_delta(10_000));
+        assert!(ReadFreshnessSla::RebuildOnDemand.should_scan_delta(0));
+        assert!(ReadFreshnessSla::CatalogValue("x".into()).should_scan_delta(0));
+        let sla = ReadFreshnessSla::BoundedAsync { max_lag_ms: 1_000 };
+        assert!(!sla.should_scan_delta(500), "within budget → snapshot ok");
+        assert!(!sla.should_scan_delta(1_000), "at budget → still ok");
+        assert!(
+            sla.should_scan_delta(1_500),
+            "over budget → must merge delta"
+        );
+    }
 }
 
 /// Estimated split inventory chosen for this route.
