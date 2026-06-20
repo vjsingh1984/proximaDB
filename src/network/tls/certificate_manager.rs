@@ -1046,7 +1046,7 @@ mod tests {
         let key = utils::load_private_key_from_pem(cert.key_pem.as_bytes())
             .expect("Failed to load private key from PEM");
 
-        assert!(!key.0.is_empty());
+        assert!(!key.secret_der().is_empty());
     }
 
     #[test]

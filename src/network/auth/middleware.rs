@@ -988,11 +988,11 @@ mod tests {
     use super::*;
     use axum::Router;
     use axum::body::Body;
+    use axum::body::to_bytes;
     use axum::extract::Extension;
     use axum::extract::Request;
     use axum::middleware;
     use axum::routing::get;
-    use hyper::body::to_bytes;
     use std::collections::HashMap;
     use tower::ServiceExt;
 
@@ -1217,7 +1217,7 @@ mod tests {
             .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body())
+        let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("Failed to read response body");
         assert_eq!(&body[..], b"ok");
@@ -1249,7 +1249,7 @@ mod tests {
             .expect("Failed to send test request");
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        let body = to_bytes(response.into_body())
+        let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("Authorization header is required"));
@@ -1310,7 +1310,7 @@ mod tests {
             .await
             .expect("Failed to send test request");
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body())
+        let body = to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("Failed to read response body");
         assert!(String::from_utf8_lossy(&body).contains("jwt-user"));

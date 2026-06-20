@@ -121,7 +121,7 @@ async fn post_json(
         .body(Body::from(serde_json::to_vec(&body_json)?))?;
     let response = app.oneshot(request).await?;
     let status = response.status();
-    let body_bytes = hyper::body::to_bytes(response.into_body()).await?;
+    let body_bytes = axum::body::to_bytes(response.into_body(), usize::MAX).await?;
     let body: serde_json::Value =
         serde_json::from_slice(&body_bytes).unwrap_or(serde_json::Value::Null);
     Ok((status, body))

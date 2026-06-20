@@ -202,8 +202,8 @@ async fn get_collection_entanglement(
 mod tests {
     use super::*;
     use axum::body::Body;
+    use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
-    use hyper::body::to_bytes;
     use tower::ServiceExt;
 
     fn router() -> Router {
@@ -225,7 +225,7 @@ mod tests {
             .unwrap();
 
         let status = response.status();
-        let bytes = to_bytes(response.into_body()).await.unwrap();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let json: serde_json::Value = if bytes.is_empty() {
             serde_json::Value::Null
         } else {

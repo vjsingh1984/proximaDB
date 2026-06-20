@@ -2077,10 +2077,10 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
 mod tests {
     use super::*;
     use axum::body::Body;
+    use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
     use axum::middleware;
     use axum::routing::get;
-    use hyper::body::to_bytes;
     use tower::ServiceExt;
 
     use crate::network::auth::middleware::auth_middleware_unified;
@@ -2181,7 +2181,7 @@ mod tests {
 
         let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"ok");
     }
 
@@ -2208,7 +2208,7 @@ mod tests {
 
         let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"ok");
     }
 }
