@@ -173,7 +173,10 @@ pub fn create_document_router() -> Router<DocumentApiState> {
         // Document CRUD
         .route("/collections/{collection}/documents", post(insert_document))
         .route("/collections/{collection}/documents", get(query_documents))
-        .route("/collections/{collection}/documents/{id}", get(get_document))
+        .route(
+            "/collections/{collection}/documents/{id}",
+            get(get_document),
+        )
         .route(
             "/collections/:collection/documents/:id",
             delete(delete_document),

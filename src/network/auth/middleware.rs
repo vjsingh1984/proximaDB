@@ -285,9 +285,7 @@ pub async fn auth_middleware(
 }
 
 /// Extract authorization header from request
-fn extract_auth_header(
-    request: &Request,
-) -> Result<String, (StatusCode, Json<AuthErrorResponse>)> {
+fn extract_auth_header(request: &Request) -> Result<String, (StatusCode, Json<AuthErrorResponse>)> {
     let auth_header = request
         .headers()
         .get(axum::http::header::AUTHORIZATION)

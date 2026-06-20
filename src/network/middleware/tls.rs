@@ -44,8 +44,9 @@
 
 use crate::network::tls::ClientCertificateInfo;
 use axum::{
+    extract::Request,
     extract::State,
-    extract::Request, http::StatusCode,
+    http::StatusCode,
     middleware::Next,
     response::{Json, Response},
 };

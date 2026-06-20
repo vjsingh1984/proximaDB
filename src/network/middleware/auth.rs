@@ -17,8 +17,9 @@
 //! Authentication middleware for ProximaDB HTTP API
 
 use axum::{
+    extract::Request,
     extract::State,
-    extract::Request, http::StatusCode,
+    http::StatusCode,
     middleware::Next,
     response::{Json, Response},
 };
