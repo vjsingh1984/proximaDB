@@ -37,6 +37,7 @@ use proximadb_storage_common::{
 };
 
 use crate::metrics::consumption_metrics::record_object_store_op;
+use crate::observability::io_trace;
 use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
 use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};
@@ -3136,10 +3137,12 @@ impl ObjectStoreVectorRecordStore {
             list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
         let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
         record_object_store_op(tenant_id, "list_pax");
+        io_trace::record_op_str("list_pax");
 
         let mut records = Vec::new();
         for path in segment_paths {
             record_object_store_op(tenant_id, "fetch_pax");
+            io_trace::record_op_str("fetch_pax");
             let bytes = self
                 .bridge
                 .fetch_vector_segment(&path, tenant_id)
@@ -3147,6 +3150,7 @@ impl ObjectStoreVectorRecordStore {
                 .map_err(|err| {
                     anyhow!("ObjectStoreVectorRecordStore failed to fetch '{path}': {err}")
                 })?;
+            io_trace::record_bytes_read(bytes.len() as u64);
             records.extend(pax_segment_to_records(bytes, schema)?);
         }
         Ok(records)
@@ -3339,11 +3343,13 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
         let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
         record_object_store_op(tenant_id, "list_pax");
+        io_trace::record_op_str("list_pax");
         let field_to_col: &(dyn Fn(&str) -> Option<i32> + Sync) = &pax_field_to_col;
 
         let mut out = Vec::new();
         'segments: for path in segment_paths {
             record_object_store_op(tenant_id, "fetch_pax_ranged");
+            io_trace::record_op_str("fetch_pax_ranged");
             let reader = RangedSegmentReader::open_with_cache(
                 self.bridge.as_ref(),
                 path.clone(),
