@@ -539,11 +539,11 @@ impl UnifiedAuthService {
         // Try PEM first
         if let Ok(pem_contents) = std::str::from_utf8(&file_bytes) {
             let mut reader = std::io::BufReader::new(pem_contents.as_bytes());
-            let certs = rustls_pemfile::certs(&mut reader)
-                .map_err(|e| anyhow!("Failed to parse PEM certificates: {}", e))?;
-
-            if let Some(first_cert) = certs.into_iter().next() {
-                return Ok(first_cert);
+            // rustls-pemfile 2.0: certs() yields Result<CertificateDer>; take the first.
+            if let Some(first_cert) = rustls_pemfile::certs(&mut reader).next() {
+                let first_cert =
+                    first_cert.map_err(|e| anyhow!("Failed to parse PEM certificates: {}", e))?;
+                return Ok(first_cert.as_ref().to_vec());
             }
         }
 

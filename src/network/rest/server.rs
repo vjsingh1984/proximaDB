@@ -932,7 +932,8 @@ impl RestServer {
         use crate::network::tls::certificate_manager::utils::{
             load_certs_from_pem, load_private_key_from_pem,
         };
-        use rustls::{RootCertStore, ServerConfig, server::AllowAnyAuthenticatedClient};
+        use rustls::server::WebPkiClientVerifier;
+        use rustls::{RootCertStore, ServerConfig};
         use std::sync::Arc;
 
         tracing::info!("Configuring mTLS with client certificate verification");
@@ -960,18 +961,19 @@ impl RestServer {
         // Build root cert store for client verification
         let mut root_store = RootCertStore::empty();
         for ca_cert in ca_certs {
-            root_store.add(&ca_cert).map_err(|e| {
+            root_store.add(ca_cert).map_err(|e| {
                 anyhow::anyhow!("Failed to add CA certificate to root store: {}", e)
             })?;
         }
 
-        // Create client certificate verifier - allows any cert signed by our CA
-        let client_verifier = AllowAnyAuthenticatedClient::new(root_store);
+        // Client certificate verifier — accept any cert chaining to our CA.
+        let client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build client cert verifier: {}", e))?;
 
-        // Build mTLS server config
+        // Build mTLS server config (rustls 0.23 dropped with_safe_defaults()).
         let server_config = ServerConfig::builder()
-            .with_safe_defaults()
-            .with_client_cert_verifier(Arc::new(client_verifier))
+            .with_client_cert_verifier(client_verifier)
             .with_single_cert(certs, key)
             .map_err(|e| anyhow::anyhow!("Failed to build mTLS server config: {}", e))?;
 

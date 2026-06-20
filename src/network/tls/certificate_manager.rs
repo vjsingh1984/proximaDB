@@ -786,46 +786,27 @@ pub mod utils {
         }
     }
 
-    /// Load certificate chain from PEM file
-    pub fn load_certs_from_pem(pem_data: &[u8]) -> Result<Vec<rustls::Certificate>, TlsError> {
+    /// Load certificate chain from PEM file (rustls 0.23 / rustls-pemfile 2.0).
+    pub fn load_certs_from_pem(
+        pem_data: &[u8],
+    ) -> Result<Vec<rustls::pki_types::CertificateDer<'static>>, TlsError> {
         let mut reader = std::io::BufReader::new(pem_data);
         rustls_pemfile::certs(&mut reader)
-            .map_err(|e| TlsError::CertificateParse(e.to_string()))?
-            .into_iter()
-            .map(|cert| Ok(rustls::Certificate(cert)))
-            .collect()
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| TlsError::CertificateParse(e.to_string()))
     }
 
-    /// Load private key from PEM file
-    pub fn load_private_key_from_pem(pem_data: &[u8]) -> Result<rustls::PrivateKey, TlsError> {
+    /// Load private key from PEM file. rustls-pemfile 2.0's `private_key`
+    /// auto-detects PKCS#8 / EC / RSA, returning the first key found.
+    pub fn load_private_key_from_pem(
+        pem_data: &[u8],
+    ) -> Result<rustls::pki_types::PrivateKeyDer<'static>, TlsError> {
         let mut reader = std::io::BufReader::new(pem_data);
-
-        // Try to load as PKCS#8 first
-        let keys = rustls_pemfile::pkcs8_private_keys(&mut reader)
-            .map_err(|e| TlsError::CertificateParse(e.to_string()))?;
-        if !keys.is_empty() {
-            return Ok(rustls::PrivateKey(keys[0].clone()));
-        }
-
-        // Reset reader and try EC keys
-        let mut reader = std::io::BufReader::new(pem_data);
-        let keys = rustls_pemfile::ec_private_keys(&mut reader)
-            .map_err(|e| TlsError::CertificateParse(e.to_string()))?;
-        if !keys.is_empty() {
-            return Ok(rustls::PrivateKey(keys[0].clone()));
-        }
-
-        // Reset reader and try RSA keys
-        let mut reader = std::io::BufReader::new(pem_data);
-        let keys = rustls_pemfile::rsa_private_keys(&mut reader)
-            .map_err(|e| TlsError::CertificateParse(e.to_string()))?;
-        if !keys.is_empty() {
-            return Ok(rustls::PrivateKey(keys[0].clone()));
-        }
-
-        Err(TlsError::CertificateParse(
-            "No private key found in PEM data".to_string(),
-        ))
+        rustls_pemfile::private_key(&mut reader)
+            .map_err(|e| TlsError::CertificateParse(e.to_string()))?
+            .ok_or_else(|| {
+                TlsError::CertificateParse("No private key found in PEM data".to_string())
+            })
     }
 }
 

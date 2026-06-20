@@ -47,7 +47,8 @@ pub use certificate_manager::{
 };
 
 use anyhow::Result;
-use rustls::{RootCertStore, ServerConfig, server::AllowAnyAuthenticatedClient};
+use rustls::server::WebPkiClientVerifier;
+use rustls::{RootCertStore, ServerConfig};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
@@ -177,21 +178,21 @@ impl TlsConfig {
             // Build root cert store
             let mut root_store = RootCertStore::empty();
             for ca_cert in ca_certs {
-                root_store.add(&ca_cert)?;
+                root_store.add(ca_cert)?;
             }
 
-            // Create client certificate verifier
-            let client_verifier = AllowAnyAuthenticatedClient::new(root_store);
+            // Client certificate verifier (rustls 0.23 WebPkiClientVerifier).
+            let client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
+                .build()
+                .map_err(|e| anyhow::anyhow!("Failed to build client cert verifier: {}", e))?;
 
             ServerConfig::builder()
-                .with_safe_defaults()
-                .with_client_cert_verifier(Arc::new(client_verifier))
+                .with_client_cert_verifier(client_verifier)
                 .with_single_cert(certs, key)
                 .map_err(|e| anyhow::anyhow!("Failed to build TLS config: {}", e))?
         } else {
-            // Standard TLS (no client certs required)
+            // Standard TLS (no client certs required; rustls 0.23 dropped with_safe_defaults).
             ServerConfig::builder()
-                .with_safe_defaults()
                 .with_no_client_auth()
                 .with_single_cert(certs, key)
                 .map_err(|e| anyhow::anyhow!("Failed to build TLS config: {}", e))?

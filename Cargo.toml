@@ -407,9 +407,9 @@ aes-gcm = "0.10"  # AEAD encryption for field-level encryption
 # TLS/mTLS certificate management
 rcgen = "0.12"                   # Certificate generation
 x509-parser = "0.16"             # Certificate parsing and validation
-rustls = { version = "0.21", features = ["dangerous_configuration"] }  # TLS implementation
-rustls-pemfile = "1.0"           # PEM file parsing
-tokio-rustls = "0.24"            # Async TLS streams
+rustls = { version = "0.23" }    # TLS implementation (unified with axum-server 0.7)
+rustls-pemfile = "2.0"           # PEM file parsing (CertificateDer/PrivateKeyDer)
+tokio-rustls = "0.26"            # Async TLS streams (rustls 0.23)
 webpki-roots = "0.25"            # Mozilla root certificates
 axum-server = { version = "0.7", features = ["tls-rustls"] }  # Axum TLS support (hyper 1.0)
 time = { version = "0.3", features = ["std"] }  # Time handling for certificates
