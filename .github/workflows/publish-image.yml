@@ -1,22 +1,17 @@
-# Publish the ProximaDB OSS server container image to Azure Container Registry.
+# Publish the ProximaDB OSS server container image to Docker Hub.
 #
-# This is the OSS *base* image (`<registry>/proximadb`). AnvaiOps' commercial
-# pipeline (anvaiops/.github/workflows/build-commercial-image.yml) consumes it
-# as `FROM` to bake pricing tiers, and AKS pulls it directly via the AcrPull
-# role wired in anvaiops/infra/terraform/azure/anvaiops/acr_attach.tf.
-#
-# Auth is OIDC-federated (no long-lived secrets): the workflow requests a
-# short-lived GitHub OIDC token (`id-token: write`) and `azure/login` exchanges
-# it for an Azure AD token via a federated credential on an app/identity that
-# holds AcrPush on the registry. Convention matches anvaiops' workflows:
-#   - secrets: AZURE_CLIENT_ID / AZURE_TENANT_ID / AZURE_SUBSCRIPTION_ID
-#   - variable: ACR_REGISTRY  (login-server FQDN, e.g. anvaiopsmvp1234.azurecr.io)
-# See deploy/docker/ACR_PUBLISH.md for the one-time identity/role setup.
+# This is the public OSS image (`vjsingh1984/proximadb`). It is the base that
+# AnvaiOps' *commercial* pipeline overlays pricing tiers onto and pushes to ACR
+# (anvaiops/.github/workflows/build-commercial-image.yml) — the OSS image
+# itself lives on Docker Hub, not ACR.
 #
 # Image built: deploy/docker/Dockerfile, target `runtime` — the minimal,
 # Python-free, non-root debian-slim OSS server (glibc). Tag scheme is
 # version + sha + latest (latest only on release tags / promoted builds).
-name: Publish Image (ACR)
+#
+# Auth: docker/login-action with DOCKERHUB_USERNAME / DOCKERHUB_TOKEN secrets.
+# See deploy/docker/IMAGE_PUBLISH.md for the one-time setup.
+name: Publish OSS Image (Docker Hub)
 
 on:
   push:
@@ -58,22 +53,20 @@ concurrency:
 
 permissions:
   contents: read
-  id-token: write  # required for OIDC federated login to Azure
 
 jobs:
   build-and-push:
-    name: Build & push to ACR
+    name: Build & push to Docker Hub
     runs-on: ubuntu-latest
     timeout-minutes: 60
-    # No-op when ACR is unconfigured (forks / OSS contributors) so the workflow
-    # skips cleanly rather than failing on a missing registry.
-    if: ${{ vars.ACR_REGISTRY != '' }}
+    # Only the canonical repo publishes — forks / OSS contributors skip cleanly
+    # (they lack the Docker Hub credentials anyway).
+    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       version: ${{ steps.vars.outputs.version }}
     env:
-      ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
-      IMAGE_REPO: ${{ vars.ACR_REGISTRY }}/${{ vars.ACR_IMAGE_NAME || 'proximadb' }}
+      IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
       TARGET: ${{ github.event.inputs.target || 'runtime' }}
     steps:
       - uses: actions/checkout@v4
@@ -114,16 +107,11 @@ jobs:
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
           echo "Resolved tags: ${TAGS}"
 
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: ACR login
-        # Extract the registry name from the FQDN, matching anvaiops convention.
-        run: az acr login --name "${ACR_REGISTRY%%.*}"
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - uses: docker/setup-buildx-action@v3
 
@@ -148,7 +136,7 @@ jobs:
       - name: Summary
         run: |
           {
-            echo "### Published \`${TARGET}\` image"
+            echo "### Published \`${TARGET}\` OSS image to Docker Hub"
             echo ""
             echo "Digest: \`${{ steps.build.outputs.digest }}\`"
             echo ""
@@ -157,44 +145,52 @@ jobs:
             echo "${{ steps.vars.outputs.tags }}" | tr ',' '\n'
             echo '```'
             echo ""
-            echo "> AnvaiOps pins this base by digest per ADR-0016. To promote:"
-            echo "> set \`PROXIMADB_BASE=${IMAGE_REPO}\` and"
-            echo "> \`PROXIMADB_VERSION=@${{ steps.build.outputs.digest }}\` in"
-            echo "> anvaiops/deploy/docker/Dockerfile.commercial."
+            echo "> AnvaiOps' commercial overlay pins this base by digest"
+            echo "> (ADR-0016): set \`PROXIMADB_OSS_BASE=${IMAGE_REPO}\` and"
+            echo "> \`proximadb_version=@${{ steps.build.outputs.digest }}\` in"
+            echo "> anvaiops build-commercial-image.yml."
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # Reclaim registry storage: purge dangling untagged manifests and keep only
-  # the most recent tagged images. Runs server-side as an ACR task (no pulls).
+  # Reclaim Docker Hub storage: delete superseded rolling `sha-*` tags, keeping
+  # only the most recent N. Never touches semver, `latest`, or `develop`.
   prune:
-    name: Prune old images
+    name: Prune old sha- tags
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: ${{ vars.ACR_REGISTRY != '' }}
-    permissions:
-      contents: read
-      id-token: write
+    if: ${{ github.repository == 'vjsingh1984/proximadb' }}
     env:
-      ACR_REGISTRY: ${{ vars.ACR_REGISTRY }}
-      IMAGE_NAME: ${{ vars.ACR_IMAGE_NAME || 'proximadb' }}
+      IMAGE_REPO: ${{ vars.DOCKERHUB_IMAGE || 'vjsingh1984/proximadb' }}
+      KEEP: ${{ vars.DOCKERHUB_PRUNE_KEEP || '10' }}
     steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Purge untagged + stale tags (keep most recent)
+      - name: Delete stale sha- tags via Docker Hub API
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # acr purge runs inside the registry: delete manifests older than the
-          # window but always keep the newest KEEP regardless of age, then sweep
-          # dangling untagged manifests left behind by re-pushed mutable tags.
-          PURGE_CMD="acr purge --filter '${IMAGE_NAME}:.*' --ago ${ACR_PURGE_AGO:-30d} --keep ${ACR_PURGE_KEEP:-10} --untagged"
-          az acr run \
-            --registry "${ACR_REGISTRY%%.*}" \
-            --cmd "${PURGE_CMD}" \
-            /dev/null
-        env:
-          ACR_PURGE_AGO: ${{ vars.ACR_PURGE_AGO }}
-          ACR_PURGE_KEEP: ${{ vars.ACR_PURGE_KEEP }}
+          # Exchange the PAT for a Hub JWT.
+          JWT="$(curl -fsSL -H "Content-Type: application/json" \
+            -d "{\"username\":\"${DOCKERHUB_USERNAME}\",\"password\":\"${DOCKERHUB_TOKEN}\"}" \
+            https://hub.docker.com/v2/users/login | jq -r .token)"
+          [ -n "$JWT" ] && [ "$JWT" != "null" ] || { echo "Hub login failed"; exit 1; }
+
+          # Newest-first list of mutable rolling tags only (sha-* and sha-*-full).
+          # Semver / latest / develop are intentionally excluded — never pruned.
+          mapfile -t SHA_TAGS < <(
+            curl -fsSL -H "Authorization: JWT ${JWT}" \
+              "https://hub.docker.com/v2/repositories/${IMAGE_REPO}/tags?page_size=100&ordering=last_updated" \
+            | jq -r '.results[].name' | grep -E '^sha-' || true)
+
+          echo "Found ${#SHA_TAGS[@]} sha- tags; keeping newest ${KEEP}."
+          i=0
+          for tag in "${SHA_TAGS[@]}"; do
+            i=$((i+1))
+            if [ "$i" -le "${KEEP}" ]; then
+              echo "keep   ${tag}"
+              continue
+            fi
+            echo "delete ${tag}"
+            curl -fsSL -X DELETE -H "Authorization: JWT ${JWT}" \
+              "https://hub.docker.com/v2/repositories/${IMAGE_REPO}/tags/${tag}/" || \
+              echo "  (delete failed for ${tag}, continuing)"
+          done
