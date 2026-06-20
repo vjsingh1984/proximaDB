@@ -12804,7 +12804,7 @@ pub mod hybrid_search_service_server {
     }
 }
 /// Catalog configuration
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CatalogConfig {
     /// Catalog name (e.g., "production", "analytics")
     #[prost(string, tag = "1")]
@@ -12831,7 +12831,7 @@ pub struct CatalogConfig {
 }
 /// Nested message and enum types in `CatalogConfig`.
 pub mod catalog_config {
-    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    #[derive(Clone, PartialEq, ::prost::Oneof, serde::Serialize, serde::Deserialize)]
     pub enum Config {
         #[prost(message, tag = "10")]
         Native(super::NativeCatalogConfig),
@@ -12850,7 +12850,7 @@ pub mod catalog_config {
     }
 }
 /// Native ProximaDB catalog (cloud-first)
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct NativeCatalogConfig {
     /// s3://bucket/catalog, adls://..., gcs://...
     #[prost(string, tag = "1")]
@@ -12869,7 +12869,7 @@ pub struct NativeCatalogConfig {
     pub replication: ::core::option::Option<ReplicationConfig>,
 }
 /// AWS Glue Data Catalog
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct GlueCatalogConfig {
     /// AWS region (e.g., "us-east-1")
     #[prost(string, tag = "1")]
@@ -12888,7 +12888,7 @@ pub struct GlueCatalogConfig {
     pub use_lake_formation: bool,
 }
 /// Databricks Unity Catalog
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct UnityCatalogConfig {
     /// <https://xxx.cloud.databricks.com>
     #[prost(string, tag = "1")]
@@ -12907,7 +12907,7 @@ pub struct UnityCatalogConfig {
     pub use_external_locations: bool,
 }
 /// Apache Polaris (Iceberg REST Catalog)
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct PolarisCatalogConfig {
     /// Polaris server URI
     #[prost(string, tag = "1")]
@@ -12926,7 +12926,7 @@ pub struct PolarisCatalogConfig {
     pub scope: ::prost::alloc::string::String,
 }
 /// Apache Hive Metastore
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct HiveCatalogConfig {
     /// thrift://host:9083
     #[prost(string, tag = "1")]
@@ -12945,7 +12945,7 @@ pub struct HiveCatalogConfig {
     pub use_ssl: bool,
 }
 /// Generic Iceberg Catalog (REST, JDBC, Hadoop)
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct IcebergCatalogConfig {
     /// Catalog implementation class
     #[prost(string, tag = "1")]
@@ -12972,7 +12972,7 @@ pub struct IcebergCatalogConfig {
     pub hadoop_conf_dir: ::prost::alloc::string::String,
 }
 /// Delta Lake Catalog
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct DeltaCatalogConfig {
     /// s3://bucket/path, file:///path, abfs://...
     #[prost(string, tag = "1")]
@@ -12994,7 +12994,7 @@ pub struct DeltaCatalogConfig {
     pub checkpoint_interval: ::core::option::Option<i32>,
 }
 /// Cross-region replication for native catalog
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct ReplicationConfig {
     /// Replica storage URLs
     #[prost(string, repeated, tag = "1")]
@@ -13005,7 +13005,7 @@ pub struct ReplicationConfig {
     #[prost(int32, tag = "3")]
     pub sync_interval_seconds: i32,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct Namespace {
     /// Parent catalog name
     #[prost(string, tag = "1")]
@@ -13018,8 +13018,10 @@ pub struct Namespace {
     pub properties:
         ::std::collections::HashMap<::prost::alloc::string::String, ::prost::alloc::string::String>,
     #[prost(message, optional, tag = "4")]
+    #[serde(skip)]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag = "5")]
+    #[serde(skip)]
     pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
     /// Owner principal
     #[prost(string, tag = "6")]
@@ -13028,7 +13030,7 @@ pub struct Namespace {
     #[prost(string, tag = "7")]
     pub location: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct TableSchema {
     /// Catalog name
     #[prost(string, tag = "1")]
@@ -13066,8 +13068,10 @@ pub struct TableSchema {
     #[prost(int64, tag = "30")]
     pub schema_id: i64,
     #[prost(message, optional, tag = "31")]
+    #[serde(skip)]
     pub created_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(message, optional, tag = "32")]
+    #[serde(skip)]
     pub updated_at: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(string, tag = "33")]
     pub owner: ::prost::alloc::string::String,
@@ -13084,7 +13088,7 @@ pub struct TableSchema {
     pub fulltext_config: ::core::option::Option<FullTextConfig>,
 }
 /// Column definition
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct ColumnDefinition {
     /// Column ID (stable across renames)
     #[prost(int32, tag = "1")]
@@ -13163,14 +13167,14 @@ pub struct ModifyColumnChange {
     pub column: ::core::option::Option<ColumnDefinition>,
 }
 /// Partition specification
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct PartitionSpec {
     #[prost(int32, tag = "1")]
     pub spec_id: i32,
     #[prost(message, repeated, tag = "2")]
     pub fields: ::prost::alloc::vec::Vec<PartitionField>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct PartitionField {
     /// Source column ID
     #[prost(int32, tag = "1")]
@@ -13184,14 +13188,14 @@ pub struct PartitionField {
     pub transform: i32,
 }
 /// Sort order for data files (catalog-specific)
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CatalogSortOrder {
     #[prost(int32, tag = "1")]
     pub order_id: i32,
     #[prost(message, repeated, tag = "2")]
     pub fields: ::prost::alloc::vec::Vec<CatalogSortField>,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CatalogSortField {
     #[prost(int32, tag = "1")]
     pub source_id: i32,
@@ -13201,7 +13205,7 @@ pub struct CatalogSortField {
     pub null_order: i32,
 }
 /// Primary key specification
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct PrimaryKeySpec {
     /// Column IDs in primary key
     #[prost(int32, repeated, tag = "1")]
@@ -13211,7 +13215,7 @@ pub struct PrimaryKeySpec {
     pub auto_generate: bool,
 }
 /// Secondary index definition (catalog-specific)
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CatalogIndexDefinition {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -13229,7 +13233,7 @@ pub struct CatalogIndexDefinition {
     pub vector_config: ::core::option::Option<VectorIndexConfig>,
 }
 /// Vector index configuration
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct VectorIndexConfig {
     #[prost(int32, tag = "1")]
     pub dimension: i32,
@@ -13253,7 +13257,7 @@ pub struct VectorIndexConfig {
     pub quantization: ::prost::alloc::string::String,
 }
 /// Vector column configuration
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct VectorColumnConfig {
     #[prost(string, tag = "1")]
     pub column_name: ::prost::alloc::string::String,
@@ -13269,7 +13273,7 @@ pub struct VectorColumnConfig {
     pub embedding_model: ::prost::alloc::string::String,
 }
 /// Full-text search configuration
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct FullTextConfig {
     #[prost(string, repeated, tag = "1")]
     pub indexed_columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
@@ -13280,14 +13284,14 @@ pub struct FullTextConfig {
     pub enable_highlighting: bool,
 }
 /// Catalog operations
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CreateCatalogRequest {
     #[prost(message, optional, tag = "1")]
     pub config: ::core::option::Option<CatalogConfig>,
     #[prost(bool, tag = "2")]
     pub if_not_exists: bool,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CreateCatalogResponse {
     #[prost(string, tag = "1")]
     pub catalog_name: ::prost::alloc::string::String,
@@ -13295,28 +13299,28 @@ pub struct CreateCatalogResponse {
     #[prost(bool, tag = "2")]
     pub created: bool,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct GetCatalogRequest {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct GetCatalogResponse {
     #[prost(message, optional, tag = "1")]
     pub config: ::core::option::Option<CatalogConfig>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct ListCatalogsRequest {
     /// Glob pattern (optional)
     #[prost(string, tag = "1")]
     pub pattern: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct ListCatalogsResponse {
     #[prost(message, repeated, tag = "1")]
     pub catalogs: ::prost::alloc::vec::Vec<CatalogConfig>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct DropCatalogRequest {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -13326,13 +13330,13 @@ pub struct DropCatalogRequest {
     #[prost(bool, tag = "3")]
     pub if_exists: bool,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct DropCatalogResponse {
     #[prost(bool, tag = "1")]
     pub dropped: bool,
 }
 /// Namespace operations
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CreateNamespaceRequest {
     #[prost(string, tag = "1")]
     pub catalog: ::prost::alloc::string::String,
@@ -13345,7 +13349,7 @@ pub struct CreateNamespaceRequest {
     #[prost(bool, tag = "4")]
     pub if_not_exists: bool,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CreateNamespaceResponse {
     #[prost(message, optional, tag = "1")]
     pub namespace: ::core::option::Option<Namespace>,
@@ -13364,7 +13368,7 @@ pub struct GetNamespaceResponse {
     #[prost(message, optional, tag = "1")]
     pub namespace: ::core::option::Option<Namespace>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CatalogListNamespacesRequest {
     #[prost(string, tag = "1")]
     pub catalog: ::prost::alloc::string::String,
@@ -13372,12 +13376,12 @@ pub struct CatalogListNamespacesRequest {
     #[prost(string, repeated, tag = "2")]
     pub parent: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CatalogListNamespacesResponse {
     #[prost(message, repeated, tag = "1")]
     pub namespaces: ::prost::alloc::vec::Vec<Namespace>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct DropNamespaceRequest {
     #[prost(string, tag = "1")]
     pub catalog: ::prost::alloc::string::String,
@@ -13388,7 +13392,7 @@ pub struct DropNamespaceRequest {
     #[prost(bool, tag = "4")]
     pub if_exists: bool,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct DropNamespaceResponse {
     #[prost(bool, tag = "1")]
     pub dropped: bool,
@@ -13411,7 +13415,7 @@ pub struct UpdateNamespacePropertiesResponse {
     pub namespace: ::core::option::Option<Namespace>,
 }
 /// Table operations
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CreateTableRequest {
     #[prost(string, tag = "1")]
     pub catalog: ::prost::alloc::string::String,
@@ -13427,14 +13431,14 @@ pub struct CreateTableRequest {
     #[prost(bool, tag = "6")]
     pub or_replace: bool,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct CreateTableResponse {
     #[prost(message, optional, tag = "1")]
     pub table: ::core::option::Option<TableSchema>,
     #[prost(bool, tag = "2")]
     pub created: bool,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct GetTableRequest {
     #[prost(string, tag = "1")]
     pub catalog: ::prost::alloc::string::String,
@@ -13446,7 +13450,7 @@ pub struct GetTableRequest {
     #[prost(bool, tag = "4")]
     pub include_statistics: bool,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct GetTableResponse {
     #[prost(message, optional, tag = "1")]
     pub table: ::core::option::Option<TableSchema>,
@@ -13454,7 +13458,7 @@ pub struct GetTableResponse {
     #[prost(message, optional, tag = "2")]
     pub statistics: ::core::option::Option<TableStatistics>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct ListTablesRequest {
     #[prost(string, tag = "1")]
     pub catalog: ::prost::alloc::string::String,
@@ -13464,12 +13468,12 @@ pub struct ListTablesRequest {
     #[prost(string, tag = "3")]
     pub pattern: ::prost::alloc::string::String,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct ListTablesResponse {
     #[prost(message, repeated, tag = "1")]
     pub tables: ::prost::alloc::vec::Vec<TableSchema>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct DropTableRequest {
     #[prost(string, tag = "1")]
     pub catalog: ::prost::alloc::string::String,
@@ -13483,7 +13487,7 @@ pub struct DropTableRequest {
     #[prost(bool, tag = "5")]
     pub if_exists: bool,
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct DropTableResponse {
     #[prost(bool, tag = "1")]
     pub dropped: bool,
@@ -13684,7 +13688,7 @@ pub struct ListIndexesResponse {
     pub indexes: ::prost::alloc::vec::Vec<CatalogIndexDefinition>,
 }
 /// Statistics
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct TableStatistics {
     #[prost(int64, tag = "1")]
     pub row_count: i64,
@@ -13695,11 +13699,12 @@ pub struct TableStatistics {
     #[prost(int64, tag = "4")]
     pub file_count: i64,
     #[prost(message, optional, tag = "5")]
+    #[serde(skip)]
     pub last_updated: ::core::option::Option<::prost_types::Timestamp>,
     #[prost(map = "string, message", tag = "6")]
     pub column_stats: ::std::collections::HashMap<::prost::alloc::string::String, ColumnStatistics>,
 }
-#[derive(Clone, PartialEq, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message, serde::Serialize, serde::Deserialize)]
 pub struct ColumnStatistics {
     #[prost(int64, tag = "1")]
     pub null_count: i64,
