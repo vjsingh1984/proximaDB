@@ -51,8 +51,12 @@ def convert_println_to_log(file_path):
     # Track if we need to add use statement
     needs_log_import = False
     
-    # Find all println! statements (including multi-line)
-    pattern = r'println!\s*\(((?:[^()]+|\([^()]*\))*)\)'
+    # Find all println! statements (including multi-line).
+    # The inner alternation uses a single [^()] (not [^()]+) so the two
+    # branches are disjoint (non-paren char vs a "(...)" group) and the
+    # outer * cannot backtrack exponentially. Same matched language as
+    # [^()]+, but linear time — avoids ReDoS (CodeQL py/redos).
+    pattern = r'println!\s*\(((?:[^()]|\([^()]*\))*)\)'
     
     def replace_println(match):
         nonlocal needs_log_import

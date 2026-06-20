@@ -135,7 +135,10 @@ def test_config_get_token_url_okta():
 
 def test_config_get_token_url_auth0():
     cfg = OAuth2Config(provider=OAuth2Provider.AUTH0, audience="tenant.auth0.com")
-    assert "tenant.auth0.com" in cfg.get_token_url()
+    # Assert the full URL, not a substring: a substring check would also pass
+    # for a host like "tenant.auth0.com.evil.example" (CodeQL
+    # py/incomplete-url-substring-sanitization).
+    assert cfg.get_token_url() == "https://tenant.auth0.com/oauth/token"
 
 
 def test_config_get_token_url_generic_empty():
