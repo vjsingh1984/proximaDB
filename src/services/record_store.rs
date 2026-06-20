@@ -3363,6 +3363,12 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
                 .read_records_pruned(&filter, field_to_col, &[], &[])
                 .await
                 .map_err(|err| anyhow!("ranged pruned read '{path}': {err}"))?;
+            // Forward this open's physical read accounting into the per-query
+            // I/O trace (co-design C0: object-store bytes + footer-cache
+            // effectiveness, Dimensions 1 & 3).
+            let st = reader.read_stats();
+            io_trace::record_bytes_read(st.bytes_read);
+            io_trace::record_footers(st.footer_hits, st.footer_misses);
             for mut record in recs {
                 record.variation_id = Some(table_schema.name.clone());
                 if predicate.is_none_or(|p| p(&record)) {

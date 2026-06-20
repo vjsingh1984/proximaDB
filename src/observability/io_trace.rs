@@ -152,6 +152,13 @@ impl IoTrace {
         counter.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Record a batch of footer/metadata cache outcomes at once — convenient for
+    /// forwarding a `RangedSegmentReader`'s per-open `SegmentReadStats`.
+    pub fn record_footers(&self, hits: u64, misses: u64) {
+        self.footer_hits.fetch_add(hits, Ordering::Relaxed);
+        self.footer_misses.fetch_add(misses, Ordering::Relaxed);
+    }
+
     /// Add to bytes moved across an availability zone (KEU / egress).
     pub fn record_cross_az_bytes(&self, bytes: u64) {
         self.bytes_cross_az.fetch_add(bytes, Ordering::Relaxed);
@@ -289,6 +296,11 @@ pub fn record_footer(hit: bool) {
     let _ = IO_TRACE.try_with(|t| t.record_footer(hit));
 }
 
+/// Record a batch of footer/metadata cache outcomes for the active query.
+pub fn record_footers(hits: u64, misses: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_footers(hits, misses));
+}
+
 /// Record cross-AZ bytes (KEU/egress) for the active query.
 pub fn record_cross_az_bytes(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_cross_az_bytes(bytes));
@@ -411,6 +423,20 @@ mod tests {
         record_footer(true);
         record_compute_ms("sst", 1);
         assert!(snapshot().is_none());
+    }
+
+    #[tokio::test]
+    async fn record_footers_batches_outcomes() {
+        let s = scope(async {
+            record_footers(7, 3);
+            record_footer(true); // one more hit on top
+            snapshot()
+        })
+        .await
+        .expect("snapshot inside scope");
+        assert_eq!(s.footer_hits, 8);
+        assert_eq!(s.footer_misses, 3);
+        assert_eq!(s.footer_hit_ratio(), Some(8.0 / 11.0));
     }
 
     #[tokio::test]

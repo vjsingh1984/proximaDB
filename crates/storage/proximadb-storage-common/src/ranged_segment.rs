@@ -15,6 +15,7 @@
 //! `tenant_id` is threaded to every fetch for billing attribution.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use object_store::path::Path;
 use proximadb_block_format::{
@@ -57,6 +58,28 @@ pub struct RangedSegmentReader<'b> {
     index: Arc<SegmentIndex>,
     size: u64,
     footer_cache: Option<Arc<FooterCache>>,
+    /// Per-open physical read accounting (co-design C0 trace substrate): bytes
+    /// fetched via ranged GETs and footer-cache outcomes, surfaced to the
+    /// caller's per-query `IoTrace` via [`RangedSegmentReader::read_stats`].
+    /// Atomic because block reads within one open may run concurrently.
+    bytes_read: AtomicU64,
+    footer_hits: AtomicU64,
+    footer_misses: AtomicU64,
+}
+
+/// Snapshot of one [`RangedSegmentReader`] open's physical read accounting.
+/// Forwarded by callers into the per-query I/O trace so a query's object-store
+/// byte cost and footer-cache effectiveness become observable (Dimensions 1 & 3
+/// of the co-design spec).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SegmentReadStats {
+    /// Bytes fetched via ranged GETs during this open. Excludes the one-time
+    /// index-locate suffix read performed before the reader is constructed.
+    pub bytes_read: u64,
+    /// Block-layout footer/metadata cache hits (a hit skips all metadata GETs).
+    pub footer_hits: u64,
+    /// Block-layout footer/metadata cache misses (built from ranged GETs).
+    pub footer_misses: u64,
 }
 
 impl<'b> RangedSegmentReader<'b> {
@@ -119,7 +142,22 @@ impl<'b> RangedSegmentReader<'b> {
             index,
             size,
             footer_cache,
+            bytes_read: AtomicU64::new(0),
+            footer_hits: AtomicU64::new(0),
+            footer_misses: AtomicU64::new(0),
         })
+    }
+
+    /// Physical read accounting accumulated by this open (co-design C0 trace
+    /// substrate). `bytes_read` excludes the one-time index-locate suffix read
+    /// done before construction. Callers forward this into the per-query
+    /// `IoTrace`.
+    pub fn read_stats(&self) -> SegmentReadStats {
+        SegmentReadStats {
+            bytes_read: self.bytes_read.load(Ordering::Relaxed),
+            footer_hits: self.footer_hits.load(Ordering::Relaxed),
+            footer_misses: self.footer_misses.load(Ordering::Relaxed),
+        }
     }
 
     /// Range-read the tail suffix and locate the segment index (growing the
@@ -157,9 +195,13 @@ impl<'b> RangedSegmentReader<'b> {
     }
 
     async fn fetch(&self, offset: u64, length: u64) -> Result<Vec<u8>, StorageError> {
-        self.bridge
+        let out = self
+            .bridge
             .fetch_vector_segment_range(&self.path, offset, length, self.tenant_id.as_deref())
-            .await
+            .await?;
+        self.bytes_read
+            .fetch_add(out.len() as u64, Ordering::Relaxed);
+        Ok(out)
     }
 
     /// Assemble a block's [`BlockLayout`], consulting the footer cache first
@@ -177,8 +219,10 @@ impl<'b> RangedSegmentReader<'b> {
                 format!("{}#{}", self.path, block_offset),
             );
             if let Some(layout) = fc.get(&key).await {
+                self.footer_hits.fetch_add(1, Ordering::Relaxed);
                 return Ok(layout);
             }
+            self.footer_misses.fetch_add(1, Ordering::Relaxed);
             let layout = Arc::new(self.build_block_layout(block_offset, block_size).await?);
             fc.insert(key, layout.approx_bytes() as u32, layout.clone())
                 .await;
@@ -634,6 +678,22 @@ mod tests {
         let after_first = bridge.ranged_bytes.load(Ordering::Relaxed);
         footer_cache.sync().await;
 
+        // Co-design C0 read accounting: a cold open is all footer-cache misses
+        // (one per block) and its byte count is positive and bounded by the
+        // bridge total (which additionally includes the index-locate suffix).
+        let s1 = r1.read_stats();
+        assert_eq!(s1.footer_hits, 0, "cold open: no footer-cache hits");
+        assert_eq!(
+            s1.footer_misses as usize,
+            r1.block_count(),
+            "cold open: one footer miss per block"
+        );
+        assert!(
+            s1.bytes_read > 0 && s1.bytes_read <= after_first,
+            "reader byte accounting {} within bridge total {after_first}",
+            s1.bytes_read
+        );
+
         // Second read: footers come from cache → only stripe bytes are fetched.
         let r2 = RangedSegmentReader::open_with_cache(
             &bridge,
@@ -647,6 +707,20 @@ mod tests {
         let c2 = r2.read_i64_column(col_id::CREATED_AT).await.unwrap();
         assert_eq!(c2, c1, "cached read must decode identically");
         let delta2 = bridge.ranged_bytes.load(Ordering::Relaxed) - after_first;
+
+        // Warm open: every block's footer is served from cache (one hit per
+        // block, zero misses) and only stripe bytes are fetched.
+        let s2 = r2.read_stats();
+        assert_eq!(s2.footer_misses, 0, "warm open: no footer-cache misses");
+        assert_eq!(
+            s2.footer_hits as usize,
+            r2.block_count(),
+            "warm open: one footer hit per block"
+        );
+        assert!(
+            s2.bytes_read > 0 && s2.bytes_read <= delta2,
+            "warm-open stripe-byte accounting positive and bounded"
+        );
 
         assert!(delta2 > 0, "second read still fetches stripe bytes");
         assert!(
