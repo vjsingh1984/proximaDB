@@ -398,7 +398,7 @@ impl RouteCostModel {
             return None; // all candidates warm — exploit, don't explore
         }
         let tick = self.explore_tick.fetch_add(1, Ordering::Relaxed);
-        if tick % self.exploration_interval == 0 {
+        if tick.is_multiple_of(self.exploration_interval) {
             Some(cand)
         } else {
             None
