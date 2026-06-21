@@ -85,14 +85,25 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | UQL/Federated Supported; AQL Planned
 
 | *gRPC `proximadb.v2.ProximaGraphService`*
-| Graph node/edge/traversal/shortest-path RPCs
+| Node/edge/query/traversal/shortest-path/stats + analytic
+  (GetConnectedComponents, HasCycle), batch (BatchCreateNodes/Edges),
+  unique-constraint DDL, and server-streaming (StreamTraverse) RPCs (TD-124).
 | Programmatic graph access from the SDK.
 | Supported
 
-| *Graph `ExecuteQuery`* (Cypher/Gremlin)
-| Declarative graph query
-| Deferred — TD-124.
-| Planned
+| *Graph `ExecuteQuery`* (Cypher)
+| Declarative graph query — supported openCypher subset (single-node patterns
+  and linear traversal chains with equality property constraints) on v2 (TD-124).
+| Now on v2 `ProximaGraphService`. GREMLIN reserved/unbacked.
+| Supported (subset)
+
+| *Graph `ExecuteHybridQuery` / `CreateGraphWithEngine` / `GetPulsarStats`*
+| Cross-modality hybrid query; engine-typed graph create; PULSAR stats
+| Still v1-only / unimplemented. `ExecuteHybridQuery` needs a v2-native
+  vector+graph fusion surface (depends on full `UnifiedHandlers`);
+  `CreateGraphWithEngine`/`GetPulsarStats` are unimplemented (PULSAR/QUASAR
+  retired). See TD-124.
+| Deferred — TD-124
 |===
 
 [NOTE]
@@ -153,7 +164,7 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | ORION graph operations
 | Beta
 | Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable. These core operations are now served on the canonical v2 gRPC surface (`proximadb.v2.ProximaGraphService`, always-registered) and consumed by the Python SDK; the deprecated `proximadb.v1.GraphService` is off by default (`enable_grpc_v1_compat`).
-| Declarative graph query execution (Cypher/Gremlin `ExecuteQuery`) and several analytic/batch RPCs are still incomplete on the canonical v2 gRPC path (deferred — TD-124); graph creation/DDL is REST-only (`/api/v2/graphs`). ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
+| The analytic (GetConnectedComponents/HasCycle), batch (BatchCreateNodes/Edges), unique-constraint, server-streaming (StreamTraverse), and declarative `ExecuteQuery` (supported openCypher subset) RPCs are now on the canonical v2 gRPC path (TD-124). Still v1-only/deferred: `ExecuteHybridQuery` (needs a v2-native vector+graph fusion surface), and the unimplemented `CreateGraphWithEngine`/`GetPulsarStats` (PULSAR/QUASAR retired); GREMLIN is reserved/unbacked. Graph creation/DDL is REST-only (`/api/v2/graphs`). ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
 
 | Observability ingestion and query
 | Beta
