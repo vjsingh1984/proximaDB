@@ -108,8 +108,10 @@ pub mod typed_value {
         Float32Value(f32),
         #[prost(string, tag = "68")]
         SymbolValue(::prost::alloc::string::String),
+        /// MessagePack-encoded JSONB
         #[prost(bytes, tag = "69")]
         JsonbValue(::prost::alloc::vec::Vec<u8>),
+        /// 16-byte ULID
         #[prost(bytes, tag = "70")]
         UlidValue(::prost::alloc::vec::Vec<u8>),
         #[prost(message, tag = "71")]
@@ -193,10 +195,7 @@ pub struct TypedValueArray {
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct TypedValueMap {
     #[prost(map = "string, message", tag = "1")]
-    pub entries: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        TypedValue,
-    >,
+    pub entries: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
 }
 /// Map types
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -430,10 +429,7 @@ pub struct ProximaRecord {
     pub sparse_vector: ::core::option::Option<SparseVector>,
     /// Canonical NF2 property map (schema-validated where a schema is attached)
     #[prost(map = "string, message", tag = "5")]
-    pub props: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        TypedValue,
-    >,
+    pub props: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
     /// TEXT content - dedicated columnar storage
     /// These are stored separately to avoid metadata scanning
     #[prost(message, repeated, tag = "10")]
@@ -619,10 +615,7 @@ pub struct TypedSearchResult {
     pub score: f64,
     /// Fields (based on projection)
     #[prost(map = "string, message", tag = "3")]
-    pub props: ::std::collections::HashMap<
-        ::prost::alloc::string::String,
-        TypedValue,
-    >,
+    pub props: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
     #[prost(float, repeated, tag = "4")]
     pub vector: ::prost::alloc::vec::Vec<f32>,
     #[prost(message, repeated, tag = "5")]
@@ -778,6 +771,96 @@ pub struct BackpressureSignal {
     /// Current buffer utilization (0-100)
     #[prost(uint32, tag = "3")]
     pub buffer_percent: u32,
+}
+/// # =============================================================================
+/// Collection management (v2 — parity with v1 CollectionService).
+/// Self-contained: distance_metric/storage_engine are lowercase strings mapped
+/// to the internal enums server-side (avoids importing the v1 proto package).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2CollectionConfig {
+    #[prost(string, tag = "1")]
+    pub name: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "2")]
+    pub dimension: u32,
+    /// "cosine" (default) | "euclidean" | "dot_product" | ...
+    #[prost(string, tag = "3")]
+    pub distance_metric: ::prost::alloc::string::String,
+    /// "sst" (default) | "viper" | ...
+    #[prost(string, tag = "4")]
+    pub storage_engine: ::prost::alloc::string::String,
+    #[prost(string, repeated, tag = "5")]
+    pub filterable_columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(string, tag = "6")]
+    pub description: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2Collection {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub config: ::core::option::Option<V2CollectionConfig>,
+    #[prost(int64, tag = "3")]
+    pub created_at: i64,
+    #[prost(int64, tag = "4")]
+    pub updated_at: i64,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2GetCollectionRequest {
+    /// name or id
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2ListCollectionsRequest {
+    #[prost(uint32, optional, tag = "1")]
+    pub limit: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "2")]
+    pub offset: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct V2ListCollectionsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub collections: ::prost::alloc::vec::Vec<V2Collection>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2DeleteCollectionRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2DeleteCollectionResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+}
+/// # =============================================================================
+/// SQL query (v2 — parity with v1 QueryService.ExecuteQuery).
+/// Rows reuse the v2 TypedValue so the SDK's existing decoders apply.
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2QueryRequest {
+    #[prost(string, tag = "1")]
+    pub query: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(uint32, optional, tag = "3")]
+    pub limit: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "4")]
+    pub offset: ::core::option::Option<u32>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct V2QueryRow {
+    #[prost(map = "string, message", tag = "1")]
+    pub values: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct V2QueryResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub rows: ::prost::alloc::vec::Vec<V2QueryRow>,
+    #[prost(string, repeated, tag = "2")]
+    pub columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(uint64, tag = "3")]
+    pub rows_returned: u64,
+    #[prost(uint64, tag = "4")]
+    pub execution_time_ms: u64,
 }
 /// # =============================================================================
 /// ColumnDataType: Rich data type enum for ProximaRecord columns
@@ -1750,6 +1833,141 @@ pub mod proxima_record_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// Collection management (v2 parity with v1 CollectionService)
+        pub async fn create_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::V2CollectionConfig>,
+        ) -> std::result::Result<tonic::Response<super::V2Collection>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaRecordService/CreateCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaRecordService",
+                        "CreateCollection",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::V2GetCollectionRequest>,
+        ) -> std::result::Result<tonic::Response<super::V2Collection>, tonic::Status> {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaRecordService/GetCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaRecordService", "GetCollection"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn list_collections(
+            &mut self,
+            request: impl tonic::IntoRequest<super::V2ListCollectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::V2ListCollectionsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaRecordService/ListCollections",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaRecordService",
+                        "ListCollections",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_collection(
+            &mut self,
+            request: impl tonic::IntoRequest<super::V2DeleteCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::V2DeleteCollectionResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaRecordService/DeleteCollection",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaRecordService",
+                        "DeleteCollection",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// SQL query (v2 parity with v1 QueryService)
+        pub async fn execute_query(
+            &mut self,
+            request: impl tonic::IntoRequest<super::V2QueryRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::V2QueryResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaRecordService/ExecuteQuery",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaRecordService", "ExecuteQuery"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -1862,6 +2080,34 @@ pub mod proxima_record_service_server {
             tonic::Response<super::EvolveSchemaResponse>,
             tonic::Status,
         >;
+        /// Collection management (v2 parity with v1 CollectionService)
+        async fn create_collection(
+            &self,
+            request: tonic::Request<super::V2CollectionConfig>,
+        ) -> std::result::Result<tonic::Response<super::V2Collection>, tonic::Status>;
+        async fn get_collection(
+            &self,
+            request: tonic::Request<super::V2GetCollectionRequest>,
+        ) -> std::result::Result<tonic::Response<super::V2Collection>, tonic::Status>;
+        async fn list_collections(
+            &self,
+            request: tonic::Request<super::V2ListCollectionsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::V2ListCollectionsResponse>,
+            tonic::Status,
+        >;
+        async fn delete_collection(
+            &self,
+            request: tonic::Request<super::V2DeleteCollectionRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::V2DeleteCollectionResponse>,
+            tonic::Status,
+        >;
+        /// SQL query (v2 parity with v1 QueryService)
+        async fn execute_query(
+            &self,
+            request: tonic::Request<super::V2QueryRequest>,
+        ) -> std::result::Result<tonic::Response<super::V2QueryResponse>, tonic::Status>;
     }
     /// # =============================================================================
     /// gRPC Service definition
@@ -2439,6 +2685,245 @@ pub mod proxima_record_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = EvolveSchemaSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaRecordService/CreateCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateCollectionSvc<T: ProximaRecordService>(pub Arc<T>);
+                    impl<
+                        T: ProximaRecordService,
+                    > tonic::server::UnaryService<super::V2CollectionConfig>
+                    for CreateCollectionSvc<T> {
+                        type Response = super::V2Collection;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::V2CollectionConfig>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaRecordService>::create_collection(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateCollectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaRecordService/GetCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetCollectionSvc<T: ProximaRecordService>(pub Arc<T>);
+                    impl<
+                        T: ProximaRecordService,
+                    > tonic::server::UnaryService<super::V2GetCollectionRequest>
+                    for GetCollectionSvc<T> {
+                        type Response = super::V2Collection;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::V2GetCollectionRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaRecordService>::get_collection(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetCollectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaRecordService/ListCollections" => {
+                    #[allow(non_camel_case_types)]
+                    struct ListCollectionsSvc<T: ProximaRecordService>(pub Arc<T>);
+                    impl<
+                        T: ProximaRecordService,
+                    > tonic::server::UnaryService<super::V2ListCollectionsRequest>
+                    for ListCollectionsSvc<T> {
+                        type Response = super::V2ListCollectionsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::V2ListCollectionsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaRecordService>::list_collections(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ListCollectionsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaRecordService/DeleteCollection" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteCollectionSvc<T: ProximaRecordService>(pub Arc<T>);
+                    impl<
+                        T: ProximaRecordService,
+                    > tonic::server::UnaryService<super::V2DeleteCollectionRequest>
+                    for DeleteCollectionSvc<T> {
+                        type Response = super::V2DeleteCollectionResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::V2DeleteCollectionRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaRecordService>::delete_collection(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteCollectionSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaRecordService/ExecuteQuery" => {
+                    #[allow(non_camel_case_types)]
+                    struct ExecuteQuerySvc<T: ProximaRecordService>(pub Arc<T>);
+                    impl<
+                        T: ProximaRecordService,
+                    > tonic::server::UnaryService<super::V2QueryRequest>
+                    for ExecuteQuerySvc<T> {
+                        type Response = super::V2QueryResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::V2QueryRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaRecordService>::execute_query(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = ExecuteQuerySvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

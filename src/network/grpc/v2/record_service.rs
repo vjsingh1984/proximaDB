@@ -33,8 +33,10 @@ use crate::proto::proximadb_v2::{
     BatchWriteStreamRequest, BatchWriteStreamResponse, CreateSchemaRequest, CreateSchemaResponse,
     EvolveSchemaRequest, EvolveSchemaResponse, GetSchemaRequest, GetSchemaResponse,
     ListSchemasRequest, ListSchemasResponse, ProximaRecordBatch, ProximaRecordBatchResponse,
-    TypedSearchRequest, TypedSearchResponse, TypedSearchResult,
-    proxima_record_service_server::ProximaRecordService,
+    TypedSearchRequest, TypedSearchResponse, TypedSearchResult, V2Collection, V2CollectionConfig,
+    V2DeleteCollectionRequest, V2DeleteCollectionResponse, V2GetCollectionRequest,
+    V2ListCollectionsRequest, V2ListCollectionsResponse, V2QueryRequest, V2QueryResponse,
+    V2QueryRow, proxima_record_service_server::ProximaRecordService,
     proxima_record_service_server::ProximaRecordServiceServer,
 };
 use crate::services::operations::BatchOperationResult;
@@ -1721,6 +1723,216 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         Err(Status::unimplemented(
             "Schema evolution not yet implemented. Use CreateSchema for new schemas.",
         ))
+    }
+
+    // ---- Collection management (v2 parity with v1 CollectionService) ----
+    // Delegate to the same UnifiedHandlers collection path the v1/REST surfaces
+    // use; map V2 messages <-> v1 CollectionConfig/Collection.
+
+    async fn create_collection(
+        &self,
+        request: Request<V2CollectionConfig>,
+    ) -> Result<Response<V2Collection>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let cfg = request.into_inner();
+        info!("V2 gRPC: CreateCollection - name='{}'", cfg.name);
+
+        let v1_config = crate::proto::proximadb_v1::CollectionConfig {
+            name: cfg.name.clone(),
+            dimension: cfg.dimension,
+            distance_metric: Some(distance_metric_from_str(&cfg.distance_metric)),
+            storage_engine: Some(storage_engine_from_str(&cfg.storage_engine)),
+            filterable_columns: cfg
+                .filterable_columns
+                .iter()
+                .map(|n| crate::proto::proximadb_v1::FilterableColumnSpec {
+                    name: n.clone(),
+                    ..Default::default()
+                })
+                .collect(),
+            description: if cfg.description.is_empty() {
+                None
+            } else {
+                Some(cfg.description.clone())
+            },
+            ..Default::default()
+        };
+
+        let req = CollectionRequest {
+            operation: CollectionOperation::CollectionCreate as i32,
+            collection_id: Some(cfg.name.clone()),
+            collection_config: Some(v1_config),
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        let resp = self
+            .request_handlers
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("CreateCollection failed: {e}")))?;
+        let coll = resp
+            .collection
+            .ok_or_else(|| Status::internal("CreateCollection returned no collection"))?;
+        Ok(Response::new(collection_to_v2(coll)))
+    }
+
+    async fn get_collection(
+        &self,
+        request: Request<V2GetCollectionRequest>,
+    ) -> Result<Response<V2Collection>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req_in = request.into_inner();
+        let req = CollectionRequest {
+            operation: CollectionOperation::CollectionGet as i32,
+            collection_id: Some(req_in.collection_id.clone()),
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        let resp = self
+            .request_handlers
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("GetCollection failed: {e}")))?;
+        let coll = resp.collection.ok_or_else(|| {
+            Status::not_found(format!("Collection not found: {}", req_in.collection_id))
+        })?;
+        Ok(Response::new(collection_to_v2(coll)))
+    }
+
+    async fn list_collections(
+        &self,
+        request: Request<V2ListCollectionsRequest>,
+    ) -> Result<Response<V2ListCollectionsResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let _ = request.into_inner();
+        let req = CollectionRequest {
+            operation: CollectionOperation::CollectionList as i32,
+            collection_id: None,
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        let resp = self
+            .request_handlers
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("ListCollections failed: {e}")))?;
+        let collections = resp.collections.into_iter().map(collection_to_v2).collect();
+        Ok(Response::new(V2ListCollectionsResponse { collections }))
+    }
+
+    async fn delete_collection(
+        &self,
+        request: Request<V2DeleteCollectionRequest>,
+    ) -> Result<Response<V2DeleteCollectionResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req_in = request.into_inner();
+        info!("V2 gRPC: DeleteCollection - id='{}'", req_in.collection_id);
+        let req = CollectionRequest {
+            operation: CollectionOperation::CollectionDelete as i32,
+            collection_id: Some(req_in.collection_id.clone()),
+            collection_config: None,
+            query_params: Default::default(),
+            options: Default::default(),
+            migration_config: Default::default(),
+        };
+        self.request_handlers
+            .handle_collection_operation_for_tenant(req, tenant_id.as_deref())
+            .await
+            .map_err(|e| Status::internal(format!("DeleteCollection failed: {e}")))?;
+        Ok(Response::new(V2DeleteCollectionResponse { success: true }))
+    }
+
+    // ---- SQL query (v2 parity with v1 QueryService.ExecuteQuery) ----
+
+    async fn execute_query(
+        &self,
+        request: Request<V2QueryRequest>,
+    ) -> Result<Response<V2QueryResponse>, Status> {
+        let _tenant_id = Self::extract_tenant_id(&request);
+        let q = request.into_inner();
+        let collection = if q.collection_id.is_empty() {
+            None
+        } else {
+            Some(q.collection_id.clone())
+        };
+        let resp = self
+            .request_handlers
+            .execute_sql_v1(q.query, None, collection)
+            .await
+            .map_err(|e| Status::internal(format!("ExecuteQuery failed: {e}")))?;
+        let rows = resp
+            .rows
+            .into_iter()
+            .map(|row| {
+                let values = row
+                    .fields
+                    .into_iter()
+                    .filter_map(|f| f.value.map(|v| (f.key, sql_value_to_typed(&v))))
+                    .collect();
+                V2QueryRow { values }
+            })
+            .collect();
+        Ok(Response::new(V2QueryResponse {
+            rows,
+            columns: resp.columns,
+            rows_returned: resp.rows_returned,
+            execution_time_ms: resp.execution_time_ms,
+        }))
+    }
+}
+
+// ---- V2 <-> v1 mapping helpers for the collection + query RPCs ----
+
+fn distance_metric_from_str(s: &str) -> i32 {
+    crate::proto::proximadb_v1::DistanceMetric::from_str_name(&s.to_ascii_uppercase())
+        .unwrap_or(crate::proto::proximadb_v1::DistanceMetric::Cosine) as i32
+}
+
+fn storage_engine_from_str(s: &str) -> i32 {
+    crate::proto::proximadb_v1::StorageEngine::from_str_name(&s.to_ascii_uppercase())
+        .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst) as i32
+}
+
+fn collection_to_v2(c: crate::proto::proximadb_v1::Collection) -> V2Collection {
+    let cfg = c.config.unwrap_or_default();
+    let distance_metric = cfg
+        .distance_metric
+        .and_then(|m| crate::proto::proximadb_v1::DistanceMetric::try_from(m).ok())
+        .map(|m| m.as_str_name().to_ascii_lowercase())
+        .unwrap_or_default();
+    let storage_engine = cfg
+        .storage_engine
+        .and_then(|e| crate::proto::proximadb_v1::StorageEngine::try_from(e).ok())
+        .map(|e| e.as_str_name().to_ascii_lowercase())
+        .unwrap_or_default();
+    V2Collection {
+        id: c.id,
+        config: Some(V2CollectionConfig {
+            name: cfg.name,
+            dimension: cfg.dimension,
+            distance_metric,
+            storage_engine,
+            filterable_columns: cfg.filterable_columns.into_iter().map(|f| f.name).collect(),
+            description: cfg.description.unwrap_or_default(),
+        }),
+        created_at: c.created_at,
+        updated_at: c.updated_at,
+    }
+}
+
+/// Map a v1 SqlValue to a v2 TypedValue. Values are carried as JSON text (the
+/// v1 proto is serde-serializable); the SDK decodes the text. Full per-type
+/// TypedValue mapping is a follow-up refinement.
+fn sql_value_to_typed(v: &crate::proto::proximadb_v1::SqlValue) -> proximadb_v2::TypedValue {
+    let text = serde_json::to_string(v).unwrap_or_default();
+    proximadb_v2::TypedValue {
+        declared_type: proximadb_v2::ColumnDataType::Text as i32,
+        value: Some(proximadb_v2::typed_value::Value::TextValue(text)),
     }
 }
 

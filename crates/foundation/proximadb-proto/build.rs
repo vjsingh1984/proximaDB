@@ -1,0 +1,42 @@
+//! Gated regeneration of the v2 record protobuf/gRPC stubs.
+//!
+//! Normal builds use the committed `src/proto/proximadb.v2.rs` (this build script
+//! is a no-op). To regenerate after editing `proto/proximadb/v2/record.proto`:
+//!
+//! ```sh
+//! PROXIMADB_REGEN_PROTO=1 cargo build -p proximadb-proto
+//! ```
+//!
+//! Only the self-contained `proximadb.v2` package is regenerated here, so the
+//! hand-maintained serde on the v1 catalog types (in `proximadb.v1.rs`) is never
+//! touched. Requires `protoc` on PATH.
+
+fn main() {
+    if std::env::var_os("PROXIMADB_REGEN_PROTO").is_none() {
+        return;
+    }
+
+    let manifest = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR");
+    let manifest_dir = std::path::Path::new(&manifest);
+    // crates/foundation/proximadb-proto -> repo root
+    let repo_root = manifest_dir
+        .ancestors()
+        .nth(3)
+        .expect("repo root from crate manifest");
+
+    let proto = repo_root.join("proto/proximadb/v2/record.proto");
+    let include = repo_root.join("proto");
+    let out_dir = manifest_dir.join("src/proto");
+
+    println!(
+        "cargo:warning=regenerating {} -> {}",
+        proto.display(),
+        out_dir.display()
+    );
+    tonic_prost_build::configure()
+        .build_server(true)
+        .build_client(true)
+        .out_dir(&out_dir)
+        .compile_protos(&[proto], &[include])
+        .expect("v2 record proto codegen failed");
+}
