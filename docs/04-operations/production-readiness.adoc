@@ -450,6 +450,41 @@ Criteria evolve based on:
 4. Communicate changes to development team
 5. Update feature evaluation process
 
+=== CI Tiers and Branch Protection
+
+Feature maturity is enforced operationally by a three-tier CI gate matched to the
+`feat → develop → qa → main` promotion flow. Each protected branch merges only when the
+single `CI Success` aggregator check is green (chosen over many individually-required
+contexts to avoid skipped-check deadlock).
+
+[cols="1,1,3,1",options="header"]
+|===
+| Promotion | Tier | Checks (summary) | Workflows
+
+| feat → `develop`
+| LIGHT
+| compile + fmt/clippy + layering + proto + panic-policy + security-audit + docs
+| `ci.yml`
+
+| `develop` → `qa`
+| MEDIUM
+| LIGHT + unit/integration tests + feature-matrix
+| `ci.yml`, `qa-gate.yml`
+
+| `qa` → `main`
+| FULL
+| MEDIUM + coverage + python multi-version + docker + benchmarks + CodeQL
+| `ci.yml`, `qa-gate.yml`, `codeql.yml`
+|===
+
+Branch protection (live): `develop`, `qa`, and `main` all require the `CI Success` check.
+`develop` and `main` additionally enforce it for admins (`enforce_admins`); `qa` and `main`
+require the branch to be up to date before merge (`strict`); `main` also requires linear
+history (merge via rebase/squash, not a merge commit). Heavy scans (CodeQL) run only at the
+`qa → main` boundary plus a weekly schedule. The canonical description of the tier contract
+is `CLAUDE.md` Core Directive #9 (CI/CD Tiering & Security Governance); this section is the
+operator-facing projection of it.
+
 == Summary
 
 Production readiness at ProximaDB means:

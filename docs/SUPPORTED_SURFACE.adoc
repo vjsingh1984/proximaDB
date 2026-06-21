@@ -206,6 +206,16 @@ must not list them under "supported", "production", or "ready":
   native row/delta indexes, DataFusion snapshot-plus-delta reads, and distributed consistency gates
   are tracked in TD-110 and are not part of v0.2.
 * External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
+* Iceberg v3 interop _write/export_ — `ALTER TABLE … MATERIALIZE` over pgwire emits a
+  spec-shaped Iceberg v3 table (`v*.metadata.json` referencing an Avro manifest list + manifest)
+  to the warehouse so external Iceberg engines can read it (verified by `tests/iceberg_interop_e2e.rs`).
+  One-way publish only; this is distinct from the hot-authority item above (still experimental), and
+  external read-back plus multi-writer coordination are unverified.
+* Columnar vector quantization (RaBitQ / SQ8) in PAX vector segments — _flag-gated, default OFF_.
+  Enabled with `PROXIMADB_PAX_VECTOR_SEGMENTS=1` plus `PROXIMADB_PAX_VECTOR_QUANT=rabitq|sq8|auto`
+  (deployment-level env selector; per-collection proto config is the productionization follow-up).
+  Reads are mixed-format-safe — existing ProximaBlocks segments still read back when the flag is on.
+  Codecs/kernels are tested; no per-collection policy or recall SLA is claimed.
 * Arrow Flight / gRPC service multiplexing as a customer-facing transport.
 * Trino / Spark compute adapters — _scaffolded_ (Spark JNI bridge per TD-097; Trino Flight per TD-098). Structural contract gates land in 2026-05-30 connector sprint (`tests/connectors_flight_contract.rs`); end-to-end wire impl deferred.
 * Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side blocked on the records-scan endpoint gap tracked under TD-099.
