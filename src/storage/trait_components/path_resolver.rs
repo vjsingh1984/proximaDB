@@ -44,7 +44,9 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use dashmap::DashMap;
-use proximadb_catalog::{CatalogNamespace, StoragePoolClass};
+use proximadb_catalog::{
+    CatalogNamespace, CatalogProjectionKind, CatalogTableSchema, StoragePoolClass,
+};
 use std::sync::Arc;
 
 /// Storage location assignment for a collection
@@ -512,6 +514,47 @@ impl DrResolvedPath {
     }
 }
 
+/// Resolve the catalog-addressed index locations for a collection's vector-ANN
+/// projections — the pure core of the CATALOG_OBJECT_MODEL P1 boot adapter.
+///
+/// For each `VectorAnn` projection on `schema`, returns `(collection_id,
+/// location)` to register with the index engine (`AxisManager::set_index_location`):
+///
+/// * A projection with an explicit catalog `location` is **always** honored — the
+///   catalog says where that index physically lives (it may have been relocated or
+///   tiered), so it is authoritative.
+/// * A projection without one is **skipped** unless `migrate_to_catalog_paths` is
+///   set, in which case the derived `DrPathBuilder` default
+///   (`…/indexes/<projection>/`) is used — the opt-in migration off the legacy
+///   `index_persist_url` convention. Default-off keeps existing indexes exactly
+///   where they are (mixed-safe).
+///
+/// Returns empty when the namespace is not DR-addressable (legacy pre-P0.5 rows)
+/// or the collection declares no ANN projection.
+pub fn ann_index_locations(
+    namespace: &CatalogNamespace,
+    schema: &CatalogTableSchema,
+    migrate_to_catalog_paths: bool,
+) -> Vec<(String, String)> {
+    let resolved = match DrPathBuilder::build(namespace, &schema.name) {
+        Ok(resolved) => resolved,
+        Err(_) => return Vec::new(), // legacy / non-DR-addressable namespace → leave convention
+    };
+    schema
+        .projections
+        .iter()
+        .filter(|p| p.kind == CatalogProjectionKind::VectorAnn)
+        .filter_map(|p| match p.location.as_deref() {
+            Some(loc) if !loc.is_empty() => Some((schema.name.clone(), loc.to_string())),
+            _ if migrate_to_catalog_paths => Some((
+                schema.name.clone(),
+                resolved.resolve_index_location(&p.name, None),
+            )),
+            _ => None,
+        })
+        .collect()
+}
+
 /// Errors returned by [`DrPathBuilder::build`]. The reconciler and engine
 /// API map these to specific operator-visible failure modes; the path
 /// resolver guard refuses any write whose builder returns one of these.
@@ -838,6 +881,55 @@ mod tests {
             path.resolve_index_location("vector_ann", Some("s3://hot-tier/idx/ann/")),
             "s3://hot-tier/idx/ann/"
         );
+    }
+
+    #[test]
+    fn ann_index_locations_honors_explicit_and_gates_migration() {
+        use proximadb_catalog::CatalogProjection;
+        let ns = dr_addressable_namespace();
+
+        let mut schema = CatalogTableSchema::new("col_orders");
+        schema.projections.push(CatalogProjection::rebuildable(
+            "vector_ann",
+            CatalogProjectionKind::VectorAnn,
+            "primary",
+        ));
+        // A non-ANN projection must be ignored.
+        schema.projections.push(CatalogProjection::rebuildable(
+            "json_path",
+            CatalogProjectionKind::JsonPath,
+            "primary",
+        ));
+
+        // No explicit location + migrate off → register nothing (convention kept).
+        assert!(ann_index_locations(&ns, &schema, false).is_empty());
+
+        // migrate on → DrPath default, ANN projection only.
+        let migrated = ann_index_locations(&ns, &schema, true);
+        assert_eq!(
+            migrated,
+            vec![(
+                "col_orders".to_string(),
+                "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/indexes/vector_ann/"
+                    .to_string()
+            )]
+        );
+
+        // An explicit catalog location is honored regardless of the migrate flag.
+        schema.projections[0] = CatalogProjection::rebuildable(
+            "vector_ann",
+            CatalogProjectionKind::VectorAnn,
+            "primary",
+        )
+        .with_location("s3://hot-tier/ann/");
+        assert_eq!(
+            ann_index_locations(&ns, &schema, false),
+            vec![("col_orders".to_string(), "s3://hot-tier/ann/".to_string())]
+        );
+
+        // Non-DR-addressable namespace (legacy) → empty, leave the convention.
+        let legacy = CatalogNamespace::new(vec!["legacy".into()]);
+        assert!(ann_index_locations(&legacy, &schema, true).is_empty());
     }
 
     #[test]
