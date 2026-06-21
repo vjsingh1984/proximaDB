@@ -417,8 +417,9 @@ class ProximaDBSyncGrpcClient:
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
-                # Create CollectionService stub for collection operations
-                stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
+                # v2: collection ops are served by ProximaRecordService (v1 gRPC
+                # CollectionService is flag-gated off). RPC names match v1.
+                stub = v2_record_pb2_grpc.ProximaRecordServiceStub(channel)
 
                 # Execute the operation with timeout
                 return operation_func(stub)
@@ -502,10 +503,9 @@ class ProximaDBSyncGrpcClient:
             # Use list_collections as a lightweight health check
             # This verifies the server is responding and the connection pool works
             with GrpcChannelContext(self._connection_pool) as channel:
-                stub = v1_collection_pb2_grpc.CollectionServiceStub(channel)
-
-                # Make a lightweight request
-                req = v1_collection_types_pb2.ListCollectionsRequest(limit=1)
+                # v2: lightweight health probe via ProximaRecordService.ListCollections.
+                stub = v2_record_pb2_grpc.ProximaRecordServiceStub(channel)
+                req = v2_record_pb2.V2ListCollectionsRequest(limit=1)
                 response = stub.ListCollections(req, timeout=self.timeout)
 
                 latency_ms = (time.time() - start_time) * 1000
@@ -618,30 +618,25 @@ class ProximaDBSyncGrpcClient:
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
-                stub = v1_sql_pb2_grpc.QueryServiceStub(channel)
-                # Build ExecuteQueryRequest using v1 messages
-                from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
-
-                req = v1_types_pb2.ExecuteQueryRequest(query=query)
-                if parameters:
-                    for p in parameters:
-                        req.parameters.append(self._python_to_sql_value(p))
-                if collection:
-                    req.collection = collection
+                # v2: SQL is served by ProximaRecordService.ExecuteQuery (the v1
+                # QueryService is flag-gated off). Note: parameterized params,
+                # rows_scanned and column_types are not carried by the v2 query
+                # messages yet; values arrive as decoded TypedValue.
+                stub = v2_record_pb2_grpc.ProximaRecordServiceStub(channel)
+                req = v2_record_pb2.V2QueryRequest(
+                    query=query, collection_id=collection or ""
+                )
                 resp = stub.ExecuteQuery(req, timeout=self.timeout)
-                # Return as a simple dict for convenience
                 rows = [
-                    {f.key: self._sql_value_to_python(f.value) for f in row.fields}
+                    {k: self._v2_typed_value_to_python(v) for k, v in row.values.items()}
                     for row in resp.rows
                 ]
                 return {
                     "rows": rows,
-                    "row_count": len(rows),  # Add row_count for compatibility
-                    "rows_scanned": resp.rows_scanned,
+                    "row_count": len(rows),
                     "rows_returned": resp.rows_returned,
                     "execution_time_ms": resp.execution_time_ms,
                     "columns": list(resp.columns),
-                    "column_types": list(resp.column_types),
                 }
         except grpc.RpcError as e:
             logger.error(f"gRPC execute_sql RPC error: {e.code()} - {e.details()}")
@@ -766,39 +761,40 @@ class ProximaDBSyncGrpcClient:
                 )
 
         def _create_collection_operation(stub):
-            # Build collection config using v1 types
-            config = v1_collection_types_pb2.CollectionConfig(
-                name=name, dimension=dimension
-            )
-
+            # v2 V2CollectionConfig is self-contained: distance_metric/storage_engine
+            # are lowercase strings (mapped from the int enums). Advanced index_configs/
+            # quantization/canonical_embedding_precision are server-default on the v2
+            # path (not carried by V2CollectionConfig).
+            dm_str = ""
             if distance_metric is not None:
-                config.distance_metric = distance_metric
-            # Indexing algorithm is configured via IndexConfig; prefer index_configs param
-            # If a simple algorithm enum is provided without configs, create a basic index config
-            if indexing_algorithm is not None and not index_configs:
-                ic = v1_collection_types_pb2.IndexConfig(
-                    index_name=f"{name}_primary",
-                    algorithm=indexing_algorithm,
-                    is_primary=True,
-                )
-                config.index_configs.extend([ic])
+                try:
+                    from proximadb_sdk.models import DistanceMetricType
+
+                    dm_str = DistanceMetricType(distance_metric).name.lower()
+                except (ValueError, ImportError):
+                    dm_str = ""
+            se_str = ""
             if storage_engine is not None:
-                config.storage_engine = storage_engine
-            if filterable_columns:
-                config.filterable_columns.extend(filterable_columns)
-            if index_configs:
-                config.index_configs.extend(index_configs)
-            if quantization_config:
-                # Field name in proto is `quantization`
-                config.quantization.CopyFrom(quantization_config)
-            if canonical_embedding_precision is not None:
-                config.canonical_embedding_precision = canonical_embedding_precision
+                if isinstance(storage_engine, str):
+                    se_str = storage_engine.lower()
+                else:
+                    try:
+                        from proximadb_sdk.models import StorageEngineType
 
-            # Use CollectionService.CreateCollection method from v1 API
-            # CreateCollection expects CollectionConfig directly, not wrapped in a request
+                        se_str = StorageEngineType(storage_engine).name.lower()
+                    except (ValueError, ImportError):
+                        se_str = ""
+            config = v2_record_pb2.V2CollectionConfig(
+                name=name,
+                dimension=dimension,
+                distance_metric=dm_str,
+                storage_engine=se_str,
+                filterable_columns=[
+                    c if isinstance(c, str) else getattr(c, "name", str(c))
+                    for c in (filterable_columns or [])
+                ],
+            )
             response = stub.CreateCollection(config, timeout=self.timeout)
-
-            # Wrap the protobuf Collection to provide .name and .dimension attributes
             return CollectionWrapper(response)
 
         return self._execute_collection_with_pool(
@@ -809,10 +805,8 @@ class ProximaDBSyncGrpcClient:
         """Get collection metadata"""
 
         def _get_collection_operation(stub):
-            request = v1_collection_types_pb2.GetCollectionRequest(collection_id=name)
+            request = v2_record_pb2.V2GetCollectionRequest(collection_id=name)
             response = stub.GetCollection(request, timeout=self.timeout)
-
-            # Wrap the protobuf Collection to provide .name and .dimension attributes
             return CollectionWrapper(response)
 
         return self._execute_collection_with_pool(
@@ -823,16 +817,9 @@ class ProximaDBSyncGrpcClient:
         """List all collections"""
 
         def _list_collections_operation(stub):
-            request = v1_collection_types_pb2.ListCollectionsRequest()
+            request = v2_record_pb2.V2ListCollectionsRequest()
             response = stub.ListCollections(request, timeout=self.timeout)
-
-            # Wrap protobuf Collection objects to provide .name and .dimension attributes
-            collections = []
-            for coll in response.collections:
-                wrapped = CollectionWrapper(coll)
-                collections.append(wrapped)
-
-            return collections
+            return [CollectionWrapper(coll) for coll in response.collections]
 
         return self._execute_collection_with_pool(
             "list_collections", _list_collections_operation
@@ -842,7 +829,7 @@ class ProximaDBSyncGrpcClient:
         """Delete collection"""
 
         def _delete_collection_operation(stub):
-            request = v1_collection_types_pb2.DeleteCollectionRequest(
+            request = v2_record_pb2.V2DeleteCollectionRequest(
                 collection_id=collection_id
             )
             response = stub.DeleteCollection(request, timeout=self.timeout)
