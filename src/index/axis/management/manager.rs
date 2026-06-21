@@ -248,6 +248,15 @@ pub struct AxisManager {
     /// (falls back to the local `index_persist_dir`).
     filesystem_factory: Option<Arc<crate::storage::persistence::filesystem::FilesystemFactory>>,
 
+    /// CATALOG_OBJECT_MODEL P1: per-collection catalog-resolved index location
+    /// (a `CatalogProjection.location`, or the `DrPathBuilder`-derived
+    /// `indexes/<projection>/` default). When set for a collection it is
+    /// authoritative and takes precedence over the `index_persist_url` /
+    /// `index_persist_dir` conventions, so an index can be relocated/tiered from
+    /// the catalog. Populated by the boot adapter that resolves projections;
+    /// empty ⇒ the legacy convention is used unchanged (mixed-safe, default-off).
+    index_location_overrides: std::collections::HashMap<String, String>,
+
     /// Phase 8 F4a (TD-094): collections whose in-memory IVF index was evicted by
     /// `suspend_collection` to free memory. The persisted `ivf.bin` remains, so
     /// the next query (or `resume_collection`) warm-loads it; the marker is
@@ -446,6 +455,7 @@ impl AxisManager {
             recall_probe_gate: None,  // Set later via set_recall_probe_gate (TD-075)
             index_persist_dir: None,  // Set later via set_index_persist_dir (TD-087 Slice B)
             index_persist_url: None,  // Set later via set_index_persist_url (ADR-023 R3 Slice 4)
+            index_location_overrides: std::collections::HashMap::new(), // catalog-resolved (P1)
             filesystem_factory: None, // Set later via set_filesystem_factory (ADR-023 R3 Slice 4)
             suspended_collections: Arc::new(RwLock::new(std::collections::HashSet::new())), // F4a
             cold_lazy_warm: false,    // ADR-023 R3 (c): eager warm by default
@@ -499,6 +509,24 @@ impl AxisManager {
             url
         );
         self.index_persist_url = Some(url);
+    }
+
+    /// CATALOG_OBJECT_MODEL P1: register the catalog-resolved index location for a
+    /// collection's ANN projection. When set, it takes precedence over the
+    /// `index_persist_url`/`index_persist_dir` conventions in
+    /// [`index_fs_and_path`](Self::index_fs_and_path), so the index path is
+    /// authoritative-from-catalog (relocatable/tierable per projection). The boot
+    /// adapter computes this via `DrResolvedPath::resolve_index_location`
+    /// (projection `location`, else the derived `indexes/<projection>/` default).
+    pub fn set_index_location(&mut self, collection_id: impl Into<String>, location: String) {
+        let collection_id = collection_id.into();
+        tracing::info!(
+            "🔗 AXIS: catalog-resolved index location for '{}' → '{}'",
+            collection_id,
+            location
+        );
+        self.index_location_overrides
+            .insert(collection_id, location);
     }
 
     /// ADR-023 R3 Slice 4: inject the shared `FilesystemFactory` that
@@ -559,6 +587,27 @@ impl AxisManager {
         Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
         String,
     )> {
+        // CATALOG_OBJECT_MODEL P1: a catalog-resolved index location is
+        // authoritative — it already encodes the per-projection path (and any
+        // relocation/tiering), so we append the index file and dispatch by scheme
+        // via the factory, ahead of the legacy url/dir conventions.
+        if let (Some(loc), Some(factory)) = (
+            self.index_location_overrides.get(collection_id),
+            &self.filesystem_factory,
+        ) {
+            let path = format!("{}/ivf.bin", loc.trim_end_matches('/'));
+            return match factory.get_filesystem(&path) {
+                Ok(fs) => Some((fs, path)),
+                Err(e) => {
+                    tracing::warn!(
+                        "AXIS: no filesystem for catalog index location '{}' ({}); persistence disabled",
+                        path,
+                        e
+                    );
+                    None
+                }
+            };
+        }
         if let (Some(url), Some(factory)) = (&self.index_persist_url, &self.filesystem_factory) {
             let path = format!("{}/{}/ivf.bin", url.trim_end_matches('/'), collection_id);
             return match factory.get_filesystem(&path) {
@@ -5759,6 +5808,42 @@ mod recluster_apply_tests {
             m2.has_ivf_index("col").await,
             "index cold-loaded via object-store URI through the factory"
         );
+    }
+
+    /// CATALOG_OBJECT_MODEL P1: a catalog-resolved index location takes precedence
+    /// over the `index_persist_url` convention, and round-trips through the same
+    /// factory/scheme path. Proves the index is addressable from the catalog
+    /// (relocatable/tierable per projection), not just the base-url convention.
+    #[tokio::test]
+    async fn catalog_index_location_overrides_persist_url() {
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        let base = tempfile::TempDir::new().unwrap();
+        let catalog_dir = tempfile::TempDir::new().unwrap();
+        let factory = Arc::new(FilesystemFactory::create_default().await.unwrap());
+
+        let mut m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m.set_filesystem_factory(factory.clone());
+        // Convention base would resolve under {base}/col/ivf.bin …
+        m.set_index_persist_url(format!("file://{}", base.path().display()));
+        // … but the catalog-resolved per-projection location wins.
+        let catalog_loc = format!("file://{}/indexes/vector_ann", catalog_dir.path().display());
+        m.set_index_location("col", catalog_loc.clone());
+
+        let (_, resolved) = m.index_fs_and_path("col").await.unwrap();
+        assert_eq!(
+            resolved,
+            format!("{}/ivf.bin", catalog_loc),
+            "catalog index location must take precedence over index_persist_url"
+        );
+        assert!(
+            !resolved.contains(&base.path().display().to_string()),
+            "must NOT fall back to the convention base when a catalog location is set"
+        );
+
+        // And it actually persists + cold-loads through that catalog location.
+        let v = batch("cat", 60, 8, 1);
+        assert!(m.rebuild_and_swap_ivf_index("col", &v).await.unwrap());
+        assert!(m.has_persisted_ivf_index("col").await);
     }
 
     // ─── Phase 8 F4a: suspend / resume ──────────────────────────────────────

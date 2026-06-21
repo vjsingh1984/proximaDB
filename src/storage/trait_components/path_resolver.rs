@@ -472,6 +472,32 @@ impl DrResolvedPath {
         format!("{}indexes/", self.root_prefix())
     }
 
+    /// Per-projection index subprefix `<root>indexes/<projection_name>/` — the
+    /// default physical path for one catalog `CatalogProjection`'s materialized
+    /// bytes (an ANN/full-text/columnar index, or an MV). Each projection maps to
+    /// its own path so it can be relocated/tiered independently
+    /// (CATALOG_OBJECT_MODEL P1). `validate_id` is NOT re-run on `projection_name`
+    /// here — the caller passes a catalog-validated name.
+    pub fn index_prefix(&self, projection_name: &str) -> String {
+        format!("{}{}/", self.indexes_subprefix(), projection_name)
+    }
+
+    /// Resolve a projection's physical location, catalog-resolved with the
+    /// `DrPathBuilder` default as fallback: the catalog `location` wins when set
+    /// (authoritative — the projection was relocated/tiered), otherwise the
+    /// derived per-projection [`index_prefix`](Self::index_prefix). This is the
+    /// single precedence rule for index/MV addressing.
+    pub fn resolve_index_location(
+        &self,
+        projection_name: &str,
+        projection_location: Option<&str>,
+    ) -> String {
+        match projection_location {
+            Some(loc) if !loc.is_empty() => loc.to_string(),
+            _ => self.index_prefix(projection_name),
+        }
+    }
+
     /// Restore-checkpoint subprefix `<root>restore-checkpoints/`.
     pub fn restore_checkpoints_subprefix(&self) -> String {
         format!("{}restore-checkpoints/", self.root_prefix())
@@ -784,6 +810,34 @@ mod tests {
             "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/restore-checkpoints/"
         );
         assert_eq!(path.storage_pool_class, StoragePoolClass::Standard);
+    }
+
+    #[test]
+    fn per_projection_index_path_and_location_precedence() {
+        let ns = dr_addressable_namespace();
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+
+        // Each projection maps to its own path under indexes/.
+        assert_eq!(
+            path.index_prefix("vector_ann"),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/indexes/vector_ann/"
+        );
+
+        // Unset (or empty) catalog location → derive the DrPathBuilder default.
+        assert_eq!(
+            path.resolve_index_location("vector_ann", None),
+            path.index_prefix("vector_ann")
+        );
+        assert_eq!(
+            path.resolve_index_location("vector_ann", Some("")),
+            path.index_prefix("vector_ann")
+        );
+
+        // A set catalog location is authoritative (relocated/tiered projection).
+        assert_eq!(
+            path.resolve_index_location("vector_ann", Some("s3://hot-tier/idx/ann/")),
+            "s3://hot-tier/idx/ann/"
+        );
     }
 
     #[test]
