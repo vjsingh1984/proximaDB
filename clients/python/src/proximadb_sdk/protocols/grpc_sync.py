@@ -1361,66 +1361,28 @@ class ProximaDBSyncGrpcClient:
         include_vector: bool = True,
         include_metadata: bool = True,
     ) -> dict[str, Any]:
-        """Get single vector by ID"""
+        """Get a single record by ID via v2 ProximaRecordService.GetRecord."""
 
-        def _get_vector_operation(stub):
-            # v1 proto uses direct boolean fields, not IncludeFields object
-            request = v1_vector_types_pb2.VectorGetRequest(
+        def _get_record_operation(stub):
+            request = v2_record_pb2.GetRecordRequest(
                 collection_id=collection_id,
-                vector_id=vector_id,
+                id=vector_id,
                 include_vector=include_vector,
-                include_metadata=include_metadata,
             )
-            response = stub.VectorGet(request, timeout=self.timeout)
-
-            # Convert response to dict
-            if not response.success:
+            response = stub.GetRecord(request, timeout=self.timeout)
+            if not response.found or not response.HasField("record"):
                 raise ProximaDBError(f"Vector {vector_id} not found")
-
-            # Extract from results if available
-            if response.results and response.results.results:
-                result_item = response.results.results[0]
-                result = {
-                    "id": result_item.id,
+            rec = response.record
+            result: dict[str, Any] = {"id": rec.id}
+            if include_vector and rec.vector:
+                result["vector"] = list(rec.vector)
+            if include_metadata and rec.props:
+                result["metadata"] = {
+                    k: self._v2_typed_value_to_python(v) for k, v in rec.props.items()
                 }
-                if include_vector and result_item.vector:
-                    result["vector"] = list(result_item.vector)
-                if include_metadata and result_item.metadata:
-                    # Convert map<string, SqlValue> to dict
-                    metadata_dict = {}
-                    for key in result_item.metadata:
-                        sql_value = result_item.metadata[key]
-                        if sql_value.HasField("string_value"):
-                            metadata_dict[key] = sql_value.string_value
-                        elif sql_value.HasField("int64_value"):
-                            metadata_dict[key] = sql_value.int64_value
-                        elif sql_value.HasField("number_value"):
-                            metadata_dict[key] = sql_value.number_value
-                        elif sql_value.HasField("bool_value"):
-                            metadata_dict[key] = sql_value.bool_value
-                    result["metadata"] = metadata_dict
+            return VectorWrapper(result)
 
-                # Add timestamp field (SearchVectorRecord has timestamp at field 7)
-                if result_item.HasField("timestamp"):
-                    result["timestamp_ms"] = result_item.timestamp
-
-                # Add version field (SearchVectorRecord has version at field 5)
-                if result_item.HasField("version"):
-                    result["version"] = result_item.version
-
-                # Add source field (SearchVectorRecord has source at field 8)
-                if result_item.HasField("source"):
-                    result["source"] = result_item.source
-
-                # NOTE: SearchVectorRecord does NOT have updated_at or expires_at fields
-                # Those fields only exist in the insert VectorRecord proto
-
-                # Wrap result to provide attribute access
-                return VectorWrapper(result)
-            else:
-                raise ProximaDBError(f"Vector {vector_id} not found")
-
-        return self._execute_with_pool("get_vector", _get_vector_operation)
+        return self._execute_collection_with_pool("get_vector", _get_record_operation)
 
     def update_vector(
         self,

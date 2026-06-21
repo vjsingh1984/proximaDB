@@ -741,6 +741,18 @@ message V2QueryResponse {
   uint64 execution_time_ms = 4;
 }
 
+// Point record get-by-id (v2 parity with v1 VectorService.VectorGet).
+message GetRecordRequest {
+  string collection_id = 1;
+  string id = 2;
+  bool include_vector = 3;
+}
+
+message GetRecordResponse {
+  bool found = 1;
+  ProximaRecord record = 2;
+}
+
 // =============================================================================
 // gRPC Service definition
 // =============================================================================
@@ -773,4 +785,7 @@ service ProximaRecordService {
 
   // SQL query (v2 parity with v1 QueryService)
   rpc ExecuteQuery(V2QueryRequest) returns (V2QueryResponse);
+
+  // Point record get-by-id (v2 parity with v1 VectorService.VectorGet)
+  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
 }

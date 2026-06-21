@@ -24,7 +24,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
-    RichSearchRequest, RichSearchResponse, UnifiedHandlers,
+    RichRecordGetRequest, RichSearchRequest, RichSearchResponse, UnifiedHandlers,
 };
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
@@ -1883,6 +1883,51 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             rows_returned: resp.rows_returned,
             execution_time_ms: resp.execution_time_ms,
         }))
+    }
+
+    // ---- Point record get-by-id (v2 parity with v1 VectorService.VectorGet) ----
+
+    async fn get_record(
+        &self,
+        request: Request<proximadb_v2::GetRecordRequest>,
+    ) -> Result<Response<proximadb_v2::GetRecordResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req = request.into_inner();
+        let result = self
+            .request_handlers
+            .handle_record_get_for_tenant(
+                RichRecordGetRequest {
+                    collection_id: req.collection_id,
+                    record_id: req.id,
+                    include_vector: req.include_vector,
+                    include_props: true,
+                },
+                tenant_id.as_deref(),
+            )
+            .await
+            .map_err(|e| Status::internal(format!("GetRecord failed: {e}")))?;
+        match result {
+            Some(record) => {
+                let props = record
+                    .props
+                    .iter()
+                    .map(|(k, v)| (k.clone(), proxima_value_to_typed_value(v)))
+                    .collect();
+                Ok(Response::new(proximadb_v2::GetRecordResponse {
+                    found: true,
+                    record: Some(proximadb_v2::ProximaRecord {
+                        id: record.id,
+                        vector: record.vector,
+                        props,
+                        ..Default::default()
+                    }),
+                }))
+            }
+            None => Ok(Response::new(proximadb_v2::GetRecordResponse {
+                found: false,
+                record: None,
+            })),
+        }
     }
 }
 
