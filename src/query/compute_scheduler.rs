@@ -40,11 +40,92 @@ use crate::query::table_write_plan::ComputeBackend;
 use proximadb_catalog::CatalogAuthorityMode;
 use proximadb_catalog::CatalogWorkloadProfile;
 
+/// Estimated cardinality bucket of a query's scan/result — a §5.2 Phase-1 shape
+/// input. Bucketed (not raw counts) so it refines the cost-model shape-class
+/// without exploding the key space. `Unknown` (the default) keeps the coarse
+/// 2-part class, so a planner that cannot estimate rows changes nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CardinalityClass {
+    /// No estimate available — class stays coarse (backward-compatible).
+    #[default]
+    Unknown,
+    /// Point / very small result (≲ 1k rows) — favors the low-latency row path.
+    Small,
+    /// Mid-size scan/result (≲ 1M rows).
+    Medium,
+    /// Large scan/result — favors the vectorized columnar engine.
+    Large,
+}
+
+impl CardinalityClass {
+    /// Bucket an estimated row count; `None` → [`CardinalityClass::Unknown`].
+    pub fn from_estimate(rows: Option<u64>) -> Self {
+        match rows {
+            None => CardinalityClass::Unknown,
+            Some(n) if n <= 1_000 => CardinalityClass::Small,
+            Some(n) if n <= 1_000_000 => CardinalityClass::Medium,
+            Some(_) => CardinalityClass::Large,
+        }
+    }
+
+    /// Stable shape-class suffix, or `None` when unknown (omitted from the key).
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        match self {
+            CardinalityClass::Unknown => None,
+            CardinalityClass::Small => Some("card=s"),
+            CardinalityClass::Medium => Some("card=m"),
+            CardinalityClass::Large => Some("card=l"),
+        }
+    }
+}
+
+/// Bucketed count of partitions / row-groups / segments a route fans out over —
+/// a §5.2 Phase-1 shape input. High fan-out is GET-round-trip-dominated (the
+/// dominant cost term), so it discriminates routes the binary signals cannot.
+/// `Unknown` (the default) keeps the coarse class.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PartitionFanout {
+    /// No partition count available — class stays coarse.
+    #[default]
+    Unknown,
+    /// A single partition / segment.
+    Single,
+    /// A handful (≤ 8) — bounded fan-out.
+    Few,
+    /// Many partitions — fan-out / GET-count dominated.
+    Many,
+}
+
+impl PartitionFanout {
+    /// Bucket a partition/segment count; `None` → [`PartitionFanout::Unknown`].
+    pub fn from_count(count: Option<u32>) -> Self {
+        match count {
+            None => PartitionFanout::Unknown,
+            Some(0) | Some(1) => PartitionFanout::Single,
+            Some(n) if n <= 8 => PartitionFanout::Few,
+            Some(_) => PartitionFanout::Many,
+        }
+    }
+
+    /// Stable shape-class suffix, or `None` when unknown (omitted from the key).
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        match self {
+            PartitionFanout::Unknown => None,
+            PartitionFanout::Single => Some("part=1"),
+            PartitionFanout::Few => Some("part=f"),
+            PartitionFanout::Many => Some("part=m"),
+        }
+    }
+}
+
 /// Shape signals the scheduler routes on.
 ///
-/// P0 uses only `engages_relational` — the existing join / `GROUP BY` /
-/// aggregate / set-op gate, which is the OLAP-shape signal. P1 (§5.2 policy
-/// inputs) adds cardinality, partition count, and point-lookup flags.
+/// P0 used only `engages_relational` — the join / `GROUP BY` / aggregate / set-op
+/// gate (the OLAP-shape signal). P1 added `parquet_backed`. C4 Phase-2b adds the
+/// §5.2 Phase-1 inputs — `cardinality` and `partition_fanout` — which refine the
+/// cost-model shape-class so routing and exploration discriminate beyond
+/// `olap/oltp × native/parquet`. Both default to `Unknown`, preserving the
+/// coarse class (and warmed cells) for planners that cannot estimate them.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryShape {
     /// The query lowers against the relational algebra engine for a reason the
@@ -56,6 +137,10 @@ pub struct QueryShape {
     /// (`try_run_select`) only when the `datafusion-integration` feature is
     /// compiled in, so the route is never advertised when the build can't honor it.
     pub parquet_backed: bool,
+    /// Estimated scan/result cardinality bucket (§5.2 Phase-1). `Unknown` default.
+    pub cardinality: CardinalityClass,
+    /// Bucketed partition/row-group fan-out (§5.2 Phase-1). `Unknown` default.
+    pub partition_fanout: PartitionFanout,
 }
 
 /// A materialized read-route decision: the engine, the workload it was
@@ -342,6 +427,7 @@ mod tests {
         let decision = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: true,
             parquet_backed: false,
+            ..Default::default()
         });
         // OLAP over native storage stays on Volcano (no Parquet base tier yet).
         assert_eq!(decision.backend, ComputeBackend::Native);
@@ -354,6 +440,7 @@ mod tests {
         let decision = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: false,
             parquet_backed: false,
+            ..Default::default()
         });
         assert_eq!(decision.backend, ComputeBackend::Native);
         assert_eq!(decision.workload_profile, CatalogWorkloadProfile::Oltp);
@@ -364,6 +451,7 @@ mod tests {
         let d = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            ..Default::default()
         });
         assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
         assert_eq!(d.workload_profile, CatalogWorkloadProfile::Olap);
@@ -376,6 +464,7 @@ mod tests {
         let d = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: false,
             parquet_backed: true,
+            ..Default::default()
         });
         assert_eq!(d.backend, ComputeBackend::Native);
     }
@@ -386,6 +475,7 @@ mod tests {
             .route_select(QueryShape {
                 engages_relational: true,
                 parquet_backed: true,
+                ..Default::default()
             })
             .routed_read_plan_with_splits(ReadSplitSummary::row_groups(
                 8,
@@ -408,6 +498,7 @@ mod tests {
             .route_select(QueryShape {
                 engages_relational: true,
                 parquet_backed: false,
+                ..Default::default()
             })
             .explain_line();
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));
@@ -429,6 +520,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: false,
+            ..Default::default()
         };
         let s = ComputeScheduler::new();
         let plain = s.route_select(shape);
@@ -444,6 +536,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: false,
+            ..Default::default()
         };
         let model = RouteCostModel::new().with_min_samples(1);
         // Teach the model that DataFusion is far cheaper for this shape-class
@@ -474,6 +567,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: false,
             parquet_backed: false,
+            ..Default::default()
         };
         let model = RouteCostModel::new().with_min_samples(1);
         // Only Native has history for this shape-class → it is the min, concurring
@@ -492,6 +586,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            ..Default::default()
         }; // static => DataFusionLocal
         let model = RouteCostModel::new().with_min_samples(1); // override OFF (default)
         for _ in 0..5 {
@@ -518,6 +613,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            ..Default::default()
         }; // static => DataFusionLocal
         let model = RouteCostModel::new().with_min_samples(1);
         model.set_override_enabled(true);
@@ -545,6 +641,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            ..Default::default()
         }; // static => DataFusionLocal
         let model = RouteCostModel::new()
             .with_min_samples(1)
@@ -573,6 +670,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: false,
             parquet_backed: true,
+            ..Default::default()
         }; // static => Native (OLTP)
         let model = RouteCostModel::new()
             .with_min_samples(1)
@@ -600,6 +698,7 @@ mod tests {
         let shape = QueryShape {
             engages_relational: false,
             parquet_backed: true,
+            ..Default::default()
         };
         let model = RouteCostModel::new().with_min_samples(1);
         model.set_override_enabled(true);
@@ -631,6 +730,7 @@ mod tests {
         let plan = ComputeScheduler::new().route_select_plan(QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            ..Default::default()
         });
 
         assert_eq!(plan.backend, ComputeBackend::DataFusionLocal);
