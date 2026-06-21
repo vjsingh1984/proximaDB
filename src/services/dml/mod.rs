@@ -54,61 +54,31 @@ use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 /// centralized so the gap is greppable and the eventual fix has one call site.
 pub(crate) const DEFAULT_TENANT_PLACEHOLDER: &str = "default_tenant";
 
-/// Apply DrPathBuilder's canonical per-segment ID validation to the components
-/// that form a warehouse object prefix (`data/{tenant}/{ns...}/{table}`).
-/// Defense-in-depth against `..` / path-separator / NUL / whitespace injection
-/// while the materialize path still builds the prefix manually instead of
-/// routing through `DrPathBuilder::build` (blocked on the namespace-id backfill;
-/// see [`DmlService::materialize_table_to_parquet`]).
-fn validate_object_path_segments(
-    tenant_id: &str,
-    namespace_segments: &[String],
-    table: &str,
-) -> Result<()> {
-    DrPathBuilder::validate_id("tenant_id", tenant_id)
-        .map_err(|e| anyhow!("refusing materialize: invalid tenant id for object path: {e}"))?;
-    for segment in namespace_segments {
-        DrPathBuilder::validate_id("namespace", segment).map_err(|e| {
-            anyhow!("refusing materialize: invalid namespace segment for object path: {e}")
-        })?;
-    }
-    DrPathBuilder::validate_id("table", table)
-        .map_err(|e| anyhow!("refusing materialize: invalid table name for object path: {e}"))?;
-    Ok(())
-}
-
-/// `PROXIMADB_WAREHOUSE_DRPATH=1|true` opts warehouse materialization into the
-/// DrPathBuilder-native physical layout (`data/{tenant}/{namespace_id}/{table}/`
-/// — rename-stable opaque ids). Default OFF: flipping it changes on-disk paths
-/// and orphans snapshots written under the legacy `data/{tenant}/{ns.join}/{table}`
-/// layout, so it is opt-in for new deployments. Read once per process.
-pub(crate) fn warehouse_drpath_enabled() -> bool {
-    use std::sync::OnceLock;
-    static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("PROXIMADB_WAREHOUSE_DRPATH")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-    })
-}
+/// Well-known, rename-stable `namespace_id` for the embedded / single-tenant path
+/// (no catalog namespace with its own id). Single-tenant is a degenerate
+/// multi-tenant: it resolves the same canonical DrPath layout as any real
+/// namespace, just under this fixed id. Matches the record-store write path, which
+/// already addresses the default namespace as `ns_default`.
+pub(crate) const DEFAULT_NAMESPACE_ID: &str = "ns_default";
 
 /// Resolve the tenant-isolated object prefix (no trailing `/`) for a warehouse
-/// snapshot. The `drpath_enabled` bool is passed in (not read from env) so this
-/// is deterministically unit-testable.
+/// snapshot: the single canonical **DrPath** layout
+/// `data/{tenant}/{namespace_id}/{table}` via [`DrPathBuilder::build_from_parts`]
+/// (rename-stable opaque ids; per-segment validated — tenant, namespace_id, AND
+/// table are all injection-guarded by `validate_id`).
 ///
-/// Layout selection:
-/// * DrPath (opt-in + a `namespace_id` is known): `data/{tenant}/{namespace_id}/{table}`
-///   via [`DrPathBuilder::build_from_parts`] — rename-stable, per-segment validated.
-/// * Legacy manual (default / no `namespace_id`): `data/{tenant}/{ns.join("/")}/{table}`
-///   with the same per-segment injection guards via [`validate_object_path_segments`].
+/// There is exactly one layout. Every namespace carries a `namespace_id` — real
+/// namespaces get one at create (`NativeCatalog`), and the embedded / single-tenant
+/// path uses the well-known [`DEFAULT_NAMESPACE_ID`] (`ns_default`), the same id the
+/// record-store write path already uses. The caller resolves `namespace_id`
+/// (real-or-`ns_default`) and passes it here, so single-tenant is just a degenerate
+/// multi-tenant — no legacy `data/{tenant}/{ns.join}/{table}` fork, no special case.
 ///
-/// In either layout, if the namespace carries an explicit owning `tenant_id` that
-/// differs from the request `tenant_id`, the materialize is refused (cross-tenant).
+/// If the namespace carries an explicit owning `tenant_id` that differs from the
+/// request `tenant_id`, the materialize is refused (cross-tenant).
 pub(crate) fn resolve_materialize_prefix(
-    drpath_enabled: bool,
     tenant_id: &str,
-    namespace_segments: &[String],
-    namespace_id: Option<&str>,
+    namespace_id: &str,
     namespace_tenant_id: Option<&str>,
     storage_pool_class: proximadb_catalog::StoragePoolClass,
     table: &str,
@@ -121,19 +91,11 @@ pub(crate) fn resolve_materialize_prefix(
                  tenant is {tenant_id:?} (cross-tenant materialize)"
         ));
     }
-    if drpath_enabled && let Some(nsid) = namespace_id {
-        let resolved = DrPathBuilder::build_from_parts(tenant_id, nsid, table, storage_pool_class)
+    let resolved =
+        DrPathBuilder::build_from_parts(tenant_id, namespace_id, table, storage_pool_class)
             .map_err(|e| anyhow!("refusing materialize: DrPathBuilder rejected path: {e}"))?;
-        // root_prefix() carries a trailing '/'; the caller appends `/data/...`.
-        return Ok(resolved.root_prefix().trim_end_matches('/').to_string());
-    }
-    validate_object_path_segments(tenant_id, namespace_segments, table)?;
-    let namespace = if namespace_segments.is_empty() {
-        "default".to_string()
-    } else {
-        namespace_segments.join("/")
-    };
-    Ok(format!("data/{tenant_id}/{namespace}/{table}"))
+    // root_prefix() carries a trailing '/'; the caller appends `/data/...`.
+    Ok(resolved.root_prefix().trim_end_matches('/').to_string())
 }
 
 /// Comparison operators supported by the lightweight catalog-table SELECT path.
@@ -1114,26 +1076,6 @@ impl DmlService {
         table_name: &str,
         tenant_context: Option<&TenantContext>,
     ) -> Result<String> {
-        // Production reads the rollout flag here; the inner takes it as a param so
-        // the DrPath layout is deterministically testable without process-global env.
-        self.materialize_table_to_parquet_inner(
-            bridge,
-            warehouse_root_url,
-            table_name,
-            tenant_context,
-            warehouse_drpath_enabled(),
-        )
-        .await
-    }
-
-    async fn materialize_table_to_parquet_inner(
-        &self,
-        bridge: &dyn ObjectStoreBridge,
-        warehouse_root_url: &str,
-        table_name: &str,
-        tenant_context: Option<&TenantContext>,
-        drpath_enabled: bool,
-    ) -> Result<String> {
         // 1. Snapshot the table's current rows (all columns, no predicate/limit).
         let (schema, rows) = self
             .scan_table_relational(table_name, None, None, None, tenant_context)
@@ -1179,25 +1121,17 @@ impl DmlService {
             .catalog_manager
             .resolve_table_scoped(table_name, scope_tenant)
             .await?;
-        // `resolve_table_scoped` folds the tenant in as the leading namespace
-        // segment; strip it so the prefix carries the tenant exactly once
-        // (`data/{tenant}/{logical_ns}/{table}`), not twice. The None case keeps
-        // the original namespace unchanged.
-        let logical_namespace: Vec<String> = match scope_tenant {
-            Some(t) if table_id.namespace.first().map(String::as_str) == Some(t) => {
-                table_id.namespace[1..].to_vec()
-            }
-            _ => table_id.namespace.clone(),
-        };
         // Best-effort namespace metadata (looked up by the FULL scoped namespace):
         // supplies the rename-stable `namespace_id` (DrPath layout) and the owning
-        // `tenant_id` (cross-tenant assertion). A miss falls back to the manual layout.
+        // `tenant_id` (cross-tenant assertion). A miss (embedded / single-tenant with
+        // no catalog namespace) uses the well-known `ns_default`.
         let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
         let prefix = resolve_materialize_prefix(
-            drpath_enabled,
             tenant_id,
-            &logical_namespace,
-            ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
+            ns_meta
+                .as_ref()
+                .and_then(|n| n.namespace_id.as_deref())
+                .unwrap_or(DEFAULT_NAMESPACE_ID),
             ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
             ns_meta
                 .as_ref()
@@ -1784,9 +1718,10 @@ impl DmlService {
     /// executor derives when it has no namespace context. Returns `None` when there
     /// is no tenant scope (single-tenant / embedded keeps the legacy fallback).
     ///
-    /// Reuses the canonical [`resolve_materialize_prefix`] so DrPath (opt-in) vs
-    /// legacy-layout selection, the cross-tenant ownership assertion, and per-segment
-    /// injection validation stay single-sourced with the materialize path. The
+    /// Reuses the canonical [`resolve_materialize_prefix`] so the DrPath-vs-legacy
+    /// layout selection (by `namespace_id`), the cross-tenant ownership assertion, and
+    /// per-segment injection validation stay single-sourced with the materialize path.
+    /// The
     /// caller sets this on the (local, non-persisted) target-schema `location`,
     /// where the executor consumes it at second priority — a materialize-set primary
     /// layout location still wins, so this never double-prefixes a published table.
@@ -1802,23 +1737,16 @@ impl DmlService {
             .catalog_manager
             .resolve_table_scoped(table_name, Some(tenant_id))
             .await?;
-        // `resolve_table_scoped` folds the tenant in as the leading namespace
-        // segment; strip it so the prefix carries the tenant exactly once.
-        let logical_namespace: Vec<String> =
-            if table_id.namespace.first().map(String::as_str) == Some(tenant_id) {
-                table_id.namespace[1..].to_vec()
-            } else {
-                table_id.namespace.clone()
-            };
         // Namespace metadata supplies the rename-stable `namespace_id` (DrPath layout)
-        // and the owning `tenant_id` (cross-tenant assertion). A miss falls back to
-        // the legacy manual layout, still tenant-prefixed.
+        // and the owning `tenant_id` (cross-tenant assertion). A miss (embedded /
+        // single-tenant with no catalog namespace) uses the well-known `ns_default`.
         let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
         let prefix = resolve_materialize_prefix(
-            warehouse_drpath_enabled(),
             tenant_id,
-            &logical_namespace,
-            ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
+            ns_meta
+                .as_ref()
+                .and_then(|n| n.namespace_id.as_deref())
+                .unwrap_or(DEFAULT_NAMESPACE_ID),
             ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
             ns_meta
                 .as_ref()
@@ -4422,55 +4350,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn materialize_path_segments_reject_injection() {
-        let ns = |s: &str| vec![s.to_string()];
-        // Happy path: clean ASCII ids, with and without a namespace segment.
-        assert!(validate_object_path_segments("tnt_acme", &ns("sales"), "orders").is_ok());
-        assert!(validate_object_path_segments(DEFAULT_TENANT_PLACEHOLDER, &[], "orders").is_ok());
-        // `..` traversal anywhere is refused.
-        assert!(validate_object_path_segments("..", &ns("sales"), "orders").is_err());
-        assert!(validate_object_path_segments("tnt_acme", &ns(".."), "orders").is_err());
-        // Path-separator injection inside a segment is refused.
-        assert!(validate_object_path_segments("tnt_acme", &ns("a/b"), "orders").is_err());
-        // Whitespace and empty ids are refused.
-        assert!(validate_object_path_segments("tnt_acme", &[], "bad name").is_err());
-        assert!(validate_object_path_segments("tnt_acme", &[], "").is_err());
-    }
-
-    #[test]
-    fn resolve_materialize_prefix_layouts_and_cross_tenant() {
+    fn resolve_materialize_prefix_drpath_and_cross_tenant() {
         use proximadb_catalog::StoragePoolClass;
         let pc = StoragePoolClass::default();
-        let segs = vec!["sales".to_string()];
-        let resolve = |drpath, nsid, owner, segs: &[String]| {
-            resolve_materialize_prefix(drpath, "tnt_acme", segs, nsid, owner, pc, "orders")
-        };
+        let resolve =
+            |nsid, owner| resolve_materialize_prefix("tnt_acme", nsid, owner, pc, "orders");
 
-        // Flag OFF → legacy manual layout (namespace path joined).
+        // The single canonical DrPath layout (a real namespace_id).
+        assert_eq!(resolve("ns_1", None).unwrap(), "data/tnt_acme/ns_1/orders");
+        // Embedded / single-tenant uses the well-known ns_default — same layout, no
+        // legacy fork (single-tenant is a degenerate multi-tenant).
         assert_eq!(
-            resolve(false, Some("ns_1"), None, &segs).unwrap(),
-            "data/tnt_acme/sales/orders"
+            resolve(DEFAULT_NAMESPACE_ID, None).unwrap(),
+            "data/tnt_acme/ns_default/orders"
         );
-        // Flag ON + namespace_id present → DrPath opaque-id layout.
-        assert_eq!(
-            resolve(true, Some("ns_1"), None, &segs).unwrap(),
-            "data/tnt_acme/ns_1/orders"
-        );
-        // Flag ON but no namespace_id → falls back to manual layout.
-        assert_eq!(
-            resolve(true, None, None, &segs).unwrap(),
-            "data/tnt_acme/sales/orders"
-        );
-        // Empty namespace → "default" segment.
-        assert_eq!(
-            resolve(false, None, None, &[]).unwrap(),
-            "data/tnt_acme/default/orders"
-        );
-        // Cross-tenant (namespace owned by another tenant) → refused in both layouts.
-        assert!(resolve(false, Some("ns_1"), Some("tnt_globex"), &segs).is_err());
-        assert!(resolve(true, Some("ns_1"), Some("tnt_globex"), &segs).is_err());
-        // Injection in a namespace segment → refused.
-        assert!(resolve(false, None, None, &["..".to_string()]).is_err());
+        // Cross-tenant (namespace owned by another tenant) → refused.
+        assert!(resolve("ns_1", Some("tnt_globex")).is_err());
+        // Injection in ANY segment is refused — `build_from_parts` validates the
+        // tenant, namespace_id, AND table (the guard the removed manual validator gave).
+        assert!(resolve_materialize_prefix("tnt_acme", "..", None, pc, "orders").is_err());
+        assert!(resolve_materialize_prefix("tnt_acme", "ns_1", None, pc, "bad/name").is_err());
+        assert!(resolve_materialize_prefix("..", "ns_1", None, pc, "orders").is_err());
     }
 
     use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
@@ -6662,16 +6562,23 @@ mod tests {
             .await
             .expect("materialize");
 
-        // The published location is the tenant-isolated base URL.
-        assert_eq!(
-            location,
-            "memory:///warehouse/data/default_tenant/default/inv"
+        // The published location is the tenant-isolated base URL in the single
+        // canonical DrPath layout (`data/{tenant}/{namespace_id}/{table}`) — the
+        // no-tenant path is just a degenerate multi-tenant under `default_tenant` and
+        // the namespace's own (rename-stable) `namespace_id`, no legacy fork.
+        assert!(
+            location.starts_with("memory:///warehouse/data/default_tenant/ns_")
+                && location.ends_with("/inv"),
+            "embedded materialize must use the canonical DrPath layout: {location}"
         );
 
         // The Parquet snapshot landed where the OLAP reader lists `{location}/data/*.parquet`,
-        // and reads back all three rows.
-        let data_object =
-            object_store::path::Path::from("data/default_tenant/default/inv/data/part-0.parquet");
+        // and reads back all three rows. Derive the prefix from the resolved location
+        // so the read tracks the real (opaque) namespace_id.
+        let prefix = location
+            .strip_prefix("memory:///warehouse/")
+            .expect("location under warehouse root");
+        let data_object = object_store::path::Path::from(format!("{prefix}/data/part-0.parquet"));
         let mut stream = bridge
             .read_parquet_batches(
                 &data_object,
@@ -6875,10 +6782,10 @@ mod tests {
         );
     }
 
-    /// TD-113 Phase 2: with the DrPath layout enabled the snapshot prefix uses the
-    /// rename-stable opaque `namespace_id` (`data/{tenant}/{ns_<uuid>}/{table}`)
-    /// instead of the human namespace path. Driven via the inner (flag injected)
-    /// so it is deterministic regardless of the `PROXIMADB_WAREHOUSE_DRPATH` env.
+    /// TD-113 Phase 2: DrPath is the canonical layout, so the snapshot prefix uses the
+    /// rename-stable opaque `namespace_id` (`data/{tenant}/{ns_<uuid>}/{table}`) instead
+    /// of the human namespace path whenever the namespace has a `namespace_id` — driven
+    /// by the catalog (no env flag).
     #[tokio::test]
     async fn materialize_drpath_layout_uses_opaque_namespace_id() {
         use crate::services::record_store::DirectWalTableRecordStore;
@@ -6926,7 +6833,7 @@ mod tests {
 
         let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///wh").unwrap());
         let loc = dml
-            .materialize_table_to_parquet_inner(&*bridge, "memory:///wh", "inv", Some(&tctx), true)
+            .materialize_table_to_parquet(&*bridge, "memory:///wh", "inv", Some(&tctx))
             .await
             .expect("materialize (drpath)");
 
