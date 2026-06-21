@@ -123,14 +123,20 @@ tick only when non-zero. Same-AZ (free) deployments report 0 and emit nothing.
 . **Tier-entitlement multiplier port (OSS) → tier policy (anvaiops).**
 `set_tier_multiplier_resolver(Fn(&str /*tenant_id*/) -> f64)` is the OSS port; the
 default adapter returns `1.0` (no resolver installed → fully inert, uniform
-community behavior). anvaiops installs the adapter from its tenant→tier authority
-(the same authority that stamps `TenantContext.tier`), resolving
-tenant→tier→multiplier *inside the adapter* — so the OSS cost path stays
-tier-agnostic (no `Tier` enum leaks into routing). The multiplier scales only the
-*reported / billed* `Cost(q)` and is **routing-neutral** (a per-tenant scalar
-scales every candidate equally → never changes which engine is chosen), so it can
-never make engine selection depend on a commercial tier. `final_cost(base,
-tenant)` and `tier_entitlement_multiplier(tenant)` are the consumption points.
+community behavior). *Startup adapter (DONE):* at boot
+(`database.rs` → `tenant_tier::install_tier_cost_multiplier_resolver`) OSS installs
+a **config-driven** resolver mapping `tenant_id → Tier → Tier::cost_multiplier`,
+where the per-tier multiplier is read from the tier-config overlay
+(`/config/tier-config.json`, baked from anvaiops `tiers.json`). The `tenant_id →
+Tier` half is itself a Port (`set_tenant_tier_resolver`): OSS standalone has no
+per-tenant tier authority, so it resolves every tenant to the configured default
+tier; the control plane registers a resolver from its registry. So the OSS cost
+path stays tier-agnostic (no `Tier` enum leaks into routing) and the values stay
+control-plane policy. The multiplier scales only the *reported / billed* `Cost(q)`
+and is **routing-neutral** (a per-tenant scalar scales every candidate equally →
+never changes which engine is chosen), so it can never make engine selection
+depend on a commercial tier. `final_cost(base, tenant)` and
+`tier_entitlement_multiplier(tenant)` are the consumption points.
 
 Boundary invariants: OSS scores `Cost(q)` in **neutral units** only; the $ weights
 (KSU/KRU/KIU/KEU), the AZ-topology→locality mapping, the tenant→tier authority,

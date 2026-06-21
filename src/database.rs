@@ -116,6 +116,12 @@ impl ProximaDB {
         // measured cost of each (shape-class, backend). Observe-mode today —
         // routing is unchanged until a later flag-gated slice.
         crate::query::route_cost_model::install_route_cost_observer();
+        // Co-design C5: install the config-driven tier cost-multiplier resolver
+        // (Dimension 5, the final Cost(q) term) into the route cost model. Reads
+        // per-tier multipliers from the tier-config overlay (control-plane policy
+        // values) via the tenant→tier Port. Default-inert: neutral 1.0 until a
+        // tenant→tier resolver is registered and non-neutral multipliers shipped.
+        crate::catalog::tenant_tier::install_tier_cost_multiplier_resolver();
 
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
             Some(metrics_collector.clone()),

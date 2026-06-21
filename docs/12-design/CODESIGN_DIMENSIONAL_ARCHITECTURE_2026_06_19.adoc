@@ -385,9 +385,11 @@ per-query `bytes_cross_az`. Remaining: same-AZ placement enforcement; Arrow Flig
 enriched shape-classes (cardinality, partition fan-out) fed from the measured trace; observe→override→
 explore loop shipped. Remaining: populate the new shape signals from a real estimator; seed the
 RL-planner. | compute_scheduler.rs, route_cost_model.rs, course-correction P7
-| C5 — Governance SKUs | [*multiplier seam DONE*] tier-entitlement multiplier (DI resolver, default
-1.0, routing-neutral) completes `Cost(q)`. Remaining: per-tier cache floor/ceiling; anvaiops authors
-tier→limit + pricing via claims. | OSS_ENTERPRISE_BOUNDARY, LimitsResolver, route_cost_model.rs
+| C5 — Governance SKUs | [*DONE*] tier-entitlement multiplier (DI resolver, default 1.0,
+routing-neutral) completes `Cost(q)`; config-driven startup adapter
+(`tenant_tier::install_tier_cost_multiplier_resolver`) reads per-tier multipliers from the
+tier-config overlay via the `tenant_id→Tier` Port. Remaining: register a real tenant→tier resolver
+in the integrated build; per-tier cache floor/ceiling. | OSS_ENTERPRISE_BOUNDARY, LimitsResolver, route_cost_model.rs, tenant_tier.rs
 | C6 — Edge collapse | Collapse the L7 proxy/LB/gateway into `proximadb-edge`: one canonical envelope +
 one policy plane (TLS/authn/ABAC/tenant/rate-limit/trace) across pgwire+REST+gRPC+Flight; E0 closes the
 live pgwire-bypasses-middleware consistency gap. | network/multiplex+middleware, proximadb-security, io_trace; see link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[edge HLD]

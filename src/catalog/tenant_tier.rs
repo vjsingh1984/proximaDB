@@ -15,7 +15,7 @@
 // not the concrete backing, so the swap is transparent.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
@@ -78,6 +78,12 @@ struct PricingTier {
     id: String,
     prom_label: String,
     soft_caps: PricingSoftCaps,
+    /// C5 governance tier-entitlement multiplier (Dimension 5). Authored by the
+    /// control plane (anvaiops `tiers.json` → `/config/tier-config.json`); absent
+    /// in the OSS baseline overlay → `None` → neutral `1.0`. Other overlay fields
+    /// (pricing, display, …) are ignored by serde — this reads only the scalar.
+    #[serde(default)]
+    cost_multiplier: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -326,6 +332,18 @@ impl Tier {
     /// Default freshness SLA for async ingest, in seconds.
     pub fn default_freshness_sla_seconds(self) -> u32 {
         pricing_row(self).soft_caps.freshness_sla_seconds
+    }
+
+    /// C5 governance tier-entitlement multiplier (Dimension 5) for this tier,
+    /// read from the tier-config overlay. Neutral `1.0` when the overlay omits it
+    /// (the OSS baseline) or supplies a non-finite/non-positive value (rejected
+    /// fail-safe — a non-positive multiplier could invert the reported cost). The
+    /// $ values are control-plane policy; OSS only reads the configured scalar.
+    pub fn cost_multiplier(self) -> f64 {
+        match pricing_row(self).cost_multiplier {
+            Some(m) if m.is_finite() && m > 0.0 => m,
+            _ => 1.0,
+        }
     }
 
     /// Bounded Prometheus label — cardinality-safe. The label set is loaded
@@ -681,6 +699,68 @@ impl TenantTierStore for InMemoryTenantTierStore {
     }
 }
 
+// ── C5: governance tier cost-multiplier startup adapter (Dimension 5) ───────
+//
+// The route cost model exposes a tenant→multiplier Port
+// (`route_cost_model::set_tier_multiplier_resolver`, default 1.0). This is the
+// OSS adapter that fills it from the tier-config overlay (anvaiops policy values)
+// without leaking the `Tier` enum into the routing/cost path:
+//
+//   tenant_id ──(tenant→tier Port)──▶ Tier ──(tier-config)──▶ cost_multiplier
+//
+// The tenant→tier half is itself a Port: OSS standalone has no per-tenant tier
+// authority (that lives in the control plane's registry), so the default
+// resolves every tenant to the configured default tier — whose multiplier is
+// 1.0 in the OSS baseline, keeping the whole objective inert until a deployment
+// both registers a tenant→tier resolver AND ships non-neutral tier multipliers.
+
+type TenantTierFn = dyn Fn(&str) -> Tier + Send + Sync;
+
+static TENANT_TIER_RESOLVER: Mutex<Option<Box<TenantTierFn>>> = Mutex::new(None);
+
+/// Install (or clear with `None`) the sync tenant→tier resolver Port. The
+/// control-plane integration registers one mapping a tenant id to its `Tier`
+/// from its authority (e.g. a warmed snapshot of the tenant registry); OSS
+/// standalone leaves it unset, so every tenant resolves to the configured
+/// default tier. Sync by contract — the route cost model consults it inline.
+pub fn set_tenant_tier_resolver(resolver: Option<Box<TenantTierFn>>) {
+    *TENANT_TIER_RESOLVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = resolver;
+}
+
+/// The configured default tier (`pricing().default_tier`, alias-aware), or
+/// [`Tier::default`] if it somehow fails to parse.
+fn default_tier() -> Tier {
+    let raw = serde_json::Value::String(pricing().default_tier.clone());
+    serde_json::from_value::<Tier>(raw).unwrap_or_default()
+}
+
+/// Resolve a tenant to its `Tier` via the registered Port, falling back to the
+/// configured default tier when none is installed (OSS standalone).
+pub fn resolve_tier_for(tenant_id: &str) -> Tier {
+    match TENANT_TIER_RESOLVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        Some(resolve) => resolve(tenant_id),
+        None => default_tier(),
+    }
+}
+
+/// C5 startup adapter: install the config-driven tier cost-multiplier resolver
+/// into the route cost model. Called once at startup (after
+/// `route_cost_model::install_route_cost_observer`). Maps tenant → tier →
+/// `Tier::cost_multiplier`, so `route_cost_model::final_cost` reports the real
+/// per-tenant `Cost(q)`. Default-inert: with no tenant→tier resolver and the
+/// neutral baseline multipliers, every tenant resolves to `1.0`.
+pub fn install_tier_cost_multiplier_resolver() {
+    crate::query::route_cost_model::set_tier_multiplier_resolver(Some(Box::new(|tenant_id| {
+        resolve_tier_for(tenant_id).cost_multiplier()
+    })));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -919,5 +999,49 @@ mod tests {
             config.quantization_ceiling,
             ObjectEconomyQuantizationCeiling::FP32
         );
+    }
+
+    // ── C5 tier cost-multiplier adapter ─────────────────────────────────────
+
+    #[test]
+    fn cost_multiplier_is_neutral_in_oss_baseline() {
+        // The baked OSS baseline overlay ships no cost_multiplier → neutral 1.0
+        // on every tier (the objective stays inert until policy ships values).
+        for &t in Tier::all() {
+            assert_eq!(t.cost_multiplier(), 1.0, "{t:?} baseline multiplier");
+        }
+    }
+
+    #[test]
+    fn tenant_tier_resolver_port_defaults_to_config_default_then_honors_override() {
+        // No resolver installed → the configured default tier.
+        set_tenant_tier_resolver(None);
+        assert_eq!(resolve_tier_for("anyone"), default_tier());
+        // A registered resolver (the control-plane adapter) maps per tenant.
+        set_tenant_tier_resolver(Some(Box::new(|t: &str| {
+            if t == "vip" { Tier::Tier5 } else { Tier::Tier1 }
+        })));
+        assert_eq!(resolve_tier_for("vip"), Tier::Tier5);
+        assert_eq!(resolve_tier_for("other"), Tier::Tier1);
+        set_tenant_tier_resolver(None); // reset process-global for sibling tests
+    }
+
+    #[test]
+    fn install_wires_the_route_cost_model_tier_multiplier() {
+        use crate::query::route_cost_model::{
+            set_tier_multiplier_resolver, tier_entitlement_multiplier,
+        };
+        // Map a tenant to a concrete tier, install the adapter, and confirm the
+        // route cost model resolves that tenant's multiplier through it. Baseline
+        // multipliers are the neutral 1.0, so the assertion is also race-robust.
+        set_tenant_tier_resolver(Some(Box::new(|_| Tier::Tier5)));
+        install_tier_cost_multiplier_resolver();
+        assert_eq!(
+            tier_entitlement_multiplier(Some("vip")),
+            Tier::Tier5.cost_multiplier()
+        );
+        // reset both process-globals so other tests are unaffected.
+        set_tier_multiplier_resolver(None);
+        set_tenant_tier_resolver(None);
     }
 }
