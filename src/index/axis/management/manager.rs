@@ -158,6 +158,20 @@ use proximadb_records::{ProximaRecord, ProximaTreeNode};
 ///                              ↓
 ///                        Background Build
 /// ```
+///
+/// Resolves a collection's catalog-addressed index location on demand
+/// (CATALOG_OBJECT_MODEL read-port, open-Q #3). Catalog-free **by design**: AXIS
+/// depends only on this trait, never on `proximadb-catalog`, so the dependency is
+/// inverted — an adapter in the wiring/control layer implements it over the
+/// catalog. Returning `None` means "no catalog-resolved location", and AXIS falls
+/// back to the `index_persist_url` / `index_persist_dir` convention. The result is
+/// memoized by [`AxisManager`], so this is consulted at most once per collection.
+#[async_trait::async_trait]
+pub trait IndexLocationResolver: Send + Sync {
+    /// Resolve `collection_id`'s ANN index location, or `None` for the convention.
+    async fn resolve_index_location(&self, collection_id: &str) -> Option<String>;
+}
+
 pub struct AxisManager {
     /// Core index components for different data types
 
@@ -253,9 +267,21 @@ pub struct AxisManager {
     /// `indexes/<projection>/` default). When set for a collection it is
     /// authoritative and takes precedence over the `index_persist_url` /
     /// `index_persist_dir` conventions, so an index can be relocated/tiered from
-    /// the catalog. Populated by the boot adapter that resolves projections;
-    /// empty ⇒ the legacy convention is used unchanged (mixed-safe, default-off).
-    index_location_overrides: std::collections::HashMap<String, String>,
+    /// the catalog. Empty ⇒ the legacy convention is used unchanged (mixed-safe,
+    /// default-off).
+    ///
+    /// This is a **memo cache**: populated eagerly by the boot adapter and lazily
+    /// by [`index_location_resolver`](Self::index_location_resolver) on first use,
+    /// so it is interior-mutable (`Arc<RwLock>`) to allow runtime fills after the
+    /// manager is shared.
+    index_location_overrides: Arc<RwLock<std::collections::HashMap<String, String>>>,
+
+    /// CATALOG_OBJECT_MODEL read-port: resolves a collection's index location from
+    /// the catalog on demand (the pull seam). When present, a memo miss consults
+    /// it once and caches the result — this is what makes catalog-resolved index
+    /// locations cover *runtime-created* collections, not just those present at
+    /// boot. `None` keeps the eager-only (boot-pushed) behavior.
+    index_location_resolver: Option<Arc<dyn IndexLocationResolver>>,
 
     /// Phase 8 F4a (TD-094): collections whose in-memory IVF index was evicted by
     /// `suspend_collection` to free memory. The persisted `ivf.bin` remains, so
@@ -455,7 +481,8 @@ impl AxisManager {
             recall_probe_gate: None,  // Set later via set_recall_probe_gate (TD-075)
             index_persist_dir: None,  // Set later via set_index_persist_dir (TD-087 Slice B)
             index_persist_url: None,  // Set later via set_index_persist_url (ADR-023 R3 Slice 4)
-            index_location_overrides: std::collections::HashMap::new(), // catalog-resolved (P1)
+            index_location_overrides: Arc::new(RwLock::new(std::collections::HashMap::new())), // catalog-resolved memo (P1)
+            index_location_resolver: None, // read-port injected at boot (open-Q #3)
             filesystem_factory: None, // Set later via set_filesystem_factory (ADR-023 R3 Slice 4)
             suspended_collections: Arc::new(RwLock::new(std::collections::HashSet::new())), // F4a
             cold_lazy_warm: false,    // ADR-023 R3 (c): eager warm by default
@@ -518,7 +545,11 @@ impl AxisManager {
     /// authoritative-from-catalog (relocatable/tierable per projection). The boot
     /// adapter computes this via `DrResolvedPath::resolve_index_location`
     /// (projection `location`, else the derived `indexes/<projection>/` default).
-    pub fn set_index_location(&mut self, collection_id: impl Into<String>, location: String) {
+    ///
+    /// `&self` + async because the location memo is interior-mutable (filled at
+    /// boot AND lazily at runtime via the read-port), so a shared `AxisManager`
+    /// can still register a location after it has been `Arc`-wrapped.
+    pub async fn set_index_location(&self, collection_id: impl Into<String>, location: String) {
         let collection_id = collection_id.into();
         tracing::info!(
             "🔗 AXIS: catalog-resolved index location for '{}' → '{}'",
@@ -526,7 +557,19 @@ impl AxisManager {
             location
         );
         self.index_location_overrides
+            .write()
+            .await
             .insert(collection_id, location);
+    }
+
+    /// CATALOG_OBJECT_MODEL read-port (open-Q #3): inject the resolver that pulls a
+    /// collection's index location from the catalog on demand. A memo miss in
+    /// [`index_fs_and_path`](Self::index_fs_and_path) consults it once and caches
+    /// the result, so catalog-resolved locations cover runtime-created collections
+    /// — not just those the boot adapter enumerated. Catalog-free trait, so AXIS
+    /// stays independent of `proximadb-catalog` (the dependency is inverted).
+    pub fn set_index_location_resolver(&mut self, resolver: Arc<dyn IndexLocationResolver>) {
+        self.index_location_resolver = Some(resolver);
     }
 
     /// ADR-023 R3 Slice 4: inject the shared `FilesystemFactory` that
@@ -587,14 +630,37 @@ impl AxisManager {
         Arc<dyn crate::storage::persistence::filesystem::FileSystem>,
         String,
     )> {
-        // CATALOG_OBJECT_MODEL P1: a catalog-resolved index location is
+        // CATALOG_OBJECT_MODEL P1 + read-port: a catalog-resolved index location is
         // authoritative — it already encodes the per-projection path (and any
         // relocation/tiering), so we append the index file and dispatch by scheme
-        // via the factory, ahead of the legacy url/dir conventions.
-        if let (Some(loc), Some(factory)) = (
-            self.index_location_overrides.get(collection_id),
-            &self.filesystem_factory,
-        ) {
+        // via the factory, ahead of the legacy url/dir conventions. The location
+        // is taken from the memo (boot-pushed) or, on a miss, pulled once from the
+        // read-port and cached — this is what covers runtime-created collections.
+        let catalog_location = {
+            let memo = self
+                .index_location_overrides
+                .read()
+                .await
+                .get(collection_id)
+                .cloned();
+            match memo {
+                Some(loc) => Some(loc),
+                None => match &self.index_location_resolver {
+                    Some(resolver) => match resolver.resolve_index_location(collection_id).await {
+                        Some(loc) => {
+                            self.index_location_overrides
+                                .write()
+                                .await
+                                .insert(collection_id.to_string(), loc.clone());
+                            Some(loc)
+                        }
+                        None => None,
+                    },
+                    None => None,
+                },
+            }
+        };
+        if let (Some(loc), Some(factory)) = (catalog_location, &self.filesystem_factory) {
             let path = format!("{}/ivf.bin", loc.trim_end_matches('/'));
             return match factory.get_filesystem(&path) {
                 Ok(fs) => Some((fs, path)),
@@ -5827,7 +5893,7 @@ mod recluster_apply_tests {
         m.set_index_persist_url(format!("file://{}", base.path().display()));
         // … but the catalog-resolved per-projection location wins.
         let catalog_loc = format!("file://{}/indexes/vector_ann", catalog_dir.path().display());
-        m.set_index_location("col", catalog_loc.clone());
+        m.set_index_location("col", catalog_loc.clone()).await;
 
         let (_, resolved) = m.index_fs_and_path("col").await.unwrap();
         assert_eq!(
@@ -5844,6 +5910,83 @@ mod recluster_apply_tests {
         let v = batch("cat", 60, 8, 1);
         assert!(m.rebuild_and_swap_ivf_index("col", &v).await.unwrap());
         assert!(m.has_persisted_ivf_index("col").await);
+    }
+
+    /// CATALOG_OBJECT_MODEL #3 read-port: with no boot push and no convention URL,
+    /// AXIS pulls the index location from the injected resolver on first use and
+    /// memoizes it — the resolver is consulted at most once per collection. This is
+    /// what makes catalog-resolved locations cover runtime-created collections.
+    #[tokio::test]
+    async fn read_port_resolves_index_location_lazily_and_memoizes() {
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingResolver {
+            location: String,
+            calls: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl IndexLocationResolver for CountingResolver {
+            async fn resolve_index_location(&self, _collection_id: &str) -> Option<String> {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                Some(self.location.clone())
+            }
+        }
+
+        let catalog_dir = tempfile::TempDir::new().unwrap();
+        let factory = Arc::new(FilesystemFactory::create_default().await.unwrap());
+        let loc = format!("file://{}/indexes/vector_ann", catalog_dir.path().display());
+        let calls = Arc::new(AtomicUsize::new(0));
+
+        let mut m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m.set_filesystem_factory(factory);
+        // No explicit push and no convention url — only the read-port resolver.
+        m.set_index_location_resolver(Arc::new(CountingResolver {
+            location: loc.clone(),
+            calls: calls.clone(),
+        }));
+
+        // First resolution pulls from the resolver …
+        let (_, p1) = m.index_fs_and_path("col").await.unwrap();
+        assert_eq!(p1, format!("{}/ivf.bin", loc));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // … and the result is memoized (no second pull).
+        let (_, p2) = m.index_fs_and_path("col").await.unwrap();
+        assert_eq!(p2, p1);
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "resolver consulted at most once per collection (memoized)"
+        );
+    }
+
+    /// Read-port returning `None` (no catalog location) falls back to the legacy
+    /// `index_persist_url` convention — mixed-safe, default behavior preserved.
+    #[tokio::test]
+    async fn read_port_none_falls_back_to_convention() {
+        use crate::storage::persistence::filesystem::FilesystemFactory;
+
+        struct NoneResolver;
+        #[async_trait::async_trait]
+        impl IndexLocationResolver for NoneResolver {
+            async fn resolve_index_location(&self, _c: &str) -> Option<String> {
+                None
+            }
+        }
+
+        let base = tempfile::TempDir::new().unwrap();
+        let factory = Arc::new(FilesystemFactory::create_default().await.unwrap());
+        let mut m = AxisManager::new(AxisConfig::default()).await.unwrap();
+        m.set_filesystem_factory(factory);
+        m.set_index_persist_url(format!("file://{}", base.path().display()));
+        m.set_index_location_resolver(Arc::new(NoneResolver));
+
+        let (_, resolved) = m.index_fs_and_path("col").await.unwrap();
+        assert!(
+            resolved.ends_with("/col/ivf.bin")
+                && resolved.contains(&base.path().display().to_string()),
+            "None resolver must fall back to the convention: {resolved}"
+        );
     }
 
     // ─── Phase 8 F4a: suspend / resume ──────────────────────────────────────
