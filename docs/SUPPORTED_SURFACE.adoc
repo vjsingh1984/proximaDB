@@ -109,8 +109,8 @@ REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of
 
 | ORION graph operations
 | Beta
-| Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable.
-| Declarative graph query execution is still incomplete on the canonical gRPC path. ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
+| Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable. These core operations are now served on the canonical v2 gRPC surface (`proximadb.v2.ProximaGraphService`, always-registered) and consumed by the Python SDK; the deprecated `proximadb.v1.GraphService` is off by default (`enable_grpc_v1_compat`).
+| Declarative graph query execution (Cypher/Gremlin `ExecuteQuery`) and several analytic/batch RPCs are still incomplete on the canonical v2 gRPC path (deferred — TD-124); graph creation/DDL is REST-only (`/api/v2/graphs`). ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
 
 | Observability ingestion and query
 | Beta
