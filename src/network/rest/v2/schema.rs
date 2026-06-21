@@ -38,6 +38,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info, warn};
+use utoipa::ToSchema;
 
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
@@ -46,7 +47,7 @@ use crate::network::rest::v1::handlers::AppState;
 use super::collections::{ColumnDefinition, SchemaDefinition};
 
 /// Schema response with metadata
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SchemaResponse {
     /// Schema ID (UUID)
     pub schema_id: String,
@@ -80,6 +81,20 @@ pub struct SchemaResponse {
 ///
 /// - `404 Not Found`: Collection or schema does not exist
 /// - `500 Internal Server Error`: Retrieval failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/collections/{collection_id}/schema",
+    tag = "Schema",
+    operation_id = "getCollectionSchema",
+    summary = "Get collection schema.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Collection schema.", body = SchemaResponse),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn get_schema(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -280,7 +295,7 @@ pub async fn get_schema(
 ///     "allow_additional_fields": true
 /// }
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateSchemaRequest {
     /// Updated schema definition
     #[serde(flatten)]
@@ -292,7 +307,7 @@ pub struct UpdateSchemaRequest {
 }
 
 /// Schema update response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct UpdateSchemaResponse {
     /// Updated schema ID
     pub schema_id: String,
@@ -309,7 +324,7 @@ pub struct UpdateSchemaResponse {
 }
 
 /// Description of a schema change
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SchemaChange {
     /// Type of change
     pub change_type: String,
@@ -346,6 +361,21 @@ pub struct SchemaChange {
 /// - `404 Not Found`: Collection does not exist
 /// - `409 Conflict`: Incompatible schema change
 /// - `500 Internal Server Error`: Update failed
+#[utoipa::path(
+    put,
+    path = "/api/v2/collections/{collection_id}/schema",
+    tag = "Schema",
+    operation_id = "updateCollectionSchema",
+    summary = "Update collection schema.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    request_body = UpdateSchemaRequest,
+    responses(
+        (status = 200, description = "Schema updated.", body = UpdateSchemaResponse),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn update_schema(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,

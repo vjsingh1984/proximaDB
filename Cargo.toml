@@ -240,6 +240,16 @@ tokio-stream = "0.1"
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# OpenAPI spec-from-code (TD-126 Phase 1). The `ToSchema`/`IntoParams`/`path`
+# derives annotate the v2 REST DTOs + handlers so `docs/openapi/proximadb-openapi.yaml`
+# is generated from the handler code (see src/network/rest/openapi.rs) with a CI
+# drift gate, rather than hand-maintained. Derives are zero runtime cost; the
+# aggregated document is only materialized by the generator/test path.
+utoipa = { version = "5", features = ["axum_extras", "preserve_order", "yaml"] }
+# YAML (de)serialization for the OpenAPI generator: parse the checked-in
+# supplement fragment and render the merged document to canonical YAML.
+serde_yaml = "0.9"
 bincode.workspace = true
 rmp-serde = "1.1"  # MessagePack serialization
 bytemuck = { version = "1.14", features = ["derive"] }
