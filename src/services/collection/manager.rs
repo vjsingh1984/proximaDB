@@ -2224,6 +2224,21 @@ impl CollectionService {
             })
             .collect();
 
+        // TD-122: prefer the neutral per-index/quant blob when present so the
+        // detailed HNSW/IVF params, is_primary, and quantization survive the
+        // round-trip. Legacy collections persisted before this lack the blob and
+        // keep the coarse reconstruction above (mixed-read-safe).
+        if let Some(json) = schema.properties.get("collection.index_config") {
+            let restored = crate::storage::metadata::catalog_config::index_configs_from_json(json);
+            if !restored.is_empty() {
+                config.index_configs = restored;
+            }
+        }
+        if let Some(json) = schema.properties.get("collection.quantization") {
+            config.quantization =
+                crate::storage::metadata::catalog_config::quantization_from_json(json);
+        }
+
         let location = schema
             .storage_layouts
             .first()
@@ -2455,6 +2470,24 @@ impl CollectionService {
                     // Unspecified / Fp32 / unknown all map to the legacy default
                     _ => proximadb_records::EmbeddingScalarType::Fp32,
                 };
+        }
+
+        // TD-122: persist the detailed per-index (HNSW m/ef, IVF n_lists/n_probe,
+        // is_primary) and quantization (enabled, strategy) config in a neutral,
+        // wire-independent form so GetCollection echoes back what CreateCollection
+        // set. The CatalogIndex entries above only carry the index identity/type;
+        // these JSON blobs carry the tuning knobs the catalog schema can't model.
+        if let Some(json) = crate::storage::metadata::catalog_config::index_configs_to_json(config)?
+        {
+            schema
+                .properties
+                .insert("collection.index_config".to_string(), json);
+        }
+        if let Some(json) = crate::storage::metadata::catalog_config::quantization_to_json(config)?
+        {
+            schema
+                .properties
+                .insert("collection.quantization".to_string(), json);
         }
 
         Ok(schema)
@@ -3318,6 +3351,80 @@ mod tests {
 
         assert!(response.success);
         assert_eq!(response.processing_time_us, 1000);
+    }
+
+    /// TD-122: the detailed per-index (HNSW m/ef, IVF n_lists/n_probe,
+    /// is_primary) and quantization (enabled, strategy) config must survive a
+    /// round-trip through the read-authoritative xCatalog table asset. Before
+    /// the fix this reconstruction returned `m=0`, `is_primary=false`, and
+    /// quantization disabled.
+    #[test]
+    fn catalog_asset_round_trips_detailed_index_and_quant_config() {
+        use crate::proto::proximadb_v1::{
+            Collection, HnswConfig, IndexConfig, IvfConfig, QuantizationConfig, StorageAssignment,
+            quantization_config::Strategy,
+        };
+
+        let collection = Collection {
+            id: "col-td122".to_string(),
+            config: Some(CollectionConfig {
+                name: "td122_round_trip".to_string(),
+                dimension: 128,
+                index_configs: vec![IndexConfig {
+                    index_name: "primary_hnsw".to_string(),
+                    hnsw_config: Some(HnswConfig {
+                        m: Some(24),
+                        ef_construction: Some(150),
+                        ef_search: Some(64),
+                        ..Default::default()
+                    }),
+                    ivf_config: Some(IvfConfig {
+                        n_lists: Some(256),
+                        n_probe: Some(16),
+                        ..Default::default()
+                    }),
+                    is_primary: Some(true),
+                    ..Default::default()
+                }],
+                quantization: Some(QuantizationConfig {
+                    enabled: Some(true),
+                    strategy: Some(Strategy::Aggressive as i32),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                primary_path: "file:///tmp/td122".to_string(),
+                base_location: "file:///tmp/td122".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let schema = CollectionService::catalog_schema_from_collection(&collection)
+            .expect("schema from collection");
+        let identifier = CollectionService::collection_table_identifier(
+            collection.config.as_ref().expect("config"),
+        );
+        let restored = CollectionService::collection_from_catalog_schema(&identifier, &schema)
+            .expect("collection from schema")
+            .expect("collection present");
+
+        let config = restored.config.expect("restored config");
+        assert_eq!(config.index_configs.len(), 1, "one ANN index retained");
+        let ic = &config.index_configs[0];
+        assert_eq!(ic.index_name, "primary_hnsw");
+        assert_eq!(ic.is_primary, Some(true));
+        let hnsw = ic.hnsw_config.as_ref().expect("hnsw config restored");
+        assert_eq!(hnsw.m, Some(24));
+        assert_eq!(hnsw.ef_construction, Some(150));
+        assert_eq!(hnsw.ef_search, Some(64));
+        let ivf = ic.ivf_config.as_ref().expect("ivf config restored");
+        assert_eq!(ivf.n_lists, Some(256));
+        assert_eq!(ivf.n_probe, Some(16));
+        let quant = config.quantization.as_ref().expect("quantization restored");
+        assert_eq!(quant.enabled, Some(true));
+        assert_eq!(quant.strategy, Some(Strategy::Aggressive as i32));
     }
 }
 
