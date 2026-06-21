@@ -21,7 +21,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode, VectorQuant};
+use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode, VectorQuant, col_id};
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
@@ -117,6 +117,92 @@ pub fn write_pax_segment(
         writer.add_record(record)?;
     }
     writer.finish()
+}
+
+/// One scored hit from a RaBitQ cascade segment scan: the record's `oid` and its
+/// L2 distance to the query (smaller = nearer), reranked against the co-located
+/// SQ8 column.
+#[derive(Debug, Clone)]
+pub struct CascadeHit {
+    pub oid: String,
+    pub distance: f32,
+}
+
+/// Cold-scan a PAX+RaBitQ segment for the `k` nearest neighbours of `query` using
+/// the co-designed cascade (P3 C.2): per block, the RaBitQ codes drive a cheap
+/// candidate prefilter (`pool` rows via `rabitq_rank`), then ONLY those candidates
+/// are reranked against the co-located SQ8 column (`rerank_rows`) — full f32 is
+/// never decoded. Hits merge across blocks into a global top-`k` (nearest-first).
+///
+/// Returns `Ok(None)` when `bytes` is not a PAX segment, or is a PAX segment with
+/// no RaBitQ-coded embedding (e.g. SQ8/raw): the caller then falls back to its
+/// normal materialize-and-score path, so this is additive and mixed-read-safe.
+///
+/// Emits a query-scoped I/O trace (`bytes_read` for the segment + one range-get)
+/// into the active [`io_trace`](crate::observability::io_trace) scope so the
+/// dimension this touches is observable per the co-design measure-first mandate;
+/// outside a scope the trace calls silently no-op. The compute win — scanning
+/// ~30× RaBitQ codes and decoding SQ8 for only the `pool` candidates rather than
+/// f32 for every row — is the cost term this route moves.
+pub fn rabitq_search_segment(
+    bytes: &[u8],
+    query: &[f32],
+    k: usize,
+    pool: usize,
+) -> Result<Option<Vec<CascadeHit>>> {
+    use crate::observability::io_trace;
+
+    if SegmentFormat::detect(bytes) != SegmentFormat::Pax {
+        return Ok(None);
+    }
+    let mut scanner = PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())?;
+    // Per-query I/O trace: the cold scan reads the segment once. (Ranged
+    // codes-only + candidate-only SQ8 fetches are a follow-up once the scan is
+    // driven by RangedSegmentReader against object storage.)
+    io_trace::record_bytes_read(bytes.len() as u64);
+    io_trace::record_range_gets(1);
+
+    let pool = pool.max(k);
+    let mut any_rabitq = false;
+    let mut hits: Vec<CascadeHit> = Vec::new();
+    while let Some(block) = scanner.next_block() {
+        // Stage 1: RaBitQ candidate prefilter on the hot codes column. A block
+        // whose EMBED_BASE isn't RaBitQ-encoded yields `None` and is skipped
+        // (mixed-quant segments stay safe).
+        let Some(cand) = block.rabitq_rank(query, pool) else {
+            continue;
+        };
+        any_rabitq = true;
+        // Stage 2: SQ8 cascade rerank over ONLY the candidate rows (no f32 GET).
+        // Without a co-located SQ8 column, keep the RaBitQ-coarse order.
+        let scored = block.rerank_rows(0, query, &cand).unwrap_or_else(|| {
+            cand.iter()
+                .enumerate()
+                .map(|(rank, &row)| (row, rank as f32))
+                .collect()
+        });
+        let oids = block.decode_str_stripe(col_id::OID);
+        for (row, dist) in scored.into_iter().take(k) {
+            let oid = oids
+                .as_ref()
+                .and_then(|o| o.get(row).cloned().flatten())
+                .unwrap_or_default();
+            hits.push(CascadeHit {
+                oid,
+                distance: dist,
+            });
+        }
+    }
+    if !any_rabitq {
+        return Ok(None);
+    }
+    hits.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    hits.truncate(k);
+    Ok(Some(hits))
 }
 
 #[cfg(test)]
@@ -278,9 +364,7 @@ mod tests {
         let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()).unwrap();
         let block = scanner.next_block().expect("segment has one block");
         assert!(
-            block
-                .decode_rabitq_codes(crate::col_id::EMBED_BASE)
-                .is_some(),
+            block.decode_rabitq_codes(col_id::EMBED_BASE).is_some(),
             "VectorQuant::RaBitQ must encode EMBED_BASE as RaBitQ codes"
         );
 
@@ -288,5 +372,117 @@ mod tests {
         let bytes2 = std::fs::read(&path).unwrap();
         let back = read_segment_records(&bytes2, &[], &[]).unwrap();
         assert_eq!(back.len(), records.len());
+    }
+
+    /// P3 C.2 cascade primitive — recall + trace gate. A real PAX+RaBitQ segment
+    /// is cold-scanned via `rabitq_search_segment` (RaBitQ candidate prefilter →
+    /// SQ8 rerank → top-k); recall@10 must hold ≥ 0.90 vs the exact-f32 baseline,
+    /// and the query-scoped I/O trace must meter the segment read (measure-first
+    /// mandate). Non-PAX / non-RaBitQ input returns `None` so the caller falls
+    /// back — exercised at the end.
+    #[test]
+    fn rabitq_search_segment_cascade_recall_and_trace() {
+        const DIM: usize = 64;
+        const N: usize = 512;
+        const Q: usize = 30;
+        const K: usize = 10;
+        const POOL: usize = 100;
+        const RATCHET: f32 = 0.90;
+
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rabitq_search.pax");
+        let records: Vec<ProximaRecord> = corpus
+            .iter()
+            .enumerate()
+            .map(|(i, v)| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i as i64,
+                    v.clone(),
+                )
+            })
+            .collect();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let exact_topk = |q: &[f32]| -> std::collections::HashSet<String> {
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], q)
+                    .partial_cmp(&l2(&corpus[b], q))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(K).map(|i| format!("v{i}")).collect()
+        };
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        rt.block_on(crate::observability::io_trace::scope(async {
+            let mut recalls = Vec::with_capacity(Q);
+            for qi in 0..Q {
+                let base = (qi * (N / Q)) % N;
+                let noise = gen_vec((qi as u64).wrapping_add(7_000_000));
+                let query: Vec<f32> = corpus[base]
+                    .iter()
+                    .zip(&noise)
+                    .map(|(v, n)| v + n * 0.01)
+                    .collect();
+
+                let hits = rabitq_search_segment(&bytes, &query, K, POOL)
+                    .unwrap()
+                    .expect("PAX+RaBitQ segment must run the cascade");
+                let got: std::collections::HashSet<String> =
+                    hits.into_iter().map(|h| h.oid).collect();
+                let truth = exact_topk(&query);
+                let hit = truth.iter().filter(|o| got.contains(*o)).count();
+                recalls.push(hit as f32 / K as f32);
+            }
+            let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
+            assert!(
+                mean >= RATCHET,
+                "P3 C.2: RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet {RATCHET}"
+            );
+
+            // The cold scan must meter the segment read on the active trace.
+            let snap = crate::observability::io_trace::snapshot().unwrap();
+            assert!(
+                snap.bytes_read > 0,
+                "io_trace must record bytes_read for the PAX cold scan"
+            );
+            assert!(
+                snap.range_gets >= 1,
+                "io_trace must record at least one range-get for the PAX cold scan"
+            );
+        }));
+
+        // Non-RaBitQ input returns None → the caller keeps its normal path.
+        let legacy = ProximaDataBlock::new(
+            vec![rec("z", 1, vec![0.0; DIM])],
+            BlockCompressionConfig::default(),
+        )
+        .serialize()
+        .unwrap();
+        assert!(
+            rabitq_search_segment(&legacy, &vec![0.0; DIM], K, POOL)
+                .unwrap()
+                .is_none(),
+            "non-PAX input must return None (caller falls back)"
+        );
     }
 }
