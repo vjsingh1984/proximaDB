@@ -776,7 +776,48 @@ pub struct BackpressureSignal {
 /// Collection management (v2 — parity with v1 CollectionService).
 /// Self-contained: distance_metric/storage_engine are lowercase strings mapped
 /// to the internal enums server-side (avoids importing the v1 proto package).
+///
+/// v2-native HNSW tuning (maps to v1 HnswConfig at the handler boundary).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2HnswConfig {
+    #[prost(uint32, optional, tag = "1")]
+    pub m: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "2")]
+    pub ef_construction: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "3")]
+    pub ef_search: ::core::option::Option<u32>,
+}
+/// v2-native IVF tuning (maps to v1 IvfConfig at the handler boundary).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2IvfConfig {
+    #[prost(uint32, optional, tag = "1")]
+    pub n_lists: ::core::option::Option<u32>,
+    #[prost(uint32, optional, tag = "2")]
+    pub n_probe: ::core::option::Option<u32>,
+}
+/// A single index on the collection (v2-native; maps to v1 IndexConfig).
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2IndexSpec {
+    /// "hnsw" (default) | "ivf" | "flat" | "pq" | "annoy" | "lsh"
+    #[prost(string, tag = "1")]
+    pub algorithm: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub hnsw: ::core::option::Option<V2HnswConfig>,
+    #[prost(message, optional, tag = "3")]
+    pub ivf: ::core::option::Option<V2IvfConfig>,
+    #[prost(bool, tag = "4")]
+    pub is_primary: bool,
+}
+/// v2-native quantization config (maps to v1 QuantizationConfig).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct V2QuantizationConfig {
+    #[prost(bool, tag = "1")]
+    pub enabled: bool,
+    /// "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels"
+    #[prost(string, tag = "2")]
+    pub strategy: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct V2CollectionConfig {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
@@ -792,8 +833,13 @@ pub struct V2CollectionConfig {
     pub filterable_columns: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
     #[prost(string, tag = "6")]
     pub description: ::prost::alloc::string::String,
+    /// Optional index tuning; when empty the server auto-selects a sensible index.
+    #[prost(message, repeated, tag = "7")]
+    pub index_specs: ::prost::alloc::vec::Vec<V2IndexSpec>,
+    #[prost(message, optional, tag = "8")]
+    pub quantization: ::core::option::Option<V2QuantizationConfig>,
 }
-#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct V2Collection {
     #[prost(string, tag = "1")]
     pub id: ::prost::alloc::string::String,
