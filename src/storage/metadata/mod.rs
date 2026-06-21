@@ -69,6 +69,7 @@
 pub use crate::storage::transaction_coordinator;
 pub mod atomic;
 pub mod backends;
+pub mod catalog_config;
 pub mod checkpoint;
 // universal_backend moved to backends/universal_backend.rs
 pub mod indexes;

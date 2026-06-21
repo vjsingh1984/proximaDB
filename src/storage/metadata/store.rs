@@ -468,6 +468,7 @@ impl MetadataStoreInterface for MetadataStore {
                     if let Some(se) = config.storage_engine {
                         m.insert("storage_engine".to_string(), serde_json::json!(se));
                     }
+                    super::catalog_config::write_index_and_quant(config, &mut m)?;
                     m
                 },
                 description: Some(format!("Collection {}", config.name)),
@@ -495,11 +496,11 @@ impl MetadataStoreInterface for MetadataStore {
                     ), // Default
                     storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32), // Default
                     storage_config: None,
-                    index_configs: Vec::new(),
+                    index_configs: super::catalog_config::read_index_configs(&versioned.config),
                     primary_index: Some(String::new()),
                     auto_index_selection: Some(true),
                     filterable_columns: Vec::new(),
-                    quantization: None,
+                    quantization: super::catalog_config::read_quantization(&versioned.config),
                     description: versioned.description.clone(),
                     tags: versioned.tags.clone(),
                     owner: versioned.owner.clone(),
@@ -567,6 +568,7 @@ impl MetadataStoreInterface for MetadataStore {
                     if let Some(se) = config.storage_engine {
                         m.insert("storage_engine".to_string(), serde_json::json!(se));
                     }
+                    super::catalog_config::write_index_and_quant(config, &mut m)?;
                     m
                 },
                 description: Some(format!("Collection {}", config.name)),

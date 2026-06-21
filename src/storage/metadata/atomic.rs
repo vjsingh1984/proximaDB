@@ -333,6 +333,17 @@ impl AtomicMetadataStore {
         for operation in &transaction.operations {
             match operation {
                 MetadataOperation::CreateCollection(collection) => {
+                    let mut config_map = std::collections::HashMap::new();
+                    if let Some(c) = collection.config.as_ref() {
+                        config_map.insert("dimension".to_string(), serde_json::json!(c.dimension));
+                        if let Some(dm) = c.distance_metric {
+                            config_map.insert("distance_metric".to_string(), serde_json::json!(dm));
+                        }
+                        if let Some(se) = c.storage_engine {
+                            config_map.insert("storage_engine".to_string(), serde_json::json!(se));
+                        }
+                        super::catalog_config::write_index_and_quant(c, &mut config_map)?;
+                    }
                     let versioned = VersionedCollectionMetadata {
                         id: collection.id.clone(),
                         name: collection
@@ -360,21 +371,7 @@ impl AtomicMetadataStore {
                             .stats
                             .as_ref()
                             .map_or(0, |s| s.data_size_bytes as u64),
-                        config: collection
-                            .config
-                            .as_ref()
-                            .map(|c| {
-                                let mut m = std::collections::HashMap::new();
-                                m.insert("dimension".to_string(), serde_json::json!(c.dimension));
-                                if let Some(dm) = c.distance_metric {
-                                    m.insert("distance_metric".to_string(), serde_json::json!(dm));
-                                }
-                                if let Some(se) = c.storage_engine {
-                                    m.insert("storage_engine".to_string(), serde_json::json!(se));
-                                }
-                                m
-                            })
-                            .unwrap_or_default(),
+                        config: config_map,
                         description: None,
                         tags: Vec::new(),
                         owner: None,
@@ -467,6 +464,12 @@ impl AtomicMetadataStore {
                         dimension: versioned_metadata.dimension as u32,
                         distance_metric: Some(distance_metric_val),
                         storage_engine: Some(storage_engine_val),
+                        index_configs: super::catalog_config::read_index_configs(
+                            &versioned_metadata.config,
+                        ),
+                        quantization: super::catalog_config::read_quantization(
+                            &versioned_metadata.config,
+                        ),
                         ..Default::default()
                     }),
                     stats: Some(crate::proto::proximadb_v1::CollectionStats {
@@ -697,6 +700,8 @@ impl MetadataStoreInterface for AtomicMetadataStore {
 
         // Read from write buffer manager (which handles caching)
         if let Some(versioned) = self.write_buffer_manager.collection(collection_id).await? {
+            let index_configs = super::catalog_config::read_index_configs(&versioned.config);
+            let quantization = super::catalog_config::read_quantization(&versioned.config);
             let collection = crate::proto::proximadb_v1::Collection {
                 id: versioned.id,
                 config: Some(crate::proto::proximadb_v1::CollectionConfig {
@@ -705,6 +710,8 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                     distance_metric: Some(
                         crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
                     ), // Default for now
+                    index_configs,
+                    quantization,
                     ..Default::default()
                 }),
                 stats: Some(crate::proto::proximadb_v1::CollectionStats {
@@ -805,6 +812,8 @@ impl MetadataStoreInterface for AtomicMetadataStore {
                         distance_metric: Some(
                             crate::proto::proximadb_v1::DistanceMetric::Cosine as i32,
                         ), // Default for now
+                        index_configs: super::catalog_config::read_index_configs(&versioned.config),
+                        quantization: super::catalog_config::read_quantization(&versioned.config),
                         ..Default::default()
                     }),
                     stats: Some(crate::proto::proximadb_v1::CollectionStats {
