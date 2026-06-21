@@ -6442,6 +6442,7 @@ dependencies = [
  "httpmock",
  "hyper 1.9.0",
  "hyper-util",
+ "ipnet",
  "jni",
  "jsonpath-rust",
  "jsonwebtoken",

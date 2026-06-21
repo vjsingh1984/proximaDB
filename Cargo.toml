@@ -317,6 +317,7 @@ once_cell = "1.19"
 lazy_static = "1.5"
 
 # Networking & gRPC
+ipnet = "2.12" # CIDR longest-prefix client-locality classification (KOU, co-design D2)
 tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
 tonic-prost = "0.14"  # Runtime codec for tonic-build 0.14+ generated code
 tonic-health = "0.14"  # Standard grpc.health.v1.Health service

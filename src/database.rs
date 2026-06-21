@@ -130,6 +130,26 @@ impl ProximaDB {
         // values) via the tenant→tier Port. Default-inert: neutral 1.0 until a
         // tenant→tier resolver is registered and non-neutral multipliers shipped.
         crate::catalog::tenant_tier::install_tier_cost_multiplier_resolver();
+        // Co-design C3/KOU: derive this deployment's object-store read-egress
+        // locality from the storage URL (provider) + control-plane-stamped
+        // PROXIMADB_COMPUTE_REGION/PROXIMADB_STORE_REGION, and install it as the
+        // process-wide locality the egress meter uses. Default Local (free, inert)
+        // when unset; logs the derived locality. Turns B1's derivation live.
+        {
+            let storage_url = config
+                .storage
+                .storage_locations
+                .first()
+                .map(|loc| loc.url.as_str())
+                .unwrap_or("");
+            let placement = crate::metrics::consumption_metrics::placement_from_env(storage_url);
+            crate::metrics::consumption_metrics::install_placement(&placement);
+        }
+        // Co-design KOU result-egress: load the client-locality scope map (CIDR→
+        // locality, control-plane-authored via PROXIMADB_NETWORK_SCOPE_MAP).
+        // Default-empty → clients classify as Unknown (safe). Consumed by the
+        // gateway/result-egress path; the classifier (`classify_client`) is live.
+        crate::metrics::consumption_metrics::install_network_scope_map(None);
 
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
             Some(metrics_collector.clone()),

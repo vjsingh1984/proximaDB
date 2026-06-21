@@ -11,8 +11,10 @@
 //! task time). Pricing/billing is an operator/control-plane concern — this OSS
 //! module only emits neutral telemetry attributed by `tenant_id`.
 
+use std::net::IpAddr;
 use std::sync::{LazyLock, Mutex};
 
+use ipnet::IpNet;
 use lazy_static::lazy_static;
 use prometheus::{CounterVec, GaugeVec, Opts, register_counter_vec, register_gauge_vec};
 use tracing::error;
@@ -299,6 +301,158 @@ pub fn object_store_egress_locality() -> KouLocality {
         .unwrap_or_else(|p| p.into_inner())
 }
 
+/// Build a [`PlacementContext`] from the storage URL + control-plane-stamped env,
+/// for the startup [`install_placement`] call. Provider is *inferred* from the
+/// storage URL scheme (mistake-proof); `compute_region` / `store_region` are
+/// stamped by the control plane (`PROXIMADB_COMPUTE_REGION` / `PROXIMADB_STORE_REGION`,
+/// the latter falling back to the AWS region envs for the S3 backend). All default
+/// empty → derives `Local` (free, inert). `compute_provider` defaults to the store
+/// provider (same cloud); cross-cloud reads are a declared exception (not inferred).
+pub fn placement_from_env(storage_url: &str) -> PlacementContext {
+    let scheme = storage_url.split("://").next().unwrap_or("");
+    let provider = CloudProvider::from_url_scheme(scheme);
+    let env = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    let store_region = env("PROXIMADB_STORE_REGION")
+        .or_else(|| {
+            if provider == CloudProvider::Aws {
+                env("PROXIMADB_S3_REGION")
+                    .or_else(|| env("AWS_REGION"))
+                    .or_else(|| env("AWS_DEFAULT_REGION"))
+            } else {
+                None
+            }
+        })
+        .unwrap_or_default();
+    PlacementContext {
+        store_provider: provider,
+        compute_provider: provider,
+        compute_region: env("PROXIMADB_COMPUTE_REGION").unwrap_or_default(),
+        store_region,
+    }
+}
+
+// ── Client-locality classification (KOU result-egress, co-design D2) ─────────
+//
+// Classify a client's source IP against a control-plane-authored CIDR→locality
+// scope map (terraform emits it from the VPC/subnet CIDRs it provisions, so it
+// can never be hand-mis-written). Longest-prefix match; no match → `Internet`
+// for a public IP, `Unknown` for an unrecognized private IP (surfaced, never
+// silently free/charged). No fragile cloud IP-range databases are consulted.
+
+/// One scope-map rule: a CIDR and the [`KouLocality`] of a client whose source
+/// IP falls in it (the terraform-baked AZ/region decision is encoded in the bucket).
+#[derive(Debug, Clone)]
+pub struct ScopeRule {
+    pub net: IpNet,
+    pub locality: KouLocality,
+}
+
+/// Ordered CIDR→locality rules; classification is **longest-prefix wins** (a /32
+/// host rule overrides a /16 VPC rule). Default-empty → every client is `Unknown`.
+#[derive(Debug, Clone, Default)]
+pub struct NetworkScopeMap {
+    rules: Vec<ScopeRule>,
+}
+
+impl NetworkScopeMap {
+    pub fn from_rules(rules: Vec<ScopeRule>) -> Self {
+        Self { rules }
+    }
+
+    /// Parse a JSON array `[{"cidr":"10.0.0.0/16","locality":"cross_az"}, …]`.
+    /// Unparseable CIDRs / localities are skipped with a WARN (never panics) —
+    /// a malformed rule degrades to `Unknown` for those IPs, never a wrong charge.
+    pub fn from_json(json: &str) -> Self {
+        let mut rules = Vec::new();
+        let parsed: serde_json::Value = match serde_json::from_str(json) {
+            Ok(v) => v,
+            Err(e) => {
+                error!("network scope map: invalid JSON ({e}); using empty map");
+                return Self::default();
+            }
+        };
+        if let Some(arr) = parsed.as_array() {
+            for entry in arr {
+                let cidr = entry.get("cidr").and_then(|v| v.as_str());
+                let loc = entry
+                    .get("locality")
+                    .and_then(|v| v.as_str())
+                    .and_then(KouLocality::parse);
+                match (cidr.and_then(|c| c.parse::<IpNet>().ok()), loc) {
+                    (Some(net), Some(locality)) => rules.push(ScopeRule { net, locality }),
+                    _ => error!("network scope map: skipping invalid rule {entry}"),
+                }
+            }
+        }
+        Self { rules }
+    }
+
+    /// Classify a client source IP. Longest-prefix match → the rule's locality;
+    /// no match → `Internet` if the IP is public, else `Unknown`.
+    pub fn classify(&self, ip: IpAddr) -> KouLocality {
+        match self
+            .rules
+            .iter()
+            .filter(|r| r.net.contains(&ip))
+            .max_by_key(|r| r.net.prefix_len())
+        {
+            Some(r) => r.locality,
+            None if is_public_ip(ip) => KouLocality::Internet,
+            None => KouLocality::Unknown,
+        }
+    }
+}
+
+/// Whether an IP is public (routable on the internet) — i.e. not loopback,
+/// private (RFC1918 / unique-local), or link-local. A non-public unmatched IP is
+/// `Unknown` (surfaced); a public unmatched IP is `Internet`.
+fn is_public_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.is_private() || v4.is_loopback() || v4.is_link_local() || v4.is_unspecified())
+        }
+        IpAddr::V6(v6) => {
+            // not loopback / unspecified / unique-local (fc00::/7) / link-local (fe80::/10)
+            let seg = v6.segments();
+            !(v6.is_loopback()
+                || v6.is_unspecified()
+                || (seg[0] & 0xfe00) == 0xfc00
+                || (seg[0] & 0xffc0) == 0xfe80)
+        }
+    }
+}
+
+/// Process-wide client-locality scope map, installed at startup by
+/// [`install_network_scope_map`]. Default-empty → every client `Unknown` (safe).
+static NETWORK_SCOPE_MAP: LazyLock<Mutex<NetworkScopeMap>> =
+    LazyLock::new(|| Mutex::new(NetworkScopeMap::default()));
+
+/// Install the deployment's client scope map (called once at startup). Reads the
+/// JSON file at `PROXIMADB_NETWORK_SCOPE_MAP` when `map` is `None`; default-empty
+/// when the env is unset/unreadable (safe: clients classify as `Unknown`).
+pub fn install_network_scope_map(map: Option<NetworkScopeMap>) {
+    let map = map.unwrap_or_else(|| match std::env::var("PROXIMADB_NETWORK_SCOPE_MAP") {
+        Ok(path) if !path.trim().is_empty() => match std::fs::read_to_string(&path) {
+            Ok(json) => NetworkScopeMap::from_json(&json),
+            Err(e) => {
+                error!("network scope map: cannot read {path} ({e}); using empty map");
+                NetworkScopeMap::default()
+            }
+        },
+        _ => NetworkScopeMap::default(),
+    });
+    *NETWORK_SCOPE_MAP.lock().unwrap_or_else(|p| p.into_inner()) = map;
+}
+
+/// Classify a client source IP against the installed scope map (KOU result-egress
+/// locality). `Unknown` until [`install_network_scope_map`] loads rules.
+pub fn classify_client(ip: IpAddr) -> KouLocality {
+    NETWORK_SCOPE_MAP
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .classify(ip)
+}
+
 /// Helper to record an object store operation.
 pub fn record_object_store_op(tenant_id: Option<&str>, operation: &str) {
     let t_id = tenant_id.unwrap_or("default");
@@ -495,6 +649,86 @@ mod tests {
         .await
         .expect("snapshot inside scope");
         assert_eq!(snap.egress_bytes, 3_000);
+    }
+
+    #[test]
+    fn scope_map_classifies_by_longest_prefix_with_safe_defaults() {
+        // Terraform-style rules: compute subnet/AZ → local; rest of VPC → cross_az;
+        // a declared on-prem range → on_prem. Longest-prefix wins.
+        let map = NetworkScopeMap::from_json(
+            r#"[
+              {"cidr":"10.0.1.0/24","locality":"local"},
+              {"cidr":"10.0.0.0/16","locality":"cross_az"},
+              {"cidr":"203.0.113.0/24","locality":"on_prem"}
+            ]"#,
+        );
+        assert_eq!(
+            map.classify("10.0.1.5".parse().unwrap()),
+            KouLocality::Local
+        ); // /24 beats /16
+        assert_eq!(
+            map.classify("10.0.2.5".parse().unwrap()),
+            KouLocality::CrossAz
+        ); // /16
+        assert_eq!(
+            map.classify("203.0.113.7".parse().unwrap()),
+            KouLocality::OnPrem
+        );
+        // Unmatched public IP → Internet; unmatched private IP → Unknown (surfaced).
+        assert_eq!(
+            map.classify("8.8.8.8".parse().unwrap()),
+            KouLocality::Internet
+        );
+        assert_eq!(
+            map.classify("192.168.9.9".parse().unwrap()),
+            KouLocality::Unknown
+        );
+    }
+
+    #[test]
+    fn empty_scope_map_is_safe_unknown_or_internet() {
+        let empty = NetworkScopeMap::default();
+        assert_eq!(
+            empty.classify("10.0.0.1".parse().unwrap()),
+            KouLocality::Unknown
+        ); // private → surfaced
+        assert_eq!(
+            empty.classify("1.1.1.1".parse().unwrap()),
+            KouLocality::Internet
+        ); // public → notice
+        // Malformed JSON / rules degrade to empty, never panic.
+        assert_eq!(
+            NetworkScopeMap::from_json("not json").classify("10.0.0.1".parse().unwrap()),
+            KouLocality::Unknown
+        );
+        let partial = NetworkScopeMap::from_json(
+            r#"[{"cidr":"bogus","locality":"local"},{"cidr":"10.0.0.0/8","locality":"cross_region"}]"#,
+        );
+        assert_eq!(
+            partial.classify("10.1.2.3".parse().unwrap()),
+            KouLocality::CrossRegion
+        );
+    }
+
+    #[test]
+    fn placement_from_env_infers_provider_and_defaults_safe() {
+        // Provider inferred from the storage URL scheme; with no region env the
+        // context derives the free Local locality (safe default, no env mutation).
+        let p = placement_from_env("s3://my-bucket/data");
+        assert_eq!(p.store_provider, CloudProvider::Aws);
+        assert_eq!(p.compute_provider, CloudProvider::Aws);
+        assert_eq!(
+            placement_from_env("gs://b/x").store_provider,
+            CloudProvider::Gcp
+        );
+        assert_eq!(
+            placement_from_env("abfs://b/x").store_provider,
+            CloudProvider::Azure
+        );
+        let local = placement_from_env("file://./data");
+        assert_eq!(local.store_provider, CloudProvider::Local);
+        // file:// + no compute region → derive Local (free), regardless of env.
+        assert_eq!(KouLocality::derive_read(&local), KouLocality::Local);
     }
 
     #[tokio::test]
