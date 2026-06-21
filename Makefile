@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec release-check docs-claim-check release-smoke
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -127,6 +127,17 @@ proto-check:
 verify-openapi-spec:
 	@echo "🧬 Validating OpenAPI spec ↔ handler drift (spec-from-code)..."
 	cargo test -p proximadb --test openapi_spec_gen
+
+# TD-126 Phase 2 (spec-driven SDK pilot, Go): the Go REST transport's wire
+# plumbing (clients/go/proximadb/internal/genrest) is GENERATED from the
+# published OpenAPI spec via oapi-codegen (pinned in clients/go/codegen/go.mod),
+# behind a thin hand-written ergonomic facade (internal/rest/adapter.go). This
+# regenerates the client; commit the result. The CI gate `go-sdk-codegen-drift`
+# runs this and `git diff --exit-code`s the generated client — same pattern as
+# verify-openapi-spec / the proto-sync gate.
+gen-go-sdk:
+	@echo "🧬 Generating Go REST transport from OpenAPI spec (TD-126 Phase 2)..."
+	PYTHON=$(PYTHON) bash clients/go/codegen/gen.sh
 
 workspace-boundaries-check:
 	@echo "🧱 Validating workspace dependency boundaries..."
@@ -323,6 +334,7 @@ help:
 	@echo "  work-commit-check  - Fast deterministic architecture guard before commit/push"
 	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
 	@echo "  verify-openapi-spec - Regenerate OpenAPI spec from handlers; fail on drift (TD-126)"
+	@echo "  gen-go-sdk         - Regenerate the Go REST transport from the OpenAPI spec (TD-126 Phase 2)"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
 	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
