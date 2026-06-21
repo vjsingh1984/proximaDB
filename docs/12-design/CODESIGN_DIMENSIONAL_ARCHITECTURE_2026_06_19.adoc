@@ -185,9 +185,13 @@ mesh tax (a sidecar ~halves throughput / doubles p99; ~70 GB RAM across 1000 pod
 ALB-LCU / API-GW-per-request / cross-AZ cost, while making cross-surface policy consistency *structural*.
 Full HLD: link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19].
 
-*Billing meter:* presently *unmetered* — a gap. Add an egress/bytes-moved counter keyed by
-`(tenant, az_locality)` so cross-AZ and result-egress become a billable, optimizable dimension
-(→ *KEU*, the egress unit already named in the OSS boundary doc but not yet sourced from a trace).
+*Billing meter:* [*DONE — C3*] `proximadb_egress_bytes_total{tenant_id, az_locality}` (the *KEU*
+meter) plus the per-query `io_trace.bytes_cross_az` term, fed by one convergent
+`consumption_metrics::record_egress_bytes` at the object-store read boundaries. `AzLocality`
+(`same_az`/`cross_az`/`internet`) is OSS *mechanism*: the deployment declares its object-store
+locality via `PROXIMADB_OBJECT_STORE_LOCALITY` (default `same_az` = the free path, so the egress
+*cost* term is inert until a cross-AZ topology is declared); the AZ topology and per-locality $
+weights stay anvaiops *policy*. Closes the previously-unmetered networking dimension.
 
 *TAM:* networking is captured indirectly as the cost floor of every serverless DB; the
 disaggregation/RDMA research wave (GaussDB, PolarDB-MP, PVLDB 2024–2025) signals where the
@@ -310,13 +314,23 @@ expected total cost is the sum across dimensions:
 
 [source]
 ----
-Cost(q) =  w_storage · bytes_stored·time          (KSU)
-         + w_read    · (GET_count·get_fee + bytes_read·bw_cost)   (KRU, Dimension 1+2)
-         + w_egress  · bytes_moved·az_locality_cost  (KEU, Dimension 2)   ← currently unmetered
-         + w_compute · engine_ms·rate              (KRU/KIU, Dimension 4)
-         - cache_hit_savings(hit_ratio)            (Dimension 3 offsets read+egress)
-         × tier_entitlement_multiplier             (Dimension 5)
+Cost(q) =  w_storage · bytes_stored·time          (KSU)            ← per-tenant aggregate, not per-query
+         + w_read    · (GET_count·get_fee + bytes_read·bw_cost)   (KRU, Dimension 1+2)   [DONE]
+         + w_egress  · bytes_moved·az_locality_cost  (KEU, Dimension 2)   [DONE — C3 meter + cost term]
+         + w_ingest  · bytes_written·bw_cost        (KIU, storage-write)  [DONE]
+         + w_compute · engine_ms·rate              (KRU/KIU, Dimension 4)   [DONE]
+         - cache_hit_savings(hit_ratio)            (Dimension 3: fewer GETs/bytes in the trace)
+         × tier_entitlement_multiplier             (Dimension 5)   [DONE — C5 seam, routing-neutral]
 ----
+
+Status: the per-query route cost model (`src/query/route_cost_model.rs`) now scores the read,
+*egress* (KEU), ingest (KIU), and compute terms in neutral units from the measured
+`IoTraceSnapshot`, and applies the per-tenant tier multiplier (C5 DI seam) to the *reported* cost.
+The egress and ingest terms are *inert by default* (zero on the free same-AZ path / for read-only
+routes), so routing is unchanged until a cross-AZ topology is declared. `w_storage·time` (KSU) stays
+a per-tenant aggregate the consumption meter owns — it is not a per-query routing discriminator — and
+the tier multiplier is routing-neutral (a per-tenant scalar scales all candidates equally), so both
+serve *reporting/billing*, not engine selection.
 
 The weights are *not* guessed — they are the published cost curves in §2, and the quantities
 (`GET_count`, `bytes_read`, `bytes_moved`, `engine_ms`, `hit_ratio`) must come from the *measured
@@ -364,12 +378,21 @@ tuned on intuition.*
 small-tenant pack store (R5). | PAX v2 leftover, TURBOQUANT, recalibration R5
 | C2 — Cache unification | Collapse cache zoo → one `TenantCache` temperature/cost model; size-aware
 eviction; decouple cache from compute for warm restarts. | proximadb-cache, recalibration R2/R3/R4/R6
-| C3 — Network metering | Add `(tenant, az_locality)` bytes-moved counter (KEU); same-AZ placement
-enforcement; Arrow Flight SQL bulk-egress GA. | TENANT_COLLECTION_POD_AFFINITY, arrow_flight detector
-| C4 — Cost-based routing | Feed measured dimensional cost into `ComputeScheduler` route selection;
-retire static heuristics; seed the RL-planner cost model. | compute_scheduler.rs, course-correction P7
-| C5 — Governance SKUs | Tier-entitlement multiplier in the cost model; per-tier cache floor/ceiling;
-anvaiops authors tier→limit + pricing via claims. | OSS_ENTERPRISE_BOUNDARY, LimitsResolver
+| C3 — Network metering | [*meter DONE*] `(tenant, az_locality)` bytes-moved counter (KEU) +
+per-query `bytes_cross_az`. Remaining: same-AZ placement enforcement; Arrow Flight SQL bulk-egress GA.
+| TENANT_COLLECTION_POD_AFFINITY, arrow_flight detector, consumption_metrics
+| C4 — Cost-based routing | [*cost model DONE*] full `Cost(q)` (read+egress+ingest+compute) +
+enriched shape-classes (cardinality, partition fan-out) fed from the measured trace; observe→override→
+explore loop shipped. *RL planner DEFERRED* (premature for a solo operator: no 2nd live read backend
+yet, and the EWMA observe→override→explore model is policy-complete). Decide the override flag on
+evidence via `scripts/route_cost_report.py` (summarizes observe-mode advisories → divergence + neutral
+advantage → verdict). *Revisit RL only when both:* ≥2 live read backends AND sustained per-shape-class
+trace volume. Remaining: populate shape signals from a real estimator. | compute_scheduler.rs, route_cost_model.rs, route_cost_report.py, course-correction P7
+| C5 — Governance SKUs | [*DONE*] tier-entitlement multiplier (DI resolver, default 1.0,
+routing-neutral) completes `Cost(q)`; config-driven startup adapter
+(`tenant_tier::install_tier_cost_multiplier_resolver`) reads per-tier multipliers from the
+tier-config overlay via the `tenant_id→Tier` Port. Remaining: register a real tenant→tier resolver
+in the integrated build; per-tier cache floor/ceiling. | OSS_ENTERPRISE_BOUNDARY, LimitsResolver, route_cost_model.rs, tenant_tier.rs
 | C6 — Edge collapse | Collapse the L7 proxy/LB/gateway into `proximadb-edge`: one canonical envelope +
 one policy plane (TLS/authn/ABAC/tenant/rate-limit/trace) across pgwire+REST+gRPC+Flight; E0 closes the
 live pgwire-bypasses-middleware consistency gap. | network/multiplex+middleware, proximadb-security, io_trace; see link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[edge HLD]

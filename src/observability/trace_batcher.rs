@@ -187,6 +187,7 @@ mod tests {
             gls_score: None,
             estimated_scan_gb: None,
             actual_scan_gb: 0.0,
+            actual_egress_gb: 0.0,
             index_stats: IndexStats::default(),
             candidate_count: 64,
             rerank_count: 10,

@@ -333,6 +333,60 @@ impl<'a> PaxBlockReader<'a> {
         Some(rabitq::rank_candidates(&q_rotated, &codes, pool))
     }
 
+    /// Stage-2 of the cascade: rerank a RaBitQ candidate `rows` set for embedding
+    /// `emb_idx` against the co-located SQ8 rerank column (`RERANK_BASE + emb_idx`),
+    /// returning `(row, l2_distance)` sorted nearest-first. SQ8 is decoded for
+    /// ONLY the candidate rows (4× footprint, no GET to an external f32 tier), so
+    /// the precise pass is cheap. Null and out-of-range rows are skipped. Returns
+    /// `None` if the rerank column is absent or not SQ8-encoded — the caller then
+    /// falls back to the RaBitQ-coarse order (or a full-f32 tier, when present).
+    pub fn rerank_rows(
+        &self,
+        emb_idx: usize,
+        query: &[f32],
+        rows: &[usize],
+    ) -> Option<Vec<(usize, f32)>> {
+        let column_id = crate::col_id::RERANK_BASE + emb_idx as i32;
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_SQ8 {
+            return None;
+        }
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let dim = entry.dim as usize;
+        let bm_len = n.div_ceil(8);
+        if raw.len() < bm_len {
+            return None;
+        }
+        let bitmap = &raw[..bm_len];
+        let payload = &raw[bm_len..];
+        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+        let stride = dim; // one u8 SQ8 code per dimension
+
+        let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
+        let mut decoded: Vec<f32> = Vec::with_capacity(dim);
+        for &row in rows {
+            if row >= n || !is_present(row) {
+                continue;
+            }
+            let off = row * stride;
+            let end = off + stride;
+            if end > payload.len() {
+                continue;
+            }
+            decoded.clear();
+            sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
+            let dist = decoded
+                .iter()
+                .zip(query)
+                .map(|(x, q)| (x - q) * (x - q))
+                .sum::<f32>();
+            scored.push((row, dist));
+        }
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        Some(scored)
+    }
+
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
     /// inverse of the writer's `build_bytes_stripe` (used for the msgpack `PROPS`
     /// and `LABELS` columns). Each value is a 4-byte little-endian length prefix
@@ -1092,22 +1146,24 @@ mod tests {
         );
     }
 
-    /// P3 Phase G — cold-recall harness at scale (N=1000). This is the *ratchet gate*
-    /// the migration plan requires before the cold-scan wiring (C.2): the
-    /// `rank_candidates` stage-1 prefilter + a decoupled f32 rerank must hold
-    /// recall@10 within tolerance of the exact-f32 baseline at realistic N (small-N is
+    /// P3 Phase G — cold-recall harness at scale (N=1000) over a REAL two-column
+    /// PAX block. This is the *ratchet gate* the migration plan requires before the
+    /// cold-scan wiring (C.2): the writer emits RaBitQ codes (`EMBED_BASE`) plus a
+    /// co-located SQ8 rerank column (`RERANK_BASE`); the scan reads the block back,
+    /// runs the `rabitq_rank` stage-1 prefilter, then `rerank_rows` (the SQ8 cascade
+    /// stage-2) over the candidate pool — exactly the cascade C.2 drives. Recall@10
+    /// must hold within tolerance of the exact-f32 baseline at realistic N (small-N is
     /// brute-force-served and doesn't exercise the approximate path). The rerank here
-    /// reranks against the held f32 corpus, standing in for the decoupled full-precision
-    /// rerank tier the scan will own. RATCHET: mean recall@10 >= 0.90 — only goes up.
+    /// is the on-segment SQ8 column (4×, no external f32 GET); an f32 rerank column is
+    /// added only if SQ8 can't hold the gate. RATCHET: mean recall@10 >= 0.90 — only
+    /// goes up.
     #[test]
     fn rabitq_cold_recall_harness_n1000_recall_at_10() {
-        use proximadb_codec::functions::rabitq;
-
         const DIM: usize = 64;
         const N: usize = 1000;
         const Q: usize = 50;
         const K: usize = 10;
-        const REFINE: usize = 100; // candidate pool before f32 rerank
+        const REFINE: usize = 100; // candidate pool before SQ8 rerank
         const RATCHET: f32 = 0.90;
 
         let gen_vec = |seed: u64| -> Vec<f32> {
@@ -1123,24 +1179,49 @@ mod tests {
         };
         let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
 
-        let refs: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
-        let (stripe, col) =
-            crate::writer::encode_f32_vec_rabitq(&refs, DIM as u32, col_id::EMBED_BASE);
-        let codes = parse_rabitq_codes(&stripe, N, DIM).unwrap();
-        let params = RaBitQParams {
-            dim: DIM,
-            seed: col.seed,
-            centroid: col.centroid.clone(),
-        };
-        let rotation = rabitq::build_rotation(DIM, col.seed);
+        // Build the real two-column segment: RaBitQ codes + co-located SQ8 rerank.
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
 
-        // ~30× target: assert real compression so the gate is meaningful.
-        let stride = 8 + DIM.div_ceil(8);
-        let raw = DIM * 4;
+        // Both vector columns must be present and correctly quantized.
+        let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        let rer = reader
+            .vector_params()
+            .get(crate::col_id::RERANK_BASE)
+            .unwrap();
+        assert_eq!(rer.quant_kind, QUANT_SQ8);
+
+        // ~30× target on the hot scan column: assert real compression so the gate
+        // is meaningful (RaBitQ codes ≪ SQ8 rerank ≪ raw f32).
+        let embed_len = reader
+            .column_metas()
+            .iter()
+            .find(|m| m.column_id == col_id::EMBED_BASE)
+            .unwrap()
+            .stripe_len as usize;
+        let rerank_len = reader
+            .column_metas()
+            .iter()
+            .find(|m| m.column_id == crate::col_id::RERANK_BASE)
+            .unwrap()
+            .stripe_len as usize;
+        let raw = N.div_ceil(8) + N * DIM * 4;
         assert!(
-            raw / stride >= 10,
-            "compression {}x below 10x",
-            raw / stride
+            embed_len < rerank_len && rerank_len < raw,
+            "expected RaBitQ ({embed_len}) < SQ8 ({rerank_len}) < raw ({raw})"
         );
 
         let l2 =
@@ -1165,16 +1246,12 @@ mod tests {
                 .map(|(v, n)| v + n * 0.01)
                 .collect();
 
-            // Stage 1: the public primitive (what C.2 calls in the cold scan).
-            let q_rot = rabitq::rotate_query(&query, &params, &rotation);
-            let mut cand = rabitq::rank_candidates(&q_rot, &codes, REFINE);
-            // Stage 2: decoupled f32 rerank → final top-K.
-            cand.sort_by(|&a, &b| {
-                l2(&corpus[a], &query)
-                    .partial_cmp(&l2(&corpus[b], &query))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            let got: std::collections::HashSet<usize> = cand.into_iter().take(K).collect();
+            // Stage 1: RaBitQ candidate prefilter (what C.2 calls in the cold scan).
+            let cand = reader.rabitq_rank(&query, REFINE).unwrap();
+            // Stage 2: SQ8 cascade rerank over the candidate pool → final top-K.
+            let reranked = reader.rerank_rows(0, &query, &cand).unwrap();
+            let got: std::collections::HashSet<usize> =
+                reranked.into_iter().take(K).map(|(row, _)| row).collect();
 
             let truth = exact_topk(&query);
             let hits = truth.iter().filter(|i| got.contains(i)).count();
@@ -1183,9 +1260,9 @@ mod tests {
         let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
         assert!(
             mean >= RATCHET,
-            "P3 Phase G: RaBitQ recall@{K} at N={N} = {mean:.3} < ratchet {RATCHET} \
-             (compression {}x). Recall regressed — do not lower the ratchet.",
-            raw / stride
+            "P3 Phase G: RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet \
+             {RATCHET}. Recall regressed — add an f32 rerank column rather than lowering \
+             the ratchet."
         );
     }
 

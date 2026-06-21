@@ -108,6 +108,36 @@ class ProximaRecordServiceStub(object):
             response_deserializer=proximadb_dot_v2_dot_record__pb2.EvolveSchemaResponse.FromString,
             _registered_method=True,
         )
+        self.CreateCollection = channel.unary_unary(
+            "/proximadb.v2.ProximaRecordService/CreateCollection",
+            request_serializer=proximadb_dot_v2_dot_record__pb2.V2CollectionConfig.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_record__pb2.V2Collection.FromString,
+            _registered_method=True,
+        )
+        self.GetCollection = channel.unary_unary(
+            "/proximadb.v2.ProximaRecordService/GetCollection",
+            request_serializer=proximadb_dot_v2_dot_record__pb2.V2GetCollectionRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_record__pb2.V2Collection.FromString,
+            _registered_method=True,
+        )
+        self.ListCollections = channel.unary_unary(
+            "/proximadb.v2.ProximaRecordService/ListCollections",
+            request_serializer=proximadb_dot_v2_dot_record__pb2.V2ListCollectionsRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_record__pb2.V2ListCollectionsResponse.FromString,
+            _registered_method=True,
+        )
+        self.DeleteCollection = channel.unary_unary(
+            "/proximadb.v2.ProximaRecordService/DeleteCollection",
+            request_serializer=proximadb_dot_v2_dot_record__pb2.V2DeleteCollectionRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_record__pb2.V2DeleteCollectionResponse.FromString,
+            _registered_method=True,
+        )
+        self.ExecuteQuery = channel.unary_unary(
+            "/proximadb.v2.ProximaRecordService/ExecuteQuery",
+            request_serializer=proximadb_dot_v2_dot_record__pb2.V2QueryRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_record__pb2.V2QueryResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class ProximaRecordServiceServicer(object):
@@ -184,6 +214,36 @@ class ProximaRecordServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def CreateCollection(self, request, context):
+        """Collection management (v2 parity with v1 CollectionService)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def GetCollection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def ListCollections(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def DeleteCollection(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
+    def ExecuteQuery(self, request, context):
+        """SQL query (v2 parity with v1 QueryService)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_ProximaRecordServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -241,6 +301,31 @@ def add_ProximaRecordServiceServicer_to_server(servicer, server):
             servicer.EvolveSchema,
             request_deserializer=proximadb_dot_v2_dot_record__pb2.EvolveSchemaRequest.FromString,
             response_serializer=proximadb_dot_v2_dot_record__pb2.EvolveSchemaResponse.SerializeToString,
+        ),
+        "CreateCollection": grpc.unary_unary_rpc_method_handler(
+            servicer.CreateCollection,
+            request_deserializer=proximadb_dot_v2_dot_record__pb2.V2CollectionConfig.FromString,
+            response_serializer=proximadb_dot_v2_dot_record__pb2.V2Collection.SerializeToString,
+        ),
+        "GetCollection": grpc.unary_unary_rpc_method_handler(
+            servicer.GetCollection,
+            request_deserializer=proximadb_dot_v2_dot_record__pb2.V2GetCollectionRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_record__pb2.V2Collection.SerializeToString,
+        ),
+        "ListCollections": grpc.unary_unary_rpc_method_handler(
+            servicer.ListCollections,
+            request_deserializer=proximadb_dot_v2_dot_record__pb2.V2ListCollectionsRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_record__pb2.V2ListCollectionsResponse.SerializeToString,
+        ),
+        "DeleteCollection": grpc.unary_unary_rpc_method_handler(
+            servicer.DeleteCollection,
+            request_deserializer=proximadb_dot_v2_dot_record__pb2.V2DeleteCollectionRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_record__pb2.V2DeleteCollectionResponse.SerializeToString,
+        ),
+        "ExecuteQuery": grpc.unary_unary_rpc_method_handler(
+            servicer.ExecuteQuery,
+            request_deserializer=proximadb_dot_v2_dot_record__pb2.V2QueryRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_record__pb2.V2QueryResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -578,6 +663,156 @@ class ProximaRecordService(object):
             "/proximadb.v2.ProximaRecordService/EvolveSchema",
             proximadb_dot_v2_dot_record__pb2.EvolveSchemaRequest.SerializeToString,
             proximadb_dot_v2_dot_record__pb2.EvolveSchemaResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def CreateCollection(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaRecordService/CreateCollection",
+            proximadb_dot_v2_dot_record__pb2.V2CollectionConfig.SerializeToString,
+            proximadb_dot_v2_dot_record__pb2.V2Collection.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def GetCollection(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaRecordService/GetCollection",
+            proximadb_dot_v2_dot_record__pb2.V2GetCollectionRequest.SerializeToString,
+            proximadb_dot_v2_dot_record__pb2.V2Collection.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def ListCollections(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaRecordService/ListCollections",
+            proximadb_dot_v2_dot_record__pb2.V2ListCollectionsRequest.SerializeToString,
+            proximadb_dot_v2_dot_record__pb2.V2ListCollectionsResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def DeleteCollection(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaRecordService/DeleteCollection",
+            proximadb_dot_v2_dot_record__pb2.V2DeleteCollectionRequest.SerializeToString,
+            proximadb_dot_v2_dot_record__pb2.V2DeleteCollectionResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def ExecuteQuery(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaRecordService/ExecuteQuery",
+            proximadb_dot_v2_dot_record__pb2.V2QueryRequest.SerializeToString,
+            proximadb_dot_v2_dot_record__pb2.V2QueryResponse.FromString,
             options,
             channel_credentials,
             insecure,

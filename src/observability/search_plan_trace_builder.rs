@@ -49,6 +49,11 @@ pub struct TraceBuilderInputs<'a> {
     /// `index_stats.vectors_scanned` into `actual_scan_gb`. `0.0` skips the
     /// conversion (the trace `actual_scan_gb` stays 0).
     pub bytes_per_vector: f64,
+    /// Bytes moved cross-AZ / to the internet for this query (the per-query
+    /// `io_trace.bytes_cross_az`), converted to `actual_egress_gb` — the KEU
+    /// egress billing quantity (Dimension 2). `0` on the free same-AZ path, so
+    /// the trace's `actual_egress_gb` stays 0 there.
+    pub egress_bytes: u64,
     /// TD-064: Predicate-aware recall shortfall recorded by the executor when
     /// a post-filter / oversample path returned fewer matches than the
     /// requested `top_k`. `None` on the happy path. When `Some`, the builder
@@ -64,6 +69,7 @@ pub struct TraceBuilderInputs<'a> {
 /// Build a fully populated `SearchPlanTrace` from the inputs.
 pub fn build(inputs: TraceBuilderInputs<'_>) -> SearchPlanTrace {
     let actual_scan_gb = derive_actual_scan_gb(&inputs.index_stats, inputs.bytes_per_vector);
+    let actual_egress_gb = bytes_to_gib(inputs.egress_bytes);
     // TD-064: when a predicate shortfall is recorded, ensure failure_class
     // reflects it so a single field check can drive alerts.
     let failure_class = if inputs.predicate_shortfall.is_some() {
@@ -84,6 +90,7 @@ pub fn build(inputs: TraceBuilderInputs<'_>) -> SearchPlanTrace {
         gls_score: inputs.plan.gls_score,
         estimated_scan_gb: None,
         actual_scan_gb,
+        actual_egress_gb,
         index_stats: inputs.index_stats,
         candidate_count: inputs.candidate_count,
         rerank_count: inputs.rerank_count,
@@ -108,6 +115,13 @@ fn derive_actual_scan_gb(stats: &IndexStats, bytes_per_vector: f64) -> f64 {
     }
     let bytes = (stats.vectors_scanned as f64) * bytes_per_vector;
     bytes / 1_073_741_824.0
+}
+
+/// Convert a raw byte count to GiB — the unit `actual_egress_gb` (and
+/// `actual_scan_gb`) are billed in. `0` bytes → `0.0` (no egress on the free
+/// same-AZ path).
+fn bytes_to_gib(bytes: u64) -> f64 {
+    (bytes as f64) / 1_073_741_824.0
 }
 
 #[cfg(test)]
@@ -139,6 +153,7 @@ mod tests {
             cache_result: CacheResult::Miss,
             failure_class: None,
             bytes_per_vector: 0.0,
+            egress_bytes: 0,
             predicate_shortfall: None,
             turboquant_explain: None,
         }
@@ -306,6 +321,24 @@ mod tests {
         let p = plan();
         let t = build(inputs(&p));
         assert_eq!(t.plan_version, 1);
+    }
+
+    #[test]
+    fn actual_egress_gb_derived_from_cross_az_bytes() {
+        let p = plan();
+        let mut i = inputs(&p);
+        i.egress_bytes = 2 * 1_073_741_824; // 2 GiB moved cross-AZ
+        let t = build(i);
+        assert!((t.actual_egress_gb - 2.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn zero_egress_bytes_is_free_same_az_path() {
+        // Default (same-AZ): no cross-AZ bytes → the KEU egress quantity is 0,
+        // so no egress is billed on the free path.
+        let p = plan();
+        let t = build(inputs(&p));
+        assert_eq!(t.actual_egress_gb, 0.0);
     }
 
     #[test]

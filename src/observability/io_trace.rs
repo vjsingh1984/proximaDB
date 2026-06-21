@@ -132,9 +132,10 @@ pub struct IoTrace {
     /// Footer/metadata cache outcomes (Dimension 3 — the highest-ROI cache).
     footer_hits: AtomicU64,
     footer_misses: AtomicU64,
-    /// Bytes moved across an availability zone (Dimension 2 — KEU, the egress
-    /// term that is currently unmetered and the spec's named gap).
-    bytes_cross_az: AtomicU64,
+    /// Chargeable egress bytes — moved cross-region / to the internet off the
+    /// free same-region path (Dimension 2 — KEU). Recorded only for chargeable
+    /// localities; the route cost model's egress weight consumes this.
+    egress_bytes: AtomicU64,
     /// Compute milliseconds attributed by engine (Dimension 4 — KRU/KIU). Kept
     /// in a small map so a single query that touches multiple engines (e.g. a
     /// Volcano point lookup plus a DataFusion aggregate) attributes each.
@@ -208,9 +209,9 @@ impl IoTrace {
         self.footer_misses.fetch_add(misses, Ordering::Relaxed);
     }
 
-    /// Add to bytes moved across an availability zone (KEU / egress).
-    pub fn record_cross_az_bytes(&self, bytes: u64) {
-        self.bytes_cross_az.fetch_add(bytes, Ordering::Relaxed);
+    /// Add to chargeable egress bytes (cross-region / internet — KEU).
+    pub fn record_egress_bytes(&self, bytes: u64) {
+        self.egress_bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 
     /// Attribute compute milliseconds to a named engine.
@@ -231,7 +232,7 @@ impl IoTrace {
             bytes_written: self.bytes_written.load(Ordering::Relaxed),
             footer_hits: self.footer_hits.load(Ordering::Relaxed),
             footer_misses: self.footer_misses.load(Ordering::Relaxed),
-            bytes_cross_az: self.bytes_cross_az.load(Ordering::Relaxed),
+            egress_bytes: self.egress_bytes.load(Ordering::Relaxed),
             compute_ms: self
                 .compute_ms
                 .lock()
@@ -258,7 +259,7 @@ pub struct IoTraceSnapshot {
     pub bytes_written: u64,
     pub footer_hits: u64,
     pub footer_misses: u64,
-    pub bytes_cross_az: u64,
+    pub egress_bytes: u64,
     pub compute_ms: BTreeMap<String, u64>,
 }
 
@@ -304,7 +305,7 @@ impl IoTraceSnapshot {
             && self.bytes_written == 0
             && self.footer_hits == 0
             && self.footer_misses == 0
-            && self.bytes_cross_az == 0
+            && self.egress_bytes == 0
             && self.compute_ms.is_empty()
     }
 
@@ -330,7 +331,7 @@ impl IoTraceSnapshot {
             footer_hits = self.footer_hits,
             footer_misses = self.footer_misses,
             footer_hit_ratio = self.footer_hit_ratio().unwrap_or(f64::NAN),
-            bytes_cross_az = self.bytes_cross_az,
+            egress_bytes = self.egress_bytes,
             compute_ms_total = self.total_compute_ms(),
             compute_ms_by_engine = ?self.compute_ms,
             "per-query I/O trace"
@@ -376,9 +377,10 @@ pub fn record_footers(hits: u64, misses: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_footers(hits, misses));
 }
 
-/// Record cross-AZ bytes (KEU/egress) for the active query.
-pub fn record_cross_az_bytes(bytes: u64) {
-    let _ = IO_TRACE.try_with(|t| t.record_cross_az_bytes(bytes));
+/// Record chargeable egress bytes (cross-region / internet — KEU) for the
+/// active query.
+pub fn record_egress_bytes(bytes: u64) {
+    let _ = IO_TRACE.try_with(|t| t.record_egress_bytes(bytes));
 }
 
 /// Attribute compute milliseconds to `engine` for the active query.
@@ -490,7 +492,7 @@ mod tests {
         t.record_footer(true);
         t.record_footer(true);
         t.record_footer(false);
-        t.record_cross_az_bytes(2_048);
+        t.record_egress_bytes(2_048);
         t.record_compute_ms("volcano", 3);
         t.record_compute_ms("volcano", 4);
         t.record_compute_ms("datafusion", 10);
@@ -502,7 +504,7 @@ mod tests {
         assert_eq!(s.bytes_read, 1_536);
         assert_eq!(s.range_gets, 3);
         assert_eq!(s.avg_get_bytes(), Some(1_536.0 / 3.0));
-        assert_eq!(s.bytes_cross_az, 2_048);
+        assert_eq!(s.egress_bytes, 2_048);
         assert_eq!(s.footer_hit_ratio(), Some(2.0 / 3.0));
         assert_eq!(s.total_compute_ms(), 17);
         assert_eq!(s.compute_ms.get("volcano"), Some(&7));
@@ -634,7 +636,7 @@ mod tests {
             range_gets: 2,
             footer_hits: 3,
             footer_misses: 1,
-            bytes_cross_az: 4_096,
+            egress_bytes: 4_096,
             compute_ms: compute,
             ..Default::default()
         };

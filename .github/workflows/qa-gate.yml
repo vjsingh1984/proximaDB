@@ -20,6 +20,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
+# Read-only is sufficient: every job only checks out and runs tests/ratchets — none
+# writes to the repo, posts comments, or uses OIDC.
+permissions:
+  contents: read
+
 jobs:
   # Enforce the promotion path: main may only be promoted FROM qa.
   promotion-source-guard:

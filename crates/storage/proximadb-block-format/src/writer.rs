@@ -111,6 +111,23 @@ impl BlockFooter {
 }
 
 /// PAX block writer — buffers records and serialises to PAX block bytes.
+/// Per-segment vector quantization selection (P3 Phase D — caller/collection-controlled,
+/// replacing the process-global env flags). `Auto` preserves the legacy env behavior
+/// (`PROXIMADB_VECTOR_RABITQ` / `PROXIMADB_VECTOR_SQ8_DISABLE`) so existing callers are
+/// unchanged; the flush passes an explicit strategy from the collection's config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VectorQuant {
+    /// Decide from env (legacy default).
+    #[default]
+    Auto,
+    /// Raw fixed-stride f32 (no quantization).
+    RawF32,
+    /// SQ8 (4×, lossy within scale/2).
+    Sq8,
+    /// RaBitQ (~30×, lossy 1-bit) — requires a decoupled f32 rerank tier for recall.
+    RaBitQ,
+}
+
 pub struct PaxBlockWriter {
     mode: BlockMode,
     compression: BlockCompression,
@@ -118,6 +135,8 @@ pub struct PaxBlockWriter {
     schema_fingerprint: u64,
     /// Number of embedding columns expected (from collection schema).
     embedding_count: usize,
+    /// Vector quantization strategy for this writer (P3 Phase D; `Auto` = env-driven).
+    quant: VectorQuant,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -157,6 +176,7 @@ impl PaxBlockWriter {
             collection_id_hash: fnv1a_hash(collection_id),
             schema_fingerprint,
             embedding_count,
+            quant: VectorQuant::Auto,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -176,6 +196,13 @@ impl PaxBlockWriter {
             min_ts: i64::MAX,
             max_ts: i64::MIN,
         }
+    }
+
+    /// Set the vector quantization strategy (P3 Phase D). Builder form so existing
+    /// `new(..)` call sites are unchanged; `Auto` (the default) keeps env behavior.
+    pub fn with_quant(mut self, quant: VectorQuant) -> Self {
+        self.quant = quant;
+        self
     }
 
     pub fn row_count(&self) -> usize {
@@ -381,10 +408,22 @@ impl PaxBlockWriter {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
                 let (stripe, entry, rabitq_col) =
                     self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
+                let is_rabitq = rabitq_col.is_some();
                 stripes.push(stripe);
                 vparam_entries.push(entry);
                 if let Some(rc) = rabitq_col {
                     vparam_rabitq.push(rc);
+                }
+                // P3 cascade: every RaBitQ-coded embedding gets a co-located SQ8
+                // rerank column at `RERANK_BASE + i`. RaBitQ codes drive the cheap
+                // candidate scan; the rerank pool is scored against this SQ8 copy
+                // (4× footprint, no GET to an external f32 tier) before the final
+                // top-k. f32 rerank is added only if the recall gate can't be met.
+                if is_rabitq {
+                    let (rerank_stripe, rerank_entry) =
+                        self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                    stripes.push(rerank_stripe);
+                    vparam_entries.push(rerank_entry);
                 }
             }
         }
@@ -603,8 +642,16 @@ impl PaxBlockWriter {
         let params = functions::sq8::fit_params(&flat);
 
         let has_data = dim > 0 && !flat.is_empty();
-        let use_rabitq = has_data && rabitq_enabled();
-        let use_sq8 = has_data && !use_rabitq && !sq8_disabled();
+        // P3 Phase D: explicit per-collection strategy wins; Auto falls back to env.
+        let (use_rabitq, use_sq8) = match self.quant {
+            VectorQuant::RaBitQ => (has_data, false),
+            VectorQuant::Sq8 => (false, has_data),
+            VectorQuant::RawF32 => (false, false),
+            VectorQuant::Auto => {
+                let r = has_data && rabitq_enabled();
+                (r, has_data && !r && !sq8_disabled())
+            }
+        };
         let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
             let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
             (
@@ -658,6 +705,55 @@ impl PaxBlockWriter {
             params,
         };
         Ok((ColumnStripe::new(meta, data), entry, rabitq_col))
+    }
+
+    /// Build an SQ8-quantized vector stripe unconditionally (ignoring the
+    /// writer's configured `quant`). This backs the co-located rerank column
+    /// emitted alongside each RaBitQ embedding: the candidate pool from the
+    /// RaBitQ scan is reranked against full-stride SQ8 here, so the column must
+    /// always be SQ8 regardless of the primary quant strategy.
+    fn build_sq8_vec_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<&[f32]>],
+    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+        let dim = vector_column_dim(vals)?;
+        let flat: Vec<f32> = vals
+            .iter()
+            .flatten()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let params = functions::sq8::fit_params(&flat);
+        let data = encode_f32_vec_sq8(vals, dim, &params);
+        let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
+        let meta = ColumnMeta {
+            column_id: id,
+            role: ColumnRole::Vector,
+            data_type_id: 0x01, // F32
+            encoding_id: ProximaScheme::Sq8.to_marker(),
+            nullable: true,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: vals
+                .iter()
+                .filter(|value| value.is_some())
+                .count()
+                .min(u32::MAX as usize) as u32,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
+        };
+        let entry = VectorParamEntry {
+            column_id: id,
+            dim,
+            quant_kind: QUANT_SQ8,
+            params,
+        };
+        Ok((ColumnStripe::new(meta, data), entry))
     }
 
     fn build_f64_stripe(

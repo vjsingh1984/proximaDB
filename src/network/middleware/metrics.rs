@@ -41,6 +41,12 @@ pub async fn metrics_middleware(request: Request, next: Next) -> Response {
         .map(|m| m.as_str().to_owned())
         .unwrap_or_else(|| "<unmatched>".to_owned());
 
+    // KOU result-egress: classify the client once, before the request is
+    // consumed by the handler. Same IP-extraction seam as the rate limiter.
+    let edge = crate::metrics::consumption_metrics::EdgePolicyContext::classify(
+        crate::network::middleware::rate_limit::get_client_ip(&request),
+    );
+
     let start = Instant::now();
     let response = next.run(request).await;
     let elapsed = start.elapsed().as_secs_f64();
@@ -52,6 +58,21 @@ pub async fn metrics_middleware(request: Request, next: Next) -> Response {
     HTTP_REQUESTS_TOTAL
         .with_label_values(&[&route, &method, &status])
         .inc();
+
+    // Meter response-body egress to the KOU meter (direction=result) when the
+    // client is genuinely remote (the direct data-plane case) and the body size
+    // is known. Buffered responses (e.g. `Json`) carry `Content-Length`;
+    // streamed/chunked bodies are not buffered here and are left uncounted. The
+    // common in-cluster gateway client classifies free → this is a no-op for it.
+    if edge.kou_locality.is_chargeable_egress()
+        && let Some(len) = response
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+    {
+        edge.record_result_egress(None, len);
+    }
 
     response
 }

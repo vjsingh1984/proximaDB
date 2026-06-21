@@ -92,8 +92,13 @@ pub struct PostgresProtocol {
     /// E0 rate-limiting: shared per-IP limiter (None = disabled), checked once at
     /// query entry. Converged with the REST limiter via `RateLimitState`.
     rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
-    /// This connection's peer IP — the rate-limit subject.
+    /// This connection's peer IP — the rate-limit subject and the KOU
+    /// result-egress locality subject (classified at each result-set boundary).
     peer_ip: std::net::IpAddr,
+    /// KOU result-egress: bytes of DataRow payload accumulated for the current
+    /// result set, flushed to the meter (direction=result) at CommandComplete /
+    /// PortalSuspended. Zero on the free path / non-row commands.
+    result_bytes_pending: u64,
 }
 
 /// Slice 6.3 gate-input bundle. Distinct type per surface for module
@@ -394,6 +399,7 @@ impl PostgresProtocol {
             suppress_row_description: false,
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            result_bytes_pending: 0,
         }
     }
 
@@ -441,6 +447,7 @@ impl PostgresProtocol {
             suppress_row_description: false,
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            result_bytes_pending: 0,
         }
     }
 
@@ -485,6 +492,7 @@ impl PostgresProtocol {
             suppress_row_description: false,
             rate_limiter: None,
             peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+            result_bytes_pending: 0,
         }
     }
 
@@ -1576,6 +1584,11 @@ impl PostgresProtocol {
                 }
             }
         }
+        // KOU result-egress: wire bytes = tag(1) + payload_len (which already
+        // counts the 4-byte length field + the 2-byte field count + values).
+        self.result_bytes_pending = self
+            .result_bytes_pending
+            .saturating_add(1 + payload_len as u64);
         self.flush_write_buffer().await
     }
 
@@ -4380,6 +4393,10 @@ impl PostgresProtocol {
             self.write_buffer.put_slice(value.as_bytes()); // Value data
         }
 
+        // KOU result-egress: wire bytes = tag(1) + length(4) + data_len.
+        self.result_bytes_pending = self
+            .result_bytes_pending
+            .saturating_add(5 + data_len as u64);
         self.flush_write_buffer().await
     }
 
@@ -4862,8 +4879,26 @@ impl PostgresProtocol {
         self.flush_write_buffer().await
     }
 
+    /// Flush the result set's accumulated DataRow bytes to the KOU result-egress
+    /// meter (`direction = "result"`), attributed to the query's tenant and the
+    /// client's edge locality. Called at each result-set boundary (CommandComplete
+    /// and PortalSuspended). No-ops when nothing was sent or the client is on the
+    /// free path (in-VPC / loopback / same-region) — only genuinely remote clients
+    /// (the direct data-plane case) classify as chargeable.
+    async fn flush_result_egress(&mut self) {
+        let bytes = std::mem::take(&mut self.result_bytes_pending);
+        if bytes == 0 {
+            return;
+        }
+        let edge = crate::metrics::consumption_metrics::EdgePolicyContext::classify(self.peer_ip);
+        let tenant = self.pgwire_resolve_read_tenant().await;
+        let tenant_scope = (!tenant.is_empty()).then_some(tenant.as_str());
+        edge.record_result_egress(tenant_scope, bytes);
+    }
+
     /// Send command complete
     async fn send_command_complete(&mut self, tag: &str) -> Result<()> {
+        self.flush_result_egress().await;
         let len = 4 + tag.len() + 1;
         self.write_buffer.put_u8(b'C');
         self.write_buffer.put_i32(len as i32);
@@ -4875,6 +4910,9 @@ impl PostgresProtocol {
     /// Send PortalSuspended for an extended-protocol Execute that has more
     /// portal rows available after satisfying the current max_rows budget.
     async fn send_portal_suspended(&mut self) -> Result<()> {
+        // Partial result set delivered — meter the rows sent so far; the rest
+        // flushes at the resumed Execute's CommandComplete.
+        self.flush_result_egress().await;
         self.write_buffer.put_u8(b's');
         self.write_buffer.put_i32(4);
         self.flush_write_buffer().await

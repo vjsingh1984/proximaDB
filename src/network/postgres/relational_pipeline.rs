@@ -226,6 +226,7 @@ pub async fn try_run_select(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
             parquet_backed,
+            ..Default::default()
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -751,6 +752,7 @@ pub fn classify_select_route(
             crate::query::compute_scheduler::QueryShape {
                 engages_relational: engages,
                 parquet_backed: false,
+                ..Default::default()
             },
             Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
         ),
@@ -947,6 +949,7 @@ async fn route_and_plan_select(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: engages,
             parquet_backed,
+            ..Default::default()
         },
         Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
     );

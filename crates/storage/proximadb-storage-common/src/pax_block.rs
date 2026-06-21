@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use proximadb_block_format::{
-    BlockCompression, BlockMode, BlockStats, FlatRow, PaxBlockReader, PaxBlockWriter,
+    BlockCompression, BlockMode, BlockStats, FlatRow, PaxBlockReader, PaxBlockWriter, VectorQuant,
     header::fnv1a_hash,
 };
 use proximadb_records::ProximaRecord;
@@ -186,6 +186,8 @@ pub struct PaxSegmentWriter {
     schema_fingerprint: u64,
     embedding_count: usize,
     block_size_threshold: usize,
+    /// Vector quantization strategy for every block in this segment (P3 Phase D).
+    quant: VectorQuant,
 
     current_writer: PaxBlockWriter,
     index: SegmentIndex,
@@ -229,12 +231,29 @@ impl PaxSegmentWriter {
             schema_fingerprint,
             embedding_count,
             block_size_threshold: threshold,
+            quant: VectorQuant::Auto,
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
             block_stats: Vec::new(),
             file_buf: Vec::new(),
             row_count: 0,
         }
+    }
+
+    /// Set the vector quantization strategy for this segment (P3 Phase D). Builder form
+    /// so existing `new(..)` callers are unchanged; rebuilds the (still-empty) current
+    /// block writer so the strategy applies from the first record. `Auto` = env default.
+    pub fn with_quant(mut self, quant: VectorQuant) -> Self {
+        self.quant = quant;
+        self.current_writer = PaxBlockWriter::new(
+            self.mode,
+            self.compression,
+            &self.collection_id,
+            self.schema_fingerprint,
+            self.embedding_count,
+        )
+        .with_quant(quant);
+        self
     }
 
     /// Append a record to the current block.
@@ -278,14 +297,15 @@ impl PaxSegmentWriter {
         self.file_buf.extend_from_slice(&block_bytes);
         self.block_stats.push(stats);
 
-        // Reset writer for the next block
+        // Reset writer for the next block (preserving the segment's quant strategy).
         self.current_writer = PaxBlockWriter::new(
             self.mode,
             self.compression,
             &self.collection_id,
             self.schema_fingerprint,
             self.embedding_count,
-        );
+        )
+        .with_quant(self.quant);
         Ok(())
     }
 
