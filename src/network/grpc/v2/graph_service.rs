@@ -48,13 +48,18 @@ use crate::proto::proximadb_v2::proxima_graph_service_server::{
 
 /// gRPC V2 native graph service.
 pub struct ProximaGraphServiceImpl {
-    request_handlers: Arc<UnifiedHandlers>,
+    /// The shared graph backing service — the only dependency the handlers use.
+    /// Held directly (rather than the whole `UnifiedHandlers`) so the service is
+    /// constructible in tests from a standalone `GraphOperationsService`.
+    graph: Arc<crate::graph::GraphOperationsService>,
 }
 
 impl ProximaGraphServiceImpl {
-    /// Create a new service over the shared unified handlers.
+    /// Create a new service over the shared unified handlers (production wiring).
     pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self { request_handlers }
+        Self {
+            graph: request_handlers.graph_operations_service.clone(),
+        }
     }
 
     /// Convert to a tonic server.
@@ -327,8 +332,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .node
             .ok_or_else(|| Status::invalid_argument("node is required"))?;
         match self
-            .request_handlers
-            .graph_operations_service
+            .graph
             .create_node(&graph_id, conv::node_to_v1(node))
             .await
         {
@@ -349,12 +353,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
         let req = request.into_inner();
         debug!("v2 gRPC GetNode graph={graph_id} node={}", req.node_id);
-        match self
-            .request_handlers
-            .graph_operations_service
-            .get_node(&graph_id, &req.node_id)
-            .await
-        {
+        match self.graph.get_node(&graph_id, &req.node_id).await {
             Ok(found) => Ok(Response::new(pv2::GraphNodeResponse {
                 node: found.map(|n| conv::node_to_v2((*n).clone())),
             })),
@@ -373,8 +372,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .node
             .ok_or_else(|| Status::invalid_argument("node is required"))?;
         match self
-            .request_handlers
-            .graph_operations_service
+            .graph
             .update_node(&graph_id, conv::node_to_v1(node))
             .await
         {
@@ -392,12 +390,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
         let req = request.into_inner();
         debug!("v2 gRPC DeleteNode graph={graph_id} node={}", req.node_id);
-        match self
-            .request_handlers
-            .graph_operations_service
-            .delete_node(&graph_id, &req.node_id)
-            .await
-        {
+        match self.graph.delete_node(&graph_id, &req.node_id).await {
             Ok(removed) => Ok(Response::new(pv2::DeleteGraphNodeResponse {
                 deleted: removed.is_some(),
                 node: removed.map(|n| conv::node_to_v2((*n).clone())),
@@ -417,8 +410,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .edge
             .ok_or_else(|| Status::invalid_argument("edge is required"))?;
         match self
-            .request_handlers
-            .graph_operations_service
+            .graph
             .create_edge(&graph_id, conv::edge_to_v1(edge))
             .await
         {
@@ -436,12 +428,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
         let req = request.into_inner();
         debug!("v2 gRPC GetEdge graph={graph_id} edge={}", req.edge_id);
-        match self
-            .request_handlers
-            .graph_operations_service
-            .get_edge(&graph_id, &req.edge_id)
-            .await
-        {
+        match self.graph.get_edge(&graph_id, &req.edge_id).await {
             Ok(found) => Ok(Response::new(pv2::GraphEdgeResponse {
                 edge: found.map(|e| conv::edge_to_v2((*e).clone())),
             })),
@@ -460,8 +447,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             .edge
             .ok_or_else(|| Status::invalid_argument("edge is required"))?;
         match self
-            .request_handlers
-            .graph_operations_service
+            .graph
             .update_edge(&graph_id, conv::edge_to_v1(edge))
             .await
         {
@@ -479,12 +465,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
         let req = request.into_inner();
         debug!("v2 gRPC DeleteEdge graph={graph_id} edge={}", req.edge_id);
-        match self
-            .request_handlers
-            .graph_operations_service
-            .delete_edge(&graph_id, &req.edge_id)
-            .await
-        {
+        match self.graph.delete_edge(&graph_id, &req.edge_id).await {
             Ok(removed) => Ok(Response::new(pv2::DeleteGraphEdgeResponse {
                 deleted: removed.is_some(),
                 edge: removed.map(|e| conv::edge_to_v2((*e).clone())),
@@ -512,12 +493,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             offset,
             continuation_token: None,
         };
-        match self
-            .request_handlers
-            .graph_operations_service
-            .query_nodes(&graph_id, query)
-            .await
-        {
+        match self.graph.query_nodes(&graph_id, query).await {
             Ok(nodes) => {
                 let nodes: Vec<pv2::GraphNode> = nodes
                     .into_iter()
@@ -551,12 +527,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             offset,
             continuation_token: None,
         };
-        match self
-            .request_handlers
-            .graph_operations_service
-            .query_edges(&graph_id, query)
-            .await
-        {
+        match self.graph.query_edges(&graph_id, query).await {
             Ok(edges) => {
                 let edges: Vec<pv2::GraphEdge> = edges
                     .into_iter()
@@ -579,12 +550,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
         let req = request.into_inner();
         debug!("v2 gRPC GetNeighbors graph={graph_id} node={}", req.node_id);
-        match self
-            .request_handlers
-            .graph_operations_service
-            .get_neighbors(&graph_id, &req.node_id)
-            .await
-        {
+        match self.graph.get_neighbors(&graph_id, &req.node_id).await {
             Ok(nodes) => Ok(Response::new(pv2::GetGraphNeighborsResponse {
                 nodes: nodes
                     .into_iter()
@@ -619,12 +585,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             timeout_ms: req.timeout_ms,
             max_frontier: req.max_frontier,
         };
-        match self
-            .request_handlers
-            .graph_operations_service
-            .traverse(&graph_id, internal)
-            .await
-        {
+        match self.graph.traverse(&graph_id, internal).await {
             Ok(resp) => {
                 let mut stats = resp.stats.map(conv::traversal_stats_to_v2);
                 if let Some(stats) = stats.as_mut()
@@ -670,8 +631,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             _ => pv1::ShortestPathAlgorithm::Dijkstra,
         };
         match self
-            .request_handlers
-            .graph_operations_service
+            .graph
             .shortest_path(
                 &graph_id,
                 &req.start_node_id,
@@ -705,14 +665,299 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
     ) -> Result<Response<pv2::GraphStats>, Status> {
         let graph_id = Self::effective_graph_id(&request, &request.get_ref().graph_id);
         debug!("v2 gRPC GetGraphStats graph={graph_id}");
-        match self
-            .request_handlers
-            .graph_operations_service
-            .get_stats(&graph_id)
-            .await
-        {
+        match self.graph.get_stats(&graph_id).await {
             Ok(stats) => Ok(Response::new(conv::stats_to_v2(stats))),
             Err(e) => Err(graph_status("get graph statistics", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::graph::GraphOperationsService;
+    use std::collections::HashMap;
+
+    fn gpv(v: pv2::graph_property_value::Value) -> pv2::GraphPropertyValue {
+        pv2::GraphPropertyValue { value: Some(v) }
+    }
+
+    fn str_pv(s: &str) -> pv2::GraphPropertyValue {
+        gpv(pv2::graph_property_value::Value::StringValue(s.to_string()))
+    }
+
+    fn int_pv(i: i64) -> pv2::GraphPropertyValue {
+        gpv(pv2::graph_property_value::Value::IntValue(i))
+    }
+
+    /// Build a v2 graph service backed by a standalone `GraphOperationsService`
+    /// with `graph_id` already provisioned (the v2 gRPC surface defers graph
+    /// creation, mirroring production where the collection is made via REST).
+    async fn service_with_graph(graph_id: &str) -> anyhow::Result<ProximaGraphServiceImpl> {
+        let graph = Arc::new(GraphOperationsService::new());
+        graph
+            .create_graph_collection(pv1::CreateGraphRequest {
+                graph_id: graph_id.to_string(),
+                name: Some(graph_id.to_string()),
+                description: None,
+                schema: None,
+                storage_config: None,
+                engine_config: None,
+                access_control: None,
+            })
+            .await?;
+        Ok(ProximaGraphServiceImpl { graph })
+    }
+
+    /// Pure check of the v2<->internal property-value mapping, including the
+    /// nested array/map shapes (`map_value` <-> v1 `object_value`).
+    #[test]
+    fn conv_property_value_roundtrips_nested() {
+        use pv2::graph_property_value::Value as V;
+        let original = gpv(V::ArrayValue(pv2::GraphPropertyArray {
+            values: vec![
+                str_pv("s"),
+                int_pv(7),
+                gpv(V::DoubleValue(1.5)),
+                gpv(V::BoolValue(true)),
+                gpv(V::MapValue(pv2::GraphPropertyMap {
+                    fields: HashMap::from([("k".to_string(), str_pv("v"))]),
+                })),
+            ],
+        }));
+        let back =
+            super::conv::property_value_to_v2(super::conv::property_value_to_v1(original.clone()));
+        assert_eq!(back, original);
+    }
+
+    /// Node create -> get round-trip (properties survive the v2->v1->v2 mapping),
+    /// plus a miss returning an empty response rather than an error.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn node_crud_roundtrip() -> anyhow::Result<()> {
+        let gid = "v2_graph_node_crud";
+        let svc = service_with_graph(gid).await?;
+
+        let node = pv2::GraphNode {
+            id: "alice".to_string(),
+            labels: vec!["Person".to_string()],
+            properties: HashMap::from([
+                ("name".to_string(), str_pv("Alice")),
+                ("age".to_string(), int_pv(30)),
+            ]),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        };
+        let created = svc
+            .create_node(Request::new(pv2::CreateGraphNodeRequest {
+                graph_id: gid.to_string(),
+                node: Some(node),
+            }))
+            .await?
+            .into_inner()
+            .node
+            .ok_or_else(|| anyhow::anyhow!("create_node returned no node"))?;
+        assert_eq!(created.id, "alice");
+        assert_eq!(created.labels, vec!["Person".to_string()]);
+
+        let got = svc
+            .get_node(Request::new(pv2::GetGraphNodeRequest {
+                graph_id: gid.to_string(),
+                node_id: "alice".to_string(),
+            }))
+            .await?
+            .into_inner()
+            .node
+            .ok_or_else(|| anyhow::anyhow!("get_node returned no node"))?;
+        assert_eq!(got.id, "alice");
+        // Property survived the v2 -> internal -> v2 conversion round-trip.
+        match got.properties.get("name").and_then(|p| p.value.clone()) {
+            Some(pv2::graph_property_value::Value::StringValue(s)) => assert_eq!(s, "Alice"),
+            other => anyhow::bail!("unexpected name property: {other:?}"),
+        }
+
+        // A miss is an empty response, not a gRPC error.
+        let miss = svc
+            .get_node(Request::new(pv2::GetGraphNodeRequest {
+                graph_id: gid.to_string(),
+                node_id: "nobody".to_string(),
+            }))
+            .await?
+            .into_inner();
+        assert!(miss.node.is_none());
+
+        let deleted = svc
+            .delete_node(Request::new(pv2::DeleteGraphNodeRequest {
+                graph_id: gid.to_string(),
+                node_id: "alice".to_string(),
+            }))
+            .await?
+            .into_inner();
+        assert!(deleted.deleted);
+        Ok(())
+    }
+
+    /// Edge create + label query + traversal + shortest path + stats over a
+    /// two-node KNOWS graph — exercises the full v2 handler surface end to end.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn edge_query_traverse_shortest_path() -> anyhow::Result<()> {
+        let gid = "v2_graph_edge_traverse";
+        let svc = service_with_graph(gid).await?;
+
+        for id in ["alice", "bob"] {
+            svc.create_node(Request::new(pv2::CreateGraphNodeRequest {
+                graph_id: gid.to_string(),
+                node: Some(pv2::GraphNode {
+                    id: id.to_string(),
+                    labels: vec!["Person".to_string()],
+                    properties: HashMap::new(),
+                    embedding: None,
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                }),
+            }))
+            .await?;
+        }
+
+        let edge = svc
+            .create_edge(Request::new(pv2::CreateGraphEdgeRequest {
+                graph_id: gid.to_string(),
+                edge: Some(pv2::GraphEdge {
+                    id: "e1".to_string(),
+                    from_node_id: "alice".to_string(),
+                    to_node_id: "bob".to_string(),
+                    edge_type: "KNOWS".to_string(),
+                    properties: HashMap::from([("since".to_string(), int_pv(2020))]),
+                    weight: Some(1.5),
+                    created_at_ms: 0,
+                    updated_at_ms: 0,
+                }),
+            }))
+            .await?
+            .into_inner()
+            .edge
+            .ok_or_else(|| anyhow::anyhow!("create_edge returned no edge"))?;
+        assert_eq!(edge.edge_type, "KNOWS");
+        assert_eq!(edge.weight, Some(1.5));
+
+        let nodes = svc
+            .query_nodes(Request::new(pv2::QueryGraphNodesRequest {
+                graph_id: gid.to_string(),
+                labels: vec!["Person".to_string()],
+                filters: vec![],
+                limit: None,
+                offset: None,
+                continuation_token: None,
+            }))
+            .await?
+            .into_inner();
+        assert_eq!(nodes.nodes.len(), 2);
+
+        let traversal = svc
+            .traverse_graph(Request::new(pv2::TraverseGraphRequest {
+                graph_id: gid.to_string(),
+                start_node_id: "alice".to_string(),
+                max_depth: 2,
+                edge_types: vec![],
+                node_labels: vec![],
+                filters: vec![],
+                algorithm: pv2::GraphTraversalAlgorithm::Bfs as i32,
+                limit: None,
+                timeout_ms: None,
+                max_frontier: None,
+            }))
+            .await?
+            .into_inner();
+        assert!(
+            traversal.nodes.iter().any(|n| n.id == "bob"),
+            "traversal from alice should reach bob"
+        );
+
+        let sp = svc
+            .shortest_path(Request::new(pv2::GraphShortestPathRequest {
+                graph_id: gid.to_string(),
+                start_node_id: "alice".to_string(),
+                target_node_id: "bob".to_string(),
+                max_depth: None,
+                edge_types: vec![],
+                algorithm: None,
+                k: None,
+                enable_prefetch: None,
+                prefetch_budget: None,
+            }))
+            .await?
+            .into_inner();
+        assert!(sp.found, "expected a path alice -> bob");
+        assert_eq!(sp.node_ids.first(), Some(&"alice".to_string()));
+        assert_eq!(sp.node_ids.last(), Some(&"bob".to_string()));
+
+        let stats = svc
+            .get_graph_stats(Request::new(pv2::GetGraphStatsRequest {
+                graph_id: gid.to_string(),
+            }))
+            .await?
+            .into_inner();
+        assert!(stats.total_nodes >= 2);
+        Ok(())
+    }
+
+    /// Structural tenant isolation: the same logical `graph_id` under two
+    /// different tenants resolves to distinct backing graphs, so a node written
+    /// under tenant A is invisible to tenant B.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tenant_namespacing_isolates_graphs() -> anyhow::Result<()> {
+        // Provision both tenant-namespaced backing graphs on one service.
+        let graph = Arc::new(GraphOperationsService::new());
+        for ns in ["tenantA::shared", "tenantB::shared"] {
+            graph
+                .create_graph_collection(pv1::CreateGraphRequest {
+                    graph_id: ns.to_string(),
+                    name: Some(ns.to_string()),
+                    description: None,
+                    schema: None,
+                    storage_config: None,
+                    engine_config: None,
+                    access_control: None,
+                })
+                .await?;
+        }
+        let svc = ProximaGraphServiceImpl { graph };
+
+        let mut create = Request::new(pv2::CreateGraphNodeRequest {
+            graph_id: "shared".to_string(),
+            node: Some(pv2::GraphNode {
+                id: "secret".to_string(),
+                labels: vec!["Doc".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            }),
+        });
+        create
+            .metadata_mut()
+            .insert("x-tenant-id", "tenantA".parse()?);
+        svc.create_node(create).await?;
+
+        // Tenant A sees it.
+        let mut get_a = Request::new(pv2::GetGraphNodeRequest {
+            graph_id: "shared".to_string(),
+            node_id: "secret".to_string(),
+        });
+        get_a
+            .metadata_mut()
+            .insert("x-tenant-id", "tenantA".parse()?);
+        assert!(svc.get_node(get_a).await?.into_inner().node.is_some());
+
+        // Tenant B, same logical graph_id, does not.
+        let mut get_b = Request::new(pv2::GetGraphNodeRequest {
+            graph_id: "shared".to_string(),
+            node_id: "secret".to_string(),
+        });
+        get_b
+            .metadata_mut()
+            .insert("x-tenant-id", "tenantB".parse()?);
+        assert!(svc.get_node(get_b).await?.into_inner().node.is_none());
+        Ok(())
     }
 }
