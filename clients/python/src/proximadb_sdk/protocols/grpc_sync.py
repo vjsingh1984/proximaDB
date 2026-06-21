@@ -242,6 +242,71 @@ def _endpoint_is_far(server_address: str) -> bool:
         return True
 
 
+def _v2_algo_name(a: Any) -> str:
+    """Normalize an index algorithm (str or IndexingAlgorithm int) to the
+    v2-native lowercase string the server expects."""
+    if a is None:
+        return ""
+    if isinstance(a, str):
+        return a.lower()
+    return {1: "hnsw", 2: "ivf", 3: "pq", 4: "flat", 5: "annoy", 6: "lsh"}.get(
+        int(a), ""
+    )
+
+
+def _build_v2_index_specs(index_configs: Any, indexing_algorithm: Any) -> list:
+    """Build a list of v2 V2IndexSpec from loose index_configs (dicts or objects
+    with ``__dict__``) and/or a default indexing_algorithm. Empty -> server
+    auto-selects a sensible index."""
+    specs = []
+    for ic in index_configs or []:
+        d = ic if isinstance(ic, dict) else getattr(ic, "__dict__", {})
+        kwargs: dict[str, Any] = {
+            "algorithm": _v2_algo_name(d.get("algorithm", indexing_algorithm))
+        }
+        hnsw = d.get("hnsw") or d.get("hnsw_config")
+        if isinstance(hnsw, dict):
+            kwargs["hnsw"] = v2_record_pb2.V2HnswConfig(
+                **{
+                    k: int(hnsw[k])
+                    for k in ("m", "ef_construction", "ef_search")
+                    if hnsw.get(k) is not None
+                }
+            )
+        ivf = d.get("ivf") or d.get("ivf_config")
+        if isinstance(ivf, dict):
+            kwargs["ivf"] = v2_record_pb2.V2IvfConfig(
+                **{
+                    k: int(ivf[k])
+                    for k in ("n_lists", "n_probe")
+                    if ivf.get(k) is not None
+                }
+            )
+        if d.get("is_primary"):
+            kwargs["is_primary"] = True
+        specs.append(v2_record_pb2.V2IndexSpec(**kwargs))
+    if not specs and indexing_algorithm is not None:
+        specs.append(
+            v2_record_pb2.V2IndexSpec(algorithm=_v2_algo_name(indexing_algorithm))
+        )
+    return specs
+
+
+def _build_v2_quantization(quantization_config: Any):
+    """Build a v2 V2QuantizationConfig from a loose dict/object, or None."""
+    if quantization_config is None:
+        return None
+    qc = (
+        quantization_config
+        if isinstance(quantization_config, dict)
+        else getattr(quantization_config, "__dict__", {})
+    )
+    return v2_record_pb2.V2QuantizationConfig(
+        enabled=bool(qc.get("enabled", True)),
+        strategy=str(qc.get("strategy", "") or "").lower(),
+    )
+
+
 class ProximaDBSyncGrpcClient:
     """
     High-performance synchronous gRPC client with connection pooling
@@ -766,9 +831,9 @@ class ProximaDBSyncGrpcClient:
 
         def _create_collection_operation(stub):
             # v2 V2CollectionConfig is self-contained: distance_metric/storage_engine
-            # are lowercase strings (mapped from the int enums). Advanced index_configs/
-            # quantization/canonical_embedding_precision are server-default on the v2
-            # path (not carried by V2CollectionConfig).
+            # are lowercase strings (mapped from the int enums). index_specs +
+            # quantization are v2-native structured config; canonical_embedding_precision
+            # remains server-default on the v2 path.
             dm_str = ""
             if distance_metric is not None:
                 try:
@@ -797,6 +862,8 @@ class ProximaDBSyncGrpcClient:
                     c if isinstance(c, str) else getattr(c, "name", str(c))
                     for c in (filterable_columns or [])
                 ],
+                index_specs=_build_v2_index_specs(index_configs, indexing_algorithm),
+                quantization=_build_v2_quantization(quantization_config),
             )
             response = stub.CreateCollection(config, timeout=self.timeout)
             return CollectionWrapper(response)
