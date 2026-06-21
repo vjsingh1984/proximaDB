@@ -417,6 +417,7 @@ impl SstEngine {
                 // `segment_format::read_segment_records` (magic-byte detection), so no
                 // manifest/reader change is required for this segment to be read back.
                 use crate::storage::engines::sst::segment_format::write_pax_segment;
+                use proximadb_block_format::VectorQuant;
                 let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
                 if let Some(parent) = std::path::Path::new(staging_path).parent() {
                     tokio::fs::create_dir_all(parent)
@@ -429,11 +430,24 @@ impl SstEngine {
                     .unwrap_or(1);
                 let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
                 let collection_id = params.collection_id.as_deref().unwrap_or("default");
+                // P3 Phase D: vector quantization strategy. Deployment selector for now
+                // (`PROXIMADB_PAX_VECTOR_QUANT` = rabitq|sq8|auto); per-collection proto
+                // config is the productionization follow-up. `Auto` keeps the env default.
+                let quant = match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "rabitq" => VectorQuant::RaBitQ,
+                    "sq8" => VectorQuant::Sq8,
+                    _ => VectorQuant::Auto,
+                };
                 let meta = write_pax_segment(
                     std::path::Path::new(staging_path),
                     &records,
                     collection_id,
                     embedding_count,
+                    quant,
                 )
                 .context("Failed to write PAX vector segment")?;
                 tracing::debug!(blocks = meta.block_count, "PAX segment write completed");

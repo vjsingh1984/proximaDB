@@ -111,6 +111,23 @@ impl BlockFooter {
 }
 
 /// PAX block writer — buffers records and serialises to PAX block bytes.
+/// Per-segment vector quantization selection (P3 Phase D — caller/collection-controlled,
+/// replacing the process-global env flags). `Auto` preserves the legacy env behavior
+/// (`PROXIMADB_VECTOR_RABITQ` / `PROXIMADB_VECTOR_SQ8_DISABLE`) so existing callers are
+/// unchanged; the flush passes an explicit strategy from the collection's config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VectorQuant {
+    /// Decide from env (legacy default).
+    #[default]
+    Auto,
+    /// Raw fixed-stride f32 (no quantization).
+    RawF32,
+    /// SQ8 (4×, lossy within scale/2).
+    Sq8,
+    /// RaBitQ (~30×, lossy 1-bit) — requires a decoupled f32 rerank tier for recall.
+    RaBitQ,
+}
+
 pub struct PaxBlockWriter {
     mode: BlockMode,
     compression: BlockCompression,
@@ -118,6 +135,8 @@ pub struct PaxBlockWriter {
     schema_fingerprint: u64,
     /// Number of embedding columns expected (from collection schema).
     embedding_count: usize,
+    /// Vector quantization strategy for this writer (P3 Phase D; `Auto` = env-driven).
+    quant: VectorQuant,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -157,6 +176,7 @@ impl PaxBlockWriter {
             collection_id_hash: fnv1a_hash(collection_id),
             schema_fingerprint,
             embedding_count,
+            quant: VectorQuant::Auto,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -176,6 +196,13 @@ impl PaxBlockWriter {
             min_ts: i64::MAX,
             max_ts: i64::MIN,
         }
+    }
+
+    /// Set the vector quantization strategy (P3 Phase D). Builder form so existing
+    /// `new(..)` call sites are unchanged; `Auto` (the default) keeps env behavior.
+    pub fn with_quant(mut self, quant: VectorQuant) -> Self {
+        self.quant = quant;
+        self
     }
 
     pub fn row_count(&self) -> usize {
@@ -603,8 +630,16 @@ impl PaxBlockWriter {
         let params = functions::sq8::fit_params(&flat);
 
         let has_data = dim > 0 && !flat.is_empty();
-        let use_rabitq = has_data && rabitq_enabled();
-        let use_sq8 = has_data && !use_rabitq && !sq8_disabled();
+        // P3 Phase D: explicit per-collection strategy wins; Auto falls back to env.
+        let (use_rabitq, use_sq8) = match self.quant {
+            VectorQuant::RaBitQ => (has_data, false),
+            VectorQuant::Sq8 => (false, has_data),
+            VectorQuant::RawF32 => (false, false),
+            VectorQuant::Auto => {
+                let r = has_data && rabitq_enabled();
+                (r, has_data && !r && !sq8_disabled())
+            }
+        };
         let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
             let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
             (

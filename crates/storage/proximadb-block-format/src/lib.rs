@@ -101,4 +101,4 @@ pub use vparam::{
     QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
     VectorParamEntry,
 };
-pub use writer::{BLOCK_FOOTER_SIZE, BlockFooter, PaxBlockWriter};
+pub use writer::{BLOCK_FOOTER_SIZE, BlockFooter, PaxBlockWriter, VectorQuant};

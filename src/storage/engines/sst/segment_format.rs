@@ -21,7 +21,7 @@
 use std::path::Path;
 
 use anyhow::Result;
-use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode};
+use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode, VectorQuant};
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
@@ -93,22 +93,26 @@ pub fn read_segment_records(
 /// flag-gated SST flush arm calls this against the local staging path; the resulting
 /// file is detected as [`SegmentFormat::Pax`] and reads back through the same router.
 ///
-/// `embedding_count` is the collection's embedding-modality count (≥1).
+/// `embedding_count` is the collection's embedding-modality count (≥1). `quant` selects
+/// the vector quantization strategy (P3 Phase D): `VectorQuant::Auto` keeps the env
+/// default (SQ8 unless `PROXIMADB_VECTOR_RABITQ`), `RaBitQ` writes ~30× binary codes.
 pub fn write_pax_segment(
     path: &Path,
     records: &[ProximaRecord],
     collection_id: &str,
     embedding_count: usize,
+    quant: VectorQuant,
 ) -> Result<SegmentMeta> {
     let mut writer = PaxSegmentWriter::new(
         path,
         BlockMode::Pax,
         BlockCompression::None,
         collection_id,
-        0, // schema_fingerprint — derived from the catalog schema in Phase D
+        0, // schema_fingerprint — derived from the catalog schema in a later phase
         embedding_count.max(1),
         None,
-    );
+    )
+    .with_quant(quant);
     for record in records {
         writer.add_record(record)?;
     }
@@ -236,7 +240,7 @@ mod tests {
             rec("w1", 1_700_000_000_000_000_000, vec![1.0, 2.0, 3.0]),
             rec("w2", 1_700_000_000_000_000_001, vec![4.0, 5.0, 6.0]),
         ];
-        let meta = write_pax_segment(&path, &records, "col", 1).unwrap();
+        let meta = write_pax_segment(&path, &records, "col", 1, VectorQuant::Auto).unwrap();
         assert!(
             meta.block_count >= 1,
             "segment should have at least one block"
@@ -248,5 +252,41 @@ mod tests {
         let mut oids: Vec<&str> = back.iter().map(|r| r.oid.as_str()).collect();
         oids.sort_unstable();
         assert_eq!(oids, vec!["w1", "w2"]);
+    }
+
+    /// P3 Phase D: `write_pax_segment` with `VectorQuant::RaBitQ` produces a segment
+    /// whose `EMBED_BASE` column is RaBitQ-quantized (~30×) — the per-collection write
+    /// selection that gives the RaBitQ ANN scan real segments to read. Records still
+    /// round-trip through the format router.
+    #[test]
+    fn write_pax_segment_rabitq_selects_rabitq_encoding() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rabitq.pax");
+        let records: Vec<ProximaRecord> = (0..8)
+            .map(|i| {
+                rec(
+                    &format!("v{i}"),
+                    1_700_000_000_000_000_000 + i,
+                    (0..16).map(|d| (i as f32 + d as f32) * 0.1).collect(),
+                )
+            })
+            .collect();
+        write_pax_segment(&path, &records, "col", 1, VectorQuant::RaBitQ).unwrap();
+
+        // The written segment's vector column must be RaBitQ-quantized.
+        let bytes = std::fs::read(&path).unwrap();
+        let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()).unwrap();
+        let block = scanner.next_block().expect("segment has one block");
+        assert!(
+            block
+                .decode_rabitq_codes(crate::col_id::EMBED_BASE)
+                .is_some(),
+            "VectorQuant::RaBitQ must encode EMBED_BASE as RaBitQ codes"
+        );
+
+        // And it still reads back through the mixed-format router.
+        let bytes2 = std::fs::read(&path).unwrap();
+        let back = read_segment_records(&bytes2, &[], &[]).unwrap();
+        assert_eq!(back.len(), records.len());
     }
 }
