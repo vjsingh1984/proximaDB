@@ -65,6 +65,49 @@ REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of
   **Sunset 2026-06-30**; clients must migrate to `proximadb.v2.*` before that date.
 ====
 
+=== Query Surfaces (which language goes where)
+
+Query languages are served by distinct, non-overlapping surfaces. pgwire is *not* a universal
+query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
+
+[cols="1,2,2,1"]
+|===
+| Surface | Language(s) | Use for | Status
+
+| *pgwire* (PostgreSQL wire)
+| ANSI *SQL* (DataFusion execution)
+| SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
+| Supported
+
+| *REST/gRPC `/api/v2/query`* (unified query port)
+| *UQL* (unified multi-modal), *Federated* SQL extensions, *AQL*
+| ProximaDB-native cross-modal queries (vector + graph + relational) that SQL cannot express.
+| UQL/Federated Supported; AQL Planned
+
+| *gRPC `proximadb.v2.ProximaGraphService`*
+| Graph node/edge/traversal/shortest-path RPCs
+| Programmatic graph access from the SDK.
+| Supported
+
+| *Graph `ExecuteQuery`* (Cypher/Gremlin)
+| Declarative graph query
+| Deferred — TD-124.
+| Planned
+|===
+
+[NOTE]
+====
+* pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
+  unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
+* The plain-SQL gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery` RPC is *deprecated* in
+  favour of pgwire (TD-121); it is the only SQL path on gRPC/REST being retired. The
+  `/api/v2/query` UQL/Federated surface is *not* deprecated.
+* *Apache Calcite*, if adopted, is an *internal* federated-SQL planner behind pgwire and the
+  Federated path — not a client surface, and not a substitute for the non-SQL languages.
+* SSO/governance (auth, RLS, tenancy) is enforced uniformly at the `TenantContext` I/O boundary,
+  independent of query language — never as a per-language interface.
+====
+
 == Status Tiers
 
 |===
@@ -109,8 +152,8 @@ REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of
 
 | ORION graph operations
 | Beta
-| Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable.
-| Declarative graph query execution is still incomplete on the canonical gRPC path. ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
+| Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable. These core operations are now served on the canonical v2 gRPC surface (`proximadb.v2.ProximaGraphService`, always-registered) and consumed by the Python SDK; the deprecated `proximadb.v1.GraphService` is off by default (`enable_grpc_v1_compat`).
+| Declarative graph query execution (Cypher/Gremlin `ExecuteQuery`) and several analytic/batch RPCs are still incomplete on the canonical v2 gRPC path (deferred — TD-124); graph creation/DDL is REST-only (`/api/v2/graphs`). ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
 
 | Observability ingestion and query
 | Beta
@@ -206,6 +249,16 @@ must not list them under "supported", "production", or "ready":
   native row/delta indexes, DataFusion snapshot-plus-delta reads, and distributed consistency gates
   are tracked in TD-110 and are not part of v0.2.
 * External-table execution (Iceberg / Delta / Hudi as Proxima-owned hot authority).
+* Iceberg v3 interop _write/export_ — `ALTER TABLE … MATERIALIZE` over pgwire emits a
+  spec-shaped Iceberg v3 table (`v*.metadata.json` referencing an Avro manifest list + manifest)
+  to the warehouse so external Iceberg engines can read it (verified by `tests/iceberg_interop_e2e.rs`).
+  One-way publish only; this is distinct from the hot-authority item above (still experimental), and
+  external read-back plus multi-writer coordination are unverified.
+* Columnar vector quantization (RaBitQ / SQ8) in PAX vector segments — _flag-gated, default OFF_.
+  Enabled with `PROXIMADB_PAX_VECTOR_SEGMENTS=1` plus `PROXIMADB_PAX_VECTOR_QUANT=rabitq|sq8|auto`
+  (deployment-level env selector; per-collection proto config is the productionization follow-up).
+  Reads are mixed-format-safe — existing ProximaBlocks segments still read back when the flag is on.
+  Codecs/kernels are tested; no per-collection policy or recall SLA is claimed.
 * Arrow Flight / gRPC service multiplexing as a customer-facing transport.
 * Trino / Spark compute adapters — _scaffolded_ (Spark JNI bridge per TD-097; Trino Flight per TD-098). Structural contract gates land in 2026-05-30 connector sprint (`tests/connectors_flight_contract.rs`); end-to-end wire impl deferred.
 * Hadoop InputFormat / OutputFormat — _write-side wire-true_ (`ProximaRecordWriter::flush_now` posts spec-true `/api/v2/.../records/batch`); read-side blocked on the records-scan endpoint gap tracked under TD-099.

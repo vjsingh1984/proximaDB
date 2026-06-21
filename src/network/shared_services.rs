@@ -902,6 +902,27 @@ impl SharedServices {
         } else if let Some(cfg) = opt_config {
             axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
         }
+
+        // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
+        // live for ALL collections — boot-present AND runtime-created — by injecting
+        // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
+        // collection's VectorAnn projection, an explicit `projection.location` is
+        // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
+        // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
+        // layout. Default-off and additive: with no projection locations set the
+        // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
+        // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
+        // this adapter lives in the control layer (dependency inversion).
+        {
+            let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
+            axis_manager_inner.set_index_location_resolver(Arc::new(
+                crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
+                    catalog_manager.clone(),
+                    migrate,
+                ),
+            ));
+        }
+
         let axis_manager = Arc::new(axis_manager_inner);
         debug!("✅ SharedServices::new - AxisManager created successfully");
 

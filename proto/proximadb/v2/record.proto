@@ -682,6 +682,33 @@ enum BackpressureLevel {
 // Self-contained: distance_metric/storage_engine are lowercase strings mapped
 // to the internal enums server-side (avoids importing the v1 proto package).
 // =============================================================================
+// v2-native HNSW tuning (maps to v1 HnswConfig at the handler boundary).
+message V2HnswConfig {
+  optional uint32 m = 1;
+  optional uint32 ef_construction = 2;
+  optional uint32 ef_search = 3;
+}
+
+// v2-native IVF tuning (maps to v1 IvfConfig at the handler boundary).
+message V2IvfConfig {
+  optional uint32 n_lists = 1;
+  optional uint32 n_probe = 2;
+}
+
+// A single index on the collection (v2-native; maps to v1 IndexConfig).
+message V2IndexSpec {
+  string algorithm = 1;  // "hnsw" (default) | "ivf" | "flat" | "pq" | "annoy" | "lsh"
+  optional V2HnswConfig hnsw = 2;
+  optional V2IvfConfig ivf = 3;
+  bool is_primary = 4;
+}
+
+// v2-native quantization config (maps to v1 QuantizationConfig).
+message V2QuantizationConfig {
+  bool enabled = 1;
+  string strategy = 2;  // "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels"
+}
+
 message V2CollectionConfig {
   string name = 1;
   uint32 dimension = 2;
@@ -689,6 +716,9 @@ message V2CollectionConfig {
   string storage_engine = 4;   // "sst" (default) | "viper" | ...
   repeated string filterable_columns = 5;
   string description = 6;
+  // Optional index tuning; when empty the server auto-selects a sensible index.
+  repeated V2IndexSpec index_specs = 7;
+  optional V2QuantizationConfig quantization = 8;
 }
 
 message V2Collection {
@@ -741,6 +771,18 @@ message V2QueryResponse {
   uint64 execution_time_ms = 4;
 }
 
+// Point record get-by-id (v2 parity with v1 VectorService.VectorGet).
+message GetRecordRequest {
+  string collection_id = 1;
+  string id = 2;
+  bool include_vector = 3;
+}
+
+message GetRecordResponse {
+  bool found = 1;
+  ProximaRecord record = 2;
+}
+
 // =============================================================================
 // gRPC Service definition
 // =============================================================================
@@ -771,6 +813,12 @@ service ProximaRecordService {
   rpc ListCollections(V2ListCollectionsRequest) returns (V2ListCollectionsResponse);
   rpc DeleteCollection(V2DeleteCollectionRequest) returns (V2DeleteCollectionResponse);
 
-  // SQL query (v2 parity with v1 QueryService)
+  // DEPRECATED: SQL over gRPC is deprecated. pgwire (the PostgreSQL wire
+  // protocol) is the canonical SQL surface; connect any PostgreSQL driver and
+  // run SQL there. gRPC owns record/vector/collection operations, not SQL.
+  // This RPC will be removed in a future release (see TD-121).
   rpc ExecuteQuery(V2QueryRequest) returns (V2QueryResponse);
+
+  // Point record get-by-id (v2 parity with v1 VectorService.VectorGet)
+  rpc GetRecord(GetRecordRequest) returns (GetRecordResponse);
 }

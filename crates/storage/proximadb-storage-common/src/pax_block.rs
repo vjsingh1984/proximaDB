@@ -491,15 +491,23 @@ impl PaxSegmentScanner {
     /// (the segment stores embeddings positionally and does not persist model ids
     /// or promoted-column names). Pass empty slices for best-effort defaults
     /// (`model_0`, `model_1`, …).
+    /// `tenant_ctx` is the segment's owning tenant (from the catalog/path); it is
+    /// stamped onto rows whose tenant column was dropped (catalog-resolution) and
+    /// ignored when the column is still present. Pass `None` to keep stored values.
     pub fn read_records(
         &mut self,
         embedding_model_ids: &[String],
         user_column_keys: &[String],
+        tenant_ctx: Option<&str>,
     ) -> Result<Vec<ProximaRecord>> {
         let mut records = Vec::new();
         while let Some(block) = self.next_block() {
             for flat in FlatRow::from_block_reader(&block)? {
-                records.push(flat.into_record(embedding_model_ids, user_column_keys)?);
+                records.push(flat.into_record(
+                    embedding_model_ids,
+                    user_column_keys,
+                    tenant_ctx,
+                )?);
             }
         }
         Ok(records)
@@ -540,6 +548,7 @@ pub fn compact_pax_segments(
     embedding_count: usize,
     embedding_model_ids: &[String],
     user_column_keys: &[String],
+    tenant_ctx: Option<&str>,
     now_ns: i64,
 ) -> Result<CompactionStats> {
     let mut writer = PaxSegmentWriter::new(
@@ -557,7 +566,7 @@ pub fn compact_pax_segments(
 
     for input in inputs {
         let mut scanner = PaxSegmentScanner::open(input, ScanPredicate::default())?;
-        for record in scanner.read_records(embedding_model_ids, user_column_keys)? {
+        for record in scanner.read_records(embedding_model_ids, user_column_keys, tenant_ctx)? {
             records_in += 1;
             if record.is_tombstone_at(now_ns) {
                 tombstones_dropped += 1;
@@ -664,6 +673,7 @@ mod tests {
             0,
             &[],
             &[],
+            None,
             1000,
         )
         .unwrap();
@@ -675,7 +685,7 @@ mod tests {
 
         // The merged L1 segment holds exactly the 3 survivors; no tombstone remains.
         let mut scanner = PaxSegmentScanner::open(&out, ScanPredicate::default()).unwrap();
-        let survivors = scanner.read_records(&[], &[]).unwrap();
+        let survivors = scanner.read_records(&[], &[], None).unwrap();
         assert_eq!(survivors.len(), 3);
         assert!(
             survivors
@@ -783,7 +793,7 @@ mod tests {
         writer.finish().unwrap();
 
         let mut scanner = PaxSegmentScanner::open(&path, ScanPredicate::default()).unwrap();
-        let records = scanner.read_records(&[], &[]).unwrap();
+        let records = scanner.read_records(&[], &[], None).unwrap();
 
         assert_eq!(records.len(), 2);
         let r1 = records.iter().find(|r| r.oid == "r1").expect("r1 present");

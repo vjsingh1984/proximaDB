@@ -143,6 +143,39 @@ pub struct MultiServer {
 }
 
 impl MultiServer {
+    /// Construct the always-on canonical v2 **record** gRPC service.
+    ///
+    /// Centralized so every server-startup entrypoint (`start`, `start_unified`,
+    /// `start_with_cluster`) registers an identical canonical gRPC surface; see
+    /// also [`Self::canonical_graph_grpc_service`]. Keeping the construction in
+    /// one place means a wiring change (segment registry, primary-pod gate) can
+    /// never drift between modes.
+    fn canonical_record_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_record_service_server::ProximaRecordServiceServer<
+        crate::network::grpc::v2::ProximaRecordServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaRecordServiceImpl::new(services.request_handlers.clone())
+            .with_segment_registry(services.segment_registry.clone())
+            .with_primary_pod_gate(
+                services.primary_pod_registry.clone(),
+                services.self_pod_id.clone(),
+            )
+            .into_server()
+    }
+
+    /// Construct the always-on canonical v2 **graph** gRPC service
+    /// (`proximadb.v2.ProximaGraphService`). Counterpart to
+    /// [`Self::canonical_record_grpc_service`].
+    fn canonical_graph_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_graph_service_server::ProximaGraphServiceServer<
+        crate::network::grpc::v2::ProximaGraphServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaGraphServiceImpl::new(services.request_handlers.clone())
+            .into_server()
+    }
+
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
     pub fn new(
@@ -538,28 +571,19 @@ impl MultiServer {
             let observability_service = grpc_svcs.observability;
             let streaming_service = grpc_svcs.streaming;
 
-            // Add V2 ProximaRecordService for typed fields and schema support
-            let proxima_record_service_impl =
-                crate::network::grpc::v2::ProximaRecordServiceImpl::new(
-                    services.request_handlers.clone(),
-                )
-                .with_segment_registry(services.segment_registry.clone())
-                .with_primary_pod_gate(
-                    services.primary_pod_registry.clone(),
-                    services.self_pod_id.clone(),
-                );
-            let proxima_record_service = proxima_record_service_impl.into_server();
-
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (health_reporter, standard_health_server) = tonic_health::server::health_reporter();
             health_reporter
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
-            // Canonical surfaces are always registered: proximadb.v2.ProximaRecordService
-            // + grpc.health.v1.Health (+ optional reflection below).
+            // Canonical v2 surfaces are always registered: ProximaRecordService +
+            // ProximaGraphService + grpc.health.v1.Health (+ optional reflection
+            // below). Service construction is centralized in the
+            // `canonical_*_grpc_service` helpers so all startup modes match.
             let mut server = server_builder
-                .add_service(proxima_record_service)
+                .add_service(Self::canonical_record_grpc_service(&services))
+                .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -1025,17 +1049,6 @@ impl MultiServer {
             let hybrid_search_service = grpc_svcs.hybrid_search;
             let security_service = grpc_svcs.security;
 
-            // Add V2 ProximaRecordService for canonical record operations in unified mode too.
-            let proxima_record_service = crate::network::grpc::v2::ProximaRecordServiceImpl::new(
-                services.request_handlers.clone(),
-            )
-            .with_segment_registry(services.segment_registry.clone())
-            .with_primary_pod_gate(
-                services.primary_pod_registry.clone(),
-                services.self_pod_id.clone(),
-            )
-            .into_server();
-
             // Arrow Flight service (HTTP/2-based, shares internal gRPC server)
             let flight_service =
                 crate::network::arrow_ipc::service::ProximaFlightService::from_unified_handlers(
@@ -1068,10 +1081,13 @@ impl MultiServer {
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
-            // Canonical surfaces always on: proximadb.v2.ProximaRecordService,
-            // Arrow Flight, and grpc.health.v1.Health (+ optional reflection below).
+            // Canonical surfaces always on: proximadb.v2.ProximaRecordService +
+            // ProximaGraphService, Arrow Flight, and grpc.health.v1.Health (+
+            // optional reflection below). Construction centralized in the
+            // `canonical_*_grpc_service` helpers.
             let mut server = server_builder
-                .add_service(proxima_record_service)
+                .add_service(Self::canonical_record_grpc_service(&services))
+                .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1435,15 +1451,6 @@ impl MultiServer {
             let graph_service = grpc_svcs.graph;
             let hybrid_search_service = grpc_svcs.hybrid_search;
             let security_service = grpc_svcs.security;
-            let proxima_record_service = crate::network::grpc::v2::ProximaRecordServiceImpl::new(
-                services.request_handlers.clone(),
-            )
-            .with_segment_registry(services.segment_registry.clone())
-            .with_primary_pod_gate(
-                services.primary_pod_registry.clone(),
-                services.self_pod_id.clone(),
-            )
-            .into_server();
 
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (mut std_health_reporter, standard_health_server) =
@@ -1452,10 +1459,13 @@ impl MultiServer {
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
-            // Canonical surfaces always on: proximadb.v2.ProximaRecordService +
-            // grpc.health.v1.Health (+ optional reflection / cluster services below).
+            // Canonical v2 surfaces always on: ProximaRecordService +
+            // ProximaGraphService + grpc.health.v1.Health (+ optional reflection /
+            // cluster services below). Construction centralized in the
+            // `canonical_*_grpc_service` helpers.
             let mut server = server_builder
-                .add_service(proxima_record_service)
+                .add_service(Self::canonical_record_grpc_service(&services))
+                .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind

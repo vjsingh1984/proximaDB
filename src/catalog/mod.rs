@@ -28,6 +28,9 @@ pub mod traits {
 // Partition pruning for query optimization
 pub mod partition_pruning;
 
+// CATALOG_OBJECT_MODEL #3 read-port: catalog adapter for AXIS index-location resolution.
+pub mod index_location_resolver;
+
 // Internal schema registry (multi-model unified catalog)
 pub mod internal;
 

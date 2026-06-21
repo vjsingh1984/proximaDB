@@ -10,6 +10,7 @@ Features:
 
 import json
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -197,13 +198,14 @@ try:
     from proximadb_sdk.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
     from proximadb_sdk.v1 import vector_types_pb2 as v1_vector_types_pb2  # type: ignore
 
-    # Optional graph service (generated via Makefile: gen-proto)
+    # Canonical v2 graph service (generated via Makefile: gen-proto).
+    # Replaces the deprecated proximadb.v1.GraphService.
     try:
-        from proximadb_sdk.v1 import graph_pb2 as v1_graph_pb2  # type: ignore
-        from proximadb_sdk.v1 import graph_pb2_grpc as v1_graph_pb2_grpc  # type: ignore
+        from proximadb.v2 import graph_pb2 as v2_graph_pb2  # type: ignore
+        from proximadb.v2 import graph_pb2_grpc as v2_graph_pb2_grpc  # type: ignore
     except Exception:  # pragma: no cover - optional
-        v1_graph_pb2_grpc = None
-        v1_graph_pb2 = None
+        v2_graph_pb2_grpc = None
+        v2_graph_pb2 = None
     try:
         from proximadb.v2 import record_pb2 as v2_record_pb2  # type: ignore
         from proximadb.v2 import record_pb2_grpc as v2_record_pb2_grpc  # type: ignore
@@ -240,6 +242,71 @@ def _endpoint_is_far(server_address: str) -> bool:
     except ValueError:
         # A non-localhost DNS hostname -> assume remote (far).
         return True
+
+
+def _v2_algo_name(a: Any) -> str:
+    """Normalize an index algorithm (str or IndexingAlgorithm int) to the
+    v2-native lowercase string the server expects."""
+    if a is None:
+        return ""
+    if isinstance(a, str):
+        return a.lower()
+    return {1: "hnsw", 2: "ivf", 3: "pq", 4: "flat", 5: "annoy", 6: "lsh"}.get(
+        int(a), ""
+    )
+
+
+def _build_v2_index_specs(index_configs: Any, indexing_algorithm: Any) -> list:
+    """Build a list of v2 V2IndexSpec from loose index_configs (dicts or objects
+    with ``__dict__``) and/or a default indexing_algorithm. Empty -> server
+    auto-selects a sensible index."""
+    specs = []
+    for ic in index_configs or []:
+        d = ic if isinstance(ic, dict) else getattr(ic, "__dict__", {})
+        kwargs: dict[str, Any] = {
+            "algorithm": _v2_algo_name(d.get("algorithm", indexing_algorithm))
+        }
+        hnsw = d.get("hnsw") or d.get("hnsw_config")
+        if isinstance(hnsw, dict):
+            kwargs["hnsw"] = v2_record_pb2.V2HnswConfig(
+                **{
+                    k: int(hnsw[k])
+                    for k in ("m", "ef_construction", "ef_search")
+                    if hnsw.get(k) is not None
+                }
+            )
+        ivf = d.get("ivf") or d.get("ivf_config")
+        if isinstance(ivf, dict):
+            kwargs["ivf"] = v2_record_pb2.V2IvfConfig(
+                **{
+                    k: int(ivf[k])
+                    for k in ("n_lists", "n_probe")
+                    if ivf.get(k) is not None
+                }
+            )
+        if d.get("is_primary"):
+            kwargs["is_primary"] = True
+        specs.append(v2_record_pb2.V2IndexSpec(**kwargs))
+    if not specs and indexing_algorithm is not None:
+        specs.append(
+            v2_record_pb2.V2IndexSpec(algorithm=_v2_algo_name(indexing_algorithm))
+        )
+    return specs
+
+
+def _build_v2_quantization(quantization_config: Any):
+    """Build a v2 V2QuantizationConfig from a loose dict/object, or None."""
+    if quantization_config is None:
+        return None
+    qc = (
+        quantization_config
+        if isinstance(quantization_config, dict)
+        else getattr(quantization_config, "__dict__", {})
+    )
+    return v2_record_pb2.V2QuantizationConfig(
+        enabled=bool(qc.get("enabled", True)),
+        strategy=str(qc.get("strategy", "") or "").lower(),
+    )
 
 
 class ProximaDBSyncGrpcClient:
@@ -537,7 +604,7 @@ class ProximaDBSyncGrpcClient:
 
     # Health check via REST endpoint (gRPC doesn't have dedicated Health service in v1)
 
-    # Graph (v1) — optional
+    # Graph (canonical v2 ProximaGraphService)
     def shortest_path(
         self,
         start_node_id: str,
@@ -548,33 +615,36 @@ class ProximaDBSyncGrpcClient:
         k: int | None = None,
         enable_prefetch: bool | None = None,
         prefetch_budget: int | None = None,
+        graph_id: str = "default",
     ) -> dict[str, Any]:
-        """Compute shortest path via GraphService.ShortestPath with per-call prefetch overrides.
+        """Compute shortest path via ProximaGraphService.ShortestPath.
 
-        Per-call overrides are passed as gRPC metadata headers:
-        - x-graph-prefetch-enabled: true|false|1|0
-        - x-graph-prefetch-budget: <int>
+        Per-call prefetch overrides are v2-native request fields
+        (``enable_prefetch`` / ``prefetch_budget``) rather than gRPC metadata.
+        Returns the ``GraphShortestPathResponse`` proto (``node_ids``,
+        ``total_weight``, ``found``).
         """
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
             algo_enum = {
-                "DIJKSTRA": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA,
-                "ASTAR": v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_ASTAR,
+                "DIJKSTRA": v2_graph_pb2.GRAPH_SHORTEST_PATH_ALGORITHM_DIJKSTRA,
+                "ASTAR": v2_graph_pb2.GRAPH_SHORTEST_PATH_ALGORITHM_ASTAR,
             }.get(
                 algorithm.upper(),
-                v1_graph_pb2.ShortestPathAlgorithm.SHORTEST_PATH_ALGORITHM_DIJKSTRA,
+                v2_graph_pb2.GRAPH_SHORTEST_PATH_ALGORITHM_DIJKSTRA,
             )
 
-            req = v1_graph_pb2.ShortestPathRequest(
+            req = v2_graph_pb2.GraphShortestPathRequest(
+                graph_id=graph_id,
                 start_node_id=start_node_id,
                 target_node_id=target_node_id,
                 max_depth=max_depth or 0,
@@ -582,19 +652,22 @@ class ProximaDBSyncGrpcClient:
                 algorithm=algo_enum,
                 k=k or 0,
             )
-
-            metadata = []
             if enable_prefetch is not None:
-                metadata.append(
-                    ("x-graph-prefetch-enabled", "true" if enable_prefetch else "false")
-                )
+                req.enable_prefetch = enable_prefetch
             if prefetch_budget is not None:
-                metadata.append(("x-graph-prefetch-budget", str(prefetch_budget)))
+                req.prefetch_budget = prefetch_budget
 
-            # Use unary_unary with metadata support
-            return stub.ShortestPath(req, timeout=self.timeout, metadata=metadata)
+            return stub.ShortestPath(req, timeout=self.timeout)
 
-        return self._execute_with_pool("shortest_path", _op)
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC shortest_path RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"shortest_path RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC shortest_path failed: {e}")
+            raise ProximaDBError(f"shortest_path failed: {e}")
 
     # SQL (v1)
     def execute_sql(
@@ -603,7 +676,15 @@ class ProximaDBSyncGrpcClient:
         parameters: list | None = None,
         collection: str | None = None,
     ):
-        """Execute SQL via proximadb.v1.QueryService.ExecuteQuery
+        """Execute SQL over gRPC.
+
+        .. deprecated::
+            SQL over gRPC/REST is deprecated. pgwire (the PostgreSQL wire
+            protocol) is the canonical SQL surface — connect any PostgreSQL
+            driver (psycopg2, asyncpg, JDBC, psql) and run SQL there. gRPC/REST
+            own record/vector/collection operations; SQL belongs on pgwire.
+            This method (and the v2 ``ExecuteQuery`` RPC) will be removed in a
+            future release.
 
         Args:
             query: SQL text
@@ -612,6 +693,13 @@ class ProximaDBSyncGrpcClient:
         Returns:
             ExecuteQueryResponse as dict-like (via proto object fields)
         """
+        warnings.warn(
+            "execute_sql over gRPC is deprecated; use pgwire (PostgreSQL wire "
+            "protocol) for SQL via any PostgreSQL driver. The gRPC SQL path will "
+            "be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
@@ -766,9 +854,9 @@ class ProximaDBSyncGrpcClient:
 
         def _create_collection_operation(stub):
             # v2 V2CollectionConfig is self-contained: distance_metric/storage_engine
-            # are lowercase strings (mapped from the int enums). Advanced index_configs/
-            # quantization/canonical_embedding_precision are server-default on the v2
-            # path (not carried by V2CollectionConfig).
+            # are lowercase strings (mapped from the int enums). index_specs +
+            # quantization are v2-native structured config; canonical_embedding_precision
+            # remains server-default on the v2 path.
             dm_str = ""
             if distance_metric is not None:
                 try:
@@ -797,6 +885,8 @@ class ProximaDBSyncGrpcClient:
                     c if isinstance(c, str) else getattr(c, "name", str(c))
                     for c in (filterable_columns or [])
                 ],
+                index_specs=_build_v2_index_specs(index_configs, indexing_algorithm),
+                quantization=_build_v2_quantization(quantization_config),
             )
             response = stub.CreateCollection(config, timeout=self.timeout)
             return CollectionWrapper(response)
@@ -1361,66 +1451,28 @@ class ProximaDBSyncGrpcClient:
         include_vector: bool = True,
         include_metadata: bool = True,
     ) -> dict[str, Any]:
-        """Get single vector by ID"""
+        """Get a single record by ID via v2 ProximaRecordService.GetRecord."""
 
-        def _get_vector_operation(stub):
-            # v1 proto uses direct boolean fields, not IncludeFields object
-            request = v1_vector_types_pb2.VectorGetRequest(
+        def _get_record_operation(stub):
+            request = v2_record_pb2.GetRecordRequest(
                 collection_id=collection_id,
-                vector_id=vector_id,
+                id=vector_id,
                 include_vector=include_vector,
-                include_metadata=include_metadata,
             )
-            response = stub.VectorGet(request, timeout=self.timeout)
-
-            # Convert response to dict
-            if not response.success:
+            response = stub.GetRecord(request, timeout=self.timeout)
+            if not response.found or not response.HasField("record"):
                 raise ProximaDBError(f"Vector {vector_id} not found")
-
-            # Extract from results if available
-            if response.results and response.results.results:
-                result_item = response.results.results[0]
-                result = {
-                    "id": result_item.id,
+            rec = response.record
+            result: dict[str, Any] = {"id": rec.id}
+            if include_vector and rec.vector:
+                result["vector"] = list(rec.vector)
+            if include_metadata and rec.props:
+                result["metadata"] = {
+                    k: self._v2_typed_value_to_python(v) for k, v in rec.props.items()
                 }
-                if include_vector and result_item.vector:
-                    result["vector"] = list(result_item.vector)
-                if include_metadata and result_item.metadata:
-                    # Convert map<string, SqlValue> to dict
-                    metadata_dict = {}
-                    for key in result_item.metadata:
-                        sql_value = result_item.metadata[key]
-                        if sql_value.HasField("string_value"):
-                            metadata_dict[key] = sql_value.string_value
-                        elif sql_value.HasField("int64_value"):
-                            metadata_dict[key] = sql_value.int64_value
-                        elif sql_value.HasField("number_value"):
-                            metadata_dict[key] = sql_value.number_value
-                        elif sql_value.HasField("bool_value"):
-                            metadata_dict[key] = sql_value.bool_value
-                    result["metadata"] = metadata_dict
+            return VectorWrapper(result)
 
-                # Add timestamp field (SearchVectorRecord has timestamp at field 7)
-                if result_item.HasField("timestamp"):
-                    result["timestamp_ms"] = result_item.timestamp
-
-                # Add version field (SearchVectorRecord has version at field 5)
-                if result_item.HasField("version"):
-                    result["version"] = result_item.version
-
-                # Add source field (SearchVectorRecord has source at field 8)
-                if result_item.HasField("source"):
-                    result["source"] = result_item.source
-
-                # NOTE: SearchVectorRecord does NOT have updated_at or expires_at fields
-                # Those fields only exist in the insert VectorRecord proto
-
-                # Wrap result to provide attribute access
-                return VectorWrapper(result)
-            else:
-                raise ProximaDBError(f"Vector {vector_id} not found")
-
-        return self._execute_with_pool("get_vector", _get_vector_operation)
+        return self._execute_collection_with_pool("get_vector", _get_record_operation)
 
     def update_vector(
         self,
@@ -1530,39 +1582,39 @@ class ProximaDBSyncGrpcClient:
     # === GRAPH OPERATIONS (v1) ===
 
     def _convert_to_property_value(self, value: Any):
-        """Convert Python value to PropertyValue proto"""
-        if v1_graph_pb2 is None:
+        """Convert Python value to a v2 GraphPropertyValue proto"""
+        if v2_graph_pb2 is None:
             raise ProximaDBError(
                 "Graph protos not available. Run: make -C clients/python gen-proto"
             )
 
         if isinstance(value, str):
-            return v1_graph_pb2.PropertyValue(string_value=value)
+            return v2_graph_pb2.GraphPropertyValue(string_value=value)
         elif isinstance(value, bool):
-            return v1_graph_pb2.PropertyValue(bool_value=value)
+            return v2_graph_pb2.GraphPropertyValue(bool_value=value)
         elif isinstance(value, int):
-            return v1_graph_pb2.PropertyValue(int_value=value)
+            return v2_graph_pb2.GraphPropertyValue(int_value=value)
         elif isinstance(value, float):
-            return v1_graph_pb2.PropertyValue(double_value=value)
+            return v2_graph_pb2.GraphPropertyValue(double_value=value)
         elif isinstance(value, bytes):
-            return v1_graph_pb2.PropertyValue(bytes_value=value)
+            return v2_graph_pb2.GraphPropertyValue(bytes_value=value)
         elif isinstance(value, list):
             array_values = [self._convert_to_property_value(item) for item in value]
-            return v1_graph_pb2.PropertyValue(
-                array_value=v1_graph_pb2.PropertyArray(values=array_values)
+            return v2_graph_pb2.GraphPropertyValue(
+                array_value=v2_graph_pb2.GraphPropertyArray(values=array_values)
             )
         elif isinstance(value, dict):
-            object_fields = {
+            map_fields = {
                 k: self._convert_to_property_value(v) for k, v in value.items()
             }
-            return v1_graph_pb2.PropertyValue(
-                object_value=v1_graph_pb2.PropertyObject(fields=object_fields)
+            return v2_graph_pb2.GraphPropertyValue(
+                map_value=v2_graph_pb2.GraphPropertyMap(fields=map_fields)
             )
         else:
-            return v1_graph_pb2.PropertyValue(string_value=str(value))
+            return v2_graph_pb2.GraphPropertyValue(string_value=str(value))
 
     def _convert_from_property_value(self, prop_value) -> Any:
-        """Convert PropertyValue proto to Python value"""
+        """Convert a v2 GraphPropertyValue proto to a Python value"""
         if prop_value.HasField("string_value"):
             return prop_value.string_value
         elif prop_value.HasField("int_value"):
@@ -1578,10 +1630,10 @@ class ProximaDBSyncGrpcClient:
                 self._convert_from_property_value(item)
                 for item in prop_value.array_value.values
             ]
-        elif prop_value.HasField("object_value"):
+        elif prop_value.HasField("map_value"):
             return {
                 k: self._convert_from_property_value(v)
-                for k, v in prop_value.object_value.fields.items()
+                for k, v in prop_value.map_value.fields.items()
             }
         else:
             return None
@@ -1674,26 +1726,26 @@ class ProximaDBSyncGrpcClient:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
 
             node_properties = {}
             if properties:
                 for key, value in properties.items():
                     node_properties[key] = self._convert_to_property_value(value)
 
-            node = v1_graph_pb2.Node(
+            node = v2_graph_pb2.GraphNode(
                 id=node_id, labels=labels, properties=node_properties
             )
 
-            request = v1_graph_pb2.CreateNodeRequest(graph_id=graph_id, node=node)
+            request = v2_graph_pb2.CreateGraphNodeRequest(graph_id=graph_id, node=node)
             response = stub.CreateNode(request, timeout=self.timeout)
-            return self._convert_node_from_proto(response)
+            return self._convert_node_from_proto(response.node)
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
@@ -1733,20 +1785,20 @@ class ProximaDBSyncGrpcClient:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
 
             edge_properties = {}
             if properties:
                 for key, value in properties.items():
                     edge_properties[key] = self._convert_to_property_value(value)
 
-            edge = v1_graph_pb2.Edge(
+            edge = v2_graph_pb2.GraphEdge(
                 id=edge_id,
                 from_node_id=from_node_id,
                 to_node_id=to_node_id,
@@ -1757,9 +1809,9 @@ class ProximaDBSyncGrpcClient:
             if weight is not None:
                 edge.weight = weight
 
-            request = v1_graph_pb2.CreateEdgeRequest(graph_id=graph_id, edge=edge)
+            request = v2_graph_pb2.CreateGraphEdgeRequest(graph_id=graph_id, edge=edge)
             response = stub.CreateEdge(request, timeout=self.timeout)
-            return self._convert_edge_from_proto(response)
+            return self._convert_edge_from_proto(response.edge)
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
@@ -1799,22 +1851,22 @@ class ProximaDBSyncGrpcClient:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
 
             # Map algorithm string to enum
-            algorithm_enum = v1_graph_pb2.TRAVERSAL_ALGORITHM_BFS
+            algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_BFS
             if algorithm.upper() == "DFS":
-                algorithm_enum = v1_graph_pb2.TRAVERSAL_ALGORITHM_DFS
+                algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_DFS
             elif algorithm.upper() == "PARALLEL_BFS":
-                algorithm_enum = v1_graph_pb2.TRAVERSAL_ALGORITHM_PARALLEL_BFS
+                algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_PARALLEL_BFS
 
-            request = v1_graph_pb2.TraversalRequest(
+            request = v2_graph_pb2.TraverseGraphRequest(
                 graph_id=graph_id,
                 start_node_id=start_node_id,
                 max_depth=max_depth,
@@ -1896,26 +1948,26 @@ class ProximaDBSyncGrpcClient:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
 
             filters = []
             if properties:
                 for key, value in properties.items():
                     filters.append(
-                        v1_graph_pb2.PropertyFilter(
+                        v2_graph_pb2.GraphPropertyFilter(
                             key=key,
-                            operator=v1_graph_pb2.PROPERTY_FILTER_OPERATOR_EQUALS,
+                            operator=v2_graph_pb2.GRAPH_PROPERTY_FILTER_OPERATOR_EQUALS,
                             value=self._convert_to_property_value(value),
                         )
                     )
 
-            request = v1_graph_pb2.NodeQuery(
+            request = v2_graph_pb2.QueryGraphNodesRequest(
                 graph_id=graph_id, labels=labels or [], filters=filters
             )
 
@@ -1926,11 +1978,14 @@ class ProximaDBSyncGrpcClient:
 
             response = stub.QueryNodes(request, timeout=self.timeout)
             return {
-                "success": response.success if hasattr(response, "success") else True,
+                "success": True,
                 "nodes": [
                     self._convert_node_from_proto(node) for node in response.nodes
                 ],
                 "total_count": len(response.nodes),
+                "next_token": (
+                    response.next_token if response.HasField("next_token") else None
+                ),
             }
 
         try:
@@ -1958,26 +2013,26 @@ class ProximaDBSyncGrpcClient:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
 
             filters = []
             if properties:
                 for key, value in properties.items():
                     filters.append(
-                        v1_graph_pb2.PropertyFilter(
+                        v2_graph_pb2.GraphPropertyFilter(
                             key=key,
-                            operator=v1_graph_pb2.PROPERTY_FILTER_OPERATOR_EQUALS,
+                            operator=v2_graph_pb2.GRAPH_PROPERTY_FILTER_OPERATOR_EQUALS,
                             value=self._convert_to_property_value(value),
                         )
                     )
 
-            request = v1_graph_pb2.EdgeQuery(
+            request = v2_graph_pb2.QueryGraphEdgesRequest(
                 graph_id=graph_id,
                 edge_types=[edge_type] if edge_type else [],
                 filters=filters,
@@ -1994,13 +2049,13 @@ class ProximaDBSyncGrpcClient:
 
             response = stub.QueryEdges(request, timeout=self.timeout)
             return {
-                "success": response.success if hasattr(response, "success") else True,
+                "success": True,
                 "edges": [
                     self._convert_edge_from_proto(edge) for edge in response.edges
                 ],
                 "total_count": len(response.edges),
                 "next_token": (
-                    response.next_token if hasattr(response, "next_token") else None
+                    response.next_token if response.HasField("next_token") else None
                 ),
             }
 
@@ -2024,16 +2079,20 @@ class ProximaDBSyncGrpcClient:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
-            request = v1_graph_pb2.GetNodeRequest(graph_id=graph_id, node_id=node_id)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            request = v2_graph_pb2.GetGraphNodeRequest(
+                graph_id=graph_id, node_id=node_id
+            )
             response = stub.GetNode(request, timeout=self.timeout)
-            return self._convert_node_from_proto(response)
+            if not response.HasField("node"):
+                return None
+            return self._convert_node_from_proto(response.node)
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
@@ -2093,16 +2152,20 @@ class ProximaDBSyncGrpcClient:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
             )
-        if v1_graph_pb2_grpc is None or v1_graph_pb2 is None:
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
             raise ProximaDBError(
-                "GraphService stubs not found. Run: make -C clients/python gen-proto"
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
             )
 
         def _op(channel):
-            stub = v1_graph_pb2_grpc.GraphServiceStub(channel)
-            request = v1_graph_pb2.DeleteNodeRequest(graph_id=graph_id, node_id=node_id)
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            request = v2_graph_pb2.DeleteGraphNodeRequest(
+                graph_id=graph_id, node_id=node_id
+            )
             response = stub.DeleteNode(request, timeout=self.timeout)
-            return self._convert_node_from_proto(response)
+            if response.HasField("node"):
+                return self._convert_node_from_proto(response.node)
+            return {"id": node_id, "deleted": response.deleted}
 
         try:
             with GrpcChannelContext(self._connection_pool) as channel:
