@@ -428,6 +428,7 @@ impl SstEngine {
                     .map(|(_, rec)| rec.embeddings.len().max(1))
                     .unwrap_or(1);
                 let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
+                let collection_id = params.collection_id.as_deref().unwrap_or("default");
                 let meta = write_pax_segment(
                     std::path::Path::new(staging_path),
                     &records,

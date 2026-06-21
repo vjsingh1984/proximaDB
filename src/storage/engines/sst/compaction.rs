@@ -1165,6 +1165,13 @@ impl Compaction {
             debug!("🔍 COMPACTION: Using block format: {:?}", block_format);
 
             match block_format {
+                BlockFormat::PaxBlock => {
+                    // PAX segment compaction lands in P3 Phase E (reads mixed formats,
+                    // rewrites to the configured format). Fail closed until then.
+                    return Err(crate::core::StorageError::SstEngine(
+                        "PAX segment compaction not yet supported (P3 Phase E)".into(),
+                    ));
+                }
                 BlockFormat::ArrowBlock => {
                     // Use ArrowBlockWriter for Arrow IPC format
                     debug!("🔍 COMPACTION: Using ArrowBlockWriter for Arrow format");
@@ -1279,6 +1286,12 @@ impl Compaction {
             );
 
             match block_format {
+                BlockFormat::PaxBlock => {
+                    // PAX segment compaction lands in P3 Phase E. Fail closed until then.
+                    return Err(crate::core::StorageError::SstEngine(
+                        "PAX segment compaction not yet supported (P3 Phase E)".into(),
+                    ));
+                }
                 BlockFormat::ArrowBlock => {
                     // Use ArrowBlockWriter for Arrow IPC format
                     debug!("🔍 COMPACTION (non-atomic): Using ArrowBlockWriter for Arrow format");
@@ -1789,6 +1802,7 @@ impl Compaction {
         let extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",
+            BlockFormat::PaxBlock => "pax",
         };
         let filename = codec.generate(level as u32, extension);
         collection_dir.join(filename)

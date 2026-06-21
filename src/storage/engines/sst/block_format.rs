@@ -137,7 +137,7 @@ impl BlockFormatWriter {
     /// Write records to a file using the configured format
     pub fn write_records<P: AsRef<Path>>(&self, path: P, records: &[ProximaRecord]) -> Result<()> {
         match self.format {
-            BlockFormat::ProximaBlocks => {
+            BlockFormat::ProximaBlocks | BlockFormat::PaxBlock => {
                 // ProximaBlocks uses existing SST writer path
                 debug!("Using ProximaBlocks format for {}", path.as_ref().display());
                 Ok(()) // Caller handles ProximaBlocks writing
@@ -193,7 +193,7 @@ impl BlockFormatReader {
         vector_id: &str,
     ) -> Result<Option<ProximaRecord>> {
         match self.format {
-            BlockFormat::ProximaBlocks => {
+            BlockFormat::ProximaBlocks | BlockFormat::PaxBlock => {
                 // ProximaBlocks uses existing SST reader path
                 debug!(
                     "ProximaBlocks lookup for {} in {}",
@@ -213,7 +213,7 @@ impl BlockFormatReader {
     /// Read all records from a file
     pub fn read_all<P: AsRef<Path>>(&self, path: P) -> Result<Vec<ProximaRecord>> {
         match self.format {
-            BlockFormat::ProximaBlocks => {
+            BlockFormat::ProximaBlocks | BlockFormat::PaxBlock => {
                 debug!("ProximaBlocks read_all from {}", path.as_ref().display());
                 Ok(vec![]) // Caller handles ProximaBlocks reading
             }
@@ -232,7 +232,7 @@ impl BlockFormatReader {
         ids: &[&str],
     ) -> Result<Vec<(String, ProximaRecord)>> {
         match self.format {
-            BlockFormat::ProximaBlocks => {
+            BlockFormat::ProximaBlocks | BlockFormat::PaxBlock => {
                 debug!("ProximaBlocks batch_lookup in {}", path.as_ref().display());
                 Ok(vec![]) // Caller handles ProximaBlocks reading
             }

@@ -966,6 +966,11 @@ impl SstCompactor {
         );
 
         match block_format {
+            super::block_format::BlockFormat::PaxBlock => {
+                // PAX segment compaction lands in P3 Phase E. Fail closed until then.
+                // (Unreachable today: detect_format only yields Arrow/ProximaBlocks.)
+                anyhow::bail!("PAX segment compaction not yet supported (P3 Phase E)");
+            }
             super::block_format::BlockFormat::ArrowBlock => {
                 // Use ArrowBlockWriter for Arrow IPC format
                 debug!("🔍 SST_COMPACTOR: Using ArrowBlockWriter for Arrow format");
