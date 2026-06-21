@@ -68,6 +68,16 @@ the full `make test` (a dependent in another crate won't be picked up).
 drift — no compile, so it stays quick. Activate manually in an existing clone
 with `git config core.hooksPath .githooks`; bypass once with `git push --no-verify`.
 
+**Commit-msg hook (no agent attribution).** `.githooks/commit-msg` (same
+`core.hooksPath`) rejects AI-agent authorship attribution in commit messages —
+co-author trailers naming an agent, "Generated with ..." taglines, the robot
+emoji, and agent signatures (e.g. "Claude Opus", "Claude Code"). The human drives
+the code, not the agents. Mere mentions of `CLAUDE.md`/`GEMINI.md` or the
+Anthropic/OpenAI APIs are fine — only attribution is blocked. The same check runs
+in CI (`layering-check.yml`) over PR commits and the PR title/body (which becomes
+the squash-merge message); logic lives in `scripts/check_no_agent_attribution.py`.
+Bypass a single commit with `git commit --no-verify`.
+
 ## Lifecycle
 
 ```
