@@ -334,6 +334,19 @@ impl Tier {
         pricing_row(self).soft_caps.freshness_sla_seconds
     }
 
+    /// Parse a tier *claim* string (e.g. the `X-Tenant-Tier` header the control
+    /// plane stamps) into a `Tier`, honoring the serde aliases — so both the
+    /// canonical ids (`tier1`..`tier5`) and the legacy/commercial ids
+    /// (`free_trial`/`free`/`team`/`pro`/`business`/`enterprise`/…) resolve.
+    /// `None` for an unrecognized claim (caller falls back to the default tier).
+    pub fn from_claim(claim: &str) -> Option<Tier> {
+        let trimmed = claim.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        serde_json::from_value::<Tier>(serde_json::Value::String(trimmed.to_string())).ok()
+    }
+
     /// C5 governance tier-entitlement multiplier (Dimension 5) for this tier,
     /// read from the tier-config overlay. Neutral `1.0` when the overlay omits it
     /// (the OSS baseline) or supplies a non-finite/non-positive value (rejected
@@ -731,7 +744,7 @@ pub fn set_tenant_tier_resolver(resolver: Option<Box<TenantTierFn>>) {
 
 /// The configured default tier (`pricing().default_tier`, alias-aware), or
 /// [`Tier::default`] if it somehow fails to parse.
-fn default_tier() -> Tier {
+pub fn default_tier() -> Tier {
     let raw = serde_json::Value::String(pricing().default_tier.clone());
     serde_json::from_value::<Tier>(raw).unwrap_or_default()
 }
@@ -1010,6 +1023,21 @@ mod tests {
         for &t in Tier::all() {
             assert_eq!(t.cost_multiplier(), 1.0, "{t:?} baseline multiplier");
         }
+    }
+
+    #[test]
+    fn from_claim_parses_canonical_and_legacy_ids() {
+        // Canonical ids and the control-plane / legacy aliases both resolve.
+        assert_eq!(Tier::from_claim("tier1"), Some(Tier::Tier1));
+        assert_eq!(Tier::from_claim("free_trial"), Some(Tier::Tier1));
+        assert_eq!(Tier::from_claim("free"), Some(Tier::Tier1));
+        assert_eq!(Tier::from_claim("pro"), Some(Tier::Tier3));
+        assert_eq!(Tier::from_claim("business"), Some(Tier::Tier4));
+        assert_eq!(Tier::from_claim("enterprise"), Some(Tier::Tier5));
+        assert_eq!(Tier::from_claim("  tier5  "), Some(Tier::Tier5));
+        // Unknown / empty → None (caller uses the default tier).
+        assert_eq!(Tier::from_claim("nonsense"), None);
+        assert_eq!(Tier::from_claim(""), None);
     }
 
     #[test]

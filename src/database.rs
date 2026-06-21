@@ -116,6 +116,14 @@ impl ProximaDB {
         // measured cost of each (shape-class, backend). Observe-mode today —
         // routing is unchanged until a later flag-gated slice.
         crate::query::route_cost_model::install_route_cost_observer();
+        // Co-design C5 (integration): register the tenant→tier Port to read the
+        // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
+        // so the per-tenant tier the cache LimitsResolver already sees also drives
+        // the cost-multiplier — one tier source, no new authority. Installed here
+        // (depends on both catalog + services) to keep catalog free of a services dep.
+        crate::catalog::tenant_tier::set_tenant_tier_resolver(Some(Box::new(
+            crate::services::record_store::tenant_tier_resolved,
+        )));
         // Co-design C5: install the config-driven tier cost-multiplier resolver
         // (Dimension 5, the final Cost(q) term) into the route cost model. Reads
         // per-tier multipliers from the tier-config overlay (control-plane policy

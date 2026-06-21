@@ -3186,6 +3186,41 @@ pub fn tenant_tier(tenant_id: &str) -> Option<String> {
     TENANT_TIERS.get(tenant_id).map(|r| r.clone())
 }
 
+/// Resolve a tenant to its [`Tier`] from the header-fed registry above — the
+/// co-design C5 tenant→tier bridge. Parses the stamped claim via
+/// [`Tier::from_claim`] (alias-aware) and falls back to the configured default
+/// tier when no claim was stamped or it is unrecognized. This converges the
+/// header-fed tier source (the cache `LimitsResolver`) with the route cost
+/// model's tier multiplier — one tier registry, not two. Installed at startup
+/// into `tenant_tier::set_tenant_tier_resolver` (see `database.rs`).
+pub fn tenant_tier_resolved(tenant_id: &str) -> crate::catalog::tenant_tier::Tier {
+    tenant_tier(tenant_id)
+        .and_then(|claim| crate::catalog::tenant_tier::Tier::from_claim(&claim))
+        .unwrap_or_else(crate::catalog::tenant_tier::default_tier)
+}
+
+#[cfg(test)]
+mod tenant_tier_bridge_tests {
+    use super::*;
+    use crate::catalog::tenant_tier::{Tier, default_tier};
+
+    #[test]
+    fn resolves_stamped_tier_else_default() {
+        // Unique tenant ids so this never races sibling tests on the global map.
+        let unknown = "bridge-test-unknown-tenant";
+        assert_eq!(tenant_tier_resolved(unknown), default_tier());
+
+        let t = "bridge-test-pro-tenant";
+        set_tenant_tier(t, "pro"); // control-plane stamped X-Tenant-Tier: pro
+        assert_eq!(tenant_tier_resolved(t), Tier::Tier3);
+
+        // An unrecognized claim falls back to the default tier (fail-safe).
+        let bad = "bridge-test-bad-claim-tenant";
+        set_tenant_tier(bad, "not-a-tier");
+        assert_eq!(tenant_tier_resolved(bad), default_tier());
+    }
+}
+
 pub struct ObjectStoreVectorRecordStore {
     bridge: Arc<dyn ObjectStoreBridge>,
     footer_cache: Option<Arc<proximadb_storage_common::ranged_segment::FooterCache>>,
