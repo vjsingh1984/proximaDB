@@ -1,0 +1,55 @@
+= TD-126 Spec-driven, modular SDKs (stop hand-rolling the client surface)
+:toc:
+:toclevels: 3
+:sectnums:
+
+Status: Open / proposed +
+Date: 2026-06-21 +
+Owner: SDK / API surface
+
+== Context
+
+The client surface is hand-maintained three times (axum REST handlers, the hand-edited
+`docs/openapi/proximadb-openapi.yaml`, and N hand-written SDKs, linked only by `openapi_contract`
+tests), and the per-language packages are kitchen sinks (Python `proximadb_sdk` is ~86k `src/` LOC,
+of which the actual wire client is ~19k; the rest is chunking/embeddings/integrations). Full
+analysis + rationale: `docs/12-design/SDK_MODULARIZATION_AND_SPEC_DRIVEN_GENERATION_2026_06_21.adoc`.
+
+Goal: the wire client becomes *generated from a single source of truth per shape* (OpenAPI for
+REST, proto for gRPC) plus a thin hand-written ergonomic facade; the value-add libraries
+(chunking, embeddings, integrations) move into separate, opt-in packages.
+
+== Work (phased)
+
+. *Spec-from-code (foundational).* Add `utoipa` annotations to the REST handlers; emit
+  `proximadb-openapi.yaml` from the build; add a CI gate that fails on spec↔code drift. Removes the
+  hand-maintained spec copy.
+. *Pilot one generated SDK leg.* Pick one language (e.g. TypeScript REST via `openapi-ts`, or Go via
+  `oapi-codegen`): generate the transport + models, keep a thin hand-written ergonomic wrapper
+  (pooling/retries/locality-gzip/auth). Validate parity against the existing contract tests.
+. *Modularize Python.* Extract `chunking_strategies` -> `proximadb-chunking`, `embedding_providers`
+  + `llm` -> `proximadb-embeddings`, `integrations` + `adapters` -> `proximadb-langchain` /
+  `proximadb-llamaindex`. Reduce `proximadb` (core) to generated transport + facade with light deps;
+  expose the rest as extras.
+. *Roll out generation* to the remaining network SDKs (go, jvm, rust); retire the now-redundant
+  per-SDK contract tests (generation guarantees conformance).
+. *gRPC via `buf`.* Standardize proto -> stub codegen on `buf`; thin the hand-written gRPC wrappers.
+
+== Scope / non-goals
+
+* The `*-embedded` SDKs (maturin/FFI in-process) are NOT spec-generated — they stay hand-written.
+* pgwire (SQL) is not an SDK we generate — clients use a standard PostgreSQL driver.
+* This does not change wire behavior; it changes how the client code is produced and packaged.
+
+== Acceptance
+
+* `proximadb-openapi.yaml` is generated from the handlers with a CI drift gate (no hand edits).
+* At least one network SDK's transport + models are generated, behind a thin ergonomic facade,
+  passing the existing contract tests.
+* The Python core install is lightweight (no tree-sitter/onnx/langchain in the default dependency
+  set); chunking/embeddings/integrations are separate installable packages/extras.
+
+== Related
+
+* TD-121 (retire plain-SQL gRPC `ExecuteQuery` -> pgwire) — narrows the gRPC surface the SDK wraps.
+* `docs/SUPPORTED_SURFACE.adoc` query-surface taxonomy — the canonical surfaces the SDK core wraps.

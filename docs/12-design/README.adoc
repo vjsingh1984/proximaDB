@@ -115,6 +115,13 @@ Read these in order for future-shaping architecture work:
    (graph/event/audit as first-class layouts). The macro generalization of tenant catalog-resolution.
    Subordinate to the 2026-06-04 course correction and `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
 
+20. `SDK_MODULARIZATION_AND_SPEC_DRIVEN_GENERATION_2026_06_21.adoc` +
+   Stop hand-rolling clients: make the OpenAPI spec `utoipa`-generated from the REST handlers,
+   generate transport+models per shape (OpenAPI for REST, proto/buf for gRPC) behind a thin
+   hand-written ergonomic facade, and split the kitchen-sink per-language packages (e.g. Python's
+   ~86k `proximadb_sdk`, of which the wire client is only ~19k) into focused, opt-in packages
+   (core client / chunking / embeddings / integrations). Tracked as TD-126.
+
 == Stable Reference Docs
 
 * `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and
