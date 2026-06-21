@@ -256,7 +256,9 @@ class ProximaDBSyncGrpcClient:
         self,
         server_address: str,
         timeout: float = 60.0,
-        enable_compression: bool | None = None,  # None = auto: gzip FAR clients, skip LOCAL
+        enable_compression: (
+            bool | None
+        ) = None,  # None = auto: gzip FAR clients, skip LOCAL
         compression_algorithm: str = "gzip",
         pool_size: int = 5,
         max_message_size: int = 64 * 1024 * 1024,
@@ -627,7 +629,10 @@ class ProximaDBSyncGrpcClient:
                 )
                 resp = stub.ExecuteQuery(req, timeout=self.timeout)
                 rows = [
-                    {k: self._v2_typed_value_to_python(v) for k, v in row.values.items()}
+                    {
+                        k: self._v2_typed_value_to_python(v)
+                        for k, v in row.values.items()
+                    }
                     for row in resp.rows
                 ]
                 return {
