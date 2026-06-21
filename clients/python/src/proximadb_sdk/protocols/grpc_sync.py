@@ -220,6 +220,29 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+def _endpoint_is_far(server_address: str) -> bool:
+    """KOU locality heuristic: is this endpoint remote (-> compress) or local (-> skip)?
+
+    LOCAL/free (no gzip): loopback, RFC1918 private, link-local, ``localhost``,
+    ``*.local``. FAR/chargeable (gzip by default): any public host/IP -- the
+    common internet / cross-region / cross-cloud case. Mirrors the gateway's
+    far-client gzip (anvaiops #168) and the KOU egress model (proximaDB #110).
+    """
+    import ipaddress
+
+    host = server_address.split("://", 1)[-1].rsplit(":", 1)[0].strip("[]")
+    if not host or host == "localhost" or host.endswith(".local"):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+        return not (
+            ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_unspecified
+        )
+    except ValueError:
+        # A non-localhost DNS hostname -> assume remote (far).
+        return True
+
+
 class ProximaDBSyncGrpcClient:
     """
     High-performance synchronous gRPC client with connection pooling
@@ -234,7 +257,7 @@ class ProximaDBSyncGrpcClient:
         self,
         server_address: str,
         timeout: float = 60.0,
-        enable_compression: bool = False,  # Disabled by default - server doesn't support gzip yet
+        enable_compression: bool | None = None,  # None = auto: gzip FAR clients, skip LOCAL
         compression_algorithm: str = "gzip",
         pool_size: int = 5,
         max_message_size: int = 64 * 1024 * 1024,
@@ -245,13 +268,19 @@ class ProximaDBSyncGrpcClient:
             server_address: gRPC server address. Use "localhost:5678" for unified port mode
                            (recommended) or "localhost:5679" for legacy multi-port mode.
             timeout: Request timeout in seconds
-            enable_compression: Enable gRPC compression (default: False - server requires config)
+            enable_compression: gzip compression. None (default) auto-enables for far/remote
+                           endpoints and skips local ones (the server supports gzip). True/False forces.
             compression_algorithm: Compression algorithm ('gzip', default: 'gzip')
             pool_size: Number of gRPC channels in pool (default: 5)
             max_message_size: Maximum message size in bytes (default: 64MB)
         """
         self.server_address = server_address
         self.timeout = timeout
+        # KOU egress decision: compress by default for FAR clients (internet /
+        # cross-region / cross-cloud); skip LOCAL/embedded to save CPU. None
+        # auto-detects from the endpoint; True/False overrides.
+        if enable_compression is None:
+            enable_compression = _endpoint_is_far(server_address)
         self.enable_compression = enable_compression
         self.compression_algorithm = compression_algorithm.lower()
         self.pool_size = pool_size
