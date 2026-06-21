@@ -36,7 +36,9 @@ use proximadb_storage_common::{
     ranged_segment::RangedSegmentReader,
 };
 
-use crate::metrics::consumption_metrics::record_object_store_op;
+use crate::metrics::consumption_metrics::{
+    object_store_egress_locality, record_egress_bytes, record_object_store_op,
+};
 use crate::observability::io_trace;
 use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
@@ -3229,6 +3231,14 @@ impl ObjectStoreVectorRecordStore {
                     anyhow!("ObjectStoreVectorRecordStore failed to fetch '{path}': {err}")
                 })?;
             io_trace::record_bytes_read(bytes.len() as u64);
+            // KEU egress (Dimension 2): the fetched bytes left object storage for
+            // compute. Metered per-(tenant, locality); only chargeable (cross-AZ /
+            // internet) localities feed the cost model's egress term.
+            record_egress_bytes(
+                tenant_id,
+                object_store_egress_locality(),
+                bytes.len() as u64,
+            );
             records.extend(pax_segment_to_records(bytes, schema)?);
         }
         Ok(records)
@@ -3448,6 +3458,8 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             io_trace::record_bytes_read(st.bytes_read);
             io_trace::record_range_gets(st.range_gets);
             io_trace::record_footers(st.footer_hits, st.footer_misses);
+            // KEU egress (Dimension 2): ranged-read bytes that left object storage.
+            record_egress_bytes(tenant_id, object_store_egress_locality(), st.bytes_read);
             for mut record in recs {
                 record.variation_id = Some(table_schema.name.clone());
                 if predicate.is_none_or(|p| p(&record)) {
