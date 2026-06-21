@@ -245,7 +245,11 @@ class ProximaRecordServiceServicer(object):
         raise NotImplementedError("Method not implemented!")
 
     def ExecuteQuery(self, request, context):
-        """SQL query (v2 parity with v1 QueryService)"""
+        """DEPRECATED: SQL over gRPC is deprecated. pgwire (the PostgreSQL wire
+        protocol) is the canonical SQL surface; connect any PostgreSQL driver and
+        run SQL there. gRPC owns record/vector/collection operations, not SQL.
+        This RPC will be removed in a future release (see TD-121).
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
