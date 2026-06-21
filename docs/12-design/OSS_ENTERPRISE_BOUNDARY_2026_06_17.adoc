@@ -114,7 +114,11 @@ The trace-driven route cost model (`src/query/route_cost_model.rs`) completes th
 egress *cost* term is zero until a cross-AZ topology is declared). OSS never
 holds a $ figure or the real AZ topology — anvaiops multiplies the metered bytes
 by its per-`az_locality` KEU rate. This is the `MeteringSink` port specialized to
-the previously-unmetered networking dimension.
+the previously-unmetered networking dimension. *Quantity delivery is wired:* the
+per-query egress GiB is surfaced as `SearchPlanTrace.actual_egress_gb` in the
+search-response envelope (mirroring `actual_scan_gb`/KRU) and carried on the
+metering event; anvaiops parses it and writes an `event_type="egress"` billing
+tick only when non-zero. Same-AZ (free) deployments report 0 and emit nothing.
 
 . **Tier-entitlement multiplier port (OSS) → tier policy (anvaiops).**
 `set_tier_multiplier_resolver(Fn(&str /*tenant_id*/) -> f64)` is the OSS port; the

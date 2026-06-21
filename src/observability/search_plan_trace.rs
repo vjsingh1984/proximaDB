@@ -149,6 +149,15 @@ pub struct SearchPlanTrace {
     pub estimated_scan_gb: Option<f64>,
     /// Bytes actually scanned — the KRU billing value.
     pub actual_scan_gb: f64,
+    /// Bytes actually moved out of object storage across an AZ / to the internet
+    /// for this query, in GiB — the **KEU egress** billing value (co-design
+    /// Dimension 2). Sourced from the per-query `io_trace.bytes_cross_az`, so it
+    /// is **0 on the free same-AZ path** (the default) and non-zero only once a
+    /// cross-AZ object-store topology is declared. The control plane prices it by
+    /// AZ locality; the engine reports only the neutral quantity. `#[serde(default)]`
+    /// keeps older traces (and OSS builds that don't populate it) wire-compatible.
+    #[serde(default)]
+    pub actual_egress_gb: f64,
 
     // ── Per-index counters (also surfaced in IndexStats for backward compat) ─
     /// Index counters bundled for legacy gateway consumption.
@@ -237,6 +246,7 @@ impl SearchPlanTrace {
             gls_score: None,
             estimated_scan_gb: None,
             actual_scan_gb: 0.0,
+            actual_egress_gb: 0.0,
             index_stats: IndexStats::default(),
             candidate_count: 0,
             rerank_count: 0,

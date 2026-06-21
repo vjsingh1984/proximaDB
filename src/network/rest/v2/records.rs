@@ -1573,6 +1573,7 @@ pub async fn search_with_typed_filters(
         cold_stage1_only,
         turboquant_hints,
         vector_bounds_pruned_blocks,
+        egress_bytes,
     ) = crate::observability::io_trace::instrument(
         Some(tenant.tenant_id.clone()),
         "rest.v2.records.search",
@@ -1599,7 +1600,22 @@ pub async fn search_with_typed_filters(
             // `SearchPlanHints.turboquant` (Phase J) and
             // `VectorHints.turboquant` (Phase F).
             let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
-            (outcome, downgraded, cold_stage1, tq_hints, vb_pruned)
+            // C3 egress delivery: read the per-query cross-AZ bytes from the
+            // active io_trace BEFORE this scope closes (the task-local binding
+            // ends when this future completes — same constraint as the takes
+            // above). 0 on the free same-AZ path. Flowed into the response
+            // SearchPlanTrace as actual_egress_gb (the KEU billing quantity).
+            let egress_bytes = crate::observability::io_trace::snapshot()
+                .map(|s| s.bytes_cross_az)
+                .unwrap_or(0);
+            (
+                outcome,
+                downgraded,
+                cold_stage1,
+                tq_hints,
+                vb_pruned,
+                egress_bytes,
+            )
         }),
     )
     .await;
@@ -1727,6 +1743,10 @@ pub async fn search_with_typed_filters(
                     // builder skips the derivation and leaves
                     // actual_scan_gb at 0.0.
                     bytes_per_vector: 0.0,
+                    // C3 egress (Dimension 2): per-query cross-AZ bytes captured
+                    // in-scope above → actual_egress_gb (the KEU billing quantity
+                    // the control plane prices). 0 on the free same-AZ path.
+                    egress_bytes,
                     // TD-064: shortfall pulled from the task-local
                     // diagnostics bus established above. `None` when
                     // no AxisManager-level shortfall was recorded
