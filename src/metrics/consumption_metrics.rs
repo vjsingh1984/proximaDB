@@ -493,6 +493,44 @@ impl EdgePolicyContext {
     pub fn record_result_egress(&self, tenant_id: Option<&str>, bytes: u64) {
         record_kou_bytes(tenant_id, self.kou_locality, "result", bytes);
     }
+
+    /// The egress-aware result-shaping decision for this request (see
+    /// [`ResultShapePolicy`]).
+    pub fn shape_policy(&self) -> ResultShapePolicy {
+        ResultShapePolicy::for_locality(self.kou_locality)
+    }
+}
+
+/// Egress-aware result-shaping decision, derived from a request's KOU locality.
+/// This is the one place the edge decides *how* to serialize a response based on
+/// where the client is — the EdgePolicyPlane "shaping stage" consulted by every
+/// surface (Arrow Flight compression, REST advisory) so the policy is uniform and
+/// not re-derived per surface.
+///
+/// Active for chargeable/far clients but **lossless only by default**: it enables
+/// byte-minimization (compression / columnar density) that the client decodes
+/// transparently — it never drops or truncates results. Lossy levers (result
+/// caps, reduced rerank) are intentionally NOT decided here; they require an
+/// explicit, signaled opt-in. The $ weight of "far" stays anvaiops policy; OSS
+/// keys purely on the neutral locality bucket.
+#[derive(Debug, Clone, Copy)]
+pub struct ResultShapePolicy {
+    /// The locality this decision was derived from.
+    pub kou_locality: KouLocality,
+    /// Prefer compressing the result body (lossless). Set for chargeable
+    /// (cross-region/-cloud/on-prem/internet) clients where egress dominates.
+    pub compress: bool,
+}
+
+impl ResultShapePolicy {
+    /// Derive the shaping decision from a KOU locality. Compression is on for
+    /// chargeable localities, off on the free path (saves CPU for near clients).
+    pub fn for_locality(kou_locality: KouLocality) -> Self {
+        Self {
+            kou_locality,
+            compress: kou_locality.is_chargeable_egress(),
+        }
+    }
 }
 
 /// Helper to record an object store operation.
@@ -806,5 +844,33 @@ mod tests {
         // Recording result-egress on the free path mutates no trace.
         unspec.record_result_egress(Some("t"), 4096);
         assert!(io_trace::snapshot().is_none());
+    }
+
+    #[test]
+    fn shape_policy_compresses_only_for_chargeable_clients() {
+        // Lossless byte-minimization is on for far/chargeable clients (egress
+        // dominates), off on the free path (save CPU) and for Unknown (never act
+        // on an unclassified client).
+        for loc in [
+            KouLocality::CrossRegion,
+            KouLocality::CrossCloud,
+            KouLocality::OnPrem,
+            KouLocality::Internet,
+        ] {
+            assert!(ResultShapePolicy::for_locality(loc).compress, "{loc:?}");
+        }
+        for loc in [
+            KouLocality::Local,
+            KouLocality::CrossAz,
+            KouLocality::Unknown,
+        ] {
+            assert!(!ResultShapePolicy::for_locality(loc).compress, "{loc:?}");
+        }
+        // EdgePolicyContext exposes the same decision for a loopback (free) caller.
+        assert!(
+            !EdgePolicyContext::classify("127.0.0.1".parse().unwrap())
+                .shape_policy()
+                .compress
+        );
     }
 }

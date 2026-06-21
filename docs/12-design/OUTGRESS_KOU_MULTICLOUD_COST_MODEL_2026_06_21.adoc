@@ -100,6 +100,27 @@ surface `cross_az` / `cross_region` / `cross_cloud` / `internet` as distinct met
 tiers so users self-select cheap topologies; default unknown placement to free +
 WARN (visible), never silent.
 
+== 3a. Egress-aware response shaping (active, lossless-by-default)
+
+Client locality drives *how* a result is serialized, not just how it is billed
+(`ResultShapePolicy`, the EdgePolicyPlane shaping stage). For a chargeable (far)
+client, shaping is **active** but **lossless**: the bytes are minimized in a way
+the client decodes transparently — results are never silently dropped.
+
+* *Arrow Flight* (OSS engine, `do_get`): chargeable client ⇒ encode batches with
+  ZSTD (Arrow IPC decompresses transparently). Near/free clients stay uncompressed
+  (save CPU). Result-egress is metered on the *actual encoded* bytes, so the meter
+  reflects the compressed egress that really left.
+* *REST* (anvaiops gateway, the dominant internet boundary): chargeable client that
+  accepts gzip ⇒ gzip the response; meter the *compressed* bytes (never the
+  uncompressed size). Free-path clients are untouched.
+* *Lossy* levers (result caps, reduced rerank) are deliberately NOT on by default —
+  a database must not silently truncate; they require an explicit, signaled opt-in
+  (tier/config), surfaced via the existing truncation/`PortalSuspended` path.
+* OSS REST compression at the engine is deferred on purpose: it would strip the
+  `Content-Length` the result-egress meter reads, so engine REST stays metered and
+  the gateway owns REST compression.
+
 == 4. Open gaps (honest — re-pin before quoting)
 
 * Exact Azure Private Link *deeper* data-processing tiers (canonical bandwidth /
