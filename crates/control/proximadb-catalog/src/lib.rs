@@ -1784,6 +1784,17 @@ pub struct CatalogProjection {
     /// is the catalog-resolution of index/MV addressing (CATALOG_OBJECT_MODEL P1).
     #[serde(default)]
     pub location: Option<String>,
+    /// Storage tier (capability class) for this projection's materialized bytes —
+    /// the per-projection tiering knob (CATALOG_OBJECT_MODEL #4). A *capability*
+    /// tag (cost/CRR/KMS/monitoring class), NOT a path selector: physical placement
+    /// is carried by [`location`](Self::location), which an operator/control-plane
+    /// sets to the chosen tier's bucket (e.g. hot RaBitQ codes → premium, cold f32
+    /// rerank → standard). `None` inherits the owning namespace's
+    /// [`StoragePoolClass`] (see [`effective_tier`](Self::effective_tier)); `Some`
+    /// overrides it for this projection. Automated tier→bucket resolution is a
+    /// deferred follow-up.
+    #[serde(default)]
+    pub tier: Option<StoragePoolClass>,
     /// Additional implementation-specific metadata.
     pub properties: HashMap<String, String>,
 }
@@ -1813,6 +1824,7 @@ impl CatalogProjection {
             benchmark_gate: None,
             support_status: "experimental".to_string(),
             location: None,
+            tier: None,
             properties: HashMap::new(),
         }
     }
@@ -1830,6 +1842,22 @@ impl CatalogProjection {
     pub fn with_location(mut self, location: impl Into<String>) -> Self {
         self.location = Some(location.into());
         self
+    }
+
+    /// Set this projection's storage tier (capability class) — the per-projection
+    /// tiering override (CATALOG_OBJECT_MODEL #4). `None` (the default) inherits the
+    /// owning namespace's tier; see [`effective_tier`](Self::effective_tier).
+    pub fn with_tier(mut self, tier: StoragePoolClass) -> Self {
+        self.tier = Some(tier);
+        self
+    }
+
+    /// The effective storage tier for this projection: its own `tier` when set,
+    /// otherwise the owning namespace's `StoragePoolClass`. This is the single
+    /// rule for resolving a projection's tier (placement still flows through
+    /// [`location`](Self::location); the tier is a capability/cost-accounting class).
+    pub fn effective_tier(&self, namespace_tier: StoragePoolClass) -> StoragePoolClass {
+        self.tier.unwrap_or(namespace_tier)
     }
 
     /// Attach a quantitative rebuild RTO specification.
@@ -3386,6 +3414,53 @@ mod tests {
         );
         assert!(projection.rebuildable);
         assert!(!projection.lossy);
+    }
+
+    #[test]
+    fn projection_tier_is_capability_tag_that_inherits_or_overrides() {
+        // Default: no per-projection tier → inherits the namespace's pool class.
+        let base = CatalogProjection::rebuildable(
+            "orders_hnsw",
+            CatalogProjectionKind::VectorAnn,
+            "orders.primary",
+        );
+        assert_eq!(base.tier, None);
+        assert_eq!(
+            base.effective_tier(StoragePoolClass::Standard),
+            StoragePoolClass::Standard
+        );
+        assert_eq!(
+            base.effective_tier(StoragePoolClass::Pooled),
+            StoragePoolClass::Pooled
+        );
+
+        // Explicit override wins over the namespace tier (e.g. hot ANN on premium).
+        let hot = base.clone().with_tier(StoragePoolClass::Premium);
+        assert_eq!(hot.tier, Some(StoragePoolClass::Premium));
+        assert_eq!(
+            hot.effective_tier(StoragePoolClass::Standard),
+            StoragePoolClass::Premium
+        );
+
+        // Tier is a capability tag; physical placement still flows through `location`,
+        // independent of the tier class.
+        let placed = hot.with_location("s3://premium-bucket/idx/ann/");
+        assert_eq!(
+            placed.location.as_deref(),
+            Some("s3://premium-bucket/idx/ann/")
+        );
+        assert_eq!(
+            placed.effective_tier(StoragePoolClass::Standard),
+            StoragePoolClass::Premium
+        );
+
+        // serde round-trips the tier; an absent tier stays `None` (serde default).
+        let json = serde_json::to_string(&placed).unwrap();
+        let back: CatalogProjection = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.tier, Some(StoragePoolClass::Premium));
+        let default_json = serde_json::to_string(&base).unwrap();
+        let default_back: CatalogProjection = serde_json::from_str(&default_json).unwrap();
+        assert_eq!(default_back.tier, None);
     }
 
     #[test]
