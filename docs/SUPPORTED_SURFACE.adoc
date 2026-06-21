@@ -65,6 +65,49 @@ REST `/api/v2` is the **sole canonical surface** for all ProximaDB clients as of
   **Sunset 2026-06-30**; clients must migrate to `proximadb.v2.*` before that date.
 ====
 
+=== Query Surfaces (which language goes where)
+
+Query languages are served by distinct, non-overlapping surfaces. pgwire is *not* a universal
+query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
+
+[cols="1,2,2,1"]
+|===
+| Surface | Language(s) | Use for | Status
+
+| *pgwire* (PostgreSQL wire)
+| ANSI *SQL* (DataFusion execution)
+| SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
+| Supported
+
+| *REST/gRPC `/api/v2/query`* (unified query port)
+| *UQL* (unified multi-modal), *Federated* SQL extensions, *AQL*
+| ProximaDB-native cross-modal queries (vector + graph + relational) that SQL cannot express.
+| UQL/Federated Supported; AQL Planned
+
+| *gRPC `proximadb.v2.ProximaGraphService`*
+| Graph node/edge/traversal/shortest-path RPCs
+| Programmatic graph access from the SDK.
+| Supported
+
+| *Graph `ExecuteQuery`* (Cypher/Gremlin)
+| Declarative graph query
+| Deferred — TD-124.
+| Planned
+|===
+
+[NOTE]
+====
+* pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
+  unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
+* The plain-SQL gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery` RPC is *deprecated* in
+  favour of pgwire (TD-121); it is the only SQL path on gRPC/REST being retired. The
+  `/api/v2/query` UQL/Federated surface is *not* deprecated.
+* *Apache Calcite*, if adopted, is an *internal* federated-SQL planner behind pgwire and the
+  Federated path — not a client surface, and not a substitute for the non-SQL languages.
+* SSO/governance (auth, RLS, tenancy) is enforced uniformly at the `TenantContext` I/O boundary,
+  independent of query language — never as a per-language interface.
+====
+
 == Status Tiers
 
 |===
