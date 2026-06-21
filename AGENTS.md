@@ -13,7 +13,7 @@ ProximaDB is undergoing a massive architectural shift to support a robust SaaS M
 
 1.  **Intelligent Multi-Engine Routing:** We do not have a single physical execution layer. We route queries based on workload profiles.
     *   **DataFusion & Polars:** Used for analytical (OLAP) and standard relational workloads over decoupled Object Storage (Iceberg/Parquet).
-    *   **Volcano & Specialized Engines (SST, VIPER, NOVA):** Used for low-latency point lookups (OLTP) and high-performance Vector/ANN searches over PAX block formats.
+    *   **Volcano & Specialized Engines (SST, HELIX, VIPER, SWIFT, NOVA, RAPTOR):** Used for low-latency point lookups (OLTP) and high-performance Vector/ANN searches over PAX block formats.
 2.  **SaaS Mandates:**
     *   **Isolation:** Multi-tenant path isolation via `DrPathBuilder` is mandatory. Do not write to root directories or raw schema locations.
     *   **Billing:** Code boundaries crossing into I/O or heavy compute must accept `TenantContext` to emit Prometheus metrics for billing.
