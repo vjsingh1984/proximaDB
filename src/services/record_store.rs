@@ -824,6 +824,19 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
             .scan_records_filtered(table_schema, request, predicate, tenant_context)
             .await
     }
+
+    /// CDC change-feed: relational changes live in the relational (iceberg) route — the
+    /// WAL-backed store — so delegate there. Without this override the routing store would
+    /// fall through to the empty trait default, hiding pgwire writes from the change-feed.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        self.iceberg_store
+            .read_changes_since(collection_id, since_lsn)
+            .await
+    }
 }
 
 /// Compatibility implementation backed by `VectorOps`.

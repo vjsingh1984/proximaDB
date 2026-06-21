@@ -52,6 +52,7 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
 4.  **Safety First:** NO `.unwrap()`, `.expect()`, or `panic!()` in production code. Use `Result` and `?`.
 5.  **Token Efficiency:** When running long-output commands, use `grep` with context flags.
 6.  **Measure, Don't Assert:** Gate performance claims on the evidence ledger (`BENCHMARK_EVIDENCE.toml`); reject "indicative" kernel benchmarks masquerading as end-to-end metrics.
+7.  **PR Sizing for CI Efficiency (batch related work):** GitHub Actions runners are a shared, finite resource and every PR/push triggers a full CI run — so do NOT slice cohesive work into many small PRs. Consolidate related commits (a feature + its tests + docs + adjacent follow-ups) into a single **medium-to-large, "meaty" but coherent** PR: large enough to amortize one CI run across all the work, small enough to stay reviewable and single-purpose. Avoid both extremes — trivial one-commit PRs that each cost a full runner cycle, and sprawling unfocused mega-PRs that are hard to review or bisect. When you have stacked or independent branches headed to the same base, rebase them onto one branch and open **one** PR rather than N. Always verify locally (`cargo clippy`/tests) before pushing so a runner cycle isn't spent catching what you could have caught locally.
 
 ### Mandate: Full ANSI SQL over pgwire
 ProximaDB is driving toward **full ANSI/standard SQL support over the PostgreSQL

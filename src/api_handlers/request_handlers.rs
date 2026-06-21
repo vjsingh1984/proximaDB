@@ -400,6 +400,21 @@ impl UnifiedHandlers {
         self.record_ops.get_dml_service()
     }
 
+    /// CDC change-feed: row-level changes for `table` with WAL sequence number strictly
+    /// greater than `since_lsn`, oldest first. Backed by the unified canonical `DmlService`
+    /// (the single cross-surface record store), so it reflects writes from EVERY protocol
+    /// — REST/gRPC/pgwire. Returns empty when no DmlService is wired.
+    pub async fn table_changes(
+        &self,
+        table: &str,
+        since_lsn: u64,
+    ) -> anyhow::Result<Vec<crate::services::record_store::ChangeRow>> {
+        match self.get_dml_service() {
+            Some(dml) => dml.changes_since(table, since_lsn).await,
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// Post-construction setter for the canonical-precision resolver.
     /// Called once at server bootstrap (`ProximaDB::new` in
     /// `src/database.rs`) so the v1 vector-batch path can coerce

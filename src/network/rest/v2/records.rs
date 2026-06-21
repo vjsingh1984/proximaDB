@@ -2302,6 +2302,40 @@ fn proxima_record_to_response(
     }
 }
 
+/// Query parameters for the CDC change-feed endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct ChangesQuery {
+    /// Return changes with WAL sequence number strictly greater than this (default 0 = all).
+    #[serde(default)]
+    pub since_lsn: u64,
+}
+
+/// `GET /api/v2/collections/{collection_id}/changes?since_lsn=N` — CDC change-feed.
+///
+/// Returns row-level changes (op + lsn + after-image) for the table, ordered by lsn, from
+/// the unified canonical store — so it reflects writes made over ANY surface (REST/gRPC/
+/// pgwire). The cursor is the `lsn`: pass the highest seen `lsn` back as `since_lsn` to poll
+/// incrementally.
+pub async fn get_changes(
+    Path(collection_id): Path<String>,
+    State(state): State<AppState>,
+    Query(q): Query<ChangesQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let changes = state
+        .request_handlers
+        .table_changes(&collection_id, q.since_lsn)
+        .await
+        .map_err(|e| ApiError::Internal(format!("change-feed read failed: {e}")))?;
+    let next_lsn = changes.iter().map(|c| c.lsn).max();
+    Ok(Json(serde_json::json!({
+        "collection": collection_id,
+        "since_lsn": q.since_lsn,
+        "count": changes.len(),
+        "next_lsn": next_lsn,
+        "changes": changes,
+    })))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
