@@ -21,7 +21,9 @@
 use std::path::Path;
 
 use anyhow::Result;
+use proximadb_block_format::prune::{FieldToColumn, PruneResult, evaluate_block};
 use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode, VectorQuant, col_id};
+use proximadb_filter_expression::FilterExpression;
 use proximadb_records::ProximaRecord;
 use proximadb_storage_common::pax_block::{
     PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
@@ -128,27 +130,70 @@ pub struct CascadeHit {
     pub distance: f32,
 }
 
+/// A metadata pre-prune for the cascade scan: a [`FilterExpression`] plus the
+/// field→column resolver that maps its leaf field names to canonical PAX column
+/// ids. Threaded through [`rabitq_search_segment`] so a block whose zone maps
+/// provably exclude the predicate is skipped **before** the (expensive) RaBitQ
+/// vector pass — the cheapest, most-selective stage of the pruning cascade.
+pub struct MetaPrune<'a> {
+    pub filter: &'a FilterExpression,
+    pub field_to_col: &'a FieldToColumn<'a>,
+}
+
+/// Canonical resolver from a filter field name to its PAX column id for
+/// block/row-group pruning — the single mapper shared by every PAX prune path
+/// (the relational ranged `read_records_pruned` scan and the RaBitQ cascade's
+/// [`MetaPrune`]). Only the fixed canonical columns carry zone-map stripes; user
+/// metadata lives in opaque `props` (not prunable), so unknown fields return
+/// `None` and the pruner conservatively keeps the block (no false negatives).
+///
+/// A plain `fn` (not a closure) so it coerces to both `&FieldToColumn` and the
+/// `Sync` form the object-storage ranged path requires.
+pub(crate) fn pax_field_to_col(field: &str) -> Option<i32> {
+    match field {
+        "id" | "oid" => Some(col_id::OID),
+        "tenant_id" => Some(col_id::TENANT_ID),
+        "created_at" | "created_at_ns" => Some(col_id::CREATED_AT),
+        "updated_at" | "updated_at_ns" => Some(col_id::UPDATED_AT),
+        "valid_from" | "valid_from_ns" => Some(col_id::VALID_FROM),
+        "valid_to" | "valid_to_ns" => Some(col_id::VALID_TO),
+        _ => None,
+    }
+}
+
 /// Cold-scan a PAX+RaBitQ segment for the `k` nearest neighbours of `query` using
-/// the co-designed cascade (P3 C.2): per block, the RaBitQ codes drive a cheap
-/// candidate prefilter (`pool` rows via `rabitq_rank`), then ONLY those candidates
-/// are reranked against the co-located SQ8 column (`rerank_rows`) — full f32 is
-/// never decoded. Hits merge across blocks into a global top-`k` (nearest-first).
+/// the co-designed cascade (P3 C.2): per block, an optional **metadata stats
+/// pre-prune** skips blocks the predicate provably excludes (the cheap pre-vector
+/// filter), then the RaBitQ codes drive a candidate prefilter (`pool` rows via
+/// `rabitq_rank`), and ONLY those candidates are reranked against the co-located
+/// SQ8 column (`rerank_rows`) — full f32 is never decoded. Hits merge across
+/// blocks into a global top-`k` (nearest-first).
+///
+/// `prune` runs first because it moves the dominant cost term (I/O round-trips):
+/// a skipped block reads neither its codes stripe nor any SQ8 candidate, so the
+/// trace below records fewer bytes/gets for a selective query than the unpruned
+/// baseline. Pruning is conservative (a block is skipped only if it *cannot*
+/// match), so it never drops a true match; final per-row metadata filtering
+/// remains the caller's responsibility (consistent with the materialize-and-score
+/// search path).
 ///
 /// Returns `Ok(None)` when `bytes` is not a PAX segment, or is a PAX segment with
 /// no RaBitQ-coded embedding (e.g. SQ8/raw): the caller then falls back to its
 /// normal materialize-and-score path, so this is additive and mixed-read-safe.
 ///
-/// Emits a query-scoped I/O trace (`bytes_read` for the segment + one range-get)
-/// into the active [`io_trace`](crate::observability::io_trace) scope so the
-/// dimension this touches is observable per the co-design measure-first mandate;
-/// outside a scope the trace calls silently no-op. The compute win — scanning
-/// ~30× RaBitQ codes and decoding SQ8 for only the `pool` candidates rather than
-/// f32 for every row — is the cost term this route moves.
+/// Emits a query-scoped I/O trace into the active
+/// [`io_trace`](crate::observability::io_trace) scope (no-op outside one),
+/// modelling the cascade's *logical* reads per kept block — the RaBitQ codes
+/// stripe (stage 1) plus the candidate SQ8 bytes (stage 2). Pruned blocks
+/// contribute nothing, so the trace makes the pruning win observable per the
+/// co-design measure-first mandate. (Whole-segment transport bytes are traced by
+/// the caller that fetched them; ranged codes-only fetches are a follow-up.)
 pub fn rabitq_search_segment(
     bytes: &[u8],
     query: &[f32],
     k: usize,
     pool: usize,
+    prune: Option<MetaPrune<'_>>,
 ) -> Result<Option<Vec<CascadeHit>>> {
     use crate::observability::io_trace;
 
@@ -156,16 +201,20 @@ pub fn rabitq_search_segment(
         return Ok(None);
     }
     let mut scanner = PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())?;
-    // Per-query I/O trace: the cold scan reads the segment once. (Ranged
-    // codes-only + candidate-only SQ8 fetches are a follow-up once the scan is
-    // driven by RangedSegmentReader against object storage.)
-    io_trace::record_bytes_read(bytes.len() as u64);
-    io_trace::record_range_gets(1);
 
     let pool = pool.max(k);
     let mut any_rabitq = false;
     let mut hits: Vec<CascadeHit> = Vec::new();
     while let Some(block) = scanner.next_block() {
+        // Stage 0: metadata stats pre-prune. Skip the whole block — no codes, no
+        // SQ8 — when its zone maps provably exclude the predicate (conservative:
+        // `Skip` only when the block cannot match, so no true match is lost).
+        if let Some(mp) = &prune
+            && evaluate_block(&block, mp.filter, mp.field_to_col) == PruneResult::Skip
+        {
+            continue;
+        }
+
         // Stage 1: RaBitQ candidate prefilter on the hot codes column. A block
         // whose EMBED_BASE isn't RaBitQ-encoded yields `None` and is skipped
         // (mixed-quant segments stay safe).
@@ -173,6 +222,23 @@ pub fn rabitq_search_segment(
             continue;
         };
         any_rabitq = true;
+
+        // Trace the cascade's logical reads for this kept block: the RaBitQ codes
+        // stripe (stage 1) + the SQ8 bytes decoded for the candidate pool (stage 2).
+        let dim = block
+            .vector_params()
+            .get(col_id::EMBED_BASE)
+            .map(|e| e.dim as u64)
+            .unwrap_or(0);
+        let codes_len = block
+            .column_metas()
+            .iter()
+            .find(|m| m.column_id == col_id::EMBED_BASE)
+            .map(|m| m.stripe_len as u64)
+            .unwrap_or(0);
+        io_trace::record_bytes_read(codes_len + cand.len() as u64 * dim);
+        io_trace::record_range_gets(1);
+
         // Stage 2: SQ8 cascade rerank over ONLY the candidate rows (no f32 GET).
         // Without a co-located SQ8 column, keep the RaBitQ-coarse order.
         let scored = block.rerank_rows(0, query, &cand).unwrap_or_else(|| {
@@ -444,7 +510,7 @@ mod tests {
                     .map(|(v, n)| v + n * 0.01)
                     .collect();
 
-                let hits = rabitq_search_segment(&bytes, &query, K, POOL)
+                let hits = rabitq_search_segment(&bytes, &query, K, POOL, None)
                     .unwrap()
                     .expect("PAX+RaBitQ segment must run the cascade");
                 let got: std::collections::HashSet<String> =
@@ -479,10 +545,127 @@ mod tests {
         .serialize()
         .unwrap();
         assert!(
-            rabitq_search_segment(&legacy, &vec![0.0; DIM], K, POOL)
+            rabitq_search_segment(&legacy, &vec![0.0; DIM], K, POOL, None)
                 .unwrap()
                 .is_none(),
             "non-PAX input must return None (caller falls back)"
+        );
+    }
+
+    /// P3 metadata stats pre-prune — the round-trip lever. A multi-block PAX+RaBitQ
+    /// segment with monotonically increasing `created_at` is cold-scanned twice: an
+    /// unpruned baseline, then with a `created_at >= threshold` filter. The filter
+    /// must (1) make the trace read STRICTLY fewer bytes and gets (early blocks
+    /// skipped before the vector pass), and (2) stay SOUND — a vector in a surviving
+    /// block is still returned. This is the cheap pre-vector filter that moves the
+    /// dominant cost term (I/O round-trips), measured by the I/O trace, not asserted.
+    #[test]
+    fn rabitq_search_segment_metadata_pruning_skips_blocks() {
+        use proximadb_filter_expression::ComparisonOperator;
+
+        const DIM: usize = 32;
+        const N: usize = 300;
+        const K: usize = 10;
+        const POOL: usize = 50;
+        // created_at_ns = BASE_TS + i; the filter keeps only the tail.
+        const BASE_TS: i64 = 1_000;
+        const THRESHOLD: i64 = BASE_TS + 280; // records 280..299 survive
+
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+
+        // Force several blocks with a small block-size threshold so early blocks
+        // fall entirely below THRESHOLD and become prunable.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metaprune.pax");
+        let mut w = PaxSegmentWriter::new(
+            &path,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            1,
+            Some(2048),
+        )
+        .with_quant(VectorQuant::RaBitQ);
+        for (i, v) in corpus.iter().enumerate() {
+            w.add_record(&rec(&format!("v{i}"), BASE_TS + i as i64, v.clone()))
+                .unwrap();
+        }
+        let meta = w.finish().unwrap();
+        assert!(
+            meta.block_count >= 3,
+            "test needs multiple blocks, got {}",
+            meta.block_count
+        );
+        let bytes = std::fs::read(&path).unwrap();
+
+        // A query that lives in a SURVIVING block (created_at 1290 >= THRESHOLD).
+        let query = corpus[290].clone();
+
+        let filter = FilterExpression::Comparison {
+            field: "created_at".to_string(),
+            operator: ComparisonOperator::GreaterThanOrEqual,
+            value: serde_json::json!(THRESHOLD),
+        };
+        // Use the SAME canonical mapper the relational pruned-read path uses.
+        let f2c = pax_field_to_col;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+
+        // Baseline: no prune — scans every block.
+        let baseline = rt.block_on(crate::observability::io_trace::scope(async {
+            let hits = rabitq_search_segment(&bytes, &query, K, POOL, None)
+                .unwrap()
+                .expect("PAX+RaBitQ segment");
+            let snap = crate::observability::io_trace::snapshot().unwrap();
+            (hits, snap.bytes_read, snap.range_gets)
+        }));
+
+        // Pruned: created_at filter skips the early blocks before the vector pass.
+        let pruned = rt.block_on(crate::observability::io_trace::scope(async {
+            let mp = MetaPrune {
+                filter: &filter,
+                field_to_col: &f2c,
+            };
+            let hits = rabitq_search_segment(&bytes, &query, K, POOL, Some(mp))
+                .unwrap()
+                .expect("PAX+RaBitQ segment");
+            let snap = crate::observability::io_trace::snapshot().unwrap();
+            (hits, snap.bytes_read, snap.range_gets)
+        }));
+
+        // (1) The round-trip win: pruning reads strictly fewer bytes and gets.
+        assert!(
+            pruned.1 < baseline.1 && pruned.2 < baseline.2,
+            "metadata prune must reduce I/O: pruned ({} bytes, {} gets) vs baseline \
+             ({} bytes, {} gets)",
+            pruned.1,
+            pruned.2,
+            baseline.1,
+            baseline.2
+        );
+        assert!(
+            pruned.2 >= 1,
+            "at least the surviving block must be scanned"
+        );
+
+        // (2) Soundness: the surviving block is not dropped — its vector is returned.
+        assert!(
+            pruned.0.iter().any(|h| h.oid == "v290"),
+            "pruning must keep blocks that can match (v290 lives in a surviving block)"
         );
     }
 }
