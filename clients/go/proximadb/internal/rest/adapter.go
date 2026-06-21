@@ -13,10 +13,20 @@
 // limitations under the License.
 
 // Package rest provides the REST protocol adapter for ProximaDB.
+//
+// TD-126 Phase 2 (spec-driven SDK pilot): the wire plumbing — URL/path
+// construction, query-parameter encoding, JSON request marshaling, and the
+// Authorization header — is GENERATED from docs/openapi/proximadb-openapi.yaml
+// into ./internal/genrest (oapi-codegen, pinned in clients/go/codegen/tools.go;
+// regenerate with `make gen-go-sdk`). This Adapter is the thin, hand-written
+// ergonomic facade over that generated client: it owns connection setup
+// (pooling, TLS, timeouts), bearer auth, error mapping to AdapterError, the
+// idiomatic per-ID Get/Delete fan-out, and the stable public model structs that
+// the SDK facade (proximadb/rest_adapter.go) and the OpenAPI contract test
+// depend on. Generators don't do ergonomics; this layer is the value-add.
 package rest
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -28,6 +38,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/proximadb/proximadb-go/proximadb/internal/genrest"
 )
 
 // ErrorCode represents a ProximaDB error code.
@@ -80,15 +92,17 @@ type Config struct {
 }
 
 // Adapter implements the REST protocol for ProximaDB.
+//
+// The transport is the generated client (genrest.Client); this struct adds the
+// ergonomic facade described in the package doc.
 type Adapter struct {
-	client  *http.Client
-	baseURL string
-	headers map[string]string
+	gen      *genrest.Client
+	httpDoer *http.Client
 }
 
-// NewAdapter creates a new REST adapter.
+// NewAdapter creates a new REST adapter backed by the generated REST client.
 func NewAdapter(config *Config) (*Adapter, error) {
-	// Parse and validate base URL
+	// Parse and validate base URL.
 	parsedURL, err := url.Parse(config.BaseURL)
 	if err != nil {
 		return nil, &AdapterError{
@@ -98,17 +112,16 @@ func NewAdapter(config *Config) (*Adapter, error) {
 		}
 	}
 
-	// Normalize the base URL (remove trailing slash)
+	// Normalize the base URL (remove trailing slash).
 	baseURL := strings.TrimSuffix(parsedURL.String(), "/")
 
-	// Build HTTP client
+	// Build HTTP client (pooling + optional TLS) — connection ergonomics the
+	// generator does not provide.
 	transport := &http.Transport{
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 		IdleConnTimeout:     90 * time.Second,
 	}
-
-	// Configure TLS if specified
 	if config.TLS != nil {
 		tlsConfig, err := buildTLSConfig(config.TLS)
 		if err != nil {
@@ -116,28 +129,46 @@ func NewAdapter(config *Config) (*Adapter, error) {
 		}
 		transport.TLSClientConfig = tlsConfig
 	}
-
-	client := &http.Client{
+	httpClient := &http.Client{
 		Transport: transport,
 		Timeout:   config.Timeout,
 	}
 
-	// Build default headers
-	headers := map[string]string{
-		"Content-Type": "application/json",
-		"Accept":       "application/json",
-		"User-Agent":   "proximadb-go/1.0.0",
+	// Request editors apply the default headers + bearer auth on every request
+	// the generated client issues (the generated client only sets Content-Type
+	// for JSON bodies; headers/auth are facade concerns).
+	editors := []genrest.RequestEditorFn{
+		func(_ context.Context, req *http.Request) error {
+			req.Header.Set("Accept", "application/json")
+			req.Header.Set("User-Agent", "proximadb-go/1.0.0")
+			return nil
+		},
 	}
-
 	if config.APIKey != "" {
-		headers["Authorization"] = "Bearer " + config.APIKey
+		apiKey := config.APIKey
+		editors = append(editors, func(_ context.Context, req *http.Request) error {
+			req.Header.Set("Authorization", "Bearer "+apiKey)
+			return nil
+		})
 	}
 
-	return &Adapter{
-		client:  client,
-		baseURL: baseURL,
-		headers: headers,
-	}, nil
+	opts := []genrest.ClientOption{
+		genrest.WithHTTPClient(httpClient),
+	}
+	for _, e := range editors {
+		opts = append(opts, genrest.WithRequestEditorFn(e))
+	}
+
+	gen, err := genrest.NewClient(baseURL, opts...)
+	if err != nil {
+		return nil, &AdapterError{
+			Code:    ErrCodeInvalidArgument,
+			Message: "failed to construct REST client",
+			Cause:   err,
+		}
+	}
+
+	return &Adapter{gen: gen, httpDoer: httpClient}, nil
 }
 
 // buildTLSConfig creates a TLS configuration from the given options.
@@ -146,7 +177,7 @@ func buildTLSConfig(config *TLSConfig) (*tls.Config, error) {
 		InsecureSkipVerify: config.SkipVerify,
 	}
 
-	// Load client certificate if specified
+	// Load client certificate if specified.
 	if config.CertFile != "" && config.KeyFile != "" {
 		cert, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
 		if err != nil {
@@ -159,7 +190,7 @@ func buildTLSConfig(config *TLSConfig) (*tls.Config, error) {
 		tlsConfig.Certificates = []tls.Certificate{cert}
 	}
 
-	// Load CA certificate if specified
+	// Load CA certificate if specified.
 	if config.CAFile != "" {
 		caCert, err := os.ReadFile(config.CAFile)
 		if err != nil {
@@ -182,7 +213,13 @@ func buildTLSConfig(config *TLSConfig) (*tls.Config, error) {
 	return tlsConfig, nil
 }
 
-// Collection types for REST API
+// ---------------------------------------------------------------------------
+// Public model structs.
+//
+// These are the stable Go shapes the facade (proximadb/rest_adapter.go) and the
+// OpenAPI contract test depend on. They are deliberately hand-kept (idiomatic Go
+// field names + JSON tags) and mapped to/from the generated wire types below.
+// ---------------------------------------------------------------------------
 
 // CreateCollectionRequest represents a request to create a collection.
 type CreateCollectionRequest struct {
@@ -331,20 +368,31 @@ type ExplainQueryRequest struct {
 // QueryResponse is the (open-shape) response from executeQuery / explainQuery.
 type QueryResponse map[string]interface{}
 
+// ---------------------------------------------------------------------------
+// Operations: each maps the public model -> generated request, invokes the
+// generated client method (which builds the URL/path/query + marshals the
+// body + applies auth), then decodes the response into the public model.
+// ---------------------------------------------------------------------------
+
 // CreateCollection creates a new vector collection.
 func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionRequest) (*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v2/collections", a.baseURL)
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
-		}
+	body := genrest.CreateCollectionJSONRequestBody{
+		Name:      req.Name,
+		Dimension: int32(req.Dimension),
+	}
+	if req.Metric != "" {
+		body.DistanceMetric = ptr(req.Metric)
+	}
+	if req.Engine != "" {
+		body.Engine = ptr(req.Engine)
 	}
 
-	var response struct {
+	resp, err := a.gen.CreateCollection(ctx, body)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+
+	var out struct {
 		CollectionID         string `json:"collection_id"`
 		Name                 string `json:"name"`
 		Dimension            int    `json:"dimension"`
@@ -352,24 +400,27 @@ func (a *Adapter) CreateCollection(ctx context.Context, req *CreateCollectionReq
 		ProximaRecordEnabled bool   `json:"proxima_record_enabled"`
 		CreatedAt            string `json:"created_at"`
 	}
-	if err := a.doRequest(ctx, http.MethodPost, url, body, &response); err != nil {
+	if err := a.decode(resp, &out); err != nil {
 		return nil, err
 	}
 
 	return &CollectionInfo{
-		Name:      response.Name,
-		Dimension: response.Dimension,
+		Name:      out.Name,
+		Dimension: out.Dimension,
 		Metric:    req.Metric,
-		Engine:    response.Engine,
-		CreatedAt: parseTimeOrZero(response.CreatedAt),
+		Engine:    out.Engine,
+		CreatedAt: parseTimeOrZero(out.CreatedAt),
 	}, nil
 }
 
 // ListCollections returns all collections.
 func (a *Adapter) ListCollections(ctx context.Context) ([]*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v2/collections", a.baseURL)
+	resp, err := a.gen.ListCollections(ctx, &genrest.ListCollectionsParams{})
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
 
-	var response struct {
+	var out struct {
 		Collections []struct {
 			CollectionID         string `json:"collection_id"`
 			Name                 string `json:"name"`
@@ -379,12 +430,12 @@ func (a *Adapter) ListCollections(ctx context.Context) ([]*CollectionInfo, error
 			RecordCount          *int64 `json:"record_count,omitempty"`
 		} `json:"collections"`
 	}
-	if err := a.doRequest(ctx, http.MethodGet, url, nil, &response); err != nil {
+	if err := a.decode(resp, &out); err != nil {
 		return nil, err
 	}
 
-	collections := make([]*CollectionInfo, 0, len(response.Collections))
-	for _, item := range response.Collections {
+	collections := make([]*CollectionInfo, 0, len(out.Collections))
+	for _, item := range out.Collections {
 		count := int64(0)
 		if item.RecordCount != nil {
 			count = *item.RecordCount
@@ -401,9 +452,12 @@ func (a *Adapter) ListCollections(ctx context.Context) ([]*CollectionInfo, error
 
 // GetCollection returns information about a specific collection.
 func (a *Adapter) GetCollection(ctx context.Context, name string) (*CollectionInfo, error) {
-	url := fmt.Sprintf("%s/api/v2/collections/%s", a.baseURL, url.PathEscape(name))
+	resp, err := a.gen.GetCollection(ctx, name)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
 
-	var response struct {
+	var out struct {
 		CollectionID   string `json:"collection_id"`
 		Name           string `json:"name"`
 		Dimension      int    `json:"dimension"`
@@ -415,63 +469,53 @@ func (a *Adapter) GetCollection(ctx context.Context, name string) (*CollectionIn
 			StorageSizeBytes int64 `json:"storage_size_bytes"`
 		} `json:"stats"`
 	}
-	if err := a.doRequest(ctx, http.MethodGet, url, nil, &response); err != nil {
+	if err := a.decode(resp, &out); err != nil {
 		return nil, err
 	}
 
 	return &CollectionInfo{
-		Name:        firstNonEmpty(response.Name, response.CollectionID),
-		Dimension:   response.Dimension,
-		Metric:      response.DistanceMetric,
-		Engine:      response.Engine,
-		VectorCount: response.Stats.RecordCount,
-		CreatedAt:   parseTimeOrZero(response.CreatedAt),
+		Name:        firstNonEmpty(out.Name, out.CollectionID),
+		Dimension:   out.Dimension,
+		Metric:      out.DistanceMetric,
+		Engine:      out.Engine,
+		VectorCount: out.Stats.RecordCount,
+		CreatedAt:   parseTimeOrZero(out.CreatedAt),
 	}, nil
 }
 
 // DeleteCollection deletes a collection.
 func (a *Adapter) DeleteCollection(ctx context.Context, name string) error {
-	url := fmt.Sprintf("%s/api/v2/collections/%s", a.baseURL, url.PathEscape(name))
-	return a.doRequest(ctx, http.MethodDelete, url, nil, nil)
+	resp, err := a.gen.DeleteCollection(ctx, name)
+	if err != nil {
+		return mapTransportError(ctx, err)
+	}
+	return a.decode(resp, nil)
 }
 
 // InsertRecords inserts canonical records into a collection.
 func (a *Adapter) InsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
-	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, url.PathEscape(collection))
-
-	body, err := json.Marshal(map[string]interface{}{
-		"records":         records,
-		"validate_schema": true,
-	})
-	if err != nil {
-		return &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
-		}
-	}
-
-	return a.doRequest(ctx, http.MethodPost, url, body, nil)
+	return a.writeRecords(ctx, collection, records, false)
 }
 
 // UpsertRecords inserts or updates canonical records in a collection.
 func (a *Adapter) UpsertRecords(ctx context.Context, collection string, records []*ProximaRecord) error {
-	url := fmt.Sprintf("%s/api/v2/collections/%s/records/batch", a.baseURL, url.PathEscape(collection))
+	return a.writeRecords(ctx, collection, records, true)
+}
 
-	body, err := json.Marshal(map[string]interface{}{
-		"records":         records,
-		"validate_schema": true,
-		"upsert":          true,
-	})
-	if err != nil {
-		return &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
-		}
+func (a *Adapter) writeRecords(ctx context.Context, collection string, records []*ProximaRecord, upsert bool) error {
+	body := genrest.InsertRecordsJSONRequestBody{
+		Records:        toGenRecords(records),
+		ValidateSchema: ptr(true),
+	}
+	if upsert {
+		body.Upsert = ptr(true)
 	}
 
-	return a.doRequest(ctx, http.MethodPost, url, body, nil)
+	resp, err := a.gen.InsertRecords(ctx, collection, body)
+	if err != nil {
+		return mapTransportError(ctx, err)
+	}
+	return a.decode(resp, nil)
 }
 
 // Insert inserts records into a collection.
@@ -486,6 +530,354 @@ func (a *Adapter) Insert(ctx context.Context, collection string, records []*Vect
 // Deprecated: use UpsertRecords with ProximaRecord.
 func (a *Adapter) Upsert(ctx context.Context, collection string, records []*VectorRecord) error {
 	return a.UpsertRecords(ctx, collection, recordsToProximaRecords(records))
+}
+
+// Search performs a vector similarity search.
+func (a *Adapter) Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error) {
+	body := genrest.SearchRecordsJSONRequestBody{
+		Vector:        query.Vector,
+		TopK:          query.TopK,
+		IncludeVector: ptr(query.IncludeVectors),
+	}
+
+	resp, err := a.gen.SearchRecords(ctx, collection, body)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+
+	var result SearchResponse
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// Get retrieves vectors by their IDs.
+//
+// The OpenAPI surface exposes single-record reads; the SDK fans out per ID and
+// assembles the slice (an ergonomic the spec does not provide).
+func (a *Adapter) Get(ctx context.Context, collection string, ids []string) ([]*VectorRecord, error) {
+	vectors := make([]*VectorRecord, 0, len(ids))
+	params := &genrest.GetRecordParams{IncludeVector: ptr(true), IncludeText: ptr(false)}
+	for _, id := range ids {
+		resp, err := a.gen.GetRecord(ctx, collection, id, params)
+		if err != nil {
+			return nil, mapTransportError(ctx, err)
+		}
+		var out struct {
+			ID     string                 `json:"id"`
+			Vector []float32              `json:"vector,omitempty"`
+			Props  map[string]interface{} `json:"props,omitempty"`
+		}
+		if err := a.decode(resp, &out); err != nil {
+			return nil, err
+		}
+		vectors = append(vectors, &VectorRecord{
+			ID:       out.ID,
+			Vector:   out.Vector,
+			Metadata: out.Props,
+		})
+	}
+	return vectors, nil
+}
+
+// Delete removes vectors by their IDs.
+func (a *Adapter) Delete(ctx context.Context, collection string, ids []string) error {
+	for _, id := range ids {
+		resp, err := a.gen.DeleteRecord(ctx, collection, id)
+		if err != nil {
+			return mapTransportError(ctx, err)
+		}
+		if err := a.decode(resp, nil); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Health checks the server health.
+func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
+	resp, err := a.gen.GetHealth(ctx)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+	var result HealthStatus
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// HealthLive issues a Kubernetes liveness probe (GET /health/live).
+func (a *Adapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
+	resp, err := a.gen.GetLiveness(ctx)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+	var result ProbeResponse
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// HealthReady issues a Kubernetes readiness probe (GET /health/ready).
+func (a *Adapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
+	resp, err := a.gen.GetReadiness(ctx)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+	var result ProbeResponse
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// GetCollectionSchema fetches the schema for a collection.
+func (a *Adapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
+	resp, err := a.gen.GetCollectionSchema(ctx, collectionID)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+	var result SchemaResponse
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// UpdateCollectionSchema updates the schema for a collection.
+func (a *Adapter) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
+	body := genrest.UpdateCollectionSchemaJSONRequestBody{
+		Columns:               toGenColumns(req.Columns),
+		AllowAdditionalFields: req.AllowAdditionalFields,
+		Force:                 ptr(req.Force),
+	}
+	if req.Enforcement != "" {
+		body.Enforcement = ptr(req.Enforcement)
+	}
+
+	resp, err := a.gen.UpdateCollectionSchema(ctx, collectionID, body)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+	var result UpdateSchemaResponse
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
+// ExecuteQuery executes an AQL/UQL/federated query via the shared query facade.
+func (a *Adapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
+	body := genrest.ExecuteQueryJSONRequestBody{
+		Language:   genrest.QueryLanguage(req.Language),
+		Query:      req.Query,
+		Collection: req.Collection,
+	}
+	if req.Limit != nil {
+		body.Limit = ptr(int32(*req.Limit))
+	}
+	if len(req.Parameters) > 0 {
+		body.Parameters = toGenQueryParams(req.Parameters)
+	}
+
+	resp, err := a.gen.ExecuteQuery(ctx, body)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+	var result QueryResponse
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// ExplainQuery returns the lowered plan / diagnostics for an AQL/UQL query.
+func (a *Adapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
+	body := genrest.ExplainQueryJSONRequestBody{
+		Language:   genrest.QueryLanguage(req.Language),
+		Query:      req.Query,
+		Collection: req.Collection,
+	}
+
+	resp, err := a.gen.ExplainQuery(ctx, body)
+	if err != nil {
+		return nil, mapTransportError(ctx, err)
+	}
+	var result QueryResponse
+	if err := a.decode(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+// Close closes the adapter and releases resources.
+func (a *Adapter) Close() error {
+	if a.httpDoer != nil {
+		if transport, ok := a.httpDoer.Transport.(*http.Transport); ok {
+			transport.CloseIdleConnections()
+		}
+	}
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Facade plumbing: response decoding + error mapping (the value-add the
+// generator doesn't provide).
+// ---------------------------------------------------------------------------
+
+// decode reads/closes the generated client's *http.Response, maps non-2xx
+// statuses to AdapterError, and unmarshals a 2xx JSON body into result (when
+// non-nil).
+func (a *Adapter) decode(resp *http.Response, result interface{}) error {
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return &AdapterError{
+			Code:    ErrCodeInternal,
+			Message: "failed to read response",
+			Cause:   err,
+		}
+	}
+
+	if resp.StatusCode >= 400 {
+		return parseErrorResponse(resp.StatusCode, respBody)
+	}
+
+	if result != nil && len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, result); err != nil {
+			return &AdapterError{
+				Code:    ErrCodeInternal,
+				Message: "failed to parse response",
+				Cause:   err,
+			}
+		}
+	}
+	return nil
+}
+
+// mapTransportError converts a transport-level error (connection / timeout)
+// from the generated client into an AdapterError.
+func mapTransportError(ctx context.Context, err error) error {
+	if ctx.Err() == context.DeadlineExceeded {
+		return &AdapterError{
+			Code:    ErrCodeTimeout,
+			Message: "request timed out",
+			Cause:   err,
+		}
+	}
+	return &AdapterError{
+		Code:    ErrCodeConnection,
+		Message: "connection error",
+		Cause:   err,
+	}
+}
+
+// parseErrorResponse parses an error response from the server.
+func parseErrorResponse(statusCode int, body []byte) error {
+	var errorResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+		Code    string `json:"code"`
+	}
+	if err := json.Unmarshal(body, &errorResp); err != nil {
+		errorResp.Message = string(body)
+	}
+
+	var code ErrorCode
+	switch statusCode {
+	case http.StatusNotFound:
+		code = ErrCodeNotFound
+	case http.StatusConflict:
+		code = ErrCodeAlreadyExists
+	case http.StatusBadRequest:
+		code = ErrCodeInvalidArgument
+	case http.StatusUnprocessableEntity:
+		code = ErrCodeDimensionMismatch
+	case http.StatusTooManyRequests:
+		code = ErrCodeRateLimited
+	case http.StatusServiceUnavailable:
+		code = ErrCodeUnavailable
+	default:
+		code = ErrCodeInternal
+	}
+
+	if errorResp.Code != "" {
+		code = ErrorCode(errorResp.Code)
+	}
+
+	message := errorResp.Message
+	if message == "" {
+		message = errorResp.Error
+	}
+	if message == "" {
+		message = fmt.Sprintf("HTTP %d", statusCode)
+	}
+
+	return &AdapterError{Code: code, Message: message}
+}
+
+// ---------------------------------------------------------------------------
+// Mapping helpers (public model <-> generated wire types) + small utilities.
+// ---------------------------------------------------------------------------
+
+func ptr[T any](v T) *T { return &v }
+
+func toGenRecords(records []*ProximaRecord) []genrest.ProximaRecordInput {
+	out := make([]genrest.ProximaRecordInput, len(records))
+	for i, r := range records {
+		gr := genrest.ProximaRecordInput{Vector: r.Vector}
+		if r.ID != "" {
+			gr.Id = ptr(r.ID)
+		}
+		if r.Props != nil {
+			props := r.Props
+			gr.Props = &props
+		}
+		out[i] = gr
+	}
+	return out
+}
+
+func toGenColumns(cols []ColumnDefinition) []genrest.RestColumnDefinition {
+	out := make([]genrest.RestColumnDefinition, len(cols))
+	for i, c := range cols {
+		out[i] = genrest.RestColumnDefinition{
+			Name:            c.Name,
+			DataType:        c.DataType,
+			Nullable:        c.Nullable,
+			Indexed:         c.Indexed,
+			Filterable:      c.Filterable,
+			MaxLength:       intPtrToInt32Ptr(c.MaxLength),
+			Precision:       intPtrToInt32Ptr(c.Precision),
+			Scale:           intPtrToInt32Ptr(c.Scale),
+			VectorDimension: intPtrToInt32Ptr(c.VectorDimension),
+		}
+	}
+	return out
+}
+
+func toGenQueryParams(params []interface{}) *[]map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(params))
+	for _, p := range params {
+		if m, ok := p.(map[string]interface{}); ok {
+			out = append(out, m)
+		} else {
+			out = append(out, map[string]interface{}{"value": p})
+		}
+	}
+	return &out
+}
+
+func intPtrToInt32Ptr(v *int) *int32 {
+	if v == nil {
+		return nil
+	}
+	out := int32(*v)
+	return &out
 }
 
 func recordsToProximaRecords(records []*VectorRecord) []*ProximaRecord {
@@ -518,297 +910,4 @@ func parseTimeOrZero(value string) time.Time {
 		return time.Time{}
 	}
 	return parsed
-}
-
-// Search performs a vector similarity search.
-func (a *Adapter) Search(ctx context.Context, collection string, query *SearchQuery) (*SearchResponse, error) {
-	url := fmt.Sprintf("%s/api/v2/collections/%s/search", a.baseURL, url.PathEscape(collection))
-
-	body, err := json.Marshal(map[string]interface{}{
-		"vector":         query.Vector,
-		"top_k":          query.TopK,
-		"include_vector": query.IncludeVectors,
-	})
-	if err != nil {
-		return nil, &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal request",
-			Cause:   err,
-		}
-	}
-
-	var result SearchResponse
-	if err := a.doRequest(ctx, http.MethodPost, url, body, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// Get retrieves vectors by their IDs.
-func (a *Adapter) Get(ctx context.Context, collection string, ids []string) ([]*VectorRecord, error) {
-	vectors := make([]*VectorRecord, 0, len(ids))
-	for _, id := range ids {
-		requestURL := fmt.Sprintf("%s/api/v2/collections/%s/records/%s?include_vector=true&include_text=false", a.baseURL, url.PathEscape(collection), url.PathEscape(id))
-		var response struct {
-			ID     string                 `json:"id"`
-			Vector []float32              `json:"vector,omitempty"`
-			Props  map[string]interface{} `json:"props,omitempty"`
-		}
-		if err := a.doRequest(ctx, http.MethodGet, requestURL, nil, &response); err != nil {
-			return nil, err
-		}
-		vectors = append(vectors, &VectorRecord{
-			ID:       response.ID,
-			Vector:   response.Vector,
-			Metadata: response.Props,
-		})
-	}
-
-	return vectors, nil
-}
-
-// Delete removes vectors by their IDs.
-func (a *Adapter) Delete(ctx context.Context, collection string, ids []string) error {
-	for _, id := range ids {
-		requestURL := fmt.Sprintf("%s/api/v2/collections/%s/records/%s", a.baseURL, url.PathEscape(collection), url.PathEscape(id))
-		if err := a.doRequest(ctx, http.MethodDelete, requestURL, nil, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Health checks the server health.
-func (a *Adapter) Health(ctx context.Context) (*HealthStatus, error) {
-	url := fmt.Sprintf("%s/health", a.baseURL)
-
-	var result HealthStatus
-	if err := a.doRequest(ctx, http.MethodGet, url, nil, &result); err != nil {
-		return nil, err
-	}
-
-	return &result, nil
-}
-
-// HealthLive issues a Kubernetes liveness probe (GET /health/live).
-func (a *Adapter) HealthLive(ctx context.Context) (*ProbeResponse, error) {
-	endpoint := fmt.Sprintf("%s/health/live", a.baseURL)
-
-	var result ProbeResponse
-	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// HealthReady issues a Kubernetes readiness probe (GET /health/ready).
-func (a *Adapter) HealthReady(ctx context.Context) (*ProbeResponse, error) {
-	endpoint := fmt.Sprintf("%s/health/ready", a.baseURL)
-
-	var result ProbeResponse
-	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// GetCollectionSchema fetches the schema for a collection.
-func (a *Adapter) GetCollectionSchema(ctx context.Context, collectionID string) (*SchemaResponse, error) {
-	endpoint := fmt.Sprintf("%s/api/v2/collections/%s/schema", a.baseURL, url.PathEscape(collectionID))
-
-	var result SchemaResponse
-	if err := a.doRequest(ctx, http.MethodGet, endpoint, nil, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// UpdateCollectionSchema updates the schema for a collection.
-func (a *Adapter) UpdateCollectionSchema(ctx context.Context, collectionID string, req *UpdateSchemaRequest) (*UpdateSchemaResponse, error) {
-	endpoint := fmt.Sprintf("%s/api/v2/collections/%s/schema", a.baseURL, url.PathEscape(collectionID))
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal update-schema request",
-			Cause:   err,
-		}
-	}
-
-	var result UpdateSchemaResponse
-	if err := a.doRequest(ctx, http.MethodPut, endpoint, body, &result); err != nil {
-		return nil, err
-	}
-	return &result, nil
-}
-
-// ExecuteQuery executes an AQL/UQL/federated query via the shared query facade.
-func (a *Adapter) ExecuteQuery(ctx context.Context, req *QueryRequest) (QueryResponse, error) {
-	endpoint := fmt.Sprintf("%s/api/v2/query", a.baseURL)
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal query request",
-			Cause:   err,
-		}
-	}
-
-	var result QueryResponse
-	if err := a.doRequest(ctx, http.MethodPost, endpoint, body, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// ExplainQuery returns the lowered plan / diagnostics for an AQL/UQL query.
-func (a *Adapter) ExplainQuery(ctx context.Context, req *ExplainQueryRequest) (QueryResponse, error) {
-	endpoint := fmt.Sprintf("%s/api/v2/query/explain", a.baseURL)
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to marshal explain-query request",
-			Cause:   err,
-		}
-	}
-
-	var result QueryResponse
-	if err := a.doRequest(ctx, http.MethodPost, endpoint, body, &result); err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// Close closes the adapter and releases resources.
-func (a *Adapter) Close() error {
-	// HTTP client doesn't need explicit closing, but we close idle connections
-	if transport, ok := a.client.Transport.(*http.Transport); ok {
-		transport.CloseIdleConnections()
-	}
-	return nil
-}
-
-// doRequest performs an HTTP request and handles the response.
-func (a *Adapter) doRequest(ctx context.Context, method, url string, body []byte, result interface{}) error {
-	var bodyReader io.Reader
-	if body != nil {
-		bodyReader = bytes.NewReader(body)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, method, url, bodyReader)
-	if err != nil {
-		return &AdapterError{
-			Code:    ErrCodeInvalidArgument,
-			Message: "failed to create request",
-			Cause:   err,
-		}
-	}
-
-	// Set headers
-	for k, v := range a.headers {
-		req.Header.Set(k, v)
-	}
-
-	// Execute request
-	resp, err := a.client.Do(req)
-	if err != nil {
-		// Check for timeout
-		if ctx.Err() == context.DeadlineExceeded {
-			return &AdapterError{
-				Code:    ErrCodeTimeout,
-				Message: "request timed out",
-				Cause:   err,
-			}
-		}
-		return &AdapterError{
-			Code:    ErrCodeConnection,
-			Message: "connection error",
-			Cause:   err,
-		}
-	}
-	defer resp.Body.Close()
-
-	// Read response body
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return &AdapterError{
-			Code:    ErrCodeInternal,
-			Message: "failed to read response",
-			Cause:   err,
-		}
-	}
-
-	// Handle error responses
-	if resp.StatusCode >= 400 {
-		return a.parseErrorResponse(resp.StatusCode, respBody)
-	}
-
-	// Parse successful response
-	if result != nil && len(respBody) > 0 {
-		if err := json.Unmarshal(respBody, result); err != nil {
-			return &AdapterError{
-				Code:    ErrCodeInternal,
-				Message: "failed to parse response",
-				Cause:   err,
-			}
-		}
-	}
-
-	return nil
-}
-
-// parseErrorResponse parses an error response from the server.
-func (a *Adapter) parseErrorResponse(statusCode int, body []byte) error {
-	var errorResp struct {
-		Error   string `json:"error"`
-		Message string `json:"message"`
-		Code    string `json:"code"`
-	}
-
-	if err := json.Unmarshal(body, &errorResp); err != nil {
-		// Fallback to raw body if parsing fails
-		errorResp.Message = string(body)
-	}
-
-	// Map HTTP status code to error code
-	var code ErrorCode
-	switch statusCode {
-	case http.StatusNotFound:
-		code = ErrCodeNotFound
-	case http.StatusConflict:
-		code = ErrCodeAlreadyExists
-	case http.StatusBadRequest:
-		code = ErrCodeInvalidArgument
-	case http.StatusUnprocessableEntity:
-		code = ErrCodeDimensionMismatch
-	case http.StatusTooManyRequests:
-		code = ErrCodeRateLimited
-	case http.StatusServiceUnavailable:
-		code = ErrCodeUnavailable
-	default:
-		code = ErrCodeInternal
-	}
-
-	// Use server-provided code if available
-	if errorResp.Code != "" {
-		code = ErrorCode(errorResp.Code)
-	}
-
-	message := errorResp.Message
-	if message == "" {
-		message = errorResp.Error
-	}
-	if message == "" {
-		message = fmt.Sprintf("HTTP %d", statusCode)
-	}
-
-	return &AdapterError{
-		Code:    code,
-		Message: message,
-	}
 }
