@@ -408,10 +408,22 @@ impl PaxBlockWriter {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
                 let (stripe, entry, rabitq_col) =
                     self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
+                let is_rabitq = rabitq_col.is_some();
                 stripes.push(stripe);
                 vparam_entries.push(entry);
                 if let Some(rc) = rabitq_col {
                     vparam_rabitq.push(rc);
+                }
+                // P3 cascade: every RaBitQ-coded embedding gets a co-located SQ8
+                // rerank column at `RERANK_BASE + i`. RaBitQ codes drive the cheap
+                // candidate scan; the rerank pool is scored against this SQ8 copy
+                // (4× footprint, no GET to an external f32 tier) before the final
+                // top-k. f32 rerank is added only if the recall gate can't be met.
+                if is_rabitq {
+                    let (rerank_stripe, rerank_entry) =
+                        self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                    stripes.push(rerank_stripe);
+                    vparam_entries.push(rerank_entry);
                 }
             }
         }
@@ -693,6 +705,55 @@ impl PaxBlockWriter {
             params,
         };
         Ok((ColumnStripe::new(meta, data), entry, rabitq_col))
+    }
+
+    /// Build an SQ8-quantized vector stripe unconditionally (ignoring the
+    /// writer's configured `quant`). This backs the co-located rerank column
+    /// emitted alongside each RaBitQ embedding: the candidate pool from the
+    /// RaBitQ scan is reranked against full-stride SQ8 here, so the column must
+    /// always be SQ8 regardless of the primary quant strategy.
+    fn build_sq8_vec_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<&[f32]>],
+    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+        let dim = vector_column_dim(vals)?;
+        let flat: Vec<f32> = vals
+            .iter()
+            .flatten()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let params = functions::sq8::fit_params(&flat);
+        let data = encode_f32_vec_sq8(vals, dim, &params);
+        let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
+        let meta = ColumnMeta {
+            column_id: id,
+            role: ColumnRole::Vector,
+            data_type_id: 0x01, // F32
+            encoding_id: ProximaScheme::Sq8.to_marker(),
+            nullable: true,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: vals
+                .iter()
+                .filter(|value| value.is_some())
+                .count()
+                .min(u32::MAX as usize) as u32,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
+        };
+        let entry = VectorParamEntry {
+            column_id: id,
+            dim,
+            quant_kind: QUANT_SQ8,
+            params,
+        };
+        Ok((ColumnStripe::new(meta, data), entry))
     }
 
     fn build_f64_stripe(

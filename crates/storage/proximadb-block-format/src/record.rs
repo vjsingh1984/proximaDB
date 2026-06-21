@@ -39,6 +39,16 @@ pub mod col_id {
     pub const EMBED_BASE: i32 = 20;
     /// First column ID for user-defined columns from CatalogTableSchema.
     pub const USER_BASE: i32 = 100;
+    /// First column ID for co-located rerank stripes (SQ8 rerank_0, rerank_1, …).
+    ///
+    /// When a collection writes RaBitQ-quantized embedding stripes (the hot
+    /// candidate-scan representation), the writer ALSO emits an SQ8-quantized
+    /// copy of the same embedding at `RERANK_BASE + i`. The cascade reranks the
+    /// RaBitQ candidate pool against this co-located SQ8 column (4× footprint, no
+    /// extra GET against an external f32 tier) before taking the final top-k;
+    /// f32 rerank is added only if the recall gate can't be met on SQ8. Chosen
+    /// well above `USER_BASE` so it never collides with catalog-driven columns.
+    pub const RERANK_BASE: i32 = 1000;
 }
 
 /// Descriptor for a single column stripe in a PAX block.
