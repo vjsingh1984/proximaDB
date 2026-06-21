@@ -59,6 +59,11 @@ fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<
 }
 
 /// POST /api/v2/query
+///
+/// DEPRECATED: SQL over REST is deprecated. pgwire (the PostgreSQL wire
+/// protocol) is the canonical SQL surface — connect any PostgreSQL driver and
+/// run SQL there. REST owns record/vector/collection operations, not SQL. This
+/// endpoint will be removed in a future release (see TD-121).
 pub async fn execute_query(
     State(state): State<AppState>,
     Json(request): Json<QueryRequest>,

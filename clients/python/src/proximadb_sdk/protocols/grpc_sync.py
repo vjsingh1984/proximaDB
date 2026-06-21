@@ -10,6 +10,7 @@ Features:
 
 import json
 import logging
+import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -603,7 +604,15 @@ class ProximaDBSyncGrpcClient:
         parameters: list | None = None,
         collection: str | None = None,
     ):
-        """Execute SQL via proximadb.v1.QueryService.ExecuteQuery
+        """Execute SQL over gRPC.
+
+        .. deprecated::
+            SQL over gRPC/REST is deprecated. pgwire (the PostgreSQL wire
+            protocol) is the canonical SQL surface — connect any PostgreSQL
+            driver (psycopg2, asyncpg, JDBC, psql) and run SQL there. gRPC/REST
+            own record/vector/collection operations; SQL belongs on pgwire.
+            This method (and the v2 ``ExecuteQuery`` RPC) will be removed in a
+            future release.
 
         Args:
             query: SQL text
@@ -612,6 +621,13 @@ class ProximaDBSyncGrpcClient:
         Returns:
             ExecuteQueryResponse as dict-like (via proto object fields)
         """
+        warnings.warn(
+            "execute_sql over gRPC is deprecated; use pgwire (PostgreSQL wire "
+            "protocol) for SQL via any PostgreSQL driver. The gRPC SQL path will "
+            "be removed in a future release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
