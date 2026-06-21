@@ -453,6 +453,48 @@ pub fn classify_client(ip: IpAddr) -> KouLocality {
         .classify(ip)
 }
 
+/// Per-request edge classification — the client IP and its derived KOU locality,
+/// computed ONCE at a surface boundary (REST / pgwire / Arrow Flight) and carried
+/// for the request. This is the unifying seam of the edge consolidation (HLD
+/// E0→E1): every surface classifies the client identically and meters
+/// result-egress through one entry point, instead of each re-deriving locality.
+/// OSS carries only the neutral bucket; the per-(provider, bucket) $ weight is
+/// anvaiops policy.
+#[derive(Debug, Clone, Copy)]
+pub struct EdgePolicyContext {
+    /// The client's source IP (the rate-limit + locality subject).
+    pub client_ip: IpAddr,
+    /// The client's KOU locality (free vs chargeable result-egress).
+    pub kou_locality: KouLocality,
+}
+
+impl EdgePolicyContext {
+    /// Classify a client source IP against the installed scope map. An
+    /// unspecified (`0.0.0.0`/`::`) or loopback address is treated as `Local`
+    /// (free, inert): these are embedded / same-host callers, never a chargeable
+    /// remote, so result-egress is never mis-charged for an in-process or
+    /// loopback client.
+    pub fn classify(client_ip: IpAddr) -> Self {
+        let kou_locality = if client_ip.is_unspecified() || client_ip.is_loopback() {
+            KouLocality::Local
+        } else {
+            classify_client(client_ip)
+        };
+        Self {
+            client_ip,
+            kou_locality,
+        }
+    }
+
+    /// Record result-egress (compute → this client) bytes for the request's
+    /// tenant through the convergent KOU meter (`direction = "result"`). No-ops on
+    /// zero bytes and on the free path; folds chargeable bytes into the active
+    /// query's egress trace, exactly like the read-egress boundary.
+    pub fn record_result_egress(&self, tenant_id: Option<&str>, bytes: u64) {
+        record_kou_bytes(tenant_id, self.kou_locality, "result", bytes);
+    }
+}
+
 /// Helper to record an object store operation.
 pub fn record_object_store_op(tenant_id: Option<&str>, operation: &str) {
     let t_id = tenant_id.unwrap_or("default");
@@ -736,6 +778,33 @@ mod tests {
         // No active trace: the counter still records, but nothing panics and the
         // trace stays empty (helper silently no-ops the egress term).
         record_kou_bytes(Some("t"), KouLocality::CrossRegion, "read", 1_234);
+        assert!(io_trace::snapshot().is_none());
+    }
+
+    #[test]
+    fn edge_context_treats_in_process_and_loopback_callers_as_free() {
+        // Unspecified (embedded / unset peer) and loopback callers are never a
+        // chargeable remote — they classify Local so result-egress is never
+        // mis-charged for an in-process or same-host client, regardless of the
+        // scope map. This is the guard that keeps the meter inert by default.
+        let unspec = EdgePolicyContext::classify("0.0.0.0".parse().unwrap());
+        assert_eq!(unspec.kou_locality, KouLocality::Local);
+        assert!(!unspec.kou_locality.is_chargeable_egress());
+        assert_eq!(
+            EdgePolicyContext::classify("::".parse().unwrap()).kou_locality,
+            KouLocality::Local
+        );
+        assert_eq!(
+            EdgePolicyContext::classify("127.0.0.1".parse().unwrap()).kou_locality,
+            KouLocality::Local
+        );
+        assert_eq!(
+            EdgePolicyContext::classify("::1".parse().unwrap()).kou_locality,
+            KouLocality::Local
+        );
+
+        // Recording result-egress on the free path mutates no trace.
+        unspec.record_result_egress(Some("t"), 4096);
         assert!(io_trace::snapshot().is_none());
     }
 }

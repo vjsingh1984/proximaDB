@@ -104,9 +104,16 @@ WARN (visible), never silent.
 
 * Exact Azure Private Link *deeper* data-processing tiers (canonical bandwidth /
 private-link pages timed out; only "~$0.01/GB, tiered" confirmed).
-* Exact GCP PSC per-GB *consumed* rate (PSC is mostly per-endpoint-hour + underlying
-LB/transfer; primary per-GB not captured).
-* GCP Standard Network Service Tier exact internet ladder.
+* "Exact GCP PSC per-GB" — *resolved by reframing* (anvaiops S1). PSC has no
+primary per-GB *egress* rate: it is billed per-endpoint-hour (+ per-rule +
+standard transfer on top), so it is modeled as a **private-connectivity add-on**
+(`unit_rates.private_connectivity_per_endpoint_hour`, a Business+
+`features.private_connectivity` entitlement), *not* a `kou_per_gb` bucket and not
+an egress waiver. The same shape covers AWS PrivateLink / Azure Private Link.
+* GCP Standard Network Service Tier — *now encoded* (anvaiops S1): GCP `internet`
+is the per-GB NST axis `{premium, standard}` (`kou_rate_per_gb(..., network_tier=)`,
+default conservative Premium). Exact Standard volume ladder still to re-pin before
+quoting deep discounts.
 * Qualitative: customer acceptance of egress as a visible pass-through line vs
 bundled; realistic BYOC per-customer ops cost + minimum ACV for a solo operator.
 
