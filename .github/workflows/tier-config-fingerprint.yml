@@ -31,6 +31,11 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'development' }}
 
+# Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
+# Read-only is sufficient: no job here writes to the repo, posts comments, or uses OIDC.
+permissions:
+  contents: read
+
 jobs:
   fingerprint-check:
     name: Verify tier-config.json fingerprint

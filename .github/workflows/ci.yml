@@ -43,6 +43,11 @@ env:
 #                             -> docker-build
 # ============================================================================
 
+# Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
+# Read-only is sufficient: no job here writes to the repo, posts comments, or uses OIDC.
+permissions:
+  contents: read
+
 jobs:
   # ============================================================================
   # CHANGES DETECTION - Determine what to build/test
