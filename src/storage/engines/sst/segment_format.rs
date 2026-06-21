@@ -18,10 +18,14 @@
 //! starts with the columnar version byte `0x01` or a compression marker
 //! `0x02..=0x0E` — disjoint from `PBLK`, so the legacy path is never mis-routed.
 
+use std::path::Path;
+
 use anyhow::Result;
-use proximadb_block_format::BLOCK_MAGIC;
+use proximadb_block_format::{BLOCK_MAGIC, BlockCompression, BlockMode};
 use proximadb_records::ProximaRecord;
-use proximadb_storage_common::pax_block::{PaxSegmentScanner, SEGMENT_MAGIC, ScanPredicate};
+use proximadb_storage_common::pax_block::{
+    PaxSegmentScanner, PaxSegmentWriter, SEGMENT_MAGIC, ScanPredicate, SegmentMeta,
+};
 
 use crate::storage::engines::core::formats::proximablocks::ProximaDataBlock;
 
@@ -83,13 +87,39 @@ pub fn read_segment_records(
     }
 }
 
+/// Write `records` as a PAX vector segment at `path` — the write-side inverse of
+/// [`read_segment_records`] for the PAX format, via the canonical [`PaxSegmentWriter`]
+/// (no hand-rolled encoder, per the storage-format-migration mandate). Phase B's
+/// flag-gated SST flush arm calls this against the local staging path; the resulting
+/// file is detected as [`SegmentFormat::Pax`] and reads back through the same router.
+///
+/// `embedding_count` is the collection's embedding-modality count (≥1).
+pub fn write_pax_segment(
+    path: &Path,
+    records: &[ProximaRecord],
+    collection_id: &str,
+    embedding_count: usize,
+) -> Result<SegmentMeta> {
+    let mut writer = PaxSegmentWriter::new(
+        path,
+        BlockMode::Pax,
+        BlockCompression::None,
+        collection_id,
+        0, // schema_fingerprint — derived from the catalog schema in Phase D
+        embedding_count.max(1),
+        None,
+    );
+    for record in records {
+        writer.add_record(record)?;
+    }
+    writer.finish()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::storage::engines::core::formats::proximablocks::BlockCompressionConfig;
-    use proximadb_block_format::{BlockCompression, BlockMode};
     use proximadb_records::{EmbeddingCell, EmbeddingValues};
-    use proximadb_storage_common::pax_block::PaxSegmentWriter;
 
     fn rec(oid: &str, ts: i64, vec: Vec<f32>) -> ProximaRecord {
         let mut r = ProximaRecord {
@@ -193,5 +223,30 @@ mod tests {
     #[test]
     fn default_is_proxima_blocks() {
         assert_eq!(SegmentFormat::default(), SegmentFormat::ProximaBlocks);
+    }
+
+    /// `write_pax_segment` is the write-side inverse: what it writes is detected as PAX
+    /// and reads back through `read_segment_records` (the Phase B flush↔read round-trip,
+    /// exercised without the flush harness).
+    #[test]
+    fn write_pax_segment_round_trips_through_reader() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("written.pax");
+        let records = vec![
+            rec("w1", 1_700_000_000_000_000_000, vec![1.0, 2.0, 3.0]),
+            rec("w2", 1_700_000_000_000_000_001, vec![4.0, 5.0, 6.0]),
+        ];
+        let meta = write_pax_segment(&path, &records, "col", 1).unwrap();
+        assert!(
+            meta.block_count >= 1,
+            "segment should have at least one block"
+        );
+
+        let bytes = std::fs::read(&path).unwrap();
+        assert_eq!(SegmentFormat::detect(&bytes), SegmentFormat::Pax);
+        let back = read_segment_records(&bytes, &[], &[]).unwrap();
+        let mut oids: Vec<&str> = back.iter().map(|r| r.oid.as_str()).collect();
+        oids.sort_unstable();
+        assert_eq!(oids, vec!["w1", "w2"]);
     }
 }

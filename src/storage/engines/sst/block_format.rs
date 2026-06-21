@@ -97,6 +97,9 @@ pub enum BlockFormat {
     ProximaBlocks,
     /// Arrow IPC based storage format
     ArrowBlock,
+    /// Columnar PAX segment (carries SQ8 / RaBitQ quant codes; enables quantized ANN).
+    /// P3 migration — flag-gated default-OFF; reads are mixed-format-safe (`segment_format`).
+    PaxBlock,
 }
 
 impl BlockFormat {
@@ -104,6 +107,7 @@ impl BlockFormat {
     pub fn parse_block_format(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "arrowblock" | "arrow" | "arrow_block" => BlockFormat::ArrowBlock,
+            "paxblock" | "pax" | "pax_block" => BlockFormat::PaxBlock,
             _ => BlockFormat::ProximaBlocks,
         }
     }
@@ -113,6 +117,7 @@ impl BlockFormat {
         match self {
             BlockFormat::ProximaBlocks => ".sst",
             BlockFormat::ArrowBlock => ".arrow",
+            BlockFormat::PaxBlock => ".pax",
         }
     }
 }
