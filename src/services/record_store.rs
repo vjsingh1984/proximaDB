@@ -17,7 +17,7 @@ use arrow_array::RecordBatch;
 use arrow_schema::Schema as ArrowSchema;
 use async_trait::async_trait;
 use futures::StreamExt;
-use proximadb_block_format::{BlockCompression, BlockMode, col_id};
+use proximadb_block_format::{BlockCompression, BlockMode};
 use proximadb_catalog::{
     CatalogPhysicalFormat, CatalogStorageLayout, CatalogStorageSpecialization, CatalogTableSchema,
     CatalogWorkloadProfile,
@@ -3482,7 +3482,8 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
         let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
         record_object_store_op(tenant_id, "list_pax");
         io_trace::record_op_str("list_pax");
-        let field_to_col: &(dyn Fn(&str) -> Option<i32> + Sync) = &pax_field_to_col;
+        let field_to_col: &(dyn Fn(&str) -> Option<i32> + Sync) =
+            &crate::storage::engines::sst::segment_format::pax_field_to_col;
 
         let mut out = Vec::new();
         'segments: for path in segment_paths {
@@ -3532,21 +3533,5 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             }
         }
         Ok(out)
-    }
-}
-
-/// Map a filter field name to its canonical PAX column id for block/row-group
-/// pruning. Only the fixed canonical columns carry zone-map stripes; user
-/// metadata lives in opaque `props` (not prunable), so unknown fields return
-/// `None` and the pruner conservatively keeps the block (no false negatives).
-fn pax_field_to_col(field: &str) -> Option<i32> {
-    match field {
-        "id" | "oid" => Some(col_id::OID),
-        "tenant_id" => Some(col_id::TENANT_ID),
-        "created_at" | "created_at_ns" => Some(col_id::CREATED_AT),
-        "updated_at" | "updated_at_ns" => Some(col_id::UPDATED_AT),
-        "valid_from" | "valid_from_ns" => Some(col_id::VALID_FROM),
-        "valid_to" | "valid_to_ns" => Some(col_id::VALID_TO),
-        _ => None,
     }
 }
