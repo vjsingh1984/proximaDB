@@ -253,6 +253,7 @@ pub mod manifest;
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
+pub mod segment_format; // P3 Phase A: mixed-format (ProximaBlocks/PAX) read primitives
 pub mod text_column_support; // TEXT column storage integration
 pub mod tiering_integration;
 pub mod trait_impl;
