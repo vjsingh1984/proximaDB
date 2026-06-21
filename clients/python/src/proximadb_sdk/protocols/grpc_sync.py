@@ -193,7 +193,6 @@ try:
     from proximadb_sdk.v1 import (
         collection_types_pb2 as v1_collection_types_pb2,  # type: ignore
     )
-    from proximadb_sdk.v1 import sql_pb2_grpc as v1_sql_pb2_grpc  # type: ignore
     from proximadb_sdk.v1 import types_pb2 as v1_types_pb2  # type: ignore
     from proximadb_sdk.v1 import vector_pb2_grpc as v1_vector_pb2_grpc  # type: ignore
     from proximadb_sdk.v1 import vector_types_pb2 as v1_vector_types_pb2  # type: ignore
@@ -506,7 +505,7 @@ class ProximaDBSyncGrpcClient:
                 # v2: lightweight health probe via ProximaRecordService.ListCollections.
                 stub = v2_record_pb2_grpc.ProximaRecordServiceStub(channel)
                 req = v2_record_pb2.V2ListCollectionsRequest(limit=1)
-                response = stub.ListCollections(req, timeout=self.timeout)
+                stub.ListCollections(req, timeout=self.timeout)
 
                 latency_ms = (time.time() - start_time) * 1000
 
