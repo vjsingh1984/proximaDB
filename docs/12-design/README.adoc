@@ -104,6 +104,16 @@ Read these in order for future-shaping architecture work:
    shift). Subordinate to `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
 18. `[SUPERSEDED] roadmap/MULTIMODAL_OVERHAUL_SPEC_2026_05_08.adoc` +
    Legacy foundational mandate. Superseded by the Data Warehouse course correction on 2026-06-04.
+19. `CATALOG_OBJECT_MODEL_2026_06_21.adoc` +
+   Makes the catalog the single central object model for all multitenant objects and access methods.
+   One `CatalogObject` expresses every modality (relational, vector, document, graph, event, audit,
+   time-series, external) as a *facet*; a uniform four-layer stack (canonical authority → physical
+   layouts → projections) hides modality complexity, each layer carrying a catalog-resolved `location`.
+   Closes the four gaps: parallel `Collection`/`MetadataStoreInterface` model (collapse), convention/
+   env-derived addressing (catalog-resolved `location`, `DrPathBuilder` as default resolver), partial
+   index/MV representations (one `CatalogProjection` with `location`), and out-of-catalog modalities
+   (graph/event/audit as first-class layouts). The macro generalization of tenant catalog-resolution.
+   Subordinate to the 2026-06-04 course correction and `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
 
 == Stable Reference Docs
 
