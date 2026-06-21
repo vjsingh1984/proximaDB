@@ -137,6 +137,12 @@ pub struct PaxBlockWriter {
     embedding_count: usize,
     /// Vector quantization strategy for this writer (P3 Phase D; `Auto` = env-driven).
     quant: VectorQuant,
+    /// Drop the per-row `tenant_id` stripe (catalog-resolution): the segment is
+    /// path-isolated to one tenant, so the reader stamps tenant from the
+    /// catalog/path context. The block-header `tenant_id_hash` (the RLS skip) is
+    /// retained. Default from `PROXIMADB_PAX_DROP_TENANT_COL` (off) so the write
+    /// format only changes once readers that stamp tenant are deployed.
+    drop_tenant_col: bool,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -177,6 +183,7 @@ impl PaxBlockWriter {
             schema_fingerprint,
             embedding_count,
             quant: VectorQuant::Auto,
+            drop_tenant_col: drop_tenant_col_enabled(),
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -202,6 +209,14 @@ impl PaxBlockWriter {
     /// `new(..)` call sites are unchanged; `Auto` (the default) keeps env behavior.
     pub fn with_quant(mut self, quant: VectorQuant) -> Self {
         self.quant = quant;
+        self
+    }
+
+    /// Enable (or disable) dropping the per-row `tenant_id` stripe
+    /// (catalog-resolution). Builder form mirroring [`with_quant`]; the default
+    /// comes from `PROXIMADB_PAX_DROP_TENANT_COL`.
+    pub fn with_drop_tenant_col(mut self, enabled: bool) -> Self {
+        self.drop_tenant_col = enabled;
         self
     }
 
@@ -320,19 +335,26 @@ impl PaxBlockWriter {
                         .collect::<Vec<_>>(),
                 ),
             );
-            stripes.push(
-                self.build_str_stripe(
-                    col_id::TENANT_ID,
-                    "tenant_id",
-                    ColumnRole::Tenant,
-                    false,
-                    &self
-                        .tenant_ids
-                        .iter()
-                        .map(|s| Some(s.as_str()))
-                        .collect::<Vec<_>>(),
-                ),
-            );
+            // Catalog-resolution: a segment is path-isolated to one tenant
+            // (DrPathBuilder data/{tenant}/{namespace}/...), so the per-row tenant
+            // is redundant — the reader stamps it from the catalog/path context.
+            // When the flag is set, drop the stripe entirely; the block-header
+            // tenant_id_hash (computed in `add_record`) still carries the RLS skip.
+            if !self.drop_tenant_col {
+                stripes.push(
+                    self.build_str_stripe(
+                        col_id::TENANT_ID,
+                        "tenant_id",
+                        ColumnRole::Tenant,
+                        false,
+                        &self
+                            .tenant_ids
+                            .iter()
+                            .map(|s| Some(s.as_str()))
+                            .collect::<Vec<_>>(),
+                    ),
+                );
+            }
             stripes.push(self.build_i64_stripe(
                 col_id::CREATED_AT,
                 ColumnRole::Timestamp,
@@ -1311,6 +1333,13 @@ fn sq8_disabled() -> bool {
 /// (SQ8 reconstructs more faithfully without a rerank tier).
 fn rabitq_enabled() -> bool {
     std::env::var_os("PROXIMADB_VECTOR_RABITQ").is_some()
+}
+
+/// Default for dropping the per-row tenant stripe (catalog-resolution). Off
+/// unless `PROXIMADB_PAX_DROP_TENANT_COL` is set, so the on-disk format only
+/// changes once readers that stamp tenant from context are deployed.
+fn drop_tenant_col_enabled() -> bool {
+    std::env::var_os("PROXIMADB_PAX_DROP_TENANT_COL").is_some()
 }
 
 /// Encode a RaBitQ vector stripe: validity bitmap + per row

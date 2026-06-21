@@ -272,7 +272,16 @@ impl SstEngine {
                 let bytes = tokio::fs::read(local)
                     .await
                     .map_err(|e| anyhow::anyhow!("read pax segment {file}: {e}"))?;
-                crate::storage::engines::sst::segment_format::read_segment_records(&bytes, &[], &[])
+                // tenant_ctx None: the AXIS rebuild indexes vectors per-collection and
+                // does not consume record.tenant_id. (Deriving the owning tenant from
+                // the DrPathBuilder segment path is a follow-up for when the
+                // tenant-column-drop flag is enabled end-to-end.)
+                crate::storage::engines::sst::segment_format::read_segment_records(
+                    &bytes,
+                    &[],
+                    &[],
+                    None,
+                )
             }
         }
     }

@@ -338,8 +338,12 @@ impl<'b> RangedSegmentReader<'b> {
             let reader = PaxBlockReader::open(&block_bytes).map_err(|e| fs_err("open block", e))?;
             for flat in FlatRow::from_block_reader(&reader).map_err(|e| fs_err("flat rows", e))? {
                 out.push(
-                    flat.into_record(embedding_model_ids, user_column_keys)
-                        .map_err(|e| fs_err("into record", e))?,
+                    flat.into_record(
+                        embedding_model_ids,
+                        user_column_keys,
+                        self.tenant_id.as_deref(),
+                    )
+                    .map_err(|e| fs_err("into record", e))?,
                 );
             }
         }
@@ -600,7 +604,7 @@ mod tests {
 
         // Whole-segment reference decode.
         let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default()).unwrap();
-        let records = scanner.read_records(&[], &[]).unwrap();
+        let records = scanner.read_records(&[], &[], None).unwrap();
         let expected: Vec<Option<Vec<f32>>> = records
             .iter()
             .map(|r| r.embeddings.first().map(|e| e.values.to_fp32_owned()))

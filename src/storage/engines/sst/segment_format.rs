@@ -74,16 +74,21 @@ fn is_pax_segment(bytes: &[u8]) -> bool {
 /// `embedding_model_ids` / `user_column_keys` are the collection's schema keys used
 /// to reconstruct PAX records positionally (empty slices = best-effort defaults);
 /// they are ignored for the legacy format, which is self-describing.
+///
+/// `tenant_ctx` is the segment's owning tenant (from the catalog/path); it is
+/// stamped onto rows whose tenant column was dropped (catalog-resolution) and is
+/// ignored when the column is present. `None` keeps stored values verbatim.
 pub fn read_segment_records(
     bytes: &[u8],
     embedding_model_ids: &[String],
     user_column_keys: &[String],
+    tenant_ctx: Option<&str>,
 ) -> Result<Vec<ProximaRecord>> {
     match SegmentFormat::detect(bytes) {
         SegmentFormat::Pax => {
             let mut scanner =
                 PaxSegmentScanner::from_bytes(bytes.to_vec(), ScanPredicate::default())?;
-            scanner.read_records(embedding_model_ids, user_column_keys)
+            scanner.read_records(embedding_model_ids, user_column_keys, tenant_ctx)
         }
         SegmentFormat::ProximaBlocks => Ok(ProximaDataBlock::deserialize(bytes, None)?.records),
     }
@@ -324,7 +329,7 @@ mod tests {
             "PAX segment must be detected as Pax"
         );
 
-        let records = read_segment_records(&bytes, &[], &[]).unwrap();
+        let records = read_segment_records(&bytes, &[], &[], None).unwrap();
         assert_eq!(records.len(), 2);
         let mut oids: Vec<&str> = records.iter().map(|r| r.oid.as_str()).collect();
         oids.sort_unstable();
@@ -349,7 +354,7 @@ mod tests {
             "ProximaDataBlock must be detected as ProximaBlocks"
         );
 
-        let back = read_segment_records(&bytes, &[], &[]).unwrap();
+        let back = read_segment_records(&bytes, &[], &[], None).unwrap();
         let mut oids: Vec<&str> = back.iter().map(|r| r.oid.as_str()).collect();
         oids.sort_unstable();
         assert_eq!(oids, vec!["x", "y"]);
@@ -400,7 +405,7 @@ mod tests {
 
         let bytes = std::fs::read(&path).unwrap();
         assert_eq!(SegmentFormat::detect(&bytes), SegmentFormat::Pax);
-        let back = read_segment_records(&bytes, &[], &[]).unwrap();
+        let back = read_segment_records(&bytes, &[], &[], None).unwrap();
         let mut oids: Vec<&str> = back.iter().map(|r| r.oid.as_str()).collect();
         oids.sort_unstable();
         assert_eq!(oids, vec!["w1", "w2"]);
@@ -436,7 +441,7 @@ mod tests {
 
         // And it still reads back through the mixed-format router.
         let bytes2 = std::fs::read(&path).unwrap();
-        let back = read_segment_records(&bytes2, &[], &[]).unwrap();
+        let back = read_segment_records(&bytes2, &[], &[], None).unwrap();
         assert_eq!(back.len(), records.len());
     }
 

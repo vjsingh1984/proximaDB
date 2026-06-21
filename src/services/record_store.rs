@@ -3310,7 +3310,7 @@ fn pax_segment_to_records(
 ) -> Result<Vec<ProximaRecord>> {
     let mut scanner = PaxSegmentScanner::from_bytes(bytes, ScanPredicate::default())
         .map_err(|err| anyhow!("ObjectStoreVectorRecordStore failed to open PAX segment: {err}"))?;
-    let mut records = scanner.read_records(&[], &[]).map_err(|err| {
+    let mut records = scanner.read_records(&[], &[], None).map_err(|err| {
         anyhow!("ObjectStoreVectorRecordStore failed to decode PAX segment: {err}")
     })?;
     for record in &mut records {
