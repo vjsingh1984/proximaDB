@@ -89,6 +89,11 @@ pub struct PostgresProtocol {
     /// Set only around the extended Execute call; the simple-query path leaves
     /// it false and emits RowDescription as before.
     suppress_row_description: bool,
+    /// E0 rate-limiting: shared per-IP limiter (None = disabled), checked once at
+    /// query entry. Converged with the REST limiter via `RateLimitState`.
+    rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
+    /// This connection's peer IP — the rate-limit subject.
+    peer_ip: std::net::IpAddr,
 }
 
 /// Slice 6.3 gate-input bundle. Distinct type per surface for module
@@ -387,7 +392,22 @@ impl PostgresProtocol {
             observability_service,
             primary_pod_gate: None,
             suppress_row_description: false,
+            rate_limiter: None,
+            peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         }
+    }
+
+    /// Attach a shared per-IP rate limiter (and this connection's peer IP) so the
+    /// pgwire query path is rate-limited consistently with REST (E0). When unset
+    /// or disabled, queries are not rate-limited (default).
+    pub fn with_rate_limiter(
+        mut self,
+        limiter: Arc<crate::network::middleware::rate_limit::RateLimitState>,
+        peer_ip: std::net::IpAddr,
+    ) -> Self {
+        self.rate_limiter = Some(limiter);
+        self.peer_ip = peer_ip;
+        self
     }
 
     /// Create a new protocol handler with DDL/DML services for catalog integration
@@ -419,6 +439,8 @@ impl PostgresProtocol {
             observability_service: None,
             primary_pod_gate: None,
             suppress_row_description: false,
+            rate_limiter: None,
+            peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         }
     }
 
@@ -461,6 +483,8 @@ impl PostgresProtocol {
             observability_service: None,
             primary_pod_gate: None,
             suppress_row_description: false,
+            rate_limiter: None,
+            peer_ip: std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
         }
     }
 
@@ -960,7 +984,53 @@ impl PostgresProtocol {
     }
 
     /// Execute a translated query with request-scoped execution controls.
+    ///
+    /// E0 (in-process edge — `IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19`): every
+    /// pgwire query is scoped in a per-query `io_trace` span with tenant
+    /// attribution, so the pgwire surface emits the *same* per-query I/O trace
+    /// (object-store GETs/bytes, footer-cache outcomes, engine-ms) as REST/gRPC
+    /// — closing the consistency gap where pgwire bypassed the edge middleware
+    /// entirely. The tenant is the one already resolved for read routing
+    /// (TD-064); no new identity source is introduced. The wrapper is a thin
+    /// scope around the unchanged body in `_inner`.
     async fn execute_query_with_controls(
+        &mut self,
+        query: &str,
+        controls: ExecutionControls,
+    ) -> Result<()> {
+        // E0 rate-limiting: reject over-quota queries up front with a pgwire
+        // error, using the SAME converged RateLimitState check REST uses (no
+        // duplicate limiter). No-op when unset/disabled.
+        if let Some(limiter) = self.rate_limiter.clone()
+            && limiter.enabled()
+            && let Err(retry_after) = limiter.check_and_consume(self.peer_ip).await
+        {
+            return self
+                .send_error(
+                    "ERROR",
+                    "53400",
+                    &format!("rate limit exceeded; retry after {retry_after}s"),
+                )
+                .await;
+        }
+        let tenant = self.pgwire_resolve_read_tenant().await;
+        // E0 (edge consistency): give every pgwire query a request-id correlation
+        // scope — matching REST's request_id middleware — so logs and error
+        // envelopes carry it; then the per-query io_trace span (tenant-attributed).
+        let request_id = crate::network::middleware::request_id::RequestId::generate();
+        proximadb_api::rest::errors::REQUEST_ID
+            .scope(
+                request_id.0,
+                crate::observability::io_trace::instrument(
+                    Some(tenant),
+                    "pgwire.query",
+                    self.execute_query_with_controls_inner(query, controls),
+                ),
+            )
+            .await
+    }
+
+    async fn execute_query_with_controls_inner(
         &mut self,
         query: &str,
         controls: ExecutionControls,
@@ -4525,6 +4595,11 @@ impl PostgresProtocol {
                 return self.emit_portal_page(portal_name, max_rows as usize).await;
             }
 
+            // E0 follow-up: this portal-SELECT fast-path returns before reaching
+            // `execute_query_with_controls`, so it is the one pgwire query path
+            // not yet under the per-query `io_trace` span. Bring it under the
+            // same scope in the next slice (kept out here to avoid restructuring
+            // the borrow in this `&&` let-chain).
             if query.trim_start().to_uppercase().starts_with("SELECT")
                 && let Some(result) = self
                     .try_run_relational_select_pipeline(query, ExecutionControls::default())

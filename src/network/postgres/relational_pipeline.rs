@@ -222,11 +222,14 @@ pub async fn try_run_select(
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
 
-    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
             parquet_backed,
         },
+        // C4: observe-mode advisory from the trace-driven cost model — augments
+        // the reason for telemetry/EXPLAIN, never changes the backend.
+        Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
     );
     tracing::debug!(
         target: "proximadb::compute_route",
@@ -253,7 +256,13 @@ pub async fn try_run_select(
             parquet_tables,
             vector_ops,
             tenant_id: tenant.map(str::to_string),
-            allow_engine_sql_fallback: false,
+            // Full ANSI SQL over pgwire: when the shared relational frontend can't
+            // yet lower a query (e.g. typed DATE literals, certain subquery/window
+            // shapes), execute it through DataFusion's own ANSI SQL planner over the
+            // same registered Parquet tables. The query still routes through pgwire →
+            // ComputeScheduler → the DataFusion engine; only the lowering frontend
+            // differs. The shared logical plane stays the fast path where it works.
+            allow_engine_sql_fallback: true,
             controls: controls.clone(),
         };
         return Some(
@@ -738,11 +747,12 @@ pub fn classify_select_route(
     };
     let engages = query_engages_relational_engine(query);
     Some(
-        crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+        crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
             crate::query::compute_scheduler::QueryShape {
                 engages_relational: engages,
                 parquet_backed: false,
             },
+            Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
         ),
     )
 }
@@ -933,11 +943,12 @@ async fn route_and_plan_select(
             }
         }
     }
-    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select(
+    let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: engages,
             parquet_backed,
         },
+        Some(&crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL),
     );
     let mut explanation = decision_to_explanation(&decision);
     // For the DataFusion route, disclose the concrete Parquet row-group split
@@ -1100,6 +1111,33 @@ mod route_explain_tests {
             "None ANALYZE metrics are skipped in JSON: {json}"
         );
     }
+
+    #[test]
+    fn explain_surfaces_cost_model_advisory_once_warm() {
+        // C4 slice 3: once the trace-driven cost model has warmed history for a
+        // shape-class, the EXPLAIN reason discloses its (observe-mode) advisory.
+        use crate::observability::io_trace::IoTraceSnapshot;
+        use crate::query::route_cost_model::GLOBAL_ROUTE_COST_MODEL;
+        let snap = IoTraceSnapshot {
+            range_gets: 5,
+            bytes_read: 1 << 20,
+            ..Default::default()
+        };
+        // The GROUP BY query classifies as "olap/native"; warm Native there.
+        for _ in 0..3 {
+            GLOBAL_ROUTE_COST_MODEL.observe_by_label("olap/native", "Native(Volcano)", &snap);
+        }
+        let expl = explain_select_route("SELECT service, count(*) FROM events GROUP BY service")
+            .expect("routable");
+        // Observe-mode: the chosen engine is unchanged ...
+        assert_eq!(expl.compute_route, "Native(Volcano)");
+        // ... but the cost-model advisory is now visible in the EXPLAIN reason.
+        assert!(
+            expl.reason.contains("cost-model"),
+            "advisory surfaced in EXPLAIN reason: {}",
+            expl.reason
+        );
+    }
 }
 
 // =========================================================================
@@ -1136,12 +1174,18 @@ fn set_expr_engages(body: &SetExpr) -> bool {
             // JOIN; the legacy single-table path can't serve it. Same safety as the
             // WHERE case — an unliftable shape declines back to legacy.
             let has_projection_subquery = select.projection.iter().any(select_item_has_subquery);
+            // A derived table (subquery in FROM, e.g. `FROM (SELECT … row_number()
+            // OVER …) t WHERE rn = 1`, the TSBS last-point shape) is not something
+            // the legacy single-table path can serve — engage the relational/OLAP
+            // route so it reaches DataFusion.
+            let has_derived = select.from.iter().any(table_with_joins_has_derived);
             has_join
                 || has_group_by
                 || select.having.is_some()
                 || has_aggregate
                 || has_where_subquery
                 || has_projection_subquery
+                || has_derived
         }
         _ => false,
     }
@@ -1256,6 +1300,17 @@ fn collect_subquery_tables_in_expr(expr: &SqlExpr, out: &mut Vec<String>) {
         }
         _ => {}
     }
+}
+
+/// True if the FROM item (or any of its joins) is a derived table — a subquery in
+/// FROM. Such a shape must engage the relational/OLAP route (the legacy single-table
+/// path can't serve it).
+fn table_with_joins_has_derived(twj: &TableWithJoins) -> bool {
+    matches!(twj.relation, TableFactor::Derived { .. })
+        || twj
+            .joins
+            .iter()
+            .any(|j| matches!(j.relation, TableFactor::Derived { .. }))
 }
 
 fn collect_from_table_with_joins(twj: &TableWithJoins, out: &mut Vec<String>) {

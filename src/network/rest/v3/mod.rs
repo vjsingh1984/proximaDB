@@ -57,7 +57,7 @@ pub fn create_v3_router() -> Router<AppState> {
     use axum::routing::post;
 
     Router::new().route(
-        "/collections/:collection_id/documents",
+        "/collections/{collection_id}/documents",
         post(redirect_documents_to_v2),
     )
 }

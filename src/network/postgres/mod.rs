@@ -99,6 +99,9 @@ pub struct PostgresServer {
     /// `ALTER TABLE … MATERIALIZE` works; when `None` the trigger returns a clean
     /// "requires a configured warehouse object store" error.
     warehouse_root_url: Option<String>,
+    /// E0: shared per-IP rate limiter applied to the pgwire query path,
+    /// consistent with REST. `None` (default) = no pgwire rate-limiting.
+    rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
     /// Whether the server is running
     running: Arc<std::sync::atomic::AtomicBool>,
 }
@@ -139,8 +142,20 @@ impl PostgresServer {
             primary_pod_registry: None,
             self_pod_id: None,
             warehouse_root_url: None,
+            rate_limiter: None,
             running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
+    }
+
+    /// E0: attach a shared per-IP rate limiter so each per-connection
+    /// `PostgresProtocol` rate-limits its query path consistently with REST,
+    /// using the same converged `RateLimitState`.
+    pub fn with_rate_limiter(
+        mut self,
+        limiter: Arc<crate::network::middleware::rate_limit::RateLimitState>,
+    ) -> Self {
+        self.rate_limiter = Some(limiter);
+        self
     }
 
     /// Slice 6.3: attach the primary-pod write router so each
@@ -229,6 +244,7 @@ impl PostgresServer {
                     let primary_pod_registry = self.primary_pod_registry.clone();
                     let self_pod_id = self.self_pod_id.clone();
                     let warehouse_root_url = self.warehouse_root_url.clone();
+                    let rate_limiter = self.rate_limiter.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = Self::handle_connection(
@@ -246,6 +262,7 @@ impl PostgresServer {
                             primary_pod_registry,
                             self_pod_id,
                             warehouse_root_url,
+                            rate_limiter,
                         )
                         .await
                         {
@@ -285,6 +302,7 @@ impl PostgresServer {
         primary_pod_registry: Option<Arc<crate::cluster::primary_pod_registry::PrimaryPodRegistry>>,
         self_pod_id: Option<String>,
         warehouse_root_url: Option<String>,
+        rate_limiter: Option<Arc<crate::network::middleware::rate_limit::RateLimitState>>,
     ) -> Result<()> {
         // Create session
         let session = session_manager.create_session(addr).await?;
@@ -323,6 +341,11 @@ impl PostgresServer {
         // gate, legacy behavior) rather than silently misconfigured.
         if let (Some(registry), Some(pod_id)) = (primary_pod_registry, self_pod_id) {
             protocol = protocol.with_primary_pod_gate(registry, pod_id);
+        }
+        // E0: apply the shared per-IP rate limiter (subject = this peer's IP) so
+        // the pgwire query path is rate-limited consistently with REST.
+        if let Some(limiter) = rate_limiter {
+            protocol = protocol.with_rate_limiter(limiter, addr.ip());
         }
 
         // Run protocol loop

@@ -25,6 +25,16 @@ onnx = ["proximadb-embedding/onnx"]
 # set `PROXIMADB_EMBED_PROVIDER=coreml` to route BGE inference through the
 # Apple Neural Engine + GPU instead of CPU.
 coreml = ["onnx", "proximadb-embedding/coreml"]
+# Cloud object_store backends. Forward to the root `proximadb` crate's gated
+# features so the server binary links the S3 / ADLS / GCS object_store
+# implementations. WITHOUT these the server fails at boot with
+# "Unsupported filesystem scheme: adls" (resp. s3/gcs) when storage points at
+# a cloud URL — the default build only has the local `file://` backend.
+aws = ["proximadb/aws"]
+azure = ["proximadb/azure"]
+gcp = ["proximadb/gcp"]
+# Convenience: all three cloud backends (mirrors the root crate's cloud-full).
+cloud-full = ["aws", "azure", "gcp"]
 
 [dependencies]
 anyhow.workspace = true

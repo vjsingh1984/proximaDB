@@ -227,6 +227,16 @@ pub struct SharedServices {
     /// (graph: tracing-only; pgwire: opens its own appender locally).
     pub canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 
+    /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
+    /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
+    /// path both route relational tables through this instance — so a write on any protocol
+    /// is visible to reads + the CDC change-feed on every protocol. Previously the REST/gRPC
+    /// `DmlService` used the vector-compatibility stub for relational tables while pgwire used
+    /// the real WAL store, leaving the cross-surface APIs unconverged. `None` on test paths
+    /// without `opt_config` (each consumer falls back to its own store).
+    pub canonical_record_store:
+        Option<Arc<crate::services::record_store::DirectWalTableRecordStore>>,
+
     /// Process-wide recall-probe gate (TD-064 / LLD §5). The gate enables
     /// the quantized candidate route only after the recall-probe set passes
     /// the tenant's target for three consecutive builds; a single failure
@@ -1224,6 +1234,36 @@ impl SharedServices {
                 None
             };
 
+        // Cross-surface unification: build the canonical WAL-backed record store ONCE and
+        // WAL-recover it here, then share it across every surface (REST/gRPC DmlService below
+        // + pgwire direct-write path). One store ⇒ one authoritative relational state and one
+        // CDC change-feed, regardless of which protocol wrote the data.
+        let canonical_record_store: Option<
+            Arc<crate::services::record_store::DirectWalTableRecordStore>,
+        > = if let Some(appender) = canonical_wal_appender.clone() {
+            let store = Arc::new(
+                crate::services::record_store::DirectWalTableRecordStore::new_partitioned(
+                    appender.clone(),
+                ),
+            );
+            match appender.read_entries().await {
+                Ok(entries) => {
+                    if let Err(e) = store.replay_wal_entries(entries).await {
+                        warn!("SharedServices: canonical record-store WAL replay failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    warn!("SharedServices: reading canonical WAL for shared store failed: {e}")
+                }
+            }
+            info!(
+                "✅ SharedServices: shared canonical record store built + recovered (unifies REST/gRPC + pgwire relational state)"
+            );
+            Some(store)
+        } else {
+            None
+        };
+
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
         debug!(
@@ -1586,10 +1626,17 @@ impl SharedServices {
         // routing). EXPLAIN INSERT … SELECT queries arriving on the ExecuteSql RPC
         // are detected in execute_sql_v1 / the adapter and dispatched here instead
         // of the legacy SQL frontend.
-        let dml_service_for_grpc = Arc::new(DmlService::new(
-            catalog_manager.clone(),
-            vector_operations_service.clone(),
-        ));
+        // Use the SHARED canonical store so REST/gRPC relational DML/reads/EXPLAIN and the
+        // CDC change-feed operate on the SAME state pgwire writes to. Fall back to the
+        // vector-compatibility store only when no canonical store exists (test paths).
+        let dml_service_for_grpc = Arc::new(match canonical_record_store.clone() {
+            Some(store) => DmlService::with_direct_record_storage(
+                catalog_manager.clone(),
+                vector_operations_service.clone(),
+                store,
+            ),
+            None => DmlService::new(catalog_manager.clone(), vector_operations_service.clone()),
+        });
 
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
@@ -1884,6 +1931,7 @@ impl SharedServices {
                 // for pgwire direct writes — guaranteeing both consumers
                 // share the same next_sequence counter.
                 canonical_wal_appender,
+                canonical_record_store,
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope

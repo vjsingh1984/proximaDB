@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, development, develop]
+    branches: [main, development, develop, qa]
   pull_request:
-    branches: [main, development, develop]
+    branches: [main, development, develop, qa]
   workflow_dispatch:
     inputs:
       skip_tests:
@@ -43,6 +43,11 @@ env:
 #                             -> docker-build
 # ============================================================================
 
+# Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
+# Read-only is sufficient: no job here writes to the repo, posts comments, or uses OIDC.
+permissions:
+  contents: read
+
 jobs:
   # ============================================================================
   # CHANGES DETECTION - Determine what to build/test
@@ -51,6 +56,19 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
+      # Three-tier CI (feat -> develop -> qa -> main):
+      #   * feat -> develop = LIGHT: compile + fmt/clippy + layering + proto +
+      #     panic-policy + capability + security-audit + lints + docs. Fast inner
+      #     loop so development merges quickly and stays unblocked.
+      #   * develop -> qa = MEDIUM (`test_tier`): LIGHT + the core correctness
+      #     suites — rust-test, the 4 rust-integration-test-* engines, feature-matrix.
+      #   * qa -> main = FULL (`extensive`): MEDIUM + docker-build, coverage,
+      #     python multi-version, cross integration-test, benchmarks. The heaviest,
+      #     pre-promotion gate.
+      # `test_tier` is true for base qa or main (and pushes to those); `extensive`
+      # is true only for base main (and pushes to main).
+      test_tier: ${{ github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
+      extensive: ${{ github.base_ref == 'main' || github.ref == 'refs/heads/main' }}
       rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
       docker: ${{ steps.filter.outputs.docker }}
@@ -340,6 +358,45 @@ jobs:
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
         run: cargo clippy --lib --bins -- -D warnings
+
+  # Feature-gated code paths that DEFAULT CI never compiles. This is the job
+  # that would have caught the cloud-full `ObjectStoreExt` compile-rot (the
+  # AnvaiOps ADLS CrashLoopBackOff) at PR time instead of in production:
+  # aws/azure/gcp/onnx/cluster/catalog code is gated, so the default build
+  # skips it and rot accumulates invisibly. `cargo check` (no link/test) keeps
+  # this cheap while still surfacing E0599-class errors. Each combo runs on its
+  # own runner (fail-fast: false) so one feature's break doesn't mask others.
+  feature-matrix:
+    name: Feature Matrix (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.test_tier == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The two combos the published images actually ship (PR #78):
+          - { label: "cloud-full",          pkg: proximadb-server, feats: "cloud-full" }
+          - { label: "cloud-full,onnx",     pkg: proximadb-server, feats: "cloud-full,onnx" }
+          # Other gated surfaces invisible to default CI:
+          - { label: "cluster",             pkg: proximadb,        feats: "cluster" }
+          - { label: "enterprise-catalogs", pkg: proximadb,        feats: "enterprise-catalogs" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install System Dependencies
+        # g++ provides libstdc++ for the onnxruntime (ort) build script.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler g++
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-feature-matrix"
+          shared-key: ${{ matrix.label }}
+      - name: cargo check -p ${{ matrix.pkg }} --features ${{ matrix.feats }}
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+        run: cargo check -p ${{ matrix.pkg }} --features ${{ matrix.feats }}
 
   rust-security:
     name: Security Audit
@@ -765,7 +822,7 @@ jobs:
     name: Rust Tests (${{ matrix.test-type }})
     runs-on: ubuntu-latest
     needs: [changes, rust-build]
-    if: needs.changes.outputs.rust == 'true' && !inputs.skip_tests
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.test_tier == 'true' && !inputs.skip_tests
     strategy:
       fail-fast: false
       matrix:
@@ -821,6 +878,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.storage_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -853,6 +911,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.query_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -884,6 +943,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.graph_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -915,6 +975,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.network_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -942,7 +1003,10 @@ jobs:
   rust-coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    needs: [rust-test]
+    # FULL tier only (qa -> main). rust-test runs at the MEDIUM tier (qa), but
+    # coverage is expensive, so gate it to the main-promotion gate explicitly.
+    needs: [changes, rust-test]
+    if: needs.changes.outputs.extensive == 'true'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -999,7 +1063,7 @@ jobs:
       matrix:
         # 3.9 dropped: the package declares requires-python ">=3.10".
         python-version: ["3.10", "3.11", "3.12"]
-    if: "!inputs.skip_tests"
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.extensive == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -1076,7 +1140,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [changes, rust-build, python-test]
-    if: "!inputs.skip_tests"
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.extensive == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -1198,7 +1262,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: changes
-    if: needs.changes.outputs.docker == 'true' || needs.changes.outputs.rust == 'true'
+    if: (needs.changes.outputs.docker == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.extensive == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -1290,6 +1354,7 @@ jobs:
       - panic-policy-no-regression
       - panic-policy-module-guard
       - rust-clippy
+      - feature-matrix
       - rust-security
       - rust-build
       - rust-test

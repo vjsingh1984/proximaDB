@@ -9,16 +9,16 @@
 //! unified port architecture.
 
 use super::service::MultiplexService;
-use hyper::Body;
+use hyper::body::Incoming;
 use hyper::http::{Request, Response};
-use hyper::server::conn::Http;
 use hyper::service::Service;
+use hyper_util::rt::{TokioExecutor, TokioIo};
+use hyper_util::server::conn::auto;
 use std::convert::Infallible;
 use std::future::Future;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 use tracing::{debug, error, info, warn};
@@ -64,39 +64,27 @@ impl Default for UnifiedServerConfig {
     }
 }
 
-/// Wrapper to adapt MultiplexService for hyper 0.14
+/// Adapt the tower `MultiplexService` to a hyper 1.0 service: convert the
+/// incoming body to `axum::body::Body`, then delegate. The response is already
+/// `Response<axum::body::Body>`, which implements `http_body::Body` for hyper 1.0.
 #[derive(Clone)]
 struct HyperService {
     inner: MultiplexService,
 }
 
-impl Service<Request<Body>> for HyperService {
-    type Response = Response<Body>;
+impl Service<Request<Incoming>> for HyperService {
+    type Response = Response<axum::body::Body>;
     type Error = Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
 
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, request: Request<Body>) -> Self::Future {
-        // Convert hyper::Body to axum::body::Body for the MultiplexService
+    fn call(&self, request: Request<Incoming>) -> Self::Future {
         let (parts, body) = request.into_parts();
-        let axum_body = body;
-        let request = Request::from_parts(parts, axum_body);
+        let request = Request::from_parts(parts, axum::body::Body::new(body));
 
         let mut service = self.inner.clone();
         Box::pin(async move {
-            let response = tower::Service::call(&mut service, request).await;
-            match response {
-                Ok(resp) => {
-                    // The response body is axum::body::Body which is compatible with hyper::Body
-                    // in axum 0.6 + hyper 0.14
-                    let (parts, body) = resp.into_parts();
-                    // Convert axum::body::Body back to hyper::Body
-                    let hyper_body = Body::wrap_stream(body);
-                    Ok(Response::from_parts(parts, hyper_body))
-                }
+            match tower::Service::call(&mut service, request).await {
+                Ok(resp) => Ok(resp),
                 Err(infallible) => match infallible {},
             }
         })
@@ -236,25 +224,22 @@ async fn handle_connection(
         .set_nodelay(true)
         .map_err(|e| UnifiedServerError::Connection(e.to_string()))?;
 
-    // Wrap the service for hyper 0.14 compatibility
+    // hyper 1.0: adapt the tokio stream + tower service, serve via the auto
+    // (HTTP/1 + HTTP/2) connection builder.
+    let io = TokioIo::new(stream);
     let hyper_service = HyperService { inner: service };
 
-    // Build the HTTP connection handler
-    let mut http = Http::new();
-
-    // Configure HTTP/1.1 and HTTP/2 support
-    if config.enable_http1 {
-        http.http1_only(false);
-    }
+    let mut builder = auto::Builder::new(TokioExecutor::new());
     if config.enable_http2 {
-        http.http2_only(false);
-        http.http2_max_concurrent_streams(config.http2_max_concurrent_streams);
-        http.http2_initial_connection_window_size(config.http2_initial_connection_window_size);
-        http.http2_initial_stream_window_size(config.http2_initial_stream_window_size);
+        builder
+            .http2()
+            .max_concurrent_streams(config.http2_max_concurrent_streams)
+            .initial_connection_window_size(config.http2_initial_connection_window_size)
+            .initial_stream_window_size(config.http2_initial_stream_window_size);
     }
 
-    // Serve the connection
-    http.serve_connection(stream, hyper_service)
+    builder
+        .serve_connection(io, hyper_service)
         .await
         .map_err(|e| UnifiedServerError::Connection(e.to_string()))?;
 

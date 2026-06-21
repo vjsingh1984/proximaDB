@@ -140,12 +140,12 @@ impl Default for WebSocketState {
 /// Returns an Axum router with WebSocket endpoints for vector streaming.
 pub fn websocket_routes(state: WebSocketState) -> Router {
     Router::new()
-        .route("/v1/stream/insert/:collection", get(ws_insert_handler))
+        .route("/v1/stream/insert/{collection}", get(ws_insert_handler))
         .route(
-            "/v1/stream/subscribe/:collection",
+            "/v1/stream/subscribe/{collection}",
             get(ws_subscribe_handler),
         )
-        .route("/v1/stream/status/:session_id", get(ws_status_handler))
+        .route("/v1/stream/status/{session_id}", get(ws_status_handler))
         .with_state(state)
 }
 
@@ -309,7 +309,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                 message: e.to_string(),
             });
             if let Some(json) = safe_serialize(&error_msg) {
-                let _ = sender.send(Message::Text(json)).await;
+                let _ = sender.send(Message::Text(json.into())).await;
             }
             return;
         }
@@ -334,7 +334,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
     };
 
     if sender
-        .send(Message::Text(session_created_json))
+        .send(Message::Text(session_created_json.into()))
         .await
         .is_err()
     {
@@ -397,7 +397,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                 });
 
                                 if let Some(ack_json) = safe_serialize(&ack) {
-                                    if sender.send(Message::Text(ack_json)).await.is_err() {
+                                    if sender.send(Message::Text(ack_json.into())).await.is_err() {
                                         break;
                                     }
                                 } else {
@@ -412,7 +412,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                                     message: e.to_string(),
                                 });
                                 if let Some(error_json) = safe_serialize(&error_msg) {
-                                    let _ = sender.send(Message::Text(error_json)).await;
+                                    let _ = sender.send(Message::Text(error_json.into())).await;
                                 }
                             }
                         }
@@ -420,7 +420,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                     Ok(ClientMessage::Ping) => {
                         let pong = ServerMessage::Pong;
                         if let Some(pong_json) = safe_serialize(&pong) {
-                            let _ = sender.send(Message::Text(pong_json)).await;
+                            let _ = sender.send(Message::Text(pong_json.into())).await;
                         }
                     }
                     Ok(ClientMessage::Close) => {
@@ -433,7 +433,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                             message: "Expected insert or close message".to_string(),
                         });
                         if let Some(error_json) = safe_serialize(&error_msg) {
-                            let _ = sender.send(Message::Text(error_json)).await;
+                            let _ = sender.send(Message::Text(error_json.into())).await;
                         }
                     }
                     Err(e) => {
@@ -443,7 +443,7 @@ async fn handle_insert_socket(socket: WebSocket, collection: String, state: WebS
                             message: e.to_string(),
                         });
                         if let Some(error_json) = safe_serialize(&error_msg) {
-                            let _ = sender.send(Message::Text(error_json)).await;
+                            let _ = sender.send(Message::Text(error_json.into())).await;
                         }
                     }
                 }
@@ -497,7 +497,7 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
                         message: "First message must be a subscribe message".to_string(),
                     });
                     if let Some(error_json) = safe_serialize(&error_msg) {
-                        let _ = sender.send(Message::Text(error_json)).await;
+                        let _ = sender.send(Message::Text(error_json.into())).await;
                     }
                 }
                 Err(e) => {
@@ -506,7 +506,7 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
                         message: e.to_string(),
                     });
                     if let Some(error_json) = safe_serialize(&error_msg) {
-                        let _ = sender.send(Message::Text(error_json)).await;
+                        let _ = sender.send(Message::Text(error_json.into())).await;
                     }
                 }
             },
@@ -541,7 +541,11 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
             }
         };
 
-        if sender.send(Message::Text(initial_json)).await.is_err() {
+        if sender
+            .send(Message::Text(initial_json.into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }
@@ -560,7 +564,7 @@ async fn handle_subscribe_socket(socket: WebSocket, collection: String, _state: 
                         .unwrap_or(0),
                 });
                 if let Some(heartbeat_json) = safe_serialize(&heartbeat) {
-                    if sender.send(Message::Text(heartbeat_json)).await.is_err() {
+                    if sender.send(Message::Text(heartbeat_json.into())).await.is_err() {
                         break;
                     }
                 } else {

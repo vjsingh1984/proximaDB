@@ -149,10 +149,20 @@ impl SstEngine {
 
         // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
-        let block_format = BlockFormat::parse_block_format(&self.config().block_format);
+        let mut block_format = BlockFormat::parse_block_format(&self.config().block_format);
+        // P3 Phase B: flag-gated PAX vector segments (default OFF). Reads stay
+        // mixed-format-safe (see `segment_format`), so flipping this on only changes
+        // newly written segments; existing ProximaBlocks segments still read back.
+        if std::env::var("PROXIMADB_PAX_VECTOR_SEGMENTS")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+            .unwrap_or(false)
+        {
+            block_format = BlockFormat::PaxBlock;
+        }
         let file_extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",
+            BlockFormat::PaxBlock => "pax",
         };
         let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
         debug!(
@@ -398,6 +408,37 @@ impl SstEngine {
 
                 tracing::debug!("SSTable write operation completed");
                 write_outcome = Some(outcome);
+            }
+            BlockFormat::PaxBlock => {
+                // P3 Phase B: write a columnar PAX vector segment (flag-gated, default
+                // OFF). Mirrors the Arrow arm's local-staging approach — write to the
+                // local staging path; the atomic op promotes it to the final (possibly
+                // object-store) URL. Reads are mixed-format-safe via
+                // `segment_format::read_segment_records` (magic-byte detection), so no
+                // manifest/reader change is required for this segment to be read back.
+                use crate::storage::engines::sst::segment_format::write_pax_segment;
+                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                if let Some(parent) = std::path::Path::new(staging_path).parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .context("Failed to create PAX staging directory")?;
+                }
+                let embedding_count = sorted_vectors
+                    .first()
+                    .map(|(_, rec)| rec.embeddings.len().max(1))
+                    .unwrap_or(1);
+                let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
+                let collection_id = params.collection_id.as_deref().unwrap_or("default");
+                let meta = write_pax_segment(
+                    std::path::Path::new(staging_path),
+                    &records,
+                    collection_id,
+                    embedding_count,
+                )
+                .context("Failed to write PAX vector segment")?;
+                tracing::debug!(blocks = meta.block_count, "PAX segment write completed");
+                // write_outcome stays None — PAX doesn't expose SstableWriteOutcome yet
+                // (block-directory emission is the ProximaBlocks-only path, like Arrow).
             }
         }
 

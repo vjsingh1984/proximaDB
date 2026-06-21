@@ -14,12 +14,105 @@
 
 use std::sync::Arc;
 
-use arrow_array::{ArrayRef, BooleanArray, Float64Array, Int64Array};
+use arrow_array::{Array, ArrayRef, BooleanArray, Float64Array, Int64Array, StringArray};
 use arrow_schema::DataType;
 use datafusion::error::{DataFusionError, Result as DFResult};
 use datafusion::logical_expr::{ColumnarValue, ScalarUDF, Volatility, create_udf};
 
 use crate::compute::montecarlo::mc_price_batch_seq;
+
+// =========================================================================
+// JSON extraction UDFs
+//
+// The pgwire translator rewrites PostgreSQL JSON operators to portable function
+// calls — `col -> 'k'` → `JSON_EXTRACT(col, 'k')` and `col ->> 'k'` →
+// `JSON_EXTRACT_TEXT(col, 'k')`. A query that is BOTH relational (GROUP BY /
+// aggregate) AND JSON-extracting routes to the DataFusion OLAP engine, so these
+// functions must be registered there too (the document modality over the
+// analytical route). JSON columns materialize to Parquet as Utf8 text; both UDFs
+// take (Utf8 json, Utf8 key) → Utf8.
+//   * json_extract       — returns the sub-value as compact JSON text (chainable:
+//                          `doc->'a'->>'b'` = JSON_EXTRACT_TEXT(JSON_EXTRACT(...))).
+//   * json_extract_text  — returns the sub-value as plain text (strings unquoted).
+// A missing key, NULL input, non-object container, or unparseable JSON yields NULL.
+// =========================================================================
+
+/// `JSON_EXTRACT(json_text, key)` → sub-value as compact JSON text.
+pub fn json_extract_udf() -> ScalarUDF {
+    create_udf(
+        "json_extract",
+        vec![DataType::Utf8, DataType::Utf8],
+        DataType::Utf8,
+        Volatility::Immutable,
+        Arc::new(|args| json_extract_impl(args, false)),
+    )
+}
+
+/// `JSON_EXTRACT_TEXT(json_text, key)` → sub-value as plain text.
+pub fn json_extract_text_udf() -> ScalarUDF {
+    create_udf(
+        "json_extract_text",
+        vec![DataType::Utf8, DataType::Utf8],
+        DataType::Utf8,
+        Volatility::Immutable,
+        Arc::new(|args| json_extract_impl(args, true)),
+    )
+}
+
+fn json_extract_impl(args: &[ColumnarValue], as_text: bool) -> DFResult<ColumnarValue> {
+    if args.len() != 2 {
+        return Err(DataFusionError::Execution(format!(
+            "json_extract expects 2 arguments (json, key), got {}",
+            args.len()
+        )));
+    }
+    let num_rows = args
+        .iter()
+        .find_map(|a| match a {
+            ColumnarValue::Array(arr) => Some(arr.len()),
+            ColumnarValue::Scalar(_) => None,
+        })
+        .unwrap_or(1);
+    let docs = args[0].clone().into_array(num_rows)?;
+    let keys = args[1].clone().into_array(num_rows)?;
+    let docs = docs
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| DataFusionError::Execution("json_extract: arg0 must be Utf8".into()))?;
+    let keys = keys
+        .as_any()
+        .downcast_ref::<StringArray>()
+        .ok_or_else(|| DataFusionError::Execution("json_extract: arg1 must be Utf8".into()))?;
+
+    let mut out: Vec<Option<String>> = Vec::with_capacity(num_rows);
+    for i in 0..num_rows {
+        if docs.is_null(i) || keys.is_null(i) {
+            out.push(None);
+            continue;
+        }
+        out.push(extract_one(docs.value(i), keys.value(i), as_text));
+    }
+    Ok(ColumnarValue::Array(Arc::new(StringArray::from(out))))
+}
+
+fn extract_one(doc: &str, key: &str, as_text: bool) -> Option<String> {
+    let parsed: serde_json::Value = serde_json::from_str(doc).ok()?;
+    // Object key, or numeric index into an array.
+    let child = match &parsed {
+        serde_json::Value::Object(map) => map.get(key)?,
+        serde_json::Value::Array(arr) => arr.get(key.parse::<usize>().ok()?)?,
+        _ => return None,
+    };
+    if as_text {
+        match child {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Null => None,
+            other => Some(other.to_string()),
+        }
+    } else {
+        Some(child.to_string())
+    }
+}
 
 /// Fixed base seed so the UDF is deterministic (same inputs → same prices), which keeps
 /// query results reproducible and benchmark comparisons fair.

@@ -5,15 +5,12 @@
 //! with gRPC while maintaining REST-friendly JSON formats.
 
 use axum::{
-    Json, async_trait,
-    body::HttpBody,
-    extract::FromRequest,
-    http::Request,
+    Json,
+    extract::{FromRequest, Request},
     response::{IntoResponse, Response},
 };
 use prost::Message;
 use serde::{Deserialize, Serialize};
-use std::error::Error;
 
 use crate::errors::ApiError;
 
@@ -37,19 +34,16 @@ impl<T> ProtoJson<T> {
     }
 }
 
-/// Implement FromRequest for ProtoJson to enable extraction from HTTP requests
-#[async_trait]
-impl<T, S, B> FromRequest<S, B> for ProtoJson<T>
+/// Implement FromRequest for ProtoJson to enable extraction from HTTP requests.
+/// axum 0.8: `FromRequest<S>` (no body generic), native async, no `#[async_trait]`.
+impl<T, S> FromRequest<S> for ProtoJson<T>
 where
     T: Message + Default + for<'de> Deserialize<'de>,
     S: Send + Sync,
-    B: HttpBody + Send + 'static,
-    B::Data: Send,
-    B::Error: Into<Box<dyn Error + Send + Sync>>,
 {
     type Rejection = ApiError;
 
-    async fn from_request(req: Request<B>, state: &S) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         // Extract JSON from request body
         let Json(value) = Json::<T>::from_request(req, state)
             .await

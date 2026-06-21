@@ -259,9 +259,9 @@ pub mod rest {
     pub fn create_router(service: Arc<dyn EventLogService>) -> Router {
         Router::new()
             .route("/health", get(get_health))
-            .route("/events/:collection_id", get(get_pending_events))
+            .route("/events/{collection_id}", get(get_pending_events))
             .route("/events", post(add_event))
-            .route("/events/:event_id/process", post(mark_processed))
+            .route("/events/{event_id}/process", post(mark_processed))
             .route("/events/query", post(query_events))
             .route("/compact/check", post(check_compaction))
             .with_state(service)

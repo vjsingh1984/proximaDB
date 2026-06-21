@@ -111,6 +111,12 @@ impl ProximaDB {
         }
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
+        // Co-design C4: wire the io_trace flush to feed the trace-driven route
+        // cost model, so completed routed queries teach the ComputeScheduler the
+        // measured cost of each (shape-class, backend). Observe-mode today —
+        // routing is unchanged until a later flag-gated slice.
+        crate::query::route_cost_model::install_route_cost_observer();
+
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
             Some(metrics_collector.clone()),
             &config.storage,
@@ -459,6 +465,19 @@ impl ProximaDB {
     /// inline-embed fallback path.
     pub fn queue_client(&self) -> Option<Arc<proximadb_queue::QueueClient>> {
         self.queue_client.clone()
+    }
+
+    /// The shared canonical WAL-backed record store unified across ALL surfaces (REST/gRPC
+    /// `DmlService` + pgwire direct writes both route relational tables through this single
+    /// instance). `None` when direct record writes aren't configured. Exposed so embedded
+    /// and integration consumers can observe the converged relational state — and the CDC
+    /// change-feed — regardless of which protocol wrote the data.
+    pub fn canonical_record_store(
+        &self,
+    ) -> Option<Arc<crate::services::record_store::DirectWalTableRecordStore>> {
+        self.multi_server
+            .as_ref()
+            .and_then(|ms| ms.shared_services.canonical_record_store.clone())
     }
 
     /// Start all database services (network listeners, background tasks, WAL recovery).

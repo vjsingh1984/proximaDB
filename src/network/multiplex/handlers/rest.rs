@@ -792,7 +792,7 @@ impl ProtocolHandler for RestHandler {
 
             // API routing - need to extract body for POST/PUT/DELETE
             let (parts, body) = request.into_parts();
-            let body_bytes: Vec<u8> = match hyper::body::to_bytes(body).await {
+            let body_bytes: Vec<u8> = match axum::body::to_bytes(body, usize::MAX).await {
                 Ok(bytes) => bytes.to_vec(),
                 Err(e) => {
                     return Response::builder()
@@ -941,7 +941,9 @@ mod tests {
     // === PR 3c: /version + /health precision_schema_v2_capable ===
 
     async fn body_json(resp: Response<Body>) -> serde_json::Value {
-        let bytes = hyper::body::to_bytes(resp.into_body()).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         serde_json::from_slice(&bytes).unwrap()
     }
 

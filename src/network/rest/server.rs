@@ -932,8 +932,12 @@ impl RestServer {
         use crate::network::tls::certificate_manager::utils::{
             load_certs_from_pem, load_private_key_from_pem,
         };
-        use rustls::{RootCertStore, ServerConfig, server::AllowAnyAuthenticatedClient};
+        use rustls::server::WebPkiClientVerifier;
+        use rustls::{RootCertStore, ServerConfig};
         use std::sync::Arc;
+
+        // rustls 0.23 requires a process-default CryptoProvider before builder(); idempotent.
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
 
         tracing::info!("Configuring mTLS with client certificate verification");
 
@@ -960,18 +964,19 @@ impl RestServer {
         // Build root cert store for client verification
         let mut root_store = RootCertStore::empty();
         for ca_cert in ca_certs {
-            root_store.add(&ca_cert).map_err(|e| {
+            root_store.add(ca_cert).map_err(|e| {
                 anyhow::anyhow!("Failed to add CA certificate to root store: {}", e)
             })?;
         }
 
-        // Create client certificate verifier - allows any cert signed by our CA
-        let client_verifier = AllowAnyAuthenticatedClient::new(root_store);
+        // Client certificate verifier — accept any cert chaining to our CA.
+        let client_verifier = WebPkiClientVerifier::builder(Arc::new(root_store))
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build client cert verifier: {}", e))?;
 
-        // Build mTLS server config
+        // Build mTLS server config (rustls 0.23 dropped with_safe_defaults()).
         let server_config = ServerConfig::builder()
-            .with_safe_defaults()
-            .with_client_cert_verifier(Arc::new(client_verifier))
+            .with_client_cert_verifier(client_verifier)
             .with_single_cert(certs, key)
             .map_err(|e| anyhow::anyhow!("Failed to build mTLS server config: {}", e))?;
 
@@ -995,10 +1000,9 @@ impl RestServer {
 
         Self::log_endpoints(&self.bind_addr, false);
 
-        // For axum 0.6, use axum::Server
-        axum::Server::bind(&self.bind_addr)
-            .serve(self.router.into_make_service())
-            .await?;
+        // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+        let listener = tokio::net::TcpListener::bind(&self.bind_addr).await?;
+        axum::serve(listener, self.router.into_make_service()).await?;
 
         Ok(())
     }
@@ -2076,10 +2080,10 @@ async fn dashboard_handler() -> axum::response::Html<&'static str> {
 mod tests {
     use super::*;
     use axum::body::Body;
+    use axum::body::to_bytes;
     use axum::http::{Request, StatusCode};
     use axum::middleware;
     use axum::routing::get;
-    use hyper::body::to_bytes;
     use tower::ServiceExt;
 
     use crate::network::auth::middleware::auth_middleware_unified;
@@ -2180,7 +2184,7 @@ mod tests {
 
         let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"ok");
     }
 
@@ -2207,7 +2211,7 @@ mod tests {
 
         let response = router.oneshot(request).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body()).await.unwrap();
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         assert_eq!(&body[..], b"ok");
     }
 }

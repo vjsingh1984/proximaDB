@@ -1573,29 +1573,35 @@ pub async fn search_with_typed_filters(
         cold_stage1_only,
         turboquant_hints,
         vector_bounds_pruned_blocks,
-    ) = crate::observability::predicate_diagnostics::scope(async {
-        let outcome = state
-            .request_handlers
-            .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
-            .await;
-        let downgraded = crate::observability::predicate_diagnostics::take_quantized_downgrade();
-        // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
-        let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
-        // TD-040 S3e: SST vector-bounds prune count (also taken in-scope —
-        // the task-local binding ends when this future completes).
-        let vb_pruned = crate::observability::predicate_diagnostics::take_vector_bounds_pruned();
-        // Phase K (Quantization Trait Convergence Plan): TurboQuant
-        // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
-        // the scope because the task-local binding ends when this
-        // future completes — same constraint as the take above.
-        // `None` is the common case (most searches don't run
-        // through TurboQuant scoring); the slot is skipped at
-        // serialization time via the `skip_serializing_if` on
-        // `SearchPlanHints.turboquant` (Phase J) and
-        // `VectorHints.turboquant` (Phase F).
-        let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
-        (outcome, downgraded, cold_stage1, tq_hints, vb_pruned)
-    })
+    ) = crate::observability::io_trace::instrument(
+        Some(tenant.tenant_id.clone()),
+        "rest.v2.records.search",
+        crate::observability::predicate_diagnostics::scope(async {
+            let outcome = state
+                .request_handlers
+                .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
+                .await;
+            let downgraded =
+                crate::observability::predicate_diagnostics::take_quantized_downgrade();
+            // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
+            let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
+            // TD-040 S3e: SST vector-bounds prune count (also taken in-scope —
+            // the task-local binding ends when this future completes).
+            let vb_pruned =
+                crate::observability::predicate_diagnostics::take_vector_bounds_pruned();
+            // Phase K (Quantization Trait Convergence Plan): TurboQuant
+            // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
+            // the scope because the task-local binding ends when this
+            // future completes — same constraint as the take above.
+            // `None` is the common case (most searches don't run
+            // through TurboQuant scoring); the slot is skipped at
+            // serialization time via the `skip_serializing_if` on
+            // `SearchPlanHints.turboquant` (Phase J) and
+            // `VectorHints.turboquant` (Phase F).
+            let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
+            (outcome, downgraded, cold_stage1, tq_hints, vb_pruned)
+        }),
+    )
     .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
@@ -2294,6 +2300,40 @@ fn proxima_record_to_response(
         version,
         timestamp,
     }
+}
+
+/// Query parameters for the CDC change-feed endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct ChangesQuery {
+    /// Return changes with WAL sequence number strictly greater than this (default 0 = all).
+    #[serde(default)]
+    pub since_lsn: u64,
+}
+
+/// `GET /api/v2/collections/{collection_id}/changes?since_lsn=N` — CDC change-feed.
+///
+/// Returns row-level changes (op + lsn + after-image) for the table, ordered by lsn, from
+/// the unified canonical store — so it reflects writes made over ANY surface (REST/gRPC/
+/// pgwire). The cursor is the `lsn`: pass the highest seen `lsn` back as `since_lsn` to poll
+/// incrementally.
+pub async fn get_changes(
+    Path(collection_id): Path<String>,
+    State(state): State<AppState>,
+    Query(q): Query<ChangesQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let changes = state
+        .request_handlers
+        .table_changes(&collection_id, q.since_lsn)
+        .await
+        .map_err(|e| ApiError::Internal(format!("change-feed read failed: {e}")))?;
+    let next_lsn = changes.iter().map(|c| c.lsn).max();
+    Ok(Json(serde_json::json!({
+        "collection": collection_id,
+        "since_lsn": q.since_lsn,
+        "count": changes.len(),
+        "next_lsn": next_lsn,
+        "changes": changes,
+    })))
 }
 
 #[cfg(test)]

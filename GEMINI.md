@@ -19,6 +19,30 @@ You must also strictly enforce SaaS Operational constraints:
 - **Financial Telemetry:** Plumb `TenantContext` to all I/O boundaries to emit accurate billing metrics.
 ====
 
+[IMPORTANT]
+====
+**🧬 CO-DESIGN MANDATE (2026-06-19)**
+The five physical dimensions — **object storage, network, local disk/cache, compute-per-modality, and
+governance/security** — are co-optimized as one system against the **measured trace distribution**,
+toward each dimension's **dominant cost term** (for a cloud DB that is I/O round-trips and egress, not
+CPU), the way NVIDIA co-designs silicon+compilers and RISC co-designed the ISA+compiler. See
+`docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
+
+When changing a storage format, reader, codec, cache, or engine you MUST:
+1. **Co-design, don't locally optimize** — state which *dimensional cost term* the change moves (a 4×
+   codec is irrelevant if you still pay N footer round-trips); optimize across the storage↔compute
+   boundary, not within one layer.
+2. **Trace before you tune** — justify with a *measured per-query trace*, never a kernel microbench;
+   new routes/readers/writers emit the query-scoped I/O trace and the `ComputeScheduler` costs routes
+   from measured quantities.
+3. **Boundary is the contract** — every I/O boundary carries `TenantContext` (isolation + billing,
+   fail-closed) and writes under `DrPathBuilder`; isolation is structural, never a per-query predicate.
+4. **Vertical inside, standard outside** — co-design internals freely; expose only at stable seams
+   (pgwire, Arrow Flight, Iceberg, REST v2).
+5. **Meter every dimension as a TAM surface** — storage (KSU), read/compute (KRU/KIU), egress (KEU —
+   open gap), cache per-tenant; governance as tier entitlement.
+====
+
 ### Key Technologies
 - **Rust (2024 Edition):** Core implementation.
 - **Tokio & Axum/Tonic:** Asynchronous runtime and networking (REST/gRPC).
@@ -83,6 +107,13 @@ ProximaDB uses a **Unified Storage Interface** allowing pluggable engines.
 18. **Open-Format Authority:** Iceberg/Delta/Hudi/Parquet paths are interoperability modes. Register them in xCatalog as publications, imports, federated reads, or explicit external-authoritative assets; do not treat files/table logs as Proxima-owned hot authority unless canonical WAL/records own the commit.
 19. **Workspace Discipline:** Follow `roadmap/techdebt/WORKSPACE_REFACTOR_PLAN_2026_05_07.adoc`; stable map is `Foundation -> Contracts -> Modality Runtime -> Cross-Model Query Runtime -> Platform Runtime -> Apps/Bindings`; add crates only for real dependency or ownership payoff.
 20. **Read Before Touching Architecture:** For records/types/catalog/storage/WAL/query/RLS/open formats/pgwire/Arrow/workspace work, consult the relevant docs in the Architecture References section and cite doc/ADR ids in PRs.
+21. **PR Sizing for CI Efficiency (batch related work):** GitHub Actions runners are a shared, finite resource and every PR/push triggers a full CI run — do NOT slice cohesive work into many small PRs. Consolidate related commits (a feature + its tests + docs + adjacent follow-ups) into a single **medium-to-large, "meaty" but coherent** PR: large enough to amortize one CI run, small enough to stay reviewable and single-purpose. Avoid both extremes — trivial one-commit PRs that each cost a full runner cycle, and sprawling unfocused mega-PRs. When you have stacked or independent branches headed to the same base, rebase them onto one branch and open **one** PR rather than N. Always verify locally (`make check` / `cargo clippy` / tests) before pushing so a runner cycle isn't spent catching what you could have caught locally.
+22. **Storage-Format Migration (mixed-read-safe, gated):** Any change to an on-disk/wire format, codec, block, segment, or manifest MUST be **mixed-read-safe** — old and new coexist, detected by a version/magic byte, never a flag-day. Ship **default-OFF** (per-collection opt-in or env gate) until baked. Readers/recovery default to the legacy format when the marker is absent — never assume the new format. Gate with **round-trip + recall/quality tests**, not just compile: quantized/lossy formats must hold recall within tolerance of the f32 baseline. Reuse the existing inverse (e.g. `PaxSegmentScanner::read_records`); do not hand-roll a decoder. See `docs/12-design/RABITQ_PAX_SEGMENT_MIGRATION_PLAN_2026_06.adoc` for the canonical phased pattern.
+23. **CI/CD Tiering & Security Governance:** CI runs in tiers matched to the `feat -> develop -> qa -> main` promotion flow: **feat->develop LIGHT** (compile + fmt/clippy + layering + proto + panic-policy + security-audit + docs), **develop->qa MEDIUM** (+ unit/integration tests + feature-matrix), **qa->main FULL** (+ coverage + python multi-version + docker + benchmarks + CodeQL). Protected branches gate on the `CI Success` aggregator; **`develop` requires it too** — don't expect to merge red. Heavy scans (CodeQL) run only at the qa->main boundary + weekly. **Never commit secrets/credentials** (even in tests/fixtures — secret-scanning + push-protection are on; CodeQL flags credential literals). Report vulnerabilities via `SECURITY.md` private reporting, not public issues.
+24. **Quality Ratchets (correctness beyond compile):** Conformance is ratcheted, not asserted — the TPC-H (22) / TPC-DS (16) pgwire suites and ANN recall@k harnesses carry counts that **only go up**; a change that regresses a ratchet is a failure. ANN/quantization changes are gated against the **f32 recall baseline** (within tolerance). Performance claims are gated on the evidence ledger (`BENCHMARK_EVIDENCE.toml`) — reject kernel microbenchmarks masquerading as end-to-end metrics.
+25. **Determinism & Test Hygiene:** Tests must be deterministic and isolated — use **`nextest`** for process isolation; **no non-daemon background threads** (an un-shutdown pool deadlocks the interpreter/runner at exit); pin temp state under `tempdir`, not shared paths. Verify the **server binary builds**, not just `--lib` (a green `--lib` skips `#[cfg(test)]` + feature-gated code). Run perf-sensitive checks on a quiet machine. Known pre-existing flake: `native_volcano_stream_truncates_without_error` (streaming hang) — re-run, don't chase.
+26. **Agentic Engineering (Model + Harness):** This repo is developed in the *agentic engineering* mode of Google's *The New SDLC With Vibe Coding* (Osmani, Saboo, Kartakis, 2026): "an agent is a model plus a harness" — and the harness, not the model, is the work (~"10% model, 90% harness"). ProximaDB's harness IS this repo: the rule files (CLAUDE/GEMINI/AGENTS.md = **static context**), per-session **memory**, worktree **sandboxes**, the **guardrails/hooks** (panic-policy, layering, tenant-path, OSS-boundary, secret-scan, the CI tiers), multi-agent **orchestration**, and **observability** (Prometheus/billing). The differentiator of this mode is "not whether you use AI, it is how outputs get verified": production work runs the disciplined end — spec/ADR → tests **and evals** → CI gates — never vibe-coding (reserve that for throwaway spikes). Since "AI turns implementation from writing into reviewing", review generated code for its failure modes — **hallucinated dependencies/APIs, plausible-but-wrong logic, silent duplication of an existing primitive** — not just style. Keep these rule files **lean and high-signal** (static context is paid on every call); push detail to on-demand docs/skills (progressive disclosure).
+27. **Evals for Non-Deterministic Surfaces:** Per the tests-vs-evals split — "tests cover the deterministic parts; evals cover the parts that aren't deterministic" — any ranked, generated, or model-driven surface (ANN recall@k, hybrid/RRF ranking, embedding/semantic relevance, RAG / Graph-RAG retrieval, Text-to-AQL / RUBICON plans) MUST ship an **eval suite with a real rubric**, covering both **output** (is the result correct) and **trajectory** (was the route / tool-calls / plan sound) — "set the bar at the eval, not the demo." Gate shared/agentic workflows on **eval thresholds** like test coverage (a regression fails CI; ties to the Quality-Ratchet mandate), and **version the prompts + eval suites in the PR** that changes the behavior. Watch production for drift.
 
 ## 🚩 Feature Flags
 - `unified-facade-routing`: (Default) Directs queries to optimal engines.

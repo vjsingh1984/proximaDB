@@ -2,9 +2,9 @@ name: Workspace Layering Check
 
 on:
   push:
-    branches: [ main, develop, 'feature/**' ]
+    branches: [ main, develop, qa, 'feature/**' ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, develop, qa ]
 
 concurrency:
   # Dedup push+PR of the same branch into one group; cancel superseded
@@ -12,10 +12,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'development' }}
 
+# Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
+# Default read-only; the single job elevates only what it needs.
+permissions:
+  contents: read
+
 jobs:
   layering-validation:
     name: Validate Workspace Layering
     runs-on: ubuntu-latest
+    permissions:
+      contents: read        # checkout
+      pull-requests: write  # "Post results to PR (on failure)" via actions/github-script
 
     steps:
     - name: Checkout code

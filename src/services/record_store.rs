@@ -37,6 +37,7 @@ use proximadb_storage_common::{
 };
 
 use crate::metrics::consumption_metrics::record_object_store_op;
+use crate::observability::io_trace;
 use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
 use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};
@@ -133,6 +134,13 @@ pub trait TableWalAppender: Send + Sync {
         operations: Vec<CanonicalOperation>,
         tenant_id: Option<String>,
     ) -> Result<Vec<CanonicalWalEntry>>;
+
+    /// Read every canonical WAL entry this appender has durably recorded, oldest first.
+    /// The default returns nothing (appenders without a readable log opt out); the framed
+    /// appender overrides it. Used by the CDC change-feed to surface row-level changes.
+    async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Physical writer route selected from xCatalog table metadata.
@@ -421,6 +429,18 @@ async fn list_objects_with_suffix(
 }
 
 /// Canonical table-record store API.
+/// One row-level change surfaced by the CDC change-feed (P2). `lsn` is the WAL sequence
+/// number (monotonic), `op` is `"upsert"` or `"delete"`, `key` is the canonical OID, and
+/// `props` carries the after-image (JSON) for upserts. Serializable for the REST surface.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChangeRow {
+    pub lsn: u64,
+    pub op: String,
+    pub collection: String,
+    pub key: String,
+    pub props: Option<serde_json::Value>,
+}
+
 #[async_trait]
 pub trait TableRecordStore: Send + Sync {
     /// Write catalog-validated record mutations.
@@ -546,6 +566,18 @@ pub trait TableRecordStore: Send + Sync {
             }
         }
         Ok(None)
+    }
+
+    /// CDC change-feed: return row-level changes for `collection_id` with WAL sequence
+    /// number strictly greater than `since_lsn`, oldest first. The default returns nothing
+    /// (stores without a readable change log opt out); the WAL-backed store overrides it.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let _ = (collection_id, since_lsn);
+        Ok(Vec::new())
     }
 }
 
@@ -790,6 +822,19 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
     ) -> Result<TableRecordScanResponse> {
         self.store_for_schema(table_schema)
             .scan_records_filtered(table_schema, request, predicate, tenant_context)
+            .await
+    }
+
+    /// CDC change-feed: relational changes live in the relational (iceberg) route — the
+    /// WAL-backed store — so delegate there. Without this override the routing store would
+    /// fall through to the empty trait default, hiding pgwire writes from the change-feed.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        self.iceberg_store
+            .read_changes_since(collection_id, since_lsn)
             .await
     }
 }
@@ -1299,6 +1344,53 @@ impl DirectWalTableRecordStore {
 
 #[async_trait]
 impl TableRecordStore for DirectWalTableRecordStore {
+    /// CDC change-feed over the canonical WAL: surface every RecordUpsert/RecordDelete for
+    /// `collection_id` (the table name) with sequence number > `since_lsn`, oldest first.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let entries = self.wal_appender.read_all_entries().await?;
+        let mut out = Vec::new();
+        for e in entries {
+            if e.sequence_number <= since_lsn {
+                continue;
+            }
+            match e.operation {
+                CanonicalOperation::RecordUpsert {
+                    collection_id: c,
+                    record,
+                    ..
+                } if c == collection_id => {
+                    out.push(ChangeRow {
+                        lsn: e.sequence_number,
+                        op: "upsert".to_string(),
+                        collection: c,
+                        key: record.oid.clone(),
+                        props: serde_json::to_value(&record.props).ok(),
+                    });
+                }
+                CanonicalOperation::RecordDelete {
+                    collection_id: c,
+                    oid,
+                    ..
+                } if c == collection_id => {
+                    out.push(ChangeRow {
+                        lsn: e.sequence_number,
+                        op: "delete".to_string(),
+                        collection: c,
+                        key: oid,
+                        props: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+        out.sort_by_key(|r| r.lsn);
+        Ok(out)
+    }
+
     async fn write_mutations(
         &self,
         table_schema: &CatalogTableSchema,
@@ -3136,10 +3228,12 @@ impl ObjectStoreVectorRecordStore {
             list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
         let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
         record_object_store_op(tenant_id, "list_pax");
+        io_trace::record_op_str("list_pax");
 
         let mut records = Vec::new();
         for path in segment_paths {
             record_object_store_op(tenant_id, "fetch_pax");
+            io_trace::record_op_str("fetch_pax");
             let bytes = self
                 .bridge
                 .fetch_vector_segment(&path, tenant_id)
@@ -3147,6 +3241,7 @@ impl ObjectStoreVectorRecordStore {
                 .map_err(|err| {
                     anyhow!("ObjectStoreVectorRecordStore failed to fetch '{path}': {err}")
                 })?;
+            io_trace::record_bytes_read(bytes.len() as u64);
             records.extend(pax_segment_to_records(bytes, schema)?);
         }
         Ok(records)
@@ -3339,11 +3434,13 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
         let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
         record_object_store_op(tenant_id, "list_pax");
+        io_trace::record_op_str("list_pax");
         let field_to_col: &(dyn Fn(&str) -> Option<i32> + Sync) = &pax_field_to_col;
 
         let mut out = Vec::new();
         'segments: for path in segment_paths {
             record_object_store_op(tenant_id, "fetch_pax_ranged");
+            io_trace::record_op_str("fetch_pax_ranged");
             let reader = RangedSegmentReader::open_with_cache(
                 self.bridge.as_ref(),
                 path.clone(),
@@ -3357,6 +3454,13 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
                 .read_records_pruned(&filter, field_to_col, &[], &[])
                 .await
                 .map_err(|err| anyhow!("ranged pruned read '{path}': {err}"))?;
+            // Forward this open's physical read accounting into the per-query
+            // I/O trace (co-design C0: object-store bytes + footer-cache
+            // effectiveness, Dimensions 1 & 3).
+            let st = reader.read_stats();
+            io_trace::record_bytes_read(st.bytes_read);
+            io_trace::record_range_gets(st.range_gets);
+            io_trace::record_footers(st.footer_hits, st.footer_misses);
             for mut record in recs {
                 record.variation_id = Some(table_schema.name.clone());
                 if predicate.is_none_or(|p| p(&record)) {

@@ -111,7 +111,10 @@ def test_serialization_roundtrip():
     rebuilt = ClientConfig(**dumped)
     assert rebuilt.url == cfg.url
     js = cfg.model_dump_json()
-    assert "example.com" in js
+    # Parse and assert the exact url field rather than a substring match: a
+    # substring check is satisfied by an arbitrary position in the JSON
+    # (CodeQL py/incomplete-url-substring-sanitization).
+    assert json.loads(js)["url"] == "https://example.com:5678"
 
 
 # --------------------------------------------------------------------------- #

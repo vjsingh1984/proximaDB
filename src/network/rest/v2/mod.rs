@@ -90,44 +90,49 @@ pub fn create_v2_router() -> Router<AppState> {
         .route("/collections", post(collections::create_collection_v2))
         .route("/collections", get(collections::list_collections_v2))
         .route(
-            "/collections/:collection_id",
+            "/collections/{collection_id}",
             get(collections::get_collection_v2).delete(collections::delete_collection_v2),
         )
         // Schema management - separate routes for GET and PUT
         .route(
-            "/collections/:collection_id/schema",
+            "/collections/{collection_id}/schema",
             get(schema::get_schema),
         )
         .route(
-            "/collections/:collection_id/schema",
+            "/collections/{collection_id}/schema",
             put(schema::update_schema),
         )
         // Record operations
         .route(
-            "/collections/:collection_id/records/batch",
+            "/collections/{collection_id}/records/batch",
             post(records::insert_records),
         )
         // TD-099 (2026-05-31): paginated table scan. Server-side delegation
         // to RecordScan is deferred; handler returns an empty page so the
         // OpenAPI contract gate has a real route to dial.
         .route(
-            "/collections/:collection_id/records/scan",
+            "/collections/{collection_id}/records/scan",
             post(records::scan_records),
         )
         .route(
-            "/collections/:collection_id/records/:record_id",
+            "/collections/{collection_id}/records/{record_id}",
             get(records::get_record_v2).delete(records::delete_record_v2),
         )
         // Search with typed filters
         .route(
-            "/collections/:collection_id/search",
+            "/collections/{collection_id}/search",
             post(records::search_with_typed_filters),
+        )
+        // CDC change-feed: row-level changes since an LSN cursor (unified across surfaces).
+        .route(
+            "/collections/{collection_id}/changes",
+            get(records::get_changes),
         )
         // Document ingest (text-only / native server-side embedding). Folded in
         // from the former v3 surface; v3 now 308-redirects here. The handler is
         // re-exported from `crate::network::rest::v3::documents::ingest_documents`.
         .route(
-            "/collections/:collection_id/documents",
+            "/collections/{collection_id}/documents",
             post(crate::network::rest::v3::documents::ingest_documents),
         )
         // Query facade operations
@@ -135,15 +140,15 @@ pub fn create_v2_router() -> Router<AppState> {
         .route("/query/explain", post(query::explain_query))
         // Phase 8 (F1) — Continuous Discovery jobs (experimental).
         .route(
-            "/collections/:collection_id/discovery-jobs",
+            "/collections/{collection_id}/discovery-jobs",
             post(discovery::create_discovery_job_v2),
         )
         .route(
-            "/collections/:collection_id/discovery-jobs",
+            "/collections/{collection_id}/discovery-jobs",
             get(discovery::list_discovery_jobs_v2),
         )
         .route(
-            "/collections/:collection_id/discovery-jobs/:job_id",
+            "/collections/{collection_id}/discovery-jobs/{job_id}",
             get(discovery::get_discovery_job_v2),
         )
         // Phase 8 (F5) — External Collections: index external lake data un-copied.
@@ -153,19 +158,19 @@ pub fn create_v2_router() -> Router<AppState> {
                 .get(external_collection::list_external_collections_v2),
         )
         .route(
-            "/external-collections/:id",
+            "/external-collections/{id}",
             get(external_collection::get_external_collection_v2),
         )
         .route(
-            "/external-collections/:id/build",
+            "/external-collections/{id}/build",
             post(external_collection::build_external_collection_v2),
         )
         .route(
-            "/external-collections/:id/search",
+            "/external-collections/{id}/search",
             post(external_collection::search_external_collection_v2),
         )
         .route(
-            "/external-collections/:id/refresh",
+            "/external-collections/{id}/refresh",
             post(external_collection::refresh_external_collection_v2),
         )
         // Diagnostics — experimental capability contract endpoints.
@@ -173,7 +178,7 @@ pub fn create_v2_router() -> Router<AppState> {
         // promotion to `/collections/:id/route-health` is intentional
         // future work, not an oversight.
         .route(
-            "/_diagnostics/collections/:collection_id/route-health",
+            "/_diagnostics/collections/{collection_id}/route-health",
             get(collections::get_collection_route_health_v2),
         )
         // Adaptive HNSW retune. POST resolves DriftKind::EfSearchOnly
@@ -181,7 +186,7 @@ pub fn create_v2_router() -> Router<AppState> {
         // DriftKind::EfConstructionOrM cases as "rebuild required"
         // (operator must run /recluster — separate slice).
         .route(
-            "/_diagnostics/collections/:collection_id/recall-tune",
+            "/_diagnostics/collections/{collection_id}/recall-tune",
             axum::routing::post(collections::post_collection_recall_tune_v2),
         )
         // Recall-aware HNSW rebuild. POST reads every record for the
@@ -191,16 +196,16 @@ pub fn create_v2_router() -> Router<AppState> {
         // workflow — the only path that resolves m / ef_construction
         // drift (hot-swap handles ef_search alone).
         .route(
-            "/_diagnostics/collections/:collection_id/recluster",
+            "/_diagnostics/collections/{collection_id}/recluster",
             axum::routing::post(collections::post_collection_recluster_v2),
         )
         // Phase 8 (F4a) — single-node collection suspend/resume (TD-094).
         .route(
-            "/collections/:collection_id/suspend",
+            "/collections/{collection_id}/suspend",
             post(collections::post_collection_suspend_v2),
         )
         .route(
-            "/collections/:collection_id/resume",
+            "/collections/{collection_id}/resume",
             post(collections::post_collection_resume_v2),
         )
         // Capability negotiation: SDKs call this once to discover the server's

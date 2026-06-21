@@ -61,7 +61,7 @@ pub fn apply_v1_deprecation_headers(headers: &mut HeaderMap) {
     }
 }
 
-pub async fn add_rest_v1_deprecation_headers(request: Request<Body>, next: Next<Body>) -> Response {
+pub async fn add_rest_v1_deprecation_headers(request: Request<Body>, next: Next) -> Response {
     let is_rest_v1 = request.uri().path().starts_with("/api/v1/");
     let mut response = next.run(request).await;
 
@@ -72,10 +72,7 @@ pub async fn add_rest_v1_deprecation_headers(request: Request<Body>, next: Next<
     response
 }
 
-pub async fn add_compatibility_deprecation_headers(
-    request: Request<Body>,
-    next: Next<Body>,
-) -> Response {
+pub async fn add_compatibility_deprecation_headers(request: Request<Body>, next: Next) -> Response {
     let mut response = next.run(request).await;
     apply_v1_deprecation_headers(response.headers_mut());
     response

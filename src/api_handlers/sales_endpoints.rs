@@ -111,8 +111,8 @@ pub fn create_sales_router(sales_state: SalesServiceState) -> Router {
     Router::new()
         .route("/sales/trials", post(handle_create_trial))
         .route("/sales/trials", get(handle_list_trials))
-        .route("/sales/trials/:trial_id", get(handle_get_trial_status))
-        .route("/sales/trials/:trial_id/extend", post(handle_extend_trial))
+        .route("/sales/trials/{trial_id}", get(handle_get_trial_status))
+        .route("/sales/trials/{trial_id}/extend", post(handle_extend_trial))
         .route("/sales/demos/ai-showcase", post(handle_ai_showcase_demo))
         .route(
             "/sales/competitive-analysis",

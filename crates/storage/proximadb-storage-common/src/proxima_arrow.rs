@@ -51,14 +51,15 @@ use std::collections::HashMap;
 use arrow_array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Date32Array, FixedSizeBinaryArray, Float32Array,
     Float64Array, Int8Array, Int16Array, Int32Array, Int64Array, LargeStringArray, RecordBatch,
-    StringArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
+    StringArray, TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+    TimestampSecondArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
 };
 use proximadb_kernel::error::StorageError;
 use proximadb_records::{
     EmbeddingCell, EmbeddingValues, ProximaRecord, ProximaTreeNode, ProximaValue, tree_get,
 };
 
-use proximadb_data_model::{ProximaType, VectorElement as DmVectorElement};
+use proximadb_data_model::{ProximaType, TimeUnit as DmTimeUnit, VectorElement as DmVectorElement};
 
 use crate::proxima_schema::{ProximaColumn, ProximaSchema};
 
@@ -117,6 +118,11 @@ fn build_column(records: &[ProximaRecord], col: &ProximaColumn) -> Result<ArrayR
         ProximaType::Float32 => scalar_col!(Float32Builder, |v| pv_as_f64(v).map(|x| x as f32)),
         ProximaType::Float64 => scalar_col!(Float64Builder, pv_as_f64),
         ProximaType::Date => scalar_col!(Date32Builder, pv_as_date32),
+        // Temporal: build in the column's DECLARED unit, converting each stored
+        // value from its own unit (INSERT lowers DATE/TIMESTAMP literals to ms).
+        // TimestampTz carries a "UTC" zone so the Arrow type matches `to_arrow_type`.
+        ProximaType::Timestamp(unit) => build_timestamp_column(records, col, *unit, false),
+        ProximaType::TimestampTz(unit) => build_timestamp_column(records, col, *unit, true),
         // Utf8-backed types per `to_arrow_type` (String, Json).
         ProximaType::String | ProximaType::Json => {
             let mut b = StringBuilder::new();
@@ -188,6 +194,57 @@ fn build_vector_column(
         }
     }
     Ok(Arc::new(b.finish()) as ArrayRef)
+}
+
+/// Nanoseconds per one tick of a [`DmTimeUnit`].
+fn time_unit_nanos(u: DmTimeUnit) -> i64 {
+    match u {
+        DmTimeUnit::Second => 1_000_000_000,
+        DmTimeUnit::Millisecond => 1_000_000,
+        DmTimeUnit::Microsecond => 1_000,
+        DmTimeUnit::Nanosecond => 1,
+    }
+}
+
+/// Convert a tick count from `from` unit to `to` unit (via nanoseconds).
+fn convert_ticks(val: i64, from: DmTimeUnit, to: DmTimeUnit) -> i64 {
+    val.saturating_mul(time_unit_nanos(from)) / time_unit_nanos(to)
+}
+
+/// Build a Timestamp(unit[, UTC]) column, converting each stored value into the
+/// column's declared `unit`. A bare `Int64` is assumed already in `unit`.
+fn build_timestamp_column(
+    records: &[ProximaRecord],
+    col: &ProximaColumn,
+    unit: DmTimeUnit,
+    tz: bool,
+) -> Result<ArrayRef, StorageError> {
+    let vals: Vec<Option<i64>> = records
+        .iter()
+        .map(|r| {
+            tree_get(&r.props, &col.name).and_then(|v| match v {
+                ProximaValue::Timestamp(t, u) | ProximaValue::TimestampTz(t, u) => {
+                    Some(convert_ticks(*t, *u, unit))
+                }
+                ProximaValue::Int64(t) => Some(*t),
+                _ => None,
+            })
+        })
+        .collect();
+    let tzopt: Option<String> = if tz { Some("UTC".to_string()) } else { None };
+    let arr: ArrayRef = match unit {
+        DmTimeUnit::Second => Arc::new(TimestampSecondArray::from(vals).with_timezone_opt(tzopt)),
+        DmTimeUnit::Millisecond => {
+            Arc::new(TimestampMillisecondArray::from(vals).with_timezone_opt(tzopt))
+        }
+        DmTimeUnit::Microsecond => {
+            Arc::new(TimestampMicrosecondArray::from(vals).with_timezone_opt(tzopt))
+        }
+        DmTimeUnit::Nanosecond => {
+            Arc::new(TimestampNanosecondArray::from(vals).with_timezone_opt(tzopt))
+        }
+    };
+    Ok(arr)
 }
 
 // ---------------------------------------------------------------------------

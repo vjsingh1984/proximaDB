@@ -126,11 +126,26 @@ impl DataFusionLocalEngine {
 
         // P4 lowering
         let lowered_plan = match lower_sql(sql, &catalog) {
-            Ok(node) => Some(
-                crate::datafusion::logical_lowering::lower_logical_node(&ctx, &node)
-                    .await
-                    .map_err(|e| ExecutionError::Planning(format!("lower logical node: {e}")))?,
-            ),
+            Ok(node) => {
+                match crate::datafusion::logical_lowering::lower_logical_node(&ctx, &node).await {
+                    Ok(plan) => Some(plan),
+                    // The shared frontend accepted the SQL but the DataFusion
+                    // logical-node lowering can't yet express it. Rather than hard
+                    // failing, fall back to DataFusion's own ANSI SQL planner over
+                    // the same registered Parquet tables (full ANSI coverage).
+                    Err(e) if context.allow_engine_sql_fallback => {
+                        tracing::debug!(
+                            target: "proximadb::compute_route",
+                            error = %e,
+                            "shared frontend lowered but DataFusion logical-node lowering declined; using DataFusion SQL fallback"
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        return Err(ExecutionError::Planning(format!("lower logical node: {e}")));
+                    }
+                }
+            }
             Err(e) if context.allow_engine_sql_fallback => {
                 tracing::debug!(
                     target: "proximadb::compute_route",

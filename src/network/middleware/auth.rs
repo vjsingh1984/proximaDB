@@ -17,8 +17,9 @@
 //! Authentication middleware for ProximaDB HTTP API
 
 use axum::{
+    extract::Request,
     extract::State,
-    http::{Request, StatusCode},
+    http::StatusCode,
     middleware::Next,
     response::{Json, Response},
 };
@@ -88,10 +89,10 @@ impl AuthLayer {
 }
 
 /// Authentication middleware function
-pub async fn auth_middleware<B>(
+pub async fn auth_middleware(
     State(auth_config): State<MiddlewareAuthConfig>,
-    mut request: Request<B>,
-    next: Next<B>,
+    mut request: Request,
+    next: Next,
 ) -> Result<Response, (StatusCode, Json<AuthErrorResponse>)> {
     // Skip authentication if disabled
     if !auth_config.enabled {

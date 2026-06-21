@@ -313,7 +313,12 @@ class ProximaDBClient:
                 api_key=api_key,  # Can be used as a fallback or for initial auth
             )
         else:
-            logger.warning(f"Unsupported authentication method: {method}")
+            # Log only the type, never the raw value: in misuse cases the
+            # caller-supplied method may carry credential material, and
+            # type(...).__name__ is a constant class name, not the value.
+            logger.warning(
+                "Unsupported authentication method of type %s", type(method).__name__
+            )
             return
 
         base_url = config.url if hasattr(config, "url") else config.base_url

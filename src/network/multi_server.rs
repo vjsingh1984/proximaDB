@@ -217,6 +217,22 @@ impl MultiServer {
             .clone()
             .unwrap_or_else(|| default_wal_path.clone());
 
+        // Cross-surface unification: when the pgwire WAL path is the default, reuse the
+        // SHARED canonical record store that `SharedServices` already built + WAL-recovered.
+        // pgwire and the REST/gRPC `DmlService` then operate on ONE instance — a write on
+        // any protocol is visible to reads + the CDC change-feed on every protocol — and the
+        // WAL is replayed exactly once. A custom WAL path opts out (builds its own below).
+        if wal_path == default_wal_path
+            && let Some(store) = self.shared_services.canonical_record_store.clone()
+        {
+            info!(
+                "🐘 pgwire reusing shared canonical record store (unified cross-surface relational state)"
+            );
+            return Ok(Some(
+                crate::network::postgres::DirectPgwireWriteServices::new(store),
+            ));
+        }
+
         // T2.3 / TD-066 production wiring: prefer the shared canonical WAL
         // appender held on `SharedServices` so graph checkpoint emission
         // and pgwire direct writes share the same `next_sequence` counter
@@ -744,6 +760,23 @@ impl MultiServer {
             // the server data dir the same way document/observability roots are.
             let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
 
+            // E0: env-gated per-IP rate limiter for the pgwire query path
+            // (PROXIMADB_PGWIRE_RATE_LIMIT_RPM=<n>). Unset/0 → no limiting, so
+            // default behavior is unchanged. Uses the converged RateLimitState
+            // the REST middleware also checks against.
+            let pgwire_rate_limiter = std::env::var("PROXIMADB_PGWIRE_RATE_LIMIT_RPM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|rpm| *rpm > 0)
+                .map(|rpm| {
+                    std::sync::Arc::new(
+                        crate::network::middleware::rate_limit::RateLimitState::new(
+                            crate::network::middleware::RateLimitConfig::production(rpm, rpm)
+                                .to_middleware_config(),
+                        ),
+                    )
+                });
+
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
                 let mut server = PostgresServer::new(
@@ -762,6 +795,9 @@ impl MultiServer {
                     server.with_rank_pipeline(rank_services, rank_profile_store, function_store);
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
                 server = server.with_warehouse_materialization(warehouse_root_url);
+                if let Some(limiter) = pgwire_rate_limiter {
+                    server = server.with_rate_limiter(limiter);
+                }
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
                 }
@@ -926,11 +962,14 @@ impl MultiServer {
             );
 
             let handle = tokio::spawn(async move {
-                if let Err(e) = axum::Server::bind(&internal_rest_addr)
-                    .serve(router.into_make_service())
-                    .await
-                {
-                    tracing::error!("Internal REST server error: {}", e);
+                // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+                match tokio::net::TcpListener::bind(&internal_rest_addr).await {
+                    Ok(listener) => {
+                        if let Err(e) = axum::serve(listener, router.into_make_service()).await {
+                            tracing::error!("Internal REST server error: {}", e);
+                        }
+                    }
+                    Err(e) => tracing::error!("Internal REST bind error: {}", e),
                 }
             });
             handles.push(handle);
