@@ -275,6 +275,34 @@ jobs:
             src/proto/ \
             || (echo "::error::Generated proto sources have drifted from committed copy. Run scripts/regenerate-proto.sh and commit the result." && exit 1)
 
+  # TD-126 Phase 1: the published REST contract (docs/openapi/proximadb-openapi.yaml)
+  # is GENERATED from the annotated axum handlers (src/network/rest/openapi.rs),
+  # not hand-maintained. This job regenerates it and fails if the committed copy
+  # has drifted from the handler code — the same generated-artifact pattern as
+  # the proto-sync gate above. Regenerate locally with:
+  #   UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb --test openapi_spec_gen
+  openapi-spec-drift:
+    name: OpenAPI Spec From Code (TD-126)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-openapi-spec-drift"
+      - name: Regenerate OpenAPI spec from handlers (drift gate)
+        run: cargo test -p proximadb --test openapi_spec_gen -- --nocapture
+      - name: Fail on uncommitted drift in generated OpenAPI spec
+        run: |
+          git diff --exit-code -- docs/openapi/proximadb-openapi.yaml \
+            || (echo "::error::docs/openapi/proximadb-openapi.yaml has drifted from the annotated REST handlers. Run 'UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb --test openapi_spec_gen' and commit the result." && exit 1)
+
   panic-policy-report:
     name: Panic Policy Report (WS-2 Stage 1)
     runs-on: ubuntu-latest

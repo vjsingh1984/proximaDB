@@ -3,7 +3,7 @@
 :toclevels: 3
 :sectnums:
 
-Status: Open / proposed +
+Status: Phase 1 done (spec-from-code + CI drift gate); Phases 2–5 open +
 Date: 2026-06-21 +
 Owner: SDK / API surface
 
@@ -21,9 +21,41 @@ REST, proto for gRPC) plus a thin hand-written ergonomic facade; the value-add l
 
 == Work (phased)
 
-. *Spec-from-code (foundational).* Add `utoipa` annotations to the REST handlers; emit
+. *Spec-from-code (foundational).* [DONE] Add `utoipa` annotations to the REST handlers; emit
   `proximadb-openapi.yaml` from the build; add a CI gate that fails on spec↔code drift. Removes the
   hand-maintained spec copy.
++
+[NOTE]
+====
+*Phase 1 shipped (2026-06-21).* `utoipa` (5.x, `axum_extras`/`preserve_order`/`yaml`) is wired into
+the root `proximadb` crate. The published spec is now generated, not hand-edited.
+
+*Annotated in code* (`#[utoipa::path]` + `#[derive(ToSchema)]` on the live v2 handlers in
+`src/network/rest/v2/`): the core v2 surface — collection lifecycle
+(`createCollection`/`listCollections`/`getCollection`/`deleteCollection`), schema
+(`getCollectionSchema`/`updateCollectionSchema`), records
+(`insertRecords`/`scanRecords`/`getRecord`/`deleteRecord`), `searchRecords`, and the query facade
+(`executeQuery`/`explainQuery`) — 13 operations and their request/response DTOs.
+
+*Generator + drift gate.* `src/network/rest/openapi.rs` aggregates the annotated paths into an
+`ApiDoc` (`OpenApi` derive), folds in a checked-in supplement fragment
+(`docs/openapi/_supplement.yaml`), and renders canonical YAML. The integration test
+`tests/openapi_spec_gen.rs` is both the generator (`UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb
+--test openapi_spec_gen` writes `docs/openapi/proximadb-openapi.yaml`) and the gate (default run
+fails on drift). CI: the `openapi-spec-drift` job in `.github/workflows/ci.yml` regenerates and
+`git diff --exit-code`s the spec (mirrors the `proto-compat` generated-artifact pattern); also wired
+as `make verify-openapi-spec`.
+
+*Not yet annotated (carried verbatim by the supplement; tracked for a later increment):* `/health*`
+and `/api/v2/_meta/capabilities` (handlers return dynamic `serde_json::Value` — no concrete DTO),
+the graph surface (`/api/v2/graphs/*` — handlers + private request DTOs live in the `proximadb-api`
+crate), and the free-form `hybrid` / `document-collections` / `observability` passthrough endpoints.
+Keeping these in the supplement ensures the published spec does not regress the operations the
+per-SDK `openapi_contract` gates depend on (notably graphs + health probes). The drift gate covers
+the *merged* result, so neither the generated half nor the supplement can silently diverge. Closing
+the residual = annotate those handlers (and lift the graph DTOs to public/`ToSchema` in
+`proximadb-api`) and shrink the supplement toward empty.
+====
 . *Pilot one generated SDK leg.* Pick one language (e.g. TypeScript REST via `openapi-ts`, or Go via
   `oapi-codegen`): generate the transport + models, keep a thin hand-written ergonomic wrapper
   (pooling/retries/locality-gzip/auth). Validate parity against the existing contract tests.

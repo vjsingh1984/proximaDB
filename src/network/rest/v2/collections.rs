@@ -36,6 +36,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use tracing::{debug, info};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::errors::{ApiError, ApiResult};
 // AnnIndexAdvisor trait needs to be in scope so the recall-tune
@@ -101,11 +102,13 @@ fn collection_embedding_precision_label(precision: Option<i32>) -> Option<String
 ///     "enable_proxima_record": true
 /// }
 /// ```
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct CreateCollectionV2Request {
     /// Collection name (required)
+    #[schema(min_length = 1)]
     pub name: String,
     /// Vector dimension (required)
+    #[schema(minimum = 1)]
     pub dimension: u32,
     /// Storage engine selection
     ///
@@ -151,7 +154,7 @@ pub struct CreateCollectionV2Request {
 }
 
 /// REST input for a single index config (mirrors proto `IndexConfig`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IndexConfigInput {
     /// Optional index name (defaults to `index_<n>`).
     pub index_name: Option<String>,
@@ -167,7 +170,7 @@ pub struct IndexConfigInput {
 }
 
 /// REST input for HNSW index params (mirrors proto `HnswConfig`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct HnswConfigInput {
     pub m: Option<u32>,
     pub ef_construction: Option<u32>,
@@ -175,7 +178,7 @@ pub struct HnswConfigInput {
 }
 
 /// REST input for IVF index params (mirrors proto `IvfConfig`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct IvfConfigInput {
     pub n_lists: Option<u32>,
     pub n_probe: Option<u32>,
@@ -184,7 +187,7 @@ pub struct IvfConfigInput {
 /// Schema definition for a collection
 ///
 /// Defines the typed columns and enforcement rules for ProximaRecord support.
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub struct SchemaDefinition {
     /// Column definitions
     pub columns: Vec<RestColumnDefinition>,
@@ -205,7 +208,7 @@ pub struct SchemaDefinition {
 pub type ColumnDefinition = RestColumnDefinition;
 
 /// Column definition for schema
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Deserialize, Serialize, Clone, ToSchema)]
 pub struct RestColumnDefinition {
     /// Column name
     pub name: String,
@@ -343,7 +346,7 @@ pub fn parse_rest_data_type(
 }
 
 /// Response for collection creation
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CreateCollectionV2Response {
     /// Collection ID (same as name)
     pub collection_id: String,
@@ -378,6 +381,18 @@ pub struct CreateCollectionV2Response {
 /// - `400 Bad Request`: Invalid request or schema
 /// - `409 Conflict`: Collection already exists
 /// - `500 Internal Server Error`: Creation failed
+#[utoipa::path(
+    post,
+    path = "/api/v2/collections",
+    tag = "Collections",
+    operation_id = "createCollection",
+    summary = "Create a collection with optional schema.",
+    request_body = CreateCollectionV2Request,
+    responses(
+        (status = 200, description = "Collection created.", body = CreateCollectionV2Response),
+        (status = 400, description = "Invalid request.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn create_collection_v2(
     Extension(tenant): Extension<TenantContext>,
     State(state): State<AppState>,
@@ -614,7 +629,7 @@ pub async fn create_collection_v2(
 }
 
 /// Collection details response
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CollectionV2Response {
     /// Collection ID
     pub collection_id: String,
@@ -645,7 +660,7 @@ pub struct CollectionV2Response {
 }
 
 /// Collection statistics for v2 API
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CollectionStatsV2 {
     /// Total number of records
     pub record_count: u64,
@@ -673,6 +688,20 @@ pub struct CollectionStatsV2 {
 ///
 /// - `404 Not Found`: Collection does not exist
 /// - `500 Internal Server Error`: Retrieval failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/collections/{collection_id}",
+    tag = "Collections",
+    operation_id = "getCollection",
+    summary = "Get collection details.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Collection details.", body = CollectionV2Response),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn get_collection_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,
@@ -747,7 +776,8 @@ pub async fn get_collection_v2(
 }
 
 /// Query parameters for listing collections
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct ListCollectionsV2Query {
     /// Maximum number of collections to return (default: 100)
     pub limit: Option<u32>,
@@ -758,7 +788,7 @@ pub struct ListCollectionsV2Query {
 }
 
 /// Response for listing collections
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ListCollectionsV2Response {
     /// List of collections
     pub collections: Vec<CollectionV2Summary>,
@@ -773,7 +803,7 @@ pub struct ListCollectionsV2Response {
 }
 
 /// Response for deleting a collection through the v2 API.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct DeleteCollectionV2Response {
     /// Whether the delete request was accepted.
     pub success: bool,
@@ -782,7 +812,7 @@ pub struct DeleteCollectionV2Response {
 }
 
 /// Summary of a collection for list operations
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct CollectionV2Summary {
     /// Collection ID
     pub collection_id: String,
@@ -815,6 +845,17 @@ pub struct CollectionV2Summary {
 /// ## Errors
 ///
 /// - `500 Internal Server Error`: List operation failed
+#[utoipa::path(
+    get,
+    path = "/api/v2/collections",
+    tag = "Collections",
+    operation_id = "listCollections",
+    summary = "List collections.",
+    params(ListCollectionsV2Query),
+    responses(
+        (status = 200, description = "Collection page.", body = ListCollectionsV2Response),
+    ),
+)]
 pub async fn list_collections_v2(
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
@@ -906,6 +947,20 @@ pub async fn list_collections_v2(
 /// Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
 /// the ProximaRecord-era API while delegating to the existing collection control
 /// plane.
+#[utoipa::path(
+    delete,
+    path = "/api/v2/collections/{collection_id}",
+    tag = "Collections",
+    operation_id = "deleteCollection",
+    summary = "Delete a collection.",
+    params(
+        ("collection_id" = String, Path, description = "Collection name/ID."),
+    ),
+    responses(
+        (status = 200, description = "Collection deleted.", body = DeleteCollectionV2Response),
+        (status = 404, description = "Resource not found.", body = crate::network::rest::openapi::ErrorResponse),
+    ),
+)]
 pub async fn delete_collection_v2(
     Path(collection_id): Path<String>,
     Extension(tenant): Extension<TenantContext>,

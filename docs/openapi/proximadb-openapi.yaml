@@ -1,1462 +1,437 @@
-openapi: 3.1.0
-info:
-  title: ProximaDB REST API
-  version: 0.2.0
-  description: |
-    SDK-facing ProximaDB REST contract. This specification is v2-first and
-    centers on ProximaRecord, typed schemas, record search, and collection
-    lifecycle operations. Legacy v1 compatibility routes are intentionally not
-    part of this publishable SDK surface.
-servers:
-  - url: http://localhost:5678
-    description: Local ProximaDB server
-security:
-  - bearerAuth: []
-paths:
-  /health:
-    get:
-      tags: [Health]
-      operationId: getHealth
-      summary: Get server health.
-      security: []
-      responses:
-        "200":
-          description: Health status.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/HealthResponse"
-  /health/live:
-    get:
-      tags: [Health]
-      operationId: getLiveness
-      summary: Kubernetes liveness probe.
-      security: []
-      responses:
-        "200":
-          description: Process is alive.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProbeResponse"
-  /health/ready:
-    get:
-      tags: [Health]
-      operationId: getReadiness
-      summary: Kubernetes readiness probe.
-      security: []
-      responses:
-        "200":
-          description: Server is ready.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ProbeResponse"
-  /api/v2/_meta/capabilities:
-    get:
-      tags: [Meta]
-      operationId: getCapabilities
-      summary: Negotiate server capabilities.
-      description: >
-        Advertises API version, supported features, limits, and the error-
-        envelope contract so SDKs can adapt instead of hard-coding assumptions.
-      security: []
-      responses:
-        "200":
-          description: Capability document.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CapabilitiesResponse"
-  /api/v2/collections:
-    post:
-      tags: [Collections]
-      operationId: createCollection
-      summary: Create a collection with optional schema.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateCollectionRequest"
-      responses:
-        "200":
-          description: Collection created.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CreateCollectionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-    get:
-      tags: [Collections]
-      operationId: listCollections
-      summary: List collections.
-      parameters:
-        - $ref: "#/components/parameters/Limit"
-        - $ref: "#/components/parameters/Offset"
-        - name: include_stats
-          in: query
-          schema:
-            type: boolean
-            default: false
-      responses:
-        "200":
-          description: Collection page.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListCollectionsResponse"
-  /api/v2/collections/{collection_id}:
-    parameters:
-      - $ref: "#/components/parameters/CollectionId"
-    get:
-      tags: [Collections]
-      operationId: getCollection
-      summary: Get collection details.
-      responses:
-        "200":
-          description: Collection details.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Collection"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    delete:
-      tags: [Collections]
-      operationId: deleteCollection
-      summary: Delete a collection.
-      responses:
-        "200":
-          description: Collection deleted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteCollectionResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/collections/{collection_id}/schema:
-    parameters:
-      - $ref: "#/components/parameters/CollectionId"
-    get:
-      tags: [Schema]
-      operationId: getCollectionSchema
-      summary: Get collection schema.
-      responses:
-        "200":
-          description: Collection schema.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SchemaResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    put:
-      tags: [Schema]
-      operationId: updateCollectionSchema
-      summary: Update collection schema.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/UpdateSchemaRequest"
-      responses:
-        "200":
-          description: Schema updated.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UpdateSchemaResponse"
-  /api/v2/collections/{collection_id}/records/batch:
-    parameters:
-      - $ref: "#/components/parameters/CollectionId"
-    post:
-      tags: [Records]
-      operationId: insertRecords
-      summary: Insert or upsert ProximaRecord batches.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/InsertRecordsRequest"
-      responses:
-        "200":
-          description: Batch write result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/InsertRecordsResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-  /api/v2/collections/{collection_id}/records/scan:
-    parameters:
-      - $ref: "#/components/parameters/CollectionId"
-    post:
-      tags: [Records]
-      operationId: scanRecords
-      summary: Paginated scan of records in a collection.
-      description: |
-        Cursor-paginated table-scan over a collection. Unlike `searchRecords`
-        (similarity search with `top_k`), this endpoint streams records in
-        a stable order so Hadoop/Spark InputFormats and bulk export pipelines
-        can drain a collection without similarity bias. Initial scope (TD-099,
-        2026-05-31): handler stub returns an empty page; full storage-engine
-        delegation lands in a follow-up.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ScanRecordsRequest"
-      responses:
-        "200":
-          description: Page of records + optional next cursor.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ScanRecordsResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/collections/{collection_id}/records/{record_id}:
-    parameters:
-      - $ref: "#/components/parameters/CollectionId"
-      - $ref: "#/components/parameters/RecordId"
-    get:
-      tags: [Records]
-      operationId: getRecord
-      summary: Get a record by ID.
-      parameters:
-        - name: include_vector
-          in: query
-          schema:
-            type: boolean
-            default: true
-        - name: include_text
-          in: query
-          schema:
-            type: boolean
-            default: false
-      responses:
-        "200":
-          description: Record.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/RecordResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    delete:
-      tags: [Records]
-      operationId: deleteRecord
-      summary: Delete a record by ID.
-      responses:
-        "200":
-          description: Delete accepted.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteRecordResponse"
-  /api/v2/collections/{collection_id}/search:
-    parameters:
-      - $ref: "#/components/parameters/CollectionId"
-    post:
-      tags: [Search]
-      operationId: searchRecords
-      summary: Search records with vector similarity and typed filters.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/SearchRequest"
-      responses:
-        "200":
-          description: Search results.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/SearchResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-  /api/v2/query:
-    post:
-      tags: [Query]
-      operationId: executeQuery
-      summary: Execute AQL or UQL through the shared query facade.
-      description: |
-        Public HTTP query surface for SDKs, agents, and OAuth/SSO front doors.
-        SQL remains pgwire-primary; use this endpoint for AQL/UQL textual
-        queries that lower into ProximaDB's shared logical query layer.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/QueryRequest"
-      responses:
-        "200":
-          description: Query result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/QueryResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-  /api/v2/query/explain:
-    post:
-      tags: [Query]
-      operationId: explainQuery
-      summary: Explain an AQL or UQL query through the shared query facade.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/ExplainQueryRequest"
-      responses:
-        "200":
-          description: Query plan and lowering details.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/QueryResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-  # ── Graph surface (v2) ─────────────────────────────────────────────
-  # The graph router is reused under both /api/v1/graph (legacy mount)
-  # and /api/v2 (canonical v2 mount, added 2026-05-29). SDKs should
-  # target /api/v2/graphs/* for new code; the v1 mount stays for
-  # backwards compatibility with existing clients.
-  /api/v2/graphs:
-    post:
-      tags: [Graphs]
-      operationId: createGraph
-      summary: Create a graph collection.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateGraphRequest"
-      responses:
-        "200":
-          description: Graph collection metadata.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GraphCollectionResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-    get:
-      tags: [Graphs]
-      operationId: listGraphs
-      summary: List graph collections.
-      responses:
-        "200":
-          description: Graph collection listing.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ListGraphsResponse"
-  /api/v2/graphs/{graph_id}:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-    get:
-      tags: [Graphs]
-      operationId: getGraph
-      summary: Get a graph collection by id.
-      responses:
-        "200":
-          description: Graph collection metadata.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GraphCollectionResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    delete:
-      tags: [Graphs]
-      operationId: deleteGraph
-      summary: Delete a graph collection.
-      responses:
-        "200":
-          description: Deletion acknowledged.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteGraphResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/graphs/{graph_id}/nodes:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-    post:
-      tags: [Graphs]
-      operationId: createNode
-      summary: Create a node in a graph.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateNodeRequest"
-      responses:
-        "200":
-          description: Created node.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/NodeResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/graphs/{graph_id}/nodes/{node_id}:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-      - $ref: "#/components/parameters/NodeId"
-    get:
-      tags: [Graphs]
-      operationId: getNode
-      summary: Get a node by id.
-      responses:
-        "200":
-          description: Node payload.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/NodeResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-    delete:
-      tags: [Graphs]
-      operationId: deleteNode
-      summary: Delete a node by id.
-      responses:
-        "200":
-          description: Deletion acknowledged.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/DeleteNodeResponse"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/graphs/{graph_id}/edges:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-    post:
-      tags: [Graphs]
-      operationId: createEdge
-      summary: Create an edge in a graph.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateEdgeRequest"
-      responses:
-        "200":
-          description: Created edge.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/EdgeResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/graphs/{graph_id}/nodes/batch:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-    post:
-      tags: [Graphs]
-      operationId: batchCreateNodes
-      summary: Create multiple nodes in a single call.
-      description: |
-        Batch counterpart to `createNode`. Use this on bulk-ingest paths
-        where individual round-trips would dominate latency.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BatchCreateNodesRequest"
-      responses:
-        "200":
-          description: Batch result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BatchNodesResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/graphs/{graph_id}/edges/batch:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-    post:
-      tags: [Graphs]
-      operationId: batchCreateEdges
-      summary: Create multiple edges in a single call.
-      description: |
-        Batch counterpart to `createEdge`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/BatchCreateEdgesRequest"
-      responses:
-        "200":
-          description: Batch result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/BatchEdgesResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "404":
-          $ref: "#/components/responses/NotFound"
-  /api/v2/graphs/{graph_id}/traverse:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-    post:
-      tags: [Graphs]
-      operationId: traverseGraph
-      summary: Traverse a graph from a start node.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/TraverseRequest"
-      responses:
-        "200":
-          description: Traversal result.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/TraverseResponse"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-  /api/v2/graphs/{graph_id}/stats:
-    parameters:
-      - $ref: "#/components/parameters/GraphId"
-    get:
-      tags: [Graphs]
-      operationId: getGraphStats
-      summary: Get graph statistics.
-      responses:
-        "200":
-          description: Graph statistics.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/GraphStatsResponse"
-  # ── Hybrid search (relocated to /api/v2 in the API standardization) ──────
-  /api/v2/hybrid/search:
-    post:
-      tags: [Hybrid]
-      operationId: hybridSearch
-      summary: BM25 + vector hybrid (fusion) search.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [collection]
-              additionalProperties: true
-              properties:
-                collection: { type: string }
-                vector: { type: array, items: { type: number } }
-                text_query: { type: string }
-                top_k: { type: integer }
-                fusion_strategy: { type: string }
-      responses:
-        "200":
-          description: Fused results.
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-        "400": { $ref: "#/components/responses/BadRequest" }
-  /api/v2/hybrid/index:
-    post:
-      tags: [Hybrid]
-      operationId: hybridIndex
-      summary: Index documents for BM25 full-text search.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [collection, documents]
-              additionalProperties: true
-      responses:
-        "200":
-          description: Index result.
-          content:
-            application/json:
-              schema: { type: object, additionalProperties: true }
-  # ── Document collections (de-doubled from /api/v1/documents/collections) ──
-  /api/v2/document-collections:
-    post:
-      tags: [Documents]
-      operationId: createDocumentCollection
-      summary: Create a document collection.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200": { description: Created., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-    get:
-      tags: [Documents]
-      operationId: listDocumentCollections
-      summary: List document collections.
-      responses:
-        "200": { description: Collections., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-  /api/v2/document-collections/{collection}/documents:
-    parameters:
-      - name: collection
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      tags: [Documents]
-      operationId: insertDocument
-      summary: Insert a document.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200": { description: Inserted., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-        "404": { $ref: "#/components/responses/NotFound" }
-    get:
-      tags: [Documents]
-      operationId: queryDocuments
-      summary: Query documents.
-      responses:
-        "200": { description: Documents., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-  # ── Observability (relocated to /api/v2; underscores dropped) ────────────
-  /api/v2/observability/namespaces/{namespace}/logs:
-    parameters:
-      - name: namespace
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      tags: [Observability]
-      operationId: ingestLog
-      summary: Ingest a log entry.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200": { description: Ingested., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
-  /api/v2/observability/namespaces/{namespace}/logs/search:
-    parameters:
-      - name: namespace
-        in: path
-        required: true
-        schema: { type: string }
-    post:
-      tags: [Observability]
-      operationId: queryLogs
-      summary: Query logs.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { type: object, additionalProperties: true }
-      responses:
-        "200": { description: Matching logs., content: { application/json: { schema: { type: object, additionalProperties: true } } } }
 components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: JWT
   parameters:
-    CollectionId:
-      name: collection_id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
-    RecordId:
-      name: record_id
-      in: path
-      required: true
-      schema:
-        type: string
-        minLength: 1
     GraphId:
+      in: path
       name: graph_id
-      in: path
       required: true
       schema:
-        type: string
         minLength: 1
+        type: string
     NodeId:
-      name: node_id
       in: path
+      name: node_id
       required: true
       schema:
-        type: string
         minLength: 1
-    Limit:
-      name: limit
-      in: query
-      schema:
-        type: integer
-        minimum: 1
-        default: 100
-    Offset:
-      name: offset
-      in: query
-      schema:
-        type: integer
-        minimum: 0
-        default: 0
+        type: string
   responses:
     BadRequest:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
       description: Invalid request.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
     NotFound:
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
       description: Resource not found.
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/ErrorResponse"
     Unauthorized:
-      description: Authentication required or insufficient permissions.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ErrorResponse"
+            $ref: '#/components/schemas/ErrorResponse'
+      description: Authentication required or insufficient permissions.
   schemas:
-    HealthResponse:
+    BatchCreateEdgesRequest:
+      description: |
+        Body for `POST /api/v2/graphs/{id}/edges/batch`.
+      properties:
+        edges:
+          items:
+            $ref: '#/components/schemas/EdgeInput'
+          minItems: 1
+          type: array
+      required:
+      - edges
       type: object
+    BatchCreateNodesRequest:
+      description: |
+        Body for `POST /api/v2/graphs/{id}/nodes/batch`.
+      properties:
+        nodes:
+          items:
+            $ref: '#/components/schemas/NodeInput'
+          minItems: 1
+          type: array
+      required:
+      - nodes
+      type: object
+    BatchEdgesResponse:
       additionalProperties: true
+      description: |
+        Server returns a `GraphResponse<BatchResults<Edge>>` envelope.
       properties:
-        status:
-          type: string
-        version:
-          type: string
-        uptime_seconds:
-          type: number
-    ProbeResponse:
+        data:
+          additionalProperties: true
+          properties:
+            count:
+              type: integer
+            results:
+              items:
+                $ref: '#/components/schemas/EdgeResponse'
+              type: array
+          type: object
+        success:
+          type: boolean
       type: object
-      required: [status]
+    BatchNodesResponse:
+      additionalProperties: true
+      description: |
+        Server returns a `GraphResponse<BatchResults<Node>>` envelope.
       properties:
-        status:
-          type: string
+        data:
+          additionalProperties: true
+          properties:
+            count:
+              type: integer
+            results:
+              items:
+                $ref: '#/components/schemas/NodeResponse'
+              type: array
+          type: object
+        success:
+          type: boolean
+      type: object
     CapabilitiesResponse:
-      type: object
       additionalProperties: true
       properties:
         api_version:
           type: string
+        error_envelope:
+          additionalProperties: true
+          type: object
+        features:
+          items:
+            type: string
+          type: array
+        limits:
+          additionalProperties: true
+          type: object
         surface:
           type: string
-        features:
-          type: array
-          items:
-            type: string
-        limits:
-          type: object
-          additionalProperties: true
-        error_envelope:
-          type: object
-          additionalProperties: true
-    CreateCollectionRequest:
       type: object
-      required: [name, dimension]
+    CollectionStatsV2:
+      description: Collection statistics for v2 API
       properties:
-        name:
-          type: string
-          minLength: 1
-        dimension:
-          type: integer
-          minimum: 1
-        engine:
-          $ref: "#/components/schemas/StorageEngine"
-        distance_metric:
-          $ref: "#/components/schemas/DistanceMetric"
-        schema:
-          $ref: "#/components/schemas/SchemaDefinition"
-        enable_proxima_record:
-          type: boolean
-          default: true
-        initial_capacity:
-          type: integer
+        indexed_fields:
+          description: Number of indexed fields
+          format: int32
           minimum: 0
-        index_configs:
-          type: array
-          description: >
-            Explicit per-index configuration. Drives index-algorithm dispatch
-            (e.g. an IVF index → recall-tune uses the IVF arm). When omitted the
-            engine selects a default (HNSW).
-          items:
-            $ref: "#/components/schemas/IndexConfigInput"
-        tags:
-          type: array
-          description: >
-            Operator metadata, e.g. `recall_target:0.95`,
-            `target_vector_count:1000`, `modalities:text,image`.
-          items:
-            type: string
-    IndexConfigInput:
-      type: object
-      required: [algorithm]
-      properties:
-        index_name:
-          type: string
-        algorithm:
-          type: string
-          enum: [hnsw, ivf, pq, flat, annoy, lsh]
-        parameters:
-          type: object
-          additionalProperties:
-            type: string
-        hnsw_config:
-          type: object
-          properties:
-            m: { type: integer }
-            ef_construction: { type: integer }
-            ef_search: { type: integer }
-        ivf_config:
-          type: object
-          properties:
-            n_lists: { type: integer }
-            n_probe: { type: integer }
-    CreateCollectionResponse:
-      type: object
-      required: [collection_id, name, dimension, engine, proxima_record_enabled, created_at]
-      properties:
-        collection_id:
-          type: string
-        name:
-          type: string
-        dimension:
           type: integer
-        engine:
-          type: string
-        proxima_record_enabled:
-          type: boolean
-        schema_id:
-          type: string
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-    ListCollectionsResponse:
-      type: object
-      required: [collections, total, limit, offset, has_more]
-      properties:
-        collections:
-          type: array
-          items:
-            $ref: "#/components/schemas/CollectionSummary"
-        total:
-          type: integer
-        limit:
-          type: integer
-        offset:
-          type: integer
-        has_more:
-          type: boolean
-    CollectionSummary:
-      type: object
-      required: [collection_id, name, dimension, engine, proxima_record_enabled]
-      properties:
-        collection_id:
-          type: string
-        name:
-          type: string
-        dimension:
-          type: integer
-        engine:
-          type: string
-        proxima_record_enabled:
-          type: boolean
         record_count:
-          type: integer
-          nullable: true
-    Collection:
-      allOf:
-        - $ref: "#/components/schemas/CollectionSummary"
-        - type: object
-          required: [distance_metric, stats, created_at]
-          properties:
-            distance_metric:
-              type: string
-            schema:
-              $ref: "#/components/schemas/SchemaDefinition"
-              nullable: true
-            stats:
-              $ref: "#/components/schemas/CollectionStats"
-            created_at:
-              type: string
-              format: date-time
-            updated_at:
-              type: string
-              format: date-time
-              nullable: true
-    DeleteCollectionResponse:
-      type: object
-      required: [success, collection_id]
-      properties:
-        success:
-          type: boolean
-        collection_id:
-          type: string
-    CollectionStats:
-      type: object
-      required: [record_count, storage_size_bytes, indexed_fields, text_field_count]
-      properties:
-        record_count:
+          description: Total number of records
+          format: int64
+          minimum: 0
           type: integer
         storage_size_bytes:
-          type: integer
-        indexed_fields:
+          description: Total storage size in bytes
+          format: int64
+          minimum: 0
           type: integer
         text_field_count:
+          description: Number of TEXT fields with dedicated storage
+          format: int32
+          minimum: 0
           type: integer
-    SchemaDefinition:
+      required:
+      - record_count
+      - storage_size_bytes
+      - indexed_fields
+      - text_field_count
       type: object
-      required: [columns]
+    CollectionV2Response:
+      description: Collection details response
       properties:
-        columns:
-          type: array
-          items:
-            $ref: "#/components/schemas/ColumnDefinition"
-        enforcement:
-          type: string
-          enum: [strict, flexible, hybrid]
-          default: hybrid
-        allow_additional_fields:
-          type: boolean
-          default: true
-    ColumnDefinition:
-      type: object
-      required: [name, data_type]
-      properties:
-        name:
-          type: string
-        data_type:
-          type: string
-          enum:
-            - text
-            - text_large
-            - integer
-            - float
-            - decimal
-            - boolean
-            - timestamp
-            - timestamp_tz
-            - date
-            - time
-            - uuid
-            - binary
-            - json
-            - array_text
-            - array_integer
-            - array_float
-            - array_boolean
-            - map_string_string
-            - map_string_any
-            - geo_point
-            - vector
-        nullable:
-          type: boolean
-        indexed:
-          type: boolean
-        filterable:
-          type: boolean
-        max_length:
-          type: integer
-        precision:
-          type: integer
-        scale:
-          type: integer
-        vector_dimension:
-          type: integer
-    SchemaResponse:
-      type: object
-      required: [schema_id, schema_version, collection_id, schema, created_at]
-      properties:
-        schema_id:
-          type: string
-        schema_version:
-          type: string
+        canonical_embedding_precision:
+          description: |-
+            Canonical embedding precision label for stored vectors.
+
+            Stable string matching the proto `EmbeddingPrecision::as_str_name()`
+            (e.g. "EMBEDDING_PRECISION_FP16"). `None` when the collection didn't
+            set a non-default (Unspecified/Fp32) precision.
+          type:
+          - string
+          - 'null'
         collection_id:
+          description: Collection ID
+          type: string
+        created_at:
+          description: Creation timestamp
+          type: string
+        dimension:
+          description: Vector dimension
+          format: int32
+          minimum: 0
+          type: integer
+        distance_metric:
+          description: Distance metric
+          type: string
+        engine:
+          description: Storage engine
+          type: string
+        name:
+          description: Collection name
+          type: string
+        proxima_record_enabled:
+          description: Whether ProximaRecord is enabled
+          type: boolean
+        schema:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/SchemaDefinition'
+            description: Schema definition (if defined)
+        stats:
+          $ref: '#/components/schemas/CollectionStatsV2'
+          description: Collection statistics
+        updated_at:
+          description: Last update timestamp
+          type:
+          - string
+          - 'null'
+      required:
+      - collection_id
+      - name
+      - dimension
+      - engine
+      - distance_metric
+      - proxima_record_enabled
+      - stats
+      - created_at
+      type: object
+    CollectionV2Summary:
+      description: Summary of a collection for list operations
+      properties:
+        collection_id:
+          description: Collection ID
+          type: string
+        dimension:
+          description: Vector dimension
+          format: int32
+          minimum: 0
+          type: integer
+        engine:
+          description: Storage engine
+          type: string
+        name:
+          description: Collection name
+          type: string
+        proxima_record_enabled:
+          description: Whether ProximaRecord is enabled
+          type: boolean
+        record_count:
+          description: Record count (if include_stats is true)
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      required:
+      - collection_id
+      - name
+      - dimension
+      - engine
+      - proxima_record_enabled
+      type: object
+    CreateCollectionV2Request:
+      description: |-
+        Request to create a collection with schema support
+
+        ## Example JSON
+
+        ```json
+        {
+            "name": "products",
+            "dimension": 768,
+            "engine": "sst",
+            "schema": {
+                "columns": [
+                    {"name": "category", "data_type": "text", "indexed": true},
+                    {"name": "price", "data_type": "float", "filterable": true},
+                    {"name": "description", "data_type": "text", "max_length": 10000}
+                ],
+                "enforcement": "hybrid",
+                "allow_additional_fields": true
+            },
+            "enable_proxima_record": true
+        }
+        ```
+      properties:
+        canonical_embedding_precision:
+          description: |-
+            Canonical embedding precision for stored vectors
+
+            Options: "fp32" (default), "fp16", "bf16", "int8", "uint8".
+            Accepts the same string forms as the gRPC / Arrow Flight surfaces
+            (e.g. "half", "float16", "EMBEDDING_PRECISION_FP16"). The DDL
+            service applies the same normalisation, so SDKs and pgwire
+            converge on the same enum discriminant.
+          type:
+          - string
+          - 'null'
+        dimension:
+          description: Vector dimension (required)
+          format: int32
+          minimum: 1
+          type: integer
+        distance_metric:
+          description: |-
+            Distance metric for vector similarity
+
+            Options: "cosine", "euclidean", "dot_product"
+            Default: "cosine"
+          type:
+          - string
+          - 'null'
+        enable_proxima_record:
+          description: |-
+            Enable ProximaRecord support for this collection
+
+            When enabled:
+            - Records can use rich props and text_fields
+            - Schema validation is applied at insert time
+            - TEXT columns are stored in dedicated columnar format
+
+            Default: false (backward compatible with v1)
+          type:
+          - boolean
+          - 'null'
+        engine:
+          description: |-
+            Storage engine selection
+
+            Options: "auto", "sst", "helix", "viper", "swift", "nova", "raptor", "tst"
+            Default: "auto" (system selects optimal engine)
+          type:
+          - string
+          - 'null'
+        index_configs:
+          description: |-
+            Index configurations (e.g. an explicit IVF or HNSW index).
+
+            Restores v1 parity: the v1 proto create accepted `index_configs`, which
+            drive `active_algorithm_for` (e.g. an IVF index → recall-tune dispatches
+            to the IVF arm). When omitted, the engine selects a default (HNSW).
+          items:
+            $ref: '#/components/schemas/IndexConfigInput'
+          type:
+          - array
+          - 'null'
+        initial_capacity:
+          description: Initial capacity hint for pre-allocation
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        name:
+          description: Collection name (required)
+          minLength: 1
           type: string
         schema:
-          $ref: "#/components/schemas/SchemaDefinition"
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/SchemaDefinition'
+            description: Schema definition with column types
+        tags:
+          description: |-
+            Operator metadata tags, e.g. `"recall_target:0.95"`,
+            `"target_vector_count:1000"`, `"modalities:text,image"`. Consumed by the
+            recall advisor / route-health (`services/collection/recall_target.rs`).
+          items:
+            type: string
+          type:
+          - array
+          - 'null'
+      required:
+      - name
+      - dimension
+      type: object
+    CreateCollectionV2Response:
+      description: Response for collection creation
+      properties:
+        collection_id:
+          description: Collection ID (same as name)
+          type: string
         created_at:
+          description: Creation timestamp
           type: string
-          format: date-time
-        updated_at:
+        dimension:
+          description: Vector dimension
+          format: int32
+          minimum: 0
+          type: integer
+        engine:
+          description: Selected storage engine
           type: string
-          format: date-time
-          nullable: true
-        parent_schema_id:
+        name:
+          description: Collection name
           type: string
-          nullable: true
-    UpdateSchemaRequest:
-      allOf:
-        - $ref: "#/components/schemas/SchemaDefinition"
-        - type: object
-          properties:
-            force:
-              type: boolean
-              default: false
-    UpdateSchemaResponse:
-      type: object
-      additionalProperties: true
-      required: [schema_id, schema_version, previous_schema_id, changes, warnings, updated_at]
-      properties:
+        proxima_record_enabled:
+          description: Whether ProximaRecord is enabled
+          type: boolean
         schema_id:
-          type: string
-        schema_version:
-          type: string
-        previous_schema_id:
-          type: string
-        changes:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-        warnings:
-          type: array
-          items:
-            type: string
-        updated_at:
-          type: string
-          format: date-time
-    InsertRecordsRequest:
+          description: Schema ID (if schema was defined)
+          type:
+          - string
+          - 'null'
+      required:
+      - collection_id
+      - name
+      - dimension
+      - engine
+      - proxima_record_enabled
+      - created_at
       type: object
-      required: [records]
-      properties:
-        records:
-          type: array
-          minItems: 1
-          items:
-            $ref: "#/components/schemas/ProximaRecordInput"
-        validate_schema:
-          type: boolean
-          default: true
-        upsert:
-          type: boolean
-          default: false
-    ProximaRecordInput:
-      type: object
-      required: [vector]
-      properties:
-        id:
-          type: string
-        vector:
-          type: array
-          minItems: 1
-          items:
-            type: number
-            format: float
-        props:
-          type: object
-          additionalProperties:
-            $ref: "#/components/schemas/ProximaValue"
-        text_fields:
-          type: array
-          items:
-            $ref: "#/components/schemas/TextField"
-    ProximaValue:
-      oneOf:
-        - type: "null"
-        - type: boolean
-        - type: integer
-        - type: number
-        - type: string
-        - type: array
-          items:
-            $ref: "#/components/schemas/ProximaValue"
-        - type: object
-          additionalProperties:
-            $ref: "#/components/schemas/ProximaValue"
-        - type: object
-          required: [type, value]
-          properties:
-            type:
-              type: string
-            value: true
-    TextField:
-      type: object
-      required: [name, content]
-      properties:
-        name:
-          type: string
-        content:
-          type: string
-        storage_hint:
-          type: string
-          enum: [inline, chunked, sidecar, adaptive]
-          default: adaptive
-    InsertRecordsResponse:
-      type: object
-      required: [inserted_count, failed_count, errors, inserted_ids]
-      properties:
-        inserted_count:
-          type: integer
-        failed_count:
-          type: integer
-        errors:
-          type: array
-          items:
-            $ref: "#/components/schemas/InsertError"
-        inserted_ids:
-          type: array
-          items:
-            type: string
-    ScanRecordsRequest:
-      type: object
+    CreateEdgeRequest:
       description: |
-        Cursor-paginated scan body. All fields are optional; an empty
-        body `{}` returns the first page with the server-default limit.
+        Wrapped envelope: server expects `{"edge": EdgeInput}`.
       properties:
-        cursor:
-          type: string
-          nullable: true
-          description: |
-            Opaque continuation token returned as `next_cursor` from a
-            prior page. Omit / null to start from the beginning.
-        limit:
-          type: integer
-          minimum: 1
-          maximum: 10000
-          default: 1000
-          description: Max records to return in this page.
-        filter:
-          type: array
-          nullable: true
-          description: |
-            Optional metadata filter — same shape as `searchRecords.filters`.
-            Server-side filter pushdown when supported by the storage
-            engine; client-side filtering as a fallback. May be omitted
-            for a pure table scan.
-          items:
-            $ref: "#/components/schemas/TypedFilter"
-        include_vector:
-          type: boolean
-          default: false
-        include_text:
-          type: boolean
-          default: false
-    ScanRecordsResponse:
+        edge:
+          $ref: '#/components/schemas/EdgeInput'
+      required:
+      - edge
       type: object
-      required: [records]
-      description: |
-        One page of records plus an optional `next_cursor`. When
-        `next_cursor` is null/absent the scan is complete.
-      properties:
-        records:
-          type: array
-          items:
-            $ref: "#/components/schemas/RecordResponse"
-        next_cursor:
-          type: string
-          nullable: true
-        scanned_count:
-          type: integer
-          nullable: true
-          description: Records examined server-side (post-filter).
-    InsertError:
-      type: object
-      required: [index, error]
-      properties:
-        index:
-          type: integer
-        id:
-          type: string
-          nullable: true
-        error:
-          type: string
-    RecordResponse:
-      type: object
-      required: [id, props]
-      properties:
-        id:
-          type: string
-        vector:
-          type: array
-          nullable: true
-          items:
-            type: number
-            format: float
-        props:
-          type: object
-          additionalProperties:
-            $ref: "#/components/schemas/ProximaValue"
-        text_fields:
-          type: array
-          nullable: true
-          items:
-            $ref: "#/components/schemas/TextFieldOutput"
-        version:
-          type: integer
-          nullable: true
-        timestamp:
-          type: integer
-          nullable: true
-    DeleteRecordResponse:
-      type: object
-      required: [success, id, processing_time_us]
-      properties:
-        success:
-          type: boolean
-        id:
-          type: string
-        processing_time_us:
-          type: integer
-    SearchRequest:
-      type: object
-      required: [vector, top_k]
-      properties:
-        vector:
-          type: array
-          minItems: 1
-          items:
-            type: number
-            format: float
-        top_k:
-          type: integer
-          minimum: 1
-        filters:
-          type: array
-          items:
-            $ref: "#/components/schemas/TypedFilter"
-        include_text:
-          type: boolean
-          default: false
-        include_vector:
-          type: boolean
-          default: false
-    TypedFilter:
-      type: object
-      required: [field, op, value]
-      properties:
-        field:
-          type: string
-        op:
-          type: string
-          enum: [eq, neq, gt, gte, lt, lte, contains, between, in, starts_with, ends_with]
-        value:
-          $ref: "#/components/schemas/ProximaValue"
-        value_upper:
-          $ref: "#/components/schemas/ProximaValue"
-    SearchResponse:
-      type: object
-      required: [results, latency_ms, request_id]
-      properties:
-        results:
-          type: array
-          items:
-            $ref: "#/components/schemas/SearchResult"
-        total_matches:
-          type: integer
-          nullable: true
-        latency_ms:
-          type: integer
-        request_id:
-          type: string
-    SearchResult:
-      type: object
-      required: [id, score, props]
-      properties:
-        id:
-          type: string
-        score:
-          type: number
-          format: float
-        vector:
-          type: array
-          nullable: true
-          items:
-            type: number
-            format: float
-        props:
-          type: object
-          additionalProperties:
-            $ref: "#/components/schemas/ProximaValue"
-        text_fields:
-          type: array
-          nullable: true
-          items:
-            $ref: "#/components/schemas/TextFieldOutput"
-    QueryLanguage:
-      type: string
-      enum: [uql, aql, federated]
-    QueryRequest:
-      type: object
-      required: [language, query]
-      properties:
-        language:
-          $ref: "#/components/schemas/QueryLanguage"
-        query:
-          type: string
-          minLength: 1
-        parameters:
-          type: array
-          items:
-            $ref: "#/components/schemas/ProximaValue"
-        collection:
-          type: string
-          nullable: true
-        limit:
-          type: integer
-          minimum: 1
-          nullable: true
-    ExplainQueryRequest:
-      type: object
-      required: [language, query]
-      properties:
-        language:
-          $ref: "#/components/schemas/QueryLanguage"
-        query:
-          type: string
-          minLength: 1
-        collection:
-          type: string
-          nullable: true
-    QueryResponse:
-      type: object
-      additionalProperties: true
-      description: |
-        Query facade result. Implementations typically return records, total_count,
-        metrics, plan, or diagnostics depending on language and endpoint.
-    TextFieldOutput:
-      type: object
-      required: [name, content, truncated]
-      properties:
-        name:
-          type: string
-        content:
-          type: string
-        chunk_count:
-          type: integer
-          nullable: true
-        truncated:
-          type: boolean
-    StorageEngine:
-      type: string
-      enum: [auto, sst, helix, viper, swift, nova, raptor, tst]
-      default: auto
-    DistanceMetric:
-      type: string
-      enum: [cosine, euclidean, dot_product]
-      default: cosine
-    ErrorResponse:
-      description: >
-        Canonical ProximaDB error envelope. `request_id` (also returned in the
-        `X-Request-ID` response header) is present whenever the request passed
-        through the request-id middleware; quote it in bug reports.
-      type: object
-      required: [error]
-      properties:
-        error:
-          type: object
-          required: [type, message, code]
-          properties:
-            type:
-              type: string
-              description: Stable machine-readable error code (snake_case).
-              example: collection_not_found
-            message:
-              type: string
-            code:
-              type: integer
-              description: HTTP status code.
-            request_id:
-              type: string
-              description: Correlation id (matches the X-Request-ID header).
-            details:
-              type: object
-              additionalProperties: true
-              description: Optional structured context (e.g. migration hints).
-    # ── Graph schemas (v2) ──────────────────────────────────────────
-    # Reconciled 2026-05-30 against
-    # `crates/platform/proximadb-api/src/rest/v1/graph.rs` (the live
-    # server handler) — the earlier additions had the wrong field
-    # names / wrapping / required-key set. Server is authoritative
-    # for the wire contract; SDKs must follow.
     CreateGraphRequest:
-      type: object
-      required: [graph_id]
       properties:
-        graph_id:
+        description:
+          nullable: true
           type: string
-          minLength: 1
+        graph_id:
           description: Unique identifier for the new graph collection.
-        name:
+          minLength: 1
           type: string
-          nullable: true
+        name:
           description: Optional human-readable name (defaults to graph_id).
-        description:
-          type: string
           nullable: true
-    GraphCollectionResponse:
+          type: string
+      required:
+      - graph_id
       type: object
-      additionalProperties: true
+    CreateNodeRequest:
       description: |
-        Server returns a `GraphResponse<T>` envelope around graph
-        collection metadata. The fields below are the common subset
-        SDKs rely on; extra server-side fields are passed through.
+        Wrapped envelope: server expects `{"node": NodeInput}`.
       properties:
-        graph_id:
-          type: string
-        name:
-          type: string
-          nullable: true
-        description:
-          type: string
-          nullable: true
-        node_count:
-          type: integer
-          nullable: true
-        edge_count:
-          type: integer
-          nullable: true
-    ListGraphsResponse:
+        node:
+          $ref: '#/components/schemas/NodeInput'
+      required:
+      - node
       type: object
-      additionalProperties: true
-      description: |
-        Server returns a `GraphResponse<Vec<...>>` envelope with `data`
-        containing the graph collections.
+    DeleteCollectionV2Response:
+      description: Response for deleting a collection through the v2 API.
       properties:
-        data:
-          type: array
-          items:
-            $ref: "#/components/schemas/GraphCollectionResponse"
+        collection_id:
+          description: Deleted collection ID.
+          type: string
         success:
+          description: Whether the delete request was accepted.
           type: boolean
-    DeleteGraphResponse:
+      required:
+      - success
+      - collection_id
       type: object
+    DeleteGraphResponse:
       additionalProperties: true
       description: |
         204 No Content on success with an empty `GraphResponse` envelope;
@@ -1464,246 +439,2233 @@ components:
       properties:
         success:
           type: boolean
-    NodeInput:
       type: object
-      required: [id]
+    DeleteNodeResponse:
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        success:
+          type: boolean
+      type: object
+    DeleteRecordV2Response:
+      description: Response for deleting a single record.
+      properties:
+        id:
+          description: Deleted record ID.
+          type: string
+        processing_time_us:
+          description: Processing latency in microseconds.
+          format: int64
+          type: integer
+        success:
+          description: Whether the delete tombstone was accepted.
+          type: boolean
+      required:
+      - success
+      - id
+      - processing_time_us
+      type: object
+    EdgeInput:
+      description: |
+        Edge payload nested inside `CreateEdgeRequest.edge`. Matches
+        `RestEdgeInput` in proximadb-api's graph handler.
+      properties:
+        edge_type:
+          type: string
+        from_node_id:
+          type: string
+        id:
+          minLength: 1
+          type: string
+        properties:
+          additionalProperties: true
+          type: object
+        to_node_id:
+          type: string
+        weight:
+          format: double
+          nullable: true
+          type: number
+      required:
+      - id
+      - from_node_id
+      - to_node_id
+      - edge_type
+      type: object
+    EdgeResponse:
+      additionalProperties: true
+      properties:
+        edge_type:
+          nullable: true
+          type: string
+        from_node_id:
+          type: string
+        id:
+          type: string
+        properties:
+          additionalProperties: true
+          nullable: true
+          type: object
+        to_node_id:
+          type: string
+        weight:
+          format: double
+          nullable: true
+          type: number
+      required:
+      - id
+      type: object
+    EmbeddingInput:
+      properties:
+        modality:
+          nullable: true
+          type: string
+        model_id:
+          nullable: true
+          type: string
+        vector:
+          items:
+            format: float
+            type: number
+          type: array
+      required:
+      - vector
+      type: object
+    ErrorBody:
+      description: Inner body of [`ErrorResponse`].
+      properties:
+        code:
+          description: HTTP status code.
+          format: int32
+          type: integer
+        details:
+          description: Optional structured context (e.g. migration hints).
+          type:
+          - object
+          - 'null'
+        message:
+          type: string
+        request_id:
+          description: Correlation id (matches the X-Request-ID header).
+          type:
+          - string
+          - 'null'
+        type:
+          description: Stable machine-readable error code (snake_case).
+          example: collection_not_found
+          type: string
+      required:
+      - type
+      - message
+      - code
+      type: object
+    ErrorResponse:
+      description: |-
+        Canonical ProximaDB error envelope (`{ error: { type, message, code } }`).
+
+        `request_id` (also returned in the `X-Request-ID` response header) is present
+        whenever the request passed through the request-id middleware; quote it in
+        bug reports.
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorBody'
+      required:
+      - error
+      type: object
+    ExplainQueryRequest:
+      properties:
+        collection:
+          type:
+          - string
+          - 'null'
+        language:
+          $ref: '#/components/schemas/QueryLanguage'
+        query:
+          minLength: 1
+          type: string
+      required:
+      - language
+      - query
+      type: object
+    GraphCollectionResponse:
+      additionalProperties: true
+      description: |
+        Server returns a `GraphResponse<T>` envelope around graph
+        collection metadata. The fields below are the common subset
+        SDKs rely on; extra server-side fields are passed through.
+      properties:
+        description:
+          nullable: true
+          type: string
+        edge_count:
+          nullable: true
+          type: integer
+        graph_id:
+          type: string
+        name:
+          nullable: true
+          type: string
+        node_count:
+          nullable: true
+          type: integer
+      type: object
+    GraphStatsResponse:
+      additionalProperties: true
+      properties:
+        density:
+          format: double
+          nullable: true
+          type: number
+        edge_count:
+          type: integer
+        node_count:
+          type: integer
+      type: object
+    HealthResponse:
+      additionalProperties: true
+      properties:
+        status:
+          type: string
+        uptime_seconds:
+          type: number
+        version:
+          type: string
+      type: object
+    HnswConfigInput:
+      description: REST input for HNSW index params (mirrors proto `HnswConfig`).
+      properties:
+        ef_construction:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        ef_search:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        m:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      type: object
+    IndexConfigInput:
+      description: REST input for a single index config (mirrors proto `IndexConfig`).
+      properties:
+        algorithm:
+          description: 'Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh".'
+          type: string
+        hnsw_config:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/HnswConfigInput'
+            description: HNSW tuning (when algorithm == "hnsw").
+        index_name:
+          description: Optional index name (defaults to `index_<n>`).
+          type:
+          - string
+          - 'null'
+        ivf_config:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/IvfConfigInput'
+            description: IVF tuning (when algorithm == "ivf").
+        parameters:
+          additionalProperties:
+            type: string
+          description: Free-form algorithm parameters.
+          propertyNames:
+            type: string
+          type: object
+      required:
+      - algorithm
+      type: object
+    InsertError:
+      description: Error details for a failed record insertion
+      properties:
+        error:
+          description: Error message
+          type: string
+        id:
+          description: Record ID (if provided)
+          type:
+          - string
+          - 'null'
+        index:
+          description: Index of the record in the request
+          minimum: 0
+          type: integer
+      required:
+      - index
+      - error
+      type: object
+    InsertRecordsRequest:
+      description: |-
+        Request to insert ProximaRecords
+
+        ## Example JSON
+
+        ```json
+        {
+            "records": [
+                {
+                    "id": "doc_1",
+                    "vector": [0.1, 0.2, 0.3],
+                    "props": {
+                        "category": "electronics",
+                        "price": 299.99,
+                        "in_stock": true
+                    },
+                    "text_fields": [
+                        {
+                            "name": "description",
+                            "content": "A detailed product description...",
+                            "storage_hint": "adaptive"
+                        }
+                    ],
+                    "source": "catalog_import"
+                }
+            ],
+            "validate_schema": true
+        }
+        ```
+        Not supported in v0.2: optimistic versioning, conditional-write predicates,
+        update-by-filter, delete-by-filter, and patch / partial-record update. The
+        live contract is exposed via `WriteContractHealth` on the route-health
+        diagnostic endpoint (`GET /api/v2/_diagnostics/collections/{id}/route-health`);
+        see also `docs/SUPPORTED_SURFACE.adoc` "Not Supported in v0.2".
+      properties:
+        records:
+          description: Records to insert
+          items:
+            $ref: '#/components/schemas/ProximaRecordInput'
+          type: array
+        upsert:
+          description: |-
+            Whether existing records with the same ID should be replaced.
+
+            The current durable record write path is idempotent/upsert-oriented; this
+            field is accepted so SDKs can expose explicit upsert intent without
+            leaving the OpenAPI contract.
+          type:
+          - boolean
+          - 'null'
+        validate_schema:
+          description: 'Whether to validate against collection schema (default: true)'
+          type:
+          - boolean
+          - 'null'
+      required:
+      - records
+      type: object
+    InsertRecordsResponse:
+      description: Response for insert operation
+      properties:
+        errors:
+          description: Detailed errors for failed records
+          items:
+            $ref: '#/components/schemas/InsertError'
+          type: array
+        failed_count:
+          description: Number of failed records
+          minimum: 0
+          type: integer
+        inserted_count:
+          description: Number of successfully inserted records
+          minimum: 0
+          type: integer
+        inserted_ids:
+          description: IDs of successfully inserted records
+          items:
+            type: string
+          type: array
+      required:
+      - inserted_count
+      - failed_count
+      - errors
+      - inserted_ids
+      type: object
+    IvfConfigInput:
+      description: REST input for IVF index params (mirrors proto `IvfConfig`).
+      properties:
+        n_lists:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        n_probe:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      type: object
+    ListCollectionsV2Response:
+      description: Response for listing collections
+      properties:
+        collections:
+          description: List of collections
+          items:
+            $ref: '#/components/schemas/CollectionV2Summary'
+          type: array
+        has_more:
+          description: Whether there are more results
+          type: boolean
+        limit:
+          description: Limit used in this request
+          format: int32
+          minimum: 0
+          type: integer
+        offset:
+          description: Offset used in this request
+          format: int32
+          minimum: 0
+          type: integer
+        total:
+          description: Total count of collections
+          format: int64
+          minimum: 0
+          type: integer
+      required:
+      - collections
+      - total
+      - limit
+      - offset
+      - has_more
+      type: object
+    ListGraphsResponse:
+      additionalProperties: true
+      description: |
+        Server returns a `GraphResponse<Vec<...>>` envelope with `data`
+        containing the graph collections.
+      properties:
+        data:
+          items:
+            $ref: '#/components/schemas/GraphCollectionResponse'
+          type: array
+        success:
+          type: boolean
+      type: object
+    NodeInput:
       description: |
         Node payload nested inside `CreateNodeRequest.node`. Matches
         `RestNodeInput` in proximadb-api's graph handler.
       properties:
-        id:
-          type: string
-          minLength: 1
-        labels:
-          type: array
-          items:
-            type: string
-        properties:
-          type: object
-          additionalProperties: true
         embedding:
-          $ref: "#/components/schemas/EmbeddingInput"
+          $ref: '#/components/schemas/EmbeddingInput'
           nullable: true
-    EmbeddingInput:
-      type: object
-      required: [vector]
-      properties:
-        vector:
-          type: array
+        id:
+          minLength: 1
+          type: string
+        labels:
           items:
-            type: number
-            format: float
-        model_id:
-          type: string
-          nullable: true
-        modality:
-          type: string
-          nullable: true
-    CreateNodeRequest:
+            type: string
+          type: array
+        properties:
+          additionalProperties: true
+          type: object
+      required:
+      - id
       type: object
-      required: [node]
-      description: |
-        Wrapped envelope: server expects `{"node": NodeInput}`. The
-        outer wrapper exists because future variants (batch_create_nodes,
-        etc.) reuse the same handler shape.
-      properties:
-        node:
-          $ref: "#/components/schemas/NodeInput"
     NodeResponse:
-      type: object
       additionalProperties: true
-      required: [id]
       properties:
         id:
           type: string
         labels:
-          type: array
-          nullable: true
           items:
             type: string
+          nullable: true
+          type: array
         properties:
-          type: object
           additionalProperties: true
           nullable: true
-    DeleteNodeResponse:
+          type: object
+      required:
+      - id
       type: object
-      additionalProperties: true
+    ProbeResponse:
       properties:
-        success:
-          type: boolean
-        id:
+        status:
           type: string
-    EdgeInput:
+      required:
+      - status
       type: object
-      required: [id, from_node_id, to_node_id, edge_type]
-      description: |
-        Edge payload nested inside `CreateEdgeRequest.edge`. Matches
-        `RestEdgeInput` in proximadb-api's graph handler. Note:
-        `from_node_id` / `to_node_id` are the canonical server fields;
-        earlier spec versions used `source` / `target` (incorrect).
+    ProximaRecordInput:
+      description: |-
+        Input format for ProximaRecord (JSON-friendly)
+
+        This is the JSON-serializable input format for ProximaRecord.
+        It uses serde_json::Value for typed fields to support dynamic typing
+        at the API boundary, with validation happening during conversion.
       properties:
         id:
-          type: string
+          description: Record ID (optional, will be auto-generated if not provided)
+          type:
+          - string
+          - 'null'
+        props:
+          additionalProperties: {}
+          description: Canonical rich property map.
+          propertyNames:
+            type: string
+          type:
+          - object
+          - 'null'
+        text_fields:
+          description: Dedicated TEXT fields with storage hints
+          items:
+            $ref: '#/components/schemas/TextFieldInput'
+          type:
+          - array
+          - 'null'
+        vector:
+          description: Vector embedding (required)
+          items:
+            format: float
+            type: number
+          type: array
+      required:
+      - vector
+      type: object
+    QueryLanguage:
+      enum:
+      - uql
+      - aql
+      - federated
+      type: string
+    QueryRequest:
+      properties:
+        collection:
+          type:
+          - string
+          - 'null'
+        language:
+          $ref: '#/components/schemas/QueryLanguage'
+        limit:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        parameters:
+          items:
+            type: object
+          type:
+          - array
+          - 'null'
+        query:
           minLength: 1
-        from_node_id:
           type: string
-        to_node_id:
-          type: string
-        edge_type:
-          type: string
-        properties:
-          type: object
-          additionalProperties: true
-        weight:
-          type: number
-          format: double
-          nullable: true
-    CreateEdgeRequest:
+      required:
+      - language
+      - query
       type: object
-      required: [edge]
-      description: |
-        Wrapped envelope: server expects `{"edge": EdgeInput}`.
-      properties:
-        edge:
-          $ref: "#/components/schemas/EdgeInput"
-    EdgeResponse:
+    QueryResponse:
+      description: |-
+        Query facade result. Implementations return records, total_count, metrics,
+        plan, or diagnostics depending on language and endpoint, so the body is a
+        free-form JSON object.
       type: object
-      additionalProperties: true
-      required: [id]
+    RecordV2Response:
+      description: Response for getting a single record
       properties:
         id:
+          description: Record ID
           type: string
-        from_node_id:
-          type: string
-        to_node_id:
-          type: string
-        edge_type:
-          type: string
-          nullable: true
-        properties:
+        props:
+          additionalProperties: {}
+          description: Rich properties from the record
+          propertyNames:
+            type: string
           type: object
-          additionalProperties: true
-          nullable: true
-        weight:
-          type: number
-          format: double
-          nullable: true
-    TraverseRequest:
+        text_fields:
+          description: TEXT fields (if include_text is true)
+          items:
+            $ref: '#/components/schemas/TextFieldOutput'
+          type:
+          - array
+          - 'null'
+        timestamp:
+          description: Record timestamp
+          format: int64
+          type:
+          - integer
+          - 'null'
+        vector:
+          description: Vector embedding (if requested)
+          items:
+            format: float
+            type: number
+          type:
+          - array
+          - 'null'
+        version:
+          description: Record version
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      required:
+      - id
+      - props
       type: object
-      required: [start_node_id]
+    RestColumnDefinition:
+      description: Column definition for schema
+      properties:
+        data_type:
+          description: |-
+            Data type
+
+            Supported types:
+            - "text": Variable-length UTF-8 text
+            - "text_large": Large text with sidecar storage
+            - "integer": 64-bit signed integer
+            - "float": 64-bit floating point
+            - "decimal": 128-bit decimal (precision, scale)
+            - "boolean": True/false
+            - "timestamp": Microseconds since epoch
+            - "timestamp_tz": Timestamp with timezone
+            - "date": Days since epoch
+            - "time": Microseconds since midnight
+            - "uuid": RFC 4122 UUID
+            - "binary": Raw bytes
+            - "json": Validated JSON
+            - "array_text", "array_integer", "array_float", "array_boolean"
+            - "map_string_string", "map_string_any"
+            - "geo_point": Latitude/longitude point
+            - "vector": Fixed-dimension vector (specify dimension)
+          type: string
+        filterable:
+          description: |-
+            Enable filtering on this column
+
+            When true, the column can be used in WHERE clauses.
+            Default: true for indexed columns, false otherwise
+          type:
+          - boolean
+          - 'null'
+        indexed:
+          description: |-
+            Create secondary index for this column
+
+            Improves query performance for equality/range filters.
+            Default: false
+          type:
+          - boolean
+          - 'null'
+        max_length:
+          description: |-
+            Maximum length for TEXT/BINARY columns
+
+            Default: no limit
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        name:
+          description: Column name
+          type: string
+        nullable:
+          description: |-
+            Whether null values are allowed
+
+            Default: true
+          type:
+          - boolean
+          - 'null'
+        precision:
+          description: Precision for DECIMAL type (1-38)
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        scale:
+          description: Scale for DECIMAL type (0-precision)
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        vector_dimension:
+          description: Dimension for VECTOR type
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      required:
+      - name
+      - data_type
+      type: object
+    ScanRecordsRequest:
+      description: |-
+        Body of `POST /records/scan`. Mirrors the OpenAPI `ScanRecordsRequest`
+        schema; all fields optional so an empty `{}` returns the first page.
+      properties:
+        cursor:
+          description: |-
+            Opaque continuation token returned as `next_cursor` from a
+            prior page. Omit / null to start from the beginning.
+          type:
+          - string
+          - 'null'
+        filter:
+          description: |-
+            Metadata filter applied (before the limit) to the scanned page.
+            Accepts either the typed list form `[{field,op,value}]` (mirrors
+            `searchRecords.filters`) or a simple equality map `{field: value}`.
+        include_text:
+          type:
+          - boolean
+          - 'null'
+        include_vector:
+          type:
+          - boolean
+          - 'null'
+        limit:
+          description: Max records to return in this page. Server enforces upper bound.
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      type: object
+    ScanRecordsResponse:
+      description: |-
+        Response shape for `scanRecords`. Empty `records` + null
+        `next_cursor` signals end-of-scan. Each record matches the OpenAPI
+        `RecordResponse` schema (same shape used by `getRecord`).
+      properties:
+        next_cursor:
+          type:
+          - string
+          - 'null'
+        records:
+          items:
+            $ref: '#/components/schemas/RecordV2Response'
+          type: array
+        scanned_count:
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      required:
+      - records
+      type: object
+    SchemaChange:
+      description: Description of a schema change
+      properties:
+        change_type:
+          description: Type of change
+          type: string
+        column:
+          description: Affected column (if applicable)
+          type:
+          - string
+          - 'null'
+        description:
+          description: Description of the change
+          type: string
+      required:
+      - change_type
+      - description
+      type: object
+    SchemaDefinition:
+      description: |-
+        Schema definition for a collection
+
+        Defines the typed columns and enforcement rules for ProximaRecord support.
+      properties:
+        allow_additional_fields:
+          description: |-
+            Allow additional fields not defined in schema
+
+            Only applies in "hybrid" mode.
+            Default: true
+          type:
+          - boolean
+          - 'null'
+        columns:
+          description: Column definitions
+          items:
+            $ref: '#/components/schemas/RestColumnDefinition'
+          type: array
+        enforcement:
+          description: |-
+            Schema enforcement mode
+
+            - "strict": All columns must match schema exactly
+            - "flexible": Schema on read, no validation at insert
+            - "hybrid": Core columns enforced, additional fields allowed (default)
+          type:
+          - string
+          - 'null'
+      required:
+      - columns
+      type: object
+    SchemaResponse:
+      description: Schema response with metadata
+      properties:
+        collection_id:
+          description: Collection this schema belongs to
+          type: string
+        created_at:
+          description: Creation timestamp
+          type: string
+        parent_schema_id:
+          description: Parent schema ID (for evolution tracking)
+          type:
+          - string
+          - 'null'
+        schema:
+          $ref: '#/components/schemas/SchemaDefinition'
+          description: Schema definition
+        schema_id:
+          description: Schema ID (UUID)
+          type: string
+        schema_version:
+          description: Schema version (semantic versioning)
+          type: string
+        updated_at:
+          description: Last update timestamp
+          type:
+          - string
+          - 'null'
+      required:
+      - schema_id
+      - schema_version
+      - collection_id
+      - schema
+      - created_at
+      type: object
+    TextFieldInput:
+      description: |-
+        Input format for TEXT fields
+
+        TEXT fields are stored in dedicated columns with optional chunking
+        for large content. The storage hint helps optimize storage strategy.
+      properties:
+        content:
+          description: Text content
+          type: string
+        name:
+          description: Field name
+          type: string
+        storage_hint:
+          description: |-
+            Storage strategy hint
+
+            - "inline": Store inline in main column (<4KB)
+            - "chunked": Split into chunks with embeddings (4KB-1MB)
+            - "sidecar": Store in separate sidecar file (>1MB)
+            - "adaptive": Auto-select based on content size (default)
+          type:
+          - string
+          - 'null'
+      required:
+      - name
+      - content
+      type: object
+    TextFieldOutput:
+      description: Output format for TEXT fields
+      properties:
+        chunk_count:
+          description: Number of chunks (for chunked storage)
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        content:
+          description: Text content (may be truncated for large content)
+          type: string
+        name:
+          description: Field name
+          type: string
+        truncated:
+          description: Whether content was truncated
+          type: boolean
+      required:
+      - name
+      - content
+      - truncated
+      type: object
+    TraverseRequest:
       description: |
         Flat shape (no wrapper). Matches `RestTraversalRequest` in
         proximadb-api.
       properties:
+        algorithm:
+          description: bfs | dfs | shortest_path
+          nullable: true
+          type: string
+        edge_types:
+          items:
+            type: string
+          type: array
+        limit:
+          minimum: 1
+          nullable: true
+          type: integer
+        max_depth:
+          default: 3
+          minimum: 1
+          type: integer
+        node_labels:
+          items:
+            type: string
+          type: array
         start_node_id:
           type: string
-        max_depth:
-          type: integer
-          minimum: 1
-          default: 3
-        edge_types:
-          type: array
-          items:
-            type: string
-        node_labels:
-          type: array
-          items:
-            type: string
-        algorithm:
-          type: string
-          nullable: true
-          description: bfs | dfs | shortest_path
-        limit:
-          type: integer
-          minimum: 1
-          nullable: true
-    TraverseResponse:
+      required:
+      - start_node_id
       type: object
+    TraverseResponse:
       additionalProperties: true
       properties:
-        nodes:
-          type: array
-          items:
-            $ref: "#/components/schemas/NodeResponse"
         edges:
-          type: array
           items:
-            $ref: "#/components/schemas/EdgeResponse"
+            $ref: '#/components/schemas/EdgeResponse'
+          type: array
+        nodes:
+          items:
+            $ref: '#/components/schemas/NodeResponse'
+          type: array
         paths:
-          type: array
           items:
-            type: array
             items:
               type: string
-    GraphStatsResponse:
+            type: array
+          type: array
       type: object
-      additionalProperties: true
+    TypedFilter:
+      description: |-
+        A typed filter for search operations
+
+        Supports various comparison operators with type-safe values.
       properties:
-        node_count:
+        field:
+          description: Field name to filter on
+          type: string
+        op:
+          description: |-
+            Comparison operator
+
+            Supported operators:
+            - "eq": Equals
+            - "neq": Not equals
+            - "gt": Greater than
+            - "gte": Greater than or equal
+            - "lt": Less than
+            - "lte": Less than or equal
+            - "contains": String/array contains
+            - "between": Value is between two bounds (requires value_upper)
+            - "in": Value is in a list
+            - "starts_with": String starts with prefix
+            - "ends_with": String ends with suffix
+          type: string
+        value:
+          description: Filter value (type depends on field type)
+        value_upper:
+          description: Upper bound for "between" operator
+      required:
+      - field
+      - op
+      - value
+      type: object
+    TypedSearchRequest:
+      description: |-
+        Search request with typed filters
+
+        ## Example JSON
+
+        ```json
+        {
+            "vector": [0.1, 0.2, 0.3],
+            "top_k": 10,
+            "filters": [
+                {"field": "category", "op": "eq", "value": "electronics"},
+                {"field": "price", "op": "lt", "value": 500},
+                {"field": "in_stock", "op": "eq", "value": true}
+            ],
+            "include_text": true
+        }
+        ```
+      properties:
+        debug:
+          description: |-
+            Return the SearchPlanTrace + a human-readable route explain
+            in the response (LLD §1 contract). Defaults to `false` so
+            non-debug requests don't pay the JSON serialization cost of
+            the ~30-field trace envelope.
+          type:
+          - boolean
+          - 'null'
+        filters:
+          description: Typed filters with operator support
+          items:
+            $ref: '#/components/schemas/TypedFilter'
+          type:
+          - array
+          - 'null'
+        include_text:
+          description: |-
+            Whether to include TEXT fields in results (default: false)
+
+            TEXT fields can be large, so they are excluded by default.
+            Set to true to include them in the response.
+          type:
+          - boolean
+          - 'null'
+        include_vector:
+          description: |-
+            Whether to include the vector in results (default: false)
+
+            Vector data can be large, so it is excluded by default.
+          type:
+          - boolean
+          - 'null'
+        top_k:
+          description: Number of results to return
+          minimum: 1
           type: integer
-        edge_count:
+        vector:
+          description: Query vector
+          items:
+            format: float
+            type: number
+          minItems: 1
+          type: array
+      required:
+      - vector
+      - top_k
+      type: object
+    TypedSearchResponse:
+      description: Search response with typed results
+      properties:
+        explain:
+          description: |-
+            Human-readable explain summary derived from the SearchPlanTrace.
+            Only emitted when the request sets `debug=true` — gives an on-call
+            operator a one-glance view of the plan, cache result, and any
+            actionable hints (high scan fraction, repair triggered, ...).
+        latency_ms:
+          description: Search latency in milliseconds
+          format: int64
+          minimum: 0
           type: integer
-        density:
+        request_id:
+          description: Request ID for tracing
+          type: string
+        results:
+          description: Search results
+          items:
+            $ref: '#/components/schemas/TypedSearchResult'
+          type: array
+        search_plan_trace:
+          description: |-
+            SearchPlanTrace (LLD §10) — the per-query telemetry envelope that
+            upstream gateways consume for metering and planner-v2 training.
+            Phase 0 emits a stub trace populated from request_id + latency; later
+            phases fill in the per-stage counters. Only emitted when the request
+            sets `debug=true` (LLD §1 contract).
+        total_matches:
+          description: Total number of matching documents (before top_k limit)
+          format: int64
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      required:
+      - results
+      - latency_ms
+      - request_id
+      type: object
+    TypedSearchResult:
+      description: Search result with typed fields
+      properties:
+        id:
+          description: Record ID
+          type: string
+        props:
+          additionalProperties: {}
+          description: Rich properties from the record
+          propertyNames:
+            type: string
+          type: object
+        score:
+          description: Similarity score (0.0 - 1.0 for cosine, distance for L2)
+          format: float
           type: number
-          format: double
-          nullable: true
-    BatchCreateNodesRequest:
-      type: object
-      required: [nodes]
-      description: |
-        Body for `POST /api/v2/graphs/{id}/nodes/batch`. Matches
-        `BatchCreateNodesRequest` in proximadb-api's graph handler.
-      properties:
-        nodes:
-          type: array
-          minItems: 1
+        text_fields:
+          description: TEXT fields (if include_text is true)
           items:
-            $ref: "#/components/schemas/NodeInput"
-    BatchNodesResponse:
-      type: object
-      additionalProperties: true
-      description: |
-        Server returns a `GraphResponse<BatchResults<Node>>` envelope.
-      properties:
-        success:
-          type: boolean
-        data:
-          type: object
-          additionalProperties: true
-          properties:
-            results:
-              type: array
-              items:
-                $ref: "#/components/schemas/NodeResponse"
-            count:
-              type: integer
-    BatchCreateEdgesRequest:
-      type: object
-      required: [edges]
-      description: |
-        Body for `POST /api/v2/graphs/{id}/edges/batch`. Matches
-        `BatchCreateEdgesRequest` in proximadb-api's graph handler.
-      properties:
-        edges:
-          type: array
-          minItems: 1
+            $ref: '#/components/schemas/TextFieldOutput'
+          type:
+          - array
+          - 'null'
+        vector:
+          description: Vector embedding (if requested)
           items:
-            $ref: "#/components/schemas/EdgeInput"
-    BatchEdgesResponse:
+            format: float
+            type: number
+          type:
+          - array
+          - 'null'
+      required:
+      - id
+      - score
+      - props
       type: object
-      additionalProperties: true
-      description: |
-        Server returns a `GraphResponse<BatchResults<Edge>>` envelope.
+    UpdateSchemaRequest:
+      allOf:
+      - $ref: '#/components/schemas/SchemaDefinition'
+        description: Updated schema definition
+      - properties:
+          force:
+            description: |-
+              Force update even if validation warnings exist
+
+              Use with caution - may cause data compatibility issues.
+            type:
+            - boolean
+            - 'null'
+        type: object
+      description: |-
+        Request to update schema
+
+        ## Schema Evolution Rules
+
+        1. **Adding Columns**: New columns must be nullable or have defaults
+        2. **Type Changes**: Not allowed (except compatible widening like int32->int64)
+        3. **Removing Columns**: Not allowed (use deprecation instead)
+        4. **Enforcement Mode**: Can be changed, but strict->flexible may lose validation
+
+        ## Example JSON
+
+        ```json
+        {
+            "columns": [
+                {"name": "category", "data_type": "text", "indexed": true},
+                {"name": "price", "data_type": "float", "filterable": true},
+                {"name": "tags", "data_type": "array_text", "nullable": true}
+            ],
+            "enforcement": "hybrid",
+            "allow_additional_fields": true
+        }
+        ```
+    UpdateSchemaResponse:
+      description: Schema update response
       properties:
-        success:
+        changes:
+          description: List of applied changes
+          items:
+            $ref: '#/components/schemas/SchemaChange'
+          type: array
+        previous_schema_id:
+          description: Previous schema ID (for rollback)
+          type: string
+        schema_id:
+          description: Updated schema ID
+          type: string
+        schema_version:
+          description: New schema version
+          type: string
+        updated_at:
+          description: Update timestamp
+          type: string
+        warnings:
+          description: Warnings about the update
+          items:
+            type: string
+          type: array
+      required:
+      - schema_id
+      - schema_version
+      - previous_schema_id
+      - changes
+      - warnings
+      - updated_at
+      type: object
+  securitySchemes:
+    bearerAuth:
+      bearerFormat: JWT
+      scheme: bearer
+      type: http
+info:
+  contact:
+    email: singhvjd@gmail.com
+    name: Vijaykumar Singh
+  description: SDK-facing ProximaDB REST contract. This specification is v2-first and centers on ProximaRecord, typed schemas, record search, and collection lifecycle operations. Legacy v1 compatibility routes are intentionally not part of this publishable SDK surface.
+  license:
+    identifier: Apache-2.0
+    name: Apache-2.0
+  title: ProximaDB REST API
+  version: 0.2.0
+openapi: 3.1.0
+paths:
+  /api/v2/_meta/capabilities:
+    get:
+      description: |
+        Advertises API version, supported features, limits, and the error- envelope contract so SDKs can adapt instead of hard-coding assumptions.
+      operationId: getCapabilities
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CapabilitiesResponse'
+          description: Capability document.
+      security: []
+      summary: Negotiate server capabilities.
+      tags:
+      - Meta
+  /api/v2/collections:
+    get:
+      description: |-
+        List all collections with pagination.
+
+        ## Query Parameters
+
+        - `limit`: Maximum number of collections to return (default: 100)
+        - `offset`: Offset for pagination (default: 0)
+        - `include_stats`: Whether to include collection statistics
+
+        ## Response
+
+        Returns [`ListCollectionsV2Response`] with collection list.
+
+        ## Errors
+
+        - `500 Internal Server Error`: List operation failed
+      operationId: listCollections
+      parameters:
+      - description: 'Maximum number of collections to return (default: 100)'
+        in: query
+        name: limit
+        required: false
+        schema:
+          format: int32
+          minimum: 0
+          type: integer
+      - description: 'Offset for pagination (default: 0)'
+        in: query
+        name: offset
+        required: false
+        schema:
+          format: int32
+          minimum: 0
+          type: integer
+      - description: Whether to include statistics
+        in: query
+        name: include_stats
+        required: false
+        schema:
           type: boolean
-        data:
-          type: object
-          additionalProperties: true
-          properties:
-            results:
-              type: array
-              items:
-                $ref: "#/components/schemas/EdgeResponse"
-            count:
-              type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListCollectionsV2Response'
+          description: Collection page.
+      summary: List collections.
+      tags:
+      - Collections
+    post:
+      description: |-
+        Create a new collection with optional schema support.
+
+        ## Request Body
+
+        See [`CreateCollectionV2Request`] for the expected JSON format.
+
+        ## Response
+
+        Returns [`CreateCollectionV2Response`] with collection details.
+
+        ## Errors
+
+        - `400 Bad Request`: Invalid request or schema
+        - `409 Conflict`: Collection already exists
+        - `500 Internal Server Error`: Creation failed
+      operationId: createCollection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateCollectionV2Request'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateCollectionV2Response'
+          description: Collection created.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+      summary: Create a collection with optional schema.
+      tags:
+      - Collections
+  /api/v2/collections/{collection_id}:
+    delete:
+      description: |-
+        Delete a collection by ID/name. This v2 route keeps SDK lifecycle methods on
+        the ProximaRecord-era API while delegating to the existing collection control
+        plane.
+      operationId: deleteCollection
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteCollectionV2Response'
+          description: Collection deleted.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Resource not found.
+      summary: Delete a collection.
+      tags:
+      - Collections
+    get:
+      description: |-
+        Get collection details including schema and statistics.
+
+        ## Path Parameters
+
+        - `collection_id`: Collection name/ID
+
+        ## Response
+
+        Returns [`CollectionV2Response`] with collection details.
+
+        ## Errors
+
+        - `404 Not Found`: Collection does not exist
+        - `500 Internal Server Error`: Retrieval failed
+      operationId: getCollection
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CollectionV2Response'
+          description: Collection details.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Resource not found.
+      summary: Get collection details.
+      tags:
+      - Collections
+  /api/v2/collections/{collection_id}/records/batch:
+    post:
+      description: |-
+        Insert ProximaRecords into a collection with typed field support.
+
+        ## Request Body
+
+        See [`InsertRecordsRequest`] for the expected JSON format.
+
+        ## Response
+
+        Returns [`InsertRecordsResponse`] with counts and any errors.
+
+        ## Errors
+
+        - `400 Bad Request`: Invalid request format or validation error
+        - `404 Not Found`: Collection does not exist
+        - `500 Internal Server Error`: Storage or processing error
+      operationId: insertRecords
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InsertRecordsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsertRecordsResponse'
+          description: Batch write result.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+      summary: Insert or upsert ProximaRecord batches.
+      tags:
+      - Records
+  /api/v2/collections/{collection_id}/records/scan:
+    post:
+      description: |-
+        Returns the next page of records (TD-099 acceptance 2, live). The
+        handler resolves the collection id, calls
+        `UnifiedHandlers::handle_record_scan_for_tenant`, and converts each
+        `ProximaRecord` into a `RecordV2Response` matching the OpenAPI
+        `RecordResponse` schema. Cursor-based pagination (acceptance 3) is
+        still deferred: `next_cursor` is always `None` today; callers bump
+        `limit` (up to `SCAN_RECORDS_MAX_PAGE`) for more rows.
+      operationId: scanRecords
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanRecordsRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScanRecordsResponse'
+          description: Page of records + optional next cursor.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Resource not found.
+      summary: Paginated scan of records in a collection.
+      tags:
+      - Records
+  /api/v2/collections/{collection_id}/records/{record_id}:
+    delete:
+      description: Delete a single record by writing a tombstone through the rich record path.
+      operationId: deleteRecord
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      - description: Record ID.
+        in: path
+        name: record_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteRecordV2Response'
+          description: Delete accepted.
+      summary: Delete a record by ID.
+      tags:
+      - Records
+    get:
+      description: |-
+        Get a single record by ID.
+
+        ## Path Parameters
+
+        - `collection_id`: Collection name/ID
+        - `record_id`: Record ID
+
+        ## Query Parameters
+
+        - `include_vector`: Whether to include the vector (default: true)
+        - `include_text`: Whether to include TEXT fields (default: false)
+
+        ## Response
+
+        Returns [`RecordV2Response`] with record details.
+
+        ## Errors
+
+        - `404 Not Found`: Collection or record does not exist
+        - `500 Internal Server Error`: Retrieval failed
+      operationId: getRecord
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      - description: Record ID.
+        in: path
+        name: record_id
+        required: true
+        schema:
+          type: string
+      - description: Whether to include the vector in the response
+        in: query
+        name: include_vector
+        required: false
+        schema:
+          type: boolean
+      - description: Whether to include TEXT fields in the response
+        in: query
+        name: include_text
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecordV2Response'
+          description: Record.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Resource not found.
+      summary: Get a record by ID.
+      tags:
+      - Records
+  /api/v2/collections/{collection_id}/schema:
+    get:
+      description: |-
+        Retrieve the schema definition for a collection.
+
+        ## Path Parameters
+
+        - `collection_id`: Collection name/ID
+
+        ## Response
+
+        Returns [`SchemaResponse`] with full schema details.
+
+        ## Errors
+
+        - `404 Not Found`: Collection or schema does not exist
+        - `500 Internal Server Error`: Retrieval failed
+      operationId: getCollectionSchema
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SchemaResponse'
+          description: Collection schema.
+        '404':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Resource not found.
+      summary: Get collection schema.
+      tags:
+      - Schema
+    put:
+      description: |-
+        Update the schema for a collection.
+
+        ## Path Parameters
+
+        - `collection_id`: Collection name/ID
+
+        ## Request Body
+
+        See [`UpdateSchemaRequest`] for the expected JSON format.
+
+        ## Response
+
+        Returns [`UpdateSchemaResponse`] with change details.
+
+        ## Schema Evolution
+
+        Schema updates must follow evolution rules to maintain data compatibility.
+        See [`UpdateSchemaRequest`] for detailed rules.
+
+        ## Errors
+
+        - `400 Bad Request`: Invalid schema or evolution violation
+        - `404 Not Found`: Collection does not exist
+        - `409 Conflict`: Incompatible schema change
+        - `500 Internal Server Error`: Update failed
+      operationId: updateCollectionSchema
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateSchemaRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateSchemaResponse'
+          description: Schema updated.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+      summary: Update collection schema.
+      tags:
+      - Schema
+  /api/v2/collections/{collection_id}/search:
+    post:
+      description: |-
+        Search a collection with typed filters.
+
+        ## Request Body
+
+        See [`TypedSearchRequest`] for the expected JSON format.
+
+        ## Response
+
+        Returns [`TypedSearchResponse`] with ranked results.
+
+        ## Errors
+
+        - `400 Bad Request`: Invalid request format or filter error
+        - `404 Not Found`: Collection does not exist
+        - `500 Internal Server Error`: Search execution error
+      operationId: searchRecords
+      parameters:
+      - description: Collection name/ID.
+        in: path
+        name: collection_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TypedSearchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TypedSearchResponse'
+          description: Search results.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+      summary: Search records with vector similarity and typed filters.
+      tags:
+      - Search
+  /api/v2/document-collections:
+    get:
+      operationId: listDocumentCollections
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Collections.
+      summary: List document collections.
+      tags:
+      - Documents
+    post:
+      operationId: createDocumentCollection
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Created.
+      summary: Create a document collection.
+      tags:
+      - Documents
+  /api/v2/document-collections/{collection}/documents:
+    get:
+      operationId: queryDocuments
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Documents.
+      summary: Query documents.
+      tags:
+      - Documents
+    parameters:
+    - in: path
+      name: collection
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: insertDocument
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Inserted.
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Insert a document.
+      tags:
+      - Documents
+  /api/v2/graphs:
+    get:
+      operationId: listGraphs
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListGraphsResponse'
+          description: Graph collection listing.
+      summary: List graph collections.
+      tags:
+      - Graphs
+    post:
+      operationId: createGraph
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGraphRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphCollectionResponse'
+          description: Graph collection metadata.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      summary: Create a graph collection.
+      tags:
+      - Graphs
+  /api/v2/graphs/{graph_id}:
+    delete:
+      operationId: deleteGraph
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteGraphResponse'
+          description: Deletion acknowledged.
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Delete a graph collection.
+      tags:
+      - Graphs
+    get:
+      operationId: getGraph
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphCollectionResponse'
+          description: Graph collection metadata.
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Get a graph collection by id.
+      tags:
+      - Graphs
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+  /api/v2/graphs/{graph_id}/edges:
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+    post:
+      operationId: createEdge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateEdgeRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EdgeResponse'
+          description: Created edge.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Create an edge in a graph.
+      tags:
+      - Graphs
+  /api/v2/graphs/{graph_id}/edges/batch:
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+    post:
+      description: |
+        Batch counterpart to `createEdge`.
+      operationId: batchCreateEdges
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateEdgesRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchEdgesResponse'
+          description: Batch result.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Create multiple edges in a single call.
+      tags:
+      - Graphs
+  /api/v2/graphs/{graph_id}/nodes:
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+    post:
+      operationId: createNode
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateNodeRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+          description: Created node.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Create a node in a graph.
+      tags:
+      - Graphs
+  /api/v2/graphs/{graph_id}/nodes/batch:
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+    post:
+      description: |
+        Batch counterpart to `createNode`. Use this on bulk-ingest paths
+        where individual round-trips would dominate latency.
+      operationId: batchCreateNodes
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/BatchCreateNodesRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BatchNodesResponse'
+          description: Batch result.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Create multiple nodes in a single call.
+      tags:
+      - Graphs
+  /api/v2/graphs/{graph_id}/nodes/{node_id}:
+    delete:
+      operationId: deleteNode
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteNodeResponse'
+          description: Deletion acknowledged.
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Delete a node by id.
+      tags:
+      - Graphs
+    get:
+      operationId: getNode
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NodeResponse'
+          description: Node payload.
+        '404':
+          $ref: '#/components/responses/NotFound'
+      summary: Get a node by id.
+      tags:
+      - Graphs
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+    - $ref: '#/components/parameters/NodeId'
+  /api/v2/graphs/{graph_id}/stats:
+    get:
+      operationId: getGraphStats
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GraphStatsResponse'
+          description: Graph statistics.
+      summary: Get graph statistics.
+      tags:
+      - Graphs
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+  /api/v2/graphs/{graph_id}/traverse:
+    parameters:
+    - $ref: '#/components/parameters/GraphId'
+    post:
+      operationId: traverseGraph
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TraverseRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraverseResponse'
+          description: Traversal result.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      summary: Traverse a graph from a start node.
+      tags:
+      - Graphs
+  /api/v2/hybrid/index:
+    post:
+      operationId: hybridIndex
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              required:
+              - collection
+              - documents
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Index result.
+      summary: Index documents for BM25 full-text search.
+      tags:
+      - Hybrid
+  /api/v2/hybrid/search:
+    post:
+      operationId: hybridSearch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              properties:
+                collection:
+                  type: string
+                fusion_strategy:
+                  type: string
+                text_query:
+                  type: string
+                top_k:
+                  type: integer
+                vector:
+                  items:
+                    type: number
+                  type: array
+              required:
+              - collection
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Fused results.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+      summary: BM25 + vector hybrid (fusion) search.
+      tags:
+      - Hybrid
+  /api/v2/observability/namespaces/{namespace}/logs:
+    parameters:
+    - in: path
+      name: namespace
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: ingestLog
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Ingested.
+      summary: Ingest a log entry.
+      tags:
+      - Observability
+  /api/v2/observability/namespaces/{namespace}/logs/search:
+    parameters:
+    - in: path
+      name: namespace
+      required: true
+      schema:
+        type: string
+    post:
+      operationId: queryLogs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              additionalProperties: true
+              type: object
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                additionalProperties: true
+                type: object
+          description: Matching logs.
+      summary: Query logs.
+      tags:
+      - Observability
+  /api/v2/query:
+    post:
+      description: |-
+        The canonical unified query surface: UQL (unified multi-modal), federated SQL
+        extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
+        pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
+        pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
+        only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
+      operationId: executeQuery
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+          description: Query result.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+      summary: Execute AQL or UQL through the shared query facade.
+      tags:
+      - Query
+  /api/v2/query/explain:
+    post:
+      operationId: explainQuery
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ExplainQueryRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryResponse'
+          description: Query plan and lowering details.
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request.
+      summary: Explain an AQL or UQL query through the shared query facade.
+      tags:
+      - Query
+  /health:
+    get:
+      operationId: getHealth
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+          description: Health status.
+      security: []
+      summary: Get server health.
+      tags:
+      - Health
+  /health/live:
+    get:
+      operationId: getLiveness
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeResponse'
+          description: Process is alive.
+      security: []
+      summary: Kubernetes liveness probe.
+      tags:
+      - Health
+  /health/ready:
+    get:
+      operationId: getReadiness
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProbeResponse'
+          description: Server is ready.
+      security: []
+      summary: Kubernetes readiness probe.
+      tags:
+      - Health
+security:
+- bearerAuth: []
+servers:
+- description: Local ProximaDB server
+  url: http://localhost:5678
+tags:
+- description: Collection lifecycle.
+  name: Collections
+- description: Typed schema management.
+  name: Schema
+- description: ProximaRecord write / read / scan.
+  name: Records
+- description: Vector similarity + typed-filter search.
+  name: Search
+- description: AQL / UQL query facade.
+  name: Query

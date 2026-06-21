@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check release-check docs-claim-check release-smoke
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -118,6 +118,15 @@ proto-check:
 	@echo "🧬 Validating protobuf/OpenAPI contract drift..."
 	cargo check -p proximadb-proto
 	cd clients/python && $(PYTHON) -m pytest --confcutdir=tests/unit -q tests/unit/test_grpc_proto_drift.py tests/unit/test_openapi_contract.py
+
+# TD-126 Phase 1: the OpenAPI spec is GENERATED from the annotated REST handlers
+# (src/network/rest/openapi.rs), not hand-maintained. This regenerates it in
+# memory and fails if it drifts from the committed docs/openapi/proximadb-openapi.yaml.
+# Mirrors the proto-sync generated-artifact gate. Regenerate with:
+#   UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb --test openapi_spec_gen
+verify-openapi-spec:
+	@echo "🧬 Validating OpenAPI spec ↔ handler drift (spec-from-code)..."
+	cargo test -p proximadb --test openapi_spec_gen
 
 workspace-boundaries-check:
 	@echo "🧱 Validating workspace dependency boundaries..."
@@ -313,6 +322,7 @@ help:
 	@echo "  tenant-path-check  - Enforce DrPathBuilder tenant path guard"
 	@echo "  work-commit-check  - Fast deterministic architecture guard before commit/push"
 	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
+	@echo "  verify-openapi-spec - Regenerate OpenAPI spec from handlers; fail on drift (TD-126)"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
 	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
