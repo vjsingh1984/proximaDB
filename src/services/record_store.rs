@@ -36,7 +36,9 @@ use proximadb_storage_common::{
     ranged_segment::RangedSegmentReader,
 };
 
-use crate::metrics::consumption_metrics::record_object_store_op;
+use crate::metrics::consumption_metrics::{
+    object_store_egress_locality, record_kou_bytes, record_object_store_op,
+};
 use crate::observability::io_trace;
 use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
@@ -3197,6 +3199,41 @@ pub fn tenant_tier(tenant_id: &str) -> Option<String> {
     TENANT_TIERS.get(tenant_id).map(|r| r.clone())
 }
 
+/// Resolve a tenant to its [`Tier`] from the header-fed registry above — the
+/// co-design C5 tenant→tier bridge. Parses the stamped claim via
+/// [`Tier::from_claim`] (alias-aware) and falls back to the configured default
+/// tier when no claim was stamped or it is unrecognized. This converges the
+/// header-fed tier source (the cache `LimitsResolver`) with the route cost
+/// model's tier multiplier — one tier registry, not two. Installed at startup
+/// into `tenant_tier::set_tenant_tier_resolver` (see `database.rs`).
+pub fn tenant_tier_resolved(tenant_id: &str) -> crate::catalog::tenant_tier::Tier {
+    tenant_tier(tenant_id)
+        .and_then(|claim| crate::catalog::tenant_tier::Tier::from_claim(&claim))
+        .unwrap_or_else(crate::catalog::tenant_tier::default_tier)
+}
+
+#[cfg(test)]
+mod tenant_tier_bridge_tests {
+    use super::*;
+    use crate::catalog::tenant_tier::{Tier, default_tier};
+
+    #[test]
+    fn resolves_stamped_tier_else_default() {
+        // Unique tenant ids so this never races sibling tests on the global map.
+        let unknown = "bridge-test-unknown-tenant";
+        assert_eq!(tenant_tier_resolved(unknown), default_tier());
+
+        let t = "bridge-test-pro-tenant";
+        set_tenant_tier(t, "pro"); // control-plane stamped X-Tenant-Tier: pro
+        assert_eq!(tenant_tier_resolved(t), Tier::Tier3);
+
+        // An unrecognized claim falls back to the default tier (fail-safe).
+        let bad = "bridge-test-bad-claim-tenant";
+        set_tenant_tier(bad, "not-a-tier");
+        assert_eq!(tenant_tier_resolved(bad), default_tier());
+    }
+}
+
 pub struct ObjectStoreVectorRecordStore {
     bridge: Arc<dyn ObjectStoreBridge>,
     footer_cache: Option<Arc<proximadb_storage_common::ranged_segment::FooterCache>>,
@@ -3242,6 +3279,16 @@ impl ObjectStoreVectorRecordStore {
                     anyhow!("ObjectStoreVectorRecordStore failed to fetch '{path}': {err}")
                 })?;
             io_trace::record_bytes_read(bytes.len() as u64);
+            // KOU read-egress (Dimension 2): the fetched bytes left object storage
+            // for compute. Metered per-(tenant, locality, direction); only
+            // chargeable (cross-region/-cloud/on-prem/internet) localities feed the
+            // cost model's egress term — same-region/AZ reads are free.
+            record_kou_bytes(
+                tenant_id,
+                object_store_egress_locality(),
+                "read",
+                bytes.len() as u64,
+            );
             records.extend(pax_segment_to_records(bytes, schema)?);
         }
         Ok(records)
@@ -3461,6 +3508,13 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             io_trace::record_bytes_read(st.bytes_read);
             io_trace::record_range_gets(st.range_gets);
             io_trace::record_footers(st.footer_hits, st.footer_misses);
+            // KOU read-egress (Dimension 2): ranged-read bytes that left object storage.
+            record_kou_bytes(
+                tenant_id,
+                object_store_egress_locality(),
+                "read",
+                st.bytes_read,
+            );
             for mut record in recs {
                 record.variation_id = Some(table_schema.name.clone());
                 if predicate.is_none_or(|p| p(&record)) {

@@ -116,6 +116,40 @@ impl ProximaDB {
         // measured cost of each (shape-class, backend). Observe-mode today —
         // routing is unchanged until a later flag-gated slice.
         crate::query::route_cost_model::install_route_cost_observer();
+        // Co-design C5 (integration): register the tenant→tier Port to read the
+        // header-fed tier registry (`X-Tenant-Tier` → `record_store::TENANT_TIERS`),
+        // so the per-tenant tier the cache LimitsResolver already sees also drives
+        // the cost-multiplier — one tier source, no new authority. Installed here
+        // (depends on both catalog + services) to keep catalog free of a services dep.
+        crate::catalog::tenant_tier::set_tenant_tier_resolver(Some(Box::new(
+            crate::services::record_store::tenant_tier_resolved,
+        )));
+        // Co-design C5: install the config-driven tier cost-multiplier resolver
+        // (Dimension 5, the final Cost(q) term) into the route cost model. Reads
+        // per-tier multipliers from the tier-config overlay (control-plane policy
+        // values) via the tenant→tier Port. Default-inert: neutral 1.0 until a
+        // tenant→tier resolver is registered and non-neutral multipliers shipped.
+        crate::catalog::tenant_tier::install_tier_cost_multiplier_resolver();
+        // Co-design C3/KOU: derive this deployment's object-store read-egress
+        // locality from the storage URL (provider) + control-plane-stamped
+        // PROXIMADB_COMPUTE_REGION/PROXIMADB_STORE_REGION, and install it as the
+        // process-wide locality the egress meter uses. Default Local (free, inert)
+        // when unset; logs the derived locality. Turns B1's derivation live.
+        {
+            let storage_url = config
+                .storage
+                .storage_locations
+                .first()
+                .map(|loc| loc.url.as_str())
+                .unwrap_or("");
+            let placement = crate::metrics::consumption_metrics::placement_from_env(storage_url);
+            crate::metrics::consumption_metrics::install_placement(&placement);
+        }
+        // Co-design KOU result-egress: load the client-locality scope map (CIDR→
+        // locality, control-plane-authored via PROXIMADB_NETWORK_SCOPE_MAP).
+        // Default-empty → clients classify as Unknown (safe). Consumed by the
+        // gateway/result-egress path; the classifier (`classify_client`) is live.
+        crate::metrics::consumption_metrics::install_network_scope_map(None);
 
         let (shared_services, collection_service) = network::multi_server::SharedServices::new(
             Some(metrics_collector.clone()),
