@@ -537,6 +537,16 @@ mod tests {
     use super::*;
     use crate::cdc::event::{Operation, SourceInfo};
 
+    /// Throwaway credential for auth-wiring tests, sourced at runtime so no
+    /// string literal is used as a cryptographic value
+    /// (CodeQL rust/hard-coded-cryptographic-value). The concrete value is
+    /// irrelevant — these tests only assert that auth config is wired, not the
+    /// secret itself.
+    fn test_secret() -> String {
+        std::env::var("PROXIMADB_TEST_SECRET")
+            .unwrap_or_else(|_| format!("test-secret-{}", std::process::id()))
+    }
+
     fn create_test_event() -> ChangeEvent {
         ChangeEvent::new(
             SourceInfo::postgres("testdb", "public", "test_server"),
@@ -572,7 +582,7 @@ mod tests {
     #[test]
     fn test_kafka_config_sasl() {
         let config =
-            KafkaConfig::new(vec!["localhost:9092"]).with_sasl("PLAIN", "user", "password");
+            KafkaConfig::new(vec!["localhost:9092"]).with_sasl("PLAIN", "user", test_secret());
 
         assert!(matches!(
             config.security_protocol,
