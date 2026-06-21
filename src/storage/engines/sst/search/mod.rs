@@ -265,6 +265,15 @@ impl SstEngine {
                     .read_all_records_for_compaction(&[file.to_string()])
                     .await
             }
+            BlockFormat::PaxBlock => {
+                // P3: read a PAX segment via the mixed-format primitive (magic-detected,
+                // reuses PaxSegmentScanner). Best-effort schema keys (empty) for now.
+                let local = file.strip_prefix("file://").unwrap_or(file);
+                let bytes = tokio::fs::read(local)
+                    .await
+                    .map_err(|e| anyhow::anyhow!("read pax segment {file}: {e}"))?;
+                crate::storage::engines::sst::segment_format::read_segment_records(&bytes, &[], &[])
+            }
         }
     }
 
