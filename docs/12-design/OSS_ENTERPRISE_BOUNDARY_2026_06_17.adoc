@@ -43,7 +43,7 @@ leaks in non-gated OSS code.
 | Data models (multimodal) | vector, relational/OLTP, OLAP, document, graph (ORION), time-series + queue (maturity-gated, not license-gated)
 | Compute | Volcano, DataFusion, Polars, specialized ANN engines, UDF/UDAF/UDTF, ranking/RERANK
 | Query | SQL frontend, pgwire, REST v2, gRPC v2, Arrow Flight, predicate/projection pushdown, subqueries, joins/aggregates
-| Multitenancy **mechanism** | `TenantContext`, `DrPathBuilder` path isolation, tenant-scoped catalog/DML/search (TD-064), generic tier/quota **hooks**, generic `TierPolicy` parser + `LimitsResolver` port, consumption telemetry (generic counters)
+| Multitenancy **mechanism** | `TenantContext`, `DrPathBuilder` path isolation, tenant-scoped catalog/DML/search (TD-064), generic tier/quota **hooks**, generic `TierPolicy` parser + `LimitsResolver` port, `set_tier_multiplier_resolver` port (route-cost), consumption telemetry (generic counters incl. `proximadb_egress_bytes_total` — the KEU egress *meter*; the cost-model scores egress/read/ingest/compute in **neutral units**)
 | Security **mechanism** | authN/authZ ports, SSO/SAML, RLS, security modes
 |===
 
@@ -52,8 +52,9 @@ leaks in non-gated OSS code.
 |===
 | Category | Where it belongs
 | Go-to-market surfaces (revenue, sales, licensing, executive intel) | feature-gated OFF today → **externalize to anvaiops** (or keep gated as stubs)
-| Pricing / billing **data + compute** (tier→limit values, pricing units KSU/KRU/KIU/KEU, invoices, cost) | **anvaiops** (OSS emits generic consumption metrics only)
-| tenant→tier **authority** | **anvaiops** (stamps `TenantContext.tier` claim)
+| Pricing / billing **data + compute** (tier→limit values, pricing units KSU/KRU/KIU/KEU, invoices, cost) | **anvaiops** (OSS emits generic consumption metrics only — incl. the new KEU egress *meter* `proximadb_egress_bytes_total{tenant_id, az_locality}`; anvaiops applies the per-`az_locality` KEU $ rate)
+| tenant→tier **authority** + tier→cost-**multiplier** values | **anvaiops** (stamps `TenantContext.tier` claim; supplies the `set_tier_multiplier_resolver` adapter — OSS default is `1.0`, inert)
+| object-store **AZ topology** ($ weight per `same_az`/`cross_az`/`internet`) | **anvaiops** / operator (OSS only records the neutral locality *bucket*, declared via `PROXIMADB_OBJECT_STORE_LOCALITY`, default `same_az`)
 | SaaS quota **values** (paid-tier caps) | operator config (`tier-config.json`) / anvaiops; the *enforcement mechanism* stays OSS
 | DR/CRR **billing binding** (SKU, cost cents) | feature-gate / externalize (opaque pass-through at most)
 | Cloud control plane (provisioning, multi-region orchestration) | **anvaiops**
@@ -84,6 +85,7 @@ leaks in non-gated OSS code.
   ┌─────────────────────── ProximaDB OSS (Rust) ───────────────────────┐
   │ PORTS (OSS-defined abstractions):                                   │
   │   LimitsResolver        ← cache tier shares      (TenantCache)      │
+  │   TierCostMultiplier    ← tenant→cost multiplier  (route_cost_model) │
   │   MeteringSink          ← consumption events     (telemetry)        │
   │   LicenseProvider       ← edition/entitlements   (#[cfg] gated)     │
   │   AuthProvider/SSO      ← identity               (security)         │
@@ -96,6 +98,41 @@ Each enterprise concern = an OSS *port* + a *default OSS adapter* (neutral) +
 an *enterprise adapter* injected by config/claim or a gated crate. The
 `LimitsResolver`/`TierPolicy` from the cache work (commit `e1491d410`) is the
 reference implementation of this pattern.
+
+=== 4.1. Cost-model seams (PR #101 — co-design Cost(q))
+
+The trace-driven route cost model (`src/query/route_cost_model.rs`) completes the
+§3 `Cost(q)` of `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` while keeping
+*all* pricing/policy on the anvaiops side. Two new seams, both default-inert:
+
+. **KEU egress meter (OSS) → KEU pricing (anvaiops).** OSS emits
+`proximadb_egress_bytes_total{tenant_id, az_locality}` and a per-query
+`io_trace.bytes_cross_az`, via the single convergent
+`consumption_metrics::record_egress_bytes`. `AzLocality` is a *neutral bucket*
+(`same_az`/`cross_az`/`internet`) the deployment declares with
+`PROXIMADB_OBJECT_STORE_LOCALITY` (default `same_az` = the free path → the
+egress *cost* term is zero until a cross-AZ topology is declared). OSS never
+holds a $ figure or the real AZ topology — anvaiops multiplies the metered bytes
+by its per-`az_locality` KEU rate. This is the `MeteringSink` port specialized to
+the previously-unmetered networking dimension.
+
+. **Tier-entitlement multiplier port (OSS) → tier policy (anvaiops).**
+`set_tier_multiplier_resolver(Fn(&str /*tenant_id*/) -> f64)` is the OSS port; the
+default adapter returns `1.0` (no resolver installed → fully inert, uniform
+community behavior). anvaiops installs the adapter from its tenant→tier authority
+(the same authority that stamps `TenantContext.tier`), resolving
+tenant→tier→multiplier *inside the adapter* — so the OSS cost path stays
+tier-agnostic (no `Tier` enum leaks into routing). The multiplier scales only the
+*reported / billed* `Cost(q)` and is **routing-neutral** (a per-tenant scalar
+scales every candidate equally → never changes which engine is chosen), so it can
+never make engine selection depend on a commercial tier. `final_cost(base,
+tenant)` and `tier_entitlement_multiplier(tenant)` are the consumption points.
+
+Boundary invariants: OSS scores `Cost(q)` in **neutral units** only; the $ weights
+(KSU/KRU/KIU/KEU), the AZ-topology→locality mapping, the tenant→tier authority,
+and the tier→multiplier values are *all* anvaiops. The guard
+(`check_oss_boundary.py`) already denies `keu_per_*` pricing units and non-doc
+`anvai*` refs, so a future leak of these into the cost model fails CI.
 
 == 5. Enforcement: CI boundary guard (new, durable)
 
