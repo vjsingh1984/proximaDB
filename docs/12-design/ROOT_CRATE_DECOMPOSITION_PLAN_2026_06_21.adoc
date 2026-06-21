@@ -90,20 +90,40 @@ Existing seams that help:
 
 == Sequencing (incremental)
 
+NOTE: An initial survey suggested `src/storage/formats` as the first slice, but a
+file-level check disproved it: `formats/adapters.rs` binds every engine
+(`crate::storage::engines::{sst,helix,viper,nova,swift,raptor}`, 12 refs), so `formats`
+cannot move ahead of the engines. The *verified* clean leaves (zero up-edges into
+engines/index/compute/services) are below.
+
+Verified clean leaf subtrees (measured 2026-06-21) — candidates that move first:
+
+[cols="1,1,2",options="header"]
+|===
+| Subtree | ~LOC | Remaining root deps (to resolve)
+| `kv` | 96 | *none* — fully self-contained (anyhow/async_trait only)
+| `transaction` | 2,715 | none (0 dependents — verify live before moving)
+| `encryption` | 1,692 | `storage::persistence` only
+| `schema` | 8,141 | `core` (4), `storage::persistence`
+| `tenant` | 3,644 | `proto` (3) → repoint to `proximadb-proto`
+|===
+
 [cols="1,3,1,1",options="header"]
 |===
 | Slice | Scope | ~LOC | Risk
-| A | `proximadb-storage-formats` ← `src/storage/formats/` (re-export) | ~5K | Low
-| B | `proximadb-storage-cache` ← `src/storage/cache/` (wraps `proximadb-cache`) | ~11K | Low
-| C | Persistence: WAL + disk-manager port crates | ~? | Med
+| A | `proximadb-storage-kv` ← `src/storage/kv/` (re-export) — proof of pattern | 96 | Very low
+| B | `transaction` / `encryption` leaf crates (mechanical moves) | ~2-5K | Low
+| C | `proximadb-storage-formats` minus `adapters.rs` (leave the engine-binding glue in root) | ~5K | Low-Med
 | D | *Enabler:* `IndexManager` (+ distance, metadata) **port crate(s)**; refactor engine/compaction to inject ports | n/a | Med-High
 | E | Engines: `proximadb-{sst,nova,viper}-engine` (depend on ports from D) | large | High
-| F | Multimodel / document / entity / transaction stores | large | High
+| F | Multimodel / document / entity stores | large | High
 |===
 
-Slices A and B are independent quick wins that prove the re-export pattern and start
-shrinking the binary. D is the linchpin: the ~403 up-edges mean engines cannot move until
-the index/compute/metadata boundaries are ports. E/F are large and must be coordinated.
+Slice A is the smallest provable inch (96 LOC, zero coupling) — it establishes the new-crate
++ `git mv` + re-export + CI pattern. B/C continue with leaf subtrees. D is the linchpin: the
+~403 up-edges mean engines cannot move until the index/compute/metadata boundaries are ports
+(and `formats/adapters.rs` follows the engines, not before them). E/F are large and must be
+coordinated.
 
 == Multi-session coordination protocol (mandatory)
 
@@ -138,6 +158,9 @@ and several edit `src/storage`. Large file-moves conflict violently with in-flig
 
 == First action
 
-Execute *Slice A* (`proximadb-storage-formats`) once a cold-subtree check confirms
-`src/storage/formats/` is not under active edit, as a pure `git mv` + re-export PR. It is the
-smallest, lowest-coupling proof of the pattern and starts the shrink.
+Execute *Slice A* (`proximadb-storage-kv`): extract `src/storage/kv/` (96 LOC, the
+self-contained `StorageKV` trait + `FsKV` impl — zero up-edges, one dependent in
+`entity_store_legacy.rs`) into a new crate, leaving a `pub use proximadb_storage_kv as kv;`
+re-export at `src/storage/mod.rs`. Cold-subtree check passed (0 commits in 10 days, no active
+worktree touches it). It is the smallest provable inch and establishes the new-crate +
+`git mv` + re-export + workspace-member + CI pattern that every subsequent slice repeats.
