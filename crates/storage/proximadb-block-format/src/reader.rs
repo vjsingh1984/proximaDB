@@ -1092,6 +1092,103 @@ mod tests {
         );
     }
 
+    /// P3 Phase G — cold-recall harness at scale (N=1000). This is the *ratchet gate*
+    /// the migration plan requires before the cold-scan wiring (C.2): the
+    /// `rank_candidates` stage-1 prefilter + a decoupled f32 rerank must hold
+    /// recall@10 within tolerance of the exact-f32 baseline at realistic N (small-N is
+    /// brute-force-served and doesn't exercise the approximate path). The rerank here
+    /// reranks against the held f32 corpus, standing in for the decoupled full-precision
+    /// rerank tier the scan will own. RATCHET: mean recall@10 >= 0.90 — only goes up.
+    #[test]
+    fn rabitq_cold_recall_harness_n1000_recall_at_10() {
+        use proximadb_codec::functions::rabitq;
+
+        const DIM: usize = 64;
+        const N: usize = 1000;
+        const Q: usize = 50;
+        const K: usize = 10;
+        const REFINE: usize = 100; // candidate pool before f32 rerank
+        const RATCHET: f32 = 0.90;
+
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+
+        let refs: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (stripe, col) =
+            crate::writer::encode_f32_vec_rabitq(&refs, DIM as u32, col_id::EMBED_BASE);
+        let codes = parse_rabitq_codes(&stripe, N, DIM).unwrap();
+        let params = RaBitQParams {
+            dim: DIM,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        let rotation = rabitq::build_rotation(DIM, col.seed);
+
+        // ~30× target: assert real compression so the gate is meaningful.
+        let stride = 8 + DIM.div_ceil(8);
+        let raw = DIM * 4;
+        assert!(
+            raw / stride >= 10,
+            "compression {}x below 10x",
+            raw / stride
+        );
+
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let exact_topk = |q: &[f32]| -> std::collections::HashSet<usize> {
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], q)
+                    .partial_cmp(&l2(&corpus[b], q))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(K).collect()
+        };
+
+        let mut recalls = Vec::with_capacity(Q);
+        for qi in 0..Q {
+            let base = (qi * (N / Q)) % N;
+            let noise = gen_vec((qi as u64).wrapping_add(7_000_000));
+            let query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, n)| v + n * 0.01)
+                .collect();
+
+            // Stage 1: the public primitive (what C.2 calls in the cold scan).
+            let q_rot = rabitq::rotate_query(&query, &params, &rotation);
+            let mut cand = rabitq::rank_candidates(&q_rot, &codes, REFINE);
+            // Stage 2: decoupled f32 rerank → final top-K.
+            cand.sort_by(|&a, &b| {
+                l2(&corpus[a], &query)
+                    .partial_cmp(&l2(&corpus[b], &query))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let got: std::collections::HashSet<usize> = cand.into_iter().take(K).collect();
+
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / K as f32);
+        }
+        let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
+        assert!(
+            mean >= RATCHET,
+            "P3 Phase G: RaBitQ recall@{K} at N={N} = {mean:.3} < ratchet {RATCHET} \
+             (compression {}x). Recall regressed — do not lower the ratchet.",
+            raw / stride
+        );
+    }
+
     #[test]
     fn raw_fallback_vector_stripe_round_trips_exactly() {
         // The raw fixed-stride path (quant_kind = RAW_F32) is exact. Exercise the
