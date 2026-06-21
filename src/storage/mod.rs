@@ -235,8 +235,10 @@ pub mod transaction;
 pub mod entity_store;
 pub mod relations;
 
-// Key-value storage interface
-pub mod kv;
+// Key-value storage interface — extracted to the `proximadb-storage-kv` crate
+// (root-crate decomposition Slice A); re-exported here for source compatibility
+// (`crate::storage::kv::{StorageKV, FsKV}`).
+pub use proximadb_storage_kv as kv;
 
 // Unified operations coordination (flush, compaction, re-quantization)
 pub mod operations;

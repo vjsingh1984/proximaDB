@@ -1,7 +1,11 @@
 //! Simple key-value storage abstraction
 //!
-//! This module provides a minimal key-value storage interface with a filesystem-based
+//! This crate provides a minimal key-value storage interface with a filesystem-based
 //! implementation. Used for storing configuration, metadata, and other small data items.
+//!
+//! Extracted from the root crate's `src/storage/kv` as the first slice of the root-crate
+//! decomposition (see `docs/12-design/ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc`).
+//! The root crate re-exports it as `crate::storage::kv` for source compatibility.
 
 use anyhow::Result;
 use async_trait::async_trait;

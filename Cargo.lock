@@ -6524,6 +6524,7 @@ dependencies = [
  "proximadb-sdk",
  "proximadb-security",
  "proximadb-storage-common",
+ "proximadb-storage-kv",
  "proximadb-telemetry",
  "proximadb-uql",
  "proximadb-vector",
@@ -7447,6 +7448,16 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-storage-kv"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "tokio",
  "tracing",
 ]
 
