@@ -257,6 +257,23 @@ impl RaBitQCode {
     }
 }
 
+/// Stage-1 RaBitQ candidate ranking: score every present code with the binary L2
+/// estimator against an already-[`rotate_query`]'d query and return up to `pool` row
+/// indices ordered nearest-first (lower estimator score = nearer). This is the
+/// approximate prefilter; the caller reranks the returned candidates against the
+/// full-precision source (decoupled rerank, per RABITQ_ANN_INTEGRATION_SCOPING) — the
+/// codes alone are ~30× smaller and too coarse to be the final answer.
+pub fn rank_candidates(q_rotated: &[f32], codes: &[Option<RaBitQCode>], pool: usize) -> Vec<usize> {
+    let mut scored: Vec<(usize, f32)> = codes
+        .iter()
+        .enumerate()
+        .filter_map(|(i, c)| c.as_ref().map(|c| (i, c.l2_rank_score(q_rotated))))
+        .collect();
+    scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+    scored.truncate(pool);
+    scored.into_iter().map(|(i, _)| i).collect()
+}
+
 /// Convenience: encode a whole column (used by tests / the block writer).
 pub fn encode_column(vectors: &[&[f32]], params: &RaBitQParams) -> Result<Vec<RaBitQCode>> {
     if params.dim == 0 {
