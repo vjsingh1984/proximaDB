@@ -1776,6 +1776,14 @@ pub struct CatalogProjection {
     pub benchmark_gate: Option<String>,
     /// Human-readable support status: experimental, beta, supported, deprecated.
     pub support_status: String,
+    /// Catalog-resolved physical location (URI/path prefix) of this projection's
+    /// materialized bytes — the index/MV files. `None` means "not yet resolved";
+    /// the engine then derives the default path from `DrPathBuilder`
+    /// (`data/{tenant}/{namespace}/{collection}/indexes/{name}/`). When set, it is
+    /// authoritative, so a projection can be relocated/tiered independently. This
+    /// is the catalog-resolution of index/MV addressing (CATALOG_OBJECT_MODEL P1).
+    #[serde(default)]
+    pub location: Option<String>,
     /// Additional implementation-specific metadata.
     pub properties: HashMap<String, String>,
 }
@@ -1804,6 +1812,7 @@ impl CatalogProjection {
             lossy: false,
             benchmark_gate: None,
             support_status: "experimental".to_string(),
+            location: None,
             properties: HashMap::new(),
         }
     }
@@ -1812,6 +1821,14 @@ impl CatalogProjection {
     pub fn with_bounded_lag(mut self, max_lag_ms: i64) -> Self {
         self.freshness = ProjectionFreshness::BoundedLag;
         self.max_lag_ms = Some(max_lag_ms);
+        self
+    }
+
+    /// Set the catalog-resolved physical location (URI/path prefix) of this
+    /// projection's materialized bytes. Authoritative when set; otherwise the
+    /// engine derives the default `DrPathBuilder` index path.
+    pub fn with_location(mut self, location: impl Into<String>) -> Self {
+        self.location = Some(location.into());
         self
     }
 

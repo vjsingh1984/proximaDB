@@ -1789,6 +1789,7 @@ fn add_specialty_projection_layouts(
             lossy: true,
             benchmark_gate: Some("hybrid-vector-smoke".to_string()),
             support_status: "experimental".to_string(),
+            location: None,
             properties: HashMap::new(),
         });
     }
@@ -1823,6 +1824,7 @@ fn add_specialty_projection_layouts(
             lossy: false,
             benchmark_gate: Some("json-path-smoke".to_string()),
             support_status: "experimental".to_string(),
+            location: None,
             properties: HashMap::new(),
         });
     }
