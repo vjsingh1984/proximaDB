@@ -498,8 +498,26 @@ fn decode_str_with_encoding(
     match scheme {
         ProximaScheme::Raw => decode_raw_str_col(data, count),
         ProximaScheme::Dictionary => decode_dictionary_str_col(data, count),
+        // Constant-column (single stored value → N copies). Always decodable so a
+        // reader is forward-compatible regardless of the writer's flag state.
+        ProximaScheme::RunLength => decode_constant_str_col(data, count),
         other => bail!("unsupported PAX string encoding: {}", other.name()),
     }
+}
+
+/// Decode a constant string stripe (`[value_len u32][value bytes]`) into `count`
+/// copies of the single value — the inverse of the writer's `encode_str_constant_col`.
+fn decode_constant_str_col(data: &[u8], count: usize) -> Result<Vec<Option<String>>> {
+    if data.len() < 4 {
+        bail!("constant string stripe missing value length");
+    }
+    let len = u32::from_le_bytes(data[0..4].try_into()?) as usize;
+    let end = 4 + len;
+    if end > data.len() {
+        bail!("constant string value exceeds stripe length");
+    }
+    let value = String::from_utf8(data[4..end].to_vec())?;
+    Ok(vec![Some(value); count])
 }
 
 fn decode_raw_str_col(data: &[u8], count: usize) -> Result<Vec<Option<String>>> {
@@ -969,6 +987,59 @@ mod tests {
                 assert!((g - o).abs() <= bound + 1e-6, "got {g}, orig {o}");
             }
         }
+    }
+
+    /// Constant-column encoding: a single-tenant block's `tenant_id` collapses to one
+    /// stored value (RunLength marker) that reconstructs N copies on read, and is
+    /// strictly smaller than the dictionary encoding the default writer emits.
+    #[test]
+    fn constant_str_tenant_column_round_trips_and_shrinks() {
+        const N: usize = 200;
+
+        let build = |constant: bool| -> Vec<u8> {
+            let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 0)
+                .with_constant_str(constant);
+            for i in 0..N {
+                w.add_record(&make_record(&format!("r{i}"), "tenant-A", 1000 + i as i64))
+                    .unwrap();
+            }
+            w.flush().unwrap()
+        };
+        let tenant_meta = |block: &[u8]| {
+            let reader = PaxBlockReader::open(block).unwrap();
+            reader
+                .column_metas()
+                .iter()
+                .find(|m| m.column_id == col_id::TENANT_ID)
+                .unwrap()
+                .clone()
+        };
+
+        // Constant-encoded: every row reconstructs, stripe is RunLength-marked.
+        let cblock = build(true);
+        let creader = PaxBlockReader::open(&cblock).unwrap();
+        let tenants = creader.decode_str_stripe(col_id::TENANT_ID).unwrap();
+        assert_eq!(tenants.len(), N);
+        assert!(tenants.iter().all(|t| t.as_deref() == Some("tenant-A")));
+        let cmeta = tenant_meta(&cblock);
+        assert_eq!(cmeta.encoding_id, ProximaScheme::RunLength.to_marker());
+
+        // Default writer (flag off) keeps dictionary — no default behaviour change.
+        let dblock = build(false);
+        let dmeta = tenant_meta(&dblock);
+        assert_eq!(dmeta.encoding_id, ProximaScheme::Dictionary.to_marker());
+
+        // The win: constant stores one value; dictionary carries ~N per-row codes.
+        assert!(
+            cmeta.stripe_len < dmeta.stripe_len,
+            "constant ({}) must be smaller than dictionary ({})",
+            cmeta.stripe_len,
+            dmeta.stripe_len
+        );
+        assert!(
+            dmeta.stripe_len as usize >= 4 * N,
+            "dictionary carries ~N per-row codes"
+        );
     }
 
     #[test]

@@ -137,6 +137,11 @@ pub struct PaxBlockWriter {
     embedding_count: usize,
     /// Vector quantization strategy for this writer (P3 Phase D; `Auto` = env-driven).
     quant: VectorQuant,
+    /// Emit a constant-column stripe for single-valued `Tenant`/`Identity` string
+    /// columns (`distinct == 1`) instead of a dictionary — O(1) instead of N
+    /// per-row codes. Default from `PROXIMADB_PAX_CONSTANT_STR` (off) so the write
+    /// format only changes once readers that understand it are deployed.
+    constant_str: bool,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -177,6 +182,7 @@ impl PaxBlockWriter {
             schema_fingerprint,
             embedding_count,
             quant: VectorQuant::Auto,
+            constant_str: constant_str_enabled(),
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -202,6 +208,14 @@ impl PaxBlockWriter {
     /// `new(..)` call sites are unchanged; `Auto` (the default) keeps env behavior.
     pub fn with_quant(mut self, quant: VectorQuant) -> Self {
         self.quant = quant;
+        self
+    }
+
+    /// Enable (or disable) constant-column encoding for single-valued
+    /// `Tenant`/`Identity` string columns. Builder form mirroring [`with_quant`];
+    /// the default comes from `PROXIMADB_PAX_CONSTANT_STR`.
+    pub fn with_constant_str(mut self, enabled: bool) -> Self {
+        self.constant_str = enabled;
         self
     }
 
@@ -595,7 +609,7 @@ impl PaxBlockWriter {
         nullable: bool,
         vals: &[Option<&str>],
     ) -> ColumnStripe {
-        let scheme = select_str_scheme(role, nullable, vals);
+        let scheme = select_str_scheme(role, nullable, vals, self.constant_str);
         let (data, null_count) = encode_str_with_scheme(vals, &scheme);
         let stats = string_stats(vals);
         let meta = ColumnMeta {
@@ -1107,7 +1121,18 @@ fn select_f64_scheme(role: ColumnRole, _nullable: bool, values: &[Option<f64>]) 
     }
 }
 
-fn select_str_scheme(role: ColumnRole, nullable: bool, values: &[Option<&str>]) -> ProximaScheme {
+fn select_str_scheme(
+    role: ColumnRole,
+    nullable: bool,
+    values: &[Option<&str>],
+    constant_str: bool,
+) -> ProximaScheme {
+    // Constant-column: a single-valued canonical structural column collapses to
+    // one stored value (decoder reconstructs N copies). RunLength is the wire
+    // scheme (marker 0x62); its doc-intent is exactly "constant/near-constant".
+    if constant_str && is_constant_str(role, values) {
+        return ProximaScheme::RunLength;
+    }
     let codes = string_category_codes(values);
     if codes.is_empty() {
         return ProximaScheme::Raw;
@@ -1165,11 +1190,40 @@ fn string_category_codes(values: &[Option<&str>]) -> Vec<i64> {
     codes
 }
 
+/// True iff `values` is a constant column eligible for constant-column encoding:
+/// a canonical low-cardinality structural column (`Tenant`/`Identity`) where every
+/// row carries the SAME non-null value (`distinct == 1`, no nulls). The common case
+/// is a single-tenant segment's `tenant_id` — N identical strings collapse to one.
+fn is_constant_str(role: ColumnRole, values: &[Option<&str>]) -> bool {
+    if !matches!(role, ColumnRole::Tenant | ColumnRole::Identity) {
+        return false;
+    }
+    let mut iter = values.iter();
+    let first = match iter.next() {
+        Some(Some(v)) => *v,
+        _ => return false, // empty, or first row null
+    };
+    values.iter().all(|v| matches!(v, Some(s) if *s == first))
+}
+
 fn encode_str_with_scheme(values: &[Option<&str>], scheme: &ProximaScheme) -> (Vec<u8>, u32) {
     match scheme {
         ProximaScheme::Dictionary => encode_str_dictionary_col(values),
+        ProximaScheme::RunLength => encode_str_constant_col(values),
         _ => encode_str_col(values),
     }
+}
+
+/// Encode a constant string column as `[value_len u32][value bytes]` — one stored
+/// value for the whole stripe (the row count comes from the block footer at decode
+/// time). The caller guarantees [`is_constant_str`], i.e. every row is this value.
+fn encode_str_constant_col(values: &[Option<&str>]) -> (Vec<u8>, u32) {
+    let value = values.iter().flatten().next().copied().unwrap_or("");
+    let bytes = value.as_bytes();
+    let mut buf = Vec::with_capacity(4 + bytes.len());
+    buf.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+    buf.extend_from_slice(bytes);
+    (buf, 0) // constant columns are non-null → null_count = 0
 }
 
 fn encode_str_dictionary_col(values: &[Option<&str>]) -> (Vec<u8>, u32) {
@@ -1311,6 +1365,13 @@ fn sq8_disabled() -> bool {
 /// (SQ8 reconstructs more faithfully without a rerank tier).
 fn rabitq_enabled() -> bool {
     std::env::var_os("PROXIMADB_VECTOR_RABITQ").is_some()
+}
+
+/// Default for constant-column string encoding. Off unless
+/// `PROXIMADB_PAX_CONSTANT_STR` is set, so the on-disk format only changes once
+/// readers that decode it (any build with this change) are deployed.
+fn constant_str_enabled() -> bool {
+    std::env::var_os("PROXIMADB_PAX_CONSTANT_STR").is_some()
 }
 
 /// Encode a RaBitQ vector stripe: validity bitmap + per row
