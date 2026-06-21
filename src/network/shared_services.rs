@@ -903,49 +903,24 @@ impl SharedServices {
             axis_manager_inner.set_index_persist_dir(cfg.server.data_dir.join("axis_indexes"));
         }
 
-        // CATALOG_OBJECT_MODEL P1 boot adapter: make catalog-resolved index
-        // locations live. For each cataloged collection's VectorAnn projection,
-        // register its catalog location with AXIS so index persistence/cold-load is
-        // addressed from the catalog rather than only the `index_persist_url`
-        // convention. Explicit `projection.location` is always honored (relocated/
-        // tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1` additionally opts the
-        // fleet into the DrPathBuilder `indexes/<projection>/` layout. Default-off
-        // and additive — with no projection locations set it is a no-op, so existing
-        // indexes stay exactly where they are (mixed-safe). Runs here, before the
-        // manager is shared, while it is still uniquely owned (`&mut`).
+        // CATALOG_OBJECT_MODEL #3 read-port: make catalog-resolved index locations
+        // live for ALL collections — boot-present AND runtime-created — by injecting
+        // a catalog resolver that AXIS pulls from on demand (and memoizes). For each
+        // collection's VectorAnn projection, an explicit `projection.location` is
+        // honored (relocated/tiered indexes); `PROXIMADB_INDEX_CATALOG_PATHS=1`
+        // additionally opts the fleet into the DrPathBuilder `indexes/<projection>/`
+        // layout. Default-off and additive: with no projection locations set the
+        // resolver returns `None` and AXIS keeps the `index_persist_url`/`dir`
+        // convention (mixed-safe). The resolver is catalog-free at the AXIS seam —
+        // this adapter lives in the control layer (dependency inversion).
         {
-            use crate::storage::trait_components::path_resolver::ann_index_locations;
             let migrate = std::env::var_os("PROXIMADB_INDEX_CATALOG_PATHS").is_some();
-            let mut registered = 0usize;
-            for catalog_name in catalog_manager.list_catalogs().await {
-                let Ok(catalog) = catalog_manager.get_catalog(&catalog_name).await else {
-                    continue;
-                };
-                let Ok(namespaces) = catalog.list_namespaces(None).await else {
-                    continue;
-                };
-                for ns in namespaces {
-                    let Ok(tables) = catalog.list_tables(&ns.levels).await else {
-                        continue;
-                    };
-                    for table_id in tables {
-                        let Ok(schema) = catalog.get_table(&table_id).await else {
-                            continue;
-                        };
-                        for (collection_id, location) in ann_index_locations(&ns, &schema, migrate)
-                        {
-                            axis_manager_inner.set_index_location(collection_id, location);
-                            registered += 1;
-                        }
-                    }
-                }
-            }
-            if registered > 0 {
-                debug!(
-                    "🔗 SharedServices: registered {} catalog-resolved index location(s) with AXIS (migrate={})",
-                    registered, migrate
-                );
-            }
+            axis_manager_inner.set_index_location_resolver(Arc::new(
+                crate::catalog::index_location_resolver::CatalogIndexLocationResolver::new(
+                    catalog_manager.clone(),
+                    migrate,
+                ),
+            ));
         }
 
         let axis_manager = Arc::new(axis_manager_inner);

@@ -14,8 +14,8 @@ pub mod strategy;
 
 // Re-export main types
 pub use manager::{
-    AxisManager, FilterOperator, HotSwapEfChange, HotSwapOutcome, HybridQuery, MetadataFilter,
-    MigrationStatus, QueryResult, ScoredResult, VectorQuery,
+    AxisManager, FilterOperator, HotSwapEfChange, HotSwapOutcome, HybridQuery,
+    IndexLocationResolver, MetadataFilter, MigrationStatus, QueryResult, ScoredResult, VectorQuery,
 };
 
 pub use adaptive_engine::{
