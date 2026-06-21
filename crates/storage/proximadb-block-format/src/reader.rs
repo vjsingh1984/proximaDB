@@ -320,6 +320,19 @@ impl<'a> PaxBlockReader<'a> {
         Some((params, codes))
     }
 
+    /// Stage-1 RaBitQ candidate ranking for this block's `EMBED_BASE` column: decode the
+    /// codes, rotate the query once, and return up to `pool` row indices ordered
+    /// nearest-first (the approximate prefilter). Returns `None` if the column isn't
+    /// RaBitQ-quantized. The caller reranks the returned rows against the full-precision
+    /// source (decoupled rerank) before taking the final top-k — this is the seam Phase C
+    /// wires into the cold scan.
+    pub fn rabitq_rank(&self, query: &[f32], pool: usize) -> Option<Vec<usize>> {
+        let (params, codes) = self.decode_rabitq_codes(crate::col_id::EMBED_BASE)?;
+        let rotation = rabitq::build_rotation(params.dim, params.seed);
+        let q_rotated = rabitq::rotate_query(query, &params, &rotation);
+        Some(rabitq::rank_candidates(&q_rotated, &codes, pool))
+    }
+
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
     /// inverse of the writer's `build_bytes_stripe` (used for the msgpack `PROPS`
     /// and `LABELS` columns). Each value is a 4-byte little-endian length prefix
@@ -1054,15 +1067,12 @@ mod tests {
                 .map(|(v, n)| v + n * 0.01)
                 .collect();
 
-            // Stage 1: rank ALL candidates by the binary estimator over codes.
+            // Stage 1: rank candidates by the binary estimator over codes — via the
+            // public `rank_candidates` primitive that Phase C wires into the cold scan.
             let q_rot = rabitq::rotate_query(&query, &params, &rotation);
-            let mut scored: Vec<(usize, f32)> = (0..N)
-                .filter_map(|i| codes[i].as_ref().map(|c| (i, c.l2_rank_score(&q_rot))))
-                .collect();
-            scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            let mut refine = rabitq::rank_candidates(&q_rot, &codes, REFINE);
 
             // Stage 2: f32 rerank the top-REFINE candidates → final top-K.
-            let mut refine: Vec<usize> = scored.iter().take(REFINE).map(|(i, _)| *i).collect();
             refine.sort_by(|&a, &b| {
                 l2(&corpus[a], &query)
                     .partial_cmp(&l2(&corpus[b], &query))
