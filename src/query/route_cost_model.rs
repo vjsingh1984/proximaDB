@@ -154,7 +154,7 @@ pub fn shape_class(shape: &QueryShape) -> String {
 
 /// Neutral relative weights for the route cost score. NOT dollars (see module
 /// docs). They encode only the co-design cost ordering of the §3 unified cost
-/// objective `Cost(q)`: an object-store round-trip dominates cross-AZ egress,
+/// objective `Cost(q)`: an object-store round-trip dominates cross-region egress,
 /// which dominates same-region read bandwidth, which dominates a ms of CPU
 /// (P5: for a cloud DB the dominant cost term is I/O round-trips + egress, not
 /// compute — §2.2).
@@ -165,12 +165,12 @@ pub struct CostWeights {
     pub per_get: f64,
     /// Per MiB read — the same-region read-bandwidth term. §3 `bytes_read·bw_cost`.
     pub per_mib_read: f64,
-    /// Per MiB moved across an AZ / to the internet — the KEU **egress** term
-    /// (§2.2, §3 `bytes_moved·az_locality_cost`). Weighted above same-region read
-    /// bandwidth because cross-AZ ($0.02/GB RT) / internet egress ($0.09/GB) is
-    /// frequently the dominant TCO term. Fed by the trace's `bytes_cross_az`,
-    /// which is **zero on the free same-AZ path**, so this term is inert until a
-    /// deployment actually moves bytes cross-AZ.
+    /// Per MiB moved cross-region / to the internet — the KEU **egress** term
+    /// (§2.2, §3 `bytes_moved·locality_cost`). Weighted above same-region read
+    /// bandwidth because cross-region (~$0.02/GB) / internet egress
+    /// (~$0.09-0.12/GB by cloud) is frequently the dominant TCO term. Fed by the
+    /// trace's `egress_bytes`, which is **zero on the free same-region path**, so
+    /// this term is inert until a deployment actually moves bytes cross-region.
     pub per_mib_egress: f64,
     /// Per MiB written to object storage — the KIU ingest / storage-write term
     /// (§3 storage side). Zero for read-only SELECT routing, so inert today;
@@ -204,7 +204,7 @@ impl Default for CostWeights {
 struct CostQuantities {
     range_gets: f64,
     bytes_read: f64,
-    bytes_cross_az: f64,
+    egress_bytes: f64,
     bytes_written: f64,
     compute_ms: f64,
 }
@@ -214,7 +214,7 @@ impl CostQuantities {
         Self {
             range_gets: snap.range_gets as f64,
             bytes_read: snap.bytes_read as f64,
-            bytes_cross_az: snap.bytes_cross_az as f64,
+            egress_bytes: snap.egress_bytes as f64,
             bytes_written: snap.bytes_written as f64,
             compute_ms: snap.total_compute_ms() as f64,
         }
@@ -226,7 +226,7 @@ impl CostQuantities {
 struct Cell {
     range_gets: f64,
     bytes_read: f64,
-    bytes_cross_az: f64,
+    egress_bytes: f64,
     bytes_written: f64,
     compute_ms: f64,
     samples: u64,
@@ -237,14 +237,14 @@ impl Cell {
         if self.samples == 0 {
             self.range_gets = q.range_gets;
             self.bytes_read = q.bytes_read;
-            self.bytes_cross_az = q.bytes_cross_az;
+            self.egress_bytes = q.egress_bytes;
             self.bytes_written = q.bytes_written;
             self.compute_ms = q.compute_ms;
         } else {
             let blend = |old: f64, new: f64| alpha * new + (1.0 - alpha) * old;
             self.range_gets = blend(self.range_gets, q.range_gets);
             self.bytes_read = blend(self.bytes_read, q.bytes_read);
-            self.bytes_cross_az = blend(self.bytes_cross_az, q.bytes_cross_az);
+            self.egress_bytes = blend(self.egress_bytes, q.egress_bytes);
             self.bytes_written = blend(self.bytes_written, q.bytes_written);
             self.compute_ms = blend(self.compute_ms, q.compute_ms);
         }
@@ -255,7 +255,7 @@ impl Cell {
         CostQuantities {
             range_gets: self.range_gets,
             bytes_read: self.bytes_read,
-            bytes_cross_az: self.bytes_cross_az,
+            egress_bytes: self.egress_bytes,
             bytes_written: self.bytes_written,
             compute_ms: self.compute_ms,
         }
@@ -269,8 +269,8 @@ pub struct RouteCost {
     pub samples: u64,
     pub range_gets: f64,
     pub bytes_read: f64,
-    /// EWMA cross-AZ / internet egress bytes (KEU) — zero on the free same-AZ path.
-    pub bytes_cross_az: f64,
+    /// EWMA cross-region / internet egress bytes (KEU) — zero on the free same-region path.
+    pub egress_bytes: f64,
     /// EWMA bytes written to object storage (KIU) — zero for read-only routes.
     pub bytes_written: f64,
     pub compute_ms: f64,
@@ -391,7 +391,7 @@ impl RouteCostModel {
         let mib = |bytes: f64| bytes / (1024.0 * 1024.0);
         self.weights.per_get * q.range_gets
             + self.weights.per_mib_read * mib(q.bytes_read)
-            + self.weights.per_mib_egress * mib(q.bytes_cross_az)
+            + self.weights.per_mib_egress * mib(q.egress_bytes)
             + self.weights.per_mib_written * mib(q.bytes_written)
             + self.weights.per_compute_ms * q.compute_ms
     }
@@ -427,7 +427,7 @@ impl RouteCostModel {
             samples: c.samples,
             range_gets: c.range_gets,
             bytes_read: c.bytes_read,
-            bytes_cross_az: c.bytes_cross_az,
+            egress_bytes: c.egress_bytes,
             bytes_written: c.bytes_written,
             compute_ms: c.compute_ms,
             score: self.score(c.quantities()),
@@ -683,10 +683,10 @@ mod tests {
     }
 
     #[test]
-    fn egress_term_is_inert_on_the_free_same_az_path() {
-        // A read-only route with NO cross-AZ bytes must score exactly the read +
+    fn egress_term_is_inert_on_the_free_same_region_path() {
+        // A read-only route with NO cross-region bytes must score exactly the read +
         // compute terms — i.e. adding the egress dimension changes nothing on the
-        // free path (default-OFF behavior; KEU is zero until bytes move cross-AZ).
+        // free path (default-OFF behavior; KEU is zero until bytes move cross-region).
         let m = RouteCostModel::new().with_min_samples(1);
         m.observe(
             "olap/parquet",
@@ -698,37 +698,41 @@ mod tests {
             .expect("history");
         let w = CostWeights::default();
         let expected = w.per_get * 10.0 + w.per_mib_read * 4.0 + w.per_compute_ms * 7.0;
-        assert_eq!(est.bytes_cross_az, 0.0);
+        assert_eq!(est.egress_bytes, 0.0);
         assert!((est.score - expected).abs() < 1e-6);
     }
 
     #[test]
-    fn cross_az_egress_raises_the_route_cost() {
+    fn cross_region_egress_raises_the_route_cost() {
         // Two routes identical in GETs/bytes-read/compute; one also moves bytes
-        // cross-AZ. The egress (KEU) term must make the cross-AZ route cost more —
+        // cross-region. The egress (KEU) term must make that route cost more —
         // the whole point of metering Dimension 2 into Cost(q).
         let m = RouteCostModel::new().with_min_samples(1);
         // Identical in every term except egress, so the score delta isolates it.
-        let same_az = snap(4, 8 << 20, 0);
-        let cross_az = IoTraceSnapshot {
+        let same_region = snap(4, 8 << 20, 0);
+        let cross_region = IoTraceSnapshot {
             range_gets: 4,
             bytes_read: 8 << 20,
-            bytes_cross_az: 8 << 20,
+            egress_bytes: 8 << 20,
             ..Default::default()
         };
-        m.observe("olap/parquet", &ComputeBackend::DataFusionLocal, &same_az);
-        m.observe("olap/parquet", &ComputeBackend::Native, &cross_az);
+        m.observe(
+            "olap/parquet",
+            &ComputeBackend::DataFusionLocal,
+            &same_region,
+        );
+        m.observe("olap/parquet", &ComputeBackend::Native, &cross_region);
         let cheap = m
             .estimate("olap/parquet", &ComputeBackend::DataFusionLocal)
             .expect("history");
         let dear = m
             .estimate("olap/parquet", &ComputeBackend::Native)
             .expect("history");
-        assert!(dear.bytes_cross_az > 0.0 && cheap.bytes_cross_az == 0.0);
-        // The cross-AZ route is dearer by exactly the egress weight × 8 MiB.
+        assert!(dear.egress_bytes > 0.0 && cheap.egress_bytes == 0.0);
+        // The cross-region route is dearer by exactly the egress weight × 8 MiB.
         let delta = dear.score - cheap.score;
         assert!((delta - CostWeights::default().per_mib_egress * 8.0).abs() < 1e-6);
-        // And the trace-driven recommendation prefers the same-AZ route.
+        // And the trace-driven recommendation prefers the same-region route.
         let rec = m
             .recommend(
                 "olap/parquet",

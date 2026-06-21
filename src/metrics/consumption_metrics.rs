@@ -11,7 +11,7 @@
 //! task time). Pricing/billing is an operator/control-plane concern — this OSS
 //! module only emits neutral telemetry attributed by `tenant_id`.
 
-use std::sync::LazyLock;
+use std::sync::{LazyLock, Mutex};
 
 use lazy_static::lazy_static;
 use prometheus::{CounterVec, GaugeVec, Opts, register_counter_vec, register_gauge_vec};
@@ -58,82 +58,245 @@ lazy_static! {
         "Per-tenant cache stats snapshot (metric label selects bytes/hits/misses/hit_ratio/evictions)",
         &["tenant_id", "cache", "metric"]
     );
-    /// Per-tenant bytes moved OUT of object storage, labelled by AZ locality —
-    /// the KEU egress meter (co-design Dimension 2 / §2.2), the one previously
-    /// unmetered dimension. Networking (cross-AZ $0.02/GB RT, internet egress
-    /// $0.09/GB) is frequently the dominant TCO term, yet same-AZ is free — so
-    /// the `az_locality` label is the discriminator that makes egress a billable,
-    /// optimizable dimension. Neutral telemetry only: the AZ topology and the $
-    /// weights are control-plane (anvaiops) policy.
-    pub static ref EGRESS_BYTES_TOTAL: CounterVec = registered_counter_vec(
-        "proximadb_egress_bytes_total",
-        "Bytes moved out of object storage per tenant, labelled by AZ locality (KEU egress)",
-        &["tenant_id", "az_locality"]
+    /// Per-tenant bytes moved OUT of the deployment — the **KOU** (Outgress Unit)
+    /// meter (co-design Dimension 2 / §2.2). `direction` separates `read`
+    /// (object store → compute) from `result` (compute → client); `kou_locality`
+    /// is the cost discriminator (cross-region ~$0.02/GB, internet ~$0.09-0.12/GB
+    /// by cloud; same-region/AZ free). Networking is frequently the dominant TCO
+    /// term. Neutral telemetry only: the cloud topology and the $ weights are
+    /// control-plane (anvaiops) policy. (KEU = embedding units is a separate meter.)
+    pub static ref KOU_BYTES_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_kou_bytes_total",
+        "Outgress bytes per tenant by locality + direction (KOU, Dimension 2)",
+        &["tenant_id", "kou_locality", "direction"]
     );
 }
 
-/// AZ-locality classification of bytes leaving object storage — the KEU egress
-/// dimension (§2.2). This is OSS **mechanism**: it records *which locality bucket*
-/// the bytes moved through; the real AZ topology and the per-locality dollar
-/// weights are commercial-control-plane (anvaiops) **policy**. Same-AZ is the
-/// co-designed free path; cross-AZ and internet egress are the chargeable terms
-/// the cost model's egress weight consumes.
+/// Cloud provider hosting the object store — the multi-cloud axis for egress
+/// pricing (AWS / Azure / GCP each price data movement differently). OSS
+/// **mechanism**: it is *inferred from the storage URL scheme* the operator
+/// already configures (so it can never be set wrong), never hand-declared. The
+/// $ weights per (provider, locality) are control-plane (anvaiops) **policy**.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum AzLocality {
-    /// Compute, cache, and object store co-located in one AZ over private IP —
-    /// the free path. The default, so egress stays inert until a deployment
-    /// declares otherwise.
+pub enum CloudProvider {
+    Aws,
+    Azure,
+    Gcp,
+    /// Local filesystem / dev / unknown — no egress cost.
     #[default]
-    SameAz,
-    /// Bytes crossed an availability-zone boundary (~$0.02/GB round-trip).
-    CrossAz,
-    /// Bytes left the cloud to the public internet (egress, ~$0.09/GB).
-    Internet,
+    Local,
 }
 
-impl AzLocality {
+impl CloudProvider {
+    /// Stable label string.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CloudProvider::Aws => "aws",
+            CloudProvider::Azure => "azure",
+            CloudProvider::Gcp => "gcp",
+            CloudProvider::Local => "local",
+        }
+    }
+
+    /// Infer the provider from an object-store URL scheme — the same scheme the
+    /// `FilesystemFactory` dispatches on (`s3`, `gs`/`gcs`, `az`/`adls`/`abfs`,
+    /// `file`). Unknown / empty → [`CloudProvider::Local`]. This is the
+    /// mistake-proof seam: the provider follows the storage URL, not a separate
+    /// env an operator could contradict.
+    pub fn from_url_scheme(scheme: &str) -> Self {
+        match scheme.trim().to_ascii_lowercase().as_str() {
+            "s3" | "s3a" => CloudProvider::Aws,
+            "gs" | "gcs" => CloudProvider::Gcp,
+            "az" | "azure" | "adls" | "abfs" | "abfss" => CloudProvider::Azure,
+            _ => CloudProvider::Local,
+        }
+    }
+}
+
+/// Locality of bytes moving out of the deployment — the **KOU** (Outgress Unit)
+/// dimension (§2.2), cloud-neutral. Used for two flows: *read-egress* (object
+/// store → compute) and *result-egress* (compute → client). Distinct from
+/// **KEU = embedding units** (a separate, embedding-compute meter).
+///
+/// Region-granular by design: object-store reads are billed by *region*, not
+/// availability zone — same-region access is **free on every cloud** (S3 via the
+/// VPC gateway endpoint, ADLS/Blob is regional, GCS via private access). So
+/// `Local`/`CrossAz` are recorded for visibility but **not** chargeable; only
+/// `CrossRegion`/`CrossCloud`/`OnPrem`/`Internet` cost. `Unknown` is recorded and
+/// surfaced (never silently charged or freed) so an operator fixes the scope map.
+/// OSS records the neutral bucket; the per-(provider, bucket) $ weight is
+/// anvaiops policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KouLocality {
+    /// Compute and the other endpoint co-located (same region/zone) — free.
+    /// The safe default so outgress stays inert until placement is known.
+    #[default]
+    Local,
+    /// Same region, different availability zone — **free for object storage** on
+    /// all clouds (recorded for visibility + the future compute↔compute meter).
+    CrossAz,
+    /// Different region, same cloud — chargeable cross-region transfer (~$0.02/GB).
+    CrossRegion,
+    /// Different cloud provider — chargeable (internet-tier, expensive).
+    CrossCloud,
+    /// To/from on-premises (over VPN / dedicated link / declared CIDR).
+    OnPrem,
+    /// Public internet (~$0.09-0.12/GB by cloud) — the dominant result-egress term.
+    Internet,
+    /// Could not be classified (no scope-map rule matched) — recorded + surfaced,
+    /// never silently treated as free or charged.
+    Unknown,
+}
+
+impl KouLocality {
     /// Stable metric-label string.
     pub fn as_str(self) -> &'static str {
         match self {
-            AzLocality::SameAz => "same_az",
-            AzLocality::CrossAz => "cross_az",
-            AzLocality::Internet => "internet",
+            KouLocality::Local => "local",
+            KouLocality::CrossAz => "cross_az",
+            KouLocality::CrossRegion => "cross_region",
+            KouLocality::CrossCloud => "cross_cloud",
+            KouLocality::OnPrem => "on_prem",
+            KouLocality::Internet => "internet",
+            KouLocality::Unknown => "unknown",
         }
     }
 
-    /// Whether bytes through this locality are chargeable egress (i.e. *not* the
-    /// free same-AZ path). Only these bytes feed the per-query trace's
-    /// `bytes_cross_az` term, so same-AZ traffic never inflates the egress cost.
+    /// Whether bytes through this locality are chargeable outgress. `Local` and
+    /// `CrossAz` object-store access is free on every cloud, and `Unknown` is not
+    /// charged (it is surfaced for the operator to fix), so only genuinely
+    /// cross-boundary movement feeds the cost model's egress term + the trace.
     pub fn is_chargeable_egress(self) -> bool {
-        !matches!(self, AzLocality::SameAz)
+        matches!(
+            self,
+            KouLocality::CrossRegion
+                | KouLocality::CrossCloud
+                | KouLocality::OnPrem
+                | KouLocality::Internet
+        )
     }
 
-    /// Parse the deployment-declared object-store locality from a string
-    /// (`same_az` | `cross_az` | `internet`), accepting a couple of obvious
-    /// aliases. Unknown values fall back to the free `SameAz` default.
-    pub fn parse(value: &str) -> Self {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "cross_az" | "cross-az" | "crossaz" => AzLocality::CrossAz,
-            "internet" | "egress" | "public" => AzLocality::Internet,
-            _ => AzLocality::SameAz,
+    /// Parse an explicit operator override / scope-map value, accepting obvious
+    /// aliases. `None` for an unrecognized value (caller keeps the derived value
+    /// rather than silently mis-charging).
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().replace('-', "_").as_str() {
+            "local" | "same_az" | "colocated" | "same_zone" => Some(KouLocality::Local),
+            "cross_az" | "same_region" | "region" => Some(KouLocality::CrossAz),
+            "cross_region" | "crossregion" => Some(KouLocality::CrossRegion),
+            "cross_cloud" | "crosscloud" => Some(KouLocality::CrossCloud),
+            "on_prem" | "onprem" | "on_premises" => Some(KouLocality::OnPrem),
+            "internet" | "egress" | "public" => Some(KouLocality::Internet),
+            "unknown" => Some(KouLocality::Unknown),
+            _ => None,
+        }
+    }
+
+    /// Derive the **read-egress** locality (object store → compute) from a
+    /// [`PlacementContext`] — the per-cloud truth table, the mistake-proof core.
+    /// A different store cloud → `CrossCloud`; region equality (not zone) decides
+    /// the rest; GCS multi-region scopes (`US`/`EU`/`ASIA`) containing the compute
+    /// region count as same-region (`CrossAz`, free).
+    pub fn derive_read(ctx: &PlacementContext) -> Self {
+        // No cloud, or we don't know where compute runs → assume free (never
+        // invent a charge); the caller logs the assumption.
+        if ctx.store_provider == CloudProvider::Local || ctx.compute_region.trim().is_empty() {
+            return KouLocality::Local;
+        }
+        // Compute in a different cloud than the store → cross-cloud read.
+        if ctx.compute_provider != CloudProvider::Local
+            && ctx.compute_provider != ctx.store_provider
+        {
+            return KouLocality::CrossCloud;
+        }
+        let compute = ctx.compute_region.trim().to_ascii_lowercase();
+        let store = ctx.store_region.trim().to_ascii_lowercase();
+        if store.is_empty() {
+            return KouLocality::Local; // store region unknown → don't over-charge
+        }
+        if compute == store || gcs_multi_region_contains(&store, &compute) {
+            // Same region (object store is regional) → free. Recorded as CrossAz
+            // only when zones are known to differ; otherwise the free Local.
+            KouLocality::Local
+        } else {
+            KouLocality::CrossRegion
         }
     }
 }
 
-/// The deployment-declared locality of the object store relative to the compute
-/// reading it, from `PROXIMADB_OBJECT_STORE_LOCALITY` (read once). Default
-/// `SameAz` — the co-designed free path — so the egress cost term is inert until
-/// an operator declares a cross-AZ/internet topology. The actual $ weight per
-/// locality remains anvaiops policy; this only selects the neutral bucket.
-static OBJECT_STORE_LOCALITY: LazyLock<AzLocality> = LazyLock::new(|| {
-    std::env::var("PROXIMADB_OBJECT_STORE_LOCALITY")
-        .map(|v| AzLocality::parse(&v))
-        .unwrap_or_default()
-});
+/// Whether a GCS multi-region / dual-region bucket scope (`us`, `eu`, `asia`)
+/// contains a specific compute region (e.g. `us-central1` ∈ `us`). Region-scoped
+/// store values fall through to plain equality in the caller.
+fn gcs_multi_region_contains(store: &str, compute: &str) -> bool {
+    matches!(store, "us" | "eu" | "asia") && compute.starts_with(store)
+}
 
-/// The configured object-store egress locality for this deployment.
-pub fn object_store_egress_locality() -> AzLocality {
+/// Inputs to [`KouLocality::derive_read`]: the store cloud + region (from the
+/// storage URL scheme + backend config) and where compute runs
+/// (`PROXIMADB_COMPUTE_REGION`, control-plane stamped; `compute_provider`
+/// defaults to the store provider — same cloud — unless declared otherwise).
+#[derive(Debug, Clone, Default)]
+pub struct PlacementContext {
+    pub store_provider: CloudProvider,
+    pub compute_provider: CloudProvider,
+    pub compute_region: String,
+    pub store_region: String,
+}
+
+/// The process-wide derived object-store egress locality, computed once at
+/// startup by [`install_placement`]. Defaults to `Local` (free, inert) until the
+/// deployment installs a real [`PlacementContext`] — so OSS-standalone / dev runs
+/// never bill egress.
+static OBJECT_STORE_LOCALITY: LazyLock<Mutex<KouLocality>> =
+    LazyLock::new(|| Mutex::new(KouLocality::Local));
+
+/// Install the deployment's placement (called once at startup). Derives the
+/// read-egress locality from `ctx`, applies the `PROXIMADB_OBJECT_STORE_LOCALITY`
+/// override when present+valid, stores it, and returns the effective value so the
+/// caller can log it. A cloud provider with an unknown compute region logs a WARN
+/// (visible assumption, not a silent free pass).
+pub fn install_placement(ctx: &PlacementContext) -> KouLocality {
+    let derived = KouLocality::derive_read(ctx);
+    let effective = match std::env::var("PROXIMADB_OBJECT_STORE_LOCALITY") {
+        Ok(v) if !v.trim().is_empty() => match KouLocality::parse(&v) {
+            Some(override_loc) => override_loc,
+            None => {
+                tracing::warn!(
+                    value = %v,
+                    "ignoring invalid PROXIMADB_OBJECT_STORE_LOCALITY override; \
+                     using derived locality"
+                );
+                derived
+            }
+        },
+        _ => derived,
+    };
+    if ctx.store_provider != CloudProvider::Local && ctx.compute_region.trim().is_empty() {
+        tracing::warn!(
+            store_provider = ctx.store_provider.as_str(),
+            "PROXIMADB_COMPUTE_REGION unset on a cloud deployment; assuming \
+             same-region (free) egress — set it so cross-region egress is metered"
+        );
+    }
+    tracing::info!(
+        store_provider = ctx.store_provider.as_str(),
+        compute_region = %ctx.compute_region,
+        store_region = %ctx.store_region,
+        locality = effective.as_str(),
+        "co-design Dimension 2 (KOU): derived read-egress locality"
+    );
     *OBJECT_STORE_LOCALITY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = effective;
+    effective
+}
+
+/// The effective object-store read-egress locality for this deployment (derived
+/// at startup; `Local` until [`install_placement`] runs).
+pub fn object_store_egress_locality() -> KouLocality {
+    *OBJECT_STORE_LOCALITY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
 }
 
 /// Helper to record an object store operation.
@@ -160,29 +323,35 @@ pub fn record_task_execution_time(tenant_id: Option<&str>, engine: &str, duratio
         .inc_by(duration_ms);
 }
 
-/// Record bytes moved out of object storage for one tenant under `locality` —
-/// the single convergent KEU egress meter (Dimension 2). It does two things at
-/// once so every I/O boundary records egress identically:
+/// Record outgress bytes for one tenant — the single convergent **KOU** meter
+/// (Dimension 2). `direction` is `"read"` (object store → compute) or `"result"`
+/// (compute → client). It does two things at once so every boundary records
+/// identically:
 ///
-/// 1. Increments the per-tenant [`EGRESS_BYTES_TOTAL`] counter (the chargeback
-///    source of truth, attributed by `(tenant, az_locality)`).
-/// 2. When the locality is *chargeable* (cross-AZ / internet, never the free
-///    same-AZ path), folds the bytes into the active per-query I/O trace's
-///    `bytes_cross_az` term — the quantity the route cost model's egress weight
-///    minimizes. Outside a query scope this silently no-ops.
+/// 1. Increments the per-tenant [`KOU_BYTES_TOTAL`] counter (the chargeback
+///    source of truth, attributed by `(tenant, kou_locality, direction)`).
+/// 2. When the locality is *chargeable* (cross-region/-cloud/on-prem/internet,
+///    never the free local / cross-AZ / same-region path), folds the bytes into
+///    the active per-query I/O trace's egress term — the quantity the route cost
+///    model's egress weight minimizes. Outside a query scope this silently no-ops.
 ///
-/// Same-AZ bytes are metered (for visibility) but deliberately do NOT enter the
+/// Free-path bytes are metered (for visibility) but deliberately do NOT enter the
 /// cost model, so the egress cost term stays inert on the free path.
-pub fn record_egress_bytes(tenant_id: Option<&str>, locality: AzLocality, bytes: u64) {
+pub fn record_kou_bytes(
+    tenant_id: Option<&str>,
+    locality: KouLocality,
+    direction: &str,
+    bytes: u64,
+) {
     if bytes == 0 {
         return;
     }
     let t_id = tenant_id.unwrap_or("default");
-    EGRESS_BYTES_TOTAL
-        .with_label_values(&[t_id, locality.as_str()])
+    KOU_BYTES_TOTAL
+        .with_label_values(&[t_id, locality.as_str(), direction])
         .inc_by(bytes as f64);
     if locality.is_chargeable_egress() {
-        crate::observability::io_trace::record_cross_az_bytes(bytes);
+        crate::observability::io_trace::record_egress_bytes(bytes);
     }
 }
 
@@ -210,49 +379,129 @@ mod tests {
     use crate::observability::io_trace;
 
     #[test]
-    fn az_locality_strings_and_chargeability() {
-        assert_eq!(AzLocality::SameAz.as_str(), "same_az");
-        assert_eq!(AzLocality::CrossAz.as_str(), "cross_az");
-        assert_eq!(AzLocality::Internet.as_str(), "internet");
-        // The free path is not chargeable egress; the other two are.
-        assert!(!AzLocality::SameAz.is_chargeable_egress());
-        assert!(AzLocality::CrossAz.is_chargeable_egress());
-        assert!(AzLocality::Internet.is_chargeable_egress());
+    fn provider_inferred_from_url_scheme() {
+        assert_eq!(CloudProvider::from_url_scheme("s3"), CloudProvider::Aws);
+        assert_eq!(CloudProvider::from_url_scheme("gs"), CloudProvider::Gcp);
+        assert_eq!(CloudProvider::from_url_scheme("gcs"), CloudProvider::Gcp);
+        assert_eq!(CloudProvider::from_url_scheme("abfs"), CloudProvider::Azure);
+        assert_eq!(CloudProvider::from_url_scheme("adls"), CloudProvider::Azure);
+        assert_eq!(CloudProvider::from_url_scheme("file"), CloudProvider::Local);
+        assert_eq!(CloudProvider::from_url_scheme(""), CloudProvider::Local);
     }
 
     #[test]
-    fn az_locality_parse_defaults_to_free_path() {
-        assert_eq!(AzLocality::parse("cross_az"), AzLocality::CrossAz);
-        assert_eq!(AzLocality::parse("CROSS-AZ"), AzLocality::CrossAz);
-        assert_eq!(AzLocality::parse("internet"), AzLocality::Internet);
-        assert_eq!(AzLocality::parse("same_az"), AzLocality::SameAz);
-        // Unknown / empty → the conservative free default (egress stays inert).
-        assert_eq!(AzLocality::parse("nonsense"), AzLocality::SameAz);
-        assert_eq!(AzLocality::parse(""), AzLocality::SameAz);
-        assert_eq!(AzLocality::default(), AzLocality::SameAz);
+    fn kou_locality_strings_and_chargeability() {
+        assert_eq!(KouLocality::Local.as_str(), "local");
+        assert_eq!(KouLocality::CrossAz.as_str(), "cross_az");
+        assert_eq!(KouLocality::CrossRegion.as_str(), "cross_region");
+        assert_eq!(KouLocality::CrossCloud.as_str(), "cross_cloud");
+        assert_eq!(KouLocality::OnPrem.as_str(), "on_prem");
+        assert_eq!(KouLocality::Internet.as_str(), "internet");
+        assert_eq!(KouLocality::Unknown.as_str(), "unknown");
+        // Local / cross-AZ object-store access is FREE on every cloud; Unknown is
+        // surfaced, not charged. Only genuine cross-boundary movement is chargeable.
+        assert!(!KouLocality::Local.is_chargeable_egress());
+        assert!(!KouLocality::CrossAz.is_chargeable_egress());
+        assert!(!KouLocality::Unknown.is_chargeable_egress());
+        assert!(KouLocality::CrossRegion.is_chargeable_egress());
+        assert!(KouLocality::CrossCloud.is_chargeable_egress());
+        assert!(KouLocality::OnPrem.is_chargeable_egress());
+        assert!(KouLocality::Internet.is_chargeable_egress());
+        assert_eq!(KouLocality::default(), KouLocality::Local);
+    }
+
+    #[test]
+    fn derive_read_is_region_granular_per_cloud() {
+        let ctx = |p, c: &str, s: &str| PlacementContext {
+            store_provider: p,
+            compute_provider: p,
+            compute_region: c.into(),
+            store_region: s.into(),
+        };
+        // Same region → free (even if zones differ — object store is regional).
+        assert_eq!(
+            KouLocality::derive_read(&ctx(CloudProvider::Aws, "us-east-1", "us-east-1")),
+            KouLocality::Local
+        );
+        // Different region → chargeable cross-region.
+        assert_eq!(
+            KouLocality::derive_read(&ctx(CloudProvider::Azure, "eastus", "westus")),
+            KouLocality::CrossRegion
+        );
+        // GCS multi-region bucket "us" containing the compute region → free.
+        assert_eq!(
+            KouLocality::derive_read(&ctx(CloudProvider::Gcp, "us-central1", "us")),
+            KouLocality::Local
+        );
+        assert_eq!(
+            KouLocality::derive_read(&ctx(CloudProvider::Gcp, "europe-west1", "us")),
+            KouLocality::CrossRegion
+        );
+        // Compute in a different cloud than the store → cross-cloud read.
+        assert_eq!(
+            KouLocality::derive_read(&PlacementContext {
+                store_provider: CloudProvider::Gcp,
+                compute_provider: CloudProvider::Aws,
+                compute_region: "us-east-1".into(),
+                store_region: "us-central1".into(),
+            }),
+            KouLocality::CrossCloud
+        );
+        // Unknown compute region or local provider → free default (never charge).
+        assert_eq!(
+            KouLocality::derive_read(&ctx(CloudProvider::Aws, "", "us-east-1")),
+            KouLocality::Local
+        );
+        assert_eq!(
+            KouLocality::derive_read(&ctx(CloudProvider::Local, "us-east-1", "us-east-1")),
+            KouLocality::Local
+        );
+    }
+
+    #[test]
+    fn override_parse_rejects_unknown() {
+        assert_eq!(
+            KouLocality::parse("cross_region"),
+            Some(KouLocality::CrossRegion)
+        );
+        assert_eq!(
+            KouLocality::parse("CROSS-REGION"),
+            Some(KouLocality::CrossRegion)
+        );
+        assert_eq!(
+            KouLocality::parse("cross_cloud"),
+            Some(KouLocality::CrossCloud)
+        );
+        assert_eq!(KouLocality::parse("on_prem"), Some(KouLocality::OnPrem));
+        assert_eq!(KouLocality::parse("internet"), Some(KouLocality::Internet));
+        // Unknown → None so the caller keeps the derived value (no silent mischarge).
+        assert_eq!(KouLocality::parse("nonsense"), None);
+        assert_eq!(KouLocality::parse(""), None);
     }
 
     #[tokio::test]
-    async fn chargeable_egress_feeds_the_query_trace_but_same_az_does_not() {
+    async fn chargeable_egress_feeds_the_query_trace_but_free_path_does_not() {
         // Inside a query scope, only chargeable localities contribute to the
-        // per-query bytes_cross_az that the cost model's egress term consumes.
+        // per-query egress term the cost model consumes.
         let snap = io_trace::scope(async {
-            record_egress_bytes(Some("t"), AzLocality::CrossAz, 1_000);
-            record_egress_bytes(Some("t"), AzLocality::Internet, 2_000);
-            record_egress_bytes(Some("t"), AzLocality::SameAz, 9_000); // free → not traced
-            record_egress_bytes(Some("t"), AzLocality::CrossAz, 0); // zero → ignored
+            record_kou_bytes(Some("t"), KouLocality::CrossRegion, "read", 1_000);
+            record_kou_bytes(Some("t"), KouLocality::Internet, "result", 2_000);
+            record_kou_bytes(Some("t"), KouLocality::CrossAz, "read", 9_000); // free → not traced
+            record_kou_bytes(Some("t"), KouLocality::Local, "read", 5_000); // free → not traced
+            record_kou_bytes(Some("t"), KouLocality::Unknown, "result", 7_000); // surfaced, not charged
+            record_kou_bytes(Some("t"), KouLocality::CrossRegion, "read", 0); // zero → ignored
             io_trace::snapshot()
         })
         .await
         .expect("snapshot inside scope");
-        assert_eq!(snap.bytes_cross_az, 3_000);
+        assert_eq!(snap.egress_bytes, 3_000);
     }
 
     #[tokio::test]
-    async fn record_egress_outside_scope_is_a_noop() {
+    async fn record_kou_outside_scope_is_a_noop() {
         // No active trace: the counter still records, but nothing panics and the
-        // trace stays empty (helper silently no-ops the cross-AZ term).
-        record_egress_bytes(Some("t"), AzLocality::CrossAz, 1_234);
+        // trace stays empty (helper silently no-ops the egress term).
+        record_kou_bytes(Some("t"), KouLocality::CrossRegion, "read", 1_234);
         assert!(io_trace::snapshot().is_none());
     }
 }

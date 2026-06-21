@@ -1606,7 +1606,7 @@ pub async fn search_with_typed_filters(
             // above). 0 on the free same-AZ path. Flowed into the response
             // SearchPlanTrace as actual_egress_gb (the KEU billing quantity).
             let egress_bytes = crate::observability::io_trace::snapshot()
-                .map(|s| s.bytes_cross_az)
+                .map(|s| s.egress_bytes)
                 .unwrap_or(0);
             (
                 outcome,
