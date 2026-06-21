@@ -7027,6 +7027,7 @@ dependencies = [
  "serde_json",
  "tonic",
  "tonic-prost",
+ "tonic-prost-build",
 ]
 
 [[package]]
