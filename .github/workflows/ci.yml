@@ -1429,6 +1429,7 @@ jobs:
       - docs-validation
       # SDK linting and security
       - go-lint
+      - go-sdk-codegen-drift
       - nodejs-lint
       - rust-sdk-lint
       - sdk-security-scan
