@@ -22,7 +22,6 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import (
@@ -185,8 +184,12 @@ class ResourcePool(Generic[T]):
         self._wait_times: list[float] = []
         self._usage_times: dict[int, float] = {}
 
-        # Background tasks
-        self._executor = ThreadPoolExecutor(max_workers=2)
+        # Background maintenance runs on a daemon thread, NOT a ThreadPoolExecutor.
+        # Executor workers are non-daemon and atexit-joined; the maintenance loop
+        # runs until `_shutdown`, so an un-shutdown pool (e.g. a module-level global
+        # or a test that forgets to close) would deadlock the interpreter's atexit
+        # join forever. A daemon thread can never block process exit.
+        self._maintenance_thread: threading.Thread | None = None
         self._shutdown = False
 
         # Pre-populate pool
@@ -491,8 +494,13 @@ class ResourcePool(Generic[T]):
             time.sleep(sleep_time)
 
     def _start_maintenance(self):
-        """Start background maintenance tasks"""
-        self._executor.submit(self._maintenance_loop)
+        """Start background maintenance tasks on a daemon thread."""
+        self._maintenance_thread = threading.Thread(
+            target=self._maintenance_loop,
+            daemon=True,
+            name="ResourcePool-Maintenance",
+        )
+        self._maintenance_thread.start()
 
     def get_stats(self) -> dict[str, Any]:
         """Get comprehensive pool statistics"""
@@ -558,8 +566,11 @@ class ResourcePool(Generic[T]):
         # Clear all resources
         self.clear()
 
-        # Shutdown executor
-        self._executor.shutdown(wait=True)
+        # Stop the maintenance thread. It is a daemon (won't block exit), but
+        # join briefly so an explicit shutdown() is deterministic.
+        if self._maintenance_thread is not None:
+            self._maintenance_thread.join(timeout=5.0)
+            self._maintenance_thread = None
 
         # Note: Resources still in use will be destroyed when released
 

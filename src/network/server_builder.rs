@@ -312,6 +312,10 @@ pub struct GrpcHttpServerBuilder {
 
     /// Enable gRPC reflection for service discovery
     enable_reflection: bool,
+
+    /// Enable deprecated gRPC v1 compatibility adapter services.
+    /// Default sourced from `PROXIMADB_GRPC_V1_COMPAT` (off when unset).
+    enable_grpc_v1_compat: bool,
 }
 
 impl Default for GrpcHttpServerBuilder {
@@ -326,6 +330,7 @@ impl Default for GrpcHttpServerBuilder {
             tls_key_file: None,
             max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts
             enable_reflection: true,
+            enable_grpc_v1_compat: GrpcHttpServerConfig::v1_compat_from_env(),
         }
     }
 }
@@ -359,6 +364,12 @@ impl GrpcHttpServerBuilder {
     /// Enable/disable gRPC reflection
     pub fn enable_reflection(mut self, enabled: bool) -> Self {
         self.enable_reflection = enabled;
+        self
+    }
+
+    /// Enable/disable deprecated gRPC v1 compatibility adapter services
+    pub fn enable_grpc_v1_compat(mut self, enabled: bool) -> Self {
+        self.enable_grpc_v1_compat = enabled;
         self
     }
 
@@ -422,6 +433,7 @@ impl GrpcHttpServerBuilder {
             enable_grpc: self.enable_grpc,
             max_message_size: self.max_message_size,
             enable_reflection: self.enable_reflection,
+            enable_grpc_v1_compat: self.enable_grpc_v1_compat,
             compression: self.grpc_compression, // Clear mapping to config
             tls_cert_file: self.tls_cert_file,
             tls_key_file: self.tls_key_file,

@@ -50,7 +50,8 @@
 //! }
 //! ```
 
-use std::any::Any;
+#![allow(dead_code)] // forward-scaffolding fields pending wiring
+
 use std::fmt::Debug;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -105,7 +106,6 @@ pub struct ViperTableProvider {
 
 /// Metadata for a Parquet file
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 struct ParquetFileMetadata {
     /// File path
     path: String,
@@ -123,7 +123,6 @@ struct ParquetFileMetadata {
 
 /// Metadata for a Parquet row group
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 struct RowGroupMetadata {
     /// Row group index within the file
     index: usize,
@@ -191,10 +190,18 @@ impl ViperTableProvider {
             .get_filesystem(&self.base_path)
             .map_err(|e| DataFusionError::External(Box::new(e)))?;
 
-        let entries = filesystem
-            .list(&self.base_path)
-            .await
-            .map_err(|e| DataFusionError::External(Box::new(e)))?;
+        let entries = match filesystem.list(&self.base_path).await {
+            Ok(entries) => entries,
+            Err(crate::storage::persistence::filesystem::FilesystemError::NotFound(_)) => {
+                Vec::new()
+            }
+            Err(crate::storage::persistence::filesystem::FilesystemError::Io(e))
+                if e.kind() == std::io::ErrorKind::NotFound =>
+            {
+                Vec::new()
+            }
+            Err(e) => return Err(DataFusionError::External(Box::new(e))),
+        };
 
         let mut files = Vec::new();
         for entry in entries {
@@ -316,10 +323,6 @@ impl ViperTableProvider {
 
 #[async_trait]
 impl TableProvider for ViperTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -412,7 +415,6 @@ impl ProximaTableProvider for ViperTableProvider {
 /// Reads row groups from Parquet files and returns RecordBatch streams.
 /// Leverages columnar format for efficient projection pushdown.
 #[derive(Debug)]
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct ViperSplitReader {
     /// Arrow schema for records
     schema: SchemaRef,
@@ -494,7 +496,6 @@ impl SplitReader for ViperSplitReader {
 /// RecordBatch stream for reading Parquet row groups.
 ///
 /// Reads row groups from Parquet files and yields RecordBatches.
-#[allow(dead_code)] // reserved/stub fields for planned engine read-path wiring
 pub struct ViperRowGroupStream {
     /// Output schema (after projection)
     schema: SchemaRef,

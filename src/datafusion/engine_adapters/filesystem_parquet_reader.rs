@@ -12,7 +12,6 @@
 //! reference-counted [`Bytes`]; per-row-group ranged reads are a future optimization the
 //! blueprint already tracks.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use arrow_schema::{Schema, SchemaRef};
@@ -190,10 +189,6 @@ impl FilesystemParquetTable {
 
 #[async_trait]
 impl TableProvider for FilesystemParquetTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

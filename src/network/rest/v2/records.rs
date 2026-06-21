@@ -1567,7 +1567,16 @@ pub async fn search_with_typed_filters(
     // Capture the quantized-route downgrade INSIDE the scope — the task-local
     // binding ends when the scoped future completes, so it must be taken here
     // (TD-075 / F2: surfaced in EXPLAIN below).
-    let (search_outcome, quantized_route_downgraded, cold_stage1_only, turboquant_hints) =
+    let (
+        search_outcome,
+        quantized_route_downgraded,
+        cold_stage1_only,
+        turboquant_hints,
+        vector_bounds_pruned_blocks,
+        egress_bytes,
+    ) = crate::observability::io_trace::instrument(
+        Some(tenant.tenant_id.clone()),
+        "rest.v2.records.search",
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
                 .request_handlers
@@ -1577,6 +1586,10 @@ pub async fn search_with_typed_filters(
                 crate::observability::predicate_diagnostics::take_quantized_downgrade();
             // ADR-023 T-E: cold-start Stage-1-only serving (also taken in-scope).
             let cold_stage1 = crate::observability::predicate_diagnostics::take_cold_stage1_only();
+            // TD-040 S3e: SST vector-bounds prune count (also taken in-scope —
+            // the task-local binding ends when this future completes).
+            let vb_pruned =
+                crate::observability::predicate_diagnostics::take_vector_bounds_pruned();
             // Phase K (Quantization Trait Convergence Plan): TurboQuant
             // EXPLAIN hints recorded by `score_turboquant`. Taken INSIDE
             // the scope because the task-local binding ends when this
@@ -1587,9 +1600,25 @@ pub async fn search_with_typed_filters(
             // `SearchPlanHints.turboquant` (Phase J) and
             // `VectorHints.turboquant` (Phase F).
             let tq_hints = crate::observability::predicate_diagnostics::take_turboquant_hints();
-            (outcome, downgraded, cold_stage1, tq_hints)
-        })
-        .await;
+            // C3 egress delivery: read the per-query cross-AZ bytes from the
+            // active io_trace BEFORE this scope closes (the task-local binding
+            // ends when this future completes — same constraint as the takes
+            // above). 0 on the free same-AZ path. Flowed into the response
+            // SearchPlanTrace as actual_egress_gb (the KEU billing quantity).
+            let egress_bytes = crate::observability::io_trace::snapshot()
+                .map(|s| s.egress_bytes)
+                .unwrap_or(0);
+            (
+                outcome,
+                downgraded,
+                cold_stage1,
+                tq_hints,
+                vb_pruned,
+                egress_bytes,
+            )
+        }),
+    )
+    .await;
     let predicate_shortfall = crate::observability::predicate_diagnostics::take_shortfall();
 
     match search_outcome {
@@ -1714,6 +1743,10 @@ pub async fn search_with_typed_filters(
                     // builder skips the derivation and leaves
                     // actual_scan_gb at 0.0.
                     bytes_per_vector: 0.0,
+                    // C3 egress (Dimension 2): per-query cross-AZ bytes captured
+                    // in-scope above → actual_egress_gb (the KEU billing quantity
+                    // the control plane prices). 0 on the free same-AZ path.
+                    egress_bytes,
                     // TD-064: shortfall pulled from the task-local
                     // diagnostics bus established above. `None` when
                     // no AxisManager-level shortfall was recorded
@@ -1787,6 +1820,7 @@ pub async fn search_with_typed_filters(
                         recall_probe_open,
                         quantized_route_downgraded,
                         cold_stage1_only,
+                        vector_bounds_pruned_blocks,
                     },
                 );
                 (Some(trace.clone()), Some(explain))
@@ -2286,6 +2320,40 @@ fn proxima_record_to_response(
         version,
         timestamp,
     }
+}
+
+/// Query parameters for the CDC change-feed endpoint.
+#[derive(Debug, serde::Deserialize)]
+pub struct ChangesQuery {
+    /// Return changes with WAL sequence number strictly greater than this (default 0 = all).
+    #[serde(default)]
+    pub since_lsn: u64,
+}
+
+/// `GET /api/v2/collections/{collection_id}/changes?since_lsn=N` — CDC change-feed.
+///
+/// Returns row-level changes (op + lsn + after-image) for the table, ordered by lsn, from
+/// the unified canonical store — so it reflects writes made over ANY surface (REST/gRPC/
+/// pgwire). The cursor is the `lsn`: pass the highest seen `lsn` back as `since_lsn` to poll
+/// incrementally.
+pub async fn get_changes(
+    Path(collection_id): Path<String>,
+    State(state): State<AppState>,
+    Query(q): Query<ChangesQuery>,
+) -> ApiResult<Json<serde_json::Value>> {
+    let changes = state
+        .request_handlers
+        .table_changes(&collection_id, q.since_lsn)
+        .await
+        .map_err(|e| ApiError::Internal(format!("change-feed read failed: {e}")))?;
+    let next_lsn = changes.iter().map(|c| c.lsn).max();
+    Ok(Json(serde_json::json!({
+        "collection": collection_id,
+        "since_lsn": q.since_lsn,
+        "count": changes.len(),
+        "next_lsn": next_lsn,
+        "changes": changes,
+    })))
 }
 
 #[cfg(test)]

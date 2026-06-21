@@ -446,15 +446,15 @@ pub fn configure_routes() -> axum::Router<EntityApiState> {
 
     axum::Router::new()
         .route(
-            "/v1/collections/:collection_id/entities",
+            "/v1/collections/{collection_id}/entities",
             post(upsert_entity).get(list_entities),
         )
         .route(
-            "/v1/collections/:collection_id/entities/:entity_id",
+            "/v1/collections/{collection_id}/entities/{entity_id}",
             get(get_entity).delete(delete_entity),
         )
         .route(
-            "/v1/collections/:collection_id/entities/search",
+            "/v1/collections/{collection_id}/entities/search",
             post(search_entities),
         )
 }

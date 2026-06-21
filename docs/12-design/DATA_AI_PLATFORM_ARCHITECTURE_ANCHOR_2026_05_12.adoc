@@ -30,21 +30,15 @@ ProximaDB should become the **context data and AI operating system**: one catalo
 plane, one logical schema model, and one explainable planner spanning OLTP, OLAP, vector,
 document, graph, event, streaming, feature, model, and agent state workloads.
 
-The platform must compete with Databricks, Snowflake, AWS/Azure managed services, Fivetran,
-dbt, Neon, Supabase, vector databases, and graph/document databases without copying any one
-vendor shape. The winning wedge is:
+The platform must explicitly compete with Databricks, Snowflake, and Trino by offering a unified, high-performance **PostgreSQL wire-compatible SQL warehouse** and **modern distributed data engineering engine**. The winning wedge is:
 
-* local embedded and single-device developer engagement first;
-* PostgreSQL compatibility for low-friction adoption;
-* cross-modal data and agent state as first-class primitives;
-* open storage and compute interoperability;
-* branchable data and agent state for git-style workflows;
-* autonomous optimization across engines and layouts;
-* a catalog that governs data, AI assets, models, streams, branches, lineage, and policies.
+* **PostgreSQL wire compatibility first** as the primary ingestion and query surface for frictionless adoption by BI tools, dbt, and existing data warehouse workloads.
+* **Relational foundation first**, with multi-modal (vector, graph, document) capabilities stacked as zero-ETL extensions rather than isolated silos.
+* **Decoupled object-storage-first architecture** utilizing local filesystem APIs that seamlessly scale to S3/GCS/Azure, enabling independent scaling of storage and compute.
+* **Rust-native distributed execution** via DataFusion/Ballista, replacing JVM-heavy Spark dependencies with a highly efficient, async I/O optimized engine for both SQL and PySpark-style DataFrame workloads.
+* A single, robust multi-engine routing layer (Volcano for OLTP/Freshness, DataFusion for OLAP/MPP, Specialized for Vector) all orchestrated under one xCatalog policy plane.
 
-The moat is not proprietary lock-in. The moat is semantic control: ProximaDB understands
-records, embeddings, graph relationships, documents, event history, feature definitions,
-model lineage, agent checkpoints, and workload intent together.
+The moat is not proprietary lock-in. The moat is **Zero-ETL Multimodal HTAP + Lakehouse on a single Rust binary**: semantic control where ProximaDB understands records, embeddings, graph relationships, event history, model lineage, and PySpark-like data engineering workloads together, executing them over highly optimized header/filter-driven caches on open formats (Parquet/Iceberg).
 
 == North Star
 
@@ -423,17 +417,14 @@ flowchart LR
 
 Databricks teaches that a unified governance/catalog layer over data and AI assets is strategic.
 Unity Catalog-style governance now extends beyond tables into models, functions, connections,
-lineage, and AI traffic. ProximaDB should absorb this lesson but avoid being Spark-only or
-notebook-first.
+lineage, and AI traffic. They also successfully combined Lakehouse storage (Parquet/Delta) with scalable data engineering (Spark) and MLOps (MLflow).
 
 Design response:
 
-* xCatalog governs data and AI assets with the same policy system.
-* Feature tables, model versions, prompts, tools, agent traces, and external connections are
-  catalog objects.
-* Spark is an external adapter target, not the center of the architecture.
-* DataFusion local/distributed is the primary Proxima-owned data-engineering route; Ray covers
-  Python-native ML and external distributed training where appropriate.
+* **xCatalog as the Unified Policy Plane:** xCatalog governs data and AI assets with the same policy system. Feature tables, model versions, MLflow-compatible experiments/runs, prompts, tools, agent traces, and external connections are all first-class catalog objects (`mlops.*`, `agent.*`).
+* **Rust-Native Data Engineering (Spark Replacement):** Spark is no longer the target for heavy lifting; it is replaced by our **Rust-native distributed execution engine** (DataFusion/Ballista). We will expose PySpark-like DataFrame APIs via our Python SDK, lowering directly into Rust-native async I/O physical plans. This eliminates JVM overhead and provides single-binary efficiency for CPU-intensive/Monte Carlo workloads.
+* **MLflow & Model Management:** ProximaDB maps the MLflow landscape directly into xCatalog. MLflow compatibility is implemented as a native facade, allowing users to track experiments, manage the model registry, and orchestrate AutoML directly within the ProximaDB ecosystem without needing a separate MLflow tracking server.
+* **DataFusion Local/Distributed:** is the primary Proxima-owned data-engineering route, replacing the need for external JVM clusters while keeping the object-storage-first Lakehouse paradigm.
 
 === Snowflake and Polaris
 

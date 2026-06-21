@@ -29,5 +29,8 @@ proximadb-data-model = { workspace = true }
 # Record envelope: ProximaRecord → PAX column projection
 proximadb-records = { workspace = true }
 
+# Canonical filter tree for block-level predicate pruning (pushdown)
+proximadb-filter-expression = { workspace = true }
+
 [dev-dependencies]
 proptest = "1"

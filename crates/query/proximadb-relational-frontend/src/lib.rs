@@ -249,19 +249,27 @@ fn lower_select(
     select: &SqlSelect,
     catalog: &dyn CatalogLookup,
 ) -> Result<LogicalNode, FrontendError> {
-    // 1) FROM (single or with joins). Empty FROM is unsupported.
+    // 1) FROM (single, with explicit joins, or comma-separated). Empty FROM is
+    //    unsupported.
     if select.from.is_empty() {
         return Err(FrontendError::Unsupported("SELECT without FROM".into()));
     }
-    if select.from.len() > 1 {
-        return Err(FrontendError::Unsupported(
-            "comma-separated FROM (use explicit JOIN)".into(),
-        ));
+    // Comma-separated FROM is an implicit cross join: `FROM a, b, c` becomes
+    // a left-deep chain of CROSS joins, with the equality predicates in WHERE
+    // acting as the join conditions (the optimizer rewrites Cross+Filter into
+    // hash joins). This is the classic ANSI/TPC-H join spelling.
+    let (mut plan, mut scope) = lower_table_with_joins(&select.from[0], catalog)?;
+    for twj in &select.from[1..] {
+        let (right, right_scope) = lower_table_with_joins(twj, catalog)?;
+        scope = scope.concat(&right_scope);
+        plan = LogicalNode::Join {
+            left: Box::new(plan),
+            right: Box::new(right),
+            kind: JoinKind::Cross,
+            on: None,
+            strategy: JoinStrategy::Auto,
+        };
     }
-    let twj = &select.from[0];
-    let (scan, scope) = lower_table_with_joins(twj, catalog)?;
-    let mut plan = scan;
-    let mut scope = scope;
 
     // 2) WHERE — lift uncorrelated IN / EXISTS / NOT EXISTS subqueries that appear
     //    as top-level AND-conjuncts into Semi/Anti joins; the remaining conjuncts

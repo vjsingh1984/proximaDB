@@ -30,15 +30,21 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     header::{BlockCompression, BlockHeader, BlockMode, HEADER_SIZE, flags, fnv1a_hash},
-    record::{FlatRow, col_id, encode_f32_vec_col, encode_str_col, update_i64_bounds},
+    record::{FlatRow, col_id, encode_str_col, update_i64_bounds},
     row_dir::{RowDirectory, RowEntry},
+    rowgroup::{RowGroupBlock, RowGroupEntry, f64_bounds, i64_bounds},
     stripe::{COLUMN_META_SIZE, ColumnMeta, ColumnRole, ColumnStripe},
+    vparam::{
+        QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock,
+        VectorParamEntry,
+    },
 };
 
 /// Size of the trailing `BlockFooter` in bytes.
 pub const BLOCK_FOOTER_SIZE: usize = 32;
 
-/// Trailing block footer: encodes offsets for the column meta and row directory.
+/// Trailing block footer: encodes offsets for the column meta, row directory,
+/// and the v2 footer-resident side regions (vector params + row-group index).
 ///
 /// Layout (little-endian, 32 bytes):
 /// ```text
@@ -47,15 +53,29 @@ pub const BLOCK_FOOTER_SIZE: usize = 32;
 /// [8..12]  stripe_start       u32  byte offset from block start
 /// [12..16] n_columns          u32
 /// [16..20] n_rows             u32
-/// [20..32] _reserved          [u8;12]
+/// [20..24] vparam_offset      u32  byte offset of VectorParamBlock (0 = none)
+/// [24..28] vparam_len         u32  byte length of VectorParamBlock (0 = none)
+/// [28..32] rgdir_offset       u32  byte offset of RowGroupBlock (0 = none)
 /// ```
-#[derive(Debug, Clone, Copy)]
+///
+/// `vparam_*` and `rgdir_offset` reclaim what were 12 reserved bytes in v1.
+/// A reader fetches the trailing 32 bytes first, then range-reads the column
+/// footer, the VectorParamBlock, and the RowGroupBlock from these offsets —
+/// the footer-first object-store read path.
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BlockFooter {
     pub col_footer_offset: u32,
     pub row_dir_offset: u32,
     pub stripe_start: u32,
     pub n_columns: u32,
     pub n_rows: u32,
+    /// Byte offset of the [`VectorParamBlock`] from block start (0 = none).
+    pub vparam_offset: u32,
+    /// Byte length of the [`VectorParamBlock`] (0 = none).
+    pub vparam_len: u32,
+    /// Byte offset of the row-group sub-index (`RowGroupBlock`) from block
+    /// start (0 = none). Its length is derivable from its own header.
+    pub rgdir_offset: u32,
 }
 
 impl BlockFooter {
@@ -66,6 +86,9 @@ impl BlockFooter {
         b[8..12].copy_from_slice(&self.stripe_start.to_le_bytes());
         b[12..16].copy_from_slice(&self.n_columns.to_le_bytes());
         b[16..20].copy_from_slice(&self.n_rows.to_le_bytes());
+        b[20..24].copy_from_slice(&self.vparam_offset.to_le_bytes());
+        b[24..28].copy_from_slice(&self.vparam_len.to_le_bytes());
+        b[28..32].copy_from_slice(&self.rgdir_offset.to_le_bytes());
         b
     }
 
@@ -80,11 +103,31 @@ impl BlockFooter {
             stripe_start: u32::from_le_bytes(b[8..12].try_into()?),
             n_columns: u32::from_le_bytes(b[12..16].try_into()?),
             n_rows: u32::from_le_bytes(b[16..20].try_into()?),
+            vparam_offset: u32::from_le_bytes(b[20..24].try_into()?),
+            vparam_len: u32::from_le_bytes(b[24..28].try_into()?),
+            rgdir_offset: u32::from_le_bytes(b[28..32].try_into()?),
         })
     }
 }
 
 /// PAX block writer — buffers records and serialises to PAX block bytes.
+/// Per-segment vector quantization selection (P3 Phase D — caller/collection-controlled,
+/// replacing the process-global env flags). `Auto` preserves the legacy env behavior
+/// (`PROXIMADB_VECTOR_RABITQ` / `PROXIMADB_VECTOR_SQ8_DISABLE`) so existing callers are
+/// unchanged; the flush passes an explicit strategy from the collection's config.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VectorQuant {
+    /// Decide from env (legacy default).
+    #[default]
+    Auto,
+    /// Raw fixed-stride f32 (no quantization).
+    RawF32,
+    /// SQ8 (4×, lossy within scale/2).
+    Sq8,
+    /// RaBitQ (~30×, lossy 1-bit) — requires a decoupled f32 rerank tier for recall.
+    RaBitQ,
+}
+
 pub struct PaxBlockWriter {
     mode: BlockMode,
     compression: BlockCompression,
@@ -92,6 +135,8 @@ pub struct PaxBlockWriter {
     schema_fingerprint: u64,
     /// Number of embedding columns expected (from collection schema).
     embedding_count: usize,
+    /// Vector quantization strategy for this writer (P3 Phase D; `Auto` = env-driven).
+    quant: VectorQuant,
 
     // Accumulated column data
     oids: Vec<String>,
@@ -131,6 +176,7 @@ impl PaxBlockWriter {
             collection_id_hash: fnv1a_hash(collection_id),
             schema_fingerprint,
             embedding_count,
+            quant: VectorQuant::Auto,
             oids: Vec::new(),
             tenant_ids: Vec::new(),
             created_at: Vec::new(),
@@ -150,6 +196,13 @@ impl PaxBlockWriter {
             min_ts: i64::MAX,
             max_ts: i64::MIN,
         }
+    }
+
+    /// Set the vector quantization strategy (P3 Phase D). Builder form so existing
+    /// `new(..)` call sites are unchanged; `Auto` (the default) keeps env behavior.
+    pub fn with_quant(mut self, quant: VectorQuant) -> Self {
+        self.quant = quant;
+        self
     }
 
     pub fn row_count(&self) -> usize {
@@ -248,6 +301,10 @@ impl PaxBlockWriter {
 
         // ---- Build column stripes (OLAP/PAX) ----
         let mut stripes: Vec<ColumnStripe> = Vec::new();
+        // One entry per vector column, serialized into the footer's VectorParamBlock.
+        let mut vparam_entries: Vec<VectorParamEntry> = Vec::new();
+        // RaBitQ side data (centroid + seed) for any binary-quantized columns.
+        let mut vparam_rabitq: Vec<RaBitQColumn> = Vec::new();
 
         if mode.has_column_stripes() {
             stripes.push(
@@ -349,7 +406,25 @@ impl PaxBlockWriter {
 
             for (i, col) in self.embeddings.iter().enumerate() {
                 let refs: Vec<Option<&[f32]>> = col.iter().map(|v| v.as_deref()).collect();
-                stripes.push(self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?);
+                let (stripe, entry, rabitq_col) =
+                    self.build_f32_vec_stripe(col_id::EMBED_BASE + i as i32, &refs)?;
+                let is_rabitq = rabitq_col.is_some();
+                stripes.push(stripe);
+                vparam_entries.push(entry);
+                if let Some(rc) = rabitq_col {
+                    vparam_rabitq.push(rc);
+                }
+                // P3 cascade: every RaBitQ-coded embedding gets a co-located SQ8
+                // rerank column at `RERANK_BASE + i`. RaBitQ codes drive the cheap
+                // candidate scan; the rerank pool is scored against this SQ8 copy
+                // (4× footprint, no GET to an external f32 tier) before the final
+                // top-k. f32 rerank is added only if the recall gate can't be met.
+                if is_rabitq {
+                    let (rerank_stripe, rerank_entry) =
+                        self.build_sq8_vec_stripe(col_id::RERANK_BASE + i as i32, &refs)?;
+                    stripes.push(rerank_stripe);
+                    vparam_entries.push(rerank_entry);
+                }
             }
         }
 
@@ -382,14 +457,48 @@ impl PaxBlockWriter {
         }
         col_footer_bytes.extend_from_slice(&footer_extra_bytes);
 
+        // ---- Build the VectorParamBlock side region (after the column footer) ----
+        let (vparam_bytes, vparam_offset, vparam_len) = if vparam_entries.is_empty() {
+            (Vec::new(), 0u32, 0u32)
+        } else {
+            let block = VectorParamBlock {
+                entries: vparam_entries,
+                rabitq: vparam_rabitq,
+            };
+            let bytes = block.to_bytes();
+            let offset = col_footer_offset + col_footer_bytes.len() as u32;
+            let len = bytes.len() as u32;
+            (bytes, offset, len)
+        };
+
+        // ---- Build the RowGroupBlock side region (after the vector params) ----
+        let rg_index = build_row_group_index(
+            n,
+            &self.created_at,
+            &self.updated_at,
+            &self.valid_from,
+            &self.valid_to,
+            &self.edge_weight,
+        );
+        let vparam_end =
+            col_footer_offset + col_footer_bytes.len() as u32 + vparam_bytes.len() as u32;
+        let (rgdir_bytes, rgdir_offset) = if rg_index.is_empty() {
+            (Vec::new(), 0u32)
+        } else {
+            (rg_index.to_bytes(), vparam_end)
+        };
+
         // ---- Build block footer ----
-        let block_footer_offset = col_footer_offset + col_footer_bytes.len() as u32;
+        let block_footer_offset = vparam_end + rgdir_bytes.len() as u32;
         let block_footer = BlockFooter {
             col_footer_offset,
             row_dir_offset,
             stripe_start,
             n_columns: stripes.len() as u32,
             n_rows: n as u32,
+            vparam_offset,
+            vparam_len,
+            rgdir_offset,
         };
 
         let total_size = block_footer_offset + BLOCK_FOOTER_SIZE as u32;
@@ -401,6 +510,8 @@ impl PaxBlockWriter {
             body.extend_from_slice(&s.data);
         }
         body.extend_from_slice(&col_footer_bytes);
+        body.extend_from_slice(&vparam_bytes);
+        body.extend_from_slice(&rgdir_bytes);
         body.extend_from_slice(&block_footer.to_bytes());
 
         // ---- Compute checksum ----
@@ -507,9 +618,65 @@ impl PaxBlockWriter {
         ColumnStripe::new(meta, data).with_bloom(stats.bloom)
     }
 
-    fn build_f32_vec_stripe(&self, id: i32, vals: &[Option<&[f32]>]) -> Result<ColumnStripe> {
-        let scheme = select_f32_vec_scheme(vals);
-        let (data, null_count) = encode_f32_vec_with_scheme(vals, &scheme)?;
+    /// Build an f32 vector stripe (v2 fixed-stride layout) plus its
+    /// [`VectorParamEntry`].
+    ///
+    /// The stripe is `[validity bitmap: ceil(n/8)][fixed-stride payload]`. By
+    /// default the payload is SQ8-quantized (1 byte/value, 4× smaller); set
+    /// `PROXIMADB_VECTOR_SQ8_DISABLE` to fall back to raw fixed-stride f32. The
+    /// per-row dimension prefix of v1 is gone — `dim` and the SQ8 params live
+    /// once in the returned entry. Null rows still occupy a full (zeroed) row
+    /// slot so any row is seekable by `offset + i * stride` (row-group reads).
+    fn build_f32_vec_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<&[f32]>],
+    ) -> Result<(ColumnStripe, VectorParamEntry, Option<RaBitQColumn>)> {
+        let dim = vector_column_dim(vals)?;
+        let flat: Vec<f32> = vals
+            .iter()
+            .flatten()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        // Always derive exact bounds (vmin/vmax) for the entry, even for raw.
+        let params = functions::sq8::fit_params(&flat);
+
+        let has_data = dim > 0 && !flat.is_empty();
+        // P3 Phase D: explicit per-collection strategy wins; Auto falls back to env.
+        let (use_rabitq, use_sq8) = match self.quant {
+            VectorQuant::RaBitQ => (has_data, false),
+            VectorQuant::Sq8 => (false, has_data),
+            VectorQuant::RawF32 => (false, false),
+            VectorQuant::Auto => {
+                let r = has_data && rabitq_enabled();
+                (r, has_data && !r && !sq8_disabled())
+            }
+        };
+        let (data, scheme, quant_kind, rabitq_col) = if use_rabitq {
+            let (bytes, col) = encode_f32_vec_rabitq(vals, dim, id);
+            (
+                bytes,
+                ProximaScheme::RaBitQ,
+                QUANT_RABITQ_RESERVED,
+                Some(col),
+            )
+        } else if use_sq8 {
+            (
+                encode_f32_vec_sq8(vals, dim, &params),
+                ProximaScheme::Sq8,
+                QUANT_SQ8,
+                None,
+            )
+        } else {
+            (
+                encode_f32_vec_raw_v2(vals, dim),
+                ProximaScheme::Raw,
+                QUANT_RAW_F32,
+                None,
+            )
+        };
+
+        let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
         let meta = ColumnMeta {
             column_id: id,
             role: ColumnRole::Vector,
@@ -531,7 +698,62 @@ impl PaxBlockWriter {
             bloom_offset: 0,
             bloom_len: 0,
         };
-        Ok(ColumnStripe::new(meta, data))
+        let entry = VectorParamEntry {
+            column_id: id,
+            dim,
+            quant_kind,
+            params,
+        };
+        Ok((ColumnStripe::new(meta, data), entry, rabitq_col))
+    }
+
+    /// Build an SQ8-quantized vector stripe unconditionally (ignoring the
+    /// writer's configured `quant`). This backs the co-located rerank column
+    /// emitted alongside each RaBitQ embedding: the candidate pool from the
+    /// RaBitQ scan is reranked against full-stride SQ8 here, so the column must
+    /// always be SQ8 regardless of the primary quant strategy.
+    fn build_sq8_vec_stripe(
+        &self,
+        id: i32,
+        vals: &[Option<&[f32]>],
+    ) -> Result<(ColumnStripe, VectorParamEntry)> {
+        let dim = vector_column_dim(vals)?;
+        let flat: Vec<f32> = vals
+            .iter()
+            .flatten()
+            .flat_map(|s| s.iter().copied())
+            .collect();
+        let params = functions::sq8::fit_params(&flat);
+        let data = encode_f32_vec_sq8(vals, dim, &params);
+        let null_count = vals.iter().filter(|v| v.is_none()).count() as u32;
+        let meta = ColumnMeta {
+            column_id: id,
+            role: ColumnRole::Vector,
+            data_type_id: 0x01, // F32
+            encoding_id: ProximaScheme::Sq8.to_marker(),
+            nullable: true,
+            has_bloom: false,
+            is_sorted: false,
+            stripe_offset: 0,
+            stripe_len: data.len() as u32,
+            null_count,
+            distinct_hint: vals
+                .iter()
+                .filter(|value| value.is_some())
+                .count()
+                .min(u32::MAX as usize) as u32,
+            min_val: [0u8; 16],
+            max_val: [0u8; 16],
+            bloom_offset: 0,
+            bloom_len: 0,
+        };
+        let entry = VectorParamEntry {
+            column_id: id,
+            dim,
+            quant_kind: QUANT_SQ8,
+            params,
+        };
+        Ok((ColumnStripe::new(meta, data), entry))
     }
 
     fn build_f64_stripe(
@@ -987,41 +1209,216 @@ fn encode_str_dictionary_col(values: &[Option<&str>]) -> (Vec<u8>, u32) {
     (buf, null_count)
 }
 
-fn select_f32_vec_scheme(values: &[Option<&[f32]>]) -> ProximaScheme {
-    let flattened: Vec<f32> = values
-        .iter()
-        .flatten()
-        .flat_map(|v| v.iter().copied())
-        .collect();
-    if flattened.is_empty() {
-        return ProximaScheme::Raw;
+/// `(column id, per-row i64 accessor)` pair for the prunable timestamp columns.
+type I64ColAccessor<'a> = (i32, &'a dyn Fn(usize) -> Option<i64>);
+
+/// Build the row-group sub-index from the writer's in-memory scalar columns.
+///
+/// For each row group, records per-column `[min, max]` for the prunable i64
+/// columns (created/updated/valid timestamps) and the f64 edge weight. Columns
+/// whose group has no usable values are omitted (then that group can't be pruned
+/// on that column — conservative). Vector byte ranges are NOT stored: they are
+/// derivable from the fixed stride + [`crate::vparam`].
+fn build_row_group_index(
+    n: usize,
+    created_at: &[i64],
+    updated_at: &[i64],
+    valid_from: &[Option<i64>],
+    valid_to: &[Option<i64>],
+    edge_weight: &[Option<f64>],
+) -> RowGroupBlock {
+    let rgs = RowGroupBlock::group_count(n as u32);
+    let size = crate::rowgroup::ROW_GROUP_SIZE;
+    let mut entries: Vec<RowGroupEntry> = Vec::new();
+
+    let i64_cols: [I64ColAccessor; 4] = [
+        (col_id::CREATED_AT, &|i| created_at.get(i).copied()),
+        (col_id::UPDATED_AT, &|i| updated_at.get(i).copied()),
+        (col_id::VALID_FROM, &|i| {
+            valid_from.get(i).copied().flatten()
+        }),
+        (col_id::VALID_TO, &|i| valid_to.get(i).copied().flatten()),
+    ];
+
+    for rg in 0..rgs {
+        let start = (rg * size) as usize;
+        let end = ((rg + 1) * size).min(n as u32) as usize;
+        if start >= end {
+            continue;
+        }
+
+        for (col, get) in i64_cols.iter() {
+            let mut lo = i64::MAX;
+            let mut hi = i64::MIN;
+            let mut any = false;
+            for i in start..end {
+                if let Some(v) = get(i) {
+                    any = true;
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+            }
+            if any {
+                let (min_val, max_val) = i64_bounds(lo, hi);
+                entries.push(RowGroupEntry {
+                    column_id: *col,
+                    rg_index: rg,
+                    data_type_id: 0x03,
+                    min_val,
+                    max_val,
+                });
+            }
+        }
+
+        // f64 edge weight (skip None + NaN).
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        let mut any = false;
+        for v in edge_weight.iter().take(end).skip(start).flatten() {
+            if v.is_finite() {
+                any = true;
+                lo = lo.min(*v);
+                hi = hi.max(*v);
+            }
+        }
+        if any {
+            let (min_val, max_val) = f64_bounds(lo, hi);
+            entries.push(RowGroupEntry {
+                column_id: col_id::EDGE_WEIGHT,
+                rg_index: rg,
+                data_type_id: 0x07,
+                min_val,
+                max_val,
+            });
+        }
     }
 
-    let analysis = DataAnalysis::from_f32_values(&flattened);
-    let mut context = SelectionContext::for_pax_stripe(TypeId::F32, DataDomain::MlEmbeddings);
-    context.target_compression = None;
-
-    let mut profile = CompressionProfile::from_selection_context(&context);
-    profile.target_compression_ratio = None;
-    profile.hotness = AccessTemperature::Warm;
-    profile.workload_profile = WorkloadProfile::Htap;
-
-    let hints = context.layout_hints();
-    let decision = StrategyRegistry::default()
-        .select_decision(&analysis, &context, &profile, &hints)
-        .scheme;
-    debug_assert!(matches!(decision, ProximaScheme::Raw));
-    ProximaScheme::Raw
+    RowGroupBlock {
+        n_row_groups: rgs,
+        row_group_size: size,
+        entries,
+    }
 }
 
-fn encode_f32_vec_with_scheme(
-    values: &[Option<&[f32]>],
-    scheme: &ProximaScheme,
-) -> Result<(Vec<u8>, u32)> {
-    match scheme {
-        ProximaScheme::Raw => Ok(encode_f32_vec_col(values)),
-        other => anyhow::bail!("unsupported exact PAX f32 vector scheme: {}", other.name()),
+/// Kill-switch: when set, vector stripes fall back to raw fixed-stride f32
+/// instead of SQ8. Mirrors the project's other `PROXIMADB_*_DISABLE` toggles.
+fn sq8_disabled() -> bool {
+    std::env::var_os("PROXIMADB_VECTOR_SQ8_DISABLE").is_some()
+}
+
+/// Opt-in: when set, vector stripes use RaBitQ binary quantization (1 bit/dim)
+/// instead of SQ8 — ~30× smaller, search-by-estimator + rerank. Off by default
+/// (SQ8 reconstructs more faithfully without a rerank tier).
+fn rabitq_enabled() -> bool {
+    std::env::var_os("PROXIMADB_VECTOR_RABITQ").is_some()
+}
+
+/// Encode a RaBitQ vector stripe: validity bitmap + per row
+/// `[dist_to_centroid f32][inv_factor f32][sign bits ceil(dim/8)]` (fixed
+/// stride, null rows zeroed). Returns the stripe bytes and the per-column
+/// [`RaBitQColumn`] side data (centroid + rotation seed) for the
+/// `VectorParamBlock` trailer.
+pub(crate) fn encode_f32_vec_rabitq(
+    vals: &[Option<&[f32]>],
+    dim: u32,
+    column_id: i32,
+) -> (Vec<u8>, RaBitQColumn) {
+    let dim_us = dim as usize;
+    let refs: Vec<&[f32]> = vals.iter().filter_map(|o| *o).collect();
+    // Deterministic per-column seed so decode reproduces the same rotation.
+    let seed = 0x9E37_79B9_7F4A_7C15u64 ^ (column_id as u64);
+    let params = functions::rabitq::fit_params(&refs, dim_us, seed);
+    let rotation = functions::rabitq::build_rotation(dim_us, seed);
+    let bits_len = dim_us.div_ceil(8);
+    let stride = 8 + bits_len; // dist(4) + inv_factor(4) + bits
+
+    let mut buf = vector_validity_bitmap(vals);
+    buf.reserve(vals.len() * stride);
+    for v in vals {
+        match v {
+            Some(vec) => {
+                let code = functions::rabitq::encode(vec, &params, &rotation);
+                buf.extend_from_slice(&code.dist_to_centroid.to_le_bytes());
+                buf.extend_from_slice(&code.inv_factor.to_le_bytes());
+                buf.extend_from_slice(&code.bits);
+            }
+            None => buf.extend(std::iter::repeat_n(0u8, stride)),
+        }
     }
+    (
+        buf,
+        RaBitQColumn {
+            column_id,
+            seed,
+            centroid: params.centroid,
+        },
+    )
+}
+
+/// Fixed dimensionality of a vector column = the length of its first non-null
+/// row. Returns 0 when every row is null. Errors if two non-null rows disagree
+/// (embedding columns are fixed-width by construction).
+fn vector_column_dim(vals: &[Option<&[f32]>]) -> Result<u32> {
+    let mut dim: Option<usize> = None;
+    for v in vals.iter().flatten() {
+        match dim {
+            None => dim = Some(v.len()),
+            Some(d) if d != v.len() => {
+                anyhow::bail!("inconsistent vector dimension: {d} vs {}", v.len())
+            }
+            _ => {}
+        }
+    }
+    Ok(dim.unwrap_or(0) as u32)
+}
+
+/// Validity bitmap prefix: bit `i` set ⇒ row `i` is present (non-null).
+fn vector_validity_bitmap(vals: &[Option<&[f32]>]) -> Vec<u8> {
+    let mut bm = vec![0u8; vals.len().div_ceil(8)];
+    for (i, v) in vals.iter().enumerate() {
+        if v.is_some() {
+            bm[i / 8] |= 1u8 << (i % 8);
+        }
+    }
+    bm
+}
+
+/// Encode an SQ8 vector stripe: validity bitmap + `n_rows * dim` u8 codes.
+/// Null rows occupy `dim` zero bytes so every row stays seekable.
+fn encode_f32_vec_sq8(vals: &[Option<&[f32]>], dim: u32, params: &functions::Sq8Params) -> Vec<u8> {
+    let dim = dim as usize;
+    let mut buf = vector_validity_bitmap(vals);
+    buf.reserve(vals.len() * dim);
+    for v in vals {
+        match v {
+            Some(floats) => {
+                for &f in *floats {
+                    buf.push(functions::sq8::quantize_one(f, params));
+                }
+            }
+            None => buf.extend(std::iter::repeat_n(0u8, dim)),
+        }
+    }
+    buf
+}
+
+/// Encode a raw fixed-stride f32 vector stripe: validity bitmap + `n_rows *
+/// dim * 4` little-endian f32 bytes. Null rows occupy a zeroed row slot.
+pub(crate) fn encode_f32_vec_raw_v2(vals: &[Option<&[f32]>], dim: u32) -> Vec<u8> {
+    let dim = dim as usize;
+    let mut buf = vector_validity_bitmap(vals);
+    buf.reserve(vals.len() * dim * 4);
+    for v in vals {
+        match v {
+            Some(floats) => {
+                for &f in *floats {
+                    buf.extend_from_slice(&f.to_le_bytes());
+                }
+            }
+            None => buf.extend(std::iter::repeat_n(0u8, dim * 4)),
+        }
+    }
+    buf
 }
 
 fn encode_i64_with_scheme(values: &[i64], scheme: &ProximaScheme) -> Result<Vec<u8>> {
@@ -1045,6 +1442,9 @@ fn encode_i64_with_scheme(values: &[i64], scheme: &ProximaScheme) -> Result<Vec<
         ProximaScheme::SparseCOO => functions::sparse_coo::encode_i64(values),
         ProximaScheme::Dictionary => functions::dictionary::encode_i64(values),
         ProximaScheme::RunLength => functions::run_length::encode_i64(values),
+        ProximaScheme::Sq8 | ProximaScheme::RaBitQ => {
+            anyhow::bail!("quantized vector scheme not valid for i64 columns")
+        }
         ProximaScheme::Adaptive => functions::adaptive::encode_i64(values),
     }
 }
@@ -1124,6 +1524,28 @@ mod tests {
         assert_eq!(header.max_timestamp_ns, 2000);
         assert!(header.tenant_matches(fnv1a_hash("tenant_a")));
         assert!(!header.tenant_matches(fnv1a_hash("tenant_b")));
+    }
+
+    #[test]
+    fn block_footer_carries_vparam_and_rgdir_offsets() {
+        // v2 BlockFooter reclaims the old 12 reserved bytes for the
+        // VectorParamBlock + RowGroupBlock pointers; they must round-trip.
+        let f = BlockFooter {
+            col_footer_offset: 1024,
+            row_dir_offset: 64,
+            stripe_start: 128,
+            n_columns: 5,
+            n_rows: 42,
+            vparam_offset: 2048,
+            vparam_len: 96,
+            rgdir_offset: 2144,
+        };
+        let f2 = BlockFooter::from_bytes(&f.to_bytes()).unwrap();
+        assert_eq!(f2.vparam_offset, 2048);
+        assert_eq!(f2.vparam_len, 96);
+        assert_eq!(f2.rgdir_offset, 2144);
+        assert_eq!(f2.col_footer_offset, 1024);
+        assert_eq!(f2.n_rows, 42);
     }
 
     #[test]

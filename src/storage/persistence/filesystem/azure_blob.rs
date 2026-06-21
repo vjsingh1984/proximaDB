@@ -19,6 +19,10 @@ use async_trait::async_trait;
 use dashmap::DashMap;
 use futures::StreamExt;
 use object_store::ObjectStore;
+// Extension trait providing get/get_range/put/delete/head on the object_store
+// handle. Required in scope here or the bridge calls below fail to resolve
+// (E0599) — this file is feature-gated (`azure`) and not built by default CI.
+use object_store::ObjectStoreExt;
 use object_store::PutPayload;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::path::Path as ObjPath;
@@ -370,7 +374,7 @@ mod tests {
     #[tokio::test]
     async fn store_for_builds_with_workload_identity_no_secret() {
         let cfg = AzureBlobConfig {
-            account: "anvaiopsmvp".to_string(),
+            account: "teststorageacct".to_string(),
             access_key: None,
             use_emulator: false,
             endpoint: None,
@@ -391,7 +395,7 @@ mod tests {
     #[tokio::test]
     async fn store_for_builds_with_user_assigned_managed_identity() {
         let cfg = AzureBlobConfig {
-            account: "anvaiopsmvp".to_string(),
+            account: "teststorageacct".to_string(),
             access_key: None,
             use_emulator: false,
             client_id: Some("00000000-0000-0000-0000-000000000003".to_string()),

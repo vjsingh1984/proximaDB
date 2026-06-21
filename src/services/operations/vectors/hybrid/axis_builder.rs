@@ -196,6 +196,10 @@ pub fn build_axis_hybrid_query_with_policy(
         ann_filtering_mode,
         ann_filtering_policy,
         estimated_selectivity: hinted_selectivity,
+        // Map the accuracy-vs-latency knob onto the AXIS query so the warm
+        // HNSW/IVF path honors it on this builder path too (mirrors the
+        // SST search-engine direct construction).
+        search_effort: search_params.search_mode.to_search_effort(),
     })
 }
 

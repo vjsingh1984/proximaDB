@@ -151,15 +151,26 @@ impl QueryTranslator {
     fn translate_jsonb(&self, query: &str) -> Result<String> {
         let mut result = query.to_string();
 
-        let re_text_extract = regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*->>\s*'([^']+)'"#)?;
-        result = re_text_extract
-            .replace_all(&result, "JSON_EXTRACT_TEXT($1, '$2')")
-            .to_string();
-
-        let re_json_extract = regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*->\s*'([^']+)'"#)?;
-        result = re_json_extract
-            .replace_all(&result, "JSON_EXTRACT($1, '$2')")
-            .to_string();
+        // The left operand of -> / ->> is either a bare column identifier OR an
+        // already-rewritten JSON_EXTRACT(...) call — the latter so CHAINED paths
+        // like `doc->'a'->>'b'` translate fully. Apply ->> (text) then -> (json)
+        // repeatedly to a fixed point so each nesting level is peeled in turn.
+        let left = r#"(?:[A-Za-z_][A-Za-z0-9_\.]*|JSON_EXTRACT(?:_TEXT)?\([^()]*\))"#;
+        let re_text_extract = regex::Regex::new(&format!(r#"({left})\s*->>\s*'([^']+)'"#))?;
+        let re_json_extract = regex::Regex::new(&format!(r#"({left})\s*->\s*'([^']+)'"#))?;
+        // Bounded fixed-point loop (guards against pathological input).
+        for _ in 0..16 {
+            let before = result.clone();
+            result = re_text_extract
+                .replace_all(&result, "JSON_EXTRACT_TEXT($1, '$2')")
+                .to_string();
+            result = re_json_extract
+                .replace_all(&result, "JSON_EXTRACT($1, '$2')")
+                .to_string();
+            if result == before {
+                break;
+            }
+        }
 
         let re_contains =
             regex::Regex::new(r#"([A-Za-z_][A-Za-z0-9_\.]*)\s*@>\s*('[^']+'(?:::jsonb)?)"#)?;

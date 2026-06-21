@@ -51,13 +51,16 @@ use parquet::arrow::async_reader::ParquetObjectReader;
 use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
 use proximadb_records::ProximaRecord;
-use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
+use proximadb_storage_common::object_store_bridge::{CommitOutcome, ObjectStoreBridge};
 use proximadb_storage_common::proxima_arrow::infer_proxima_schema;
 use proximadb_storage_common::proxima_parquet::proxima_records_to_parquet_bytes;
 use proximadb_storage_common::proxima_schema::ProximaSchema;
 
+/// Spec-shaped Iceberg v2 manifest / manifest-list (Avro) + TableMetadata (JSON) content.
+pub mod iceberg;
 /// Iceberg-style atomic manifest commits (optimistic concurrency via `put_if_absent`).
 pub mod manifest;
+pub mod metadata;
 
 /// Map a Parquet read/decode failure into a [`StorageError`] with operation context.
 fn read_err(context: &str, e: impl std::fmt::Display) -> StorageError {
@@ -96,40 +99,6 @@ impl IcebergObjectStoreBridge {
         self.store.full_path(path)
     }
 
-    /// Atomically publish the data objects currently under `data_prefix` as the next
-    /// snapshot in the manifest log at `manifest_prefix`.
-    ///
-    /// This is the warehouse base-tier commit: it composes [`list_objects`] (the data
-    /// files written via `write_records_to_parquet*`) with the
-    /// [`ManifestCommitter`](crate::manifest) `put_if_absent` protocol, so a snapshot
-    /// is published all-or-nothing and concurrent publishers cannot clobber each other
-    /// (the loser gets [`CommitOutcome::Conflict`](crate::manifest::CommitOutcome)).
-    ///
-    /// `manifest_prefix` MUST NOT be nested under `data_prefix`, or the manifest objects
-    /// would themselves be listed as data. The manifest body is the **v1 format**: the
-    /// sorted, newline-delimited, base-relative data-file keys — exactly the keys
-    /// `list_objects` yields, so they round-trip through `read_parquet_batches`. `parent`
-    /// is the snapshot being superseded (`None` for the first commit, version `0`).
-    ///
-    /// [`list_objects`]: ObjectStoreBridge::list_objects
-    pub async fn publish_snapshot(
-        &self,
-        data_prefix: &Path,
-        manifest_prefix: &str,
-        parent: Option<u64>,
-    ) -> Result<manifest::CommitOutcome, StorageError> {
-        let mut keys: Vec<String> = self
-            .list_objects(data_prefix)
-            .await?
-            .iter()
-            .map(|p| p.as_ref().to_string())
-            .collect();
-        keys.sort(); // deterministic manifest body regardless of list order
-        let body = keys.join("\n");
-        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
-        committer.commit(parent, Bytes::from(body)).await
-    }
-
     /// Read the data-file keys recorded by snapshot `version` of the manifest log at
     /// `manifest_prefix` (parses the v1 newline-delimited body). Each returned path is
     /// directly consumable by
@@ -148,6 +117,115 @@ impl IcebergObjectStoreBridge {
             .filter(|l| !l.is_empty())
             .map(Path::from)
             .collect())
+    }
+
+    /// Row count of a Parquet object, read from the footer metadata only (no row data).
+    async fn parquet_num_rows(&self, path: &Path) -> Result<i64, StorageError> {
+        let reader = ParquetObjectReader::new(self.store.store(), self.full_object_path(path));
+        let builder = ParquetRecordBatchStreamBuilder::new(reader)
+            .await
+            .map_err(|e| read_err("open parquet footer", e))?;
+        Ok(builder.metadata().file_metadata().num_rows())
+    }
+
+    /// Publish a snapshot as **spec-shaped Iceberg** (v3 by default): write an Avro manifest
+    /// for the `*.parquet` data files under `data_prefix`, an Avro manifest list, and a
+    /// `TableMetadata` JSON referencing it, committed atomically through the metadata log at
+    /// `metadata_prefix`. External Iceberg engines can then read the table. `snapshot_id` and
+    /// `timestamp_ms` are caller-supplied (no wall-clock here, for determinism). Returns the
+    /// committed metadata version (or a `Conflict` to rebase onto).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn publish_iceberg_snapshot(
+        &self,
+        data_prefix: &Path,
+        metadata_prefix: &str,
+        table_uuid: &str,
+        table_location: &str,
+        fields: &[iceberg::IcebergField],
+        snapshot_id: i64,
+        timestamp_ms: i64,
+        format_version: iceberg::FormatVersion,
+    ) -> Result<CommitOutcome, StorageError> {
+        // 1. Enumerate data files with size (HEAD) + record count (footer).
+        let mut keys: Vec<Path> = self.list_objects(data_prefix).await?;
+        keys.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+        let mut data_files = Vec::new();
+        for key in &keys {
+            if !key.as_ref().ends_with(".parquet") {
+                continue;
+            }
+            let size = self.store.object_size(key).await?;
+            let record_count = self.parquet_num_rows(key).await.unwrap_or(0);
+            data_files.push(iceberg::DataFileMeta {
+                file_path: key.as_ref().to_string(),
+                record_count,
+                file_size_in_bytes: size as i64,
+            });
+        }
+        let added_records: i64 = data_files.iter().map(|f| f.record_count).sum();
+        let added_files = data_files.len() as i64;
+
+        // 2. Write the Avro manifest + manifest list.
+        let manifest_bytes = iceberg::write_manifest(&data_files, snapshot_id)?;
+        let manifest_path = Path::from(format!("{metadata_prefix}/{snapshot_id}-m0.avro"));
+        self.store
+            .put(&manifest_path, Bytes::from(manifest_bytes.clone()))
+            .await?;
+        let manifest_list = vec![iceberg::ManifestFileMeta {
+            manifest_path: manifest_path.as_ref().to_string(),
+            manifest_length: manifest_bytes.len() as i64,
+            added_files_count: added_files as i32,
+            added_rows_count: added_records,
+            added_snapshot_id: snapshot_id,
+        }];
+        let list_bytes = iceberg::write_manifest_list(&manifest_list)?;
+        let list_path = Path::from(format!("{metadata_prefix}/snap-{snapshot_id}-list.avro"));
+        self.store.put(&list_path, Bytes::from(list_bytes)).await?;
+
+        // 3. Build + atomically commit the TableMetadata.
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        let parent = committer.latest_version().await?;
+        let sequence_number = parent.map(|p| p as i64 + 1).unwrap_or(1);
+        let json = iceberg::build_table_metadata(
+            format_version,
+            table_uuid,
+            table_location,
+            fields,
+            snapshot_id,
+            sequence_number,
+            list_path.as_ref(),
+            timestamp_ms,
+            added_files,
+            added_records,
+        )?;
+        committer.commit(parent, Bytes::from(json)).await
+    }
+
+    /// Resolve the data-file keys of the current snapshot in the Iceberg metadata log at
+    /// `metadata_prefix` (decodes `TableMetadata` → manifest list → manifests). Each returned
+    /// path is consumable by [`read_parquet_batches`](ObjectStoreBridge::read_parquet_batches).
+    pub async fn read_iceberg_snapshot(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<Path>, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        let meta_bytes = committer.read_metadata(version).await?;
+        let meta_json =
+            std::str::from_utf8(&meta_bytes).map_err(|e| read_err("metadata utf8", e))?;
+        let Some(list_loc) = iceberg::current_manifest_list(meta_json)? else {
+            return Ok(Vec::new());
+        };
+        let list_bytes = self.store.get(&Path::from(list_loc)).await?;
+        let manifests = iceberg::read_manifest_list(&list_bytes)?;
+        let mut out = Vec::new();
+        for m in manifests {
+            let mbytes = self.store.get(&Path::from(m.manifest_path)).await?;
+            for df in iceberg::read_manifest(&mbytes)? {
+                out.push(Path::from(df.file_path));
+            }
+        }
+        Ok(out)
     }
 }
 
@@ -247,6 +325,33 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
         Ok(self.store.get(path).await?.to_vec())
     }
 
+    /// Metadata-only size (HEAD) — the prerequisite for footer-first ranged
+    /// reads; no object body is transferred.
+    async fn vector_segment_size(
+        &self,
+        path: &Path,
+        _tenant_id: Option<&str>,
+    ) -> Result<u64, StorageError> {
+        self.store.object_size(path).await
+    }
+
+    /// True ranged GET over object storage (`Range: bytes=offset-…`): only the
+    /// requested slice leaves the wire, so column/footer reads don't pull the
+    /// whole segment.
+    async fn fetch_vector_segment_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: u64,
+        _tenant_id: Option<&str>,
+    ) -> Result<Vec<u8>, StorageError> {
+        Ok(self
+            .store
+            .get_range(path, offset..offset + length)
+            .await?
+            .to_vec())
+    }
+
     async fn persist_vector_segment(
         &self,
         path: &Path,
@@ -278,6 +383,107 @@ impl ObjectStoreBridge for IcebergObjectStoreBridge {
                 }
             })
             .collect())
+    }
+
+    async fn latest_manifest_version(
+        &self,
+        manifest_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
+        committer.latest_version().await
+    }
+
+    async fn publish_snapshot(
+        &self,
+        data_prefix: &Path,
+        manifest_prefix: &str,
+        parent: Option<u64>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let mut keys: Vec<String> = self
+            .list_objects(data_prefix)
+            .await?
+            .iter()
+            .map(|p| p.as_ref().to_string())
+            .collect();
+        keys.sort(); // deterministic manifest body regardless of list order
+        let body = keys.join("\n");
+        let committer = manifest::ManifestCommitter::new(self.store.clone(), manifest_prefix);
+        committer.commit(parent, Bytes::from(body)).await
+    }
+
+    async fn latest_metadata_version(
+        &self,
+        metadata_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        committer.latest_version().await
+    }
+
+    async fn read_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<u8>, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        Ok(committer.read_metadata(version).await?.to_vec())
+    }
+
+    async fn commit_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        parent: Option<u64>,
+        metadata: Vec<u8>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let committer = metadata::MetadataCommitter::new(self.store.clone(), metadata_prefix);
+        committer.commit(parent, Bytes::from(metadata)).await
+    }
+
+    /// Map the storage-common field descriptors to Iceberg fields and delegate to the
+    /// inherent [`publish_iceberg_snapshot`](IcebergObjectStoreBridge::publish_iceberg_snapshot).
+    async fn publish_iceberg_table(
+        &self,
+        data_prefix: &Path,
+        metadata_prefix: &str,
+        table_uuid: &str,
+        table_location: &str,
+        fields: &[proximadb_storage_common::object_store_bridge::IcebergSnapshotField],
+        snapshot_id: i64,
+        timestamp_ms: i64,
+        v3: bool,
+    ) -> Result<CommitOutcome, StorageError> {
+        let mapped: Vec<iceberg::IcebergField> = fields
+            .iter()
+            .map(|f| iceberg::IcebergField {
+                id: f.id,
+                name: f.name.clone(),
+                type_name: f.type_name.clone(),
+                required: f.required,
+            })
+            .collect();
+        let format_version = if v3 {
+            iceberg::FormatVersion::V3
+        } else {
+            iceberg::FormatVersion::V2
+        };
+        self.publish_iceberg_snapshot(
+            data_prefix,
+            metadata_prefix,
+            table_uuid,
+            table_location,
+            &mapped,
+            snapshot_id,
+            timestamp_ms,
+            format_version,
+        )
+        .await
+    }
+
+    async fn read_iceberg_table(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<Path>, StorageError> {
+        self.read_iceberg_snapshot(metadata_prefix, version).await
     }
 }
 
@@ -364,6 +570,85 @@ mod tests {
         assert_eq!(ages.value(1), 41);
         // The inferred dense-vector column round-tripped as a column too.
         assert!(batch.column_by_name("vector").is_some());
+    }
+
+    /// End-to-end Iceberg publish: write a Parquet data file, publish a v3 snapshot
+    /// (manifest + manifest list + TableMetadata), then resolve the snapshot back to its
+    /// data files and read their rows. Proves ProximaDB emits a readable Iceberg table.
+    #[tokio::test]
+    async fn iceberg_snapshot_publishes_and_reads_back_v3() {
+        let b = bridge();
+        let data_prefix = Path::from("wh/t/ns/tbl/data");
+        let metadata_prefix = "wh/t/ns/tbl/metadata";
+
+        let r0 = record(
+            "r0",
+            vec![
+                ("name", ProximaValue::String("alice".into())),
+                ("age", ProximaValue::Int64(30)),
+            ],
+        );
+        let r1 = record(
+            "r1",
+            vec![
+                ("name", ProximaValue::String("bob".into())),
+                ("age", ProximaValue::Int64(41)),
+            ],
+        );
+        b.write_records_to_parquet(
+            &Path::from("wh/t/ns/tbl/data/part-0.parquet"),
+            &[r0, r1],
+            None,
+        )
+        .await
+        .unwrap();
+
+        let fields = vec![
+            iceberg::IcebergField {
+                id: 1,
+                name: "name".into(),
+                type_name: "string".into(),
+                required: false,
+            },
+            iceberg::IcebergField {
+                id: 2,
+                name: "age".into(),
+                type_name: "long".into(),
+                required: false,
+            },
+        ];
+        let out = b
+            .publish_iceberg_snapshot(
+                &data_prefix,
+                metadata_prefix,
+                "uuid-1",
+                "wh/t/ns/tbl",
+                &fields,
+                1001,
+                1_700_000_000_000,
+                iceberg::FormatVersion::V3,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out, CommitOutcome::Committed(0));
+
+        // The committed metadata is Iceberg format-version 3.
+        let meta = b.read_table_metadata(metadata_prefix, 0).await.unwrap();
+        let mj: serde_json::Value = serde_json::from_slice(&meta).unwrap();
+        assert_eq!(mj["format-version"], 3);
+
+        // Resolve the snapshot back to its data file(s) and read the rows.
+        let files = b.read_iceberg_snapshot(metadata_prefix, 0).await.unwrap();
+        assert_eq!(files.len(), 1, "one data file in the snapshot");
+        let mut stream = b
+            .read_parquet_batches(&files[0], Arc::new(ArrowSchema::empty()), 1024, None)
+            .await
+            .unwrap();
+        let mut total = 0;
+        while let Some(batch) = stream.next().await {
+            total += batch.unwrap().num_rows();
+        }
+        assert_eq!(total, 2, "snapshot data files carry all rows");
     }
 
     /// A non-empty `schema` arg projects the read to only the named columns (by name),

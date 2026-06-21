@@ -252,18 +252,18 @@ pub fn create_observability_router() -> Router<ObservabilityRestState> {
     super::with_v1_compatibility_headers(
         Router::new()
             .route("/namespaces", post(create_namespace))
-            .route("/namespaces/:namespace/logs/bulk", post(ingest_logs))
-            .route("/namespaces/:namespace/logs", post(ingest_log))
-            .route("/namespaces/:namespace/logs/search", post(query_logs))
-            .route("/namespaces/:namespace/metrics/bulk", post(ingest_metrics))
-            .route("/namespaces/:namespace/metrics", post(ingest_metric))
+            .route("/namespaces/{namespace}/logs/bulk", post(ingest_logs))
+            .route("/namespaces/{namespace}/logs", post(ingest_log))
+            .route("/namespaces/{namespace}/logs/search", post(query_logs))
+            .route("/namespaces/{namespace}/metrics/bulk", post(ingest_metrics))
+            .route("/namespaces/{namespace}/metrics", post(ingest_metric))
             .route(
-                "/namespaces/:namespace/metrics/aggregate",
+                "/namespaces/{namespace}/metrics/aggregate",
                 post(aggregate_metrics),
             )
-            .route("/namespaces/:namespace/metrics/promql", post(query_promql))
-            .route("/namespaces/:namespace/traces/bulk", post(ingest_traces))
-            .route("/namespaces/:namespace/traces/search", post(query_traces)),
+            .route("/namespaces/{namespace}/metrics/promql", post(query_promql))
+            .route("/namespaces/{namespace}/traces/bulk", post(ingest_traces))
+            .route("/namespaces/{namespace}/traces/search", post(query_traces)),
     )
 }
 

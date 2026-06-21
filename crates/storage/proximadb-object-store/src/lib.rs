@@ -23,7 +23,7 @@ use std::sync::Arc;
 use bytes::Bytes;
 use futures::StreamExt;
 use object_store::path::Path;
-use object_store::{ObjectMeta, ObjectStore, PutMode, PutOptions};
+use object_store::{ObjectMeta, ObjectStore, ObjectStoreExt, PutMode, PutOptions};
 use proximadb_kernel::error::StorageError;
 use url::Url;
 

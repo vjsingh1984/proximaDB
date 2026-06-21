@@ -33,9 +33,13 @@ use proximadb_storage_common::{
     CanonicalOpenTableFormat, CanonicalOperation, CanonicalWalEntry, ProjectionDirective,
     pax_block::{PAX_SEGMENT_EXT, PaxSegmentScanner, PaxSegmentWriter, ScanPredicate},
     proxima_arrow,
+    ranged_segment::RangedSegmentReader,
 };
 
-use crate::metrics::saas_billing_metrics::record_object_store_op;
+use crate::metrics::consumption_metrics::{
+    object_store_egress_locality, record_kou_bytes, record_object_store_op,
+};
+use crate::observability::io_trace;
 use crate::services::operations::VectorOps;
 use crate::services::operations::batch_result::OperationMetrics;
 use crate::services::operations::vectors::{RichRecordGetRequest, RichSearchResult};
@@ -95,7 +99,7 @@ pub struct TableRecordGetRequest {
 pub type TableRecordGetResponse = Option<RichSearchResult>;
 
 /// Scan request against a cataloged table/collection.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TableRecordScanRequest {
     /// xCatalog table or current compatibility collection identifier.
     pub table_id: String,
@@ -105,6 +109,13 @@ pub struct TableRecordScanRequest {
     pub include_vector: bool,
     /// Whether scalar/document props should be included.
     pub include_props: bool,
+    /// Optional structured predicate for **block/row-group pushdown** on stores
+    /// that read PAX segments from object storage (e.g.
+    /// [`ObjectStoreVectorRecordStore`]). When set, the store skips segment
+    /// blocks the filter provably excludes before fetching their bodies; the
+    /// row-exact `predicate` closure of `scan_records_filtered` is still applied
+    /// on top. `None` ⇒ whole-segment read, preserving prior caller behavior.
+    pub filter: Option<proximadb_filter_expression::FilterExpression>,
 }
 
 /// Scan result shape for canonical table-record reads.
@@ -125,6 +136,13 @@ pub trait TableWalAppender: Send + Sync {
         operations: Vec<CanonicalOperation>,
         tenant_id: Option<String>,
     ) -> Result<Vec<CanonicalWalEntry>>;
+
+    /// Read every canonical WAL entry this appender has durably recorded, oldest first.
+    /// The default returns nothing (appenders without a readable log opt out); the framed
+    /// appender overrides it. Used by the CDC change-feed to surface row-level changes.
+    async fn read_all_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
+        Ok(Vec::new())
+    }
 }
 
 /// Physical writer route selected from xCatalog table metadata.
@@ -216,7 +234,7 @@ fn record_id(record: &ProximaRecord) -> String {
     }
 }
 
-#[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
+#[allow(dead_code)] // pending wiring
 fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> {
     schema
         .storage_layouts
@@ -226,7 +244,7 @@ fn primary_layout(schema: &CatalogTableSchema) -> Option<&CatalogStorageLayout> 
         .or_else(|| schema.storage_layouts.first())
 }
 
-#[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
+#[allow(dead_code)] // pending wiring
 fn normalize_object_path_prefix(location: &str) -> String {
     let without_scheme = location
         .split_once("://")
@@ -255,9 +273,7 @@ fn sanitize_object_path_segment(value: &str) -> String {
     }
 }
 
-// DrPathBuilder::build is infallible for this internally-constructed namespace
-// (fixed tenant + namespace id), so expect() flags a programmer error, not input.
-#[allow(clippy::expect_used)]
+#[allow(clippy::expect_used)] // DrPathBuilder::build is infallible for this internally-constructed namespace
 fn object_store_write_base_path(
     schema: &CatalogTableSchema,
     tenant_context: Option<&TenantContext>,
@@ -415,6 +431,18 @@ async fn list_objects_with_suffix(
 }
 
 /// Canonical table-record store API.
+/// One row-level change surfaced by the CDC change-feed (P2). `lsn` is the WAL sequence
+/// number (monotonic), `op` is `"upsert"` or `"delete"`, `key` is the canonical OID, and
+/// `props` carries the after-image (JSON) for upserts. Serializable for the REST surface.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ChangeRow {
+    pub lsn: u64,
+    pub op: String,
+    pub collection: String,
+    pub key: String,
+    pub props: Option<serde_json::Value>,
+}
+
 #[async_trait]
 pub trait TableRecordStore: Send + Sync {
     /// Write catalog-validated record mutations.
@@ -484,26 +512,6 @@ pub trait TableRecordStore: Send + Sync {
         Ok(all)
     }
 
-    /// TD-110 Slice D: resolve the oids whose UNIQUE column `set` equals
-    /// `values`, via an index point-probe.
-    ///
-    /// `columns`/`values` are the unique set's columns and their equality-probe
-    /// texts (rendered like [`proxima_value_to_unique_text`] so they match the
-    /// index). Returns `Ok(None)` when this store has no point index for that set
-    /// (the caller should fall back to a scan); `Ok(Some(oids))` is the indexed
-    /// match set (possibly empty = no such row). Default = `Ok(None)`; index-backed
-    /// stores (e.g. `DirectWalTableRecordStore`) override it.
-    async fn lookup_unique_oids(
-        &self,
-        table_schema: &CatalogTableSchema,
-        columns: &[String],
-        values: &[String],
-        tenant_context: Option<&TenantContext>,
-    ) -> Result<Option<Vec<String>>> {
-        let _ = (table_schema, columns, values, tenant_context);
-        Ok(None)
-    }
-
     /// TD-110 Slice C: detect a UNIQUE/PK conflict for a batch of candidate
     /// tuples against committed rows. `sets` carries one entry per unique column
     /// set with the (NULL-exempt, within-batch-deduped) candidate tuples the
@@ -540,6 +548,7 @@ pub trait TableRecordStore: Send + Sync {
                 .scan_records_filtered(
                     table_schema,
                     TableRecordScanRequest {
+                        filter: None,
                         table_id: table_id.to_string(),
                         limit: Some(1),
                         include_vector: false,
@@ -559,6 +568,18 @@ pub trait TableRecordStore: Send + Sync {
             }
         }
         Ok(None)
+    }
+
+    /// CDC change-feed: return row-level changes for `collection_id` with WAL sequence
+    /// number strictly greater than `since_lsn`, oldest first. The default returns nothing
+    /// (stores without a readable change log opt out); the WAL-backed store overrides it.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let _ = (collection_id, since_lsn);
+        Ok(Vec::new())
     }
 }
 
@@ -803,6 +824,19 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
     ) -> Result<TableRecordScanResponse> {
         self.store_for_schema(table_schema)
             .scan_records_filtered(table_schema, request, predicate, tenant_context)
+            .await
+    }
+
+    /// CDC change-feed: relational changes live in the relational (iceberg) route — the
+    /// WAL-backed store — so delegate there. Without this override the routing store would
+    /// fall through to the empty trait default, hiding pgwire writes from the change-feed.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        self.iceberg_store
+            .read_changes_since(collection_id, since_lsn)
             .await
     }
 }
@@ -1159,29 +1193,126 @@ impl TableUniqueIndex {
 }
 
 pub struct DirectWalTableRecordStore {
-    storage: Arc<dyn RecordStorage>,
+    /// Per-(tenant_id, collection) record partitions, created on demand via
+    /// `storage_factory`. TD-064: tenant + collection isolation is STRUCTURAL —
+    /// selecting the partition by the catalog-resolved (tenant, collection)
+    /// identity replaces per-record tenant/`variation_id` filtering on the hot
+    /// path, and scopes oid point-lookups/insert-conflicts per (tenant, table).
+    /// The empty tenant id (`""`) is just one more tenant key (single-tenant).
+    partitions:
+        parking_lot::RwLock<std::collections::HashMap<(String, String), Arc<dyn RecordStorage>>>,
+    /// Factory for a fresh per-partition record store (default: in-memory memtable).
+    storage_factory: Arc<dyn Fn() -> Arc<dyn RecordStorage> + Send + Sync>,
     wal_appender: Arc<dyn TableWalAppender>,
-    /// TD-110 Slice C: per-table UNIQUE/PK index (keyed by `table_schema.name`).
-    /// Presence of a table key == "index built". Lazily built on first
-    /// `check_unique_conflict`, then maintained on every `write_mutations`.
-    unique_index: parking_lot::RwLock<std::collections::HashMap<String, TableUniqueIndex>>,
+    /// TD-110 Slice C: UNIQUE/PK index keyed by `(tenant_id, collection)` so a
+    /// table's UNIQUE/PK enforcement is per-tenant. Presence of a key == "index
+    /// built". Lazily built on first `check_unique_conflict`, then maintained on
+    /// every `write_mutations`.
+    unique_index:
+        parking_lot::RwLock<std::collections::HashMap<(String, String), TableUniqueIndex>>,
 }
 
 impl DirectWalTableRecordStore {
-    /// Create a direct writer over canonical storage and WAL appender.
+    /// Create a direct writer that routes every `(tenant, collection)` partition
+    /// to the single supplied `storage`. This is the non-isolated shape used by
+    /// single-tenant unit tests and callers that intentionally share one store;
+    /// production multi-tenant paths use [`Self::new_partitioned`].
     pub fn new(storage: Arc<dyn RecordStorage>, wal_appender: Arc<dyn TableWalAppender>) -> Self {
+        Self::with_storage_factory(wal_appender, Arc::new(move || storage.clone()))
+    }
+
+    /// Create a direct writer with per-(tenant, collection) partitions backed by
+    /// in-memory memtables created on demand — the isolated production shape.
+    pub fn new_partitioned(wal_appender: Arc<dyn TableWalAppender>) -> Self {
+        Self::with_storage_factory(
+            wal_appender,
+            Arc::new(|| {
+                Arc::new(crate::services::MemtableRecordStorage::new()) as Arc<dyn RecordStorage>
+            }),
+        )
+    }
+
+    /// Create a direct writer with a custom per-partition storage factory.
+    pub fn with_storage_factory(
+        wal_appender: Arc<dyn TableWalAppender>,
+        storage_factory: Arc<dyn Fn() -> Arc<dyn RecordStorage> + Send + Sync>,
+    ) -> Self {
         Self {
-            storage,
+            partitions: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            storage_factory,
             wal_appender,
             unique_index: parking_lot::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
-    /// Build the UNIQUE/PK index for `table_schema` if not already built, by
-    /// scanning current visible state (which the WAL recovery has rebuilt). A
-    /// no-op when the table has no UNIQUE/PK sets.
-    async fn ensure_unique_index_built(&self, table_schema: &CatalogTableSchema) -> Result<()> {
-        if self.unique_index.read().contains_key(&table_schema.name) {
+    /// Resolve the tenant scope key from an optional tenant context.
+    fn tenant_key(tenant_context: Option<&TenantContext>) -> String {
+        tenant_context
+            .map(|tenant| tenant.tenant_id.clone())
+            .unwrap_or_default()
+    }
+
+    /// Select (creating on demand) the record partition for `(tenant_id, collection)`.
+    fn partition(&self, tenant_id: &str, collection: &str) -> Arc<dyn RecordStorage> {
+        let key = (tenant_id.to_string(), collection.to_string());
+        if let Some(partition) = self.partitions.read().get(&key) {
+            return partition.clone();
+        }
+        self.partitions
+            .write()
+            .entry(key)
+            .or_insert_with(|| (self.storage_factory)())
+            .clone()
+    }
+
+    /// Replay canonical WAL entries into the correct `(tenant, table)` partitions
+    /// on recovery, routing by the entry's `tenant_id` + the operation's
+    /// `collection_id`. Reuses the per-store `RecordStore` point ops.
+    pub async fn replay_wal_entries<I>(
+        &self,
+        entries: I,
+    ) -> Result<proximadb_records::RecordRecoverySummary>
+    where
+        I: IntoIterator<Item = CanonicalWalEntry>,
+    {
+        let mut summary = proximadb_records::RecordRecoverySummary::default();
+        for entry in entries {
+            let tenant_id = entry.tenant_id.clone().unwrap_or_default();
+            match entry.operation {
+                CanonicalOperation::RecordUpsert {
+                    collection_id,
+                    record,
+                    ..
+                } => {
+                    self.partition(&tenant_id, &collection_id)
+                        .upsert_record(*record)
+                        .await?;
+                    summary.upserts_replayed += 1;
+                }
+                CanonicalOperation::RecordDelete {
+                    collection_id, oid, ..
+                } => {
+                    self.partition(&tenant_id, &collection_id)
+                        .delete_record(&RecordKey::new(oid))
+                        .await?;
+                    summary.deletes_replayed += 1;
+                }
+                CanonicalOperation::Checkpoint(_) | CanonicalOperation::CdcBarrier { .. } => {}
+            }
+        }
+        Ok(summary)
+    }
+
+    /// Build the UNIQUE/PK index for `(tenant_id, table_schema)` if not already
+    /// built, by scanning the tenant's current visible state (WAL recovery has
+    /// rebuilt it). A no-op when the table has no UNIQUE/PK sets.
+    async fn ensure_unique_index_built(
+        &self,
+        table_schema: &CatalogTableSchema,
+        tenant_id: &str,
+    ) -> Result<()> {
+        let index_key = (tenant_id.to_string(), table_schema.name.clone());
+        if self.unique_index.read().contains_key(&index_key) {
             return Ok(());
         }
         let set_columns = schema_unique_column_sets(table_schema);
@@ -1189,33 +1320,79 @@ impl DirectWalTableRecordStore {
             return Ok(());
         }
         let primary_key = schema_primary_key_column(table_schema);
-        let existing = self
-            .scan_records(
-                table_schema,
-                TableRecordScanRequest {
-                    table_id: table_schema.name.clone(),
-                    limit: None,
-                    include_vector: false,
-                    include_props: true,
-                },
-                None,
-            )
-            .await?;
+        let existing =
+            RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
+                .scan_records(
+                    table_schema,
+                    TableRecordScanRequest {
+                        filter: None,
+                        table_id: table_schema.name.clone(),
+                        limit: None,
+                        include_vector: false,
+                        include_props: true,
+                    },
+                    None,
+                )
+                .await?;
         let mut index = TableUniqueIndex::with_sets(&set_columns);
         for record in &existing {
             index.upsert(record, primary_key.as_deref());
         }
         // Double-checked insert: keep an index another writer built meanwhile.
-        self.unique_index
-            .write()
-            .entry(table_schema.name.clone())
-            .or_insert(index);
+        self.unique_index.write().entry(index_key).or_insert(index);
         Ok(())
     }
 }
 
 #[async_trait]
 impl TableRecordStore for DirectWalTableRecordStore {
+    /// CDC change-feed over the canonical WAL: surface every RecordUpsert/RecordDelete for
+    /// `collection_id` (the table name) with sequence number > `since_lsn`, oldest first.
+    async fn read_changes_since(
+        &self,
+        collection_id: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<ChangeRow>> {
+        let entries = self.wal_appender.read_all_entries().await?;
+        let mut out = Vec::new();
+        for e in entries {
+            if e.sequence_number <= since_lsn {
+                continue;
+            }
+            match e.operation {
+                CanonicalOperation::RecordUpsert {
+                    collection_id: c,
+                    record,
+                    ..
+                } if c == collection_id => {
+                    out.push(ChangeRow {
+                        lsn: e.sequence_number,
+                        op: "upsert".to_string(),
+                        collection: c,
+                        key: record.oid.clone(),
+                        props: serde_json::to_value(&record.props).ok(),
+                    });
+                }
+                CanonicalOperation::RecordDelete {
+                    collection_id: c,
+                    oid,
+                    ..
+                } if c == collection_id => {
+                    out.push(ChangeRow {
+                        lsn: e.sequence_number,
+                        op: "delete".to_string(),
+                        collection: c,
+                        key: oid,
+                        props: None,
+                    });
+                }
+                _ => {}
+            }
+        }
+        out.sort_by_key(|r| r.lsn);
+        Ok(out)
+    }
+
     async fn write_mutations(
         &self,
         table_schema: &CatalogTableSchema,
@@ -1225,6 +1402,10 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let mut operations = Vec::with_capacity(mutations.len());
         let mut storage_actions = Vec::with_capacity(mutations.len());
         let projections = projection_directives_for_schema(table_schema);
+        // TD-064: structural per-(tenant, collection) partition selection.
+        let tenant_scope = Self::tenant_key(tenant_context);
+        let partition = self.partition(&tenant_scope, &table_schema.name);
+        let index_key = (tenant_scope.clone(), table_schema.name.clone());
 
         for mutation in mutations {
             let kind = mutation.kind;
@@ -1233,7 +1414,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
 
             match kind {
                 TableRecordMutationKind::Insert => {
-                    if self.storage.get_record(&key).await?.is_some() {
+                    if partition.get_record(&key).await?.is_some() {
                         return Ok(TableRecordWriteResult::failure(
                             format!(
                                 "Record '{}' already exists in table '{}'",
@@ -1250,7 +1431,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
                     storage_actions.push((kind, record));
                 }
                 TableRecordMutationKind::Update => {
-                    if self.storage.get_record(&key).await?.is_none() {
+                    if partition.get_record(&key).await?.is_none() {
                         return Ok(TableRecordWriteResult::failure(
                             format!(
                                 "Record '{}' does not exist in table '{}'",
@@ -1305,7 +1486,7 @@ impl TableRecordStore for DirectWalTableRecordStore {
         // safe; checking once avoids per-write work for tables never probed.
         let index_primary_key = schema_primary_key_column(table_schema);
         let maintain_index = !schema_unique_column_sets(table_schema).is_empty()
-            && self.unique_index.read().contains_key(&table_schema.name);
+            && self.unique_index.read().contains_key(&index_key);
 
         let mut record_ids = Vec::with_capacity(storage_actions.len());
         for (kind, record) in storage_actions {
@@ -1314,22 +1495,20 @@ impl TableRecordStore for DirectWalTableRecordStore {
                 | TableRecordMutationKind::Upsert
                 | TableRecordMutationKind::Update => {
                     if maintain_index {
-                        let written = self.storage.upsert_record(record.clone()).await?;
+                        let written = partition.upsert_record(record.clone()).await?;
                         record_ids.push(written.oid);
-                        if let Some(index) = self.unique_index.write().get_mut(&table_schema.name) {
+                        if let Some(index) = self.unique_index.write().get_mut(&index_key) {
                             index.upsert(&record, index_primary_key.as_deref());
                         }
                     } else {
-                        let written = self.storage.upsert_record(record).await?;
+                        let written = partition.upsert_record(record).await?;
                         record_ids.push(written.oid);
                     }
                 }
                 TableRecordMutationKind::Delete => {
-                    self.storage
-                        .delete_record(&RecordKey::from(&record))
-                        .await?;
+                    partition.delete_record(&RecordKey::from(&record)).await?;
                     if maintain_index
-                        && let Some(index) = self.unique_index.write().get_mut(&table_schema.name)
+                        && let Some(index) = self.unique_index.write().get_mut(&index_key)
                     {
                         index.delete(&record.oid);
                     }
@@ -1352,8 +1531,11 @@ impl TableRecordStore for DirectWalTableRecordStore {
         request: TableRecordGetRequest,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordGetResponse> {
-        RecordStorageTableRecordStore::new(self.storage.clone())
-            .get_by_key(table_schema, request, tenant_context)
+        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
+        // Pass `None`: the partition already scopes the tenant structurally, so
+        // no per-record tenant filter is needed (TD-064).
+        RecordStorageTableRecordStore::new(partition)
+            .get_by_key(table_schema, request, None)
             .await
     }
 
@@ -1363,8 +1545,9 @@ impl TableRecordStore for DirectWalTableRecordStore {
         request: TableRecordScanRequest,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        RecordStorageTableRecordStore::new(self.storage.clone())
-            .scan_records(table_schema, request, tenant_context)
+        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
+        RecordStorageTableRecordStore::new(partition)
+            .scan_records(table_schema, request, None)
             .await
     }
 
@@ -1375,8 +1558,9 @@ impl TableRecordStore for DirectWalTableRecordStore {
         predicate: Option<&RecordScanPredicate<'_>>,
         tenant_context: Option<&TenantContext>,
     ) -> Result<TableRecordScanResponse> {
-        RecordStorageTableRecordStore::new(self.storage.clone())
-            .scan_records_filtered(table_schema, request, predicate, tenant_context)
+        let partition = self.partition(&Self::tenant_key(tenant_context), &table_schema.name);
+        RecordStorageTableRecordStore::new(partition)
+            .scan_records_filtered(table_schema, request, predicate, None)
             .await
     }
 
@@ -1390,11 +1574,14 @@ impl TableRecordStore for DirectWalTableRecordStore {
         _primary_key: Option<&str>,
         sets: &[UniqueCandidateSet],
         exclude_oids: &std::collections::HashSet<String>,
-        _tenant_context: Option<&TenantContext>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<Option<UniqueConflict>> {
-        self.ensure_unique_index_built(table_schema).await?;
+        let tenant_scope = Self::tenant_key(tenant_context);
+        self.ensure_unique_index_built(table_schema, &tenant_scope)
+            .await?;
+        let index_key = (tenant_scope, table_schema.name.clone());
         let index = self.unique_index.read();
-        let Some(table_index) = index.get(&table_schema.name) else {
+        let Some(table_index) = index.get(&index_key) else {
             return Ok(None); // table has no UNIQUE/PK sets
         };
         for set in sets {
@@ -1406,37 +1593,6 @@ impl TableRecordStore for DirectWalTableRecordStore {
             }
         }
         Ok(None)
-    }
-
-    /// TD-110 Slice D: O(1) index-backed point lookup. Builds the per-table index
-    /// on first use, then probes the set matching `columns` for the `values`
-    /// tuple. Returns `Ok(None)` when no index set matches `columns` (caller
-    /// scans); otherwise the (possibly empty) set of owning oids.
-    async fn lookup_unique_oids(
-        &self,
-        table_schema: &CatalogTableSchema,
-        columns: &[String],
-        values: &[String],
-        _tenant_context: Option<&TenantContext>,
-    ) -> Result<Option<Vec<String>>> {
-        self.ensure_unique_index_built(table_schema).await?;
-        let index = self.unique_index.read();
-        let Some(table_index) = index.get(&table_schema.name) else {
-            return Ok(None); // table has no UNIQUE/PK sets
-        };
-        let Some(set) = table_index
-            .sets
-            .iter()
-            .find(|set| set.columns.as_slice() == columns)
-        else {
-            return Ok(None); // this column set is not indexed
-        };
-        let oids = set
-            .tuple_to_oids
-            .get(values)
-            .map(|owners| owners.iter().cloned().collect())
-            .unwrap_or_default();
-        Ok(Some(oids))
     }
 }
 
@@ -1748,6 +1904,26 @@ mod tests {
                 .push((path.clone(), data.to_vec()));
             Ok(())
         }
+
+        async fn latest_manifest_version(
+            &self,
+            _manifest_prefix: &str,
+        ) -> std::result::Result<Option<u64>, StorageError> {
+            Ok(None)
+        }
+
+        async fn publish_snapshot(
+            &self,
+            _data_prefix: &ObjectPath,
+            _manifest_prefix: &str,
+            _parent: Option<u64>,
+        ) -> std::result::Result<
+            proximadb_storage_common::object_store_bridge::CommitOutcome,
+            StorageError,
+        > {
+            use proximadb_storage_common::object_store_bridge::CommitOutcome;
+            Ok(CommitOutcome::Committed(0))
+        }
     }
 
     #[async_trait]
@@ -1816,6 +1992,7 @@ mod tests {
             .scan_records_filtered(
                 &schema,
                 TableRecordScanRequest {
+                    filter: None,
                     table_id: "orders".to_string(),
                     limit: None,
                     include_vector: true,
@@ -1896,6 +2073,7 @@ mod tests {
             .scan_records(
                 &schema,
                 TableRecordScanRequest {
+                    filter: None,
                     table_id: "orders".to_string(),
                     limit: Some(10),
                     include_vector: true,
@@ -2102,6 +2280,7 @@ mod tests {
             .scan_records(
                 &schema,
                 TableRecordScanRequest {
+                    filter: None,
                     table_id: "events".to_string(),
                     limit: Some(10),
                     include_vector: true,
@@ -2587,6 +2766,7 @@ mod tests {
             .scan_records(
                 &schema,
                 TableRecordScanRequest {
+                    filter: None,
                     table_id: "orders".to_string(),
                     limit: None,
                     include_vector: true,
@@ -2682,6 +2862,7 @@ mod tests {
             .scan_records(
                 &schema,
                 TableRecordScanRequest {
+                    filter: None,
                     table_id: "vectors".to_string(),
                     limit: None,
                     include_vector: true,
@@ -2693,14 +2874,21 @@ mod tests {
             .unwrap();
         assert_eq!(scanned.len(), 1, "the persisted record must read back");
         assert_eq!(scanned[0].oid, "v1", "oid must round-trip through PAX");
-        assert_eq!(
-            scanned[0]
-                .embeddings
-                .first()
-                .map(|e| e.values.to_fp32_owned()),
-            Some(vec![0.1, 0.2, 0.3, 0.4]),
-            "dense embedding must round-trip through the PAX segment"
-        );
+        // PAX v2 stores dense vectors with SQ8 scalar quantization (lossy, 4x), so
+        // the embedding reconstructs within one quantization step rather than bit-exactly.
+        let got = scanned[0]
+            .embeddings
+            .first()
+            .map(|e| e.values.to_fp32_owned())
+            .expect("dense embedding must round-trip through the PAX segment");
+        let expected = [0.1_f32, 0.2, 0.3, 0.4];
+        assert_eq!(got.len(), expected.len(), "embedding dim must round-trip");
+        for (g, e) in got.iter().zip(expected.iter()) {
+            assert!(
+                (g - e).abs() <= 0.02,
+                "dense embedding must round-trip within SQ8 tolerance: got {got:?} vs {expected:?}"
+            );
+        }
         // Phase B: props + timestamps now round-trip (was oid+embedding only).
         assert_eq!(
             proximadb_records::tree_get(&scanned[0].props, "category"),
@@ -2726,7 +2914,20 @@ mod tests {
             .await
             .unwrap()
             .expect("get_by_key must find the persisted vector record");
-        assert_eq!(fetched.vector, vec![0.1, 0.2, 0.3, 0.4]);
+        // SQ8-quantized reconstruction: compare within one quantization step.
+        let expected = [0.1_f32, 0.2, 0.3, 0.4];
+        assert_eq!(
+            fetched.vector.len(),
+            expected.len(),
+            "vector dim must round-trip"
+        );
+        for (g, e) in fetched.vector.iter().zip(expected.iter()) {
+            assert!(
+                (g - e).abs() <= 0.02,
+                "get_by_key vector must round-trip within SQ8 tolerance: got {:?} vs {expected:?}",
+                fetched.vector
+            );
+        }
     }
 
     /// Phase D: the recovered `oid` byte-matches the catalog's canonical
@@ -2929,13 +3130,125 @@ impl TableRecordStore for ObjectStoreIcebergRecordStore {
 }
 
 /// Specialized Vector/ANN Target: PAX block formats.
+/// Process-global multitenant footer/index caches for the PAX v2 ranged read
+/// path. The cache is inherently a process singleton; `SharedServices` calls
+/// [`init_segment_caches`] once at boot, and every `ObjectStoreVectorRecordStore`
+/// auto-picks them up — no threading through every constructor.
+static GLOBAL_SEGMENT_CACHES: std::sync::OnceLock<(
+    Arc<proximadb_storage_common::ranged_segment::FooterCache>,
+    Arc<proximadb_storage_common::ranged_segment::SegmentIndexCache>,
+)> = std::sync::OnceLock::new();
+
+/// Initialize the global footer/index caches from `budget` (idempotent — first
+/// call wins). Call once during server boot.
+///
+/// `limits_resolver` is the open-core injection seam (Dependency Inversion): OSS
+/// passes `None` → uniform elastic fair share. An enterprise/control-plane boot
+/// path supplies a [`proximadb_cache::LimitsResolver`] (built from an
+/// operator `cache_tiers.json` [`proximadb_cache::TierPolicy`] + a tenant→tier
+/// authority such as `TenantContext.tier`) to get tier-weighted preference —
+/// without any commercial policy baked into the OSS engine.
+pub fn init_segment_caches(
+    budget: proximadb_cache::CacheBudget,
+    limits_resolver: Option<Arc<proximadb_cache::LimitsResolver>>,
+) {
+    let mut footer = proximadb_storage_common::ranged_segment::FooterCache::new(budget.clone());
+    let mut index = proximadb_storage_common::ranged_segment::SegmentIndexCache::new(budget);
+    if let Some(resolver) = limits_resolver {
+        footer = footer.with_limits_resolver(resolver.clone());
+        index = index.with_limits_resolver(resolver);
+    }
+    let _ = GLOBAL_SEGMENT_CACHES.set((Arc::new(footer), Arc::new(index)));
+}
+
+/// Per-tenant stats snapshot for the global footer cache (for metrics emission).
+/// Empty when caches are not initialized.
+pub fn segment_cache_tenant_stats() -> Vec<proximadb_cache::TenantCacheStat> {
+    GLOBAL_SEGMENT_CACHES
+        .get()
+        .map(|(fc, _)| fc.tenant_stats())
+        .unwrap_or_default()
+}
+
+fn segment_caches() -> (
+    Option<Arc<proximadb_storage_common::ranged_segment::FooterCache>>,
+    Option<Arc<proximadb_storage_common::ranged_segment::SegmentIndexCache>>,
+) {
+    match GLOBAL_SEGMENT_CACHES.get() {
+        Some((fc, ic)) => (Some(fc.clone()), Some(ic.clone())),
+        None => (None, None),
+    }
+}
+
+/// Process-global tenant→tier map (the *authority* hook for the open-core cache
+/// tier policy). OSS leaves it empty (→ uniform fair share); the auth/control
+/// plane populates it from a request tier claim via [`set_tenant_tier`], and the
+/// cache `LimitsResolver` (built from an operator `cache_tiers.json`) reads it.
+/// Commercial tier *data* stays out of OSS — this only carries opaque tier ids.
+static TENANT_TIERS: std::sync::LazyLock<dashmap::DashMap<String, String>> =
+    std::sync::LazyLock::new(dashmap::DashMap::new);
+
+/// Record (or update) a tenant's tier id — called by the auth layer from a
+/// request claim/header. No-op semantics for unknown tenants (just inserts).
+pub fn set_tenant_tier(tenant_id: impl Into<String>, tier: impl Into<String>) {
+    TENANT_TIERS.insert(tenant_id.into(), tier.into());
+}
+
+/// The recorded tier id for a tenant, if the control plane has stamped one.
+pub fn tenant_tier(tenant_id: &str) -> Option<String> {
+    TENANT_TIERS.get(tenant_id).map(|r| r.clone())
+}
+
+/// Resolve a tenant to its [`Tier`] from the header-fed registry above — the
+/// co-design C5 tenant→tier bridge. Parses the stamped claim via
+/// [`Tier::from_claim`] (alias-aware) and falls back to the configured default
+/// tier when no claim was stamped or it is unrecognized. This converges the
+/// header-fed tier source (the cache `LimitsResolver`) with the route cost
+/// model's tier multiplier — one tier registry, not two. Installed at startup
+/// into `tenant_tier::set_tenant_tier_resolver` (see `database.rs`).
+pub fn tenant_tier_resolved(tenant_id: &str) -> crate::catalog::tenant_tier::Tier {
+    tenant_tier(tenant_id)
+        .and_then(|claim| crate::catalog::tenant_tier::Tier::from_claim(&claim))
+        .unwrap_or_else(crate::catalog::tenant_tier::default_tier)
+}
+
+#[cfg(test)]
+mod tenant_tier_bridge_tests {
+    use super::*;
+    use crate::catalog::tenant_tier::{Tier, default_tier};
+
+    #[test]
+    fn resolves_stamped_tier_else_default() {
+        // Unique tenant ids so this never races sibling tests on the global map.
+        let unknown = "bridge-test-unknown-tenant";
+        assert_eq!(tenant_tier_resolved(unknown), default_tier());
+
+        let t = "bridge-test-pro-tenant";
+        set_tenant_tier(t, "pro"); // control-plane stamped X-Tenant-Tier: pro
+        assert_eq!(tenant_tier_resolved(t), Tier::Tier3);
+
+        // An unrecognized claim falls back to the default tier (fail-safe).
+        let bad = "bridge-test-bad-claim-tenant";
+        set_tenant_tier(bad, "not-a-tier");
+        assert_eq!(tenant_tier_resolved(bad), default_tier());
+    }
+}
+
 pub struct ObjectStoreVectorRecordStore {
     bridge: Arc<dyn ObjectStoreBridge>,
+    footer_cache: Option<Arc<proximadb_storage_common::ranged_segment::FooterCache>>,
+    index_cache: Option<Arc<proximadb_storage_common::ranged_segment::SegmentIndexCache>>,
 }
 
 impl ObjectStoreVectorRecordStore {
     pub fn new(bridge: Arc<dyn ObjectStoreBridge>) -> Self {
-        Self { bridge }
+        // Auto-pick up the process-global caches if SharedServices initialized them.
+        let (footer_cache, index_cache) = segment_caches();
+        Self {
+            bridge,
+            footer_cache,
+            index_cache,
+        }
     }
 
     /// Read every current record for `schema` by listing the PAX segment objects
@@ -2952,10 +3265,12 @@ impl ObjectStoreVectorRecordStore {
             list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
         let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
         record_object_store_op(tenant_id, "list_pax");
+        io_trace::record_op_str("list_pax");
 
         let mut records = Vec::new();
         for path in segment_paths {
             record_object_store_op(tenant_id, "fetch_pax");
+            io_trace::record_op_str("fetch_pax");
             let bytes = self
                 .bridge
                 .fetch_vector_segment(&path, tenant_id)
@@ -2963,6 +3278,17 @@ impl ObjectStoreVectorRecordStore {
                 .map_err(|err| {
                     anyhow!("ObjectStoreVectorRecordStore failed to fetch '{path}': {err}")
                 })?;
+            io_trace::record_bytes_read(bytes.len() as u64);
+            // KOU read-egress (Dimension 2): the fetched bytes left object storage
+            // for compute. Metered per-(tenant, locality, direction); only
+            // chargeable (cross-region/-cloud/on-prem/internet) localities feed the
+            // cost model's egress term — same-region/AZ reads are free.
+            record_kou_bytes(
+                tenant_id,
+                object_store_egress_locality(),
+                "read",
+                bytes.len() as u64,
+            );
             records.extend(pax_segment_to_records(bytes, schema)?);
         }
         Ok(records)
@@ -3115,5 +3441,97 @@ impl TableRecordStore for ObjectStoreVectorRecordStore {
             }
         }
         Ok(records)
+    }
+    /// Override: when a structured `request.filter` is present, read segments via
+    /// footer-first **ranged** reads and skip whole blocks the filter provably
+    /// excludes (predicate pushdown) before fetching their bodies. The row-exact
+    /// `predicate` closure is still applied on top (block pruning is coarse), and
+    /// the scan stops at `request.limit`. With no structured filter, this falls
+    /// back to the default materialize-then-filter behavior.
+    async fn scan_records_filtered(
+        &self,
+        table_schema: &CatalogTableSchema,
+        request: TableRecordScanRequest,
+        predicate: Option<&RecordScanPredicate<'_>>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        let Some(filter) = request.filter.clone() else {
+            let limit = request.limit.unwrap_or(usize::MAX);
+            let mut req = request;
+            req.limit = None;
+            let mut all = self.scan_records(table_schema, req, tenant_context).await?;
+            let mut kept = 0usize;
+            all.retain(|record| {
+                if kept >= limit {
+                    return false;
+                }
+                let keep = predicate.is_none_or(|p| p(record));
+                if keep {
+                    kept += 1;
+                }
+                keep
+            });
+            return Ok(all);
+        };
+
+        let limit = request.limit.unwrap_or(usize::MAX);
+        let base = object_store_write_base_path(table_schema, tenant_context);
+        let prefix = ObjectPath::from(format!("{base}segments"));
+        let segment_paths =
+            list_objects_with_suffix(&self.bridge, &prefix, PAX_SEGMENT_EXT).await?;
+        let tenant_id = tenant_context.map(|tc| tc.tenant_id.as_str());
+        record_object_store_op(tenant_id, "list_pax");
+        io_trace::record_op_str("list_pax");
+        let field_to_col: &(dyn Fn(&str) -> Option<i32> + Sync) =
+            &crate::storage::engines::sst::segment_format::pax_field_to_col;
+
+        let mut out = Vec::new();
+        'segments: for path in segment_paths {
+            record_object_store_op(tenant_id, "fetch_pax_ranged");
+            io_trace::record_op_str("fetch_pax_ranged");
+            let reader = RangedSegmentReader::open_with_cache(
+                self.bridge.as_ref(),
+                path.clone(),
+                tenant_id,
+                self.footer_cache.clone(),
+                self.index_cache.clone(),
+            )
+            .await
+            .map_err(|err| anyhow!("ranged open '{path}': {err}"))?;
+            let recs = reader
+                .read_records_pruned(&filter, field_to_col, &[], &[])
+                .await
+                .map_err(|err| anyhow!("ranged pruned read '{path}': {err}"))?;
+            // Forward this open's physical read accounting into the per-query
+            // I/O trace (co-design C0: object-store bytes + footer-cache
+            // effectiveness, Dimensions 1 & 3).
+            let st = reader.read_stats();
+            io_trace::record_bytes_read(st.bytes_read);
+            io_trace::record_range_gets(st.range_gets);
+            io_trace::record_footers(st.footer_hits, st.footer_misses);
+            // KOU read-egress (Dimension 2): ranged-read bytes that left object storage.
+            record_kou_bytes(
+                tenant_id,
+                object_store_egress_locality(),
+                "read",
+                st.bytes_read,
+            );
+            for mut record in recs {
+                record.variation_id = Some(table_schema.name.clone());
+                if predicate.is_none_or(|p| p(&record)) {
+                    if !request.include_vector {
+                        record.embeddings.clear();
+                    }
+                    if !request.include_props {
+                        record.props.clear();
+                    }
+                    out.push(record);
+                    if out.len() >= limit {
+                        break 'segments;
+                    }
+                }
+            }
+        }
+        Ok(out)
     }
 }

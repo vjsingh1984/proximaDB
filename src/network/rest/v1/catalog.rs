@@ -7,19 +7,19 @@
 //! ### Catalog Management
 //! - `POST /api/v1/catalogs` - Register a new external catalog
 //! - `GET /api/v1/catalogs` - List all registered catalogs
-//! - `GET /api/v1/catalogs/:name` - Get catalog details
-//! - `DELETE /api/v1/catalogs/:name` - Unregister a catalog
+//! - `GET /api/v1/catalogs/{name}` - Get catalog details
+//! - `DELETE /api/v1/catalogs/{name}` - Unregister a catalog
 //!
 //! ### Namespace Operations
-//! - `POST /api/v1/catalogs/:catalog/namespaces` - Create namespace
-//! - `GET /api/v1/catalogs/:catalog/namespaces` - List namespaces
-//! - `DELETE /api/v1/catalogs/:catalog/namespaces` - Drop namespace
+//! - `POST /api/v1/catalogs/{catalog}/namespaces` - Create namespace
+//! - `GET /api/v1/catalogs/{catalog}/namespaces` - List namespaces
+//! - `DELETE /api/v1/catalogs/{catalog}/namespaces` - Drop namespace
 //!
 //! ### Table Operations
-//! - `POST /api/v1/catalogs/:catalog/tables` - Create external table
-//! - `GET /api/v1/catalogs/:catalog/tables` - List tables
-//! - `GET /api/v1/catalogs/:catalog/tables/:table` - Get table schema
-//! - `DELETE /api/v1/catalogs/:catalog/tables/:table` - Drop table
+//! - `POST /api/v1/catalogs/{catalog}/tables` - Create external table
+//! - `GET /api/v1/catalogs/{catalog}/tables` - List tables
+//! - `GET /api/v1/catalogs/{catalog}/tables/{table}` - Get table schema
+//! - `DELETE /api/v1/catalogs/{catalog}/tables/{table}` - Drop table
 
 use axum::{
     Json, Router,
@@ -139,13 +139,15 @@ pub async fn list_catalogs(
     debug!("Listing catalogs");
 
     // List catalogs from the manager. Currently returns default catalog.
-    let catalog_names = state
-        .catalog_manager
-        .list_catalog_names()
-        .await
-        .unwrap_or_default();
+    let catalog_names = state.catalog_manager.list_catalogs().await;
     Ok(Json(ListCatalogsResponse {
-        catalogs: catalog_names,
+        catalogs: catalog_names
+            .into_iter()
+            .map(|name| CatalogConfig {
+                name,
+                ..Default::default()
+            })
+            .collect(),
     }))
 }
 
@@ -324,12 +326,13 @@ pub async fn list_tables(
 
     // Namespace from query params (default namespace for now)
     let namespace = vec![];
-    let tables = catalog
+    // Validates the namespace (errors propagate); TableIdentifier → TableSchema
+    // conversion (names → schemas) is not yet implemented, so the list is empty.
+    let _tables = catalog
         .list_tables(&namespace)
         .await
         .map_err(|e| ApiError::Internal(format!("Failed to list tables: {}", e)))?;
 
-    // TableIdentifier → TableSchema conversion: maps table names to schemas
     Ok(Json(ListTablesResponse { tables: vec![] }))
 }
 
@@ -416,25 +419,25 @@ pub fn configure_routes() -> Router<CatalogApiState> {
         .route("/api/v1/catalogs", axum::routing::post(create_catalog))
         .route("/api/v1/catalogs", axum::routing::get(list_catalogs))
         .route(
-            "/api/v1/catalogs/:name",
+            "/api/v1/catalogs/{name}",
             get(get_catalog).delete(drop_catalog),
         )
         // Namespace operations
         .route(
-            "/api/v1/catalogs/:catalog/namespaces",
+            "/api/v1/catalogs/{catalog}/namespaces",
             post(create_namespace).get(list_namespaces),
         )
         .route(
-            "/api/v1/catalogs/:catalog/namespaces/:namespace",
+            "/api/v1/catalogs/{catalog}/namespaces/{namespace}",
             axum::routing::delete(drop_namespace),
         )
         // Table operations
         .route(
-            "/api/v1/catalogs/:catalog/tables",
+            "/api/v1/catalogs/{catalog}/tables",
             post(create_table).get(list_tables),
         )
         .route(
-            "/api/v1/catalogs/:catalog/tables/:table",
+            "/api/v1/catalogs/{catalog}/tables/{table}",
             get(get_table).delete(drop_table),
         )
 }
@@ -447,7 +450,7 @@ pub fn configure_routes() -> Router<CatalogApiState> {
 fn convert_proto_catalog_config(_proto_config: &CatalogConfig) -> ApiResult<()> {
     // Catalog type conversion: maps internal catalog representation to proto
     Err(ApiError::NotImplemented(
-        "Catalog config conversion not yet implemented",
+        "Catalog config conversion not yet implemented".to_string(),
     ))
 }
 
@@ -484,8 +487,10 @@ fn convert_table_schema_from_proto(proto: &TableSchema) -> ApiResult<CatalogTabl
 /// Convert ProximaDB table schema to proto table schema
 fn convert_table_schema_to_proto(schema: CatalogTableSchema) -> TableSchema {
     TableSchema {
-        catalog: schema.catalog_id.unwrap_or_default(),
-        namespace: schema.namespace_path.unwrap_or_default(),
+        // ProximaSchema no longer carries catalog/namespace identity (moved to
+        // TableIdentifier); default to empty, matching prior unwrap_or_default().
+        catalog: String::new(),
+        namespace: Vec::new(),
         name: schema.name.clone(),
         columns: schema
             .columns
@@ -493,7 +498,7 @@ fn convert_table_schema_to_proto(schema: CatalogTableSchema) -> TableSchema {
             .map(|col| crate::proto::proximadb_v1::ColumnDefinition {
                 id: col.id,
                 name: col.name.clone(),
-                data_type: convert_data_type_to_proto(&col.data_type),
+                data_type: convert_data_type_to_proto(&col.data_type).into(),
                 nullable: col.nullable,
                 default_value: col.default_value.unwrap_or_default(),
                 comment: col.comment.unwrap_or_default(),

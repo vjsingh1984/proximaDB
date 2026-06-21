@@ -9,6 +9,17 @@ ProximaDB aims to be "The Context Database" -- a unified engine for vectors, doc
 time-series, and events, purpose-built for AI agents, real-time analytics, and mission-critical
 applications. Dogfooded in production algorithmic trading.
 
+[IMPORTANT]
+====
+This document states the *broad, durable vision*. The *narrow, reliable surface actually
+supported today* is defined by link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc], which is
+authoritative for maturity and customer claims -- treat anything here not listed there as
+aspirational. The *near-term wedge* is *pgwire/relational + vector/context over decoupled object
+storage* per link:../12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc[the
+2026-06-04 course correction]: the multi-model vision is delivered incrementally through a
+relational/warehouse-compatible front door, not all at once.
+====
+
 == Executive Summary
 
 Modern AI agents and real-time applications do not operate on a single data model. They need

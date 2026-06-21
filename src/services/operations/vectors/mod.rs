@@ -45,6 +45,21 @@ pub mod search;
 // Metadata validation and pseudo-query generation
 pub mod validation;
 
+// Diagnostics / metrics collaborator (Phase 2.1 decomposition)
+mod diagnostics;
+
+// Flush + compaction coordinator (Phase 2.1 decomposition)
+mod flush;
+
+// Collection-resolution + engine-resolution collaborator (Phase 2.1 decomposition)
+mod resolver;
+
+// Pure input validators for inserts/queries (Phase 2.1 decomposition)
+mod input_validation;
+
+// WAL write-primitive coordinator (Phase 2.1 decomposition)
+mod write;
+
 // Legacy main service implementation (being decomposed)
 mod legacy;
 

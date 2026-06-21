@@ -21,7 +21,6 @@
 //! `logical_lowering`) into the shared logical plane so the join is reachable from
 //! pgwire SQL. Both reuse [`vector_matches_to_batch`] below.
 
-use std::any::Any;
 use std::sync::Arc;
 
 use arrow_array::{Float32Array, RecordBatch, StringArray};
@@ -107,10 +106,6 @@ impl std::fmt::Debug for VectorSearchTableProvider {
 
 #[async_trait]
 impl TableProvider for VectorSearchTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         vector_matches_schema()
     }
@@ -195,11 +190,26 @@ impl TableFunctionImpl for VectorSearchTableFunction {
                 "vector_search: cannot parse query vector {query_text:?}"
             ))
         })?;
+        if collection.trim().is_empty() {
+            return Err(DataFusionError::Plan(
+                "vector_search: collection must not be empty".into(),
+            ));
+        }
+        if query_vector.is_empty() {
+            return Err(DataFusionError::Plan(
+                "vector_search: query vector must contain at least one dimension".into(),
+            ));
+        }
+        if top_k <= 0 {
+            return Err(DataFusionError::Plan(
+                "vector_search: top_k must be greater than zero".into(),
+            ));
+        }
         Ok(Arc::new(VectorSearchTableProvider::new(
             self.vector_ops.clone(),
             collection,
             query_vector,
-            top_k.max(0) as u32,
+            top_k as u32,
             None,
         )))
     }
@@ -483,6 +493,38 @@ mod tests {
             .map(|b| b.num_rows())
             .sum();
         assert_eq!(n, 2); // a + b
+    }
+
+    #[tokio::test]
+    async fn vector_search_udtf_rejects_invalid_inputs() {
+        let ops: Arc<dyn proximadb_runtime::VectorOpsPort> =
+            Arc::new(FixedVectorOps { matches: vec![] });
+        let ctx = SessionContext::new();
+        ctx.register_udtf(
+            "vector_search",
+            Arc::new(VectorSearchTableFunction::new(ops)),
+        );
+
+        for (sql, expected) in [
+            (
+                "SELECT * FROM vector_search('', '[0.1,0.2]', 10)",
+                "collection must not be empty",
+            ),
+            (
+                "SELECT * FROM vector_search('docs_vec', '[]', 10)",
+                "query vector must contain at least one dimension",
+            ),
+            (
+                "SELECT * FROM vector_search('docs_vec', '[0.1,0.2]', 0)",
+                "top_k must be greater than zero",
+            ),
+        ] {
+            let error = ctx.sql(sql).await.expect_err("invalid vector_search");
+            assert!(
+                error.to_string().contains(expected),
+                "expected {expected:?} in {error}"
+            );
+        }
     }
 
     #[tokio::test]

@@ -644,12 +644,12 @@ Legacy `ProximaDBStub` is no longer supported in v1 SDKs.
 === SKS Compatibility (Experimental)
 
 - The Python SDK automatically probes and uses SKS endpoints when available:
-  - Search: `POST /api/v1/search/{collection_id}` (envelope response)
-  - Entities: `POST/GET/DELETE /api/v1/entities/{collection_id}[/{entity_id}]`
+  - Search: `POST /api/v2/collections/{collection_id}/search` (envelope response)
+  - Entities: `POST/GET/DELETE /api/v2/collections/{collection_id}/records[/{entity_id}]`
 - When SKS is not available, the SDK falls back to legacy endpoints:
-  - Search: `POST /api/v1/vector/search`
-  - Batch write: `POST /api/v1/vector/batch`
-  - Delete: `DELETE /api/v1/vectors/{collection_id}`
+  - Search: `POST /api/v2/collections/{collection_id}/search`
+  - Batch write: `POST /api/v2/collections/{collection_id}/records`
+  - Delete: `DELETE /api/v2/collections/{collection_id}`
 
 You can pre‑probe SKS support for a collection to avoid first‑call probing:
 

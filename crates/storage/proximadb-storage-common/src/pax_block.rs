@@ -40,7 +40,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Result, bail};
 use proximadb_block_format::{
-    BlockCompression, BlockMode, BlockStats, FlatRow, PaxBlockReader, PaxBlockWriter,
+    BlockCompression, BlockMode, BlockStats, FlatRow, PaxBlockReader, PaxBlockWriter, VectorQuant,
     header::fnv1a_hash,
 };
 use proximadb_records::ProximaRecord;
@@ -109,6 +109,52 @@ impl SegmentIndex {
         }
         Ok(Self { blocks })
     }
+
+    /// Locate and parse the index at the tail of `before_magic` (the segment
+    /// bytes with the trailing [`SEGMENT_MAGIC`] removed). The index length is
+    /// not stored explicitly, so candidate counts are tried until the embedded
+    /// count + CRC validate. Shared by the whole-file scanner and the ranged
+    /// reader.
+    pub fn locate(before_magic: &[u8]) -> Result<Self> {
+        if before_magic.len() < 8 {
+            bail!("no room for segment index");
+        }
+        for candidate_n in 0usize..=(before_magic.len().saturating_sub(8) / 12) {
+            let index_len = 4 + candidate_n * 12 + 4;
+            if index_len > before_magic.len() {
+                break;
+            }
+            let idx_start = before_magic.len() - index_len;
+            let n_in_data = u32::from_le_bytes(
+                before_magic[idx_start..idx_start + 4]
+                    .try_into()
+                    .unwrap_or([0; 4]),
+            ) as usize;
+            if n_in_data == candidate_n
+                && let Ok(idx) = SegmentIndex::from_bytes(&before_magic[idx_start..])
+            {
+                return Ok(idx);
+            }
+        }
+        bail!("could not locate valid segment index");
+    }
+
+    /// Locate and parse the index from a file **suffix** that must contain the
+    /// trailing [`SEGMENT_MAGIC`] and the full index. Returns `Ok(None)` when the
+    /// suffix is too small to hold the whole index (the caller should re-read a
+    /// larger suffix), and `Err` only on a corrupt/invalid tail. This is the
+    /// footer-first entry point for object-storage ranged reads.
+    pub fn locate_in_suffix(suffix: &[u8]) -> Result<Option<Self>> {
+        if suffix.len() < 8 || &suffix[suffix.len() - 8..] != SEGMENT_MAGIC {
+            bail!("segment suffix missing magic (not a PAX segment tail)");
+        }
+        let before_magic = &suffix[..suffix.len() - 8];
+        match Self::locate(before_magic) {
+            Ok(idx) => Ok(Some(idx)),
+            // The index may simply not fit in this suffix yet — signal a re-read.
+            Err(_) => Ok(None),
+        }
+    }
 }
 
 // ── Segment metadata (returned from finish()) ──────────────────────────────────
@@ -140,6 +186,8 @@ pub struct PaxSegmentWriter {
     schema_fingerprint: u64,
     embedding_count: usize,
     block_size_threshold: usize,
+    /// Vector quantization strategy for every block in this segment (P3 Phase D).
+    quant: VectorQuant,
 
     current_writer: PaxBlockWriter,
     index: SegmentIndex,
@@ -183,12 +231,29 @@ impl PaxSegmentWriter {
             schema_fingerprint,
             embedding_count,
             block_size_threshold: threshold,
+            quant: VectorQuant::Auto,
             current_writer: writer,
             index: SegmentIndex { blocks: Vec::new() },
             block_stats: Vec::new(),
             file_buf: Vec::new(),
             row_count: 0,
         }
+    }
+
+    /// Set the vector quantization strategy for this segment (P3 Phase D). Builder form
+    /// so existing `new(..)` callers are unchanged; rebuilds the (still-empty) current
+    /// block writer so the strategy applies from the first record. `Auto` = env default.
+    pub fn with_quant(mut self, quant: VectorQuant) -> Self {
+        self.quant = quant;
+        self.current_writer = PaxBlockWriter::new(
+            self.mode,
+            self.compression,
+            &self.collection_id,
+            self.schema_fingerprint,
+            self.embedding_count,
+        )
+        .with_quant(quant);
+        self
     }
 
     /// Append a record to the current block.
@@ -232,14 +297,15 @@ impl PaxSegmentWriter {
         self.file_buf.extend_from_slice(&block_bytes);
         self.block_stats.push(stats);
 
-        // Reset writer for the next block
+        // Reset writer for the next block (preserving the segment's quant strategy).
         self.current_writer = PaxBlockWriter::new(
             self.mode,
             self.compression,
             &self.collection_id,
             self.schema_fingerprint,
             self.embedding_count,
-        );
+        )
+        .with_quant(self.quant);
         Ok(())
     }
 
@@ -360,33 +426,7 @@ impl PaxSegmentScanner {
     }
 
     fn parse_index(before_magic: &[u8]) -> Result<SegmentIndex> {
-        if before_magic.len() < 8 {
-            bail!("no room for segment index");
-        }
-        // Read block_count from various candidate positions.
-        // The index is at the END of `before_magic`. We know:
-        //   index_len = 4 + n * 12 + 4
-        // Try up to 1 MB of index (for up to ~87 000 blocks — well beyond normal).
-        for candidate_n in 0usize..=(before_magic.len().saturating_sub(8) / 12) {
-            let index_len = 4 + candidate_n * 12 + 4;
-            if index_len > before_magic.len() {
-                break;
-            }
-            let idx_start = before_magic.len() - index_len;
-            let n_in_data = u32::from_le_bytes(
-                before_magic[idx_start..idx_start + 4]
-                    .try_into()
-                    .unwrap_or([0; 4]),
-            ) as usize;
-            if n_in_data == candidate_n {
-                // Candidate matches — validate CRC
-                match SegmentIndex::from_bytes(&before_magic[idx_start..]) {
-                    Ok(idx) => return Ok(idx),
-                    Err(_) => continue,
-                }
-            }
-        }
-        bail!("could not locate valid segment index");
+        SegmentIndex::locate(before_magic)
     }
 
     /// Yield the next block that passes predicate pruning.
@@ -466,6 +506,77 @@ impl PaxSegmentScanner {
     }
 }
 
+// ── Compaction (TD-114) ─────────────────────────────────────────────────────────
+
+/// Statistics from a PAX segment compaction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionStats {
+    /// Number of input segment files merged.
+    pub inputs: usize,
+    /// Total records read across all inputs.
+    pub records_in: u64,
+    /// Records written to the output (survivors, after dropping tombstones).
+    pub records_out: u64,
+    /// Records dropped because they were tombstones at `now_ns` (merge-on-read deletes).
+    pub tombstones_dropped: u64,
+}
+
+/// Merge several L0 PAX segments into one L1 segment, dropping records that are
+/// tombstones as of `now_ns` (merge-on-read deletes; TD-114).
+///
+/// `embedding_model_ids` and `user_column_keys` are the collection's schema keys
+/// used to reconstruct records (see [`PaxSegmentScanner::read_records`]). Inputs are
+/// read in order; surviving records are written to `output` via a fresh
+/// [`PaxSegmentWriter`]. This is a pure, engine-agnostic primitive: the caller owns
+/// L0 discovery (the input paths) and manifest registration of the output.
+#[allow(clippy::too_many_arguments)]
+pub fn compact_pax_segments(
+    inputs: &[PathBuf],
+    output: &Path,
+    mode: BlockMode,
+    compression: BlockCompression,
+    collection_id: &str,
+    schema_fingerprint: u64,
+    embedding_count: usize,
+    embedding_model_ids: &[String],
+    user_column_keys: &[String],
+    now_ns: i64,
+) -> Result<CompactionStats> {
+    let mut writer = PaxSegmentWriter::new(
+        output,
+        mode,
+        compression,
+        collection_id,
+        schema_fingerprint,
+        embedding_count,
+        None,
+    );
+    let mut records_in = 0u64;
+    let mut records_out = 0u64;
+    let mut tombstones_dropped = 0u64;
+
+    for input in inputs {
+        let mut scanner = PaxSegmentScanner::open(input, ScanPredicate::default())?;
+        for record in scanner.read_records(embedding_model_ids, user_column_keys)? {
+            records_in += 1;
+            if record.is_tombstone_at(now_ns) {
+                tombstones_dropped += 1;
+                continue;
+            }
+            writer.add_record(&record)?;
+            records_out += 1;
+        }
+    }
+    writer.finish()?;
+
+    Ok(CompactionStats {
+        inputs: inputs.len(),
+        records_in,
+        records_out,
+        tombstones_dropped,
+    })
+}
+
 // ── Tests ──────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -502,6 +613,76 @@ mod tests {
         assert_eq!(idx2.blocks.len(), 2);
         assert_eq!(idx2.blocks[0].size, 4096);
         assert_eq!(idx2.blocks[1].offset, 4096);
+    }
+
+    #[test]
+    fn compact_drops_tombstones_and_merges() {
+        let dir = tempfile::tempdir().unwrap();
+        let seg0 = dir.path().join("L0_0.pax");
+        let seg1 = dir.path().join("L0_1.pax");
+        let out = dir.path().join("L1.pax");
+
+        // L0 segment 0: two live records.
+        let mut w0 = PaxSegmentWriter::new(
+            &seg0,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            0,
+            Some(1),
+        );
+        w0.add_record(&make_record("a", "t", 100)).unwrap();
+        w0.add_record(&make_record("b", "t", 200)).unwrap();
+        w0.finish().unwrap();
+
+        // L0 segment 1: one live record + a tombstone (deleted at ts=500).
+        let mut w1 = PaxSegmentWriter::new(
+            &seg1,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            0,
+            Some(1),
+        );
+        w1.add_record(&make_record("c", "t", 300)).unwrap();
+        let mut tombstone = make_record("a", "t", 500);
+        tombstone.valid_to_ns = Some(500);
+        tombstone.origin = Some("delete".to_string());
+        w1.add_record(&tombstone).unwrap();
+        w1.finish().unwrap();
+
+        // Compact as of now=1000 (after the delete) → the tombstone is dropped.
+        let stats = compact_pax_segments(
+            &[seg0, seg1],
+            &out,
+            BlockMode::Pax,
+            BlockCompression::None,
+            "col",
+            0,
+            0,
+            &[],
+            &[],
+            1000,
+        )
+        .unwrap();
+
+        assert_eq!(stats.inputs, 2);
+        assert_eq!(stats.records_in, 4);
+        assert_eq!(stats.tombstones_dropped, 1);
+        assert_eq!(stats.records_out, 3);
+
+        // The merged L1 segment holds exactly the 3 survivors; no tombstone remains.
+        let mut scanner = PaxSegmentScanner::open(&out, ScanPredicate::default()).unwrap();
+        let survivors = scanner.read_records(&[], &[]).unwrap();
+        assert_eq!(survivors.len(), 3);
+        assert!(
+            survivors
+                .iter()
+                .all(|r| r.origin.as_deref() != Some("delete")),
+            "the delete tombstone must not survive compaction"
+        );
     }
 
     #[test]
@@ -621,10 +802,23 @@ mod tests {
         let mut labels: Vec<String> = r1.labels.iter().map(|s| s.to_string()).collect();
         labels.sort();
         assert_eq!(labels, vec!["a".to_string(), "b".to_string()]);
-        assert_eq!(
-            r1.embeddings.first().map(|e| e.values.to_fp32_owned()),
-            Some(vec![1.0, 2.0, 3.0])
-        );
+        // Vectors are SQ8-quantized in PAX v2 (lossy, 4× smaller): assert the
+        // embedding reconstructs within the per-column quantization error rather
+        // than bit-exactly. For [1,2,3] the step is (3-1)/255 ≈ 0.0078, so the
+        // bound is ~0.004 — well under 0.01.
+        let recon = r1
+            .embeddings
+            .first()
+            .map(|e| e.values.to_fp32_owned())
+            .expect("embedding present");
+        let expected = [1.0f32, 2.0, 3.0];
+        assert_eq!(recon.len(), expected.len());
+        for (got, exp) in recon.iter().zip(expected.iter()) {
+            assert!(
+                (got - exp).abs() <= 0.01,
+                "SQ8 embedding {got} not within 0.01 of {exp}"
+            );
+        }
     }
 
     #[test]

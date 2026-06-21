@@ -21,19 +21,7 @@ use bytes::Bytes;
 use object_store::path::Path;
 use proximadb_kernel::error::StorageError;
 use proximadb_object_store::ProximaObjectStore;
-
-/// Outcome of an attempted [`ManifestCommitter::commit`].
-///
-/// `Conflict` is an expected control-flow result of optimistic concurrency, not an
-/// error — only genuine I/O failures surface as `Err(StorageError)`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum CommitOutcome {
-    /// The manifest was atomically published as this new version.
-    Committed(u64),
-    /// Another committer already claimed the target slot. `latest` is the highest
-    /// version currently present — the snapshot to rebase onto and retry from.
-    Conflict { latest: Option<u64> },
-}
+pub use proximadb_storage_common::object_store_bridge::CommitOutcome;
 
 /// Atomic, optimistic-concurrency manifest committer over a [`ProximaObjectStore`].
 ///
@@ -114,6 +102,63 @@ impl ManifestCommitter {
             Err(other) => Err(other),
         }
     }
+
+    /// Commit `payload` as a **generation-fenced** successor of `parent` (TD-117/TD-119).
+    ///
+    /// On top of the version CAS in [`commit`](Self::commit), this fences a *stale
+    /// writer*: a `generation` strictly lower than the generation embedded in the latest
+    /// committed manifest is rejected with [`CommitOutcome::Conflict`] **before** the slot
+    /// is claimed. This is the object-store analog of Neon's `index_part.json` +
+    /// generation single-writer guarantee — a resurrected/forked writer carrying an old
+    /// generation cannot clobber a branch that a newer writer has taken over.
+    ///
+    /// The generation is stored as an 8-byte big-endian header prepended to `payload`;
+    /// read it back with [`read_fenced`](Self::read_fenced). Existing manifests written by
+    /// plain [`commit`](Self::commit) decode as generation `0`, so an unfenced log upgrades
+    /// transparently.
+    pub async fn commit_fenced(
+        &self,
+        parent: Option<u64>,
+        generation: u64,
+        payload: Bytes,
+    ) -> Result<CommitOutcome, StorageError> {
+        if let Some(latest) = self.latest_version().await? {
+            let (existing_generation, _) = decode_fenced(&self.read_manifest(latest).await?);
+            if generation < existing_generation {
+                // Stale writer: a newer generation already owns this log.
+                return Ok(CommitOutcome::Conflict {
+                    latest: Some(latest),
+                });
+            }
+        }
+        self.commit(parent, encode_fenced(generation, &payload))
+            .await
+    }
+
+    /// Read a generation-fenced manifest, returning `(generation, payload)`.
+    /// Manifests written by plain [`commit`](Self::commit) decode as generation `0`.
+    pub async fn read_fenced(&self, version: u64) -> Result<(u64, Bytes), StorageError> {
+        Ok(decode_fenced(&self.read_manifest(version).await?))
+    }
+}
+
+/// Prepend the 8-byte big-endian `generation` header to `payload`.
+fn encode_fenced(generation: u64, payload: &[u8]) -> Bytes {
+    let mut buf = Vec::with_capacity(8 + payload.len());
+    buf.extend_from_slice(&generation.to_be_bytes());
+    buf.extend_from_slice(payload);
+    Bytes::from(buf)
+}
+
+/// Split a fenced manifest into `(generation, payload)`. Bytes too short to carry a
+/// header decode as generation `0` with the whole buffer as payload (back-compat).
+fn decode_fenced(bytes: &Bytes) -> (u64, Bytes) {
+    if bytes.len() < 8 {
+        return (0, bytes.clone());
+    }
+    let mut header = [0u8; 8];
+    header.copy_from_slice(&bytes[..8]);
+    (u64::from_be_bytes(header), bytes.slice(8..))
 }
 
 #[cfg(test)]
@@ -234,5 +279,48 @@ mod tests {
             CommitOutcome::Committed(0)
         );
         assert_eq!(c.latest_version().await.unwrap(), Some(0));
+    }
+
+    /// A stale writer (generation lower than the latest committed) is fenced before it
+    /// can claim a slot; a current/newer generation commits and round-trips.
+    #[tokio::test]
+    async fn fenced_commit_rejects_stale_generation() {
+        let c = committer();
+        // Generation 5 takes ownership of the log at v0.
+        assert_eq!(
+            c.commit_fenced(None, 5, Bytes::from_static(b"g5"))
+                .await
+                .unwrap(),
+            CommitOutcome::Committed(0)
+        );
+        let (generation, payload) = c.read_fenced(0).await.unwrap();
+        assert_eq!(generation, 5);
+        assert_eq!(payload, Bytes::from_static(b"g5"));
+
+        // A resurrected writer with an older generation is fenced; no slot is claimed.
+        assert_eq!(
+            c.commit_fenced(Some(0), 3, Bytes::from_static(b"stale"))
+                .await
+                .unwrap(),
+            CommitOutcome::Conflict { latest: Some(0) }
+        );
+        assert_eq!(c.latest_version().await.unwrap(), Some(0));
+
+        // The current generation (>= latest) advances the log normally.
+        assert_eq!(
+            c.commit_fenced(Some(0), 5, Bytes::from_static(b"g5-next"))
+                .await
+                .unwrap(),
+            CommitOutcome::Committed(1)
+        );
+        assert_eq!(c.read_fenced(1).await.unwrap().0, 5);
+    }
+
+    /// A plain (unfenced) manifest decodes as generation 0 for forward compatibility.
+    #[tokio::test]
+    async fn plain_commit_decodes_as_generation_zero() {
+        let c = committer();
+        c.commit(None, Bytes::from_static(b"plain")).await.unwrap();
+        assert_eq!(c.read_fenced(0).await.unwrap().0, 0);
     }
 }

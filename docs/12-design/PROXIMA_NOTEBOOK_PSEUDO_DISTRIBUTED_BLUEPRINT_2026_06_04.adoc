@@ -18,6 +18,7 @@ authority into Python. The target experience is Python ergonomics with Rust exec
 * Python objects stay as facades over a lazy DataFusion `LogicalPlan`, similar to Spark DataFrames;
 * execution is pushed into the Rust engine through embedded PyO3/Arrow surfaces;
 * All SQL, relational, and multi-modal transforms are routed through **DataFusion** running over decoupled object storage;
+* **MLflow-compatible MLOps and Model Management** APIs are exposed natively on the DataFrame facade. Users can track experiments, log models, register artifacts, and execute distributed scoring or Ray-style training workflows utilizing the same Rust-native distributed architecture, all managed by xCatalog (`mlops.*`);
 * vector, document, graph, and observability paths utilize DataFusion User Defined Logical Nodes (UDLNs) wrapping Proxima-native operations;
 * a single-node pseudo-distributed mode using DataFusion workers proves the object-store coordination before real multi-node cluster maturity is claimed.
 

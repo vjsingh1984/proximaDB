@@ -18,7 +18,7 @@ use proximadb_catalog::{
 };
 use proximadb_data_model::ProximaType;
 use proximadb_data_model::ProximaValue;
-use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode, RecordStorage};
+use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
@@ -37,14 +37,104 @@ use crate::services::operations::vectors::RichSearchResult;
 use crate::services::record_store::{
     CatalogRoutingTableRecordStore, DirectWalTableRecordStore, ObjectStoreIcebergRecordStore,
     ObjectStoreVectorRecordStore, TableRecordGetRequest, TableRecordMutation,
-    TableRecordMutationKind, TableRecordScanRequest, TableRecordStore, TableWalAppender,
-    VectorOpsTableRecordStore, proxima_value_to_unique_text, record_unique_tuple,
+    TableRecordMutationKind, TableRecordScanRequest, TableRecordStore, VectorOpsTableRecordStore,
+    proxima_value_to_unique_text, record_unique_tuple,
 };
 use crate::services::{
-    WriteDurabilityRequirement, WriteIntent, WriteLaneDecision, WriteLaneRouter, WriteOperationKind,
+    WriteDurabilityRequirement, WriteIntent, WriteLane, WriteLaneDecision, WriteLaneRouter,
+    WriteOperationKind,
 };
 use crate::storage::tenant::context::TenantContext;
+use crate::storage::trait_components::path_resolver::DrPathBuilder;
 use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
+
+/// Placeholder tenant used by warehouse materialization when no `TenantContext`
+/// reaches it. This path does NOT yet enforce tenant isolation (see the note in
+/// [`DmlService::materialize_table_to_parquet`]); the placeholder is named and
+/// centralized so the gap is greppable and the eventual fix has one call site.
+pub(crate) const DEFAULT_TENANT_PLACEHOLDER: &str = "default_tenant";
+
+/// Apply DrPathBuilder's canonical per-segment ID validation to the components
+/// that form a warehouse object prefix (`data/{tenant}/{ns...}/{table}`).
+/// Defense-in-depth against `..` / path-separator / NUL / whitespace injection
+/// while the materialize path still builds the prefix manually instead of
+/// routing through `DrPathBuilder::build` (blocked on the namespace-id backfill;
+/// see [`DmlService::materialize_table_to_parquet`]).
+fn validate_object_path_segments(
+    tenant_id: &str,
+    namespace_segments: &[String],
+    table: &str,
+) -> Result<()> {
+    DrPathBuilder::validate_id("tenant_id", tenant_id)
+        .map_err(|e| anyhow!("refusing materialize: invalid tenant id for object path: {e}"))?;
+    for segment in namespace_segments {
+        DrPathBuilder::validate_id("namespace", segment).map_err(|e| {
+            anyhow!("refusing materialize: invalid namespace segment for object path: {e}")
+        })?;
+    }
+    DrPathBuilder::validate_id("table", table)
+        .map_err(|e| anyhow!("refusing materialize: invalid table name for object path: {e}"))?;
+    Ok(())
+}
+
+/// `PROXIMADB_WAREHOUSE_DRPATH=1|true` opts warehouse materialization into the
+/// DrPathBuilder-native physical layout (`data/{tenant}/{namespace_id}/{table}/`
+/// — rename-stable opaque ids). Default OFF: flipping it changes on-disk paths
+/// and orphans snapshots written under the legacy `data/{tenant}/{ns.join}/{table}`
+/// layout, so it is opt-in for new deployments. Read once per process.
+pub(crate) fn warehouse_drpath_enabled() -> bool {
+    use std::sync::OnceLock;
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("PROXIMADB_WAREHOUSE_DRPATH")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
+/// Resolve the tenant-isolated object prefix (no trailing `/`) for a warehouse
+/// snapshot. The `drpath_enabled` bool is passed in (not read from env) so this
+/// is deterministically unit-testable.
+///
+/// Layout selection:
+/// * DrPath (opt-in + a `namespace_id` is known): `data/{tenant}/{namespace_id}/{table}`
+///   via [`DrPathBuilder::build_from_parts`] — rename-stable, per-segment validated.
+/// * Legacy manual (default / no `namespace_id`): `data/{tenant}/{ns.join("/")}/{table}`
+///   with the same per-segment injection guards via [`validate_object_path_segments`].
+///
+/// In either layout, if the namespace carries an explicit owning `tenant_id` that
+/// differs from the request `tenant_id`, the materialize is refused (cross-tenant).
+pub(crate) fn resolve_materialize_prefix(
+    drpath_enabled: bool,
+    tenant_id: &str,
+    namespace_segments: &[String],
+    namespace_id: Option<&str>,
+    namespace_tenant_id: Option<&str>,
+    storage_pool_class: proximadb_catalog::StoragePoolClass,
+    table: &str,
+) -> Result<String> {
+    if let Some(owner) = namespace_tenant_id
+        && owner != tenant_id
+    {
+        return Err(anyhow!(
+            "refusing materialize: namespace is owned by tenant {owner:?} but the request \
+                 tenant is {tenant_id:?} (cross-tenant materialize)"
+        ));
+    }
+    if drpath_enabled && let Some(nsid) = namespace_id {
+        let resolved = DrPathBuilder::build_from_parts(tenant_id, nsid, table, storage_pool_class)
+            .map_err(|e| anyhow!("refusing materialize: DrPathBuilder rejected path: {e}"))?;
+        // root_prefix() carries a trailing '/'; the caller appends `/data/...`.
+        return Ok(resolved.root_prefix().trim_end_matches('/').to_string());
+    }
+    validate_object_path_segments(tenant_id, namespace_segments, table)?;
+    let namespace = if namespace_segments.is_empty() {
+        "default".to_string()
+    } else {
+        namespace_segments.join("/")
+    };
+    Ok(format!("data/{tenant_id}/{namespace}/{table}"))
+}
 
 /// Comparison operators supported by the lightweight catalog-table SELECT path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -110,6 +200,134 @@ impl RelationalPredicateTree {
     }
 }
 
+/// Map an Arrow column type (the materialized Parquet's physical type) to the Iceberg
+/// primitive type name for the published `TableMetadata` schema. Kept in lock-step with
+/// the Parquet physical types so an external Iceberg reader's schema matches the file.
+/// Timestamps map to the v3 nanosecond types (ProximaDB is nanosecond-native).
+fn iceberg_type_for(arrow: &arrow_schema::DataType) -> &'static str {
+    use arrow_schema::DataType as D;
+    match arrow {
+        D::Boolean => "boolean",
+        D::Int8 | D::Int16 | D::Int32 => "int",
+        D::Int64 | D::UInt8 | D::UInt16 | D::UInt32 | D::UInt64 => "long",
+        D::Float16 | D::Float32 => "float",
+        D::Float64 => "double",
+        D::Date32 | D::Date64 => "date",
+        D::Timestamp(_, Some(_)) => "timestamptz_ns",
+        D::Timestamp(_, None) => "timestamp_ns",
+        D::Utf8 | D::LargeUtf8 => "string",
+        D::Binary | D::LargeBinary | D::FixedSizeBinary(_) => "binary",
+        // JSON columns materialize as Utf8 today; v3 `variant` is a follow-up.
+        _ => "string",
+    }
+}
+
+/// A stable, well-formed UUID string derived deterministically from the table's object
+/// prefix, so an Iceberg table keeps the same `table-uuid` across re-materializations
+/// (no `uuid` v5 dependency; two seeded hashes fill the 16 bytes).
+fn deterministic_table_uuid(prefix: &str) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h1 = std::collections::hash_map::DefaultHasher::new();
+    prefix.hash(&mut h1);
+    let a = h1.finish();
+    let mut h2 = std::collections::hash_map::DefaultHasher::new();
+    (prefix, 0x50524f58_4944425fu64).hash(&mut h2); // "PROX_IDB_" salt
+    let b = h2.finish();
+    format!(
+        "{:08x}-{:04x}-{:04x}-{:04x}-{:012x}",
+        (a >> 32) as u32,
+        (a >> 16) as u16,
+        a as u16,
+        (b >> 48) as u16,
+        b & 0x0000_ffff_ffff_ffff
+    )
+}
+
+/// Parse a SQL literal into a JSON value for the pushdown filter: integers and
+/// floats become JSON numbers (so i64/f64 zone-map pruning fires); everything
+/// else stays a string (string-equality hash pruning).
+fn literal_to_json(literal: &str) -> serde_json::Value {
+    if let Ok(i) = literal.parse::<i64>() {
+        serde_json::Value::from(i)
+    } else if let Ok(f) = literal.parse::<f64>() {
+        serde_json::json!(f)
+    } else {
+        serde_json::Value::String(literal.to_string())
+    }
+}
+
+/// Lower a resolved [`RelationalPredicateTree`] to a canonical `FilterExpression`
+/// for **block/row-group pushdown** in the object-store vector store. Only the
+/// operators the zone-map pruner can use are converted; the row-exact closure
+/// still filters, so this is purely a coarse pre-filter.
+///
+/// Soundness (no false negatives when used for pruning): an unconvertible `AND`
+/// conjunct is dropped (only weakens pruning); an `OR` with any unconvertible
+/// branch returns `None` (cannot soundly prune); `NOT` and unsupported operators
+/// (`!=`, `NOT IN`, `LIKE`, `IS NULL`) return `None`.
+fn predicate_tree_to_filter_expression(
+    tree: &RelationalPredicateTree,
+) -> Option<proximadb_filter_expression::FilterExpression> {
+    use proximadb_filter_expression::{ComparisonOperator as FxOp, FilterExpression as Fx};
+    match tree {
+        RelationalPredicateTree::Leaf(pred) => {
+            let field = pred.column.name.clone();
+            match &pred.condition {
+                RelationalSelectPredicateCondition::Comparison { operator, literal } => {
+                    let op = match operator {
+                        RelationalSelectPredicateOperator::Equal => FxOp::Equals,
+                        RelationalSelectPredicateOperator::LessThan => FxOp::LessThan,
+                        RelationalSelectPredicateOperator::LessThanOrEqual => FxOp::LessThanOrEqual,
+                        RelationalSelectPredicateOperator::GreaterThan => FxOp::GreaterThan,
+                        RelationalSelectPredicateOperator::GreaterThanOrEqual => {
+                            FxOp::GreaterThanOrEqual
+                        }
+                        RelationalSelectPredicateOperator::NotEqual => return None,
+                    };
+                    Some(Fx::Comparison {
+                        field,
+                        operator: op,
+                        value: literal_to_json(literal),
+                    })
+                }
+                RelationalSelectPredicateCondition::In {
+                    literals,
+                    negated: false,
+                } => Some(Fx::Comparison {
+                    field,
+                    operator: FxOp::In,
+                    value: serde_json::Value::Array(
+                        literals.iter().map(|l| literal_to_json(l)).collect(),
+                    ),
+                }),
+                _ => None,
+            }
+        }
+        RelationalPredicateTree::And(children) => {
+            let parts: Vec<_> = children
+                .iter()
+                .filter_map(predicate_tree_to_filter_expression)
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(Fx::And(parts))
+            }
+        }
+        RelationalPredicateTree::Or(children) => {
+            // Every disjunct must convert, else a block matching the dropped
+            // branch could be wrongly skipped.
+            let parts: Option<Vec<_>> = children
+                .iter()
+                .map(predicate_tree_to_filter_expression)
+                .collect();
+            parts.map(Fx::Or)
+        }
+        // Negation cannot be soundly pruned by a min/max zone map.
+        RelationalPredicateTree::Not(_) => None,
+    }
+}
+
 /// Syntax-level predicate input from a SQL/protocol facade.
 ///
 /// DML resolves this against xCatalog before route selection or evaluation.
@@ -123,9 +341,6 @@ pub struct RelationalSelectPredicateInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationalSelectAccessPath {
     PrimaryKeyLookup,
-    /// TD-110 Slice D: an equality on a UNIQUE column set resolved via the
-    /// store's O(1) index point-probe instead of a full table scan.
-    UniqueIndexLookup,
     TableScan,
 }
 
@@ -480,17 +695,16 @@ impl DmlService {
     pub fn with_direct_record_storage(
         catalog_manager: Arc<CatalogManager>,
         vector_ops: Arc<VectorOps>,
-        record_storage: Arc<dyn RecordStorage>,
-        wal_appender: Arc<dyn TableWalAppender>,
+        canonical_store: Arc<DirectWalTableRecordStore>,
     ) -> Self {
-        let canonical_store =
-            Arc::new(DirectWalTableRecordStore::new(record_storage, wal_appender));
         let legacy_store = Arc::new(VectorOpsTableRecordStore::new(vector_ops));
         let routed_store: Arc<dyn TableRecordStore> = Arc::new(
             // Temporary wiring during migration: canonical acts as the native
-            // row/delta path, legacy acts as the vector-specialized path.
+            // row/delta path, legacy acts as the vector-specialized path. The
+            // canonical store is shared across all pgwire connections so its
+            // per-(tenant, collection) partitions hold one authoritative state.
             CatalogRoutingTableRecordStore::new(
-                canonical_store.clone(),
+                canonical_store,
                 legacy_store.clone(),
                 legacy_store,
             ),
@@ -554,8 +768,20 @@ impl DmlService {
         }
     }
 
-    /// Execute a DML statement
+    /// Execute a DML statement (single-tenant / unscoped).
     pub async fn execute(&self, statement: DmlStatement) -> Result<DmlResult> {
+        self.execute_scoped(statement, None).await
+    }
+
+    /// Execute a DML statement within a tenant scope (TD-064). The tenant
+    /// context selects the catalog schema row (via `resolve_table_scoped`) and
+    /// the record partition (threaded into `write_mutations` / FK / unique
+    /// checks). `None` ⇒ single-tenant, identical to the legacy path.
+    pub async fn execute_scoped(
+        &self,
+        statement: DmlStatement,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<DmlResult> {
         let start = std::time::Instant::now();
 
         let result = match statement {
@@ -563,19 +789,25 @@ impl DmlService {
                 table_name,
                 columns,
                 values,
-            } => self.execute_insert(&table_name, &columns, values).await?,
+            } => {
+                self.execute_insert(&table_name, &columns, values, tenant_context)
+                    .await?
+            }
             DmlStatement::Update {
                 table_name,
                 assignments,
                 where_clause,
             } => {
-                self.execute_update(&table_name, assignments, where_clause)
+                self.execute_update(&table_name, assignments, where_clause, tenant_context)
                     .await?
             }
             DmlStatement::Delete {
                 table_name,
                 where_clause,
-            } => self.execute_delete(&table_name, where_clause).await?,
+            } => {
+                self.execute_delete(&table_name, where_clause, tenant_context)
+                    .await?
+            }
             DmlStatement::Upsert {
                 table_name,
                 columns,
@@ -589,16 +821,37 @@ impl DmlService {
                     values,
                     &conflict_columns,
                     update_assignments,
+                    tenant_context,
                 )
                 .await?
             }
             DmlStatement::InsertSelect { plan, columns }
             | DmlStatement::InsertOverwrite { plan, columns } => {
-                self.plan_table_write(&plan, &columns, None).await?
+                // TD-113 family: thread the connection tenant so the target table
+                // resolves within the tenant scope and the bulk-append writes into
+                // the tenant's partition (was `None` → cross-tenant / unscoped).
+                self.plan_table_write(&plan, &columns, tenant_context)
+                    .await?
             }
         };
 
         Ok(result.with_execution_time(start.elapsed().as_micros() as u64))
+    }
+
+    /// TD-064 write-authz gate: does `table_name` resolve to an existing table
+    /// within the tenant scope? pgwire uses this pre-execute to deny cross-tenant
+    /// writes with `42P01` (relation does not exist) — never leaking existence of
+    /// another tenant's table.
+    pub async fn table_visible_for_tenant(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<bool> {
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
+        catalog.table_exists(&table_id).await
     }
 
     /// Scan current visible records for a cataloged table through the shared
@@ -624,6 +877,20 @@ impl DmlService {
             .await
     }
 
+    /// CDC change-feed (P2): row-level changes for `table_name` with WAL sequence number
+    /// strictly greater than `since_lsn`, oldest first. Backed by the canonical WAL via the
+    /// record store; returns empty for stores without a readable change log. The REST
+    /// change-feed surface and (later) the pgwire `table_changes()` TVF call this.
+    pub async fn changes_since(
+        &self,
+        table_name: &str,
+        since_lsn: u64,
+    ) -> Result<Vec<crate::services::record_store::ChangeRow>> {
+        self.record_store
+            .read_changes_since(table_name, since_lsn)
+            .await
+    }
+
     /// Select current visible records and resolve projection columns inside the
     /// DML/catalog boundary.
     pub async fn select_table_records_with_projection(
@@ -632,8 +899,11 @@ impl DmlService {
         projection_column_names: &[String],
         limit: Option<usize>,
         predicates: &[RelationalSelectPredicateInput],
+        tenant_context: Option<&TenantContext>,
     ) -> Result<RelationalSelectResult> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         let selected_columns =
             Self::resolve_select_projection(&table_schema, projection_column_names)?;
         let predicates = Self::resolve_select_predicates(&table_schema, predicates)?;
@@ -643,6 +913,7 @@ impl DmlService {
                 &table_id_name,
                 limit,
                 &predicates,
+                tenant_context,
             )
             .await?;
         let rows = Self::project_select_rows(&records, &table_schema, &selected_columns)?;
@@ -678,8 +949,11 @@ impl DmlService {
         projection_column_names: &[String],
         limit: Option<usize>,
         where_clause: Option<&WhereClause>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<RelationalSelectResult> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         let selected_columns =
             Self::resolve_select_projection(&table_schema, projection_column_names)?;
 
@@ -694,6 +968,7 @@ impl DmlService {
                         limit,
                         where_clause,
                         &tree,
+                        tenant_context,
                     )
                     .await?;
                 (access_path, records, predicate_count)
@@ -705,13 +980,14 @@ impl DmlService {
                     .scan_records_filtered(
                         &table_schema,
                         TableRecordScanRequest {
+                            filter: None,
                             table_id: table_id_name.clone(),
                             limit,
                             include_vector: true,
                             include_props: true,
                         },
                         None,
-                        None,
+                        tenant_context,
                     )
                     .await?;
                 (RelationalSelectAccessPath::TableScan, records, 0)
@@ -737,8 +1013,12 @@ impl DmlService {
     /// Resolve a catalog table's schema for the relational pipeline (PATH B).
     /// Used by the pipeline's schema-only prefetch (the sync `CatalogLookup`
     /// can't await xCatalog), so the actual rows can be fetched lazily per scan.
-    pub async fn resolve_relational_schema(&self, table_name: &str) -> Result<CatalogTableSchema> {
-        let (table_schema, _table_id_name) = self.resolve_select_table(table_name).await?;
+    pub async fn resolve_relational_schema(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<CatalogTableSchema> {
+        let (table_schema, _table_id_name) = self.resolve_select_table(table_name, tenant).await?;
         Ok(table_schema)
     }
 
@@ -758,8 +1038,11 @@ impl DmlService {
         output_columns: Option<&[String]>,
         full_row_predicate: Option<&(dyn Fn(&[ProximaValue]) -> bool + Send + Sync)>,
         limit: Option<usize>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<(CatalogTableSchema, Vec<Vec<ProximaValue>>)> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         // Full column set — predicates are evaluated against a complete row.
         let all_columns: Vec<String> = table_schema
             .columns
@@ -789,13 +1072,14 @@ impl DmlService {
             .scan_records_filtered(
                 &table_schema,
                 TableRecordScanRequest {
+                    filter: None,
                     table_id: table_id_name.clone(),
                     limit,
                     include_vector: true,
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
 
@@ -830,9 +1114,29 @@ impl DmlService {
         table_name: &str,
         tenant_context: Option<&TenantContext>,
     ) -> Result<String> {
+        // Production reads the rollout flag here; the inner takes it as a param so
+        // the DrPath layout is deterministically testable without process-global env.
+        self.materialize_table_to_parquet_inner(
+            bridge,
+            warehouse_root_url,
+            table_name,
+            tenant_context,
+            warehouse_drpath_enabled(),
+        )
+        .await
+    }
+
+    async fn materialize_table_to_parquet_inner(
+        &self,
+        bridge: &dyn ObjectStoreBridge,
+        warehouse_root_url: &str,
+        table_name: &str,
+        tenant_context: Option<&TenantContext>,
+        drpath_enabled: bool,
+    ) -> Result<String> {
         // 1. Snapshot the table's current rows (all columns, no predicate/limit).
         let (schema, rows) = self
-            .scan_table_relational(table_name, None, None, None)
+            .scan_table_relational(table_name, None, None, None, tenant_context)
             .await?;
 
         // 2. Column-order ProximaValue rows → ProximaRecord envelopes (props keyed by
@@ -858,18 +1162,49 @@ impl DmlService {
             .collect();
 
         // 3. Tenant-isolated object prefix (DrPathBuilder mandate: data/{tenant}/{ns}/{table}).
-        //    The namespace comes from the table's catalog identifier — not a hardcoded
-        //    default — so multi-tenant/multi-namespace tables don't collide.
-        let tenant_id = tenant_context
-            .map(|tc| tc.tenant_id.as_str())
-            .unwrap_or("default_tenant");
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
-        let namespace = if table_id.namespace.is_empty() {
-            "default".to_string()
-        } else {
-            table_id.namespace.join("/")
+        //    NOTE (tracked tech-debt): this path does NOT yet route through
+        //    `DrPathBuilder::build`. The native catalog leaves `namespace_id`/`tenant_id`
+        //    unset (pending the P0.5 backfill), so the builder would fail-closed here, and
+        //    the DDL `TableMaterializer` trait does not yet thread a `TenantContext`
+        //    (production callers pass `None` -> `DEFAULT_TENANT_PLACEHOLDER`). Until that
+        //    multi-layer fix lands, isolation on this path is best-effort. We still apply
+        //    DrPathBuilder's canonical per-segment validation so a crafted tenant /
+        //    namespace / table id cannot inject `..` or path separators into the prefix.
+        let scope_tenant = tenant_context.map(|tc| tc.tenant_id.as_str());
+        let tenant_id = scope_tenant.unwrap_or(DEFAULT_TENANT_PLACEHOLDER);
+        // Resolve the table under the SAME tenant scope the snapshot scan used: a
+        // tenant-scoped table lives under a tenant-prefixed namespace, so the
+        // unscoped resolve would look in `default` and miss it.
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, scope_tenant)
+            .await?;
+        // `resolve_table_scoped` folds the tenant in as the leading namespace
+        // segment; strip it so the prefix carries the tenant exactly once
+        // (`data/{tenant}/{logical_ns}/{table}`), not twice. The None case keeps
+        // the original namespace unchanged.
+        let logical_namespace: Vec<String> = match scope_tenant {
+            Some(t) if table_id.namespace.first().map(String::as_str) == Some(t) => {
+                table_id.namespace[1..].to_vec()
+            }
+            _ => table_id.namespace.clone(),
         };
-        let prefix = format!("data/{tenant_id}/{namespace}/{}", schema.name);
+        // Best-effort namespace metadata (looked up by the FULL scoped namespace):
+        // supplies the rename-stable `namespace_id` (DrPath layout) and the owning
+        // `tenant_id` (cross-tenant assertion). A miss falls back to the manual layout.
+        let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
+        let prefix = resolve_materialize_prefix(
+            drpath_enabled,
+            tenant_id,
+            &logical_namespace,
+            ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
+            ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
+            ns_meta
+                .as_ref()
+                .map(|n| n.storage_pool_class)
+                .unwrap_or_default(),
+            &schema.name,
+        )?;
 
         // 4. Write the snapshot under `{prefix}/data/` — exactly where the OLAP reader
         //    lists `{location}/data/*.parquet`. Use the CATALOG-AUTHORITATIVE schema
@@ -895,6 +1230,54 @@ impl DmlService {
         };
         catalog.set_storage_layouts(&table_id, vec![layout]).await?;
 
+        // 6. Best-effort: also publish a spec-shaped Iceberg snapshot (v3) — Avro manifest
+        //    + manifest list + TableMetadata under `{prefix}/metadata` — so EXTERNAL Iceberg
+        //    engines (Spark/Trino/DuckDB/PyIceberg) can read the table. This is purely
+        //    additive interop: ProximaDB's own SELECT path reads via the catalog storage
+        //    layout above, not the manifest, so a failure here never breaks materialize.
+        let iceberg_fields: Vec<
+            proximadb_storage_common::object_store_bridge::IcebergSnapshotField,
+        > = schema
+            .to_arrow_schema()
+            .fields()
+            .iter()
+            .enumerate()
+            .map(
+                |(i, f)| proximadb_storage_common::object_store_bridge::IcebergSnapshotField {
+                    id: (i + 1) as i32,
+                    name: f.name().clone(),
+                    type_name: iceberg_type_for(f.data_type()).to_string(),
+                    required: !f.is_nullable(),
+                },
+            )
+            .collect();
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as i64)
+            .unwrap_or(0);
+        let table_uuid = deterministic_table_uuid(&prefix);
+        let data_prefix = object_store::path::Path::from(format!("{prefix}/data"));
+        let metadata_prefix = format!("{prefix}/metadata");
+        if let Err(e) = bridge
+            .publish_iceberg_table(
+                &data_prefix,
+                &metadata_prefix,
+                &table_uuid,
+                &location,
+                &iceberg_fields,
+                now_ms, // snapshot id (unique per materialize)
+                now_ms, // timestamp ms
+                true,   // v3 (ProximaDB default)
+            )
+            .await
+        {
+            tracing::warn!(
+                target: "proximadb::warehouse::iceberg",
+                table = %table_name,
+                "Iceberg snapshot publish failed (non-fatal, interop only): {e}"
+            );
+        }
+
         Ok(location)
     }
 
@@ -911,8 +1294,11 @@ impl DmlService {
         &self,
         table_name: &str,
         key: &str,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<Option<Vec<ProximaValue>>> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        let (table_schema, table_id_name) = self
+            .resolve_select_table(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
         let all_columns: Vec<String> = table_schema
             .columns
             .iter()
@@ -929,7 +1315,7 @@ impl DmlService {
                     include_vector: true,
                     include_props: true,
                 },
-                None,
+                tenant_context,
             )
             .await?;
         match record {
@@ -952,6 +1338,7 @@ impl DmlService {
         limit: Option<usize>,
         where_clause: &WhereClause,
         tree: &RelationalPredicateTree,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<(RelationalSelectAccessPath, Vec<ProximaRecord>)> {
         let primary_key = table_schema.primary_key.first().map(String::as_str);
 
@@ -976,7 +1363,7 @@ impl DmlService {
                             include_vector: true,
                             include_props: true,
                         },
-                        None,
+                        tenant_context,
                     )
                     .await?
                 else {
@@ -990,46 +1377,6 @@ impl DmlService {
             return Ok((RelationalSelectAccessPath::PrimaryKeyLookup, records));
         }
 
-        // TD-110 Slice D: UNIQUE-index point lookup (tree path). Probe the index
-        // for the owning oids, then fetch + re-check the FULL tree (the index only
-        // covers the unique equality).
-        if let Some((columns, values)) =
-            self.extract_unique_lookup_from_where(where_clause, table_schema)?
-            && let Some(oids) = self
-                .record_store
-                .lookup_unique_oids(table_schema, &columns, &values, None)
-                .await?
-        {
-            let cap = limit.unwrap_or(usize::MAX);
-            let mut records = Vec::new();
-            for oid in oids {
-                if records.len() >= cap {
-                    break;
-                }
-                let Some(rich) = self
-                    .record_store
-                    .get_by_key(
-                        table_schema,
-                        TableRecordGetRequest {
-                            table_id: table_id_name.to_string(),
-                            key: oid,
-                            include_vector: true,
-                            include_props: true,
-                        },
-                        None,
-                    )
-                    .await?
-                else {
-                    continue;
-                };
-                let record = Self::rich_result_to_record(rich);
-                if Self::eval_predicate_tree(&record, tree, primary_key) {
-                    records.push(record);
-                }
-            }
-            return Ok((RelationalSelectAccessPath::UniqueIndexLookup, records));
-        }
-
         // No usable PK predicate: push the full tree into the store scan + limit.
         let pred = |record: &ProximaRecord| Self::eval_predicate_tree(record, tree, primary_key);
         let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
@@ -1038,13 +1385,16 @@ impl DmlService {
             .scan_records_filtered(
                 table_schema,
                 TableRecordScanRequest {
+                    // Block/row-group pushdown for object-store vector tables; the
+                    // `predicate` closure remains the row-exact authority.
+                    filter: predicate_tree_to_filter_expression(tree),
                     table_id: table_id_name.to_string(),
                     limit,
                     include_vector: true,
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
         Ok((RelationalSelectAccessPath::TableScan, records))
@@ -1062,7 +1412,9 @@ impl DmlService {
         limit: Option<usize>,
         predicates: &[RelationalSelectPredicateInput],
     ) -> Result<(CatalogTableSchema, Vec<ProximaRecord>)> {
-        let (table_schema, table_id_name) = self.resolve_select_table(table_name).await?;
+        // Not on the pgwire tenant read path (pgwire SELECT uses the
+        // `_with_projection*` methods); resolve unscoped.
+        let (table_schema, table_id_name) = self.resolve_select_table(table_name, None).await?;
         let predicates = Self::resolve_select_predicates(&table_schema, predicates)?;
         let (_, records) = self
             .select_table_records_with_resolved_predicates(
@@ -1070,13 +1422,21 @@ impl DmlService {
                 &table_id_name,
                 limit,
                 &predicates,
+                None,
             )
             .await?;
         Ok((table_schema, records))
     }
 
-    async fn resolve_select_table(&self, table_name: &str) -> Result<(CatalogTableSchema, String)> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+    async fn resolve_select_table(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<(CatalogTableSchema, String)> {
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         if !catalog.table_exists(&table_id).await? {
             return Err(anyhow!("Table '{table_name}' does not exist"));
@@ -1091,6 +1451,7 @@ impl DmlService {
         table_id_name: &str,
         limit: Option<usize>,
         predicates: &[RelationalSelectPredicate],
+        tenant_context: Option<&TenantContext>,
     ) -> Result<(RelationalSelectAccessPath, Vec<ProximaRecord>)> {
         if let Some(primary_key_value) = Self::primary_key_lookup_value(table_schema, predicates) {
             let record = self
@@ -1103,7 +1464,7 @@ impl DmlService {
                         include_vector: true,
                         include_props: true,
                     },
-                    None,
+                    tenant_context,
                 )
                 .await?;
             let primary_key = table_schema.primary_key.first().map(String::as_str);
@@ -1118,48 +1479,6 @@ impl DmlService {
                     .take(limit.unwrap_or(usize::MAX))
                     .collect(),
             ));
-        }
-
-        // TD-110 Slice D: UNIQUE-index point lookup. If the predicates pin a
-        // non-PK UNIQUE set to equality and the store has an index for it, probe
-        // the index for the owning oids, fetch + re-check the FULL predicate set
-        // (the index only covers the unique equality), then return.
-        if let Some((columns, values)) =
-            Self::unique_index_lookup_from_predicates(table_schema, predicates)
-            && let Some(oids) = self
-                .record_store
-                .lookup_unique_oids(table_schema, &columns, &values, None)
-                .await?
-        {
-            let primary_key = table_schema.primary_key.first().map(String::as_str);
-            let cap = limit.unwrap_or(usize::MAX);
-            let mut records = Vec::new();
-            for oid in oids {
-                if records.len() >= cap {
-                    break;
-                }
-                let Some(rich) = self
-                    .record_store
-                    .get_by_key(
-                        table_schema,
-                        TableRecordGetRequest {
-                            table_id: table_id_name.to_string(),
-                            key: oid,
-                            include_vector: true,
-                            include_props: true,
-                        },
-                        None,
-                    )
-                    .await?
-                else {
-                    continue;
-                };
-                let record = Self::rich_result_to_record(rich);
-                if Self::record_matches_select_predicates(&record, predicates, primary_key) {
-                    records.push(record);
-                }
-            }
-            return Ok((RelationalSelectAccessPath::UniqueIndexLookup, records));
         }
 
         // Push the resolved `WHERE` predicate + limit INTO the scan so the store
@@ -1180,13 +1499,14 @@ impl DmlService {
             .scan_records_filtered(
                 table_schema,
                 TableRecordScanRequest {
+                    filter: None,
                     table_id: table_id_name.to_string(),
                     limit,
                     include_vector: true,
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
 
@@ -1343,9 +1663,17 @@ impl DmlService {
         tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
         let (table_schema, target_stats) = self
-            .resolve_table_metadata(&plan.target.qualified_name())
+            .resolve_table_metadata(
+                &plan.target.qualified_name(),
+                tenant_context.map(|tc| tc.tenant_id.as_str()),
+            )
             .await?;
-        let source_metadata = self.resolve_table_write_source_metadata(plan).await?;
+        let source_metadata = self
+            .resolve_table_write_source_metadata(
+                plan,
+                tenant_context.map(|tc| tc.tenant_id.as_str()),
+            )
+            .await?;
         let source_schema = source_metadata.as_ref().map(|(schema, _)| schema);
         let source_stats = source_metadata.as_ref().map(|(_, stats)| stats);
         let routed = self.route_table_write_with_schemas(
@@ -1357,6 +1685,28 @@ impl DmlService {
             source_stats,
             None,
         )?;
+
+        // Fold the namespace/DrPath-aware prefix into the warehouse bulk-append write
+        // so its object layout matches the materialize path
+        // (`data/{tenant}/{namespace}/{table}`) instead of the flat
+        // `data/{tenant}/tables/{name}` fallback the executor derives without
+        // namespace context. Only for the bulk-append lane, only under a tenant
+        // scope, and only when no location is already pinned (a materialize-set
+        // primary-layout location keeps precedence in the executor → no
+        // double-prefix). Set on the local, non-persisted schema copy.
+        let mut table_schema = table_schema;
+        if routed.write_lane_decision.lane == WriteLane::BulkAppendCommit
+            && table_schema.location.is_none()
+            && let Some(prefix) = self
+                .resolve_warehouse_object_prefix(
+                    &plan.target.qualified_name(),
+                    tenant_context.map(|tc| tc.tenant_id.as_str()),
+                )
+                .await?
+        {
+            table_schema.location = Some(prefix);
+        }
+
         let execution = self
             .table_write_executor
             .execute(TableWriteExecutionRequest {
@@ -1387,8 +1737,12 @@ impl DmlService {
         write_intent_overrides: Option<&WriteIntentOverrides>,
     ) -> Result<RoutedExecutionPlan> {
         let target_table_name = plan.target.qualified_name();
-        let (table_schema, target_stats) = self.resolve_table_metadata(&target_table_name).await?;
-        let source_metadata = self.resolve_table_write_source_metadata(plan).await?;
+        // Route/EXPLAIN planning is not a write boundary; resolve unscoped (the
+        // execution path `plan_table_write` resolves scoped via the tenant).
+        let (table_schema, target_stats) = self
+            .resolve_table_metadata(&target_table_name, None)
+            .await?;
+        let source_metadata = self.resolve_table_write_source_metadata(plan, None).await?;
         let source_schema = source_metadata.as_ref().map(|(schema, _)| schema);
         let source_stats = source_metadata.as_ref().map(|(_, stats)| stats);
         self.route_table_write_with_schemas(
@@ -1405,8 +1759,14 @@ impl DmlService {
     async fn resolve_table_metadata(
         &self,
         table_name: &str,
+        tenant: Option<&str>,
     ) -> Result<(CatalogTableSchema, CatalogTableStatistics)> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        // Resolve within the tenant scope (TD-064/TD-113) so a tenant-scoped target
+        // table is addressed in the tenant's namespace, not the default one.
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant)
+            .await?;
 
         if !catalog.table_exists(&table_id).await? {
             return Err(anyhow!("Table '{table_name}' does not exist"));
@@ -1415,6 +1775,58 @@ impl DmlService {
         let schema = catalog.get_table(&table_id).await?;
         let stats = catalog.get_statistics(&table_id).await.unwrap_or_default();
         Ok((schema, stats))
+    }
+
+    /// Resolve the tenant/namespace/DrPath-aware object base prefix for a warehouse
+    /// bulk-append target (`data/{tenant}/{namespace}/{table}`), so an
+    /// `INSERT ... SELECT` lands under the SAME object layout the materialize path
+    /// publishes instead of the flat `data/{tenant}/tables/{name}` fallback the
+    /// executor derives when it has no namespace context. Returns `None` when there
+    /// is no tenant scope (single-tenant / embedded keeps the legacy fallback).
+    ///
+    /// Reuses the canonical [`resolve_materialize_prefix`] so DrPath (opt-in) vs
+    /// legacy-layout selection, the cross-tenant ownership assertion, and per-segment
+    /// injection validation stay single-sourced with the materialize path. The
+    /// caller sets this on the (local, non-persisted) target-schema `location`,
+    /// where the executor consumes it at second priority — a materialize-set primary
+    /// layout location still wins, so this never double-prefixes a published table.
+    async fn resolve_warehouse_object_prefix(
+        &self,
+        table_name: &str,
+        tenant: Option<&str>,
+    ) -> Result<Option<String>> {
+        let Some(tenant_id) = tenant.filter(|t| !t.is_empty()) else {
+            return Ok(None);
+        };
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, Some(tenant_id))
+            .await?;
+        // `resolve_table_scoped` folds the tenant in as the leading namespace
+        // segment; strip it so the prefix carries the tenant exactly once.
+        let logical_namespace: Vec<String> =
+            if table_id.namespace.first().map(String::as_str) == Some(tenant_id) {
+                table_id.namespace[1..].to_vec()
+            } else {
+                table_id.namespace.clone()
+            };
+        // Namespace metadata supplies the rename-stable `namespace_id` (DrPath layout)
+        // and the owning `tenant_id` (cross-tenant assertion). A miss falls back to
+        // the legacy manual layout, still tenant-prefixed.
+        let ns_meta = catalog.get_namespace(&table_id.namespace).await.ok();
+        let prefix = resolve_materialize_prefix(
+            warehouse_drpath_enabled(),
+            tenant_id,
+            &logical_namespace,
+            ns_meta.as_ref().and_then(|n| n.namespace_id.as_deref()),
+            ns_meta.as_ref().and_then(|n| n.tenant_id.as_deref()),
+            ns_meta
+                .as_ref()
+                .map(|n| n.storage_pool_class)
+                .unwrap_or_default(),
+            &table_id.name,
+        )?;
+        Ok(Some(prefix))
     }
 
     fn route_table_write_with_schemas(
@@ -1467,6 +1879,13 @@ impl DmlService {
         );
     }
 
+    /// Strip a leading table qualifier (`t.col` / alias `k.col` → `col`). On a
+    /// single-table SELECT the qualifier is unambiguous, so the unqualified suffix
+    /// is the column name to resolve against the schema.
+    fn unqualified_column(name: &str) -> &str {
+        name.rsplit('.').next().unwrap_or(name)
+    }
+
     fn resolve_select_predicates(
         table_schema: &CatalogTableSchema,
         predicates: &[RelationalSelectPredicateInput],
@@ -1474,10 +1893,11 @@ impl DmlService {
         predicates
             .iter()
             .map(|predicate| {
+                let bare = Self::unqualified_column(&predicate.column_name);
                 let column = table_schema
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(&predicate.column_name))
+                    .find(|column| column.name.eq_ignore_ascii_case(bare))
                     .cloned()
                     .ok_or_else(|| {
                         anyhow!(
@@ -1505,10 +1925,11 @@ impl DmlService {
         projection_column_names
             .iter()
             .map(|column_name| {
+                let bare = Self::unqualified_column(column_name);
                 table_schema
                     .columns
                     .iter()
-                    .find(|column| column.name.eq_ignore_ascii_case(column_name))
+                    .find(|column| column.name.eq_ignore_ascii_case(bare))
                     .cloned()
                     .ok_or_else(|| {
                         anyhow!(
@@ -1592,50 +2013,6 @@ impl DmlService {
             };
             Some(literal.clone())
         })
-    }
-
-    /// TD-110 Slice D: if `predicates` pin every column of some non-PK UNIQUE set
-    /// to an equality, return that `(columns, probe-values)` so the store can
-    /// resolve it via an O(1) index probe instead of a scan.
-    ///
-    /// Gated to String/Symbol columns: their `proxima_value_to_unique_text`
-    /// rendering equals the (already-unquoted) predicate literal exactly, so the
-    /// probe can never miss a real row. Numeric/boolean unique columns need
-    /// literal→typed canonicalization first (a bounded follow-up) and fall
-    /// through to the scan here.
-    fn unique_index_lookup_from_predicates(
-        table_schema: &CatalogTableSchema,
-        predicates: &[RelationalSelectPredicate],
-    ) -> Option<(Vec<String>, Vec<String>)> {
-        for columns in crate::services::record_store::schema_unique_column_sets(table_schema) {
-            let mut values = Vec::with_capacity(columns.len());
-            let pinned = columns.iter().all(|column_name| {
-                predicates.iter().any(|predicate| {
-                    if !predicate.column.name.eq_ignore_ascii_case(column_name) {
-                        return false;
-                    }
-                    if !matches!(
-                        predicate.column.data_type,
-                        ProximaType::String | ProximaType::Symbol
-                    ) {
-                        return false;
-                    }
-                    let RelationalSelectPredicateCondition::Comparison {
-                        operator: RelationalSelectPredicateOperator::Equal,
-                        literal,
-                    } = &predicate.condition
-                    else {
-                        return false;
-                    };
-                    values.push(literal.clone());
-                    true
-                })
-            });
-            if pinned && !columns.is_empty() {
-                return Some((columns, values));
-            }
-        }
-        None
     }
 
     fn rich_result_to_record(result: RichSearchResult) -> ProximaRecord {
@@ -1966,15 +2343,18 @@ impl DmlService {
     async fn resolve_table_write_source_metadata(
         &self,
         plan: &CopyIntoPlan,
+        tenant: Option<&str>,
     ) -> Result<Option<(CatalogTableSchema, CatalogTableStatistics)>> {
         let ReadSource::CatalogTable { table, .. } = &plan.source else {
             return Ok(None);
         };
 
         let source_table_name = table.qualified_name();
+        // Resolve the SELECT source within the tenant scope (TD-064/TD-113) so a
+        // tenant reads its own source table, not the default namespace's.
         let (catalog, table_id) = self
             .catalog_manager
-            .resolve_table(&source_table_name)
+            .resolve_table_scoped(&source_table_name, tenant)
             .await?;
         if !catalog.table_exists(&table_id).await? {
             return Err(anyhow!(
@@ -1995,8 +2375,12 @@ impl DmlService {
         table_name: &str,
         columns: &[String],
         values: Vec<Vec<SqlValueLiteral>>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -2096,7 +2480,7 @@ impl DmlService {
                     primary_key.as_deref(),
                     &candidate_sets,
                     &std::collections::HashSet::new(),
-                    None,
+                    tenant_context,
                 )
                 .await?
         {
@@ -2109,7 +2493,8 @@ impl DmlService {
         }
 
         // TD-110: enforce FOREIGN KEY references (same-partition cross-table).
-        self.enforce_foreign_keys(&table_schema, &records).await?;
+        self.enforce_foreign_keys(&table_schema, &records, tenant_context)
+            .await?;
 
         // Compute per-column min/max and NDV from the canonical record props before moving records
         // into mutations. Only orderable types (String, integers) tracked for min/max; floats and
@@ -2126,7 +2511,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -2167,8 +2552,12 @@ impl DmlService {
         table_name: &str,
         assignments: Vec<(String, SqlValueLiteral)>,
         where_clause: Option<WhereClause>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -2177,7 +2566,7 @@ impl DmlService {
 
         let table_schema = catalog.get_table(&table_id).await?;
         let ids_to_update = if let Some(ref wc) = where_clause {
-            self.resolve_matching_ids(&table_schema, &table_id.name, wc)
+            self.resolve_matching_ids(&table_schema, &table_id.name, wc, tenant_context)
                 .await?
         } else {
             return Err(anyhow!("UPDATE without WHERE clause is not allowed"));
@@ -2206,7 +2595,7 @@ impl DmlService {
                         include_vector: true,
                         include_props: true,
                     },
-                    None,
+                    tenant_context,
                 )
                 .await?
             else {
@@ -2247,7 +2636,7 @@ impl DmlService {
                     primary_key.as_deref(),
                     &candidate_sets,
                     &exclude_oids,
-                    None,
+                    tenant_context,
                 )
                 .await?
             {
@@ -2261,7 +2650,8 @@ impl DmlService {
         }
 
         // TD-110: an UPDATE may change a FOREIGN KEY column — re-verify references.
-        self.enforce_foreign_keys(&table_schema, &records).await?;
+        self.enforce_foreign_keys(&table_schema, &records, tenant_context)
+            .await?;
 
         let updated_count = records.len();
         let mutations = records
@@ -2270,7 +2660,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -2304,8 +2694,12 @@ impl DmlService {
         &self,
         table_name: &str,
         where_clause: Option<WhereClause>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -2316,7 +2710,7 @@ impl DmlService {
 
         // Get IDs to delete based on WHERE clause
         let ids_to_delete = if let Some(ref wc) = where_clause {
-            self.resolve_matching_ids(&table_schema, &table_id.name, wc)
+            self.resolve_matching_ids(&table_schema, &table_id.name, wc, tenant_context)
                 .await?
         } else {
             return Err(anyhow!(
@@ -2327,14 +2721,6 @@ impl DmlService {
         if ids_to_delete.is_empty() {
             return Ok(DmlResult::success(0, "No rows matched WHERE clause"));
         }
-
-        // TD-110: apply FOREIGN KEY referential actions (ON DELETE
-        // RESTRICT/NO ACTION/CASCADE/SET NULL) before removing the parent rows.
-        // RESTRICT/NO ACTION rejects the DELETE; CASCADE/SET NULL mutate children
-        // first so the parent removal leaves no dangling references.
-        self.enforce_delete_referential_actions(&catalog, &table_id, &table_schema, &ids_to_delete)
-            .await?;
-
         let (write_intent, write_lane_decision) = Self::route_row_dml_write_intent(
             &table_schema,
             WriteOperationKind::Delete,
@@ -2354,7 +2740,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -2390,8 +2776,12 @@ impl DmlService {
         values: Vec<Vec<SqlValueLiteral>>,
         _conflict_columns: &[String],
         _update_assignments: Vec<(String, SqlValueLiteral)>,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
-        let (catalog, table_id) = self.catalog_manager.resolve_table(table_name).await?;
+        let (catalog, table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(table_name, tenant_context.map(|t| t.tenant_id.as_str()))
+            .await?;
 
         // Verify table exists
         if !catalog.table_exists(&table_id).await? {
@@ -2428,7 +2818,7 @@ impl DmlService {
             .collect::<Vec<_>>();
         let batch_result = self
             .record_store
-            .write_mutations(&table_schema, mutations, None)
+            .write_mutations(&table_schema, mutations, tenant_context)
             .await?;
         if !batch_result.success {
             return Err(anyhow!(
@@ -3144,7 +3534,7 @@ impl DmlService {
     /// indexes plus inline `UNIQUE (...)` column constraints. Delegates to the
     /// shared store-layer helper so DmlService candidates and the store's index
     /// enforce exactly the same sets.
-    #[allow(dead_code)] // retained: exercised by tests / planned API surface (dead only in --lib)
+    #[allow(dead_code)] // store-layer parity helper; wired by upcoming slice
     fn unique_column_sets(table_schema: &CatalogTableSchema) -> Vec<Vec<String>> {
         crate::services::record_store::schema_unique_column_sets(table_schema)
     }
@@ -3177,6 +3567,7 @@ impl DmlService {
         &self,
         table_schema: &CatalogTableSchema,
         records: &[ProximaRecord],
+        tenant_context: Option<&TenantContext>,
     ) -> Result<()> {
         let child_primary_key = Self::primary_key_column(table_schema);
         for constraint in &table_schema.relational_capabilities.constraints {
@@ -3201,7 +3592,7 @@ impl DmlService {
 
             let (parent_catalog, parent_table_id) = self
                 .catalog_manager
-                .resolve_table(references_table)
+                .resolve_table_scoped(references_table, tenant_context.map(|t| t.tenant_id.as_str()))
                 .await
                 .map_err(|err| {
                     anyhow!(
@@ -3249,7 +3640,7 @@ impl DmlService {
                             include_vector: false,
                             include_props: false,
                         },
-                        None,
+                        tenant_context,
                     )
                     .await?
                     .is_some();
@@ -3268,197 +3659,6 @@ impl DmlService {
         Ok(())
     }
 
-    /// TD-110: apply FOREIGN KEY referential actions when deleting parent rows.
-    ///
-    /// For every child table in the same namespace whose single-column FK
-    /// references this table's PRIMARY KEY, find rows pointing at one of the
-    /// `deleted_keys` and act on `ON DELETE`:
-    ///   - RESTRICT / NO ACTION (and an unspecified action — the SQL default):
-    ///     reject the DELETE so no dangling reference is left behind;
-    ///   - CASCADE: delete the referencing child rows;
-    ///   - SET NULL: clear the child FK column.
-    ///
-    /// SET DEFAULT is rejected as unsupported (no column-default model yet).
-    /// Children are resolved in the same record store (same-partition), matching
-    /// [`Self::enforce_foreign_keys`]. CASCADE is one level: a cascaded child
-    /// delete does not itself re-trigger this pass, so a grandchild RESTRICT/
-    /// CASCADE is not chained (follow-up). Composite / non-PK-referenced FKs are
-    /// skipped — they are rejected at write time, so no such rows can exist.
-    async fn enforce_delete_referential_actions(
-        &self,
-        parent_catalog: &Arc<dyn crate::catalog::Catalog>,
-        parent_table_id: &crate::catalog::TableIdentifier,
-        parent_schema: &CatalogTableSchema,
-        deleted_keys: &[String],
-    ) -> Result<()> {
-        let Some(parent_pk) = Self::primary_key_column(parent_schema) else {
-            return Ok(()); // No PK → nothing can reference these rows.
-        };
-        let deleted: std::collections::HashSet<&str> =
-            deleted_keys.iter().map(String::as_str).collect();
-
-        let sibling_ids = parent_catalog
-            .list_tables(&parent_table_id.namespace)
-            .await?;
-        for child_id in sibling_ids {
-            if child_id.name == parent_table_id.name
-                && child_id.namespace == parent_table_id.namespace
-            {
-                continue; // Self-referencing FK on the same table: out of scope.
-            }
-            let child_schema = parent_catalog.get_table(&child_id).await?;
-            let child_pk = Self::primary_key_column(&child_schema);
-            for constraint in &child_schema.relational_capabilities.constraints {
-                let proximadb_catalog::ColumnConstraint::ForeignKey {
-                    columns,
-                    references_table,
-                    references_columns,
-                    on_delete,
-                    ..
-                } = constraint
-                else {
-                    continue;
-                };
-                if columns.len() != 1 || references_columns.len() != 1 {
-                    continue; // Unsupported shape → no rows could have been written.
-                }
-                // Does this FK reference the table being deleted from?
-                let Ok((_, referenced_id)) =
-                    self.catalog_manager.resolve_table(references_table).await
-                else {
-                    continue;
-                };
-                if referenced_id.name != parent_table_id.name
-                    || referenced_id.namespace != parent_table_id.namespace
-                {
-                    continue;
-                }
-                if references_columns[0] != parent_pk {
-                    continue; // Only parent-PK references are enforced.
-                }
-                let fk_column = columns[0].clone();
-
-                // Find child rows referencing any deleted parent key.
-                let child_pk_for_pred = child_pk.clone();
-                let fk_for_pred = fk_column.clone();
-                let deleted_ref = &deleted;
-                let pred = move |record: &ProximaRecord| {
-                    match record_unique_tuple(
-                        record,
-                        std::slice::from_ref(&fk_for_pred),
-                        child_pk_for_pred.as_deref(),
-                    ) {
-                        Some(values) => values
-                            .first()
-                            .map(|value| deleted_ref.contains(value.as_str()))
-                            .unwrap_or(false),
-                        None => false, // NULL/absent FK never references a parent.
-                    }
-                };
-                let predicate: Option<&proximadb_records::RecordScanPredicate<'_>> = Some(&pred);
-                let referencing = self
-                    .record_store
-                    .scan_records_filtered(
-                        &child_schema,
-                        TableRecordScanRequest {
-                            table_id: child_id.name.clone(),
-                            limit: None,
-                            include_vector: true,
-                            include_props: true,
-                        },
-                        predicate,
-                        None,
-                    )
-                    .await?;
-                if referencing.is_empty() {
-                    continue;
-                }
-
-                match on_delete {
-                    None
-                    | Some(proximadb_catalog::ReferentialAction::Restrict)
-                    | Some(proximadb_catalog::ReferentialAction::NoAction) => {
-                        return Err(anyhow!(
-                            "DELETE on table '{}' violates FOREIGN KEY ({}) on table '{}': {} referencing row(s) remain (ON DELETE NO ACTION)",
-                            parent_table_id.name,
-                            fk_column,
-                            child_id.name,
-                            referencing.len()
-                        ));
-                    }
-                    Some(proximadb_catalog::ReferentialAction::Cascade) => {
-                        let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
-                        let tombstones = referencing
-                            .iter()
-                            .map(|record| {
-                                Self::build_delete_tombstone_record(
-                                    &record.oid,
-                                    &child_schema,
-                                    now_ns,
-                                )
-                            })
-                            .collect::<Result<Vec<_>>>()?;
-                        let cascaded = tombstones.len();
-                        let mutations = tombstones
-                            .into_iter()
-                            .map(|record| {
-                                TableRecordMutation::new(TableRecordMutationKind::Delete, record)
-                            })
-                            .collect::<Vec<_>>();
-                        let result = self
-                            .record_store
-                            .write_mutations(&child_schema, mutations, None)
-                            .await?;
-                        if !result.success {
-                            return Err(anyhow!(
-                                "ON DELETE CASCADE failed for child table '{}': {:?}",
-                                child_id.name,
-                                result.errors
-                            ));
-                        }
-                        self.bump_row_count_stats(&child_id.name, -(cascaded as i64))
-                            .await;
-                    }
-                    Some(proximadb_catalog::ReferentialAction::SetNull) => {
-                        let mut updated = Vec::with_capacity(referencing.len());
-                        for mut record in referencing {
-                            record.props.insert(
-                                fk_column.clone(),
-                                ProximaTreeNode::Value(ProximaValue::Null),
-                            );
-                            updated.push(record);
-                        }
-                        let mutations = updated
-                            .into_iter()
-                            .map(|record| {
-                                TableRecordMutation::new(TableRecordMutationKind::Update, record)
-                            })
-                            .collect::<Vec<_>>();
-                        let result = self
-                            .record_store
-                            .write_mutations(&child_schema, mutations, None)
-                            .await?;
-                        if !result.success {
-                            return Err(anyhow!(
-                                "ON DELETE SET NULL failed for child table '{}': {:?}",
-                                child_id.name,
-                                result.errors
-                            ));
-                        }
-                    }
-                    Some(proximadb_catalog::ReferentialAction::SetDefault) => {
-                        return Err(anyhow!(
-                            "ON DELETE SET DEFAULT on table '{}' (FOREIGN KEY {}) is not supported",
-                            child_id.name,
-                            fk_column
-                        ));
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
     /// Extract IDs from WHERE clause using the catalog primary key.
     /// Resolve the canonical OIDs of the rows an UPDATE/DELETE `WHERE` clause
     /// targets, honoring the FULL predicate (any catalog column), not just the
@@ -3470,6 +3670,7 @@ impl DmlService {
         table_schema: &CatalogTableSchema,
         table_id_name: &str,
         where_clause: &WhereClause,
+        tenant_context: Option<&TenantContext>,
     ) -> Result<Vec<String>> {
         let tree = self.where_clause_to_predicate_tree(where_clause, table_schema)?;
         let primary_key = table_schema.primary_key.first().map(String::as_str);
@@ -3491,7 +3692,7 @@ impl DmlService {
                             include_vector: true,
                             include_props: true,
                         },
-                        None,
+                        tenant_context,
                     )
                     .await?
                 else {
@@ -3513,13 +3714,14 @@ impl DmlService {
             .scan_records_filtered(
                 table_schema,
                 TableRecordScanRequest {
+                    filter: predicate_tree_to_filter_expression(&tree),
                     table_id: table_id_name.to_string(),
                     limit: None,
                     include_vector: true,
                     include_props: true,
                 },
                 predicate,
-                None,
+                tenant_context,
             )
             .await?;
         Ok(records.into_iter().map(|record| record.oid).collect())
@@ -3572,64 +3774,6 @@ impl DmlService {
         Ok(ids)
     }
 
-    /// TD-110 Slice D: tree-path counterpart of
-    /// [`Self::unique_index_lookup_from_predicates`]. Under a top-level
-    /// conjunction (the same soundness guard as the PK fast-path — under OR a
-    /// unique leaf does not bound the match set), return a non-PK UNIQUE set
-    /// whose every String/Symbol column is pinned to an `=` condition, with the
-    /// probe values, so the store can resolve it via an O(1) index probe.
-    fn extract_unique_lookup_from_where(
-        &self,
-        where_clause: &WhereClause,
-        table_schema: &CatalogTableSchema,
-    ) -> Result<Option<(Vec<String>, Vec<String>)>> {
-        if matches!(where_clause.operator, LogicalOperator::Or) && where_clause.conditions.len() > 1
-        {
-            return Ok(None);
-        }
-        for columns in crate::services::record_store::schema_unique_column_sets(table_schema) {
-            let mut values = Vec::with_capacity(columns.len());
-            let mut all_pinned = true;
-            for column_name in &columns {
-                let is_text = table_schema.columns.iter().any(|column| {
-                    column.name.eq_ignore_ascii_case(column_name)
-                        && matches!(column.data_type, ProximaType::String | ProximaType::Symbol)
-                });
-                if !is_text {
-                    all_pinned = false;
-                    break;
-                }
-                let found = where_clause
-                    .conditions
-                    .iter()
-                    .find_map(|condition| match condition {
-                        Condition::Comparison {
-                            column,
-                            operator,
-                            value,
-                        } if column.eq_ignore_ascii_case(column_name)
-                            && matches!(operator, ComparisonOperator::Equal) =>
-                        {
-                            Some(self.literal_to_string(value))
-                        }
-                        _ => None,
-                    });
-                match found {
-                    Some(Ok(value)) => values.push(value),
-                    Some(Err(err)) => return Err(err),
-                    None => {
-                        all_pinned = false;
-                        break;
-                    }
-                }
-            }
-            if all_pinned && !columns.is_empty() {
-                return Ok(Some((columns, values)));
-            }
-        }
-        Ok(None)
-    }
-
     /// Convert an UPDATE/DELETE `WhereClause` into a resolved boolean predicate
     /// tree. Columns are resolved against the catalog ONCE here (so per-record
     /// evaluation is infallible); supports AND/OR/nested/BETWEEN/NOT BETWEEN.
@@ -3646,6 +3790,7 @@ impl DmlService {
     }
 
     /// Combine a list of conditions with the given logical operator.
+    #[allow(clippy::expect_used)] // infallible: guarded by len==1 check above
     fn combine_conditions(
         &self,
         conditions: &[Condition],
@@ -3660,9 +3805,7 @@ impl DmlService {
             .map(|condition| self.condition_to_predicate_tree(condition, table_schema))
             .collect::<Result<Vec<_>>>()?;
         Ok(if children.len() == 1 {
-            children
-                .pop()
-                .ok_or_else(|| anyhow!("predicate group must have at least one child"))?
+            children.pop().expect("len == 1")
         } else {
             match operator {
                 LogicalOperator::And => RelationalPredicateTree::And(children),
@@ -3673,6 +3816,7 @@ impl DmlService {
 
     /// Lower one `Condition` into a resolved predicate tree node. `BETWEEN`
     /// expands to `>= low AND <= high` (negated → `Not`); `Nested` recurses.
+    #[allow(clippy::expect_used)] // infallible: guarded by len/shape check above
     fn condition_to_predicate_tree(
         &self,
         condition: &Condition,
@@ -3693,7 +3837,7 @@ impl DmlService {
                 resolved
                     .into_iter()
                     .next()
-                    .ok_or_else(|| anyhow!("resolve_select_predicates produced no predicate"))?,
+                    .expect("one input → one predicate"),
             ))
         };
         match condition {
@@ -3937,11 +4081,34 @@ impl DmlService {
             SqlValueLiteral::Null => Ok(None),
             SqlValueLiteral::Integer(i) => Ok(Some(*i)),
             SqlValueLiteral::String(s) => {
-                // Parse ISO 8601 timestamp
-                use chrono::DateTime;
-                let dt = DateTime::parse_from_rfc3339(s)
-                    .map_err(|e| anyhow!("Invalid timestamp format: {e}"))?;
-                Ok(Some(dt.timestamp_millis()))
+                // Accept RFC3339 (with TZ) first, then standard SQL naive timestamp
+                // spellings (`YYYY-MM-DD HH:MM:SS[.fff]` or with a `T` separator,
+                // treated as UTC) and a bare date. `TIMESTAMP '2016-01-01 00:00:00'`
+                // literals (no TZ) are standard SQL and dense in time-series data.
+                use chrono::{DateTime, NaiveDate, NaiveDateTime};
+                let s = s.trim();
+                if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+                    return Ok(Some(dt.timestamp_millis()));
+                }
+                for fmt in [
+                    "%Y-%m-%d %H:%M:%S%.f",
+                    "%Y-%m-%d %H:%M:%S",
+                    "%Y-%m-%dT%H:%M:%S%.f",
+                    "%Y-%m-%dT%H:%M:%S",
+                ] {
+                    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, fmt) {
+                        return Ok(Some(ndt.and_utc().timestamp_millis()));
+                    }
+                }
+                if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                    return Ok(Some(
+                        d.and_hms_opt(0, 0, 0)
+                            .ok_or_else(|| anyhow!("internal: bad midnight"))?
+                            .and_utc()
+                            .timestamp_millis(),
+                    ));
+                }
+                Err(anyhow!("Invalid timestamp format: {s}"))
             }
             SqlValueLiteral::Function { name, .. } if name.eq_ignore_ascii_case("NOW") => {
                 Ok(Some(chrono::Utc::now().timestamp_millis()))
@@ -4047,8 +4214,7 @@ impl DmlService {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
                     return Ok(ProximaValue::Null);
                 }
-                self.literal_to_i64(val)
-                    .map(|value| ProximaValue::Date(value as i32))
+                self.literal_to_date_days(val).map(ProximaValue::Date)
             }
             ProximaType::Time(_) => {
                 if matches!(val, SqlValueLiteral::Null) && column.nullable {
@@ -4145,6 +4311,29 @@ impl DmlService {
         }
     }
 
+    /// Coerce a DML literal to a DATE stored as days since the Unix epoch.
+    /// Accepts an integer (already a day count) or an ISO-8601 `YYYY-MM-DD`
+    /// string (the form `DATE '1995-02-15'` literals lower to). Parsing to a
+    /// real day count — rather than stuffing the string in — keeps the column a
+    /// true Date32 through materialization, so DataFusion compares it correctly
+    /// against `DATE '...'` predicates.
+    fn literal_to_date_days(&self, val: &SqlValueLiteral) -> Result<i32> {
+        match val {
+            SqlValueLiteral::Integer(value) => Ok(*value as i32),
+            SqlValueLiteral::String(value) => {
+                let date = chrono::NaiveDate::parse_from_str(value.trim(), "%Y-%m-%d")
+                    .map_err(|e| anyhow!("Invalid DATE literal '{}': {}", value, e))?;
+                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1)
+                    .ok_or_else(|| anyhow!("internal: bad epoch date"))?;
+                Ok(date.signed_duration_since(epoch).num_days() as i32)
+            }
+            SqlValueLiteral::Null => Err(anyhow!("Cannot convert NULL to date")),
+            _ => Err(anyhow!(
+                "Expected date literal (integer days or 'YYYY-MM-DD')"
+            )),
+        }
+    }
+
     fn literal_to_f64(&self, val: &SqlValueLiteral) -> Result<f64> {
         match val {
             SqlValueLiteral::Float(value) => Ok(*value),
@@ -4210,9 +4399,20 @@ impl DmlTableMaterializer {
 
 #[async_trait::async_trait]
 impl crate::services::ddl::TableMaterializer for DmlTableMaterializer {
-    async fn materialize(&self, table_name: &str) -> Result<String> {
+    async fn materialize(&self, table_name: &str, tenant: Option<&str>) -> Result<String> {
+        // Thread the request/connection tenant (TD-113) so the snapshot is scoped
+        // and the object prefix is tenant-isolated instead of landing under the
+        // DEFAULT_TENANT_PLACEHOLDER. Empty tenant ⇒ None (single-tenant/embedded).
+        let tenant_ctx = tenant
+            .filter(|t| !t.is_empty())
+            .map(TenantContext::for_tenant_id);
         self.dml
-            .materialize_table_to_parquet(&*self.bridge, &self.warehouse_root_url, table_name, None)
+            .materialize_table_to_parquet(
+                &*self.bridge,
+                &self.warehouse_root_url,
+                table_name,
+                tenant_ctx.as_ref(),
+            )
             .await
     }
 }
@@ -4220,6 +4420,59 @@ impl crate::services::ddl::TableMaterializer for DmlTableMaterializer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn materialize_path_segments_reject_injection() {
+        let ns = |s: &str| vec![s.to_string()];
+        // Happy path: clean ASCII ids, with and without a namespace segment.
+        assert!(validate_object_path_segments("tnt_acme", &ns("sales"), "orders").is_ok());
+        assert!(validate_object_path_segments(DEFAULT_TENANT_PLACEHOLDER, &[], "orders").is_ok());
+        // `..` traversal anywhere is refused.
+        assert!(validate_object_path_segments("..", &ns("sales"), "orders").is_err());
+        assert!(validate_object_path_segments("tnt_acme", &ns(".."), "orders").is_err());
+        // Path-separator injection inside a segment is refused.
+        assert!(validate_object_path_segments("tnt_acme", &ns("a/b"), "orders").is_err());
+        // Whitespace and empty ids are refused.
+        assert!(validate_object_path_segments("tnt_acme", &[], "bad name").is_err());
+        assert!(validate_object_path_segments("tnt_acme", &[], "").is_err());
+    }
+
+    #[test]
+    fn resolve_materialize_prefix_layouts_and_cross_tenant() {
+        use proximadb_catalog::StoragePoolClass;
+        let pc = StoragePoolClass::default();
+        let segs = vec!["sales".to_string()];
+        let resolve = |drpath, nsid, owner, segs: &[String]| {
+            resolve_materialize_prefix(drpath, "tnt_acme", segs, nsid, owner, pc, "orders")
+        };
+
+        // Flag OFF → legacy manual layout (namespace path joined).
+        assert_eq!(
+            resolve(false, Some("ns_1"), None, &segs).unwrap(),
+            "data/tnt_acme/sales/orders"
+        );
+        // Flag ON + namespace_id present → DrPath opaque-id layout.
+        assert_eq!(
+            resolve(true, Some("ns_1"), None, &segs).unwrap(),
+            "data/tnt_acme/ns_1/orders"
+        );
+        // Flag ON but no namespace_id → falls back to manual layout.
+        assert_eq!(
+            resolve(true, None, None, &segs).unwrap(),
+            "data/tnt_acme/sales/orders"
+        );
+        // Empty namespace → "default" segment.
+        assert_eq!(
+            resolve(false, None, None, &[]).unwrap(),
+            "data/tnt_acme/default/orders"
+        );
+        // Cross-tenant (namespace owned by another tenant) → refused in both layouts.
+        assert!(resolve(false, Some("ns_1"), Some("tnt_globex"), &segs).is_err());
+        assert!(resolve(true, Some("ns_1"), Some("tnt_globex"), &segs).is_err());
+        // Injection in a namespace segment → refused.
+        assert!(resolve(false, None, None, &["..".to_string()]).is_err());
+    }
+
     use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
     use crate::services::operations::batch_result::OperationMetrics;
     use crate::services::record_store::{
@@ -5142,6 +5395,7 @@ mod tests {
                 &["id".to_string(), "email".to_string(), "age".to_string()],
                 None,
                 &[],
+                None,
             )
             .await
             .expect("select users");
@@ -5176,6 +5430,92 @@ mod tests {
             replay_storage.len(),
             1,
             "replayed memtable must hold the record"
+        );
+    }
+
+    /// CDC change-feed (P2): INSERT → UPDATE → DELETE produce ordered change rows over the
+    /// canonical WAL; `changes_since` filters by table + lsn and reports correct op tags.
+    #[tokio::test]
+    async fn cdc_change_feed_reports_ops_since_lsn() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("cdc.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        ddl.execute(DdlStatement::CreateNamespace {
+            namespace: vec!["default".to_string()],
+            if_not_exists: true,
+            properties: HashMap::new(),
+        })
+        .await
+        .expect("create namespace");
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let ddl_stmt = parser
+            .parse_ddl("CREATE TABLE acct (id TEXT NOT NULL, bal INT, PRIMARY KEY (id));")
+            .expect("parse create")
+            .expect("ddl");
+        ddl.execute(ddl_stmt).await.expect("create table");
+
+        let wal_appender = Arc::new(
+            FramedTableWalAppender::open(&wal_path)
+                .await
+                .expect("open WAL"),
+        );
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            wal_appender,
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let run = |sql: &str| {
+            let parser = &parser;
+            let dml = &dml;
+            let sql = sql.to_string();
+            async move {
+                let stmt = parser.parse_dml(&sql).expect("parse dml").expect("dml");
+                dml.execute(stmt).await.expect("execute dml")
+            }
+        };
+        run("INSERT INTO acct (id, bal) VALUES ('a', 100);").await;
+        run("UPDATE acct SET bal = 150 WHERE id = 'a';").await;
+        run("DELETE FROM acct WHERE id = 'a';").await;
+
+        // Full feed from the beginning: upsert, upsert (update), delete — lsn-ordered.
+        let changes = dml.changes_since("acct", 0).await.expect("changes");
+        assert_eq!(changes.len(), 3, "three changes: insert, update, delete");
+        assert_eq!(changes[0].op, "upsert");
+        assert_eq!(changes[1].op, "upsert");
+        assert_eq!(changes[2].op, "delete");
+        assert!(
+            changes[0].lsn < changes[1].lsn && changes[1].lsn < changes[2].lsn,
+            "changes are lsn-ordered"
+        );
+        assert_eq!(changes[2].key, "a", "delete carries the key");
+
+        // Incremental: only changes after the first lsn (the two later ops).
+        let tail = dml
+            .changes_since("acct", changes[0].lsn)
+            .await
+            .expect("tail");
+        assert_eq!(tail.len(), 2, "since first lsn → update + delete only");
+
+        // A different table sees nothing.
+        assert!(
+            dml.changes_since("other", 0)
+                .await
+                .expect("other")
+                .is_empty()
         );
     }
 
@@ -5654,154 +5994,6 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn delete_enforces_referential_actions() {
-        // TD-110: ON DELETE referential actions. Deleting a parent row triggers
-        // NO ACTION (default → reject), CASCADE (delete children), or SET NULL
-        // (clear the child FK) on child tables in the same namespace.
-        use crate::services::record_store::DirectWalTableRecordStore;
-        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
-
-        let temp_dir = tempfile::tempdir().expect("tempdir");
-        let manager = Arc::new(CatalogManager::new());
-        manager
-            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
-            .await
-            .expect("native catalog");
-        let ddl = DdlService::new(manager.clone());
-        ddl.execute(DdlStatement::CreateNamespace {
-            namespace: vec!["default".to_string()],
-            if_not_exists: true,
-            properties: HashMap::new(),
-        })
-        .await
-        .expect("create namespace");
-        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
-        for create in [
-            "CREATE TABLE customers (id TEXT NOT NULL, name TEXT, PRIMARY KEY (id));",
-            "CREATE TABLE orders_restrict (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id));",
-            "CREATE TABLE orders_cascade (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE CASCADE);",
-            "CREATE TABLE orders_setnull (id TEXT NOT NULL, customer_id TEXT, PRIMARY KEY (id), FOREIGN KEY (customer_id) REFERENCES customers (id) ON DELETE SET NULL);",
-        ] {
-            let stmt = parser
-                .parse_ddl(create)
-                .expect("parse create")
-                .expect("ddl");
-            ddl.execute(stmt).await.expect("create table");
-        }
-
-        let wal_appender = Arc::new(
-            FramedTableWalAppender::open(temp_dir.path().join("refaction.wal"))
-                .await
-                .expect("open WAL"),
-        );
-        let record_store = Arc::new(DirectWalTableRecordStore::new(
-            Arc::new(MemtableRecordStorage::new()),
-            wal_appender,
-        ));
-        let dml = DmlService::with_record_store_and_table_write_executor(
-            manager.clone(),
-            record_store.clone(),
-            Arc::new(PlannedOnlyTableWriteExecutor::new()),
-        );
-        let run = |sql: &'static str| parser.parse_dml(sql).expect("parse dml").expect("dml");
-
-        // Sanity: the parser must carry ON DELETE actions into the catalog.
-        let cascade_schema = manager
-            .resolve_table("orders_cascade")
-            .await
-            .map(|(catalog, id)| (catalog, id))
-            .expect("resolve cascade table");
-        let cascade_table = cascade_schema
-            .0
-            .get_table(&cascade_schema.1)
-            .await
-            .expect("cascade schema");
-        assert!(
-            cascade_table
-                .relational_capabilities
-                .constraints
-                .iter()
-                .any(|c| matches!(
-                    c,
-                    proximadb_catalog::ColumnConstraint::ForeignKey {
-                        on_delete: Some(proximadb_catalog::ReferentialAction::Cascade),
-                        ..
-                    }
-                )),
-            "ON DELETE CASCADE must survive into the catalog schema"
-        );
-
-        for sql in [
-            "INSERT INTO customers (id, name) VALUES ('c1', 'Alice');",
-            "INSERT INTO customers (id, name) VALUES ('c2', 'Bob');",
-            "INSERT INTO customers (id, name) VALUES ('c3', 'Cara');",
-            "INSERT INTO orders_restrict (id, customer_id) VALUES ('o1', 'c1');",
-            "INSERT INTO orders_cascade (id, customer_id) VALUES ('oc1', 'c2');",
-            "INSERT INTO orders_setnull (id, customer_id) VALUES ('os1', 'c3');",
-        ] {
-            dml.execute(run(sql)).await.expect("seed insert");
-        }
-
-        // NO ACTION (default): deleting c1 is rejected — o1 still references it.
-        let err = dml
-            .execute(run("DELETE FROM customers WHERE id = 'c1';"))
-            .await
-            .expect_err("NO ACTION must reject deleting a referenced parent");
-        assert!(
-            err.to_string().contains("ON DELETE NO ACTION"),
-            "unexpected error: {err}"
-        );
-
-        let get = |table: &'static str, key: &'static str| {
-            let store = record_store.clone();
-            let manager = manager.clone();
-            async move {
-                let (catalog, id) = manager.resolve_table(table).await.expect("resolve");
-                let schema = catalog.get_table(&id).await.expect("schema");
-                store
-                    .get_by_key(
-                        &schema,
-                        TableRecordGetRequest {
-                            table_id: id.name.clone(),
-                            key: key.to_string(),
-                            include_vector: false,
-                            include_props: true,
-                        },
-                        None,
-                    )
-                    .await
-                    .expect("get_by_key")
-            }
-        };
-
-        // CASCADE: deleting c2 removes the referencing orders_cascade row.
-        assert!(get("orders_cascade", "oc1").await.is_some());
-        dml.execute(run("DELETE FROM customers WHERE id = 'c2';"))
-            .await
-            .expect("CASCADE delete of referenced parent must succeed");
-        assert!(
-            get("orders_cascade", "oc1").await.is_none(),
-            "ON DELETE CASCADE must remove the child row"
-        );
-
-        // SET NULL: deleting c3 keeps the orders_setnull row but nulls its FK.
-        dml.execute(run("DELETE FROM customers WHERE id = 'c3';"))
-            .await
-            .expect("SET NULL delete of referenced parent must succeed");
-        let child = get("orders_setnull", "os1")
-            .await
-            .expect("ON DELETE SET NULL must keep the child row");
-        assert!(
-            matches!(
-                child.props.get("customer_id"),
-                None | Some(ProximaValue::Null)
-            ),
-            "ON DELETE SET NULL must clear the child FK column, got {:?}",
-            child.props.get("customer_id")
-        );
-    }
-
     /// SQL UPDATE and DELETE through `DirectWalTableRecordStore` — T9 conformance.
     ///
     /// Verifies that UPDATE rewrites the current visible record and DELETE leaves
@@ -5889,6 +6081,7 @@ mod tests {
                         literal: "i1".to_string(),
                     },
                 }],
+                None,
             )
             .await
             .expect("select after update");
@@ -5914,7 +6107,7 @@ mod tests {
 
         // Verify i2 is no longer returned by a full scan.
         let after_delete = dml
-            .select_table_records_with_projection("items", &["id".to_string()], None, &[])
+            .select_table_records_with_projection("items", &["id".to_string()], None, &[], None)
             .await
             .expect("select after delete");
         let ids: Vec<&ProximaValue> = after_delete.rows.iter().map(|r| &r[0]).collect();
@@ -5993,6 +6186,7 @@ mod tests {
                             literal: id.to_string(),
                         },
                     }],
+                    None,
                 )
                 .await
                 .expect("select");
@@ -6095,168 +6289,6 @@ mod tests {
     /// stays OR-safe (a PK leaf under OR forces a full scan), and nested groups
     /// are NOT flattened.
     #[tokio::test]
-    async fn select_uses_unique_index_point_lookup() {
-        // TD-110 Slice D: equality on a UNIQUE (non-PK) string column resolves via
-        // the store's O(1) index probe (UniqueIndexLookup), not a full scan — on
-        // both the WHERE-tree path and the flat-predicate path. The full predicate
-        // set is still re-checked, and a unique leaf under OR falls back to a scan.
-        use crate::services::record_store::DirectWalTableRecordStore;
-        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
-
-        let temp_dir = tempfile::tempdir().expect("tempdir");
-        let wal_path = temp_dir.path().join("dml-uniq-lookup.wal");
-        let manager = Arc::new(CatalogManager::new());
-        manager
-            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
-            .await
-            .expect("native catalog");
-        let ddl = DdlService::new(manager.clone());
-        ddl.execute(DdlStatement::CreateNamespace {
-            namespace: vec!["default".to_string()],
-            if_not_exists: true,
-            properties: HashMap::new(),
-        })
-        .await
-        .expect("create namespace");
-        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
-        let ddl_stmt = parser
-            .parse_ddl(
-                "CREATE TABLE users (id TEXT NOT NULL, email TEXT, status TEXT, PRIMARY KEY (id), UNIQUE (email));",
-            )
-            .expect("parse ddl")
-            .expect("ddl stmt");
-        ddl.execute(ddl_stmt).await.expect("create table");
-
-        let record_store = Arc::new(DirectWalTableRecordStore::new(
-            Arc::new(MemtableRecordStorage::new()),
-            Arc::new(
-                FramedTableWalAppender::open(&wal_path)
-                    .await
-                    .expect("open WAL"),
-            ),
-        ));
-        let dml = DmlService::with_record_store_and_table_write_executor(
-            manager.clone(),
-            record_store,
-            Arc::new(PlannedOnlyTableWriteExecutor::new()),
-        );
-        for (id, email, status) in [
-            ("u1", "a@x.com", "active"),
-            ("u2", "b@x.com", "active"),
-            ("u3", "c@x.com", "idle"),
-        ] {
-            let stmt = parser
-                .parse_dml(&format!(
-                    "INSERT INTO users (id, email, status) VALUES ('{id}', '{email}', '{status}');"
-                ))
-                .expect("parse insert")
-                .expect("insert stmt");
-            dml.execute(stmt).await.expect("insert");
-        }
-
-        async fn run_where(
-            dml: &DmlService,
-            parser: &crate::query::sql_frontend::SqlFrontendParser,
-            sql: &str,
-        ) -> (RelationalSelectAccessPath, Vec<String>) {
-            let where_clause = parser.parse_select_where_clause(sql).expect("parse where");
-            let res = dml
-                .select_table_records_with_projection_where(
-                    "users",
-                    &["id".to_string()],
-                    None,
-                    where_clause.as_ref(),
-                )
-                .await
-                .expect("select");
-            let mut ids: Vec<String> = res
-                .rows
-                .iter()
-                .map(|row| match &row[0] {
-                    ProximaValue::String(s) => s.clone(),
-                    other => format!("{other:?}"),
-                })
-                .collect();
-            ids.sort();
-            (res.route_metadata.access_path, ids)
-        }
-
-        // Tree path: equality on the UNIQUE column → index point lookup, right row.
-        let (path, ids) = run_where(
-            &dml,
-            &parser,
-            "SELECT id FROM users WHERE email = 'b@x.com'",
-        )
-        .await;
-        assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
-        assert_eq!(ids, vec!["u2"]);
-
-        // Full-predicate re-check: unique email matches but status does not → no row.
-        let (path, ids) = run_where(
-            &dml,
-            &parser,
-            "SELECT id FROM users WHERE email = 'b@x.com' AND status = 'idle'",
-        )
-        .await;
-        assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
-        assert!(ids.is_empty(), "full predicate re-check drops the row");
-
-        // Missing unique value → index path, empty result.
-        let (path, ids) = run_where(
-            &dml,
-            &parser,
-            "SELECT id FROM users WHERE email = 'zzz@x.com'",
-        )
-        .await;
-        assert_eq!(path, RelationalSelectAccessPath::UniqueIndexLookup);
-        assert!(ids.is_empty());
-
-        // Unique leaf under OR must NOT point-lookup (would miss the idle row).
-        let (path, ids) = run_where(
-            &dml,
-            &parser,
-            "SELECT id FROM users WHERE email = 'b@x.com' OR status = 'idle'",
-        )
-        .await;
-        assert_eq!(
-            path,
-            RelationalSelectAccessPath::TableScan,
-            "unique leaf under OR forces a scan"
-        );
-        assert_eq!(ids, vec!["u2", "u3"]);
-
-        // Flat-predicate path (pgwire relational adapter): same index lookup.
-        let flat = dml
-            .select_table_records_with_projection(
-                "users",
-                &["id".to_string()],
-                None,
-                &[RelationalSelectPredicateInput {
-                    column_name: "email".to_string(),
-                    condition: RelationalSelectPredicateCondition::Comparison {
-                        operator: RelationalSelectPredicateOperator::Equal,
-                        literal: "c@x.com".to_string(),
-                    },
-                }],
-            )
-            .await
-            .expect("flat select");
-        assert_eq!(
-            flat.route_metadata.access_path,
-            RelationalSelectAccessPath::UniqueIndexLookup
-        );
-        let flat_ids: Vec<String> = flat
-            .rows
-            .iter()
-            .map(|row| match &row[0] {
-                ProximaValue::String(s) => s.clone(),
-                other => format!("{other:?}"),
-            })
-            .collect();
-        assert_eq!(flat_ids, vec!["u3"]);
-    }
-
-    #[tokio::test]
     async fn select_where_supports_or_nested_and_pk_or_safety() {
         use crate::services::record_store::DirectWalTableRecordStore;
         use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
@@ -6331,6 +6363,7 @@ mod tests {
                     &["id".to_string()],
                     limit,
                     where_clause.as_ref(),
+                    None,
                 )
                 .await
                 .expect("select");
@@ -6517,7 +6550,7 @@ mod tests {
 
         // (a) No predicate / no projection → all rows, full column order [id,status,qty].
         let (schema, rows) = dml
-            .scan_table_relational("inv", None, None, None)
+            .scan_table_relational("inv", None, None, None, None)
             .await
             .expect("scan all");
         assert_eq!(schema.columns.len(), 3);
@@ -6528,7 +6561,7 @@ mod tests {
         let pred =
             |row: &[ProximaValue]| matches!(&row[1], ProximaValue::String(s) if s == "active");
         let (_s, rows) = dml
-            .scan_table_relational("inv", None, Some(&pred), None)
+            .scan_table_relational("inv", None, Some(&pred), None, None)
             .await
             .expect("scan predicate");
         let mut ids: Vec<String> = rows
@@ -6544,7 +6577,7 @@ mod tests {
         // (c) Output projection narrows + orders columns → just [status].
         let cols = vec!["status".to_string()];
         let (_s, rows) = dml
-            .scan_table_relational("inv", Some(&cols), None, None)
+            .scan_table_relational("inv", Some(&cols), None, None, None)
             .await
             .expect("scan projection");
         assert_eq!(rows.len(), 4);
@@ -6552,7 +6585,7 @@ mod tests {
 
         // (d) Limit caps the result.
         let (_s, rows) = dml
-            .scan_table_relational("inv", None, None, Some(2))
+            .scan_table_relational("inv", None, None, Some(2), None)
             .await
             .expect("scan limit");
         assert_eq!(rows.len(), 2, "limit caps the scan");
@@ -6764,6 +6797,249 @@ mod tests {
         );
     }
 
+    /// TD-113: the same table name materialized under two different request
+    /// tenants lands under disjoint, tenant-isolated object prefixes — never
+    /// co-mingled under the `default_tenant` placeholder. CREATE + INSERT +
+    /// MATERIALIZE are all tenant-scoped (TD-064), so each tenant owns its row
+    /// and its snapshot prefix.
+    #[tokio::test]
+    async fn materialize_is_tenant_isolated_by_request_tenant() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use crate::storage::tenant::context::TenantContext;
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-mat-tenant.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///wh").unwrap());
+
+        let mut locations = Vec::new();
+        for tenant in ["acmecorp", "globexco"] {
+            let tctx = TenantContext::for_tenant_id(tenant);
+            let create = parser
+                .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
+                .expect("parse ddl")
+                .expect("ddl stmt");
+            ddl.execute_scoped(create, Some(tenant))
+                .await
+                .expect("create table");
+            // Distinct PK per tenant: this low-level DirectWalTableRecordStore is
+            // not row-partitioned by tenant (that is TD-064's routing store), and
+            // TD-113 only governs the object prefix, not row isolation here.
+            let insert = parser
+                .parse_dml(&format!(
+                    "INSERT INTO inv (id, qty) VALUES ('{tenant}', 5);"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute_scoped(insert, Some(&tctx))
+                .await
+                .expect("insert");
+            let loc = dml
+                .materialize_table_to_parquet(&*bridge, "memory:///wh", "inv", Some(&tctx))
+                .await
+                .expect("materialize");
+            assert!(
+                loc.contains(&format!("/{tenant}/")),
+                "location must carry the tenant segment: {loc}"
+            );
+            assert!(
+                !loc.contains("default_tenant"),
+                "location must not use the default_tenant placeholder: {loc}"
+            );
+            locations.push(loc);
+        }
+        assert_ne!(
+            locations[0], locations[1],
+            "two tenants must materialize to disjoint prefixes"
+        );
+    }
+
+    /// TD-113 Phase 2: with the DrPath layout enabled the snapshot prefix uses the
+    /// rename-stable opaque `namespace_id` (`data/{tenant}/{ns_<uuid>}/{table}`)
+    /// instead of the human namespace path. Driven via the inner (flag injected)
+    /// so it is deterministic regardless of the `PROXIMADB_WAREHOUSE_DRPATH` env.
+    #[tokio::test]
+    async fn materialize_drpath_layout_uses_opaque_namespace_id() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use crate::storage::tenant::context::TenantContext;
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-mat-drpath.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let create = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute_scoped(create, Some("acmecorp"))
+            .await
+            .expect("create table");
+        let tctx = TenantContext::for_tenant_id("acmecorp");
+        let insert = parser
+            .parse_dml("INSERT INTO inv (id, qty) VALUES ('i1', 5);")
+            .expect("parse insert")
+            .expect("insert stmt");
+        dml.execute_scoped(insert, Some(&tctx))
+            .await
+            .expect("insert");
+
+        let bridge = Arc::new(IcebergObjectStoreBridge::from_url("memory:///wh").unwrap());
+        let loc = dml
+            .materialize_table_to_parquet_inner(&*bridge, "memory:///wh", "inv", Some(&tctx), true)
+            .await
+            .expect("materialize (drpath)");
+
+        assert!(
+            loc.starts_with("memory:///wh/data/acmecorp/ns_"),
+            "drpath layout must use the opaque namespace_id: {loc}"
+        );
+        assert!(loc.ends_with("/inv"), "loc={loc}");
+        assert!(!loc.contains("default_tenant"), "loc={loc}");
+    }
+
+    /// The bulk-append `INSERT ... SELECT` prefix resolver produces the SAME
+    /// namespace-aware, tenant-scoped layout as the materialize path
+    /// (`data/{tenant}/{namespace}/{table}`) — not the flat `tables/{name}`
+    /// fallback — and yields `None` (legacy fallback) when there is no tenant scope.
+    #[tokio::test]
+    async fn resolve_warehouse_object_prefix_is_namespace_aware_and_tenant_scoped() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-bulk-prefix.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+        let create = parser
+            .parse_ddl("CREATE TABLE facts (id TEXT NOT NULL, qty INT, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute_scoped(create, Some("acmecorp"))
+            .await
+            .expect("create table");
+
+        // Tenant scope → namespace-aware, tenant-isolated prefix (NOT the flat fallback).
+        let prefix = dml
+            .resolve_warehouse_object_prefix("facts", Some("acmecorp"))
+            .await
+            .expect("resolve prefix")
+            .expect("a tenant scope yields a prefix");
+        assert!(
+            prefix.starts_with("data/acmecorp/"),
+            "prefix must be tenant-isolated: {prefix}"
+        );
+        assert!(
+            prefix.ends_with("/facts"),
+            "prefix must end with table: {prefix}"
+        );
+        assert!(
+            !prefix.contains("/tables/"),
+            "prefix must be namespace-aware, not the flat `tables/` fallback: {prefix}"
+        );
+        assert!(!prefix.contains("default_tenant"), "prefix={prefix}");
+
+        // No tenant scope → None (single-tenant/embedded keeps the legacy fallback).
+        assert!(
+            dml.resolve_warehouse_object_prefix("facts", None)
+                .await
+                .expect("resolve prefix (no tenant)")
+                .is_none()
+        );
+    }
+
+    /// TD-113 Phase 2: a tenant-scoped CREATE records the owning tenant on the
+    /// namespace, so it becomes DR-addressable (both `namespace_id` and
+    /// `tenant_id` populated).
+    #[tokio::test]
+    async fn scoped_create_makes_namespace_dr_addressable() {
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+        let ddl = DdlService::new(manager.clone());
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        let create = parser
+            .parse_ddl("CREATE TABLE inv (id TEXT NOT NULL, PRIMARY KEY (id));")
+            .expect("parse ddl")
+            .expect("ddl stmt");
+        ddl.execute_scoped(create, Some("acmecorp"))
+            .await
+            .expect("create table");
+
+        let (catalog, table_id) = manager
+            .resolve_table_scoped("inv", Some("acmecorp"))
+            .await
+            .expect("resolve scoped");
+        let ns = catalog
+            .get_namespace(&table_id.namespace)
+            .await
+            .expect("get namespace");
+        assert_eq!(ns.tenant_id.as_deref(), Some("acmecorp"));
+        assert!(ns.namespace_id.is_some());
+        assert!(ns.is_dr_addressable(), "namespace must be DR-addressable");
+    }
+
     /// P3 end-to-end: materialize a table to a Parquet snapshot on a REOPENABLE
     /// (file://) object store, then read it back through the DataFusion OLAP reader
     /// (`ObjectStoreParquetTable::open(location)` + `ctx.sql`) — proving the published
@@ -6914,7 +7190,7 @@ mod tests {
 
         // Existing key → full row [id, status, qty] in schema order.
         let row = dml
-            .point_lookup_relational("inv", "i2")
+            .point_lookup_relational("inv", "i2", None)
             .await
             .expect("lookup")
             .expect("row present");
@@ -6925,7 +7201,7 @@ mod tests {
 
         // Missing key → None.
         let missing = dml
-            .point_lookup_relational("inv", "nope")
+            .point_lookup_relational("inv", "nope", None)
             .await
             .expect("lookup");
         assert!(missing.is_none(), "absent key returns None");
@@ -6999,6 +7275,7 @@ mod tests {
                             literal: id.to_string(),
                         },
                     }],
+                    None,
                 )
                 .await
                 .expect("select");
@@ -7363,6 +7640,7 @@ mod tests {
                 &["id".to_string(), "tag".to_string(), "rating".to_string()],
                 None,
                 &[],
+                None,
             )
             .await
             .expect("select");

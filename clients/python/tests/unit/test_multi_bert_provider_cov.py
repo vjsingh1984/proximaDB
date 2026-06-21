@@ -32,6 +32,16 @@ import pandas as pd
 import psutil
 import pytest
 
+# The target SDK module does a module-level ``import torch.nn.functional``; exec'ing
+# it below triggers that import at collection time. torch is an optional, heavy dep
+# and can be absent or broken in CI (e.g. a partial wheel where ``torch`` imports
+# but ``torch.nn`` does not — "'torch' is not a package"). Skip the whole module in
+# that case instead of aborting collection for the entire unit suite.
+pytest.importorskip(
+    "torch.nn.functional",
+    reason="torch (with torch.nn) required by multi_bert_provider",
+)
+
 # ---------------------------------------------------------------------------
 # Import-time shims (must run before importing the target module).
 #

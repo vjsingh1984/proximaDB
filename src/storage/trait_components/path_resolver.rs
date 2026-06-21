@@ -476,6 +476,14 @@ impl DrResolvedPath {
     pub fn restore_checkpoints_subprefix(&self) -> String {
         format!("{}restore-checkpoints/", self.root_prefix())
     }
+
+    /// Branches subprefix `<root>_branches/`. Holds the object-store branch
+    /// refs (`<id>.json`) used for agent copy-on-write branching (TD-117). The
+    /// leading underscore keeps branch metadata lexically separate from data
+    /// subprefixes (`segments/`, `wal/`, …) in a `list`.
+    pub fn branches_subprefix(&self) -> String {
+        format!("{}_branches/", self.root_prefix())
+    }
 }
 
 /// Errors returned by [`DrPathBuilder::build`]. The reconciler and engine
@@ -579,7 +587,39 @@ impl DrPathBuilder {
         Ok(resolved)
     }
 
-    fn validate_id(field: &'static str, value: &str) -> Result<(), PathResolverError> {
+    /// Build a validated [`DrResolvedPath`] from already-resolved parts, rather
+    /// than from a `CatalogNamespace`.
+    ///
+    /// Use this when the authoritative `tenant_id` comes from the request/connection
+    /// (TD-064 tenancy) while only the rename-stable `namespace_id` comes from the
+    /// catalog — e.g. warehouse materialization, where the catalog row may not yet
+    /// carry a `tenant_id` (the P0.5 backfill is a separate concern). Every segment
+    /// is run through the same [`validate_id`](Self::validate_id) guard as
+    /// [`build`](Self::build), so injection/traversal is rejected identically.
+    pub fn build_from_parts(
+        tenant_id: &str,
+        namespace_id: &str,
+        collection_id: &str,
+        storage_pool_class: StoragePoolClass,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        Self::validate_id("tenant_id", tenant_id)?;
+        Self::validate_id("namespace_id", namespace_id)?;
+        Self::validate_id("collection_id", collection_id)?;
+        Ok(DrResolvedPath {
+            tenant_id: tenant_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            collection_id: collection_id.to_string(),
+            storage_pool_class,
+        })
+    }
+
+    /// Canonical validation for a single tenant-isolated path ID segment
+    /// (tenant_id / namespace_id / collection_id). Rejects empty, non-ASCII,
+    /// path-separator/NUL, whitespace, and `..` traversal. Public so callers
+    /// that must build a path before the full `CatalogNamespace` is available
+    /// (e.g. the warehouse materializer over the not-yet-backfilled native
+    /// catalog) can apply the same injection/traversal guard per segment.
+    pub fn validate_id(field: &'static str, value: &str) -> Result<(), PathResolverError> {
         if value.is_empty() {
             return Err(PathResolverError::InvalidId {
                 field,
@@ -707,7 +747,7 @@ mod tests {
             .with_tenant("tnt_acme")
             .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
             .with_region_home("us-east-1")
-            .with_storage_pool_class(StoragePoolClass::Business)
+            .with_storage_pool_class(StoragePoolClass::Standard)
     }
 
     #[test]
@@ -743,7 +783,7 @@ mod tests {
             path.restore_checkpoints_subprefix(),
             "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/restore-checkpoints/"
         );
-        assert_eq!(path.storage_pool_class, StoragePoolClass::Business);
+        assert_eq!(path.storage_pool_class, StoragePoolClass::Standard);
     }
 
     #[test]
@@ -797,6 +837,18 @@ mod tests {
     }
 
     #[test]
+    fn build_from_parts_validates_each_segment() {
+        let pc = StoragePoolClass::default();
+        // Happy path → canonical prefix.
+        let ok = DrPathBuilder::build_from_parts("tnt_acme", "ns_42", "orders", pc).unwrap();
+        assert_eq!(ok.root_prefix(), "data/tnt_acme/ns_42/orders/");
+        // Each segment is guarded against traversal / separators / empty.
+        assert!(DrPathBuilder::build_from_parts("..", "ns_42", "orders", pc).is_err());
+        assert!(DrPathBuilder::build_from_parts("tnt_acme", "a/b", "orders", pc).is_err());
+        assert!(DrPathBuilder::build_from_parts("tnt_acme", "ns_42", "", pc).is_err());
+    }
+
+    #[test]
     fn dr_builder_rejects_non_ascii_ids() {
         let ns = dr_addressable_namespace();
         let err = DrPathBuilder::build(&ns, "col_café").unwrap_err();
@@ -842,8 +894,8 @@ mod tests {
     fn dr_builder_for_pool_accepts_matching_class() {
         let ns = dr_addressable_namespace();
         let path =
-            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Business).unwrap();
-        assert_eq!(path.storage_pool_class, StoragePoolClass::Business);
+            DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Standard).unwrap();
+        assert_eq!(path.storage_pool_class, StoragePoolClass::Standard);
     }
 
     #[test]
@@ -855,7 +907,7 @@ mod tests {
             DrPathBuilder::build_for_pool(&ns, "col_orders", StoragePoolClass::Pooled).unwrap_err();
         match err {
             PathResolverError::PoolClassMismatch { expected, got } => {
-                assert_eq!(expected, StoragePoolClass::Business);
+                assert_eq!(expected, StoragePoolClass::Standard);
                 assert_eq!(got, StoragePoolClass::Pooled);
             }
             other => panic!("expected PoolClassMismatch, got {other:?}"),

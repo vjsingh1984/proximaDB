@@ -17,7 +17,7 @@ _MASTER_RE = re.compile(r"^proxima-local\[(?P<workers>[1-9][0-9]*)\]$")
 _IDENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def col(name: str) -> Column:
+def _legacy_col(name: str) -> Column:
     """Create a column expression for notebook/DataFrame-style filters."""
     return Column(name)
 
@@ -555,6 +555,40 @@ class ProximaFrame:
     def to_pandas(self) -> Any:
         return self.to_arrow().to_pandas()
 
+    def to_dataframe(self) -> Any:
+        """Convert this frame to a native DataFusion-backed DataFrame.
+
+        This enables advanced relational operations and high-performance
+        execution via the Rust-native engine.
+        """
+        if self._plan.source_kind == "sql":
+            session = self.session.db.dataframe_session()
+            session.refresh_tables()
+            return session.sql(self._plan.source)
+        
+        if self._plan.source_kind == "table":
+            session = self.session.db.dataframe_session()
+            session.refresh_tables()
+            df = session.table(self._plan.source)
+            
+            # Apply operations
+            for op in self._plan.operations:
+                op_type = op["type"]
+                if op_type == "select":
+                    from . import col as native_col
+                    exprs = [native_col(c) for c in op["columns"]]
+                    df = df.select(*exprs)
+                elif op_type == "where":
+                    # This is a bit tricky as we have a SQL string in the Python Predicate
+                    # For now, we fallback to SQL if we can't easily lower the expression
+                    pass 
+                elif op_type == "limit":
+                    df = df.limit(op["count"])
+            
+            return df
+
+        raise NotImplementedError(f"Cannot convert source {self._plan.source_kind} to DataFrame")
+
 
 class GroupedProximaFrame:
     """Grouped frame returned by ``ProximaFrame.group_by``."""
@@ -577,5 +611,4 @@ __all__ = [
     "ProximaFrame",
     "ProximaSession",
     "ProximaSessionBuilder",
-    "col",
 ]

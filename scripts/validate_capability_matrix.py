@@ -53,7 +53,9 @@ DRIFT_RULES = {
     "graph_legacy_route_deprecation": {
         "doc_rules": [
             {
-                "path": "docs/api/graph.adoc",
+                # Relocated from docs/api/graph.adoc to docs/03-api-reference/ in the
+                # 2026-05 docs taxonomy reshuffle; all deprecation/redirect content moved with it.
+                "path": "docs/03-api-reference/graph.adoc",
                 "required_substrings": [
                     "Legacy Endpoint Deprecation And Migration",
                     "308 Permanent Redirect",
@@ -62,21 +64,10 @@ DRIFT_RULES = {
                     "`/api/v1/graph/graphs/default/nodes`",
                 ],
             },
-            {
-                "path": "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc",
-                "forbidden_substrings": [
-                    "http://localhost:5678/api/v1/graph/nodes",
-                    "http://localhost:5678/api/v1/graph/edges",
-                    "http://localhost:5678/api/v1/graph/query",
-                    "http://localhost:5678/api/v1/graph/stats?collection=",
-                    "http://localhost:5678/api/v1/graph/migrate",
-                ],
-                "required_substrings": [
-                    "http://localhost:5678/api/v1/graph/graphs/social_network/nodes",
-                    "http://localhost:5678/api/v1/graph/graphs/web_graph/pulsar/query",
-                    "http://localhost:5678/api/v1/graph/graphs/historical_events/quasar/migrate",
-                ],
-            },
+            # NOTE: the former GRAPH_ENGINES_GUIDE.adoc URL-example sub-rule was removed.
+            # That guide is now a conceptual runtime guide with no API examples; the
+            # multi-graph canonical-route requirement is covered by the graph.adoc rule
+            # above and the source-comment rule below.
             {
                 "path": "src/network/rest/v1/graph.rs",
                 "required_substrings": [
@@ -94,9 +85,12 @@ DRIFT_RULES = {
     "distributed_graph_engine_messaging": {
         "doc_rules": [
             {
+                # PULSAR/QUASAR moved past "experimental" to fully RETIRED (TD-001,
+                # Jun 2026); the guide now documents retirement, not experimentation.
                 "path": "docs/06-internals/GRAPH_ENGINES_GUIDE.adoc",
                 "required_substrings": [
-                    "*WARNING*: PULSAR and QUASAR are experimental",
+                    "are retired graph engine names",
+                    "Do not document, demo, or release-note PULSAR or QUASAR as product engines",
                 ],
                 "forbidden_substrings": [
                     "PULSAR is production-ready",
@@ -117,6 +111,91 @@ DRIFT_RULES = {
         ],
     },
 }
+
+
+# Maturity-contract reconciliation guard. Unlike DRIFT_RULES, these are NOT tied to a
+# capability id -- they always run. They assert the doc-drift reconciliation between the
+# product support contract and the technical-debt register / PRD / VISION stays in place,
+# so a future edit cannot silently re-introduce "production-ready" claims that contradict
+# SUPPORTED_SURFACE. See docs/SUPPORTED_SURFACE.adoc "Authority Hierarchy".
+MATURITY_CONTRACT_RULES = [
+    {
+        "path": "docs/SUPPORTED_SURFACE.adoc",
+        "required_substrings": [
+            "== Authority Hierarchy",
+        ],
+    },
+    {
+        "path": "docs/10-quality/TECHNICAL_DEBT.adoc",
+        "required_substrings": [
+            # Banner: register tracks implementation state, not support level.
+            "This register tracks _implementation state_, not _product-support level_.",
+            # Relabeled contradiction cells, each cross-linked to its support tier.
+            "_Experimental in v0.2 (see SUPPORTED_SURFACE)_",  # external catalogs (TD-002)
+            "_Beta in v0.2 (see SUPPORTED_SURFACE)_",          # mTLS / TST / event (TD-006/009/010)
+            "Not a v0.2 supported surface (see SUPPORTED_SURFACE)",  # framework integrations (TD-011)
+        ],
+    },
+    {
+        "path": "docs/00-product/PRD.adoc",
+        "required_substrings": [
+            "shippable/supported surface for v0.2 is defined by",  # precedence banner
+            "v0.2 status: Beta",                  # TST + Event P0 notes
+            "v0.2 status: not a Supported surface",  # Framework integrations P0 note
+        ],
+    },
+    {
+        "path": "docs/00-product/VISION.adoc",
+        "required_substrings": [
+            "This document states the *broad, durable vision*",
+        ],
+    },
+    # REST /api/v3 is a 308 alias to /api/v2/collections/{id}/documents.
+    # These checks ensure the alias relationship and redirect behaviour remain
+    # in place and that v3 is not re-promoted to an independent API surface.
+    {
+        "path": "src/network/rest/v3/mod.rs",
+        "required_substrings": [
+            # v3 returns a 308 to the canonical v2 path.
+            "308 Permanent Redirect",
+            # Redirect target comment must reference the canonical v2 path template.
+            "/api/v2/collections/{id}/documents",
+            # Sunset header constant must be referenced (not hard-coded inline).
+            "V3_DOCUMENTS_SUNSET_DATE",
+        ],
+        "forbidden_substrings": [
+            # v3 must not be re-promoted to a stable independent surface.
+            "v3 is a stable API surface",
+            "v3 production-ready",
+        ],
+    },
+    # gRPC v1 compatibility services must remain OFF by default and must carry
+    # Sunset documentation noting post-sunset hard-deletion (see TD-121).
+    {
+        "path": "crates/platform/proximadb-runtime/src/bootstrap_config.rs",
+        "required_substrings": [
+            # Default value of the env-var helper must be false (opt-in, not opt-out).
+            "unwrap_or(false)",
+            # Env-var override name is documented in the field comment.
+            "PROXIMADB_GRPC_V1_COMPAT",
+            # Hard-deletion intent after Sunset must be stated in the struct field doc.
+            "Post-sunset these v1 services are removed entirely",
+        ],
+        "forbidden_substrings": [
+            # v1 compat must not default to enabled.
+            "unwrap_or(true)",
+        ],
+    },
+    {
+        "path": "src/network/multi_server.rs",
+        "required_substrings": [
+            # Runtime registration comment must note post-sunset removal.
+            "Post-sunset these service impls are removed entirely",
+            # v1 services must be behind the flag check, not unconditionally registered.
+            "enable_grpc_v1_compat",
+        ],
+    },
+]
 
 
 def parse_reference(ref: str) -> tuple[Path, int | None]:
@@ -230,6 +309,10 @@ def main() -> int:
             continue
 
         evaluate_doc_rule(cap_id, rule, errors)
+
+    # Maturity-contract reconciliation guard (always evaluated).
+    for rule in MATURITY_CONTRACT_RULES:
+        evaluate_doc_rule("maturity_contract", rule, errors)
 
     if errors:
         print("Capability matrix validation failed:")

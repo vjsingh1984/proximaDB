@@ -71,6 +71,11 @@ pub mod hint {
     /// no fp32 rerank) because the IVF index was still cold-loaded
     /// (`ColdBinaryOnly`). Recall is reduced until the WARM tier finishes loading.
     pub const COLD_STAGE1_ONLY: &str = "cold_stage1_only";
+    /// TD-040: the SST cold read skipped one or more whole blocks via per-block
+    /// vector-bounds (L2 lower-bound) pruning before reading them. Recall is
+    /// preserved (the skipped blocks provably can't hold a top-k candidate);
+    /// the hint discloses the I/O saving, not a degradation.
+    pub const VECTOR_BOUNDS_PRUNED: &str = "vector_bounds_pruned";
 }
 
 /// Inputs the explain builder consumes. The trace itself carries most
@@ -89,6 +94,10 @@ pub struct ExplainInputs<'a> {
     /// ADR-023 T-E: the search served Stage-1-only from a cold-loaded IVF index
     /// (`ColdBinaryOnly`) — reduced recall until the WARM tier loads.
     pub cold_stage1_only: bool,
+    /// TD-040: count of SST blocks skipped by per-block vector-bounds pruning
+    /// before their data blocks were read. 0 when nothing was pruned (the
+    /// common case, or a non-L2 / filtered / kill-switched search).
+    pub vector_bounds_pruned_blocks: u64,
 }
 
 /// Build the structured explain.
@@ -101,6 +110,7 @@ pub fn build(inputs: &ExplainInputs<'_>) -> RouteExplain {
             trace,
             inputs.quantized_route_downgraded,
             inputs.cold_stage1_only,
+            inputs.vector_bounds_pruned_blocks,
         ),
         cache_section(trace),
         execution_section(trace, inputs.corpus_gb),
@@ -143,6 +153,7 @@ fn plan_section(
     trace: &SearchPlanTrace,
     quantized_route_downgraded: bool,
     cold_stage1_only: bool,
+    vector_bounds_pruned_blocks: u64,
 ) -> ExplainSection {
     let mut lines = vec![
         format!(
@@ -161,6 +172,12 @@ fn plan_section(
             "cold start: Stage-1-only (binary Hamming, no fp32 rerank) until warm tier loads"
                 .to_string(),
         );
+    }
+    if vector_bounds_pruned_blocks > 0 {
+        // TD-040: recall-preserving I/O saving — disclose the skipped reads.
+        lines.push(format!(
+            "vector-bounds pruning skipped {vector_bounds_pruned_blocks} block(s) before read (recall preserved)"
+        ));
     }
     if let Some(est) = trace.estimated_selectivity {
         lines.push(format!("estimated selectivity: {:.4}", est));
@@ -300,6 +317,10 @@ fn build_hints(inputs: &ExplainInputs<'_>) -> Vec<String> {
         // ADR-023 T-E: cold-start coarse serving — recall reduced until warm.
         hints.push(hint::COLD_STAGE1_ONLY.to_string());
     }
+    if inputs.vector_bounds_pruned_blocks > 0 {
+        // TD-040: recall-preserving block-read pruning fired on the cold path.
+        hints.push(hint::VECTOR_BOUNDS_PRUNED.to_string());
+    }
     if trace.sure_signals.disagreement >= 0.5 {
         hints.push(hint::HIGH_DISAGREEMENT.to_string());
     }
@@ -375,6 +396,7 @@ mod tests {
             gls_score: None,
             estimated_scan_gb: None,
             actual_scan_gb: 0.0,
+            actual_egress_gb: 0.0,
             index_stats: IndexStats::default(),
             candidate_count: 64,
             rerank_count: 10,
@@ -396,6 +418,7 @@ mod tests {
             recall_probe_open: None,
             quantized_route_downgraded: false,
             cold_stage1_only: false,
+            vector_bounds_pruned_blocks: 0,
         }
     }
 
@@ -646,6 +669,30 @@ mod tests {
     }
 
     #[test]
+    fn hint_and_plan_line_on_vector_bounds_pruned() {
+        let t = trace_template();
+        let mut i = inputs(&t, 1.0);
+        i.vector_bounds_pruned_blocks = 5;
+        let e = build(&i);
+        assert!(
+            e.hints.iter().any(|h| h == hint::VECTOR_BOUNDS_PRUNED),
+            "vector-bounds-pruned hint must fire when blocks were skipped"
+        );
+        let plan = e.sections.iter().find(|s| s.header == "Plan").unwrap();
+        assert!(
+            plan.lines
+                .iter()
+                .any(|l| l.contains("vector-bounds pruning skipped 5 block")),
+            "Plan section must disclose the skipped block count"
+        );
+        // Zero pruned → no hint/line (the common case).
+        let e2 = build(&inputs(&t, 1.0));
+        assert!(!e2.hints.iter().any(|h| h == hint::VECTOR_BOUNDS_PRUNED));
+        let plan2 = e2.sections.iter().find(|s| s.header == "Plan").unwrap();
+        assert!(!plan2.lines.iter().any(|l| l.contains("vector-bounds")));
+    }
+
+    #[test]
     fn hint_high_disagreement_at_threshold() {
         let mut t = trace_template();
         t.sure_signals.disagreement = 0.5;
@@ -696,6 +743,7 @@ mod tests {
             hint::QUANTIZED_ROUTE_DOWNGRADED,
             hint::COLD_STAGE1_ONLY,
             hint::HIGH_DISAGREEMENT,
+            hint::VECTOR_BOUNDS_PRUNED,
         ] {
             assert!(!label.is_empty());
             assert!(

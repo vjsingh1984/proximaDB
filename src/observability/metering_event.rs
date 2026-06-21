@@ -156,6 +156,10 @@ pub fn build_kru(inputs: &MeteringInputs<'_>) -> MeteringEvent {
         metadata.insert("estimated_scan_gb".into(), json!(v));
     }
     metadata.insert("actual_scan_gb".into(), json!(trace.actual_scan_gb));
+    // KEU egress (Dimension 2): the per-query cross-AZ/internet bytes (GiB). 0 on
+    // the free same-AZ path. Carried on the KRU event so the metering collection
+    // has the egress quantity per query; the control plane prices it by locality.
+    metadata.insert("actual_egress_gb".into(), json!(trace.actual_egress_gb));
     if let Some(v) = trace.recall_probe_score {
         metadata.insert("recall_probe_score".into(), json!(v));
     }
@@ -247,6 +251,7 @@ mod tests {
             gls_score: None,
             estimated_scan_gb: None,
             actual_scan_gb: 0.0,
+            actual_egress_gb: 0.0,
             index_stats: IndexStats::default(),
             candidate_count: 64,
             rerank_count: 10,
@@ -301,6 +306,19 @@ mod tests {
         assert_eq!(ev.quantity, 0.42);
         assert_eq!(ev.metadata["scanned_gb"], 0.42);
         assert_eq!(ev.metadata["actual_scan_gb"], 0.42);
+    }
+
+    #[test]
+    fn actual_egress_gb_is_carried_on_the_metering_event() {
+        // KEU egress (Dimension 2): the metering event carries the per-query
+        // cross-AZ bytes so the control plane can price it; 0 on the free path.
+        let mut t = trace_template();
+        t.actual_egress_gb = 0.125;
+        let ev = build_kru(&inputs(&t));
+        assert_eq!(ev.metadata["actual_egress_gb"], 0.125);
+        // Default (free same-AZ) path → 0.0, still present for a stable shape.
+        let ev0 = build_kru(&inputs(&trace_template()));
+        assert_eq!(ev0.metadata["actual_egress_gb"], 0.0);
     }
 
     #[test]

@@ -138,6 +138,22 @@ pub enum DomainStatus {
 }
 
 impl StorageTenantContext {
+    /// Build a minimal tenant context carrying just the tenant identity, with
+    /// default config/limits. Used by the pgwire write path (TD-064) to scope a
+    /// statement to the connection's `database` tenant without loading the full
+    /// tenant record — the relational store only needs `tenant_id` to select its
+    /// partition, and write authorization is enforced by the catalog-scoped gate.
+    pub fn for_tenant_id(tenant_id: impl Into<String>) -> Self {
+        Self {
+            tenant_id: tenant_id.into(),
+            config: TenantConfig::default(),
+            created_at: Utc::now(),
+            status: TenantStatus::Active,
+            domains: Arc::new(DashMap::new()),
+            resource_limits: ContextResourceLimits::default(),
+        }
+    }
+
     /// Create or get domain within tenant
     pub async fn get_or_create_domain(
         &self,

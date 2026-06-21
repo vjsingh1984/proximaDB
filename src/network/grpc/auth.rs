@@ -107,10 +107,25 @@ pub async fn authenticate_http_request<B>(
         validate_tenant_metadata(&user_context, request.headers())?;
     }
 
+    // Open-core cache tier hook: record the tenant's tier from `x-tenant-tier`
+    // metadata (control-plane supplied, opaque id) for the cache policy, before
+    // `user_context` is moved into the auth context.
+    let tier_claim = request
+        .headers()
+        .get("x-tenant-tier")
+        .and_then(|v| v.to_str().ok())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string());
+    let tenant_for_tier = user_context.tenant_id.clone();
+
     request.extensions_mut().insert(GrpcAuthContext {
         user_context,
         capability,
     });
+
+    if let (Some(tenant), Some(tier)) = (tenant_for_tier, tier_claim) {
+        crate::services::record_store::set_tenant_tier(tenant, tier);
+    }
     Ok(())
 }
 

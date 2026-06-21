@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, development, develop]
+    branches: [main, development, develop, qa]
   pull_request:
-    branches: [main, development, develop]
+    branches: [main, development, develop, qa]
   workflow_dispatch:
     inputs:
       skip_tests:
@@ -19,8 +19,10 @@ on:
         default: false
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: false
+  # Dedup push+PR of the same branch into one group; cancel superseded runs
+  # on feature/PR branches, but let protected-branch validation finish.
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: ${{ github.ref_name != 'main' && github.ref_name != 'development' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,6 +43,11 @@ env:
 #                             -> docker-build
 # ============================================================================
 
+# Least-privilege default GITHUB_TOKEN scope (CodeQL actions/missing-workflow-permissions).
+# Read-only is sufficient: no job here writes to the repo, posts comments, or uses OIDC.
+permissions:
+  contents: read
+
 jobs:
   # ============================================================================
   # CHANGES DETECTION - Determine what to build/test
@@ -49,6 +56,19 @@ jobs:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
+      # Three-tier CI (feat -> develop -> qa -> main):
+      #   * feat -> develop = LIGHT: compile + fmt/clippy + layering + proto +
+      #     panic-policy + capability + security-audit + lints + docs. Fast inner
+      #     loop so development merges quickly and stays unblocked.
+      #   * develop -> qa = MEDIUM (`test_tier`): LIGHT + the core correctness
+      #     suites — rust-test, the 4 rust-integration-test-* engines, feature-matrix.
+      #   * qa -> main = FULL (`extensive`): MEDIUM + docker-build, coverage,
+      #     python multi-version, cross integration-test, benchmarks. The heaviest,
+      #     pre-promotion gate.
+      # `test_tier` is true for base qa or main (and pushes to those); `extensive`
+      # is true only for base main (and pushes to main).
+      test_tier: ${{ github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
+      extensive: ${{ github.base_ref == 'main' || github.ref == 'refs/heads/main' }}
       rust: ${{ steps.filter.outputs.rust }}
       python: ${{ steps.filter.outputs.python }}
       docker: ${{ steps.filter.outputs.docker }}
@@ -168,6 +188,15 @@ jobs:
           fi
           echo "No tracked artifact files detected."
 
+  deterministic-commit-contract:
+    name: Deterministic Commit Contract
+    runs-on: ubuntu-latest
+    needs: changes
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate deterministic guard wiring
+        run: python3 scripts/check_deterministic_commit_contract.py
+
   rust-format:
     name: Rust Format
     runs-on: ubuntu-latest
@@ -188,11 +217,20 @@ jobs:
     name: Capability Matrix
     runs-on: ubuntu-latest
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    # Run on rust changes (evidence refs point at source) AND on docs changes:
+    # the validator now also guards the maturity-contract reconciliation in
+    # SUPPORTED_SURFACE / TECHNICAL_DEBT / PRD / VISION, so a docs-only PR that
+    # weakens those banners must trip this gate too.
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true'
     steps:
       - uses: actions/checkout@v4
       - name: Validate capability matrix
         run: python3 scripts/validate_capability_matrix.py
+      # Benchmark evidence ledger: keeps perf/capability claims tied to a runnable
+      # bench + (for 'measured') dated provenance, and bites if a claim is cited at
+      # a doc:line that no longer exists.
+      - name: Validate benchmark evidence ledger
+        run: python3 scripts/validate_benchmark_evidence.py
 
   # T4.2 (pre-release foundations) — Proto compatibility gate.
   # Runs `make proto-check`: cargo-checks the proximadb-proto crate AND
@@ -320,6 +358,45 @@ jobs:
         env:
           CARGO_PROFILE_DEV_DEBUG: 0
         run: cargo clippy --lib --bins -- -D warnings
+
+  # Feature-gated code paths that DEFAULT CI never compiles. This is the job
+  # that would have caught the cloud-full `ObjectStoreExt` compile-rot (the
+  # AnvaiOps ADLS CrashLoopBackOff) at PR time instead of in production:
+  # aws/azure/gcp/onnx/cluster/catalog code is gated, so the default build
+  # skips it and rot accumulates invisibly. `cargo check` (no link/test) keeps
+  # this cheap while still surfacing E0599-class errors. Each combo runs on its
+  # own runner (fail-fast: false) so one feature's break doesn't mask others.
+  feature-matrix:
+    name: Feature Matrix (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.test_tier == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The two combos the published images actually ship (PR #78):
+          - { label: "cloud-full",          pkg: proximadb-server, feats: "cloud-full" }
+          - { label: "cloud-full,onnx",     pkg: proximadb-server, feats: "cloud-full,onnx" }
+          # Other gated surfaces invisible to default CI:
+          - { label: "cluster",             pkg: proximadb,        feats: "cluster" }
+          - { label: "enterprise-catalogs", pkg: proximadb,        feats: "enterprise-catalogs" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install System Dependencies
+        # g++ provides libstdc++ for the onnxruntime (ort) build script.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler g++
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-feature-matrix"
+          shared-key: ${{ matrix.label }}
+      - name: cargo check -p ${{ matrix.pkg }} --features ${{ matrix.feats }}
+        env:
+          CARGO_PROFILE_DEV_DEBUG: 0
+        run: cargo check -p ${{ matrix.pkg }} --features ${{ matrix.feats }}
 
   rust-security:
     name: Security Audit
@@ -745,7 +822,7 @@ jobs:
     name: Rust Tests (${{ matrix.test-type }})
     runs-on: ubuntu-latest
     needs: [changes, rust-build]
-    if: needs.changes.outputs.rust == 'true' && !inputs.skip_tests
+    if: needs.changes.outputs.rust == 'true' && needs.changes.outputs.test_tier == 'true' && !inputs.skip_tests
     strategy:
       fail-fast: false
       matrix:
@@ -801,6 +878,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.storage_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -833,6 +911,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.query_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -864,6 +943,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.graph_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -895,6 +975,7 @@ jobs:
     needs: [changes, rust-build]
     if: |
       !inputs.skip_tests &&
+      needs.changes.outputs.test_tier == 'true' &&
       needs.changes.outputs.rust == 'true' &&
       (needs.changes.outputs.network_changes == 'true' ||
        needs.changes.outputs.core_changes == 'true')
@@ -922,7 +1003,10 @@ jobs:
   rust-coverage:
     name: Code Coverage
     runs-on: ubuntu-latest
-    needs: [rust-test]
+    # FULL tier only (qa -> main). rust-test runs at the MEDIUM tier (qa), but
+    # coverage is expensive, so gate it to the main-promotion gate explicitly.
+    needs: [changes, rust-test]
+    if: needs.changes.outputs.extensive == 'true'
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
@@ -970,12 +1054,16 @@ jobs:
   python-test:
     name: Python SDK Tests (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # Defense-in-depth: the suite runs in ~5min. If a future test leaks a
+    # non-daemon thread / unshutdown pool, the interpreter's atexit join can hang
+    # the job for hours. Cap it so a leak fails fast instead of stalling CI.
+    timeout-minutes: 20
     needs: changes
     strategy:
       matrix:
         # 3.9 dropped: the package declares requires-python ">=3.10".
         python-version: ["3.10", "3.11", "3.12"]
-    if: "!inputs.skip_tests"
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.extensive == 'true' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -990,19 +1078,59 @@ jobs:
           # contract/process metrics). Without them those modules fail to import
           # and pytest aborts at collection.
           pip install -e ".[dev]" pyarrow pandas jsonschema psutil
+      # Cache the sentence-transformers model so repeated runs don't re-hit the HF
+      # Hub (a 429 there previously aborted pytest collection). tests/embedding_utils
+      # falls back to deterministic vectors if the model is still unavailable, so
+      # neither the cache miss nor the prefetch failure can break the suite.
+      - name: Cache HuggingFace model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-all-MiniLM-L6-v2-${{ runner.os }}
+      - name: Pre-fetch embedding model (best-effort)
+        continue-on-error: true
+        env:
+          HF_HUB_DOWNLOAD_TIMEOUT: "30"
+        run: |
+          python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')" || true
       - name: Run SDK unit tests
         working-directory: clients/python
         env:
           PROXIMADB_EMBEDDED: "0"
+          HF_HUB_DOWNLOAD_TIMEOUT: "30"
         run: |
-          # test_integrations_victor_cov imports the internal, unpublished
-          # `victor` package which isn't installable in CI; skip its collection.
-          # test_integrations_victor_cov imports the internal, unpublished
-          # `victor` package; test_chunking_code_cov needs tree-sitter language
-          # grammars that are intentionally not installed in CI. Skip both.
-          pytest tests/unit/ -v --tb=short --timeout=120 \
-            --ignore=tests/unit/test_integrations_victor_cov.py \
-            --ignore=tests/unit/test_chunking_code_cov.py
+          # Per-file process isolation for the SDK unit suite.
+          #
+          # Several *_cov tests stub heavy optional deps (sentence_transformers,
+          # torch, openai, ...) into sys.modules — some at MODULE/collection level,
+          # some via monkeypatch. These leak across files in a shared interpreter
+          # and break later REAL tests (e.g. test_embedding_providers_v2 getting a
+          # fake sentence_transformers). The leak is MULTI-FILE emergent (not
+          # pairwise-reducible) and collection-time, so neither xdist/forked nor
+          # excluding a known subset is airtight. Running EACH file in its own
+          # process is the only guaranteed fix — a file's stubs cannot escape its
+          # process. Parallelized for speed; failures print with ::error::.
+          #
+          # Permanently skipped (not isolation-related):
+          #   victor_cov     -> imports the internal, unpublished `victor` package
+          #   chunking_code  -> needs tree-sitter grammars not installed in CI
+          set -u
+          SKIP_RE='test_integrations_victor_cov|test_chunking_code_cov'
+          # Run one file in its own process. exit 0 = ok, 5 = no tests collected
+          # (e.g. a whole module importorskip-skipped) -> ok; anything else fails.
+          test_one() {
+            o=$(pytest "$1" -q --timeout=120 -p no:cacheprovider 2>&1); r=$?
+            if [ "$r" -ne 0 ] && [ "$r" -ne 5 ]; then
+              echo "::error::FAILED $1 (exit $r)"; echo "$o" | tail -25; return 1
+            fi
+            echo "ok: $1"; return 0
+          }
+          export -f test_one
+          # `xargs -n1 bash -c 'test_one "$0"'` passes each file as $0 (no -I
+          # substitution, so no BSD/GNU command-length quirk). xargs exits non-zero
+          # (123) if any invocation failed -> the step fails.
+          find tests/unit -name 'test_*.py' | sort | grep -vE "$SKIP_RE" | \
+            xargs -P 4 -n 1 bash -c 'test_one "$0"'
 
   # ============================================================================
   # INTEGRATION TESTS - Server + Python SDK
@@ -1012,7 +1140,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     needs: [changes, rust-build, python-test]
-    if: "!inputs.skip_tests"
+    if: ${{ !inputs.skip_tests && needs.changes.outputs.extensive == 'true' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -1134,16 +1262,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     needs: changes
-    if: needs.changes.outputs.docker == 'true' || needs.changes.outputs.rust == 'true'
+    if: (needs.changes.outputs.docker == 'true' || needs.changes.outputs.rust == 'true') && needs.changes.outputs.extensive == 'true'
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
       - name: Build Docker Image
+        # Build the image we actually publish (deploy/docker/Dockerfile,
+        # target `runtime`) so CI exercises the shipped OSS server, not the
+        # demo image. The published artifact comes from publish-image.yml.
         uses: docker/build-push-action@v6
         with:
           context: .
+          file: deploy/docker/Dockerfile
+          target: runtime
           push: false
           load: true
           tags: proximadb:test
@@ -1213,12 +1346,15 @@ jobs:
     name: CI Success
     runs-on: ubuntu-latest
     needs:
+      - deterministic-commit-contract
       - rust-format
+      - capability-matrix
       - proto-compat
       - panic-policy-report
       - panic-policy-no-regression
       - panic-policy-module-guard
       - rust-clippy
+      - feature-matrix
       - rust-security
       - rust-build
       - rust-test

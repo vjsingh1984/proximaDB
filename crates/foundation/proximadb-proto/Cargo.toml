@@ -21,3 +21,7 @@ serde.workspace = true
 serde_json.workspace = true
 tonic.workspace = true
 tonic-prost.workspace = true
+
+[build-dependencies]
+# Gated v2 proto regeneration (see build.rs). Not used by normal builds.
+tonic-prost-build = "0.14"

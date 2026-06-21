@@ -90,6 +90,7 @@ impl Default for BulkWriteConfig {
 ///
 /// This optimization centralizes the threshold decision for bulk inserts. It
 /// does not by itself authorize skipping WAL.
+#[derive(Clone)]
 pub struct BulkWriteRouter {
     /// Configuration controlling batch size thresholds and routing behavior
     config: BulkWriteConfig,

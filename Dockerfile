@@ -2,7 +2,7 @@
 # Single container with ProximaDB server
 
 # Stage 1: Build ProximaDB server
-FROM rust:1.88-slim AS builder
+FROM rust:1.95-slim AS builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y \
@@ -12,6 +12,8 @@ RUN apt-get update && apt-get install -y \
     cmake \
     build-essential \
     git \
+    python3 \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Set working directory

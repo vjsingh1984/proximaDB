@@ -16,6 +16,8 @@
 //!
 //! See `docs/12-design/PHASE8_CONTINUOUS_LOOP_HLD_LLD_2026_05_28.adoc` (F1, S0).
 
+mod branch_ref;
 mod coordinator;
 
+pub use branch_ref::BranchRef;
 pub use coordinator::{DISCOVERY_ACTIVE_PROJECTION, SnapshotPin, SnapshotPublishCoordinator};

@@ -15,6 +15,16 @@ pub use object_store::ObjectStore as BridgeObjectStore;
 pub use object_store::memory::InMemory as BridgeInMemoryObjectStore;
 pub use object_store::path::Path as BridgeObjectPath;
 
+/// Outcome of an attempted manifest commit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommitOutcome {
+    /// The manifest was atomically published as this new version.
+    Committed(u64),
+    /// Another committer already claimed the target slot. `latest` is the highest
+    /// version currently present — the snapshot to rebase onto and retry from.
+    Conflict { latest: Option<u64> },
+}
+
 /// The canonical bridge interface between ProximaDB's compute/storage engines
 /// and decoupled object storage (S3, GCS, Azure, Local).
 ///
@@ -78,6 +88,35 @@ pub trait ObjectStoreBridge: Send + Sync {
         tenant_id: Option<&str>,
     ) -> Result<Vec<u8>, StorageError>;
 
+    /// Byte length of a PAX segment object without reading its body — the
+    /// prerequisite for footer-first ranged reads. The default falls back to a
+    /// whole-object fetch (no I/O saving); object-store-backed implementations
+    /// MUST override with a metadata-only `object_size`/HEAD.
+    async fn vector_segment_size(
+        &self,
+        path: &Path,
+        tenant_id: Option<&str>,
+    ) -> Result<u64, StorageError> {
+        Ok(self.fetch_vector_segment(path, tenant_id).await?.len() as u64)
+    }
+
+    /// Read a byte range `[offset, offset+length)` of a PAX segment — a true
+    /// ranged GET on object storage. The default falls back to a whole-object
+    /// fetch + slice (no I/O saving); object-store-backed implementations MUST
+    /// override with `get_range` so only the requested bytes leave the wire.
+    async fn fetch_vector_segment_range(
+        &self,
+        path: &Path,
+        offset: u64,
+        length: u64,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<u8>, StorageError> {
+        let whole = self.fetch_vector_segment(path, tenant_id).await?;
+        let start = (offset as usize).min(whole.len());
+        let end = ((offset + length) as usize).min(whole.len());
+        Ok(whole[start..end].to_vec())
+    }
+
     /// Persists a specialized PAX block or Segment to decoupled object storage.
     /// Implementers MUST emit `proximadb_object_store_ops_total` and `proximadb_storage_bytes_seconds` for billing.
     async fn persist_vector_segment(
@@ -117,4 +156,126 @@ pub trait ObjectStoreBridge: Send + Sync {
         }
         Ok(paths)
     }
+
+    /// Retrieve the latest committed manifest version for a given table prefix.
+    async fn latest_manifest_version(
+        &self,
+        manifest_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let _ = manifest_prefix;
+        Err(StorageError::Serialization(
+            "latest_manifest_version not supported".into(),
+        ))
+    }
+
+    /// Atomically publish the data objects currently under `data_prefix` as the next
+    /// snapshot in the manifest log at `manifest_prefix`.
+    async fn publish_snapshot(
+        &self,
+        data_prefix: &Path,
+        manifest_prefix: &str,
+        parent: Option<u64>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let _ = (data_prefix, manifest_prefix, parent);
+        Err(StorageError::Serialization(
+            "publish_snapshot not supported".into(),
+        ))
+    }
+
+    /// Latest committed Iceberg `metadata.json` version in the table metadata log at
+    /// `metadata_prefix` (companion to [`latest_manifest_version`]; TD-119).
+    ///
+    /// [`latest_manifest_version`]: ObjectStoreBridge::latest_manifest_version
+    async fn latest_metadata_version(
+        &self,
+        metadata_prefix: &str,
+    ) -> Result<Option<u64>, StorageError> {
+        let _ = metadata_prefix;
+        Err(StorageError::Serialization(
+            "latest_metadata_version not supported".into(),
+        ))
+    }
+
+    /// Read the raw bytes of the Iceberg `metadata.json` at `version` under `metadata_prefix`.
+    async fn read_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<u8>, StorageError> {
+        let _ = (metadata_prefix, version);
+        Err(StorageError::Serialization(
+            "read_table_metadata not supported".into(),
+        ))
+    }
+
+    /// Atomically publish `metadata` as the successor of `parent` in the table metadata log
+    /// at `metadata_prefix` (optimistic-concurrency CAS, like [`publish_snapshot`]).
+    ///
+    /// [`publish_snapshot`]: ObjectStoreBridge::publish_snapshot
+    async fn commit_table_metadata(
+        &self,
+        metadata_prefix: &str,
+        parent: Option<u64>,
+        metadata: Vec<u8>,
+    ) -> Result<CommitOutcome, StorageError> {
+        let _ = (metadata_prefix, parent, metadata);
+        Err(StorageError::Serialization(
+            "commit_table_metadata not supported".into(),
+        ))
+    }
+
+    /// Publish the `*.parquet` data files under `data_prefix` as a **spec-shaped Iceberg
+    /// snapshot** (Avro manifest + manifest list + `TableMetadata`) committed atomically
+    /// through the metadata log at `metadata_prefix`, so external Iceberg engines can read
+    /// the table. `v3` selects Iceberg format-version 3 (ProximaDB's default) vs v2. The
+    /// field descriptors are storage-common-local (this trait can't depend on the Iceberg
+    /// engine crate); the Iceberg bridge maps them to its own types. Default: unsupported.
+    #[allow(clippy::too_many_arguments)]
+    async fn publish_iceberg_table(
+        &self,
+        data_prefix: &Path,
+        metadata_prefix: &str,
+        table_uuid: &str,
+        table_location: &str,
+        fields: &[IcebergSnapshotField],
+        snapshot_id: i64,
+        timestamp_ms: i64,
+        v3: bool,
+    ) -> Result<CommitOutcome, StorageError> {
+        let _ = (
+            data_prefix,
+            metadata_prefix,
+            table_uuid,
+            table_location,
+            fields,
+            snapshot_id,
+            timestamp_ms,
+            v3,
+        );
+        Err(StorageError::Serialization(
+            "publish_iceberg_table not supported".into(),
+        ))
+    }
+
+    /// Resolve the current snapshot's data-file paths from the Iceberg metadata log at
+    /// `metadata_prefix` (decodes `TableMetadata` → manifest list → manifests). Default: empty.
+    async fn read_iceberg_table(
+        &self,
+        metadata_prefix: &str,
+        version: u64,
+    ) -> Result<Vec<Path>, StorageError> {
+        let _ = (metadata_prefix, version);
+        Ok(Vec::new())
+    }
+}
+
+/// Storage-common-local descriptor of one Iceberg schema field (the trait can't reference
+/// the Iceberg engine's own type). The Iceberg bridge maps `type_name` to an Iceberg
+/// primitive type ("long", "int", "string", "double", "boolean", "date", "timestamp", …).
+#[derive(Debug, Clone)]
+pub struct IcebergSnapshotField {
+    pub id: i32,
+    pub name: String,
+    pub type_name: String,
+    pub required: bool,
 }

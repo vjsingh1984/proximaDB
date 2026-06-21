@@ -37,6 +37,7 @@ use tracing::debug;
 
 use crate::catalog::{CatalogManager, CatalogTableSchema, TableIdentifier};
 use proximadb_data_model::ProximaType;
+use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 
 // ============================================================================
 // Iceberg REST API types — serialized exactly per spec
@@ -216,6 +217,8 @@ pub struct IcebergSnapshot {
     pub snapshot_id: i64,
     #[serde(rename = "parent-snapshot-id", skip_serializing_if = "Option::is_none")]
     pub parent_snapshot_id: Option<i64>,
+    #[serde(rename = "sequence-number")]
+    pub sequence_number: i64,
     #[serde(rename = "timestamp-ms")]
     pub timestamp_ms: i64,
     #[serde(rename = "manifest-list")]
@@ -223,6 +226,29 @@ pub struct IcebergSnapshot {
     pub summary: IcebergSnapshotSummary,
     #[serde(rename = "schema-id", skip_serializing_if = "Option::is_none")]
     pub schema_id: Option<i32>,
+}
+
+/// A named snapshot reference (`refs` map entry): a branch or tag pointing at a snapshot.
+///
+/// This is the Iceberg-native substrate for git-style branching (TD-117): a branch is a
+/// mutable named pointer to a snapshot id; a tag is an immutable one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IcebergSnapshotRef {
+    #[serde(rename = "snapshot-id")]
+    pub snapshot_id: i64,
+    /// `"branch"` or `"tag"`.
+    #[serde(rename = "type")]
+    pub ref_type: String,
+}
+
+impl IcebergSnapshotRef {
+    /// A `branch`-type ref pointing at `snapshot_id`.
+    pub fn branch(snapshot_id: i64) -> Self {
+        Self {
+            snapshot_id,
+            ref_type: "branch".to_string(),
+        }
+    }
 }
 
 /// Full Iceberg table metadata (returned by load-table)
@@ -270,6 +296,10 @@ pub struct IcebergTableMetadata {
         default
     )]
     pub metadata_log: Vec<HashMap<String, serde_json::Value>>,
+    /// Named snapshot references (branches/tags). `main` always points at the current
+    /// snapshot; this is the substrate for git-style agent branching (TD-117).
+    #[serde(skip_serializing_if = "HashMap::is_empty", default)]
+    pub refs: HashMap<String, IcebergSnapshotRef>,
 }
 
 /// Response for loading a table (GET /v1/namespaces/{ns}/tables/{table})
@@ -483,6 +513,11 @@ pub struct IcebergRestService {
     catalog_manager: Arc<CatalogManager>,
     /// PAX segment registry: provides real row counts and file sizes for snapshots.
     segment_registry: Option<Arc<crate::catalog::SegmentRegistry>>,
+    /// Warehouse object-store bridge. When present, `load_table` materializes a real,
+    /// versioned `metadata.json` with a manifest-log-driven snapshot history and serves
+    /// a resolvable `metadata-location` (TD-119). When absent, metadata is synthesized
+    /// inline (still spec-shaped) without persistence.
+    object_store_bridge: Option<Arc<dyn ObjectStoreBridge>>,
     /// Warehouse identifier returned in GET /v1/config
     pub warehouse: String,
     /// Arrow Flight endpoint embedded in table write-credentials
@@ -501,6 +536,7 @@ impl IcebergRestService {
         Self {
             catalog_manager,
             segment_registry: None,
+            object_store_bridge: None,
             warehouse: warehouse.into(),
             flight_endpoint: flight_endpoint.into(),
             server_base_url: server_base_url.into(),
@@ -510,6 +546,13 @@ impl IcebergRestService {
     /// Attach a shared segment registry so snapshot summaries reflect real PAX stats.
     pub fn with_segment_registry(mut self, registry: Arc<crate::catalog::SegmentRegistry>) -> Self {
         self.segment_registry = Some(registry);
+        self
+    }
+
+    /// Attach the warehouse object-store bridge so table metadata is persisted as a real,
+    /// versioned `metadata.json` with a manifest-log-driven snapshot history (TD-119).
+    pub fn with_object_store_bridge(mut self, bridge: Arc<dyn ObjectStoreBridge>) -> Self {
+        self.object_store_bridge = Some(bridge);
         self
     }
 
@@ -645,14 +688,8 @@ impl IcebergRestService {
         let schema = self.iceberg_schema_to_catalog(&req.schema, &req.name, req.properties.clone());
 
         let created = catalog.create_table(&identifier, schema).await?;
-        let metadata = self.catalog_schema_to_iceberg_metadata(&identifier, &created);
-
-        let metadata_location = format!(
-            "{}/namespaces/{}/tables/{}/metadata/v1.metadata.json",
-            self.server_base_url,
-            namespace.join("\x1f"),
-            req.name
-        );
+        let (metadata, metadata_location) =
+            self.ensure_table_metadata(&identifier, &created).await?;
 
         Ok(IcebergLoadTableResponse {
             metadata_location,
@@ -670,14 +707,8 @@ impl IcebergRestService {
         let identifier = TableIdentifier::new(namespace.clone(), table.clone());
 
         let schema = catalog.get_table(&identifier).await?;
-        let metadata = self.catalog_schema_to_iceberg_metadata(&identifier, &schema);
-
-        let metadata_location = format!(
-            "{}/namespaces/{}/tables/{}/metadata/v1.metadata.json",
-            self.server_base_url,
-            namespace.join("\x1f"),
-            table
-        );
+        let (metadata, metadata_location) =
+            self.ensure_table_metadata(&identifier, &schema).await?;
 
         let mut config = HashMap::new();
         config.insert(
@@ -690,6 +721,165 @@ impl IcebergRestService {
             metadata,
             config: Some(config),
         })
+    }
+
+    /// Materialize a real, versioned `metadata.json` for `schema` and return it with a
+    /// resolvable `metadata-location` (TD-119).
+    ///
+    /// When a warehouse bridge is configured AND the table has an object-store location,
+    /// reads the data manifest log to build a parent-chained snapshot history, then
+    /// idempotently persists `metadata.json` (only re-committing when the manifest log has
+    /// advanced). Otherwise falls back to inline-synthesized (still spec-shaped) metadata.
+    /// Persistence is fail-soft: a write error logs and still serves the in-memory metadata.
+    pub async fn ensure_table_metadata(
+        &self,
+        identifier: &TableIdentifier,
+        schema: &CatalogTableSchema,
+    ) -> Result<(IcebergTableMetadata, String)> {
+        let mut md = self.catalog_schema_to_iceberg_metadata(identifier, schema);
+        let ns = identifier.namespace.join("\x1f");
+        let default_location = format!(
+            "{}/namespaces/{}/tables/{}/metadata/v1.metadata.json",
+            self.server_base_url, ns, identifier.name
+        );
+
+        let (Some(bridge), Some(base)) =
+            (self.object_store_bridge.as_ref(), table_base_path(schema))
+        else {
+            // No persistence wired / unmaterialized table → serve spec-shaped inline metadata.
+            return Ok((md, default_location));
+        };
+
+        let manifest_prefix = format!("{base}/_manifests");
+        let metadata_prefix = format!("{base}/_metadata");
+        let manifest_base_url = format!(
+            "{}/namespaces/{}/tables/{}/manifests",
+            self.server_base_url, ns, identifier.name
+        );
+
+        // Snapshot history is driven by the data manifest log: version k -> snapshot k.
+        let latest = bridge
+            .latest_manifest_version(&manifest_prefix)
+            .await
+            .ok()
+            .flatten();
+
+        // Current aggregate stats applied to the head snapshot's summary.
+        let mut summary_extra: HashMap<String, String> = HashMap::new();
+        if let Some(stats) = self
+            .segment_registry
+            .as_ref()
+            .and_then(|r| r.stats(&schema.name))
+        {
+            summary_extra.insert("total-records".to_string(), stats.row_count.to_string());
+            summary_extra.insert(
+                "total-data-files".to_string(),
+                stats.segment_count.to_string(),
+            );
+            summary_extra.insert("total-files-size".to_string(), stats.size_bytes.to_string());
+        }
+
+        match latest {
+            None => {
+                // Table exists but no data committed yet: a valid table with no snapshots.
+                md.snapshots = Vec::new();
+                md.current_snapshot_id = None;
+                md.refs = HashMap::new();
+                md.snapshot_log = Vec::new();
+            }
+            Some(latest) => {
+                let (snaps, log) = build_snapshot_chain(
+                    &md.table_uuid,
+                    md.current_schema_id,
+                    latest,
+                    md.last_updated_ms,
+                    &manifest_base_url,
+                    summary_extra,
+                );
+                let current = snaps.last().map(|s| s.snapshot_id);
+                md.refs = current
+                    .map(|id| HashMap::from([("main".to_string(), IcebergSnapshotRef::branch(id))]))
+                    .unwrap_or_default();
+                md.current_snapshot_id = current;
+                md.snapshots = snaps;
+                md.snapshot_log = log;
+            }
+        }
+
+        let expected_snapshots = latest.map(|v| (v + 1) as usize).unwrap_or(0);
+        let existing_version = bridge
+            .latest_metadata_version(&metadata_prefix)
+            .await
+            .ok()
+            .flatten();
+
+        // If a persisted metadata.json already reflects the current manifest log, serve it
+        // as-is — repeated reads must not keep appending metadata versions.
+        if let Some(mv) = existing_version
+            && let Ok(bytes) = bridge.read_table_metadata(&metadata_prefix, mv).await
+            && let Ok(existing) = serde_json::from_slice::<IcebergTableMetadata>(&bytes)
+            && existing.snapshots.len() == expected_snapshots
+        {
+            let loc = format!(
+                "{}/namespaces/{}/tables/{}/metadata/v{}.metadata.json",
+                self.server_base_url, ns, identifier.name, mv
+            );
+            return Ok((existing, loc));
+        }
+
+        // Stale or absent → commit a fresh metadata version (fail-soft).
+        let target = existing_version.map(|v| v + 1).unwrap_or(0);
+        let metadata_location = format!(
+            "{}/namespaces/{}/tables/{}/metadata/v{}.metadata.json",
+            self.server_base_url, ns, identifier.name, target
+        );
+        md.metadata_log.push(HashMap::from([
+            (
+                "timestamp-ms".to_string(),
+                serde_json::json!(md.last_updated_ms),
+            ),
+            (
+                "metadata-file".to_string(),
+                serde_json::json!(metadata_location.clone()),
+            ),
+        ]));
+        match serde_json::to_vec(&md) {
+            Ok(bytes) => {
+                if let Err(err) = bridge
+                    .commit_table_metadata(&metadata_prefix, existing_version, bytes)
+                    .await
+                {
+                    debug!(
+                        "iceberg: persisting metadata.json for `{}` failed, serving inline: {err}",
+                        identifier.name
+                    );
+                }
+            }
+            Err(err) => debug!("iceberg: serializing metadata.json failed: {err}"),
+        }
+
+        Ok((md, metadata_location))
+    }
+
+    /// Read the raw bytes of a persisted `metadata.json` version (for the REST GET route).
+    pub async fn read_table_metadata_file(
+        &self,
+        namespace: Vec<String>,
+        table: String,
+        version: u64,
+    ) -> Result<Vec<u8>> {
+        let catalog = self.catalog_manager.default_catalog().await?;
+        let identifier = TableIdentifier::new(namespace, table);
+        let schema = catalog.get_table(&identifier).await?;
+        let base = table_base_path(&schema)
+            .ok_or_else(|| anyhow::anyhow!("table has no object-store location"))?;
+        let bridge = self
+            .object_store_bridge
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("iceberg metadata persistence is not configured"))?;
+        Ok(bridge
+            .read_table_metadata(&format!("{base}/_metadata"), version)
+            .await?)
     }
 
     pub async fn table_exists(&self, namespace: Vec<String>, table: String) -> Result<bool> {
@@ -920,6 +1110,7 @@ impl IcebergRestService {
         let snapshot = IcebergSnapshot {
             snapshot_id,
             parent_snapshot_id: None,
+            sequence_number: 1,
             timestamp_ms: now_ms,
             manifest_list: manifest_list_url,
             summary: IcebergSnapshotSummary {
@@ -988,8 +1179,12 @@ impl IcebergRestService {
             properties,
             current_snapshot_id: Some(snapshot_id),
             snapshots: vec![snapshot],
-            snapshot_log: vec![],
+            snapshot_log: vec![HashMap::from([
+                ("timestamp-ms".to_string(), serde_json::json!(now_ms)),
+                ("snapshot-id".to_string(), serde_json::json!(snapshot_id)),
+            ])],
             metadata_log: vec![],
+            refs: HashMap::from([("main".to_string(), IcebergSnapshotRef::branch(snapshot_id))]),
         }
     }
 
@@ -1114,6 +1309,93 @@ fn uuid_from_name(name: &str) -> String {
     )
 }
 
+/// Derive a materialized table's object-store base prefix from its catalog schema,
+/// mirroring the write path's `object_write_base_path` (explicit-location branch). Returns
+/// `None` for tables without an object-store location (not yet materialized), for which
+/// there is no manifest/metadata log to expose.
+fn table_base_path(schema: &CatalogTableSchema) -> Option<String> {
+    let primary = schema
+        .storage_layouts
+        .iter()
+        .rev()
+        .find(|l| l.name == "primary")
+        .or_else(|| schema.storage_layouts.first());
+    let location = primary
+        .and_then(|l| match l.physical_format {
+            crate::catalog::CatalogPhysicalFormat::Iceberg
+            | crate::catalog::CatalogPhysicalFormat::Parquet => l.location.as_deref(),
+            _ => None,
+        })
+        .or(schema.location.as_deref())?;
+    let normalized = normalize_object_path_prefix(location);
+    (!normalized.is_empty()).then_some(normalized)
+}
+
+fn normalize_object_path_prefix(location: &str) -> String {
+    let without_scheme = location
+        .split_once("://")
+        .map(|(_, rest)| rest)
+        .unwrap_or(location);
+    without_scheme.trim_matches('/').to_string()
+}
+
+/// Deterministic, stable positive `i64` snapshot id from `(table uuid, manifest version)`.
+/// Stable across rebuilds so external time-travel by snapshot id stays valid.
+fn stable_snapshot_id(table_uuid: &str, version: u64) -> i64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in table_uuid.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash ^= version.wrapping_add(1);
+    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    (hash & 0x7FFF_FFFF_FFFF_FFFF) as i64
+}
+
+/// Build a parent-chained snapshot history for manifest versions `0..=latest_version`
+/// (one Iceberg snapshot per committed data manifest). Pure; `head_summary_extra` is
+/// applied to the latest snapshot. Returns `(snapshots, snapshot_log)`.
+fn build_snapshot_chain(
+    table_uuid: &str,
+    schema_id: i32,
+    latest_version: u64,
+    now_ms: i64,
+    manifest_base_url: &str,
+    head_summary_extra: HashMap<String, String>,
+) -> (
+    Vec<IcebergSnapshot>,
+    Vec<HashMap<String, serde_json::Value>>,
+) {
+    let mut snapshots = Vec::new();
+    let mut log = Vec::new();
+    for k in 0..=latest_version {
+        let snapshot_id = stable_snapshot_id(table_uuid, k);
+        let parent = (k > 0).then(|| stable_snapshot_id(table_uuid, k - 1));
+        let extra = if k == latest_version {
+            head_summary_extra.clone()
+        } else {
+            HashMap::new()
+        };
+        snapshots.push(IcebergSnapshot {
+            snapshot_id,
+            parent_snapshot_id: parent,
+            sequence_number: (k + 1) as i64,
+            timestamp_ms: now_ms,
+            manifest_list: format!("{manifest_base_url}/snap-{snapshot_id}.avro"),
+            summary: IcebergSnapshotSummary {
+                operation: "append".to_string(),
+                extra,
+            },
+            schema_id: Some(schema_id),
+        });
+        log.push(HashMap::from([
+            ("timestamp-ms".to_string(), serde_json::json!(now_ms)),
+            ("snapshot-id".to_string(), serde_json::json!(snapshot_id)),
+        ]));
+    }
+    (snapshots, log)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1161,5 +1443,131 @@ mod tests {
         let json = serde_json::to_string(&err).unwrap();
         assert!(json.contains("NoSuchTableException"));
         assert!(json.contains("404"));
+    }
+
+    #[test]
+    fn metadata_has_main_ref_and_v2_snapshot_fields() {
+        use crate::catalog::CatalogColumn;
+        let svc = IcebergRestService::new(
+            Arc::new(CatalogManager::new()),
+            "wh",
+            "grpc://localhost:5680",
+            "http://localhost:5678/iceberg/v1",
+        );
+        let schema = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String))
+            .with_column(CatalogColumn::new(2, "score", ProximaType::Int64))
+            .with_primary_key(vec!["id".to_string()]);
+        let id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
+
+        let md = svc.catalog_schema_to_iceberg_metadata(&id, &schema);
+
+        // refs.main is the git-style branch pointer at the current snapshot (TD-117 substrate).
+        let main = md.refs.get("main").expect("main ref present");
+        assert_eq!(main.ref_type, "branch");
+        assert_eq!(Some(main.snapshot_id), md.current_snapshot_id);
+
+        // The snapshot carries a v2 sequence number and is recorded in the snapshot log.
+        assert_eq!(md.snapshots.len(), 1);
+        assert_eq!(md.snapshots[0].sequence_number, 1);
+        assert_eq!(md.snapshot_log.len(), 1);
+
+        // Serializes with Iceberg-spec field names so external readers parse it.
+        let json = serde_json::to_string(&md).unwrap();
+        assert!(json.contains("\"refs\""), "refs map present: {json}");
+        assert!(json.contains("\"sequence-number\""));
+        assert!(json.contains("\"format-version\":2"));
+        assert!(json.contains("\"current-snapshot-id\""));
+    }
+
+    #[test]
+    fn build_snapshot_chain_parent_chains_and_is_stable() {
+        let (snaps, log) =
+            build_snapshot_chain("uuid-x", 0, 2, 1000, "http://h/manifests", HashMap::new());
+        assert_eq!(snaps.len(), 3, "one snapshot per manifest version 0..=2");
+        assert_eq!(snaps[0].parent_snapshot_id, None);
+        assert_eq!(snaps[1].parent_snapshot_id, Some(snaps[0].snapshot_id));
+        assert_eq!(snaps[2].parent_snapshot_id, Some(snaps[1].snapshot_id));
+        assert_eq!(snaps[0].sequence_number, 1);
+        assert_eq!(snaps[2].sequence_number, 3);
+        assert_ne!(snaps[0].snapshot_id, snaps[1].snapshot_id);
+        assert_eq!(log.len(), 3);
+
+        // Snapshot ids are deterministic (stable across rebuilds → time-travel by id holds).
+        let (snaps2, _) =
+            build_snapshot_chain("uuid-x", 0, 2, 9999, "http://h/manifests", HashMap::new());
+        assert_eq!(snaps[1].snapshot_id, snaps2[1].snapshot_id);
+    }
+
+    #[tokio::test]
+    async fn ensure_table_metadata_materializes_history_from_manifest_log() {
+        use crate::catalog::CatalogColumn;
+        use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+        use proximadb_storage_common::object_store_bridge::{
+            BridgeObjectPath, CommitOutcome, ObjectStoreBridge as _,
+        };
+
+        // In-memory warehouse with three committed (empty) data-manifest versions: 0,1,2.
+        let bridge = IcebergObjectStoreBridge::from_url("memory://").expect("memory bridge");
+        let base = "warehouse_tables/events";
+        let manifest_prefix = format!("{base}/_manifests");
+        let data_prefix = BridgeObjectPath::from(format!("{base}/data"));
+        let mut parent = None;
+        for _ in 0..3 {
+            match bridge
+                .publish_snapshot(&data_prefix, &manifest_prefix, parent)
+                .await
+                .expect("seed manifest")
+            {
+                CommitOutcome::Committed(v) => parent = Some(v),
+                other => panic!("unexpected seed outcome: {other:?}"),
+            }
+        }
+
+        let svc = IcebergRestService::new(
+            Arc::new(CatalogManager::new()),
+            "wh",
+            "grpc://localhost:5680",
+            "http://localhost:5678/iceberg/v1",
+        )
+        .with_object_store_bridge(Arc::new(bridge));
+
+        let mut schema = CatalogTableSchema::new("events")
+            .with_column(CatalogColumn::new(1, "id", ProximaType::String))
+            .with_primary_key(vec!["id".to_string()]);
+        schema.location = Some(base.to_string());
+        let id = TableIdentifier::new(vec!["default".to_string()], "events".to_string());
+
+        let (md, location) = svc
+            .ensure_table_metadata(&id, &schema)
+            .await
+            .expect("ensure");
+
+        // History reflects the manifest log: 3 parent-chained snapshots.
+        assert_eq!(md.snapshots.len(), 3);
+        assert_eq!(md.snapshots[0].parent_snapshot_id, None);
+        assert_eq!(
+            md.snapshots[2].parent_snapshot_id,
+            Some(md.snapshots[1].snapshot_id)
+        );
+        assert_eq!(md.snapshots[2].sequence_number, 3);
+        assert_eq!(md.current_snapshot_id, Some(md.snapshots[2].snapshot_id));
+        assert_eq!(
+            md.refs.get("main").expect("main ref").snapshot_id,
+            md.snapshots[2].snapshot_id
+        );
+        assert!(
+            location.ends_with(".metadata.json"),
+            "location = {location}"
+        );
+
+        // Idempotent: a second materialization sees the persisted metadata is current and
+        // returns the same history (no runaway metadata versions on repeated reads).
+        let (md2, _) = svc
+            .ensure_table_metadata(&id, &schema)
+            .await
+            .expect("ensure 2");
+        assert_eq!(md2.snapshots.len(), 3);
+        assert_eq!(md2.current_snapshot_id, md.current_snapshot_id);
     }
 }

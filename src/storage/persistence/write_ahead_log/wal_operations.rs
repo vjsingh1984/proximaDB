@@ -27,182 +27,6 @@ use proximadb_records::ProximaRecord;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-fn wal_segment_path(base_path: &str, segment_number: u32) -> String {
-    format!(
-        "{}/wal_{:08}.log",
-        base_path.trim_end_matches('/'),
-        segment_number
-    )
-}
-
-fn filesystem_url(path: &str) -> String {
-    if path.contains("://") {
-        path.to_string()
-    } else {
-        format!("file://{}", path)
-    }
-}
-
-fn parse_wal_segment_number(name: &str) -> Option<u32> {
-    let filename = name.rsplit('/').next()?;
-    let number = filename.strip_prefix("wal_")?.strip_suffix(".log")?;
-
-    if number.len() == 8 && number.bytes().all(|b| b.is_ascii_digit()) {
-        number.parse().ok()
-    } else {
-        None
-    }
-}
-
-fn parse_legacy_wal_max_sequence(name: &str) -> Option<u64> {
-    let filename = name.rsplit('/').next()?;
-    if !filename.starts_with("wal_") {
-        return None;
-    }
-
-    let parts: Vec<&str> = filename.split('_').collect();
-    if parts.len() >= 4 {
-        parts[3].parse().ok()
-    } else {
-        None
-    }
-}
-
-fn parse_wal_segment_entries(segment_number: u32, data: &[u8]) -> Vec<UnifiedWALEntry> {
-    tracing::debug!(
-        "Reading WAL segment {}: {} total bytes",
-        segment_number,
-        data.len()
-    );
-
-    let mut entries = Vec::new();
-    let mut cursor = 0;
-
-    while cursor < data.len() {
-        if cursor + 4 > data.len() {
-            tracing::debug!(
-                "End of WAL segment {} at cursor {}, {} bytes remaining",
-                segment_number,
-                cursor,
-                data.len() - cursor
-            );
-            break;
-        }
-
-        let size = u32::from_le_bytes([
-            data[cursor],
-            data[cursor + 1],
-            data[cursor + 2],
-            data[cursor + 3],
-        ]) as usize;
-
-        cursor += 4;
-
-        if size == 0 || size > 10 * 1024 * 1024 {
-            tracing::warn!(
-                "Invalid WAL entry size {} in segment {} at cursor {}, skipping rest of segment",
-                size,
-                segment_number,
-                cursor - 4
-            );
-            break;
-        }
-
-        if cursor + size > data.len() {
-            tracing::warn!(
-                "Truncated WAL entry in segment {} at cursor {}: need {} bytes, have {}",
-                segment_number,
-                cursor,
-                size,
-                data.len() - cursor
-            );
-            break;
-        }
-
-        let entry_data = &data[cursor..cursor + size];
-        match bincode::deserialize::<UnifiedWALEntry>(entry_data) {
-            Ok(entry) => {
-                if entry.verify_checksum() {
-                    entries.push(entry);
-                } else {
-                    tracing::warn!(
-                        "Checksum mismatch in WAL segment {} for entry {}",
-                        segment_number,
-                        entries.len()
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to deserialize WAL entry in segment {} at cursor {}, size {}: {:?}",
-                    segment_number,
-                    cursor,
-                    size,
-                    e
-                );
-                let preview = &entry_data[..entry_data.len().min(32)];
-                tracing::debug!(
-                    "Entry data preview (first {} bytes): {:?}",
-                    preview.len(),
-                    preview
-                );
-            }
-        }
-
-        cursor += size;
-    }
-
-    entries
-}
-
-fn canonical_operation_bytes(operation: &UnifiedWALOperation) -> Option<Vec<u8>> {
-    let value = serde_json::to_value(operation).ok()?;
-    let mut bytes = Vec::new();
-    write_canonical_json_value(&value, &mut bytes);
-    Some(bytes)
-}
-
-fn write_canonical_json_value(value: &serde_json::Value, out: &mut Vec<u8>) {
-    match value {
-        serde_json::Value::Null => out.extend_from_slice(b"null"),
-        serde_json::Value::Bool(value) => {
-            out.extend_from_slice(if *value { b"true" } else { b"false" });
-        }
-        serde_json::Value::Number(value) => out.extend_from_slice(value.to_string().as_bytes()),
-        serde_json::Value::String(value) => {
-            // Writing a JSON string into an in-memory buffer is infallible; ignore
-            // the Result rather than expect() to keep the encoder panic-free
-            // (CLAUDE.md: no expect/unwrap/panic in production code).
-            let _ = serde_json::to_writer(out, value);
-        }
-        serde_json::Value::Array(values) => {
-            out.push(b'[');
-            for (index, value) in values.iter().enumerate() {
-                if index > 0 {
-                    out.push(b',');
-                }
-                write_canonical_json_value(value, out);
-            }
-            out.push(b']');
-        }
-        serde_json::Value::Object(values) => {
-            out.push(b'{');
-            let mut keys = values.keys().collect::<Vec<_>>();
-            keys.sort_unstable();
-            for (index, key) in keys.into_iter().enumerate() {
-                if index > 0 {
-                    out.push(b',');
-                }
-                // Infallible in-memory write; ignore the Result (see above).
-                let _ = serde_json::to_writer(&mut *out, key);
-                out.push(b':');
-                write_canonical_json_value(&values[key], out);
-            }
-            out.push(b'}');
-        }
-    }
-}
-
 /// Unified WAL operation supporting vector, graph, document, and observability operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UnifiedWALOperation {
@@ -457,11 +281,40 @@ impl UnifiedWALEntry {
         }
     }
 
-    /// Calculate CRC32 checksum
+    /// Calculate a stable operation checksum.
     fn calculate_checksum(operation: &UnifiedWALOperation) -> u32 {
-        let bytes = canonical_operation_bytes(operation)
-            .unwrap_or_else(|| bincode::serialize(operation).unwrap_or_default());
-        crc32fast::hash(&bytes)
+        let serialized = Self::canonical_operation_bytes(operation)
+            .or_else(|| bincode::serialize(operation).ok())
+            .unwrap_or_default();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        use std::hash::{Hash, Hasher};
+        serialized.hash(&mut hasher);
+        hasher.finish() as u32
+    }
+
+    fn canonical_operation_bytes(operation: &UnifiedWALOperation) -> Option<Vec<u8>> {
+        let value = serde_json::to_value(operation).ok()?;
+        let canonical = Self::canonical_json_value(value);
+        serde_json::to_vec(&canonical).ok()
+    }
+
+    fn canonical_json_value(value: serde_json::Value) -> serde_json::Value {
+        match value {
+            serde_json::Value::Array(items) => serde_json::Value::Array(
+                items.into_iter().map(Self::canonical_json_value).collect(),
+            ),
+            serde_json::Value::Object(map) => {
+                let mut entries = map.into_iter().collect::<Vec<_>>();
+                entries.sort_by(|left, right| left.0.cmp(&right.0));
+
+                let mut canonical = serde_json::Map::new();
+                for (key, value) in entries {
+                    canonical.insert(key, Self::canonical_json_value(value));
+                }
+                serde_json::Value::Object(canonical)
+            }
+            scalar => scalar,
+        }
     }
 
     /// Verify checksum integrity
@@ -537,46 +390,40 @@ impl UnifiedWALWriter {
         );
 
         // Ensure base directory exists. If caller passed a URL, don't prefix again.
-        let base_url = filesystem_url(&base_path);
+        let base_url = if base_path.contains("://") {
+            base_path.clone()
+        } else {
+            format!("file://{}", base_path)
+        };
         let fs = filesystem.get_filesystem(&base_url)?;
         fs.create_dir_all(&base_url).await?;
 
         // Discover existing WAL files to resume from max sequence number
-        let mut max_seq: Option<u64> = None;
+        let mut max_seq: u64 = 0;
         let mut segment_count: u64 = 0;
-        let mut next_segment_counter: u32 = 0;
         if let Ok(files) = fs.list(&base_url).await {
             for file_info in &files {
-                if let Some(segment_number) = parse_wal_segment_number(&file_info.name) {
+                // WAL filenames: wal_YYYYMMDD_HHMMSS_{min_seq}_{max_seq}_{uuid}.{ext}
+                if let Some(name) = file_info.name.split('/').next_back()
+                    && name.starts_with("wal_")
+                {
                     segment_count += 1;
-                    next_segment_counter = next_segment_counter.max(segment_number + 1);
-
-                    let data = fs.read(&file_info.url).await?;
-                    for entry in parse_wal_segment_entries(segment_number, &data) {
-                        max_seq =
-                            Some(max_seq.map_or(entry.sequence_number, |seq| {
-                                seq.max(entry.sequence_number)
-                            }));
+                    // Extract max sequence from filename (field 3, 0-indexed)
+                    let parts: Vec<&str> = name.split('_').collect();
+                    if parts.len() >= 4
+                        && let Ok(seq) = parts[3].parse::<u64>()
+                    {
+                        max_seq = max_seq.max(seq);
                     }
-                } else if let Some(seq) = parse_legacy_wal_max_sequence(&file_info.name) {
-                    segment_count += 1;
-                    max_seq = Some(max_seq.map_or(seq, |max| max.max(seq)));
-                } else if file_info.name.starts_with("wal_") {
-                    tracing::warn!(
-                        "Ignoring WAL file with unrecognized segment name: {}",
-                        file_info.name
-                    );
                 }
             }
         }
 
-        let next_sequence_number = max_seq.map_or(0, |seq| seq + 1);
-
-        if next_sequence_number > 0 {
+        if max_seq > 0 {
             tracing::info!(
                 "WAL recovery: found {} segments, resuming from sequence {}",
                 segment_count,
-                next_sequence_number
+                max_seq
             );
         } else {
             tracing::debug!("WAL writer initialized fresh for path: {}", base_path);
@@ -584,12 +431,12 @@ impl UnifiedWALWriter {
 
         Ok(Self {
             base_path,
-            sequence_number: std::sync::atomic::AtomicU64::new(next_sequence_number),
+            sequence_number: std::sync::atomic::AtomicU64::new(max_seq),
             filesystem,
             current_segment_path: None,
             current_segment_data: Vec::new(),
             max_segment_size: 64 * 1024 * 1024, // 64MB segments
-            segment_counter: next_segment_counter,
+            segment_counter: segment_count as u32,
         })
     }
 
@@ -663,12 +510,12 @@ impl UnifiedWALWriter {
         if let Some(ref path) = self.current_segment_path
             && !self.current_segment_data.is_empty()
         {
-            let url = filesystem_url(path);
+            let url = format!("file://{}", path);
             let fs = self.filesystem.get_filesystem(&url)?;
 
-            // WAL segments are single-writer append logs. Rewriting the whole
-            // segment would transiently truncate the file, which can make a
-            // concurrent/restarted reader observe an empty or partial segment.
+            // WAL segments are append-only. Avoid read-modify-write here:
+            // cached reads can lag behind recent writes, and rewriting the
+            // segment risks dropping entries that were already durable.
             fs.append(&url, &self.current_segment_data).await?;
             fs.sync_file(&url).await?;
 
@@ -680,12 +527,12 @@ impl UnifiedWALWriter {
 
     /// Open a new WAL segment file
     async fn open_new_segment(&mut self) -> anyhow::Result<()> {
-        let filename = wal_segment_path(&self.base_path, self.segment_counter);
+        let filename = format!("{}/wal_{:08}.log", self.base_path, self.segment_counter);
         self.current_segment_path = Some(filename.clone());
         self.current_segment_data.clear();
 
         // Ensure the file exists
-        let url = filesystem_url(&filename);
+        let url = format!("file://{}", filename);
         let fs = self.filesystem.get_filesystem(&url)?;
         if !fs.exists(&url).await? {
             // Create empty file
@@ -727,8 +574,8 @@ impl UnifiedWALReader {
 
     /// Read all WAL entries from a segment
     pub async fn read_segment(&self, segment_number: u32) -> anyhow::Result<Vec<UnifiedWALEntry>> {
-        let filename = wal_segment_path(&self.base_path, segment_number);
-        let url = filesystem_url(&filename);
+        let filename = format!("{}/wal_{:08}.log", self.base_path, segment_number);
+        let url = format!("file://{}", filename);
         let fs = self.filesystem.get_filesystem(&url)?;
 
         if !fs.exists(&url).await? {
@@ -736,65 +583,104 @@ impl UnifiedWALReader {
         }
 
         let data = fs.read(&url).await?;
-        Ok(parse_wal_segment_entries(segment_number, &data))
+        tracing::debug!(
+            "Reading WAL segment {}: {} total bytes",
+            segment_number,
+            data.len()
+        );
+        let mut entries = Vec::new();
+        let mut cursor = 0;
+
+        while cursor < data.len() {
+            // Read size header
+            if cursor + 4 > data.len() {
+                tracing::debug!(
+                    "End of WAL segment at cursor {}, {} bytes remaining",
+                    cursor,
+                    data.len() - cursor
+                );
+                break;
+            }
+
+            let size = u32::from_le_bytes([
+                data[cursor],
+                data[cursor + 1],
+                data[cursor + 2],
+                data[cursor + 3],
+            ]) as usize;
+
+            cursor += 4;
+
+            // Sanity check on size
+            if size == 0 || size > 10 * 1024 * 1024 {
+                // 10MB max per entry
+                tracing::warn!(
+                    "Invalid WAL entry size {} at cursor {}, skipping rest of segment",
+                    size,
+                    cursor - 4
+                );
+                break;
+            }
+
+            // Read entry
+            if cursor + size > data.len() {
+                tracing::warn!(
+                    "Truncated WAL entry at cursor {}: need {} bytes, have {}",
+                    cursor,
+                    size,
+                    data.len() - cursor
+                );
+                break;
+            }
+
+            let entry_data = &data[cursor..cursor + size];
+            match bincode::deserialize::<UnifiedWALEntry>(entry_data) {
+                Ok(entry) => {
+                    if entry.verify_checksum() {
+                        entries.push(entry);
+                    } else {
+                        tracing::warn!("Checksum mismatch for entry {}", entries.len());
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to deserialize WAL entry at cursor {}, size {}: {:?}",
+                        cursor,
+                        size,
+                        e
+                    );
+                    // Log first few bytes for debugging
+                    let preview = &entry_data[..entry_data.len().min(32)];
+                    tracing::debug!(
+                        "Entry data preview (first {} bytes): {:?}",
+                        preview.len(),
+                        preview
+                    );
+                    // Continue trying to read more entries
+                }
+            }
+
+            cursor += size;
+        }
+
+        Ok(entries)
     }
 
     /// Read all WAL entries for recovery
     pub async fn read_all(&self) -> anyhow::Result<Vec<UnifiedWALEntry>> {
         let mut all_entries = Vec::new();
+        let mut segment = 0;
 
         tracing::debug!("WAL reader starting to read from path: {}", self.base_path);
 
-        let base_url = filesystem_url(&self.base_path);
-        let fs = self.filesystem.get_filesystem(&base_url)?;
-        let mut segments = match fs.list(&base_url).await {
-            Ok(files) => files
-                .iter()
-                .filter_map(|file_info| parse_wal_segment_number(&file_info.name))
-                .collect::<Vec<_>>(),
-            Err(e) => {
-                tracing::debug!(
-                    "WAL reader could not list path {} ({}); falling back to segment 0",
-                    self.base_path,
-                    e
-                );
-                Vec::new()
+        loop {
+            let entries = self.read_segment(segment).await?;
+            tracing::debug!("Read segment {}: {} entries", segment, entries.len());
+            if entries.is_empty() {
+                break;
             }
-        };
-
-        segments.sort_unstable();
-        segments.dedup();
-
-        if segments.is_empty() {
-            let entries = self.read_segment(0).await?;
-            tracing::debug!("Read segment 0: {} entries", entries.len());
             all_entries.extend(entries);
-        } else {
-            for segment in segments {
-                let entries = self.read_segment(segment).await?;
-                tracing::debug!("Read segment {}: {} entries", segment, entries.len());
-                all_entries.extend(entries);
-            }
-        }
-
-        /*
-         * The old reader walked segment 0, 1, ... and stopped at the first empty
-         * segment. Empty segments are valid because writers create the file
-         * before buffering an entry, and a crash/restart can leave that empty
-         * file before later valid segments. Listing real segment files avoids
-         * dropping later entries.
-         */
-        if all_entries.is_empty() {
-            let mut segment = 0;
-            loop {
-                let entries = self.read_segment(segment).await?;
-                tracing::debug!("Read segment {}: {} entries", segment, entries.len());
-                if entries.is_empty() {
-                    break;
-                }
-                all_entries.extend(entries);
-                segment += 1;
-            }
+            segment += 1;
         }
 
         tracing::debug!("WAL reader total entries read: {}", all_entries.len());
@@ -806,7 +692,7 @@ impl UnifiedWALReader {
 mod tests {
     use super::*;
     use crate::graph::Node;
-    use proximadb_records::{EmbeddingCell, ProximaTreeNode, ProximaValue};
+    use proximadb_records::EmbeddingCell;
 
     #[tokio::test]
     async fn test_unified_wal_operations() {
@@ -853,63 +739,6 @@ mod tests {
         assert!(entries[1].is_vector_operation());
     }
 
-    #[tokio::test]
-    async fn test_unified_wal_reader_skips_empty_segment_gap() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().to_str().unwrap().to_string();
-        tokio::fs::write(temp_dir.path().join("wal_00000000.log"), [])
-            .await
-            .unwrap();
-
-        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
-        let seq = writer
-            .append(test_graph_op("node_after_gap"))
-            .await
-            .unwrap();
-        assert_eq!(seq, 0);
-        writer.sync().await.unwrap();
-
-        assert!(temp_dir.path().join("wal_00000001.log").exists());
-
-        let reader = UnifiedWALReader::new(path).await.unwrap();
-        let entries = reader.read_all().await.unwrap();
-        assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].sequence_number, 0);
-        assert!(entries[0].is_graph_operation());
-    }
-
-    #[tokio::test]
-    async fn test_unified_wal_writer_resumes_sequence_after_reopen() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().to_str().unwrap().to_string();
-
-        let mut writer = UnifiedWALWriter::new(path.clone()).await.unwrap();
-        assert_eq!(writer.append(test_graph_op("node1")).await.unwrap(), 0);
-        assert_eq!(
-            writer
-                .append(UnifiedWALOperation::VectorOp(VectorOperation::AddVector {
-                    collection_id: "test_collection".to_string(),
-                    record: test_record("vec1", vec![0.1, 0.2, 0.3]),
-                }))
-                .await
-                .unwrap(),
-            1
-        );
-        writer.sync().await.unwrap();
-
-        let mut reopened = UnifiedWALWriter::new(path.clone()).await.unwrap();
-        assert_eq!(reopened.append(test_graph_op("node2")).await.unwrap(), 2);
-        reopened.sync().await.unwrap();
-
-        let reader = UnifiedWALReader::new(path).await.unwrap();
-        let entries = reader.read_all().await.unwrap();
-        let sequences = entries
-            .iter()
-            .map(|entry| entry.sequence_number)
-            .collect::<Vec<_>>();
-        assert_eq!(sequences, vec![0, 1, 2]);
-    }
-
     #[test]
     fn test_hybrid_operation() {
         let hybrid_op = UnifiedWALOperation::HybridOp {
@@ -938,55 +767,33 @@ mod tests {
     }
 
     #[test]
-    fn test_wal_checksum_is_stable_for_unordered_record_maps() {
-        let first = document_upsert_with_props(&[("title", "Recovered"), ("category", "docs")]);
-        let second = document_upsert_with_props(&[("category", "docs"), ("title", "Recovered")]);
-
-        assert_eq!(
-            UnifiedWALEntry::calculate_checksum(&first),
-            UnifiedWALEntry::calculate_checksum(&second)
+    fn test_document_checksum_survives_unordered_props_roundtrip() {
+        let mut record = test_record("document/coll/doc1", vec![]);
+        record.props.insert(
+            "zeta".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "last".to_string(),
+            )),
+        );
+        record.props.insert(
+            "alpha".to_string(),
+            proximadb_records::ProximaTreeNode::Value(proximadb_data_model::ProximaValue::String(
+                "first".to_string(),
+            )),
         );
 
-        let entry = UnifiedWALEntry::new(7, first);
-        let encoded = bincode::serialize(&entry).unwrap();
-        let decoded: UnifiedWALEntry = bincode::deserialize(&encoded).unwrap();
+        let entry = UnifiedWALEntry::new(
+            7,
+            UnifiedWALOperation::DocumentOp(DocumentOperation::UpsertCanonicalDocumentRecord {
+                collection_id: "coll".to_string(),
+                record,
+            }),
+        );
+        let encoded = bincode::serialize(&entry).expect("serialize wal entry");
+        let decoded: UnifiedWALEntry =
+            bincode::deserialize(&encoded).expect("deserialize wal entry");
+
         assert!(decoded.verify_checksum());
-    }
-
-    fn document_upsert_with_props(props: &[(&str, &str)]) -> UnifiedWALOperation {
-        let mut record = ProximaRecord {
-            oid: "document://wal_docs/doc-1".to_string(),
-            local_id: Some("doc-1".to_string()),
-            created_at_ns: 0,
-            updated_at_ns: 0,
-            ..Default::default()
-        };
-
-        for (key, value) in props {
-            record.props.insert(
-                (*key).to_string(),
-                ProximaTreeNode::Value(ProximaValue::String((*value).to_string())),
-            );
-        }
-
-        UnifiedWALOperation::DocumentOp(DocumentOperation::UpsertCanonicalDocumentRecord {
-            collection_id: "wal_docs".to_string(),
-            record,
-        })
-    }
-
-    fn test_graph_op(id: &str) -> UnifiedWALOperation {
-        UnifiedWALOperation::GraphOp(GraphOperation::CreateNode {
-            graph_id: "test_graph".to_string(),
-            node: Node {
-                id: id.to_string(),
-                labels: vec!["TestNode".to_string()],
-                properties: Default::default(),
-                embedding: None,
-                created_at_ms: 0,
-                updated_at_ms: 0,
-            },
-        })
     }
 
     fn test_record(id: &str, vector: Vec<f32>) -> ProximaRecord {

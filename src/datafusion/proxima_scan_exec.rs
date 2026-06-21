@@ -45,7 +45,6 @@
 //! let stream = scan_exec.execute(0, context)?;
 //! ```
 
-use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -138,7 +137,7 @@ pub struct ProximaScanExec {
     /// Collection name for logging
     collection_name: String,
     /// Plan properties
-    properties: PlanProperties,
+    properties: Arc<PlanProperties>,
     /// Cached statistics
     statistics: Option<Statistics>,
 }
@@ -257,11 +256,7 @@ impl ExecutionPlan for ProximaScanExec {
         "ProximaScanExec"
     }
 
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
-    fn properties(&self) -> &PlanProperties {
+    fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
 
@@ -350,8 +345,19 @@ impl ExecutionPlan for ProximaScanExec {
         Ok(Box::pin(RecordBatchStreamAdapter::new(schema, limited)))
     }
 
-    fn statistics(&self) -> DFResult<Statistics> {
-        Ok(self.statistics.clone().unwrap_or_default())
+    fn partition_statistics(&self, _partition: Option<usize>) -> DFResult<Arc<Statistics>> {
+        // DataFusion 54 indexes `column_statistics[col.index()]` when a parent
+        // (e.g. AggregateExec) derives its own statistics. A bare
+        // `Statistics::default()` carries an EMPTY `column_statistics`, so any
+        // aggregate planned over this scan panics with "index out of bounds".
+        // Always hand back a schema-sized Statistics: use the provided stats only
+        // when their column count matches the schema, else an unknown-but-sized one.
+        let schema = self.schema();
+        let stats = match &self.statistics {
+            Some(s) if s.column_statistics.len() == schema.fields().len() => s.clone(),
+            _ => Statistics::new_unknown(&schema),
+        };
+        Ok(Arc::new(stats))
     }
 }
 
@@ -483,7 +489,7 @@ impl ProximaScanExecBuilder {
             reader,
             batch_size,
             collection_name: self.collection_name,
-            properties,
+            properties: Arc::new(properties),
             statistics: self.statistics,
         })
     }

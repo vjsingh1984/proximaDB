@@ -56,12 +56,17 @@ pub enum StoragePoolClass {
     /// Default for legacy rows backfilled by the P0.5 migration.
     #[default]
     Pooled,
-    /// Shared Business pool — prefix-scoped CRR allowed.
-    Business,
-    /// Shared Enterprise pool — stricter KMS, monitoring, and rule budgeting.
-    Enterprise,
+    /// Shared standard pool — prefix-scoped CRR allowed. (Commercial tier names
+    /// are an operator/control-plane concern; the OSS engine uses neutral
+    /// capability classes and reads legacy wire values via serde aliases.)
+    #[serde(alias = "business")]
+    Standard,
+    /// Shared premium pool — stricter KMS, monitoring, and rule budgeting.
+    #[serde(alias = "enterprise")]
+    Premium,
     /// Dedicated bucket/storage-account pair per tenant per region pair.
-    EnterpriseDedicated,
+    #[serde(alias = "enterprise_dedicated")]
+    Dedicated,
 }
 
 /// Namespace metadata.
@@ -2699,7 +2704,7 @@ mod tests {
             .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
             .with_region_home("us-east-1")
             .with_default_dr_region_pair("aws:us-east-1:us-west-2")
-            .with_storage_pool_class(StoragePoolClass::Business);
+            .with_storage_pool_class(StoragePoolClass::Standard);
 
         assert_eq!(ns.tenant_id.as_deref(), Some("tnt_acme"));
         assert_eq!(
@@ -2711,7 +2716,7 @@ mod tests {
             ns.default_dr_region_pair_id.as_deref(),
             Some("aws:us-east-1:us-west-2"),
         );
-        assert_eq!(ns.storage_pool_class, StoragePoolClass::Business);
+        assert_eq!(ns.storage_pool_class, StoragePoolClass::Standard);
         assert!(ns.is_dr_addressable());
     }
 
@@ -2748,20 +2753,35 @@ mod tests {
 
     #[test]
     fn storage_pool_class_serde_uses_snake_case() {
+        // Serialization uses the neutral capability-class names; legacy commercial
+        // wire values still deserialize via serde aliases (back-compat).
         let classes = [
-            (StoragePoolClass::Pooled, "\"pooled\""),
-            (StoragePoolClass::Business, "\"business\""),
-            (StoragePoolClass::Enterprise, "\"enterprise\""),
+            (StoragePoolClass::Pooled, "\"pooled\"", None),
             (
-                StoragePoolClass::EnterpriseDedicated,
-                "\"enterprise_dedicated\"",
+                StoragePoolClass::Standard,
+                "\"standard\"",
+                Some("\"business\""),
+            ),
+            (
+                StoragePoolClass::Premium,
+                "\"premium\"",
+                Some("\"enterprise\""),
+            ),
+            (
+                StoragePoolClass::Dedicated,
+                "\"dedicated\"",
+                Some("\"enterprise_dedicated\""),
             ),
         ];
-        for (variant, expected_json) in classes {
+        for (variant, expected_json, legacy_alias) in classes {
             let s = serde_json::to_string(&variant).unwrap();
             assert_eq!(s, expected_json, "variant {variant:?}");
             let back: StoragePoolClass = serde_json::from_str(expected_json).unwrap();
             assert_eq!(back, variant);
+            if let Some(alias) = legacy_alias {
+                let from_alias: StoragePoolClass = serde_json::from_str(alias).unwrap();
+                assert_eq!(from_alias, variant, "legacy alias {alias} must still read");
+            }
         }
     }
 
@@ -3928,6 +3948,22 @@ pub trait Catalog: Send + Sync {
         namespace: &[String],
         properties: HashMap<String, String>,
     ) -> anyhow::Result<CatalogNamespace>;
+
+    /// Create a namespace owned by `tenant` (TD-064/TD-113). Backends that own
+    /// ProximaDB physical paths record `tenant_id` so the namespace is
+    /// DR-addressable (`is_dr_addressable`) and the warehouse path resolver can
+    /// assert tenant ownership / route by storage pool. The default implementation
+    /// ignores `tenant` and delegates to [`create_namespace`](Self::create_namespace),
+    /// so external/federated catalogs (which manage their own identity) are
+    /// unaffected.
+    async fn create_namespace_for_tenant(
+        &self,
+        namespace: &[String],
+        properties: HashMap<String, String>,
+        _tenant: Option<&str>,
+    ) -> anyhow::Result<CatalogNamespace> {
+        self.create_namespace(namespace, properties).await
+    }
 
     async fn drop_namespace(&self, namespace: &[String], cascade: bool) -> anyhow::Result<bool>;
     async fn list_namespaces(

@@ -388,6 +388,17 @@ pub struct GrpcHttpServerConfig {
     /// Allows dynamic service discovery (grpcurl, etc)
     pub enable_reflection: bool,
 
+    /// Enable deprecated gRPC v1 compatibility services.
+    ///
+    /// When `false` (default) only the canonical `proximadb.v2.ProximaRecordService`,
+    /// `grpc.health.v1.Health`, and reflection are registered. When `true`, the
+    /// deprecated v1 compatibility adapter services (vector/sql/collection/graph/
+    /// hybrid-search/security/document/entity/observability/streaming) are also
+    /// registered. Post-sunset these v1 services are removed entirely.
+    ///
+    /// Env override: `PROXIMADB_GRPC_V1_COMPAT` (set to `1`/`true` to enable).
+    pub enable_grpc_v1_compat: bool,
+
     /// Enable gRPC compression for Avro payloads
     /// Further reduces already-compact protobuf
     pub compression: bool,
@@ -402,6 +413,20 @@ pub struct GrpcHttpServerConfig {
 }
 
 impl GrpcHttpServerConfig {
+    /// Resolve the deprecated gRPC v1 compatibility flag from the
+    /// `PROXIMADB_GRPC_V1_COMPAT` environment variable. Defaults to `false`
+    /// (v1 compat services not registered) when unset or unparseable.
+    /// Accepts `1`/`true`/`yes`/`on` (case-insensitive) as truthy.
+    pub fn v1_compat_from_env() -> bool {
+        std::env::var("PROXIMADB_GRPC_V1_COMPAT")
+            .ok()
+            .map(|v| {
+                let v = v.trim().to_ascii_lowercase();
+                matches!(v.as_str(), "1" | "true" | "yes" | "on")
+            })
+            .unwrap_or(false)
+    }
+
     /// Check if TLS is enabled
     pub fn is_tls_enabled(&self) -> bool {
         self.tls_cert_file.is_some() && self.tls_key_file.is_some()
@@ -518,6 +543,8 @@ impl Default for MultiServerConfig {
                 enable_grpc: true,
                 max_message_size: 64 * 1024 * 1024, // 64MB for bulk vector inserts with Avro
                 enable_reflection: true,
+                // Deprecated v1 compat adapters off by default; env opt-in.
+                enable_grpc_v1_compat: GrpcHttpServerConfig::v1_compat_from_env(),
                 compression: true,
                 tls_cert_file: None,
                 tls_key_file: None,
@@ -830,6 +857,7 @@ mod tests {
             enable_grpc: true,
             max_message_size: 64 * 1024 * 1024,
             enable_reflection: true,
+            enable_grpc_v1_compat: false,
             compression: true,
             tls_cert_file: None,
             tls_key_file: None,

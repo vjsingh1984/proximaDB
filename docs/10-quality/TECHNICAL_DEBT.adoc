@@ -4,6 +4,18 @@
 
 Comprehensive register of technical debt items tracking gaps between current state and world-class targets.
 
+[IMPORTANT]
+====
+This register tracks _implementation state_, not _product-support level_.
+
+link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] is the authoritative product
+support contract and takes precedence for any customer, release-note, or marketing claim.
+A "Resolved" or "Production Ready" status in this register means the code path is complete
+in the working tree -- it does *not* by itself mean the capability is a Supported v0.2
+surface. Where this register and the support contract disagree, the support contract wins;
+the affected rows are relabeled with their `SUPPORTED_SURFACE.adoc` tier inline.
+====
+
 == Vision Phase Context
 
 Technical debt items are prioritized based on their impact on the four development phases:
@@ -44,16 +56,18 @@ Technical debt items are prioritized based on their impact on the four developme
 | *Resolved*
 | Cannot integrate with Iceberg/Delta data lakes
 | 3-4 months
-| *RESOLVED Mar 2026*: **External catalogs fully implemented**. All major catalog backends are production-ready:
-|  |  |  |  |  |
-|---|---|---|---|---
-| Catalog | Status | Location | Features |
-| **Iceberg** | ✅ Production Ready | `src/catalog/iceberg.rs` | JDBC, Hadoop, Memory backends; schema evolution; time travel; snapshot isolation |
-| **Delta Lake** | ✅ Production Ready | `src/catalog/delta.rs` | Delta log protocol; ACID transactions; time travel; partitioning |
-| **AWS Glue** | ✅ Production Ready | `src/catalog/glue.rs` | AWS Glue Data Catalog; Athena/Redshift compatible; vector extensions |
-| **Unity Catalog** | ✅ Production Ready | `src/catalog/unity.rs` | Databricks Unity; 3-level namespace; REST API integration |
-| **Polaris** | ✅ Production Ready | `src/catalog/polaris.rs` | Apache Polaris; Iceberg REST Catalog; OAuth2 |
-| **Hive** | ✅ Production Ready | `src/catalog/hive.rs` | Apache Hive Metastore; Thrift protocol |
+a| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Experimental in v0.2 (see SUPPORTED_SURFACE)_** -- external-table / external-catalog execution is not a v0.2 supported surface; do not market it as supported or production. _Implementation detail:_ all major catalog backends are code-complete:
+
+[%header%autowidth]
+!===
+! Catalog ! Status ! Location ! Features
+! Iceberg ! ✅ Production Ready ! `src/catalog/iceberg.rs` ! JDBC, Hadoop, Memory backends; schema evolution; time travel; snapshot isolation
+! Delta Lake ! ✅ Production Ready ! `src/catalog/delta.rs` ! Delta log protocol; ACID transactions; time travel; partitioning
+! AWS Glue ! ✅ Production Ready ! `src/catalog/glue.rs` ! AWS Glue Data Catalog; Athena/Redshift compatible; vector extensions
+! Unity Catalog ! ✅ Production Ready ! `src/catalog/unity.rs` ! Databricks Unity; 3-level namespace; REST API integration
+! Polaris ! ✅ Production Ready ! `src/catalog/polaris.rs` ! Apache Polaris; Iceberg REST Catalog; OAuth2
+! Hive ! ✅ Production Ready ! `src/catalog/hive.rs` ! Apache Hive Metastore; Thrift protocol
+!===
 
 All catalogs implement the `Catalog` trait with full CRUD operations, health checks, and caching. Feature-gated behind appropriate flags: `delta-lake`, `aws`, `unity-catalog`, `polaris-catalog`.
 
@@ -73,13 +87,15 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot capture changes from PostgreSQL/MySQL/MongoDB natively
 | 1-2 months
-| *RESOLVED Mar 2026*: **All three CDC connectors 100% complete**. Full production-ready CDC implementations with live streaming support:
-|  |  |  |  |
-|---|---|---|---
-| **Connector** | **Status** | **Location** | **Features** |
-| **PostgreSQL** | ✅ Complete | `src/cdc/connectors/postgres/connector.rs` | Logical replication, pgoutput protocol, WAL streaming, slot management, LSN tracking, offset storage |
-| **MySQL** | ✅ Complete | `src/cdc/connectors/mysql/connector.rs` | Binlog decoder complete, live polling event loop, query_binlog_events(), convert_binlog_to_change_event(), position/GTID tracking |
-| **MongoDB** | ✅ Complete | `src/cdc/connectors/mongodb/connector.rs` | Live change stream with async iteration, run_mongodb_change_stream(), BSON to JSON conversion, resume token handling, tokio::select! for shutdown |
+a| *RESOLVED Mar 2026*: **All three CDC connectors 100% complete**. Full production-ready CDC implementations with live streaming support:
+
+[%header%autowidth]
+!===
+! Connector ! Status ! Location ! Features
+! PostgreSQL ! ✅ Complete ! `src/cdc/connectors/postgres/connector.rs` ! Logical replication, pgoutput protocol, WAL streaming, slot management, LSN tracking, offset storage
+! MySQL ! ✅ Complete ! `src/cdc/connectors/mysql/connector.rs` ! Binlog decoder complete, live polling event loop, query_binlog_events(), convert_binlog_to_change_event(), position/GTID tracking
+! MongoDB ! ✅ Complete ! `src/cdc/connectors/mongodb/connector.rs` ! Live change stream with async iteration, run_mongodb_change_stream(), BSON to JSON conversion, resume token handling, tokio::select for shutdown
+!===
 
 | TD-005
 | Multi-language SDKs
@@ -97,15 +113,17 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot meet enterprise security requirements
 | 1 month
-| *RESOLVED Mar 2026*: **mTLS support fully implemented**. Complete enterprise-grade mutual TLS infrastructure:
-|  |  |  |  |
-|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **Certificate Manager** | ✅ Production Ready | `src/network/tls/certificate_manager.rs` | Self-signed cert generation, CA generation for mTLS, cert parsing/validation, automatic renewal |
-| **TLS Configuration** | ✅ Production Ready | `src/network/tls/mod.rs` | Rustls ServerConfig builder, mTLS support, ALPN protocols |
-| **TLS Acceptor** | ✅ Production Ready | `src/network/tls/acceptor.rs` | Client certificate extraction, Axum layer integration, peer cert parsing |
-| **Client Cert Middleware** | ✅ Production Ready | `src/network/middleware/tls.rs` | CN validation, pattern matching, expiration checking, user mapping |
-| **Unified Auth** | ✅ Supports mTLS | `src/security/unified_auth.rs` | `ClientCertificate` auth method, integration with JWT/API keys |
+a| *Implemented (engine), Mar 2026.* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- the security runtime is Beta; admin/status APIs and stronger online revocation policy remain incomplete. _Implementation detail:_ enterprise-grade mutual TLS infrastructure is code-complete:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! Certificate Manager ! ✅ Production Ready ! `src/network/tls/certificate_manager.rs` ! Self-signed cert generation, CA generation for mTLS, cert parsing/validation, automatic renewal
+! TLS Configuration ! ✅ Production Ready ! `src/network/tls/mod.rs` ! Rustls ServerConfig builder, mTLS support, ALPN protocols
+! TLS Acceptor ! ✅ Production Ready ! `src/network/tls/acceptor.rs` ! Client certificate extraction, Axum layer integration, peer cert parsing
+! Client Cert Middleware ! ✅ Production Ready ! `src/network/middleware/tls.rs` ! CN validation, pattern matching, expiration checking, user mapping
+! Unified Auth ! ✅ Supports mTLS ! `src/security/unified_auth.rs` ! `ClientCertificate` auth method, integration with JWT/API keys
+!===
 
 **mTLS Pipeline Complete:**
 1. TLS handshake with client certificate verification (rustls)
@@ -147,7 +165,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot serve trading/IoT workloads. ibkrtrading forced to use PostgreSQL.
 | 3-4 months
-| *COMPLETED Feb 2025*: TST engine implemented in `src/storage/engines/impls/tst/` with time-partitioned storage (Arrow IPC I/O), OHLC downsampling with Gorilla compression, segment compaction. 6 integration tests passing. ASOF joins <1ms, >100K bars/second ingestion, >10:1 compression ratio.
+| *Implemented (engine).* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- time-series/event foundations are Beta; product packaging, API parity, and at-scale validation are still in progress. _Implementation detail:_ TST engine implemented in `src/storage/engines/impls/tst/` with time-partitioned storage (Arrow IPC I/O), OHLC downsampling with Gorilla compression, segment compaction. 6 integration tests passing. ASOF joins <1ms, >100K bars/second ingestion, >10:1 compression ratio.
 
 | TD-010
 | No event sourcing store
@@ -156,7 +174,7 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot provide immutable audit trails. ibkrtrading uses 119MB/day JSONL. MiFID II non-compliant.
 | 2-3 months
-| *COMPLETED Feb 2025*: EventLogEngine implemented in `src/storage/engines/impls/eventlog/` with append-only event log, indexed queries (by entity ID, event type, timestamp), temporal replay (point-in-time reconstruction), MiFID II compliance mode. JSON serialization for serde_json::Value compatibility. 7 integration tests passing. Monotonic sequence numbers, immutable audit trail, snapshot manager.
+| *Implemented (engine).* **v0.2 support tier: _Beta in v0.2 (see SUPPORTED_SURFACE)_** -- see TD-009; event sourcing shares the Beta time-series/event tier. _Implementation detail:_ EventLogEngine implemented in `src/storage/engines/impls/eventlog/` with append-only event log, indexed queries (by entity ID, event type, timestamp), temporal replay (point-in-time reconstruction), MiFID II compliance mode. JSON serialization for serde_json::Value compatibility. 7 integration tests passing. Monotonic sequence numbers, immutable audit trail, snapshot manager.
 
 | TD-011
 | No framework integrations
@@ -165,17 +183,19 @@ All catalogs implement the `Catalog` trait with full CRUD operations, health che
 | *Resolved*
 | Cannot be used with LangChain, LlamaIndex, Haystack, CrewAI without custom code. Every competitor has these.
 | 1-2 months
-| *RESOLVED Mar 2026*: **All major framework integrations complete**. 7 frameworks implemented:
-|  |  |  |  |
-|---|---|---|---|---
-| **Framework** | **Status** | **Location** | **Features** |
-| **LangChain** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/langchain.py` | VectorStore, from_texts/from_documents, similarity_search |
-| **LangGraph** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/langgraph.py` | Retriever integration with LangGraph |
-| **LlamaIndex** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/llama_index.py` | VectorStore, Retriever, Node with embeddings |
-| **Haystack** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/haystack.py` | DocumentStore, Retriever, write_documents |
-| **CrewAI** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/crewai.py` | SearchTool, KnowledgeSource |
-| **DSPy** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/dspy.py` | RM (Retrieval Model) integration |
-| **AutoGen** | ✅ Complete | `clients/python/src/proximadb_sdk/integrations/autogen.py` | VectorDB adapter |
+a| *Implemented (SDK), Mar 2026.* **_Not a v0.2 supported surface (see SUPPORTED_SURFACE)_** -- framework integrations ship in the Python SDK but are not listed as a Supported v0.2 product surface; do not release-note them as production. _Implementation detail:_ 7 frameworks implemented:
+
+[%header%autowidth]
+!===
+! Framework ! Status ! Location ! Features
+! LangChain ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/langchain.py` ! VectorStore, from_texts/from_documents, similarity_search
+! LangGraph ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/langgraph.py` ! Retriever integration with LangGraph
+! LlamaIndex ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/llama_index.py` ! VectorStore, Retriever, Node with embeddings
+! Haystack ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/haystack.py` ! DocumentStore, Retriever, write_documents
+! CrewAI ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/crewai.py` ! SearchTool, KnowledgeSource
+! DSPy ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/dspy.py` ! RM (Retrieval Model) integration
+! AutoGen ! ✅ Complete ! `clients/python/src/proximadb_sdk/integrations/autogen.py` ! VectorDB adapter
+!===
 
 **Installation:**
 ```bash
@@ -211,13 +231,15 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Enterprise requirement. No mechanism for incremental backup or point-in-time recovery.
 | 1-2 months
-| *RESOLVED Mar 2026*: **Backup/restore infrastructure fully implemented**. Complete enterprise-grade backup and restore system:
-|  |  |  |  |
-|---|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **Backup Manager** | ✅ Production Ready | `src/operations/backup/mod.rs` | Incremental snapshots, S3/GCS/Azure targets, WAL checkpointing, compression, checksums |
-| **Restore Manager** | ✅ Production Ready | `src/operations/restore/mod.rs` | Manifest restore, checksum verification, WAL replay, dry-run mode, continue-on-error |
-| **CLI Scripts** | ✅ Production Ready | `scripts/backup.sh`, `scripts/restore.sh` | User-friendly CLI with incremental/full support, retention policy, verification |
+a| *RESOLVED Mar 2026*: **Backup/restore infrastructure fully implemented**. Complete enterprise-grade backup and restore system:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! Backup Manager ! ✅ Production Ready ! `src/operations/backup/mod.rs` ! Incremental snapshots, S3/GCS/Azure targets, WAL checkpointing, compression, checksums
+! Restore Manager ! ✅ Production Ready ! `src/operations/restore/mod.rs` ! Manifest restore, checksum verification, WAL replay, dry-run mode, continue-on-error
+! CLI Scripts ! ✅ Production Ready ! `scripts/backup.sh`, `scripts/restore.sh` ! User-friendly CLI with incremental/full support, retention policy, verification
+!===
 
 **Features:**
 - RPO <1 minute (WAL checkpoint frequency)
@@ -233,15 +255,17 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Cannot prove performance claims. No ANN-benchmark submission.
 | 2 weeks
-| *RESOLVED Mar 2026*: **Comprehensive benchmark infrastructure complete**. All components implemented:
-|  |  |  |  |
-|---|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **ANN-Benchmarks Adapter** | ✅ Complete | `src/bench/ann_benchmarks/adapter.rs` | HNSW, IVF, DiskANN, Annoy, LSH, PQ algorithms; SIFT/GIST/MNIST/DEEP1B datasets |
-| **Binary Runner** | ✅ Complete | `src/bin/ann-benchmarks.rs` | CLI runner with CSV/JSON export |
-| **VectorDBBench Comparison** | ✅ Complete | `src/bin/vectordb_comparison.rs` | Competitor comparison (Qdrant, Weaviate, Milvus, Pinecone) |
-| **Public Documentation** | ✅ Complete | `docs/10-quality/benchmarks/PERFORMANCE.md` | 271 lines with methodology, results, competitor comparisons |
-| **Python Benchmarks** | ✅ Complete | `clients/python/tests/` | 15+ benchmark scripts for SDK validation |
+a| *RESOLVED Mar 2026*: **Comprehensive benchmark infrastructure complete**. All components implemented:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! ANN-Benchmarks Adapter ! ✅ Complete ! `src/bench/ann_benchmarks/adapter.rs` ! HNSW, IVF, DiskANN, Annoy, LSH, PQ algorithms; SIFT/GIST/MNIST/DEEP1B datasets
+! Binary Runner ! ✅ Complete ! `src/bin/ann-benchmarks.rs` ! CLI runner with CSV/JSON export
+! VectorDBBench Comparison ! ✅ Complete ! `src/bin/vectordb_comparison.rs` ! Competitor comparison (Qdrant, Weaviate, Milvus, Pinecone)
+! Public Documentation ! ✅ Complete ! `docs/10-quality/benchmarks/PERFORMANCE.md` ! 271 lines with methodology, results, competitor comparisons
+! Python Benchmarks ! ✅ Complete ! `clients/python/tests/` ! 15+ benchmark scripts for SDK validation
+!===
 
 **ANN-Benchmarks Status:**
 - Infrastructure production-ready
@@ -256,14 +280,16 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Data stored unencrypted on disk. Fails SOC 2 requirements.
 | 1-2 months
-| *RESOLVED Mar 2026*: **Storage engine file encryption complete**. Integrated FileEncryptionLayer into LocalFileSystem with transparent AES-256-GCM encryption for all storage engines (SST, VIPER, NOVA, SWIFT, HELIX, RAPTOR). WAL encryption was previously complete. Key rotation support implemented.
-|  |  |  |  |
-|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **WAL Encryption** | ✅ Complete | `src/storage/persistence/write_ahead_log/encryption.rs` | WALEncryptionLayer for transaction logs |
-| **File Encryption** | ✅ Complete | `src/storage/persistence/filesystem/local.rs` | FileEncryptionLayer for all storage files |
-| **Key Manager** | ✅ Complete | `src/storage/encryption/key_manager.rs` | KeyVersionManager with rotation support |
-| **Tests** | ✅ Complete | `tests/storage_encryption_test.rs` | 5 integration tests passing |
+a| *RESOLVED Mar 2026*: **Storage engine file encryption complete**. Integrated FileEncryptionLayer into LocalFileSystem with transparent AES-256-GCM encryption for all storage engines (SST, VIPER, NOVA, SWIFT, HELIX, RAPTOR). WAL encryption was previously complete. Key rotation support implemented.
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! WAL Encryption ! ✅ Complete ! `src/storage/persistence/write_ahead_log/encryption.rs` ! WALEncryptionLayer for transaction logs
+! File Encryption ! ✅ Complete ! `src/storage/persistence/filesystem/local.rs` ! FileEncryptionLayer for all storage files
+! Key Manager ! ✅ Complete ! `src/storage/encryption/key_manager.rs` ! KeyVersionManager with rotation support
+! Tests ! ✅ Complete ! `tests/storage_encryption_test.rs` ! 5 integration tests passing
+!===
 
 **Features:**
 - Transparent encryption/decryption at filesystem level
@@ -299,15 +325,17 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 | *Resolved*
 | Parser exists (`src/graph/query/parser.rs`) but incomplete engine integration. Not production-ready vs. Neo4j openCypher.
 | 2-3 months
-| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete OpenCypher-compatible query language:
-|  |  |  |  |
-|---|---|---|---|---
-| **Component** | **Status** | **Location** | **Features** |
-| **Parser** | ✅ Complete | `src/graph/query/parser.rs` | MATCH, WHERE, RETURN, ORDER BY, SKIP, LIMIT, WITH, UNION |
-| **AST** | ✅ Complete | `src/graph/query/ast.rs` | ReturnSpec, WithClause, UnionClause with full support |
-| **Planner** | ✅ Complete | `src/graph/query/planner.rs` | Cost-based optimization, join ordering, index selection |
-| **Executor** | ✅ Complete | `src/graph/query/pattern.rs` | `apply_ordering_and_limits`, `apply_with_clauses`, `apply_union` |
-| **Distributed** | ✅ Complete | `src/query/facade/strategies/distributed.rs` | Distributed query execution, REST endpoint |
+a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete OpenCypher-compatible query language:
+
+[%header%autowidth]
+!===
+! Component ! Status ! Location ! Features
+! Parser ! ✅ Complete ! `src/graph/query/parser.rs` ! MATCH, WHERE, RETURN, ORDER BY, SKIP, LIMIT, WITH, UNION
+! AST ! ✅ Complete ! `src/graph/query/ast.rs` ! ReturnSpec, WithClause, UnionClause with full support
+! Planner ! ✅ Complete ! `src/graph/query/planner.rs` ! Cost-based optimization, join ordering, index selection
+! Executor ! ✅ Complete ! `src/graph/query/pattern.rs` ! `apply_ordering_and_limits`, `apply_with_clauses`, `apply_union`
+! Distributed ! ✅ Complete ! `src/query/facade/strategies/distributed.rs` ! Distributed query execution, REST endpoint
+!===
 
 **Clauses Implemented:**
 - RETURN: Projections, variables, DISTINCT
@@ -347,7 +375,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 
 | Operations
 | ~TD-014~, ~TD-015~
-| No (All resolved: comprehensive backup/restore and benchmark infrastructure complete) |
+| No (All resolved: comprehensive backup/restore and benchmark infrastructure complete)
 
 | Ecosystem
 | TD-004, TD-005
@@ -355,7 +383,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 
 | Honesty/Trust
 | ~TD-001~, ~TD-017~
-| No (but erodes credibility). Both resolved. |
+| No (but erodes credibility). Both resolved.
 |===
 
 == Priority Legend
@@ -397,7 +425,7 @@ pip install proximadb-python[langchain,langgraph,crewai,dspy,autogen,llama_index
 
 | Phase 4 (Context DB)
 | ~TD-015~
-| *COMPLETED* (All Phase 4 items resolved) |
+| *COMPLETED* (All Phase 4 items resolved)
 |===
 
 == Recently Resolved (Phase 1 & Phase 2 Complete)
@@ -912,6 +940,15 @@ The following items represent the frontier of AI database research, aligned with
 | Implement Plan-Retrieve-Evaluate loop and metadata pseudo-query augmentation for bounded, auditable dataset search.
 | 5-6 weeks
 | **Verified**: May 10, 2026. From March 2026 Reference Architecture (arXiv:2604.16394). **Implementation**: `PseudoQueryGenerator` in `VectorOperationsService` ingestion paths (`insert_batch_internal`, `insert_vectors_via_*`), storing auto-derived `proximadb.pseudo_query` metadata. **Tests**: `src/services/operations/vectors.rs` (`pseudo_query_tests`).
+
+| TD-117
+| Agent branching via object-store metadata (BranchRef, copy-on-write, writer fence)
+| P5
+| HIGH
+| *Foundation landed 2026-06-17* (`e4d9b05fb`) — BranchRef type + assembly, `DrPathBuilder::branches_subprefix`, and `ManifestCommitter::commit_fenced` generation writer-fence shipped + unit-tested; residual: ancestor read fall-through, live CAS fencing on the write path, branch GC
+| The two copy-on-write substrates exist but there is no branch primitive: `SnapshotPin` captures `(from_lsn,to_lsn,checkpoint_id)` (`src/services/snapshot/coordinator.rs:18`) with no parent/ancestor pointer, and `ManifestCommitter` writes immutable versioned `v{N}.manifest` under CAS (`crates/storage/proximadb-iceberg-engine/src/manifest.rs`) with no ref/branch layer and *no generation/epoch writer fence* (`DrPathBuilder` isolates paths but does not fence concurrent writers). There is no way for an agent to instantly fork an isolated read-write copy of a collection/table — the headline capability Neon/Lakebase have and Supabase lacks. (The graph branch/merge APIs are unrelated knowledge-graph features.)
+| 3-4 sprints
+| Deliverables: (1) `BranchRef` (new `src/services/snapshot/branch_ref.rs`): `{branch_id, parent, collections:{coll→fork_lsn}, tables:{tbl→manifest_version}, catalog_snapshot_id, generation, created_at_ns}` persisted as `_branches/{id}.json` under a new `DrPathBuilder::branches_subprefix()` (`src/storage/trait_components/path_resolver.rs` ~:474) and indexed in a new catalog `branches`/`snapshots` table (reuse the drop+create projection pattern); (2) ancestor fall-through — `SnapshotPublishCoordinator::create_branch()` + `resolve_snapshot_lineage()`; the tenant/collection-scoped read path recurses to the parent when the branch has no entry ≤ the requested version; (3) a generation-number writer fence on the `ManifestCommitter` CAS per `(tenant, branch)` (copies Neon's `index_part.json`+generation single-writer guarantee); (4) branch GC by reference-counting WAL layers/data files (Iceberg `expire_snapshots` semantics — safer than Delta shallow clone). *Acceptance:* O(1) branch create off a populated collection (no data copy); divergent writes leave the parent unchanged; unmodified reads fall through to the parent; a stale writer is fenced by generation. *Depends on* TD-116 (LSN history) and TD-119 (manifest refs). Design doc §6 (`docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md`); plan `roadmap/techdebt/TD_117_AGENT_BRANCHING_2026_06_17.adoc`.
 |===
 
 == Phase 7: Competitive Platform Architecture And Storage Authority (2026+)
@@ -1072,7 +1109,7 @@ physical layouts.
 | Open
 | Optimizer (`src/index/axis/management/manager.rs:653-694`) routes filtered ANN through a default `AnnFilteringPolicy` instance. ADR-011 contract says per-collection policy (low/medium/high-selectivity preferences, recall floor, pushdown candidate cap) should be cataloged. Without it, operators cannot tune per workload; recall envelope is policy-uniform across collections.
 | 3-5 days
-| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `AnnFilteringPolicy` field on collection metadata in xCatalog; (2) optimizer resolves catalog policy → falls back to default; (3) DDL surface (REST `PATCH /api/v2/collections/:id`) updates it; (4) route-health surfaces `policy_source: "catalog"|"default"`. v0.2 ships Beta with differential recall coverage via `tests/filtered_ann_recall_bands.rs` only.
+| Deferred from v0.2 MVP cut (2026-05-28). Acceptance: (1) `AnnFilteringPolicy` field on collection metadata in xCatalog; (2) optimizer resolves catalog policy → falls back to default; (3) DDL surface (REST `PATCH /api/v2/collections/:id`) updates it; (4) route-health surfaces `policy_source: "catalog"\|"default"`. v0.2 ships Beta with differential recall coverage via `tests/filtered_ann_recall_bands.rs` only.
 
 | TD-074
 | Collection-default freshness mode not catalog-wired
@@ -1415,4 +1452,105 @@ physical layouts.
 | Governed by `docs/12-design/adr/ADR-024-single-canonical-data-type-and-schema.adoc` + CONVERGENCE_AUDIT seam S8. Three parallel logical type enums (`ProximaType`/`ProximaDataType`/`CatalogDataType`) and two schema structs (`CatalogTableSchema`/`ProximaSchema`) collapsed onto the canonical `ProximaType` + `CatalogTableSchema`. DONE: ProximaType superset + Arrow/pgwire/proto-code bridges (`7d78df773`,`be1c0b2f6`); `ProximaDataType` deleted (`320d62747`); `CatalogDataType` deleted + durable serde-compat shim (`8009ab052`); REST v2 type vocabulary derived from ProximaType (`d6e897689`); `ProximaSchema` merged into `CatalogTableSchema` (`fcac4f5fe`). Physical encoding/quantization kept as an orthogonal storage attribute (not a logical-type variant).
 | residual ~1 day
 | Acceptance: (1) one logical type enum [DONE]. (2) one schema struct [DONE]. (3) REST/pgwire/proto type paths funnel through ProximaType [DONE]. RESIDUAL: (a) `build_vector_column` honors non-f32 dense-vector element width (currently writes fp32 `dim*4` while `DenseVector::to_arrow_type` declares `dim*element_width`; latent — only f32 used in practice). (b) Broader `SqlValue→ProximaValue` value migration is tracked separately under TD-106/S3.
+
+| TD-112
+| ANN recall over flushed/compacted segments (post-flush index population)
+| P1/P4
+| MEDIUM
+| *Fix landed 2026-06-16* — index-on-flush wired on the live SST path; recall-band e2e green; local-FS post-loss recovery via search-time lazy rebuild-from-SST (acceptance #1/#2/#3 + local post-restart recovery). Residual: real object-store SST read-back coverage. Boot-time AXIS prewarm is not claimed.
+| Surfaced 2026-06-14 while disproving the long-claimed "v2 INSERT→search-index flush gap". `tests/v2_post_flush_search_e2e.rs` proves *correctness* — v2 vector search (`enable_proxima_record=false`) and metadata-filtered scan (`enable_proxima_record=true`) both still return the right records after a real `ProximaDB::force_flush_collection` (WAL drain + `compact_collection`). What that test does NOT establish is whether post-flush retrieval is served by a *populated ANN index* (HNSW/IVF over the SST/PAX segments) or by a brute-force scan over flushed storage. At small N the two are indistinguishable; at scale the difference is recall + tail latency, not correctness.
+*PRE-FIX CHARACTERIZATION (2026-06-16, acceptance #2 — verified per-engine, SST engine):* the flush/compaction path did **not** register flushed/compacted vectors into the AXIS ANN index. Evidence: (a) the SST flush wrote segments + emitted an *object-economy read-route directory* entry (`flush/mod.rs` `emit_after_flush`), not an index event; (b) the dedicated entry point `AxisManager::handle_flushed_vectors` (`management/manager.rs`) had **zero callers** — dead scaffolding; (c) the AXIS `EventLogConsumer` (`integration/eventlog_consumer.rs`, which would route a flush `IndexEvent`→`index_vectors_hybrid`) was **not spawned/subscribed in boot** (no wiring in `shared_services`/`server`/`database`), and the SST flush emitted no such `IndexEvent`; (d) the compactor explicitly *deferred* AXIS indexing to that unwired consumer (`compactor_impl.rs` "deferred until EventLog consumer is wired (L2.4)"); (e) `recall_drift_sweeper` only hot-swapped the HNSW `ef_search` param, it did not re-index. Pre-fix net: post-flush search was served by `sst/search/mod.rs` `fallback_to_direct_search` (brute-force / block-pruned scan) whenever the in-memory AXIS index lacked the vectors — so recall degraded toward brute-force as data aged out of the WAL memtable and **unconditionally after a restart** (in-memory index lost, nothing rebuilt it from SST). HELIX/NOVA have no separate flush-index path today. A characterization lock-in test (`td112_handle_flushed_vectors_indexes_flushed_batch`) proves the `handle_flushed_vectors` primitive *does* index when invoked. *FIX (2026-06-16):* index-on-flush is now wired on the LIVE path — `SstEngine::flush_implementation` calls `handle_flushed_vectors` after segments are durable (best-effort; first wired into `FlushCoordinator`, which turned out to be test-only scaffolding with no production callers, then moved to the real path). Verified by `td112_live_flush_indexes_vectors_into_axis` (a real `do_flush` populates AXIS) and `tests/td112_postflush_recall_e2e.rs` (≥2 flush cycles + compaction → ~0.95 top-k recall vs a brute-force oracle). NOTE: high-magnitude all-positive vectors collapse under the index's sign/INT8 quantization (one shared signature), so the e2e uses sign-separated clusters for a fair measurement. *LOCAL POST-LOSS RECOVERY (2026-06-16):* lazy rebuild-from-SST — `sst/search` `ensure_axis_index_from_sst` reads flushed records back from durable local segments (via `discover_sstable_files` + format-dispatched block readers) and re-indexes them through `handle_flushed_vectors` when a search finds the AXIS store empty (keyed on `registered_vector_count`, with an in-flight per-(process, collection) guard that retries after failed or empty attempts). Index-agnostic — covers HNSW and small IVF, unlike the IVF-only persist+cold-load. Verified by `axis_index_rebuilt_from_sst_after_loss` (drop_collection → next search rebuilds the store 0→N). RESIDUAL (acceptance #4): real object-store SST read-back coverage remains separate; the current rebuild path is local-FS and boot-time AXIS prewarm is not claimed.
+Scope spans the specialized engines (SST today; HELIX/NOVA), real object storage (S3/ADLS/GCS) reads, multi-flush + compaction churn, and post-restart recovery reload. This is a *performance/recall* concern and belongs to the recall-band track, not the (now-complete) hybrid metadata-filter work.
+| 1-2 sprints (characterize first)
+| Acceptance: (1) a recall-band e2e that inserts enough vectors to force ≥2 flush+compaction cycles, then asserts top-k recall stays within target bands against a brute-force oracle — wired into the existing `filtered_ann_recall_bands` / `helix_cold_search_recall` suite rather than a one-off. (2) Explicit statement (test or doc) of whether flushed/compacted segments are ANN-indexed or scanned, per engine. (3) If indexing is missing on the flush/compaction path, a follow-up TD to build/extend the AXIS index on flush. (4) Coverage extended to at least one real object-store backend and a post-restart reload.
+
+| TD-113
+| Warehouse materialize path does not enforce tenant isolation (DrPathBuilder mandate gap)
+| P1
+| HIGH (SaaS isolation)
+| *Mostly resolved (2026-06-16)* — tenant isolation enforced; DrPathBuilder layout opt-in
+| Surfaced 2026-06-15 by the DrPathBuilder tenant-path guard (`scripts/check_tenant_path_guard.py`): `DmlService::materialize_table_to_parquet` built the object prefix by hand and the production `ALTER TABLE … MATERIALIZE` trigger passed `None` for `TenantContext`, so warehouse snapshots co-mingled under the literal `"default_tenant"`. *RESOLVED:* (1) interim id-injection hardening (`e93dcf91d`); (2) **Phase 1** — the real request `TenantContext` is now threaded through `TableMaterializer::materialize` (trait + DDL dispatch in `ddl/mod.rs`) into `materialize_table_to_parquet`, so each tenant's snapshot lands under its own `data/{tenant}/…` prefix and tenant-scoped table resolution rejects cross-tenant materialize; (3) **Phase 2** — opaque, rename-stable `namespace_id` (`ns_<uuid>`) is populated at native-catalog `create_namespace` + idempotently backfilled on load, and a flag-gated DrPathBuilder layout (`PROXIMADB_WAREHOUSE_DRPATH`, default OFF → `data/{tenant}/{namespace_id}/{table}` via the new `DrPathBuilder::build_from_parts`) ships with graceful fallback to the validated manual layout + a cross-tenant owner assertion. Validated by unit tests (`build_from_parts_validates_each_segment`, `resolve_materialize_prefix_layouts_and_cross_tenant`) and a two-tenant materialize-isolation test.
+| done
+| Phase 2 hardening landed (`fa32bd2df`): tenant-scoped CREATE records the owning tenant on the namespace (`create_namespace_for_tenant`), so namespaces are now DR-addressable (`namespace_id` + `tenant_id`) and the cross-tenant assertion + `build_for_pool` pool routing operate on real data, not a `None` tenant; the DrPath flag is dependency-injected for deterministic testing (`materialize_drpath_layout_uses_opaque_namespace_id`, `scoped_create_makes_namespace_dr_addressable`; 47/47 materialize+catalog tests green). Remaining (by-design, low priority): `PROXIMADB_WAREHOUSE_DRPATH` stays *opt-in* — the opaque-id layout trades path readability/determinism for rename-stability, so flip the default only alongside a snapshot-repath migration.
+
+| TD-114
+| Storage spine: background L0→base compactor + merge-on-read deletion vectors
+| P7
+| HIGH
+| *Foundation landed 2026-06-17* (`71dbd3b17`) — tested PAX merge-on-read compaction core (`compact_pax_segments`, drops tombstones) + flag-gated trigger (`PROXIMADB_L0_COMPACTION_ENABLED`, default OFF) shipped; residual: live auto-invoke from flush (engine segment-reader wiring), orchestrator integration, deletion vectors on the read path
+| Both ends of the LSM hot→cold pattern already exist — the memtable/WAL hot tier (`DirectWalTableRecordStore`, `src/services/record_store.rs:1168`) flushes to PAX/Parquet segments (`SstEngine::flush_implementation`, `src/storage/engines/sst/flush/mod.rs:92`) — but there is *no background compaction* merging small L0 flush outputs into large columnar base files; `CompactionOrchestrator` (`src/storage/common/compaction_orchestrator.rs`, thresholds level0=5/level=10/max=7) is defined but never called from the flush path. Deletes are WAL tombstones (`CanonicalOperation::RecordDelete`); `enable_deletion_vectors` is an unused field (`src/storage/formats/open/delta.rs:107`), so a delete over immutable Parquet requires a full rewrite. Net: the small-file problem (slow scans, bloated manifests) and deletes not honored on compacted base reads.
+| 2-3 sprints
+| Deliverables: (1) post-flush trigger at `sst/flush/mod.rs` after `index_flushed_into_axis()` — when L0 count ≥ `level0_threshold`, enqueue an async compaction task via the existing orchestrator; (2) implement `SstEngine::execute_compaction()` merging L0 into a single L1 base file via `PaxSegmentWriter`/Parquet encoder, registering a new `GlobalManifestEntry` (Active, level 1); (3) deletion-vector overlay applied at the read-time merge (`scan_records_filtered`, `record_store.rs:458`) and consumed by the compactor to drop tombstoned rows (wiring the dormant `enable_deletion_vectors`/`deleted_at` fields); (4) compaction marked `dataChange=false`-equivalent so snapshot reads are unaffected; (5) per-collection eager/lazy compaction knob (write-amp vs read-amp). *Acceptance:* an e2e forcing ≥2 flush+compaction cycles asserts L0 collapses to ≤1 base file, a deleted row is absent from post-compaction scans, and scan latency/manifest size improves. Design doc §4–5.1 (`docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md`); plan `roadmap/techdebt/TD_114_STORAGE_SPINE_2026_06_17.adoc`. Related: TD-112 (same flush seam).
+
+| TD-115
+| Cost-based multi-engine dispatch (flip ComputeScheduler off always-Native)
+| P7
+| HIGH
+| Open (proposed 2026-06-17)
+| `ComputeScheduler::route_select()` (`src/query/compute_scheduler.rs:202`) hardcodes `ComputeBackend::Native` (Volcano) for every SELECT. The flip scaffolding exists (`QueryShape.parquet_backed`/`engages_relational`, `routed_read_plan`, `explain_line()`) but `parquet_backed` is never set and there is no cost comparison. `UnifiedCostModel`/`UnifiedCostWeights` (`src/query/query_optimizer.rs:49`) is consumed only by the ANN/search optimizer, not by routing; no table cardinality/selectivity feeds the router. Analytical scans/joins/aggregates over Parquet base tables are forced through the row-oriented executor — the exact mismatch the data-warehouse course-correction targets.
+| 2 sprints
+| Deliverables: (1) enrich `QueryShape` with `estimated_cardinality`, `partition_count`, `is_point_lookup`, `filter_selectivity`, populated at the planner boundary from catalog metadata + Parquet row-group splits; (2) new `src/query/cost_model.rs` `cost_for_backend(shape, backend)` reusing `UnifiedCostWeights`, with a selectivity-crossover rule (point/high-selectivity → Native; large-scan/low-selectivity/aggregate/join over parquet_backed → DataFusionLocal); (3) set `parquet_backed=true` once all referenced tables are Parquet-materialized; (4) `SET compute_engine TO {auto/native/datafusion}` session override via the existing SET parser (`src/network/postgres/protocol.rs:895`) as an escape hatch (TiDB lesson: the cost model is approximate); (5) extend `explain_line()` with a per-backend cost breakdown. *Acceptance:* a scan-heavy query routes to DataFusionLocal and a point lookup to Native, both visible in EXPLAIN; the session override forces a backend. *Depends on* the live DataFusion execution path (course-correction). Design doc §3.4/5.3; plan `roadmap/techdebt/TD_115_COST_BASED_ROUTING_2026_06_17.adoc`.
+
+| TD-116
+| WAL tiering + read-as-of-LSN time travel
+| P7
+| MEDIUM
+| Open (proposed 2026-06-17)
+| The WAL is local-only — `WalEntryStatus::Archived` (`src/storage/persistence/write_ahead_log/manifest/types.rs:53`) is defined but never set, and there is no sealed-segment offload to object storage, so durable history is bounded by local disk and cold recovery cannot pull WAL from S3. LSN infrastructure is solid (`GlobalLsnAllocator` `types.rs:189`; `SnapshotPin{from_lsn,to_lsn,checkpoint_id}` `src/services/snapshot/coordinator.rs:18`; `GlobalCheckpoint`), but there is no user-facing read-as-of-LSN path — `delta.rs`/`iceberg.rs` `time_travel()` are `Unimplemented` stubs and PITR (`src/storage/persistence/write_ahead_log/pitr.rs:542`) is crash-recovery-only. This blocks cheap PITR and the branching feature (TD-117), which needs LSN-addressable history.
+| 3 sprints
+| Deliverables: (1) background archival task (new `src/storage/persistence/write_ahead_log/archival.rs`) — periodically copy `Flushed` segments older than a TTL to object store via `ObjectStoreBridge`, set `status=Archived`, add an `archive_location` to `GlobalManifestEntry`, and GC the local copy; (2) archive read-back in recovery/replay (fetch from `archive_location` when `Archived`); (3) `SnapshotPin::pin_at_lsn(collection, target_lsn)` + `TableRecordStore::scan_records_at_lsn(…, at_lsn)` replaying entries with `global_lsn ≤ at_lsn` over the base; (4) `SELECT … AS OF (LSN n / TIMESTAMP t / SNAPSHOT id)` parser → `as_of_lsn` threaded to the read path (timestamp/snapshot resolved to an LSN via `GlobalCheckpoint`). *Acceptance:* a write→archive→read-back round-trip from object store; an `AS OF LSN` query returns historical state; PITR-to-LSN restores a collection. Design doc §5.2; plan `roadmap/techdebt/TD_116_WAL_TIERING_TIME_TRAVEL_2026_06_17.adoc`. *Unblocks* TD-117.
+
+| TD-118
+| Unify paging/cache policy with tier policy; split cache from FileSystem mechanism
+| P7
+| MEDIUM
+| Open (proposed 2026-06-17)
+| Two storage seams conflate three concerns. The `FileSystem` trait (`src/storage/persistence/filesystem/mod.rs`) is pure mechanism, but `UnifiedCachingFilesystem` (`src/storage/persistence/filesystem/caching_filesystem.rs:35`) fuses cache admission/eviction, metadata cache, prefetch and range optimization into that mechanism layer, while the tier-policy engine (`src/infrastructure/tier_policy_engine.rs`, `InfrastructureTier` Memory…CloudDeepArchive) decides long-term placement independently. Cache eviction (page into RAM/NVMe) and tier demotion (page down to S3/Glacier) are the same OS-paging decision at two rungs of one hierarchy yet are governed by two unrelated components; there is no `BufferAccessStrategy`-style scan ring, so a large cold S3 scan can evict the OLTP working set. The `proximadb-cache` crate's `TenantCache` is the consolidation base.
+| 2-3 sprints
+| Deliverables: (1) extract caching out of `UnifiedCachingFilesystem` into a `PagingCache` layer over `TenantCache`, leaving `FileSystem` as pure mechanism; (2) one `HierarchyPolicy`/`CacheTemperaturePolicy` trait (`on_access`/`should_evict`/`should_demote→tier`) consumed by *both* the paging cache and the tier engine, driven by one `(temperature, tenant SLA, cost)` model via the existing JSON `TierPolicy`+`LimitsResolver` DI seam (`PROXIMADB_CACHE_TIERS_PATH`); (3) a `BufferAccessStrategy`-style scan ring / cache-bypass for large sequential scans. *Keep* `FileSystem` and the tier engine as separate seams (mechanism vs policy — mirrors Postgres `smgr` vs `bufmgr`); consolidate only the policy brain. *Acceptance:* a large scan does not evict hot OLTP entries; a single policy config drives both eviction and demotion; `FileSystem` carries no cache logic. Design doc §1.5/7; plan `roadmap/techdebt/TD_118_UNIFY_PAGING_TIER_POLICY_2026_06_17.adoc`.
+
+| TD-119
+| Promote v1 key-list manifest to real Iceberg snapshots (metadata.json + manifest lists + refs)
+| P7
+| MEDIUM
+| *Phase 1 landed 2026-06-18* (branch `feat/td119-iceberg-snapshots`) — real persisted, versioned `metadata.json` + a manifest-log-driven snapshot history (parent chain, v2 `sequence-number`, `refs.main`) + a resolvable `metadata-location` served by a new GET route. `MetadataCommitter` (atomic CAS, mirrors `ManifestCommitter`) + `ObjectStoreBridge` metadata methods + `IcebergRestService::ensure_table_metadata` (idempotent: only re-commits when the manifest log advances; fail-soft), wired at the REST mount from `file://{data_dir}/warehouse` (same root as the write path). Unblocks TD-117 (refs/snapshot substrate). *RESIDUAL (Phase 2):* Avro manifest-list + manifest files with per-file `DataFile` stats (so Spark/Trino can *scan data files*); exact per-snapshot historical stats; tenant-scoping the Iceberg REST endpoints.
+| The manifest is a v1 newline-delimited list of object keys (`crates/storage/proximadb-iceberg-engine/src/lib.rs:99`) committed under CAS as `v{N}.manifest` — no `metadata.json`, no snapshot layer, no manifest list, no `refs` map, no column statistics. The Iceberg REST service (`src/catalog/iceberg_rest_service.rs`) returns stub snapshot structures, so external engines (PyIceberg/Spark/Trino/DuckDB) cannot consume ProximaDB tables as Iceberg, the long-standing "Snowflake/Trino interop" claim stays FALSE, and there is no snapshot-ref substrate for branching (TD-117) to point at.
+| 3-4 sprints
+| Deliverables: (1) `IcebergSnapshot`/`SnapshotSummary` types + a `metadata.json` writer emitted alongside each `v{N}.manifest` commit (snapshots list, `current-snapshot-id`, `refs`, schema, parent-snapshot-id) under the reserved `DrPathBuilder::snapshots_subprefix()`; (2) a manifest-list Avro per snapshot pointing at the existing key-list (a derived index — v1 stays the low-level store, backward compatible); (3) populate column stats from `BlockStats` (PAX) into manifest entries; (4) wire `iceberg_rest_service.rs` `/v1/{ns}/{table}` + `/snapshots` to read the real `metadata.json`. *Design option (sub-task):* the DuckLake model — move the manifest/branch registry into a transactional catalog DB if S3 metadata ops dominate at branch scale. *Acceptance:* PyIceberg/Spark reads a ProximaDB table including snapshot history. Design doc §3.4/6 and §9-P6; plan `roadmap/techdebt/TD_119_REAL_ICEBERG_TABLE_FORMAT_2026_06_17.adoc`. *Enables* TD-117 manifest-version refs.
+
+| TD-120
+| pg_catalog completeness for ORM/driver compatibility
+| P7
+| MEDIUM
+| *Foundation landed 2026-06-17* (`1233de45d`) — canonical pg_type/pg_namespace/pg_class/pg_attribute/pg_constraint views shipped + unit-tested; residual: pg_index canonical view + full live ORM round-trip
+| pgwire catalog introspection is stubbed — `catalog_introspection.rs` detects a few `pg_catalog`/`information_schema` join shapes and returns hardcoded rows (relkind='r', relnamespace=2200, atttypid=23); there is no catalog-backed `pg_type`/`pg_class`/`pg_attribute`/`pg_namespace`/`pg_index`/`pg_constraint`, and the translator (`src/network/postgres/translator.rs:73`) echoes catalog queries back. ORMs/drivers (SQLAlchemy, JDBC `DatabaseMetaData`, Diesel, sqlx) run heavy catalog introspection and break on type inference and key discovery — the #1 documented failure mode for Postgres-wire-compatible engines (Materialize/RisingWave/QuestDB all hit it).
+| 2-3 sprints
+| Deliverables: catalog-backed views in `catalog_introspection.rs` — (1) `pg_type` from the `ProximaType`↔OID mapping; (2) `pg_class`/`pg_namespace` from `CatalogTableSchema`/`CatalogNamespace`; (3) `pg_attribute` from real column order/type/nullability; (4) `pg_index`/`pg_constraint` from relational constraints (`relational.rs`: PK/UNIQUE/FK/CHECK/NOT NULL) and vector indexes (HNSW/IVF); (5) route these in `translator.rs` to `CatalogIntrospectionService::execute_select()`. Reference `datafusion-postgres`'s pg_catalog-over-DataFusion layer. *Acceptance:* SQLAlchemy `Inspector.get_table_names/get_columns/get_pk_constraint` and JDBC `getTables/getColumns/getIndexInfo` return correct results against a live collection. Design doc §0.7/8; plan `roadmap/techdebt/TD_120_PG_CATALOG_COMPLETENESS_2026_06_17.adoc`.
+
+| TD-121
+| Hard-delete gRPC v1 proto files and compat adapter impls after Sunset 2026-06-30
+| P7
+| HIGH
+| Open (planned post-2026-06-30)
+| gRPC v1 compatibility services (`proto/proximadb/v1/*.proto` + `crates/platform/proximadb-api/src/grpc/v1/*.rs`) are gated off by default behind `enable_grpc_v1_compat` (`PROXIMADB_GRPC_V1_COMPAT` env, default `false`). After the 2026-06-30 Sunset date the flag must be removed along with all v1 proto files and Rust impl files to eliminate the maintenance surface, reduce binary size, and prevent accidental re-enablement. Leaving deprecated code behind the flag indefinitely creates a false safety net and complicates codegen.
+| 1 sprint
+| Deliverables: (1) delete `proto/proximadb/v1/` directory and regenerate `crates/foundation/proximadb-proto/src/proto/proximadb.v1.rs`; (2) delete `crates/platform/proximadb-api/src/grpc/v1/` (vector.rs, sql.rs, collection.rs, graph.rs, hybrid.rs, security.rs, document.rs, entity.rs, observability.rs, streaming.rs, mod.rs); (3) remove `enable_grpc_v1_compat` field from `GrpcHttpServerConfig` (`crates/platform/proximadb-runtime/src/bootstrap_config.rs`) and all callers in `server_builder.rs` / `multi_server.rs`; (4) remove the `if enable_grpc_v1_compat` blocks in `multi_server.rs`; (5) update CI to assert no `proximadb.v1` proto package remains; (6) update `docs/03-api-reference/` migration guide to confirm v1 EOL. *Acceptance:* `grep -r 'proximadb.v1' proto/` returns zero results; `cargo build` green; no `PROXIMADB_GRPC_V1_COMPAT` in any config file. *Depends on:* Sunset date passing (2026-06-30). *Gate:* Do NOT merge before 2026-07-01. *Unblocked by* TD-123 (v2 parity services must exist before v1 removal ships).
+
+| TD-122
+| gRPC v2 parity services for graph, document, and entity modalities
+| P7
+| HIGH
+| Open (proposed 2026-06-18)
+| The canonical `proximadb.v2.ProximaRecordService` (`crates/platform/proximadb-api/src/grpc/v2/`) covers record writes, search, and SQL. Graph (`graph.proto`/`graph.rs`), document (`document.proto`/`document.rs`), and entity (`entity.proto`/`entity.rs`) workloads are currently REST-v2-only; there are no `proximadb.v2.GraphService`, `proximadb.v2.DocumentService`, or `proximadb.v2.EntityService` gRPC endpoints. Callers that need gRPC-native graph traversal, document CRUD, or entity resolution must either use the deprecated v1 compat adapter (off by default) or fall back to REST. This becomes a blocking gap for any gRPC-first SDK once TD-121 removes v1.
+| 3-4 sprints
+| Deliverables: (1) author `proto/proximadb/v2/graph.proto`, `proto/proximadb/v2/document.proto`, `proto/proximadb/v2/entity.proto` using `proximadb.v2.*` message types (no v1 message re-use); (2) implement `GraphServiceV2`, `DocumentServiceV2`, `EntityServiceV2` in `crates/platform/proximadb-api/src/grpc/v2/`; (3) register these services in `multi_server.rs` alongside the existing v2 ProximaRecordService; (4) add gRPC integration tests for graph traversal (BFS/DFS), document CRUD (insert/get/update/delete/search), and entity resolution; (5) add OpenAPI/grpc-gateway annotations so the REST v2 and gRPC v2 surfaces share schema definitions. *Acceptance:* `grpcurl` can list and call `proximadb.v2.GraphService`, `proximadb.v2.DocumentService`, `proximadb.v2.EntityService` without enabling `PROXIMADB_GRPC_V1_COMPAT`. *Blocks:* TD-121 (v1 cannot be removed until v2 parity exists). *Coordinates with:* TD-120 (pg_catalog) for entity type metadata; TD-119 (Iceberg manifests) for document storage layout.
+
+| TD-123
+| Full proximadb.v1 to proximadb.v2 message-type migration (codegen cascade)
+| P7
+| MEDIUM
+| Open (proposed 2026-06-18)
+| Many internal service boundaries, SDK clients, and test fixtures still reference `proximadb.v1.*` message types directly — even on code paths that do not use the deprecated gRPC v1 compat adapter. Typical examples: `VectorRecord` (v1) vs `ProximaRecord` (v2), `CollectionConfig` (v1) vs `CatalogTableSchema` (v2), `SearchResult` (v1) vs `SearchResponse` (v2). This creates a dual-namespace burden: codegen produces both `proximadb.v1` and `proximadb.v2` crate modules; From/Into conversion shims between the two add latency and hide type mismatches; JSON serialization differs across v1/v2 wire shapes; SDK auto-generated clients contain both namespaces. Once TD-121 deletes `proto/proximadb/v1/` the compiler will surface all remaining v1 usages as errors — without a migration plan this becomes a large unplanned blast radius.
+| 4-6 sprints
+| Deliverables: (1) audit all `use proximadb_proto::proto::proximadb_v1::*` imports across `src/` and `crates/` (a `grep -r 'proximadb_v1\|proximadb::v1'` run at HEAD is the starting inventory); (2) define migration layers — a. internal service ports: switch to `proximadb.v2.*` types directly; b. conversion shims: delete `From<v1::VectorRecord> for v2::ProximaRecord` and equivalent bridges once all callers migrate; c. SDK codegen: regenerate Python/Go/Node clients from `proto/proximadb/v2/` only; d. test fixtures: update integration tests that construct `v1::VectorRecord` / `v1::CollectionConfig` proto messages; (3) add a CI step (`scripts/check_v1_proto_usage.py`) that fails if `proximadb_v1` is referenced outside the compat adapter directory; (4) land migrations incrementally before TD-121 ships so the v1 deletion is a clean `git rm` with no compile errors. *Acceptance:* `scripts/check_v1_proto_usage.py` reports zero violations; `cargo build --all-features` green after the CI guard is added. *Depends on:* TD-122 (v2 parity services must exist before callers can migrate). *Must complete before* TD-121 hard-deletion ships.
 |===

@@ -56,6 +56,16 @@ type TonicStreaming<T> = tonic::Streaming<T>;
 type TonicResult<T> = std::result::Result<TonicResponse<T>, TonicStatus>;
 type TonicStream<T> = Pin<Box<dyn Stream<Item = std::result::Result<T, TonicStatus>> + Send>>;
 
+/// Total wire bytes a `do_get` response will egress: the encoded header + body +
+/// app-metadata across every `FlightData` frame. Used to meter KOU result-egress
+/// on the actual (post-compression) bytes leaving the engine.
+fn flight_data_wire_bytes(flight_data: &[FlightData]) -> u64 {
+    flight_data
+        .iter()
+        .map(|fd| (fd.data_header.len() + fd.data_body.len() + fd.app_metadata.len()) as u64)
+        .sum()
+}
+
 #[derive(Debug, Clone, Default)]
 struct AuthenticatedFlightContext {
     tenant_id: Option<String>,
@@ -1202,6 +1212,15 @@ impl FlightService for ProximaFlightService {
     }
 
     async fn do_get(&self, request: TonicRequest<Ticket>) -> TonicResult<Self::DoGetStream> {
+        // KOU result-egress: classify the client's peer IP once for this request
+        // (no remote addr ⇒ unspecified ⇒ Local/free). Drives both the egress
+        // meter and the egress-aware shaping decision below.
+        let edge = crate::metrics::consumption_metrics::EdgePolicyContext::classify(
+            request
+                .remote_addr()
+                .map(|a| a.ip())
+                .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)),
+        );
         let auth_context = self
             .authenticated_flight_context(request.metadata(), request.peer_certs())
             .await?;
@@ -1245,6 +1264,13 @@ impl FlightService for ProximaFlightService {
                         TonicStatus::internal(format!("Failed to encode batches: {}", e))
                     })?;
 
+            // KOU result-egress: meter the actual encoded FlightData bytes (the
+            // client picked the compression via the ticket).
+            edge.record_result_egress(
+                auth_context.tenant_id.as_deref(),
+                flight_data_wire_bytes(&flight_data),
+            );
+
             let stream = stream::iter(flight_data.into_iter().map(Ok));
 
             return Ok(TonicResponse::new(Box::pin(stream)));
@@ -1265,8 +1291,23 @@ impl FlightService for ProximaFlightService {
             .await
             .map_err(|e| TonicStatus::internal(format!("Search failed: {}", e)))?;
 
-        let flight_data = ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, None)
-            .map_err(|e| TonicStatus::internal(format!("Failed to encode batches: {}", e)))?;
+        // Egress-aware shaping (co-design D2): for a chargeable (far) client, encode
+        // the result batches with ZSTD — a lossless byte-minimization the Arrow
+        // reader decompresses transparently. Near/free clients stay uncompressed
+        // (save CPU). Then meter the ACTUAL encoded bytes so the bill reflects the
+        // compressed egress that really left.
+        let compression = if edge.shape_policy().compress {
+            FlightCompression::Zstd.to_arrow_compression()
+        } else {
+            None
+        };
+        let flight_data =
+            ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, compression)
+                .map_err(|e| TonicStatus::internal(format!("Failed to encode batches: {}", e)))?;
+        edge.record_result_egress(
+            auth_context.tenant_id.as_deref(),
+            flight_data_wire_bytes(&flight_data),
+        );
         let stream = stream::iter(flight_data.into_iter().map(Ok));
 
         Ok(TonicResponse::new(Box::pin(stream)))

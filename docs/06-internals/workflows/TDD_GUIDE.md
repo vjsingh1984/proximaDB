@@ -18,6 +18,43 @@ Test-Driven Development follows a simple cycle:
 - **Documentation**: Tests show how to use the code
 - **Confidence**: Refactor safely knowing tests catch breakage
 
+## ProximaDB Testing Realities
+
+Generic TDD applies, but ProximaDB has concrete rules that override the defaults above. Read these before writing tests.
+
+### nextest profiles (zero-retry unit contract)
+
+Tests run under [`cargo-nextest`](https://nexte.st) with profiles defined in `.config/nextest.toml`:
+
+| Profile | Retries | Use |
+|---------|---------|-----|
+| `unit` | **0** | Library unit tests (`--lib`). The blocking CI gate (`ci.yml` `rust-test`) runs `cargo nextest run --lib --profile unit`. |
+| `integration` | 1 | Integration tests — tolerates exactly one transient **port-bind** flake, nothing else. |
+| `default` | 0 | Fallback. |
+
+**The unit profile has zero retries on purpose.** A unit test that only passes on retry is a *bug in the test or the code*, not something to paper over. Do **not** raise `retries` to make a red unit test green — that has masked real defects here before (e.g. a load-induced WAL-recovery visibility bug). Run locally exactly as CI does:
+
+```bash
+cargo nextest run --lib --profile unit
+```
+
+### Determinism: filesystem, WAL, and one-boot-per-process
+
+- **Use a fresh temp dir per test** (`tempfile::TempDir`). Never hardcode `/tmp` or `/private/tmp` — that aliases state across concurrent tests and is non-deterministic under load.
+- **One ProximaDB boot per test process.** The global WAL manifest is a *set-once process singleton*; a second full-DB boot in the same test binary reads stale/empty state. Either give each scenario its own test file, or run multiple phases inside a single `#[tokio::test]`.
+- **No wall-clock/sleep-based assertions.** Drive on observable state (await the condition), not `sleep(n)`.
+
+### Tenant-path and route-contract tests
+
+- **Tenant isolation:** any test that writes to object storage must go through `DrPathBuilder` (`data/{tenant_id}/{namespace_id}/{collection_id}/`). The `scripts/check_tenant_path_guard.py` CI guard fails new raw `format!("data/{...}/...")` prefixes — assert on `DrResolvedPath::root_prefix()`, not hand-built strings.
+- **Routing is a contract:** when you touch query routing, assert the *route decision* and *EXPLAIN output*, not just results. See `ComputeScheduler::route_select` route-selection tests and the `EXPLAIN`/`compute_route` assertions in `tests/pgwire_relational_engine_e2e.rs` for the pattern (OLTP→Native/Volcano, OLAP-over-Parquet→DataFusion, "OLTP never routes off native").
+
+### Flaky-test quarantine policy
+
+1. **First, fix it.** Reproduce with the unit profile (`cargo nextest run --lib --profile unit`, repeat). Flakiness is almost always shared global state, a temp-dir collision, a second boot, or a timing assumption — see the determinism rules above.
+2. **Never mask with retries.** Do not add nextest `retries` to the `unit` profile. The single `integration` retry exists only for OS port-bind races.
+3. **If you must quarantine**, mark the test `#[ignore = "flaky: <one-line reason> — tracked in <issue/TD>"]` with a tracked owner. A quarantined test is debt with a due date, not a resolution.
+
 ## Project Structure
 
 ```
@@ -75,10 +112,12 @@ make test-tdd-unit
 
 ```bash
 # Run pre-commit checks
-make tdd-precommit
+make work-commit-check
 
 # Or manually:
-make fmt && make clippy && make test
+make fmt-check
+cargo nextest run --lib --profile unit
+make deterministic-commit-contract-check
 ```
 
 ## Test Utilities
@@ -166,7 +205,7 @@ async fn test_search_performance() {
 
 - **Don't skip tests** - Every feature needs tests
 - **Don't test everything** - Focus on important paths
-- **Don't use unwrap() in tests** - Tests should use `?` or `expect()` with messages
+- **Prefer `expect("why")` over bare `unwrap()` in tests** - so a failure names what broke. (The hard *no-`unwrap`/`expect`/`panic!`* mandate in CLAUDE.md is for **production** code, not tests; tests may use them, but legible messages beat bare unwraps.)
 - **Don't make tests fragile** - Avoid brittle timing assumptions
 - **Don't write implementation-specific tests** - Test the contract, not details
 
@@ -257,16 +296,29 @@ async fn test_search_latency_p99() {
 
 ## CI/CD Integration
 
-Tests run automatically on:
-- **Push to main**: Full test suite
-- **Pull requests**: Full test suite + coverage
-- **Feature branches**: Unit tests only (faster feedback)
+### What actually gates a merge
 
-### GitHub Actions Workflows
+The **blocking** release gate is `.github/workflows/ci.yml`, aggregated by the `ci-success` job (triggers on `main`/`develop`/`development` + PRs). It runs, among ~30 jobs:
 
-- `.github/workflows/tdd.yml` - Main TDD test suite
-- Runs: Unit tests, integration tests, Python SDK tests
-- Enforces: Formatting, linting, coverage thresholds
+- `cargo fmt --all -- --check`
+- `cargo clippy --lib --bins -- -D warnings`
+- **`cargo nextest run --lib --profile unit`** (the zero-retry unit contract)
+- proto / OpenAPI drift checks; targeted integration tests
+- `scripts/check_deterministic_commit_contract.py` (fast guard that verifies the zero-retry
+  policy, CI/Makefile wiring, architecture/support guard text, and conflict-marker absence)
+- `scripts/validate_capability_matrix.py` (capability + maturity-contract guard)
+- `scripts/check_workspace_boundaries.py` and `scripts/check_tenant_path_guard.py` (layering + DrPathBuilder mandate, via the Workspace Layering Check workflow)
+
+`.github/workflows/tdd.yml` is an **advisory** TDD suite (several steps are `continue-on-error`); a green `tdd.yml` is *not* the merge gate — `ci-success` is. Don't rely on tdd.yml to catch what the gate enforces.
+
+The local pre-push equivalent is:
+
+```bash
+make work-commit-check
+```
+
+That command intentionally avoids full integration/server smokes; use `make release-check` before
+a release cut or when touching release-facing protocol behavior.
 
 ### Pre-commit Hook
 
@@ -278,7 +330,9 @@ git commit              # Hook runs automatically
 
 ## Coverage Goals
 
-| Module | Target | Current |
+> **Note:** the "Current" column below is illustrative and goes stale fast. For live numbers run `make test-coverage` / `scripts/coverage_by_module.sh`; do not cite these figures as the current state.
+
+| Module | Target | Current (illustrative) |
 |--------|--------|---------|
 | Core (storage, compute, query) | >80% | ~49% |
 | Graph | >80% | ~52% |
@@ -295,12 +349,14 @@ open coverage/index.html
 
 ### Tests Are Flaky
 
-Run tests multiple times to detect flakiness:
+Detect with the same zero-retry profile CI uses, repeated:
 ```bash
-for i in {1..3}; do
-  make test-unit
-done
+for i in {1..5}; do cargo nextest run --lib --profile unit || break; done
 ```
+Then **fix the cause** — do not raise the unit profile's retries. See the
+[Flaky-test quarantine policy](#flaky-test-quarantine-policy) above: the usual
+culprits are shared global state, temp-dir collisions, a second ProximaDB boot
+in one process, or a timing assumption.
 
 ### Tests Are Slow
 

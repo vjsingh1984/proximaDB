@@ -564,6 +564,7 @@ impl AxisHnswIndex {
         query: &[f32],
         k: usize,
         predicate: P,
+        ef_override: Option<usize>,
     ) -> Result<Vec<(String, f32)>>
     where
         P: Fn(&str) -> bool + Send + Sync,
@@ -599,8 +600,14 @@ impl AxisHnswIndex {
                 .unwrap_or(false)
         };
 
-        // Layer 0: predicate-aware NaviX traversal
-        let ef = self.config.ef.max(k);
+        // Layer 0: predicate-aware NaviX traversal. A per-query `ef` override
+        // (from SearchMode::Approximate) wins when set, floored at `k`; else the
+        // historical recall-maximizing default. Oversample (`k` here is already
+        // the policy-driven oversample_k) is an orthogonal lever — untouched.
+        let ef = match ef_override {
+            Some(e) => e.max(k),
+            None => self.config.ef.max(k),
+        };
         let raw = self.search_layer_predicate(query, &current_points, ef, 0, &id_predicate);
 
         let results = raw
@@ -860,6 +867,18 @@ impl AxisVectorIndex for AxisHnswIndex {
         self.search_with_filter(query, top_k, None).await
     }
 
+    async fn search_with_effort(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        ef_override: Option<usize>,
+        _filter: Option<&HashMap<String, String>>,
+    ) -> Result<Vec<(String, f32)>> {
+        // Honor the per-query ef budget on the warm HNSW path.
+        self.search_with_filter_ef(query, top_k, ef_override, None)
+            .await
+    }
+
     async fn remove(&self, id: &str) -> Result<()> {
         let start = std::time::Instant::now();
 
@@ -962,7 +981,8 @@ impl AxisVectorIndex for AxisHnswIndex {
         let predicate =
             self.filterable_metadata
                 .build_predicate(tenant_id, time_range_ns, rls_tags);
-        self.search_with_predicate_fn(query, top_k, predicate).await
+        self.search_with_predicate_fn(query, top_k, predicate, None)
+            .await
     }
 
     fn supports_predicate_search(&self) -> bool {
@@ -995,11 +1015,34 @@ impl AxisVectorIndex for AxisHnswIndex {
 }
 
 impl AxisHnswIndex {
-    /// Search with optional filtering
+    /// Search with optional filtering.
+    ///
+    /// Thin wrapper over [`Self::search_with_filter_ef`] with no per-query `ef`
+    /// override — preserves the historical signature and behavior for all
+    /// existing callers.
     pub async fn search_with_filter(
         &self,
         query: &[f32],
         top_k: usize,
+        filter: Option<
+            &(dyn for<'a> Fn(&'a proximadb_records::ProximaRecord) -> bool + Send + Sync),
+        >,
+    ) -> Result<Vec<(String, f32)>> {
+        self.search_with_filter_ef(query, top_k, None, filter).await
+    }
+
+    /// Search with optional filtering and an optional per-query `ef` override.
+    ///
+    /// `ef_override`: when `Some(ef)`, layer-0 is searched with `ef.max(top_k)`
+    /// candidates instead of the collection-size-aware default; when `None`,
+    /// the historical `config.ef.max(clamp(sqrt(N),50,500)).max(top_k)` is used.
+    /// This is the knob that lets `SearchMode::Approximate` actually trade
+    /// recall for latency on the warm HNSW path.
+    pub async fn search_with_filter_ef(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        ef_override: Option<usize>,
         _filter: Option<
             &(dyn for<'a> Fn(&'a proximadb_records::ProximaRecord) -> bool + Send + Sync),
         >,
@@ -1056,13 +1099,20 @@ impl AxisHnswIndex {
         // a customer who explicitly asked for ef_search=500 on a 100K
         // collection still gets 500 (not sqrt(100K)=316).
         let size_aware_ef = ((collection_size as f64).sqrt() as usize).clamp(50, 500);
-        let search_ef = self.config.ef.max(size_aware_ef).max(top_k);
+        // Per-query `ef` override (from SearchMode::Approximate) wins when set,
+        // floored at `top_k` so we never return fewer than the requested
+        // results. When absent, keep the historical recall-maximizing default.
+        let search_ef = match ef_override {
+            Some(ef) => ef.max(top_k),
+            None => self.config.ef.max(size_aware_ef).max(top_k),
+        };
 
         tracing::debug!(
-            "HNSW search: collection_size={}, size_aware_ef={}, config_ef={}, final_ef={}",
+            "HNSW search: collection_size={}, size_aware_ef={}, config_ef={}, ef_override={:?}, final_ef={}",
             collection_size,
             size_aware_ef,
             self.config.ef,
+            ef_override,
             search_ef
         );
 
@@ -1664,6 +1714,197 @@ mod tests {
             .expect("Failed to remove nonexistent");
     }
 
+    /// Proves the per-query `ef` override (the `SearchEffort` knob threaded via
+    /// `search_with_filter_ef`) actually controls the HNSW accuracy/latency
+    /// tradeoff: a tiny `ef` (greedy descent) recovers the true nearest
+    /// neighbour for STRICTLY fewer queries than a large `ef` on the SAME index,
+    /// and disagrees with it on at least one query.
+    ///
+    /// Regression guard for the fix where `SearchMode`/`nprobe` was dropped
+    /// before reaching AXIS, so the warm HNSW path always used the size-aware
+    /// default `ef` and the `approximate`/`approximate:N` knob was a no-op. If
+    /// the override were ignored, both calls would use the same `ef` and the
+    /// results would be identical for every query (`differed == 0`).
+    #[tokio::test]
+    async fn test_hnsw_ef_override_controls_recall() {
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let dim = 48usize;
+        let n = 5000usize;
+        let index = AxisHnswIndex::new(AxisHnswConfig::default(), dim).expect("create HNSW index");
+
+        // Deterministic, normalized random vectors so L2 / cosine / dot all rank
+        // neighbours identically (the brute-force oracle is metric-agnostic).
+        let mut state = 0x1234_5678_9ABC_DEF0u64;
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((state >> 33) as f32 / u32::MAX as f32) * 2.0 - 1.0
+        };
+        let normalize = |v: &mut Vec<f32>| {
+            let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                v.iter_mut().for_each(|x| *x /= norm);
+            }
+        };
+
+        let mut vecs: Vec<Vec<f32>> = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut v: Vec<f32> = (0..dim).map(|_| next()).collect();
+            normalize(&mut v);
+            index.add(format!("v{i}"), v.clone()).await.expect("add");
+            vecs.push(v);
+        }
+
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+
+        let queries = 80usize;
+        let (mut hit_low, mut hit_high, mut differed) = (0usize, 0usize, 0usize);
+        for _ in 0..queries {
+            let mut q: Vec<f32> = (0..dim).map(|_| next()).collect();
+            normalize(&mut q);
+
+            // Brute-force true nearest neighbour (top-1).
+            let true_idx = (0..n)
+                .min_by(|&a, &b| {
+                    l2(&q, &vecs[a])
+                        .partial_cmp(&l2(&q, &vecs[b]))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .expect("non-empty");
+            let true_id = format!("v{true_idx}");
+
+            // ef = 1: pure greedy descent (top_k=1, so the `ef.max(top_k)` floor
+            // is 1). ef = n: effectively exhaustive.
+            let low = index
+                .search_with_filter_ef(&q, 1, Some(1), None)
+                .await
+                .expect("low-ef search");
+            let high = index
+                .search_with_filter_ef(&q, 1, Some(n), None)
+                .await
+                .expect("high-ef search");
+
+            let low_id = low.first().map(|(id, _)| id.clone());
+            let high_id = high.first().map(|(id, _)| id.clone());
+            if low_id.as_deref() == Some(true_id.as_str()) {
+                hit_low += 1;
+            }
+            if high_id.as_deref() == Some(true_id.as_str()) {
+                hit_high += 1;
+            }
+            if low_id != high_id {
+                differed += 1;
+            }
+        }
+
+        // Large ef is near-perfect on this easy data.
+        assert!(
+            hit_high as f64 / queries as f64 >= 0.85,
+            "high-ef recall@1 too low ({hit_high}/{queries}) — index may be broken"
+        );
+        // The override is plumbed: greedy ef=1 disagrees with exhaustive ef=n on
+        // at least one query. If the knob were ignored both would use the same ef
+        // and `differed` would be 0.
+        assert!(
+            differed > 0,
+            "ef override had NO effect — ef=1 and ef=n returned identical results for all {queries} queries (knob ignored?)"
+        );
+        // And it controls accuracy: more effort recovers the true NN more often.
+        assert!(
+            hit_high > hit_low,
+            "large ef must recover the true NN more often than greedy ef=1 (high={hit_high} low={hit_low})"
+        );
+    }
+
+    /// Same proof as `test_hnsw_ef_override_controls_recall`, but through the
+    /// PREDICATE-FILTERED path (`search_with_predicate_fn`) with a permissive
+    /// predicate — guards the follow-slice that threads the per-query `ef`
+    /// override into the Inline/PostFilter traversal (ACORN). Effort tunes `ef`
+    /// (traversal depth); the post-filter oversample is an orthogonal lever.
+    #[tokio::test]
+    async fn test_hnsw_predicate_ef_override_controls_recall() {
+        let _ = proximadb_hardware::hardware_capabilities();
+
+        let dim = 48usize;
+        let n = 5000usize;
+        let index = AxisHnswIndex::new(AxisHnswConfig::default(), dim).expect("create HNSW index");
+
+        let mut state = 0x0FEE_1DEA_D15E_A5E1u64;
+        let mut next = || {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((state >> 33) as f32 / u32::MAX as f32) * 2.0 - 1.0
+        };
+        let normalize = |v: &mut Vec<f32>| {
+            let norm: f32 = v.iter().map(|x| x * x).sum::<f32>().sqrt();
+            if norm > 0.0 {
+                v.iter_mut().for_each(|x| *x /= norm);
+            }
+        };
+
+        let mut vecs: Vec<Vec<f32>> = Vec::with_capacity(n);
+        for i in 0..n {
+            let mut v: Vec<f32> = (0..dim).map(|_| next()).collect();
+            normalize(&mut v);
+            index.add(format!("v{i}"), v.clone()).await.expect("add");
+            vecs.push(v);
+        }
+
+        let l2 =
+            |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum::<f32>();
+
+        let queries = 80usize;
+        let (mut hit_low, mut hit_high, mut differed) = (0usize, 0usize, 0usize);
+        for _ in 0..queries {
+            let mut q: Vec<f32> = (0..dim).map(|_| next()).collect();
+            normalize(&mut q);
+
+            let true_idx = (0..n)
+                .min_by(|&a, &b| {
+                    l2(&q, &vecs[a])
+                        .partial_cmp(&l2(&q, &vecs[b]))
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .expect("non-empty");
+            let true_id = format!("v{true_idx}");
+
+            // Permissive predicate (accept all) so only `ef` drives the result.
+            let low = index
+                .search_with_predicate_fn(&q, 1, |_id| true, Some(1))
+                .await
+                .expect("low-ef predicate search");
+            let high = index
+                .search_with_predicate_fn(&q, 1, |_id| true, Some(n))
+                .await
+                .expect("high-ef predicate search");
+
+            let low_id = low.first().map(|(id, _)| id.clone());
+            let high_id = high.first().map(|(id, _)| id.clone());
+            if low_id.as_deref() == Some(true_id.as_str()) {
+                hit_low += 1;
+            }
+            if high_id.as_deref() == Some(true_id.as_str()) {
+                hit_high += 1;
+            }
+            if low_id != high_id {
+                differed += 1;
+            }
+        }
+
+        assert!(
+            hit_high as f64 / queries as f64 >= 0.85,
+            "high-ef predicate recall@1 too low ({hit_high}/{queries})"
+        );
+        assert!(
+            differed > 0,
+            "predicate ef override had NO effect for all {queries} queries (knob ignored?)"
+        );
+        assert!(
+            hit_high > hit_low,
+            "large ef must recover the true NN more often than greedy ef=1 on the predicate path (high={hit_high} low={hit_low})"
+        );
+    }
+
     #[tokio::test]
     async fn test_hnsw_search_quality() {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
@@ -1957,7 +2198,7 @@ mod tests {
         let query = vec![1.0f32, 0.0, 0.0, 0.0];
         let unfiltered = index.search(&query, 3, None).await.unwrap();
         let filtered = index
-            .search_with_predicate_fn(&query, 3, |_id| true)
+            .search_with_predicate_fn(&query, 3, |_id| true, None)
             .await
             .unwrap();
 
@@ -1994,7 +2235,7 @@ mod tests {
 
         let query = vec![1.0f32, 0.0, 0.0, 0.0];
         let results = index
-            .search_with_predicate_fn(&query, 2, |id| id != "v0")
+            .search_with_predicate_fn(&query, 2, |id| id != "v0", None)
             .await
             .unwrap();
 

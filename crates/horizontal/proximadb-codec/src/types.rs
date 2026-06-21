@@ -215,6 +215,22 @@ pub enum ProximaScheme {
     /// Use case: Default fallback for ML embeddings to prevent 66-133% expansion from integer schemes
     Raw,
 
+    /// SQ8: 8-bit scalar quantization for f32 vector columns.
+    /// Maps each f32 to a single u8 via a per-column affine transform —
+    /// a 4× reduction in vector bytes with bounded error (`scale/2`).
+    /// LOSSY. The per-column scale/offset live in the block's
+    /// `VectorParamBlock` side region, not in the wire bytes, so this
+    /// variant is parameterless (like `Raw`). See `functions::sq8`.
+    /// Wire marker 0x05.
+    Sq8,
+
+    /// RaBitQ: 1-bit-per-dimension binary quantization for f32 vector columns.
+    /// ~30× smaller than f32 with an unbiased distance estimator (rank by binary
+    /// codes, rerank against full precision). LOSSY. Per-column centroid + seed
+    /// live in the block's `VectorParamBlock`; per-row corrective scalars + sign
+    /// bits live in the stripe. Wire marker 0x71. See `functions::rabitq`.
+    RaBitQ,
+
     /// Adaptive: automatically select best scheme based on data
     /// Analyzes data pattern and chooses optimal encoding
     Adaptive,
@@ -392,6 +408,13 @@ impl ProximaScheme {
             (Self::Gorilla, TypeId::F32 | TypeId::F64) => true, // Always lossy for floats
             (Self::Gorilla, _) => false, // Lossless for integers (XOR is exact for integers)
 
+            // ========== ALWAYS LOSSY: SQ8 / RaBitQ ==========
+            // Scalar (SQ8) and binary (RaBitQ) quantization are lossy by
+            // construction for every type. Intended for f32 vector columns;
+            // exact rerank must use the full-precision cold tier.
+            (Self::Sq8, _) => true,
+            (Self::RaBitQ, _) => true,
+
             // ========== ALWAYS LOSSLESS: DoubleDelta ==========
             // DoubleDelta is LOSSLESS for all types, including floats.
             //
@@ -490,6 +513,9 @@ impl ProximaScheme {
 
             // Identity/Raw (0x00-0x0F)
             Self::Raw => 0x01,
+            // Quantization: scalar (0x05) + binary RaBitQ (0x71).
+            Self::Sq8 => 0x05,
+            Self::RaBitQ => 0x71,
             Self::Adaptive => 0x0D,
         }
     }
@@ -536,6 +562,8 @@ impl ProximaScheme {
 
             // Identity/Raw
             0x01 => Ok(Self::Raw),
+            0x05 => Ok(Self::Sq8),
+            0x71 => Ok(Self::RaBitQ),
             0x0D => Ok(Self::Adaptive),
 
             _ => Err(anyhow::anyhow!("Unknown scheme marker: 0x{:02x}", marker)),
@@ -560,6 +588,8 @@ impl ProximaScheme {
             Self::Dictionary => "Dictionary",
             Self::RunLength => "RunLength",
             Self::Raw => "Raw",
+            Self::Sq8 => "SQ8",
+            Self::RaBitQ => "RaBitQ",
             Self::Adaptive => "Adaptive",
         }
     }
@@ -567,8 +597,8 @@ impl ProximaScheme {
     /// Check if scheme is lossless
     pub fn is_lossless(&self) -> bool {
         match self {
-            // All schemes are lossless except Gorilla (which uses XOR approximation)
-            Self::Gorilla => false,
+            // Gorilla (XOR) and SQ8/RaBitQ (quantization) are lossy.
+            Self::Gorilla | Self::Sq8 | Self::RaBitQ => false,
             _ => true,
         }
     }
@@ -645,6 +675,25 @@ mod tests {
         assert!(ProximaScheme::Delta { base: 0 }.is_integer_scheme());
         assert!(!ProximaScheme::Gorilla.is_lossless());
         assert!(ProximaScheme::SparseBitmap.is_sparse_scheme());
+    }
+
+    #[test]
+    fn sq8_marker_round_trips() {
+        let s = ProximaScheme::Sq8;
+        assert_eq!(s.to_marker(), 0x05);
+        let recovered = ProximaScheme::from_marker(0x05).unwrap();
+        assert_eq!(recovered, ProximaScheme::Sq8);
+        assert_eq!(s.name(), "SQ8");
+        // SQ8 is lossy for every type and never reported lossless.
+        assert!(!s.is_lossless());
+        assert!(s.is_lossy(TypeId::F32));
+        // 0x71 is now the RaBitQ binary-quantization marker.
+        let rq = ProximaScheme::from_marker(0x71).unwrap();
+        assert_eq!(rq, ProximaScheme::RaBitQ);
+        assert_eq!(ProximaScheme::RaBitQ.to_marker(), 0x71);
+        assert_eq!(ProximaScheme::RaBitQ.name(), "RaBitQ");
+        assert!(!ProximaScheme::RaBitQ.is_lossless());
+        assert!(ProximaScheme::RaBitQ.is_lossy(TypeId::F32));
     }
 
     #[test]

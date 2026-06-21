@@ -12,7 +12,13 @@ use anyhow::{Result, bail};
 /// Magic bytes for ProximaDB PAX blocks.
 pub const BLOCK_MAGIC: [u8; 4] = *b"PBLK";
 /// Current format version.
-pub const FORMAT_VERSION: u8 = 1;
+///
+/// v2 (this build) is a clean break from v1: SQ8-quantized vector stripes, a
+/// per-column dimension carried in the [`crate::writer::VectorParamBlock`]
+/// side region (no more per-row dim prefix), and a row-group sub-index. v1
+/// blocks are rejected outright by [`BlockHeader::from_bytes`] — there is no
+/// migration path.
+pub const FORMAT_VERSION: u8 = 2;
 /// Fixed header size in bytes.
 pub const HEADER_SIZE: usize = 64;
 
@@ -239,6 +245,56 @@ mod tests {
         assert_eq!(h2.tenant_id_hash, h.tenant_id_hash);
         assert!(h2.tenant_matches(fnv1a_hash("tenant_a")));
         assert!(!h2.tenant_matches(fnv1a_hash("tenant_b")));
+    }
+
+    #[test]
+    fn header_rejects_v1() {
+        // A well-formed v1 header (correct magic, version byte = 1) must be
+        // rejected outright — v2 is a clean break with no migration path.
+        let mut bytes = BlockHeader {
+            block_mode: BlockMode::Pax,
+            compression: BlockCompression::None,
+            flags: 0,
+            column_count: 1,
+            row_count: 1,
+            block_size: 64,
+            checksum: 0,
+            collection_id_hash: 0,
+            schema_fingerprint: 0,
+            min_timestamp_ns: 0,
+            max_timestamp_ns: 0,
+            tenant_id_hash: 0,
+        }
+        .to_bytes();
+        bytes[4] = 1; // downgrade the version byte to v1
+        let err = BlockHeader::from_bytes(&bytes).unwrap_err();
+        assert!(
+            err.to_string().contains("unsupported block format version"),
+            "expected version rejection, got: {err}"
+        );
+    }
+
+    #[test]
+    fn header_v2_round_trips() {
+        // The current build stamps FORMAT_VERSION = 2; a round-trip must hold.
+        assert_eq!(FORMAT_VERSION, 2);
+        let h = BlockHeader {
+            block_mode: BlockMode::Pax,
+            compression: BlockCompression::Zstd,
+            flags: flags::HAS_VECTOR,
+            column_count: 3,
+            row_count: 10,
+            block_size: 4096,
+            checksum: 0xabad_1dea,
+            collection_id_hash: 7,
+            schema_fingerprint: 9,
+            min_timestamp_ns: 1,
+            max_timestamp_ns: 2,
+            tenant_id_hash: 0,
+        };
+        let h2 = BlockHeader::from_bytes(&h.to_bytes()).unwrap();
+        assert_eq!(h2.row_count, 10);
+        assert_eq!(h2.column_count, 3);
     }
 
     #[test]

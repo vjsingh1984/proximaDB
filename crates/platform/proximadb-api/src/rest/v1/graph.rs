@@ -695,58 +695,58 @@ pub fn create_graph_router() -> Router<GraphRestState> {
             // Graph collection management
             .route("/graphs", post(create_graph_collection))
             .route("/graphs", get(list_graph_collections))
-            .route("/graphs/:graph_id", get(get_graph_collection))
-            .route("/graphs/:graph_id", delete(delete_graph_collection))
-            .route("/graphs/:graph_id/schema", put(update_graph_schema))
+            .route("/graphs/{graph_id}", get(get_graph_collection))
+            .route("/graphs/{graph_id}", delete(delete_graph_collection))
+            .route("/graphs/{graph_id}/schema", put(update_graph_schema))
             // Node CRUD
-            .route("/graphs/:graph_id/nodes", post(create_node))
-            .route("/graphs/:graph_id/nodes/:id", get(get_node))
-            .route("/graphs/:graph_id/nodes/:id", put(update_node))
-            .route("/graphs/:graph_id/nodes/:id", delete(delete_node))
+            .route("/graphs/{graph_id}/nodes", post(create_node))
+            .route("/graphs/{graph_id}/nodes/{id}", get(get_node))
+            .route("/graphs/{graph_id}/nodes/{id}", put(update_node))
+            .route("/graphs/{graph_id}/nodes/{id}", delete(delete_node))
             .route(
-                "/graphs/:graph_id/nodes/:id/neighbors",
+                "/graphs/{graph_id}/nodes/{id}/neighbors",
                 get(get_node_neighbors),
             )
             // Edge CRUD
-            .route("/graphs/:graph_id/edges", post(create_edge))
-            .route("/graphs/:graph_id/edges/:id", get(get_edge))
-            .route("/graphs/:graph_id/edges/:id", put(update_edge))
-            .route("/graphs/:graph_id/edges/:id", delete(delete_edge))
+            .route("/graphs/{graph_id}/edges", post(create_edge))
+            .route("/graphs/{graph_id}/edges/{id}", get(get_edge))
+            .route("/graphs/{graph_id}/edges/{id}", put(update_edge))
+            .route("/graphs/{graph_id}/edges/{id}", delete(delete_edge))
             // Traversal + agentic navigation
-            .route("/graphs/:graph_id/traverse", post(traverse_graph))
-            .route("/graphs/:graph_id/walk", post(walk_graph))
-            .route("/graphs/:graph_id/step", post(step_graph))
+            .route("/graphs/{graph_id}/traverse", post(traverse_graph))
+            .route("/graphs/{graph_id}/walk", post(walk_graph))
+            .route("/graphs/{graph_id}/step", post(step_graph))
             // Shortest path
-            .route("/graphs/:graph_id/shortest-path", post(shortest_path))
+            .route("/graphs/{graph_id}/shortest-path", post(shortest_path))
             // Queries
-            .route("/graphs/:graph_id/query/nodes", post(query_nodes))
-            .route("/graphs/:graph_id/query/edges", post(query_edges))
-            .route("/graphs/:graph_id/query", post(execute_graph_query))
+            .route("/graphs/{graph_id}/query/nodes", post(query_nodes))
+            .route("/graphs/{graph_id}/query/edges", post(query_edges))
+            .route("/graphs/{graph_id}/query", post(execute_graph_query))
             // RAG (root-crate concrete dep → 501)
-            .route("/graphs/:graph_id/rag", post(not_implemented_handler))
+            .route("/graphs/{graph_id}/rag", post(not_implemented_handler))
             // Batch
-            .route("/graphs/:graph_id/nodes/batch", post(batch_create_nodes))
-            .route("/graphs/:graph_id/edges/batch", post(batch_create_edges))
+            .route("/graphs/{graph_id}/nodes/batch", post(batch_create_nodes))
+            .route("/graphs/{graph_id}/edges/batch", post(batch_create_edges))
             // Statistics + analysis
-            .route("/graphs/:graph_id/stats", get(get_graph_stats))
+            .route("/graphs/{graph_id}/stats", get(get_graph_stats))
             .route(
-                "/graphs/:graph_id/components",
+                "/graphs/{graph_id}/components",
                 get(get_connected_components),
             )
-            .route("/graphs/:graph_id/cycles", get(check_cycles))
+            .route("/graphs/{graph_id}/cycles", get(check_cycles))
             // Constraints DDL
             .route(
-                "/graphs/:graph_id/constraints/unique",
+                "/graphs/{graph_id}/constraints/unique",
                 post(add_unique_constraint),
             )
             .route(
-                "/graphs/:graph_id/constraints/unique",
+                "/graphs/{graph_id}/constraints/unique",
                 delete(remove_unique_constraint),
             )
             // Engine selection is ORION-only; retired engine-specific endpoints are not exposed.
             // Legacy redirects (self-contained, no port needed)
             .route("/nodes", post(create_node_legacy))
-            .route("/nodes/:id", get(get_node_legacy))
+            .route("/nodes/{id}", get(get_node_legacy))
             .route("/edges", post(create_edge_legacy))
             .route("/stats", get(get_graph_stats_legacy)),
     )

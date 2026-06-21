@@ -40,11 +40,92 @@ use crate::query::table_write_plan::ComputeBackend;
 use proximadb_catalog::CatalogAuthorityMode;
 use proximadb_catalog::CatalogWorkloadProfile;
 
+/// Estimated cardinality bucket of a query's scan/result — a §5.2 Phase-1 shape
+/// input. Bucketed (not raw counts) so it refines the cost-model shape-class
+/// without exploding the key space. `Unknown` (the default) keeps the coarse
+/// 2-part class, so a planner that cannot estimate rows changes nothing.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CardinalityClass {
+    /// No estimate available — class stays coarse (backward-compatible).
+    #[default]
+    Unknown,
+    /// Point / very small result (≲ 1k rows) — favors the low-latency row path.
+    Small,
+    /// Mid-size scan/result (≲ 1M rows).
+    Medium,
+    /// Large scan/result — favors the vectorized columnar engine.
+    Large,
+}
+
+impl CardinalityClass {
+    /// Bucket an estimated row count; `None` → [`CardinalityClass::Unknown`].
+    pub fn from_estimate(rows: Option<u64>) -> Self {
+        match rows {
+            None => CardinalityClass::Unknown,
+            Some(n) if n <= 1_000 => CardinalityClass::Small,
+            Some(n) if n <= 1_000_000 => CardinalityClass::Medium,
+            Some(_) => CardinalityClass::Large,
+        }
+    }
+
+    /// Stable shape-class suffix, or `None` when unknown (omitted from the key).
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        match self {
+            CardinalityClass::Unknown => None,
+            CardinalityClass::Small => Some("card=s"),
+            CardinalityClass::Medium => Some("card=m"),
+            CardinalityClass::Large => Some("card=l"),
+        }
+    }
+}
+
+/// Bucketed count of partitions / row-groups / segments a route fans out over —
+/// a §5.2 Phase-1 shape input. High fan-out is GET-round-trip-dominated (the
+/// dominant cost term), so it discriminates routes the binary signals cannot.
+/// `Unknown` (the default) keeps the coarse class.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PartitionFanout {
+    /// No partition count available — class stays coarse.
+    #[default]
+    Unknown,
+    /// A single partition / segment.
+    Single,
+    /// A handful (≤ 8) — bounded fan-out.
+    Few,
+    /// Many partitions — fan-out / GET-count dominated.
+    Many,
+}
+
+impl PartitionFanout {
+    /// Bucket a partition/segment count; `None` → [`PartitionFanout::Unknown`].
+    pub fn from_count(count: Option<u32>) -> Self {
+        match count {
+            None => PartitionFanout::Unknown,
+            Some(0) | Some(1) => PartitionFanout::Single,
+            Some(n) if n <= 8 => PartitionFanout::Few,
+            Some(_) => PartitionFanout::Many,
+        }
+    }
+
+    /// Stable shape-class suffix, or `None` when unknown (omitted from the key).
+    pub(crate) fn class_suffix(self) -> Option<&'static str> {
+        match self {
+            PartitionFanout::Unknown => None,
+            PartitionFanout::Single => Some("part=1"),
+            PartitionFanout::Few => Some("part=f"),
+            PartitionFanout::Many => Some("part=m"),
+        }
+    }
+}
+
 /// Shape signals the scheduler routes on.
 ///
-/// P0 uses only `engages_relational` — the existing join / `GROUP BY` /
-/// aggregate / set-op gate, which is the OLAP-shape signal. P1 (§5.2 policy
-/// inputs) adds cardinality, partition count, and point-lookup flags.
+/// P0 used only `engages_relational` — the join / `GROUP BY` / aggregate / set-op
+/// gate (the OLAP-shape signal). P1 added `parquet_backed`. C4 Phase-2b adds the
+/// §5.2 Phase-1 inputs — `cardinality` and `partition_fanout` — which refine the
+/// cost-model shape-class so routing and exploration discriminate beyond
+/// `olap/oltp × native/parquet`. Both default to `Unknown`, preserving the
+/// coarse class (and warmed cells) for planners that cannot estimate them.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct QueryShape {
     /// The query lowers against the relational algebra engine for a reason the
@@ -56,6 +137,10 @@ pub struct QueryShape {
     /// (`try_run_select`) only when the `datafusion-integration` feature is
     /// compiled in, so the route is never advertised when the build can't honor it.
     pub parquet_backed: bool,
+    /// Estimated scan/result cardinality bucket (§5.2 Phase-1). `Unknown` default.
+    pub cardinality: CardinalityClass,
+    /// Bucketed partition/row-group fan-out (§5.2 Phase-1). `Unknown` default.
+    pub partition_fanout: PartitionFanout,
 }
 
 /// A materialized read-route decision: the engine, the workload it was
@@ -116,8 +201,10 @@ impl SelectRouteDecision {
     }
 }
 
-/// Short, stable label for a backend in EXPLAIN/telemetry output.
-fn backend_label(backend: &ComputeBackend) -> String {
+/// Short, stable label for a backend in EXPLAIN/telemetry output. Also the
+/// canonical key the trace-driven [`crate::query::route_cost_model`] aggregates
+/// observations under, so labels and cost-model keys never diverge.
+pub(crate) fn backend_label(backend: &ComputeBackend) -> String {
     match backend {
         ComputeBackend::Native => "Native(Volcano)".to_string(),
         ComputeBackend::DataFusionLocal => "DataFusionLocal".to_string(),
@@ -200,7 +287,7 @@ impl ComputeScheduler {
     /// classification and reason vary, so the contract is locked before any
     /// second physical executor exists.
     pub fn route_select(&self, shape: QueryShape) -> SelectRouteDecision {
-        match (shape.engages_relational, shape.parquet_backed) {
+        let decision = match (shape.engages_relational, shape.parquet_backed) {
             // P1: OLAP shape over Parquet-backed (object-store) table(s) → DataFusion.
             (true, true) => SelectRouteDecision {
                 backend: ComputeBackend::DataFusionLocal,
@@ -221,12 +308,113 @@ impl ComputeScheduler {
                 workload_profile: CatalogWorkloadProfile::Oltp,
                 reason: "OLTP shape (point/simple select) — Volcano".to_string(),
             },
-        }
+        };
+        // C4 ingestion: stamp the chosen route onto the active io_trace scope (a
+        // no-op when unscoped, e.g. unit tests / EXPLAIN-only). The completed
+        // query's measured snapshot then feeds the trace-driven cost model at
+        // flush; empty traces are skipped, so EXPLAIN-only calls cost nothing.
+        crate::observability::io_trace::record_route(
+            &crate::query::route_cost_model::shape_class(&shape),
+            &backend_label(&decision.backend),
+        );
+        decision
     }
 
     /// Route a relational `SELECT` and materialize the typed read-route plan.
     pub fn route_select_plan(&self, shape: QueryShape) -> RoutedReadPlan {
         self.route_select(shape).routed_read_plan()
+    }
+
+    /// Route a `SELECT`, then — if a trace-driven cost model is supplied —
+    /// **observe-mode** advise: consult the measured per-(shape-class, backend)
+    /// cost (co-design C4) and fold its recommendation into the decision's
+    /// `reason` for EXPLAIN/telemetry, *without changing the backend*.
+    ///
+    /// This closes the co-design loop (C0 trace → cost model → router). By
+    /// default it is **observe-mode**: the scheduler discloses what the trace
+    /// *would* recommend and whether it diverges from the static rule, without
+    /// changing the backend. When the model's live override is enabled (slice 4,
+    /// flag-gated via `PROXIMADB_ROUTE_COST_OVERRIDE`) and a freshness-safe
+    /// challenger is confidently cheaper, the route is *flipped* to it. With no
+    /// warmed history the static decision is returned unchanged.
+    pub fn route_select_advised(
+        &self,
+        shape: QueryShape,
+        model: Option<&crate::query::route_cost_model::RouteCostModel>,
+    ) -> SelectRouteDecision {
+        let mut decision = self.route_select(shape);
+        let Some(model) = model else {
+            return decision;
+        };
+        let class = crate::query::route_cost_model::shape_class(&shape);
+
+        // Live override (flag-gated, confidence-gated). Only consider backends
+        // that are freshness-SAFE for this shape (see `override_candidates`), so
+        // the cost model can never flip a query onto an engine that would serve
+        // it incorrectly (e.g. a point/OLTP query onto a stale base snapshot).
+        if model.override_active() {
+            let safe = override_candidates(shape, &decision.backend);
+            // Exploration (Phase 2) first: warm an under-explored freshness-safe
+            // candidate so it accrues history the override can later act on.
+            // Bounded + rate-limited + freshness-safe (see `exploration_choice`).
+            if let Some(explore) = model.exploration_choice(&class, &safe)
+                && backend_label(&explore) != backend_label(&decision.backend)
+            {
+                let prev = backend_label(&decision.backend);
+                decision.reason = format!(
+                    "{} | cost-model EXPLORE {prev}→{} (gathering cost history)",
+                    decision.reason,
+                    backend_label(&explore)
+                );
+                decision.backend = explore;
+                return decision;
+            }
+            // Exploitation: override to the confidently-cheaper backend.
+            if let Some(rec) = model.recommend_override(&class, &decision.backend, &safe) {
+                let prev = backend_label(&decision.backend);
+                decision.reason = format!(
+                    "{} | cost-model OVERRIDE {prev}→{} ({})",
+                    decision.reason,
+                    backend_label(&rec.backend),
+                    rec.reason()
+                );
+                decision.backend = rec.backend;
+                return decision;
+            }
+        }
+
+        // Observe-mode advisory (no behavior change): disclose the recommendation.
+        let candidates = [ComputeBackend::Native, ComputeBackend::DataFusionLocal];
+        if let Some(rec) = model.recommend(&class, &candidates) {
+            let advisory = if rec.backend == decision.backend {
+                format!("cost-model concurs ({})", rec.reason())
+            } else {
+                format!(
+                    "cost-model would prefer {} ({}) — observe-mode, route unchanged",
+                    backend_label(&rec.backend),
+                    rec.reason()
+                )
+            };
+            decision.reason = format!("{} | {advisory}", decision.reason);
+        }
+        decision
+    }
+}
+
+/// The freshness-SAFE backend set a live override may choose among for `shape`.
+///
+/// Only OLAP-over-Parquet has more than one freshness-compatible engine: both
+/// Native's strong-freshness scan (WAL+RecordStorage) and DataFusion's
+/// base-snapshot scan correctly answer an analytic query, and both are already
+/// used by the static rule for this shape — so flipping between them is safe.
+/// OLTP (point/simple) is freshness-critical → never override off Native; OLAP
+/// on native storage has no Parquet base → DataFusion cannot serve it. Those
+/// keep only the static backend, so `recommend_override` can never flip them.
+fn override_candidates(shape: QueryShape, static_backend: &ComputeBackend) -> Vec<ComputeBackend> {
+    if shape.engages_relational && shape.parquet_backed {
+        vec![ComputeBackend::Native, ComputeBackend::DataFusionLocal]
+    } else {
+        vec![static_backend.clone()]
     }
 }
 
@@ -239,6 +427,7 @@ mod tests {
         let decision = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: true,
             parquet_backed: false,
+            ..Default::default()
         });
         // OLAP over native storage stays on Volcano (no Parquet base tier yet).
         assert_eq!(decision.backend, ComputeBackend::Native);
@@ -251,6 +440,7 @@ mod tests {
         let decision = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: false,
             parquet_backed: false,
+            ..Default::default()
         });
         assert_eq!(decision.backend, ComputeBackend::Native);
         assert_eq!(decision.workload_profile, CatalogWorkloadProfile::Oltp);
@@ -261,6 +451,7 @@ mod tests {
         let d = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            ..Default::default()
         });
         assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
         assert_eq!(d.workload_profile, CatalogWorkloadProfile::Olap);
@@ -273,6 +464,7 @@ mod tests {
         let d = ComputeScheduler::new().route_select(QueryShape {
             engages_relational: false,
             parquet_backed: true,
+            ..Default::default()
         });
         assert_eq!(d.backend, ComputeBackend::Native);
     }
@@ -283,6 +475,7 @@ mod tests {
             .route_select(QueryShape {
                 engages_relational: true,
                 parquet_backed: true,
+                ..Default::default()
             })
             .routed_read_plan_with_splits(ReadSplitSummary::row_groups(
                 8,
@@ -305,9 +498,231 @@ mod tests {
             .route_select(QueryShape {
                 engages_relational: true,
                 parquet_backed: false,
+                ..Default::default()
             })
             .explain_line();
         assert!(line.starts_with("Compute Route: Native(Volcano) (workload=Olap"));
+    }
+
+    fn io_snap(
+        range_gets: u64,
+        bytes_read: u64,
+    ) -> crate::observability::io_trace::IoTraceSnapshot {
+        crate::observability::io_trace::IoTraceSnapshot {
+            range_gets,
+            bytes_read,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn advised_without_model_is_identical_to_static() {
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+            ..Default::default()
+        };
+        let s = ComputeScheduler::new();
+        let plain = s.route_select(shape);
+        let advised = s.route_select_advised(shape, None);
+        assert_eq!(advised.backend, plain.backend);
+        assert_eq!(advised.reason, plain.reason);
+    }
+
+    #[test]
+    fn advised_is_observe_mode_never_overrides_backend() {
+        use crate::query::route_cost_model::RouteCostModel;
+        // OLAP-on-native shape: static rule => Native(Volcano).
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: false,
+            ..Default::default()
+        };
+        let model = RouteCostModel::new().with_min_samples(1);
+        // Teach the model that DataFusion is far cheaper for this shape-class
+        // (few coalesced GETs vs Native's many small GETs).
+        for _ in 0..4 {
+            model.observe(
+                "olap/native",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/native",
+                &ComputeBackend::Native,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        // Backend is UNCHANGED (observe-mode) ...
+        assert_eq!(advised.backend, ComputeBackend::Native);
+        // ... but the divergence is disclosed for EXPLAIN/validation.
+        assert!(advised.reason.contains("would prefer DataFusionLocal"));
+        assert!(advised.reason.contains("observe-mode"));
+    }
+
+    #[test]
+    fn advised_notes_when_cost_model_concurs() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: false,
+            parquet_backed: false,
+            ..Default::default()
+        };
+        let model = RouteCostModel::new().with_min_samples(1);
+        // Only Native has history for this shape-class → it is the min, concurring
+        // with the static OLTP→Native rule.
+        for _ in 0..3 {
+            model.observe("oltp/native", &ComputeBackend::Native, &io_snap(2, 8192));
+        }
+        let advised = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(advised.backend, ComputeBackend::Native);
+        assert!(advised.reason.contains("cost-model concurs"));
+    }
+
+    #[test]
+    fn override_off_keeps_static_backend_even_when_model_disagrees() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new().with_min_samples(1); // override OFF (default)
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        // Native is far cheaper, but override is off → static DataFusion holds.
+        assert_eq!(d.backend, ComputeBackend::DataFusionLocal);
+        assert!(d.reason.contains("would prefer Native") && d.reason.contains("observe-mode"));
+    }
+
+    #[test]
+    fn override_on_flips_olap_parquet_to_the_cheaper_backend() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new().with_min_samples(1);
+        model.set_override_enabled(true);
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::Native,
+                &io_snap(3, 16 << 20),
+            );
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(300, 16 << 20),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        // Override fires: the route is flipped to the measured-cheaper engine.
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert!(d.reason.contains("OVERRIDE"));
+    }
+
+    #[test]
+    fn override_on_explores_under_explored_olap_parquet_candidate() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        }; // static => DataFusionLocal
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1);
+        model.set_override_enabled(true);
+        // DataFusion (the static route) is warm; Native is unexplored → explore it.
+        for _ in 0..5 {
+            model.observe(
+                "olap/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(4, 8192),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(
+            d.backend,
+            ComputeBackend::Native,
+            "exploration routes to the under-explored freshness-safe candidate"
+        );
+        assert!(d.reason.contains("EXPLORE"));
+    }
+
+    #[test]
+    fn exploration_never_targets_freshness_critical_oltp() {
+        use crate::query::route_cost_model::RouteCostModel;
+        let shape = QueryShape {
+            engages_relational: false,
+            parquet_backed: true,
+            ..Default::default()
+        }; // static => Native (OLTP)
+        let model = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_exploration_interval(1);
+        model.set_override_enabled(true);
+        // Even with DataFusion history for this class, OLTP's freshness-safe set
+        // is just [Native], so exploration has nothing to probe.
+        for _ in 0..5 {
+            model.observe(
+                "oltp/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(1, 4096),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(d.backend, ComputeBackend::Native);
+        assert!(!d.reason.contains("EXPLORE"));
+    }
+
+    #[test]
+    fn override_never_flips_freshness_critical_oltp() {
+        use crate::query::route_cost_model::RouteCostModel;
+        // Point/OLTP shape: static => Native, MUST stay Native (strong freshness)
+        // no matter what the cost model says.
+        let shape = QueryShape {
+            engages_relational: false,
+            parquet_backed: true,
+            ..Default::default()
+        };
+        let model = RouteCostModel::new().with_min_samples(1);
+        model.set_override_enabled(true);
+        // Even if DataFusion looks absurdly cheap for this class, it is not a
+        // freshness-safe candidate for OLTP, so it can never be chosen.
+        for _ in 0..5 {
+            model.observe(
+                "oltp/parquet",
+                &ComputeBackend::Native,
+                &io_snap(500, 16 << 20),
+            );
+            model.observe(
+                "oltp/parquet",
+                &ComputeBackend::DataFusionLocal,
+                &io_snap(1, 4096),
+            );
+        }
+        let d = ComputeScheduler::new().route_select_advised(shape, Some(&model));
+        assert_eq!(
+            d.backend,
+            ComputeBackend::Native,
+            "OLTP must never be overridden off Native"
+        );
+        assert!(!d.reason.contains("OVERRIDE"));
     }
 
     #[test]
@@ -315,6 +730,7 @@ mod tests {
         let plan = ComputeScheduler::new().route_select_plan(QueryShape {
             engages_relational: true,
             parquet_backed: true,
+            ..Default::default()
         });
 
         assert_eq!(plan.backend, ComputeBackend::DataFusionLocal);

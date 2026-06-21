@@ -50,6 +50,38 @@ pub use operations::FlushOperations;
 pub use optimizer::FlushOptimizer;
 
 impl SstEngine {
+    /// Register just-flushed vectors into the per-collection AXIS ANN index (TD-112).
+    ///
+    /// Without this, flushed/compacted vectors are never indexed, so post-flush
+    /// vector search falls back to a brute-force segment scan
+    /// (`sst/search` `fallback_to_direct_search`) and recall degrades as data
+    /// ages out of the WAL memtable. Best-effort: the segments are already
+    /// durable, so an indexing error is logged, not propagated. The per-collection
+    /// `IndexUpdateMode` governs whether this blocks flush completion
+    /// (Synchronous) or runs in the background. There is no double-index risk —
+    /// the live write path does not populate AXIS, so flush is the first
+    /// indexing point.
+    async fn index_flushed_into_axis(&self, params: &FlushParameters, files_created: Vec<String>) {
+        let Some(axis_manager) = self.axis_manager() else {
+            return;
+        };
+        let Some(collection_id) = params.collection_id.as_ref() else {
+            return;
+        };
+        if params.vector_records.is_empty() {
+            return;
+        }
+        if let Err(e) = axis_manager
+            .handle_flushed_vectors(collection_id, params.vector_records.clone(), files_created)
+            .await
+        {
+            tracing::warn!(
+                "TD-112: AXIS index-on-flush failed for collection {collection_id}: {e} \
+                 (post-flush search will fall back to a segment scan)"
+            );
+        }
+    }
+
     /// Main flush operation for SST engine
     ///
     /// This method implements the core flush logic for the SST engine:
@@ -117,10 +149,20 @@ impl SstEngine {
 
         // Generate SSTable filename with appropriate extension based on block format
         let codec = FilenameCodec::new();
-        let block_format = BlockFormat::parse_block_format(&self.config().block_format);
+        let mut block_format = BlockFormat::parse_block_format(&self.config().block_format);
+        // P3 Phase B: flag-gated PAX vector segments (default OFF). Reads stay
+        // mixed-format-safe (see `segment_format`), so flipping this on only changes
+        // newly written segments; existing ProximaBlocks segments still read back.
+        if std::env::var("PROXIMADB_PAX_VECTOR_SEGMENTS")
+            .map(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
+            .unwrap_or(false)
+        {
+            block_format = BlockFormat::PaxBlock;
+        }
         let file_extension = match block_format {
             BlockFormat::ArrowBlock => "arrow",
             BlockFormat::ProximaBlocks => "sst",
+            BlockFormat::PaxBlock => "pax",
         };
         let sst_filename = codec.generate(0, file_extension); // Level 0 for flush
         debug!(
@@ -367,6 +409,51 @@ impl SstEngine {
                 tracing::debug!("SSTable write operation completed");
                 write_outcome = Some(outcome);
             }
+            BlockFormat::PaxBlock => {
+                // P3 Phase B: write a columnar PAX vector segment (flag-gated, default
+                // OFF). Mirrors the Arrow arm's local-staging approach — write to the
+                // local staging path; the atomic op promotes it to the final (possibly
+                // object-store) URL. Reads are mixed-format-safe via
+                // `segment_format::read_segment_records` (magic-byte detection), so no
+                // manifest/reader change is required for this segment to be read back.
+                use crate::storage::engines::sst::segment_format::write_pax_segment;
+                use proximadb_block_format::VectorQuant;
+                let staging_path = staging_url.strip_prefix("file://").unwrap_or(&staging_url);
+                if let Some(parent) = std::path::Path::new(staging_path).parent() {
+                    tokio::fs::create_dir_all(parent)
+                        .await
+                        .context("Failed to create PAX staging directory")?;
+                }
+                let embedding_count = sorted_vectors
+                    .first()
+                    .map(|(_, rec)| rec.embeddings.len().max(1))
+                    .unwrap_or(1);
+                let records: Vec<_> = sorted_vectors.into_iter().map(|(_, rec)| rec).collect();
+                let collection_id = params.collection_id.as_deref().unwrap_or("default");
+                // P3 Phase D: vector quantization strategy. Deployment selector for now
+                // (`PROXIMADB_PAX_VECTOR_QUANT` = rabitq|sq8|auto); per-collection proto
+                // config is the productionization follow-up. `Auto` keeps the env default.
+                let quant = match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .as_str()
+                {
+                    "rabitq" => VectorQuant::RaBitQ,
+                    "sq8" => VectorQuant::Sq8,
+                    _ => VectorQuant::Auto,
+                };
+                let meta = write_pax_segment(
+                    std::path::Path::new(staging_path),
+                    &records,
+                    collection_id,
+                    embedding_count,
+                    quant,
+                )
+                .context("Failed to write PAX vector segment")?;
+                tracing::debug!(blocks = meta.block_count, "PAX segment write completed");
+                // write_outcome stays None — PAX doesn't expose SstableWriteOutcome yet
+                // (block-directory emission is the ProximaBlocks-only path, like Arrow).
+            }
         }
 
         // Get actual bytes written from the filesystem
@@ -463,8 +550,15 @@ impl SstEngine {
             }
         }
 
+        let final_file_path = format!("{}/{}", atomic_op.final_url, filename);
+
         // Check if compaction should be triggered
         let should_trigger_compaction = self.should_trigger_compaction(storage_url).await?;
+
+        // TD-112: index the just-flushed vectors into AXIS so post-flush search is
+        // served by the ANN index rather than a brute-force segment scan.
+        self.index_flushed_into_axis(params, vec![final_file_path.clone()])
+            .await;
 
         // Create flush result with file path for AXIS index building
         Ok(FlushResult {
@@ -473,7 +567,7 @@ impl SstEngine {
             entries_flushed: Some(entries_written),
             bytes_written: Some(bytes_written),
             files_created: Some(1),
-            file_paths: vec![format!("{}/{}", atomic_op.final_url, filename)],
+            file_paths: vec![final_file_path],
             duration_ms: Some(0), // Will be set by caller
             completed_at: Utc::now(),
             engine_metrics: {
@@ -494,12 +588,35 @@ impl SstEngine {
         })
     }
 
-    /// Check if compaction should be triggered
-    async fn should_trigger_compaction(&self, _storage_url: &str) -> Result<bool> {
-        // Simple heuristic: trigger compaction based on file count
-        // In a real implementation, this would check actual file metrics
-        Ok(false) // Simplified for now
+    /// Whether L0→base compaction should be triggered after this flush (TD-114).
+    ///
+    /// Default-OFF: the trigger only arms when `PROXIMADB_L0_COMPACTION_ENABLED`
+    /// is set, so the live flush path is byte-for-byte unchanged unless an
+    /// operator opts in. When armed, it reuses the existing segment discovery to
+    /// count L0 segments and arms once the orchestrator threshold is reached.
+    /// Discovery errors are treated as "not yet" (best-effort, never fails flush).
+    async fn should_trigger_compaction(&self, storage_url: &str) -> Result<bool> {
+        if !l0_compaction_enabled() {
+            return Ok(false);
+        }
+        let l0_count = self
+            .discover_sstable_files(storage_url)
+            .await
+            .map(|files| files.len())
+            .unwrap_or(0);
+        Ok(l0_count >= L0_COMPACTION_THRESHOLD)
     }
+}
+
+/// L0 segment count at which compaction arms. Mirrors
+/// `OrchestratorCompactionConfig::level0_threshold` (default 5).
+const L0_COMPACTION_THRESHOLD: usize = 5;
+
+/// Reads the `PROXIMADB_L0_COMPACTION_ENABLED` opt-in flag (default OFF).
+fn l0_compaction_enabled() -> bool {
+    std::env::var("PROXIMADB_L0_COMPACTION_ENABLED")
+        .map(|v| matches!(v.trim(), "1" | "true" | "TRUE" | "on" | "yes"))
+        .unwrap_or(false)
 }
 
 /// Statistics from vector sorting operation
@@ -569,5 +686,81 @@ mod tests {
             }],
             ..ProximaRecord::default()
         }
+    }
+
+    /// TD-112: the LIVE flush path (`do_flush` -> `flush_implementation`) must
+    /// register flushed vectors into the per-collection AXIS index, so post-flush
+    /// search is served by the ANN index instead of a brute-force segment scan.
+    /// (The `FlushCoordinator` is test-only scaffolding; the hook lives on the
+    /// real path exercised here.)
+    #[tokio::test]
+    async fn td112_live_flush_indexes_vectors_into_axis() {
+        use crate::compute::distance_computation::DistanceMetric;
+        use crate::index::axis::management::manager::AxisManager;
+        use crate::index::axis::types::AxisConfig;
+        use crate::proto::proximadb_v1::{
+            Collection, CollectionConfig, StorageAssignment, StorageEngine,
+        };
+        use crate::storage::traits::UnifiedStorageEngine;
+
+        // Attach an AXIS manager (process-global OnceLock; a no-op if a prior test
+        // already set one). We read the effective manager back from the engine so
+        // the assertion targets whatever the live flush path will use.
+        crate::storage::engines::sst::core::set_sst_axis_manager(Arc::new(
+            AxisManager::new(AxisConfig::default()).await.unwrap(),
+        ));
+        let engine = create_test_engine().await;
+        let axis = engine
+            .axis_manager()
+            .expect("an AXIS manager must be attached for index-on-flush");
+
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let collection_id = "td112_live_flush";
+        let collection = Collection {
+            id: collection_id.to_string(),
+            config: Some(CollectionConfig {
+                name: collection_id.to_string(),
+                dimension: 4,
+                distance_metric: Some(DistanceMetric::Cosine as i32),
+                storage_engine: Some(StorageEngine::Sst as i32),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                base_location: temp_dir.path().to_str().unwrap().to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let records = vec![
+            create_test_vector("v0", vec![1.0, 0.0, 0.0, 0.0]),
+            create_test_vector("v1", vec![0.0, 1.0, 0.0, 0.0]),
+            create_test_vector("v2", vec![0.0, 0.0, 1.0, 0.0]),
+        ];
+
+        let params = FlushParameters {
+            collection_id: Some(collection_id.to_string()),
+            vector_records: records,
+            force: true,
+            synchronous: true,
+            hints: std::collections::HashMap::new(),
+            timeout_ms: None,
+            trigger_compaction: false,
+            batch_ids: vec![],
+            collection_config: Some(collection),
+            estimated_size: 0,
+        };
+
+        let result = engine
+            .do_flush(&params)
+            .await
+            .expect("flush should succeed");
+        assert!(result.success, "flush should succeed");
+
+        assert_eq!(
+            axis.registered_vector_count(collection_id).await,
+            3,
+            "the live flush path must index all flushed vectors into AXIS (TD-112)"
+        );
     }
 }

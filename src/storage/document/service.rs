@@ -3091,6 +3091,8 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().expect("temp wal dir");
         let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
+        let collection_id = "wal_docs_upsert";
+        let document_id = "doc-upsert";
 
         let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
         let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
@@ -3105,9 +3107,9 @@ mod tests {
 
         first
             .create_collection(
-                "wal_docs",
+                collection_id,
                 DocumentCollectionConfig {
-                    name: "wal_docs".to_string(),
+                    name: collection_id.to_string(),
                     ..Default::default()
                 },
             )
@@ -3115,13 +3117,49 @@ mod tests {
             .expect("create collection");
         first
             .insert_document(
-                "wal_docs",
-                Some("doc-1"),
+                collection_id,
+                Some(document_id),
                 make_document(vec![("title", sql_string("Recovered"))]),
             )
             .await
             .expect("insert");
         first.flush_wal().await.expect("flush wal");
+        let wal_dir = format!("{}/document_wal", wal_base_path);
+        let wal_files = std::fs::read_dir(&wal_dir)
+            .expect("list document wal dir")
+            .map(|entry| {
+                let entry = entry.expect("wal dir entry");
+                let len = entry.metadata().expect("wal entry metadata").len();
+                format!("{}:{}", entry.file_name().to_string_lossy(), len)
+            })
+            .collect::<Vec<_>>();
+        let durable_entries =
+            crate::storage::persistence::write_ahead_log::wal_operations::UnifiedWALReader::new(
+                wal_dir,
+            )
+            .await
+            .expect("open wal reader")
+            .read_all()
+            .await
+            .expect("read flushed wal");
+        assert!(
+            durable_entries.iter().any(|entry| matches!(
+                &entry.operation,
+                UnifiedWALOperation::DocumentOp(
+                    DocumentOperation::UpsertCanonicalDocumentRecord {
+                        collection_id: wal_collection,
+                        ..
+                    }
+                ) if wal_collection == collection_id
+            )),
+            "flushed WAL should contain canonical document upsert; files {:?}; got {:?}",
+            wal_files,
+            durable_entries
+                .iter()
+                .map(|entry| &entry.operation)
+                .collect::<Vec<_>>()
+        );
+        drop(first);
 
         let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
         let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
@@ -3135,14 +3173,39 @@ mod tests {
         .await
         .expect("restart from wal");
 
-        let recovered_records = restarted_record_probe
+        let recovered_scan = restarted_record_probe
             .scan_records(10)
             .await
             .expect("scan recovered records");
-        assert_eq!(recovered_records.len(), 1);
+        assert_eq!(
+            recovered_scan.len(),
+            1,
+            "canonical WAL recovery should replay one record; got {:?}",
+            recovered_scan
+                .iter()
+                .map(|record| record.oid.as_str())
+                .collect::<Vec<_>>()
+        );
+
+        let recovered_key = DocumentRecordKey::new(collection_id, document_id);
+        let recovered_record = restarted_record_probe
+            .get_record(&RecordKey::new(recovered_key.canonical_oid()))
+            .await
+            .expect("get recovered canonical record")
+            .unwrap_or_else(|| {
+                panic!(
+                    "canonical record recovered at {}; scanned {:?}",
+                    recovered_key.canonical_oid(),
+                    recovered_scan
+                        .iter()
+                        .map(|record| record.oid.as_str())
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(recovered_record.oid, recovered_key.canonical_oid());
 
         let recovered = restarted
-            .get_document("wal_docs", "doc-1", None)
+            .get_document(collection_id, document_id, None)
             .await
             .expect("get recovered")
             .expect("document recovered through canonical store");
@@ -3160,6 +3223,8 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().expect("temp wal dir");
         let wal_base_path = temp_dir.path().to_str().expect("utf-8 temp path");
+        let collection_id = "wal_docs_delete";
+        let document_id = "doc-delete";
 
         let first_cedar = Arc::new(CedarEngine::new().expect("cedar engine"));
         let first_storage_engine: Arc<dyn UnifiedStorageFormat> = first_cedar.clone();
@@ -3174,9 +3239,9 @@ mod tests {
 
         first
             .create_collection(
-                "wal_docs",
+                collection_id,
                 DocumentCollectionConfig {
-                    name: "wal_docs".to_string(),
+                    name: collection_id.to_string(),
                     ..Default::default()
                 },
             )
@@ -3184,19 +3249,20 @@ mod tests {
             .expect("create collection");
         first
             .insert_document(
-                "wal_docs",
-                Some("doc-1"),
+                collection_id,
+                Some(document_id),
                 make_document(vec![("title", sql_string("Deleted"))]),
             )
             .await
             .expect("insert");
         assert!(
             first
-                .delete_document("wal_docs", "doc-1")
+                .delete_document(collection_id, document_id)
                 .await
                 .expect("delete")
         );
         first.flush_wal().await.expect("flush wal");
+        drop(first);
 
         let restarted_cedar = Arc::new(CedarEngine::new().expect("restarted cedar engine"));
         let restarted_storage_engine: Arc<dyn UnifiedStorageFormat> = restarted_cedar.clone();
@@ -3221,7 +3287,7 @@ mod tests {
 
         assert!(
             restarted
-                .get_document("wal_docs", "doc-1", None)
+                .get_document(collection_id, document_id, None)
                 .await
                 .expect("get after delete replay")
                 .is_none()

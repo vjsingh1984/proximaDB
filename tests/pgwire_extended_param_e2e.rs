@@ -31,6 +31,7 @@ fn free_port() -> u16 {
 
 struct PgwireTestServer {
     pg_port: u16,
+    database: String,
     db: Option<ProximaDB>,
     _tmp_data: TempDir,
 }
@@ -85,6 +86,7 @@ impl PgwireTestServer {
 
         Ok(Self {
             pg_port,
+            database: format!("pgext_{pg_port}"),
             db: Some(db),
             _tmp_data: tmp_data,
         })
@@ -92,9 +94,13 @@ impl PgwireTestServer {
 
     fn conn_string(&self) -> String {
         format!(
-            "host=127.0.0.1 port={} user=postgres dbname=proximadb sslmode=disable",
-            self.pg_port
+            "host=127.0.0.1 port={} user=postgres dbname={} sslmode=disable",
+            self.pg_port, self.database
         )
+    }
+
+    fn table_name(&self) -> String {
+        format!("mem_ext_{}", self.pg_port)
     }
 }
 
@@ -130,19 +136,21 @@ async fn pgwire_extended_protocol_vector_search_with_bound_params() {
         format!("[{}]", v.join(","))
     };
 
-    let table = "mem_ext";
+    let table = server.table_name();
     // DDL + INSERT via simple_query (already supported).
-    let _ = client
+    client
         .simple_query(&format!(
             "CREATE TABLE {table} (id VARCHAR PRIMARY KEY, embedding VECTOR({dim}), payload JSONB)"
         ))
-        .await;
+        .await
+        .expect("pgwire CREATE TABLE");
     for i in 1..=3 {
-        let _ = client
+        client
             .simple_query(&format!(
                 "INSERT INTO {table} (id, embedding, payload) VALUES ('m{i}', '{vec_text}'::vector, '{{}}'::jsonb)"
             ))
-            .await;
+            .await
+            .unwrap_or_else(|error| panic!("pgwire INSERT m{i}: {error}"));
     }
     sleep(Duration::from_millis(150)).await;
 

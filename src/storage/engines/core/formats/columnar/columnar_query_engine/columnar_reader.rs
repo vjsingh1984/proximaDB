@@ -205,8 +205,12 @@ impl ParquetReader {
         Ok(batch)
     }
 
-    /// Convert Arrow RecordBatch to ProximaRecords
-    fn batch_to_records(&self, batch: RecordBatch) -> Result<Vec<ProximaRecord>> {
+    /// Convert Arrow RecordBatch to ProximaRecords.
+    ///
+    /// `pub(crate)` so the NOVA ranged row-group reader (TD-040) decodes
+    /// object_store-streamed batches identically to the full-file path —
+    /// keeping ranged-read results byte-for-byte equal to a full read.
+    pub(crate) fn batch_to_records(&self, batch: RecordBatch) -> Result<Vec<ProximaRecord>> {
         let num_rows = batch.num_rows();
         let mut records = Vec::with_capacity(num_rows);
 

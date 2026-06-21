@@ -97,6 +97,19 @@ impl IcebergRestState {
         self.segment_registry = registry;
         self
     }
+
+    /// Wire the warehouse object-store bridge so `load_table` persists and serves a real
+    /// `metadata.json` with a manifest-log-driven snapshot history (TD-119).
+    pub fn with_object_store_bridge(
+        mut self,
+        bridge: Arc<dyn proximadb_storage_common::object_store_bridge::ObjectStoreBridge>,
+    ) -> Self {
+        let inner = Arc::try_unwrap(self.service)
+            .unwrap_or_else(|arc| (*arc).clone())
+            .with_object_store_bridge(bridge);
+        self.service = Arc::new(inner);
+        self
+    }
 }
 
 // ============================================================================
@@ -113,31 +126,36 @@ pub fn create_iceberg_rest_router() -> Router<IcebergRestState> {
         // Namespaces
         .route("/namespaces", get(list_namespaces).post(create_namespace))
         .route(
-            "/namespaces/:namespace",
+            "/namespaces/{namespace}",
             get(get_namespace)
                 .head(namespace_exists)
                 .delete(drop_namespace),
         )
         .route(
-            "/namespaces/:namespace/properties",
+            "/namespaces/{namespace}/properties",
             post(update_namespace_properties),
         )
         // Tables
         .route(
-            "/namespaces/:namespace/tables",
+            "/namespaces/{namespace}/tables",
             get(list_tables).post(create_table),
         )
         .route(
-            "/namespaces/:namespace/tables/:table",
+            "/namespaces/{namespace}/tables/{table}",
             get(load_table)
                 .head(table_exists)
                 .delete(drop_table)
                 .post(commit_table),
         )
+        // Serve a persisted metadata.json so `metadata-location` resolves (TD-119)
+        .route(
+            "/namespaces/{namespace}/tables/{table}/metadata/{file}",
+            get(load_table_metadata_file),
+        )
         // Register existing table
-        .route("/namespaces/:namespace/register", post(register_table))
+        .route("/namespaces/{namespace}/register", post(register_table))
         // Views (v2 stub — returns empty list)
-        .route("/namespaces/:namespace/views", get(list_views))
+        .route("/namespaces/{namespace}/views", get(list_views))
 }
 
 // ============================================================================
@@ -349,6 +367,42 @@ async fn load_table(
     debug!("Iceberg REST: load_table {}.{}", namespace.join("."), table);
     match state.service.load_table(namespace, table).await {
         Ok(resp) => Json(resp).into_response(),
+        Err(e) => err_to_response(e),
+    }
+}
+
+/// GET /namespaces/:namespace/tables/:table/metadata/:file — serve a persisted
+/// `metadata.json` so the `metadata-location` returned by load_table resolves (TD-119).
+async fn load_table_metadata_file(
+    State(state): State<IcebergRestState>,
+    Path((namespace_raw, table, file)): Path<(String, String, String)>,
+) -> Response {
+    let namespace = parse_namespace(&namespace_raw);
+    let version = match file
+        .strip_prefix('v')
+        .and_then(|s| s.strip_suffix(".metadata.json"))
+        .and_then(|s| s.parse::<u64>().ok())
+    {
+        Some(v) => v,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                format!("invalid metadata file name: {file}"),
+            )
+                .into_response();
+        }
+    };
+    match state
+        .service
+        .read_table_metadata_file(namespace, table, version)
+        .await
+    {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            bytes,
+        )
+            .into_response(),
         Err(e) => err_to_response(e),
     }
 }

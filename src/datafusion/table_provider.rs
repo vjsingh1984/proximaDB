@@ -18,7 +18,6 @@
 //! let provider = ProximaDataFusionTable::new(collection, schema, reader);
 //! ```
 
-use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
@@ -164,10 +163,6 @@ impl std::fmt::Debug for ProximaDBTableProvider {
 
 #[async_trait]
 impl TableProvider for ProximaDBTableProvider {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
@@ -457,10 +452,6 @@ impl Debug for ProximaDataFusionTable {
 
 #[async_trait]
 impl TableProvider for ProximaDataFusionTable {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }

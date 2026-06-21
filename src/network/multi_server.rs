@@ -217,6 +217,22 @@ impl MultiServer {
             .clone()
             .unwrap_or_else(|| default_wal_path.clone());
 
+        // Cross-surface unification: when the pgwire WAL path is the default, reuse the
+        // SHARED canonical record store that `SharedServices` already built + WAL-recovered.
+        // pgwire and the REST/gRPC `DmlService` then operate on ONE instance — a write on
+        // any protocol is visible to reads + the CDC change-feed on every protocol — and the
+        // WAL is replayed exactly once. A custom WAL path opts out (builds its own below).
+        if wal_path == default_wal_path
+            && let Some(store) = self.shared_services.canonical_record_store.clone()
+        {
+            info!(
+                "🐘 pgwire reusing shared canonical record store (unified cross-surface relational state)"
+            );
+            return Ok(Some(
+                crate::network::postgres::DirectPgwireWriteServices::new(store),
+            ));
+        }
+
         // T2.3 / TD-066 production wiring: prefer the shared canonical WAL
         // appender held on `SharedServices` so graph checkpoint emission
         // and pgwire direct writes share the same `next_sequence` counter
@@ -256,28 +272,35 @@ impl MultiServer {
                     })?,
             )
         };
-        let record_storage = Arc::new(crate::services::MemtableRecordStorage::new());
+        // TD-064: the canonical store is per-(tenant, collection) partitioned and
+        // shared across all pgwire connections. Build it once, recover its
+        // partitions from the canonical WAL (routing each entry by its
+        // tenant_id + collection_id), then hand the shared store down.
+        let canonical_store = Arc::new(
+            crate::services::record_store::DirectWalTableRecordStore::new_partitioned(
+                wal_appender.clone(),
+            ),
+        );
         let entries = wal_appender.read_entries().await.with_context(|| {
             format!(
                 "reading pgwire direct canonical WAL at {}",
                 wal_path.display()
             )
         })?;
-        let summary = record_storage
+        let summary = canonical_store
             .replay_wal_entries(entries)
             .await
-            .context("replaying pgwire direct canonical WAL into record memtable")?;
+            .context("replaying pgwire direct canonical WAL into record partitions")?;
 
         info!(
-            "🐘 pgwire direct record writes enabled: WAL={}, replayed_upserts={}, replayed_deletes={}, current_records={}",
+            "🐘 pgwire direct record writes enabled: WAL={}, replayed_upserts={}, replayed_deletes={}",
             wal_path.display(),
             summary.upserts_replayed,
             summary.deletes_replayed,
-            record_storage.len()
         );
 
         Ok(Some(
-            crate::network::postgres::DirectPgwireWriteServices::new(record_storage, wal_appender),
+            crate::network::postgres::DirectPgwireWriteServices::new(canonical_store),
         ))
     }
 
@@ -527,30 +550,37 @@ impl MultiServer {
                 );
             let proxima_record_service = proxima_record_service_impl.into_server();
 
-            // Build server with all services
-            warn!(
-                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-            );
-
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (health_reporter, standard_health_server) = tonic_health::server::health_reporter();
             health_reporter
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
+            // Canonical surfaces are always registered: proximadb.v2.ProximaRecordService
+            // + grpc.health.v1.Health (+ optional reflection below).
             let mut server = server_builder
-                .add_service(vector_service)
-                .add_service(sql_service)
-                .add_service(col_service)
-                .add_service(graph_service)
-                .add_service(hybrid_search_service)
-                .add_service(security_service)
-                .add_service(document_service)
-                .add_service(entity_service)
-                .add_service(observability_service)
-                .add_service(streaming_service)
                 .add_service(proxima_record_service)
                 .add_service(standard_health_server);
+
+            // Deprecated gRPC v1 compatibility adapters are gated behind
+            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
+            // Post-sunset these service impls are removed entirely.
+            if self.config.grpc_config.enable_grpc_v1_compat {
+                warn!(
+                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+                );
+                server = server
+                    .add_service(vector_service)
+                    .add_service(sql_service)
+                    .add_service(col_service)
+                    .add_service(graph_service)
+                    .add_service(hybrid_search_service)
+                    .add_service(security_service)
+                    .add_service(document_service)
+                    .add_service(entity_service)
+                    .add_service(observability_service)
+                    .add_service(streaming_service);
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -730,6 +760,23 @@ impl MultiServer {
             // the server data dir the same way document/observability roots are.
             let warehouse_root_url = format!("file://{}/warehouse", self.config.data_dir.display());
 
+            // E0: env-gated per-IP rate limiter for the pgwire query path
+            // (PROXIMADB_PGWIRE_RATE_LIMIT_RPM=<n>). Unset/0 → no limiting, so
+            // default behavior is unchanged. Uses the converged RateLimitState
+            // the REST middleware also checks against.
+            let pgwire_rate_limiter = std::env::var("PROXIMADB_PGWIRE_RATE_LIMIT_RPM")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|rpm| *rpm > 0)
+                .map(|rpm| {
+                    std::sync::Arc::new(
+                        crate::network::middleware::rate_limit::RateLimitState::new(
+                            crate::network::middleware::RateLimitConfig::production(rpm, rpm)
+                                .to_middleware_config(),
+                        ),
+                    )
+                });
+
             let postgres_handle = tokio::spawn(async move {
                 use crate::network::postgres::PostgresServer;
                 let mut server = PostgresServer::new(
@@ -748,6 +795,9 @@ impl MultiServer {
                     server.with_rank_pipeline(rank_services, rank_profile_store, function_store);
                 server = server.with_primary_pod_gate(primary_pod_registry, self_pod_id);
                 server = server.with_warehouse_materialization(warehouse_root_url);
+                if let Some(limiter) = pgwire_rate_limiter {
+                    server = server.with_rate_limiter(limiter);
+                }
                 if let Err(e) = server.start().await {
                     tracing::error!("❌ PostgreSQL Server error: {}", e);
                 }
@@ -912,11 +962,14 @@ impl MultiServer {
             );
 
             let handle = tokio::spawn(async move {
-                if let Err(e) = axum::Server::bind(&internal_rest_addr)
-                    .serve(router.into_make_service())
-                    .await
-                {
-                    tracing::error!("Internal REST server error: {}", e);
+                // axum 0.8 / hyper 1.0: bind a tokio listener, then axum::serve.
+                match tokio::net::TcpListener::bind(&internal_rest_addr).await {
+                    Ok(listener) => {
+                        if let Err(e) = axum::serve(listener, router.into_make_service()).await {
+                            tracing::error!("Internal REST server error: {}", e);
+                        }
+                    }
+                    Err(e) => tracing::error!("Internal REST bind error: {}", e),
                 }
             });
             handles.push(handle);
@@ -999,9 +1052,6 @@ impl MultiServer {
                     .max_encoding_message_size(512 * 1024 * 1024)
                     .max_decoding_message_size(512 * 1024 * 1024);
 
-            warn!(
-                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-            );
             let mut server_builder = tonic::transport::Server::builder().layer(
                 tower::util::option_layer(if self.rest_auth_enabled {
                     self.security_coordinator
@@ -1018,16 +1068,27 @@ impl MultiServer {
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
+            // Canonical surfaces always on: proximadb.v2.ProximaRecordService,
+            // Arrow Flight, and grpc.health.v1.Health (+ optional reflection below).
             let mut server = server_builder
-                .add_service(vector_service)
-                .add_service(sql_service)
-                .add_service(col_service)
-                .add_service(graph_service)
-                .add_service(hybrid_search_service)
-                .add_service(security_service)
                 .add_service(proxima_record_service)
                 .add_service(flight_server)
                 .add_service(standard_health_server);
+
+            // Deprecated gRPC v1 compatibility adapters are gated behind
+            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
+            if self.config.grpc_config.enable_grpc_v1_compat {
+                warn!(
+                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+                );
+                server = server
+                    .add_service(vector_service)
+                    .add_service(sql_service)
+                    .add_service(col_service)
+                    .add_service(graph_service)
+                    .add_service(hybrid_search_service)
+                    .add_service(security_service);
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {
@@ -1384,11 +1445,6 @@ impl MultiServer {
             )
             .into_server();
 
-            // Build cluster services
-            warn!(
-                "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
-            );
-
             // Standard grpc.health.v1.Health service for k8s/LB probes.
             let (mut std_health_reporter, standard_health_server) =
                 tonic_health::server::health_reporter();
@@ -1396,15 +1452,26 @@ impl MultiServer {
                 .set_service_status("", tonic_health::ServingStatus::Serving)
                 .await;
 
+            // Canonical surfaces always on: proximadb.v2.ProximaRecordService +
+            // grpc.health.v1.Health (+ optional reflection / cluster services below).
             let mut server = server_builder
-                .add_service(vector_service)
-                .add_service(sql_service)
-                .add_service(col_service)
-                .add_service(graph_service)
-                .add_service(hybrid_search_service)
-                .add_service(security_service)
                 .add_service(proxima_record_service)
                 .add_service(standard_health_server);
+
+            // Deprecated gRPC v1 compatibility adapters are gated behind
+            // `enable_grpc_v1_compat` (env `PROXIMADB_GRPC_V1_COMPAT`, default off).
+            if self.config.grpc_config.enable_grpc_v1_compat {
+                warn!(
+                    "gRPC v1 services are registered as deprecated compatibility adapters; use proximadb.v2.ProximaRecordService for record writes/search"
+                );
+                server = server
+                    .add_service(vector_service)
+                    .add_service(sql_service)
+                    .add_service(col_service)
+                    .add_service(graph_service)
+                    .add_service(hybrid_search_service)
+                    .add_service(security_service);
+            }
 
             // Optional grpc.reflection.v1.ServerReflection for runtime discovery.
             if self.config.grpc_config.enable_reflection {

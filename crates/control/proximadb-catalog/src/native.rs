@@ -184,13 +184,26 @@ impl NativeCatalog {
 
         match fs::read(&namespaces_path).await {
             Ok(data) => {
-                let namespaces: HashMap<String, CatalogNamespace> = serde_json::from_slice(&data)?;
+                let mut namespaces: HashMap<String, CatalogNamespace> =
+                    serde_json::from_slice(&data)?;
+                // Idempotent backfill: legacy rows persisted before namespace
+                // identity existed deserialize with `namespace_id = None`. Assign
+                // an opaque id so warehouse paths can route through DrPathBuilder.
+                // Persist once if anything changed; a no-op on subsequent loads.
+                let mut backfilled = 0usize;
+                for ns in namespaces.values_mut() {
+                    if ns.namespace_id.is_none() {
+                        ns.namespace_id = Some(Self::new_namespace_id());
+                        backfilled += 1;
+                    }
+                }
+                let count = namespaces.len();
                 *self.namespaces.write().await = namespaces;
-                debug!(
-                    "Loaded {} namespaces from {:?}",
-                    self.namespaces.read().await.len(),
-                    namespaces_path
-                );
+                if backfilled > 0 {
+                    self.save_namespaces().await?;
+                    info!("Backfilled namespace_id for {backfilled} legacy namespace(s)");
+                }
+                debug!("Loaded {count} namespaces from {namespaces_path:?}");
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 debug!("No existing namespaces found at {:?}", namespaces_path);
@@ -296,6 +309,55 @@ impl NativeCatalog {
             .as_millis() as i64
     }
 
+    /// Mint an opaque, rename-stable namespace id (`ns_<uuid-v4>`). Matches the
+    /// UUID convention used for collection ids; the `ns_` prefix keeps physical
+    /// paths self-describing.
+    fn new_namespace_id() -> String {
+        format!("ns_{}", uuid::Uuid::new_v4())
+    }
+
+    /// Shared namespace construction. `tenant_id` records the owning tenant when
+    /// the namespace is created in a tenant scope (TD-064/TD-113) so it is
+    /// DR-addressable; `None` for unscoped/single-tenant creates.
+    async fn create_namespace_inner(
+        &self,
+        namespace: &[String],
+        properties: HashMap<String, String>,
+        tenant_id: Option<String>,
+    ) -> Result<CatalogNamespace> {
+        let key = namespace.join(".");
+        if self.namespaces.read().await.contains_key(&key) {
+            return Err(anyhow!("Namespace '{}' already exists", key));
+        }
+
+        let now = Self::now_millis();
+        let ns = CatalogNamespace {
+            levels: namespace.to_vec(),
+            properties,
+            owner: None,
+            location: None,
+            created_at_ms: now,
+            updated_at_ms: now,
+            // Opaque, rename-stable server-issued id that drives physical paths
+            // (DrPathBuilder). `tenant_id` is the owning tenant when created in a
+            // tenant scope; together they make the namespace DR-addressable.
+            namespace_id: Some(Self::new_namespace_id()),
+            tenant_id,
+            region_home: None,
+            default_dr_region_pair_id: None,
+            storage_pool_class: Default::default(),
+        };
+
+        self.namespaces
+            .write()
+            .await
+            .insert(key.clone(), ns.clone());
+        self.save_namespaces().await?;
+
+        info!("Created namespace: {}", key);
+        Ok(ns)
+    }
+
     /// Inherent accessor for the catalog metadata cache.
     /// Was a trait method before Option B consolidation; moved to inherent
     /// since the canonical `proximadb_catalog::Catalog` trait omits it.
@@ -323,36 +385,19 @@ impl Catalog for NativeCatalog {
         namespace: &[String],
         properties: HashMap<String, String>,
     ) -> Result<CatalogNamespace> {
-        let key = namespace.join(".");
-
-        // Check if already exists
-        if self.namespaces.read().await.contains_key(&key) {
-            return Err(anyhow!("Namespace '{}' already exists", key));
-        }
-
-        let now = Self::now_millis();
-        let ns = CatalogNamespace {
-            levels: namespace.to_vec(),
-            properties,
-            owner: None,
-            location: None,
-            created_at_ms: now,
-            updated_at_ms: now,
-            namespace_id: None,
-            tenant_id: None,
-            region_home: None,
-            default_dr_region_pair_id: None,
-            storage_pool_class: Default::default(),
-        };
-
-        self.namespaces
-            .write()
+        self.create_namespace_inner(namespace, properties, None)
             .await
-            .insert(key.clone(), ns.clone());
-        self.save_namespaces().await?;
+    }
 
-        info!("Created namespace: {}", key);
-        Ok(ns)
+    async fn create_namespace_for_tenant(
+        &self,
+        namespace: &[String],
+        properties: HashMap<String, String>,
+        tenant: Option<&str>,
+    ) -> Result<CatalogNamespace> {
+        let tenant_id = tenant.filter(|t| !t.is_empty()).map(str::to_string);
+        self.create_namespace_inner(namespace, properties, tenant_id)
+            .await
     }
 
     async fn drop_namespace(&self, namespace: &[String], cascade: bool) -> Result<bool> {

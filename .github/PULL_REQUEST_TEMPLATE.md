@@ -26,7 +26,8 @@
 ## Test Plan
 
 ### Rust Tests
-- [ ] Unit tests pass (`cargo test --lib`)
+- [ ] Deterministic work-commit guard passes (`make work-commit-check`)
+- [ ] Unit tests pass (`cargo nextest run --lib --profile unit`)
 - [ ] Doc tests pass (`cargo test --doc`)
 - [ ] Integration tests pass (storage, query, graph, cluster)
 - [ ] Code coverage maintained/improved
@@ -53,9 +54,10 @@
 
 ```bash
 # Rust
-cargo test --lib
+cargo nextest run --lib --profile unit
 cargo clippy -- -D warnings
 cargo fmt --check
+make work-commit-check
 
 # Python
 cd clients/python && black --check src tests
@@ -73,6 +75,7 @@ cd clients/nodejs-embedded && npx tsc --noEmit
 This PR must pass the following automated checks:
 
 ### Quality Checks
+- [ ] `work-commit-check` - Deterministic commit contract, docs/support claims, architecture guards
 - [ ] `rust-format` - Rust code formatting
 - [ ] `rust-clippy` - Rust linting
 - [ ] `rust-security` - Security audit

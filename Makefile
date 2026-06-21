@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check release-check docs-claim-check release-smoke
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -110,6 +110,10 @@ capability-matrix-check:
 	@echo "🧭 Validating capability matrix..."
 	python3 scripts/validate_capability_matrix.py
 
+deterministic-commit-contract-check:
+	@echo "🧷 Validating deterministic commit contract..."
+	python3 scripts/check_deterministic_commit_contract.py
+
 proto-check:
 	@echo "🧬 Validating protobuf/OpenAPI contract drift..."
 	cargo check -p proximadb-proto
@@ -118,6 +122,16 @@ proto-check:
 workspace-boundaries-check:
 	@echo "🧱 Validating workspace dependency boundaries..."
 	python3 scripts/check_workspace_boundaries.py
+
+tenant-path-check:
+	@echo "🏢 Validating tenant path isolation guard..."
+	python3 scripts/check_tenant_path_guard.py
+
+work-commit-check: fmt-check deterministic-commit-contract-check docs-claim-check capability-matrix-check workspace-boundaries-check tenant-path-check panic-policy-module-guard hygiene-check
+	@echo "✅ work-commit-check: deterministic architecture and commit guardrails passed"
+
+validated-commit-check: work-commit-check
+	@echo "✅ validated-commit-check: alias complete"
 
 workspace-rebuild-baseline:
 	@echo "⏱️ Measuring targeted workspace rebuild baseline..."
@@ -152,7 +166,7 @@ release: clean build-server test benchmark
 
 # Release-cut gate: one command that must be green before the v0.2 release tag.
 # Sequence is fail-fast — early steps (fmt, doc-claim, proto) are cheap.
-release-check: fmt-check docs-claim-check proto-check release-smoke build-server
+release-check: work-commit-check proto-check release-smoke build-server
 	@echo "✅ release-check: all gates passed"
 
 fmt-check:
@@ -295,6 +309,9 @@ help:
 	@echo "  check              - Format + lint + test"
 	@echo "  hygiene-check      - Detect tracked backup/disabled/.victor artifacts"
 	@echo "  capability-matrix-check - Validate docs/_internal/roadmap/CAPABILITY_MATRIX.toml"
+	@echo "  deterministic-commit-contract-check - Validate zero-retry/test/docs guard wiring"
+	@echo "  tenant-path-check  - Enforce DrPathBuilder tenant path guard"
+	@echo "  work-commit-check  - Fast deterministic architecture guard before commit/push"
 	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"

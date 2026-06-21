@@ -1594,17 +1594,22 @@ impl ConsensusTransport for InMemoryTransport {
             .clone();
         drop(hub);
 
-        // Convert RPC LogEntry to consensus module's LogEntry type.
+        // Mirror the production gRPC server: decode the serialized command
+        // bytes and return the accepted match index on successful appends so
+        // leaders can advance commit for pending proposals.
         let entries: Vec<proximadb::cluster::consensus::LogEntry> = req
             .entries
             .iter()
-            .map(|e| proximadb::cluster::consensus::LogEntry {
-                term: e.term,
-                index: e.index,
-                command: Command::Noop,
+            .filter_map(|e| {
+                let command = serde_json::from_slice(&e.command).ok()?;
+                Some(proximadb::cluster::consensus::LogEntry {
+                    term: e.term,
+                    index: e.index,
+                    command,
+                })
             })
             .collect();
-        let appended = entries.len() as u64;
+        let match_index = req.prev_log_index + entries.len() as u64;
 
         let consensus = node.read().await;
         let (term, success) = consensus
@@ -1617,20 +1622,10 @@ impl ConsensusTransport for InMemoryTransport {
                 req.leader_commit,
             )
             .await;
-        // A real follower reports the highest log index it now stores so the
-        // leader can advance match_index and, in turn, the commit index. The
-        // follower's handle_append_entries only returns (term, success), so
-        // derive the match index here: on success it holds everything up to
-        // prev_log_index plus the entries just appended.
-        let match_index = if success {
-            Some(req.prev_log_index + appended)
-        } else {
-            None
-        };
         Ok(AppendEntriesResponse {
             term,
             success,
-            match_index,
+            match_index: success.then_some(match_index),
             conflict_term: None,
             conflict_index: None,
         })

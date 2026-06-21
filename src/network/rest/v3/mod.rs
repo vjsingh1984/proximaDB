@@ -32,17 +32,68 @@
 
 pub mod documents;
 
-use axum::Router;
+use axum::{
+    Router,
+    extract::Path,
+    http::{HeaderValue, StatusCode, header},
+    response::{IntoResponse, Response},
+};
+use tracing::warn;
 
 use super::v1::handlers::AppState;
 
+/// Sunset date after which the v3 document-ingest alias is removed; clients
+/// must migrate to `POST /api/v2/collections/{id}/documents`.
+const V3_DOCUMENTS_SUNSET_DATE: &str = "2026-09-30";
+
 /// Create the v3 API router with all endpoints. Mounted under `/api/v3`
 /// in `server.rs` alongside `/api/v1` and `/api/v2`.
+///
+/// NOTE: v3 is now an alias. The document-ingest endpoint folds into v2
+/// (`POST /api/v2/collections/{id}/documents`); this route returns a
+/// `308 Permanent Redirect` to the canonical v2 path (mirrors the v1 graph
+/// 308 redirect pattern). Sunset: see `V3_DOCUMENTS_SUNSET_DATE`.
 pub fn create_v3_router() -> Router<AppState> {
     use axum::routing::post;
 
     Router::new().route(
-        "/collections/:collection_id/documents",
-        post(documents::ingest_documents),
+        "/collections/{collection_id}/documents",
+        post(redirect_documents_to_v2),
     )
+}
+
+/// 308 redirect from the deprecated v3 document-ingest endpoint to the
+/// canonical v2 surface. Preserves the request method/body semantics (308),
+/// and stamps `deprecation` + `sunset` headers like the v1 graph redirects.
+async fn redirect_documents_to_v2(Path(collection_id): Path<String>) -> Response {
+    let canonical_path = format!("/api/v2/collections/{}/documents", collection_id);
+
+    warn!(
+        canonical_route = %canonical_path,
+        sunset_date = V3_DOCUMENTS_SUNSET_DATE,
+        "v3 document-ingest endpoint is deprecated; redirecting to canonical v2 route"
+    );
+
+    let mut response = StatusCode::PERMANENT_REDIRECT.into_response();
+
+    if let Ok(location_value) = HeaderValue::from_str(&canonical_path) {
+        response
+            .headers_mut()
+            .insert(header::LOCATION, location_value.clone());
+        response.headers_mut().insert(
+            header::HeaderName::from_static("x-proximadb-canonical-route"),
+            location_value,
+        );
+    }
+
+    response.headers_mut().insert(
+        header::HeaderName::from_static("deprecation"),
+        HeaderValue::from_static("true"),
+    );
+    response.headers_mut().insert(
+        header::HeaderName::from_static("sunset"),
+        HeaderValue::from_static(V3_DOCUMENTS_SUNSET_DATE),
+    );
+
+    response
 }

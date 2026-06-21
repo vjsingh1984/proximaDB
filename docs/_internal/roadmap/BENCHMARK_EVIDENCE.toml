@@ -1,0 +1,206 @@
+# Benchmark Evidence Ledger
+#
+# Ties each externally-facing PERFORMANCE/CAPABILITY claim to its evidence:
+# where the claim is asserted, the bench that (could) substantiate it, and — for
+# claims we actually stand behind — the reproducible provenance (command, source,
+# artifact, hardware, date, version).
+#
+# This exists because perf claims were scattered across README / BENCHMARKS /
+# PRD with no link back to a runnable benchmark or a dated artifact. The ledger
+# makes the gap explicit and machine-checkable (scripts/validate_benchmark_evidence.py).
+#
+# Status taxonomy (enforced by the validator):
+#   measured     - backed by a checked-in dated artifact; REQUIRES bench_source,
+#                  bench_command, artifact, hardware, date, version.
+#   unverified   - a benchmark exists that could substantiate it, but there is no
+#                  dated reproducible artifact tying THIS number to a run.
+#                  REQUIRES bench_source; artifact/date/hardware may be empty.
+#   aspirational - a target / acceptance-criterion only; no benchmark yet.
+#                  REQUIRES bench_source empty.
+#
+# DO NOT promote an entry to `measured` without real provenance. Numbers in
+# README/BENCHMARKS are claims, not evidence, until an artifact backs them.
+
+as_of_date = "2026-06-16"
+source_of_truth = "benches/ + checked-in dated artifacts"
+header_status = "ran the benches 2026-06-16 (docs/_internal/status/BENCH_RUN_2026_06_16.adoc): object_economy_e2e promoted to measured; the other e2e claims' benches measure COMPONENT kernels (fusion-merge µs, recall computation, quantization speed) or small-scale per-engine search, NOT the claimed end-to-end metric/scale — they stay unverified with corrected notes; real e2e benches are the follow-up"
+
+# ---------------------------------------------------------------------------
+# MEASURED — backed by a dated, checked-in artifact.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "object_economy_cpu_cost"
+claim = "Object-economy vector route building-block CPU costs (100/1K/10K/100K records) non-regression baseline"
+metric = "cpu_cost_ms"
+status = "measured"
+asserted_in = ["docs/_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc:57"]
+bench_source = "benches/bench_vector_object_economy.rs"
+bench_command = "cargo bench --bench bench_vector_object_economy"
+artifact = "docs/_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-05-28"
+version = "v0.2"
+notes = "Non-regression baseline only — explicitly NOT a cost/recall SLA (route is Beta). Cosine, Criterion release profile."
+
+# ---------------------------------------------------------------------------
+# UNVERIFIED — a bench exists, but no dated artifact backs the claimed number.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "vector_search_latency"
+claim = "~8 ms avg, ~15 ms p99 search latency (HNSW, M=32)"
+metric = "search_latency_ms"
+status = "unverified"
+asserted_in = ["README.adoc:97", "docs/10-quality/benchmarks/BENCHMARKS.adoc:16"]
+bench_source = "benches/bench_04_storage_unified.rs"
+bench_command = "cargo bench --bench bench_04_storage_unified"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Ran 2026-06-16: bench_04 measures per-engine search at only 128 vectors (SST pure ~1.44 ms, filtered ~1.42 ms) — it does NOT measure the '~8 ms p99 over 10M-vector HNSW' claim (scale + engine differ). A real 10M-scale HNSW latency bench is needed. README carries a 'not an SLA / YMMV' caveat."
+
+[[claims]]
+id = "ingest_throughput"
+claim = "~125K vectors/sec ingest (small-batch WAL path)"
+metric = "ingest_vectors_per_sec"
+status = "unverified"
+asserted_in = ["README.adoc:98", "docs/10-quality/benchmarks/BENCHMARKS.adoc:17"]
+bench_source = "benches/bench_08_quantization_sst.rs"
+bench_command = "cargo bench --bench bench_08_quantization_sst"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Ran 2026-06-16: bench_08 measures the quantization-speed kernel (dim 128 ~1.02 ms … dim 1536 ~10.74 ms) and progressive-search latency (1024 → ~6.6 µs), NOT an end-to-end '~125K vectors/sec' ingest throughput. A real ingest-throughput bench is needed."
+
+[[claims]]
+id = "recall_at_10"
+claim = "~97% Recall@10 (HNSW, M=32)"
+metric = "recall_at_10_pct"
+status = "unverified"
+asserted_in = ["README.adoc:99", "docs/10-quality/benchmarks/BENCHMARKS.adoc:18"]
+bench_source = "benches/bench_24_recall_at_k_engine.rs"
+bench_command = "cargo bench --bench bench_24_recall_at_k_engine"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Ran 2026-06-16: bench_23_recall_at_k is registered and runnable but only benchmarks the recall-COMPUTATION utility over synthetic vectors + SIMULATED approximate results. A real index-vs-ground-truth bench now exists at benches/bench_24_recall_at_k_engine.rs with deterministic vectors and bounded search-readiness probing, but this claim stays UNVERIFIED until that bench is run on recorded hardware and its output is archived. README states 'not an SLA'."
+
+[[claims]]
+id = "hybrid_search_latency"
+claim = "~8 ms hybrid search (vector + BM25, RRF fusion)"
+metric = "hybrid_search_latency_ms"
+status = "unverified"
+asserted_in = ["README.adoc:101"]
+bench_source = "benches/bench_21_hybrid_search_fusion.rs"
+bench_command = "cargo bench --bench bench_21_hybrid_search_fusion"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Ran 2026-06-16: bench_21 measures the RRF fusion-merge kernel (k=10 → 1.77 µs, k=50 → 8.46 µs, k=100 → 17.27 µs), NOT the '~8 ms' end-to-end vector+BM25 hybrid search latency. A real e2e hybrid bench is needed; quality deltas (NDCG) need a labeled IR dataset and are not claimed here."
+
+[[claims]]
+id = "qps_throughput"
+claim = "100K+ QPS throughput on commodity hardware"
+metric = "qps"
+status = "unverified"
+asserted_in = ["docs/10-quality/benchmarks/BENCHMARKS.adoc:12"]
+bench_source = "benches/bench_04_storage_unified.rs"
+bench_command = "cargo bench --bench bench_04_storage_unified"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Ran 2026-06-16: bench_04 reports per-engine search latency at 128 vectors but no QPS-at-scale measurement; the '100K+ QPS' claim is unsubstantiated. Needs a full-scale throughput bench + dated artifact before it can be marketed."
+
+[[claims]]
+id = "object_economy_e2e_latency"
+claim = "Object-economy cold/warm end-to-end retrieval latency"
+metric = "e2e_latency_ms"
+status = "measured"
+asserted_in = ["docs/_internal/status/OBJECT_ECONOMY_BENCH_REPORT_2026_05_28.adoc:154"]
+bench_source = "benches/bench_vector_object_economy_e2e.rs"
+bench_command = "cargo bench --bench bench_vector_object_economy_e2e"
+artifact = "docs/_internal/status/BENCH_RUN_2026_06_16.adoc"
+hardware = "Apple M1 Max, 64 GB, macOS 26.2 (shared dev machine — indicative, not an SLA)"
+date = "2026-06-16"
+version = "v0.2"
+notes = "Ran 2026-06-16 (10K vectors, dim 128, top_k 10): cold query p50 20.83 ms (p99 21.12), warm p50 19.97 ms (p99 20.44), ~50 QPS; setup insert 9 ms / flush 117 ms / 3.37 MB on-disk. Genuinely measures the route's e2e cold/warm latency. Indicative local baseline (shared machine, default 10K scale — below the 1M-doc headline), NOT an SLA."
+
+# ---------------------------------------------------------------------------
+# ASPIRATIONAL — target / acceptance-criterion only; no benchmark yet.
+# ---------------------------------------------------------------------------
+
+[[claims]]
+id = "tst_ohlc_latency"
+claim = "Sub-millisecond OHLC bar queries (TST engine)"
+metric = "ohlc_query_latency_ms"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:206"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "PRD acceptance criterion for the Beta TST engine. No benchmark under benches/ measures OHLC query latency."
+
+[[claims]]
+id = "tst_ingest_rate"
+claim = ">100K bars/second sustained ingest (TST engine)"
+metric = "tst_ingest_bars_per_sec"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:217"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "PRD acceptance criterion; no TST ingest benchmark exists."
+
+[[claims]]
+id = "recovery_time"
+claim = "<5s recovery"
+metric = "recovery_time_s"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:48"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Platform-engineer requirement; recovery time is not benchmarked."
+
+[[claims]]
+id = "asof_join_latency"
+claim = "ASOF join point-in-time lookup performance (TST engine)"
+metric = "asof_join_latency_ms"
+status = "aspirational"
+asserted_in = ["docs/00-product/PRD.adoc:211"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "PRD acceptance criterion for the Beta TST engine; no ASOF-join benchmark exists."
+
+[[claims]]
+id = "cloud_latency"
+claim = "Cold vs warm object-store (S3) query latency for the vector object-economy route"
+metric = "query_latency_ms"
+status = "unverified"
+asserted_in = ["docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc:327"]
+bench_source = "benches/bench_vector_object_economy_e2e.rs"
+bench_command = "BENCH_VECTORS=1000000 BENCH_DIM=768 cargo bench --bench bench_vector_object_economy_e2e"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Co-design C0 §4.3. The e2e bench currently runs over a tempdir-backed LOCAL filesystem (object_economy_e2e measured local-FS cold p50 20.83 ms / warm 19.97 ms @10K, 2026-06-16) — the S3 first-byte floor (~tens of ms cold; turbopuffer reports ~444 ms p90 cold to ~10-18 ms warm) that DOMINATES real cold ANN is NOT captured. To promote to measured: point the bench's FilesystemFactory at an S3-compatible backend (MinIO/Wasabi/real S3) and check in a dated artifact. The per-query GET-count + bytes half of the bench's own stated gap is now captured by the io_trace substrate (src/observability/io_trace.rs); the remaining half is real cloud latency."

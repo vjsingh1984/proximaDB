@@ -21,9 +21,13 @@ use proximadb_codec::{ProximaScheme, functions};
 use crate::{
     header::{BlockHeader, HEADER_SIZE, fnv1a_hash},
     row_dir::{ROW_ENTRY_SIZE, RowDirectory},
+    rowgroup::RowGroupBlock,
     stripe::{COLUMN_META_SIZE, ColumnMeta},
+    vparam::{QUANT_RABITQ_RESERVED, QUANT_RAW_F32, QUANT_SQ8, RaBitQColumn, VectorParamBlock},
     writer::{BLOCK_FOOTER_SIZE, BlockFooter},
 };
+use proximadb_codec::functions::{rabitq, sq8};
+use proximadb_codec::{RaBitQCode, RaBitQParams};
 
 /// A parsed but not yet decoded PAX block.
 ///
@@ -34,6 +38,10 @@ pub struct PaxBlockReader<'a> {
     header: BlockHeader,
     footer: BlockFooter,
     columns: Vec<ColumnMeta>,
+    /// Per-vector-column quantization params (dim, quant_kind, SQ8 scale/offset).
+    vparams: VectorParamBlock,
+    /// Row-group sub-index for finer-than-block pruning (empty if absent).
+    rowgroups: RowGroupBlock,
 }
 
 impl<'a> PaxBlockReader<'a> {
@@ -62,11 +70,38 @@ impl<'a> PaxBlockReader<'a> {
             columns.push(ColumnMeta::from_bytes(&data[off..])?);
         }
 
+        // Parse the VectorParamBlock side region (footer-first read path).
+        let vparams = if footer.vparam_offset != 0 && footer.vparam_len != 0 {
+            let start = footer.vparam_offset as usize;
+            let end = start
+                .checked_add(footer.vparam_len as usize)
+                .ok_or_else(|| anyhow::anyhow!("vparam offset/len overflow"))?;
+            if end > footer_start {
+                bail!("vector param block overlaps block footer");
+            }
+            VectorParamBlock::from_bytes(&data[start..end])?
+        } else {
+            VectorParamBlock::default()
+        };
+
+        // Parse the RowGroupBlock side region (finer-grained pruning).
+        let rowgroups = if footer.rgdir_offset != 0 {
+            let start = footer.rgdir_offset as usize;
+            if start >= footer_start {
+                bail!("row-group index overlaps block footer");
+            }
+            RowGroupBlock::from_bytes(&data[start..footer_start])?
+        } else {
+            RowGroupBlock::default()
+        };
+
         Ok(Self {
             data,
             header,
             footer,
             columns,
+            vparams,
+            rowgroups,
         })
     }
 
@@ -233,12 +268,123 @@ impl<'a> PaxBlockReader<'a> {
         )
     }
 
+    /// The parsed vector-param side region (dim/quant_kind/SQ8 params per column).
+    pub fn vector_params(&self) -> &VectorParamBlock {
+        &self.vparams
+    }
+
+    /// The parsed row-group sub-index (empty if the block has none).
+    pub fn row_groups(&self) -> &RowGroupBlock {
+        &self.rowgroups
+    }
+
     /// Decode f32 vector values from an embedding stripe.
+    ///
+    /// v2 vector stripes are fixed-stride (`[validity bitmap][payload]`); the
+    /// dimension, quant kind, and SQ8 params come from the block's
+    /// [`VectorParamBlock`]. SQ8 stripes reconstruct lossily (within `scale/2`).
     pub fn decode_f32_vec_stripe(&self, column_id: i32) -> Option<Vec<Option<Vec<f32>>>> {
         let raw = self.read_stripe_raw(column_id)?;
         let n = self.row_count() as usize;
-        let meta = self.columns.iter().find(|m| m.column_id == column_id)?;
-        decode_f32_vec_with_encoding(raw, meta.encoding_id, n).ok()
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind == QUANT_RABITQ_RESERVED {
+            // RaBitQ is a search representation; reconstruction is coarse (direction
+            // preserved, magnitude approximate). Exact rerank uses a full-f32 tier.
+            let col = self.vparams.rabitq_column(column_id)?;
+            return decode_rabitq_reconstruct(raw, n, entry, col).ok();
+        }
+        decode_f32_vec_v2(raw, n, entry).ok()
+    }
+
+    /// Return the per-row RaBitQ codes for a binary-quantized vector column,
+    /// together with the [`RaBitQParams`] needed to rotate a query and run the
+    /// distance estimator. `None` if the column is absent or not RaBitQ-encoded.
+    /// This is the candidate-scan path (rank by codes, then rerank full vectors).
+    pub fn decode_rabitq_codes(
+        &self,
+        column_id: i32,
+    ) -> Option<(RaBitQParams, Vec<Option<RaBitQCode>>)> {
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_RABITQ_RESERVED {
+            return None;
+        }
+        let col = self.vparams.rabitq_column(column_id)?;
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let codes = parse_rabitq_codes(raw, n, entry.dim as usize).ok()?;
+        let params = RaBitQParams {
+            dim: entry.dim as usize,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        Some((params, codes))
+    }
+
+    /// Stage-1 RaBitQ candidate ranking for this block's `EMBED_BASE` column: decode the
+    /// codes, rotate the query once, and return up to `pool` row indices ordered
+    /// nearest-first (the approximate prefilter). Returns `None` if the column isn't
+    /// RaBitQ-quantized. The caller reranks the returned rows against the full-precision
+    /// source (decoupled rerank) before taking the final top-k — this is the seam Phase C
+    /// wires into the cold scan.
+    pub fn rabitq_rank(&self, query: &[f32], pool: usize) -> Option<Vec<usize>> {
+        let (params, codes) = self.decode_rabitq_codes(crate::col_id::EMBED_BASE)?;
+        let rotation = rabitq::build_rotation(params.dim, params.seed);
+        let q_rotated = rabitq::rotate_query(query, &params, &rotation);
+        Some(rabitq::rank_candidates(&q_rotated, &codes, pool))
+    }
+
+    /// Stage-2 of the cascade: rerank a RaBitQ candidate `rows` set for embedding
+    /// `emb_idx` against the co-located SQ8 rerank column (`RERANK_BASE + emb_idx`),
+    /// returning `(row, l2_distance)` sorted nearest-first. SQ8 is decoded for
+    /// ONLY the candidate rows (4× footprint, no GET to an external f32 tier), so
+    /// the precise pass is cheap. Null and out-of-range rows are skipped. Returns
+    /// `None` if the rerank column is absent or not SQ8-encoded — the caller then
+    /// falls back to the RaBitQ-coarse order (or a full-f32 tier, when present).
+    pub fn rerank_rows(
+        &self,
+        emb_idx: usize,
+        query: &[f32],
+        rows: &[usize],
+    ) -> Option<Vec<(usize, f32)>> {
+        let column_id = crate::col_id::RERANK_BASE + emb_idx as i32;
+        let entry = self.vparams.get(column_id)?;
+        if entry.quant_kind != QUANT_SQ8 {
+            return None;
+        }
+        let raw = self.read_stripe_raw(column_id)?;
+        let n = self.row_count() as usize;
+        let dim = entry.dim as usize;
+        let bm_len = n.div_ceil(8);
+        if raw.len() < bm_len {
+            return None;
+        }
+        let bitmap = &raw[..bm_len];
+        let payload = &raw[bm_len..];
+        let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+        let stride = dim; // one u8 SQ8 code per dimension
+
+        let mut scored: Vec<(usize, f32)> = Vec::with_capacity(rows.len());
+        let mut decoded: Vec<f32> = Vec::with_capacity(dim);
+        for &row in rows {
+            if row >= n || !is_present(row) {
+                continue;
+            }
+            let off = row * stride;
+            let end = off + stride;
+            if end > payload.len() {
+                continue;
+            }
+            decoded.clear();
+            sq8::decode_into(&payload[off..end], &entry.params, &mut decoded);
+            let dist = decoded
+                .iter()
+                .zip(query)
+                .map(|(x, q)| (x - q) * (x - q))
+                .sum::<f32>();
+            scored.push((row, dist));
+        }
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        Some(scored)
     }
 
     /// Decode opaque byte blobs from a raw length-prefixed binary stripe — the
@@ -288,7 +434,11 @@ fn i64_scheme_from_encoding_id(encoding_id: u8) -> Option<ProximaScheme> {
     }
 }
 
-fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Result<Vec<i64>> {
+pub(crate) fn decode_i64_with_encoding(
+    data: &[u8],
+    encoding_id: u8,
+    count: usize,
+) -> Result<Vec<i64>> {
     let scheme = i64_scheme_from_encoding_id(encoding_id)
         .ok_or_else(|| anyhow::anyhow!("unknown PAX i64 encoding id: {encoding_id}"))?;
     match scheme {
@@ -320,6 +470,9 @@ fn decode_i64_with_encoding(data: &[u8], encoding_id: u8, count: usize) -> Resul
                     count
                 )
             }
+        }
+        ProximaScheme::Sq8 | ProximaScheme::RaBitQ => {
+            bail!("quantized vector scheme not valid for i64 columns")
         }
         ProximaScheme::Adaptive => functions::adaptive::decode_i64(data, count),
     }
@@ -416,45 +569,119 @@ fn decode_dictionary_str_col(data: &[u8], count: usize) -> Result<Vec<Option<Str
     Ok(values)
 }
 
-fn decode_f32_vec_with_encoding(
-    data: &[u8],
-    encoding_id: u8,
-    count: usize,
-) -> Result<Vec<Option<Vec<f32>>>> {
-    let scheme = scheme_from_encoding_id(encoding_id)
-        .ok_or_else(|| anyhow::anyhow!("unknown PAX f32 vector encoding id: {encoding_id}"))?;
-    match scheme {
-        ProximaScheme::Raw => decode_raw_f32_vec_col(data, count),
-        other => bail!("unsupported PAX f32 vector encoding: {}", other.name()),
+/// Decode a v2 fixed-stride f32 vector stripe (`[validity bitmap][payload]`).
+///
+/// `entry` supplies the dimension, the quant kind, and (for SQ8) the affine
+/// params. Each present row is a fixed-size slice at `i * stride`; absent rows
+/// (validity bit clear) are returned as `None` regardless of their zeroed slot.
+/// Parse the per-row RaBitQ codes from a stripe (validity bitmap + per row
+/// `[dist f32][inv_factor f32][bits ceil(dim/8)]`). Absent rows → `None`.
+fn parse_rabitq_codes(data: &[u8], count: usize, dim: usize) -> Result<Vec<Option<RaBitQCode>>> {
+    let bits_len = dim.div_ceil(8);
+    let stride = 8 + bits_len;
+    let bm_len = count.div_ceil(8);
+    if data.len() < bm_len {
+        bail!("RaBitQ stripe shorter than validity bitmap");
     }
+    let bitmap = &data[..bm_len];
+    let payload = &data[bm_len..];
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        if bitmap[i / 8] & (1u8 << (i % 8)) == 0 {
+            out.push(None);
+            continue;
+        }
+        let off = i * stride;
+        if off + stride > payload.len() {
+            bail!("RaBitQ row {i} exceeds stripe length");
+        }
+        let dist = f32::from_le_bytes(payload[off..off + 4].try_into()?);
+        let inv = f32::from_le_bytes(payload[off + 4..off + 8].try_into()?);
+        let bits = payload[off + 8..off + stride].to_vec();
+        out.push(Some(RaBitQCode {
+            bits,
+            dist_to_centroid: dist,
+            inv_factor: inv,
+        }));
+    }
+    Ok(out)
 }
 
-fn decode_raw_f32_vec_col(data: &[u8], count: usize) -> Result<Vec<Option<Vec<f32>>>> {
-    let mut values = Vec::with_capacity(count);
-    let mut pos = 0;
-    for _ in 0..count {
-        if pos + 4 > data.len() {
-            bail!("raw f32 vector stripe ended before {count} values");
-        }
-        let dim = u32::from_le_bytes(data[pos..pos + 4].try_into()?);
-        pos += 4;
-        if dim == u32::MAX {
-            values.push(None);
-        } else {
-            let byte_len = dim as usize * 4;
-            if pos + byte_len > data.len() {
-                bail!("raw f32 vector value exceeds stripe length");
-            }
-            let mut floats = Vec::with_capacity(dim as usize);
-            for i in 0..dim as usize {
-                let f = f32::from_le_bytes(data[pos + i * 4..pos + i * 4 + 4].try_into()?);
-                floats.push(f);
-            }
-            values.push(Some(floats));
-            pos += byte_len;
-        }
+/// Decode a RaBitQ stripe to coarse reconstructed f32 vectors (lossy; for the
+/// uniform decode API). Rebuilds the rotation from the column seed once.
+fn decode_rabitq_reconstruct(
+    data: &[u8],
+    count: usize,
+    entry: &crate::vparam::VectorParamEntry,
+    col: &RaBitQColumn,
+) -> Result<Vec<Option<Vec<f32>>>> {
+    let dim = entry.dim as usize;
+    let codes = parse_rabitq_codes(data, count, dim)?;
+    let params = RaBitQParams {
+        dim,
+        seed: col.seed,
+        centroid: col.centroid.clone(),
+    };
+    let rotation = rabitq::build_rotation(dim, col.seed);
+    Ok(codes
+        .into_iter()
+        .map(|c| c.map(|code| rabitq::reconstruct(&code, &params, &rotation)))
+        .collect())
+}
+
+pub(crate) fn decode_f32_vec_v2(
+    data: &[u8],
+    count: usize,
+    entry: &crate::vparam::VectorParamEntry,
+) -> Result<Vec<Option<Vec<f32>>>> {
+    let dim = entry.dim as usize;
+    let bm_len = count.div_ceil(8);
+    if data.len() < bm_len {
+        bail!("vector stripe shorter than validity bitmap");
     }
-    Ok(values)
+    let bitmap = &data[..bm_len];
+    let payload = &data[bm_len..];
+    let is_present = |i: usize| bitmap[i / 8] & (1u8 << (i % 8)) != 0;
+
+    let mut out = Vec::with_capacity(count);
+    match entry.quant_kind {
+        QUANT_SQ8 => {
+            let stride = dim; // one u8 code per dimension
+            for i in 0..count {
+                if !is_present(i) {
+                    out.push(None);
+                    continue;
+                }
+                let off = i * stride;
+                let end = off + stride;
+                if end > payload.len() {
+                    bail!("SQ8 vector row {i} exceeds stripe length");
+                }
+                out.push(Some(sq8::decode(&payload[off..end], &entry.params)));
+            }
+        }
+        QUANT_RAW_F32 => {
+            let stride = dim * 4; // 4 bytes per f32 dimension
+            for i in 0..count {
+                if !is_present(i) {
+                    out.push(None);
+                    continue;
+                }
+                let off = i * stride;
+                let end = off + stride;
+                if end > payload.len() {
+                    bail!("raw f32 vector row {i} exceeds stripe length");
+                }
+                let mut floats = Vec::with_capacity(dim);
+                for c in payload[off..end].chunks_exact(4) {
+                    floats.push(f32::from_le_bytes(c.try_into()?));
+                }
+                out.push(Some(floats));
+            }
+        }
+        other => bail!("unknown vector quant_kind: {other}"),
+    }
+    Ok(out)
 }
 
 const PAX_BLOOM_SALTS: [u64; 3] = [
@@ -698,7 +925,10 @@ mod tests {
     }
 
     #[test]
-    fn reader_decode_exact_f32_vec_raw_stripe() {
+    fn sq8_vector_stripe_write_read() {
+        // Default v2 path: vectors are SQ8-quantized and reconstruct within the
+        // per-column error bound (scale/2). The stripe carries an SQ8 marker and
+        // a VectorParamBlock entry with the correct dim.
         let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1);
         writer
             .add_record(&make_record_with_embedding(
@@ -724,11 +954,344 @@ mod tests {
             .iter()
             .find(|m| m.column_id == col_id::EMBED_BASE)
             .unwrap();
-        assert_eq!(embed_meta.encoding_id, ProximaScheme::Raw.to_marker());
+        assert_eq!(embed_meta.encoding_id, ProximaScheme::Sq8.to_marker());
+
+        let entry = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
+        assert_eq!(entry.dim, 3);
+        assert_eq!(entry.quant_kind, crate::vparam::QUANT_SQ8);
+        let bound = entry.params.max_abs_error();
 
         let embeddings = reader.decode_f32_vec_stripe(col_id::EMBED_BASE).unwrap();
-        assert_eq!(embeddings[0], Some(vec![0.1, 0.2, 0.3]));
-        assert_eq!(embeddings[1], Some(vec![0.4, 0.5, 0.6]));
+        let originals = [[0.1f32, 0.2, 0.3], [0.4, 0.5, 0.6]];
+        for (row, orig) in embeddings.iter().zip(originals.iter()) {
+            let got = row.as_ref().expect("present row");
+            for (g, o) in got.iter().zip(orig.iter()) {
+                assert!((g - o).abs() <= bound + 1e-6, "got {g}, orig {o}");
+            }
+        }
+    }
+
+    #[test]
+    fn f32_vec_stripe_no_per_row_dim_header() {
+        // v2 vector stripes are fixed-stride with no per-row dim prefix: an SQ8
+        // stripe is exactly ceil(n/8) validity bytes + n*dim code bytes.
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1);
+        for i in 0..10 {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i,
+                    vec![
+                        i as f32 * 0.1,
+                        i as f32 * 0.2,
+                        i as f32 * 0.3,
+                        i as f32 * 0.4,
+                    ],
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+        let meta = reader
+            .column_metas()
+            .iter()
+            .find(|m| m.column_id == col_id::EMBED_BASE)
+            .unwrap();
+        let n = 10usize;
+        let dim = 4usize;
+        let expected = n.div_ceil(8) + n * dim; // SQ8: 1 byte/value, no dim prefix
+        assert_eq!(meta.stripe_len as usize, expected);
+    }
+
+    #[test]
+    fn rabitq_stripe_codes_and_reconstruction() {
+        // Exercise the RaBitQ stripe format + decode without the env-gated writer
+        // path: encode a stripe, parse its codes, run the estimator, and check the
+        // coarse reconstruction preserves direction.
+        use proximadb_codec::functions::rabitq;
+        let dim = 32u32;
+        let dimu = dim as usize;
+        let near: Vec<f32> = (0..dimu).map(|i| (i as f32 * 0.07).sin()).collect();
+        let mut far = near.clone();
+        for (i, f) in far.iter_mut().enumerate() {
+            *f += if i % 2 == 0 { 2.5 } else { -2.5 };
+        }
+        let vals: Vec<Option<&[f32]>> = vec![Some(near.as_slice()), None, Some(far.as_slice())];
+
+        let (stripe, col) = crate::writer::encode_f32_vec_rabitq(&vals, dim, col_id::EMBED_BASE);
+        let codes = parse_rabitq_codes(&stripe, vals.len(), dimu).unwrap();
+        assert!(codes[0].is_some() && codes[1].is_none() && codes[2].is_some());
+
+        let params = RaBitQParams {
+            dim: dimu,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        let rotation = rabitq::build_rotation(dimu, col.seed);
+
+        // Estimator: query == near ⇒ near scores lower (closer) than far.
+        let q = rabitq::rotate_query(&near, &params, &rotation);
+        let near_score = codes[0].as_ref().unwrap().l2_rank_score(&q);
+        let far_score = codes[2].as_ref().unwrap().l2_rank_score(&q);
+        assert!(
+            near_score < far_score,
+            "near {near_score} !< far {far_score}"
+        );
+
+        // Coarse reconstruction preserves direction (positive cosine).
+        let recon = rabitq::reconstruct(codes[0].as_ref().unwrap(), &params, &rotation);
+        let dot: f32 = recon.iter().zip(near.iter()).map(|(a, b)| a * b).sum();
+        let nr: f32 = recon.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let nn: f32 = near.iter().map(|x| x * x).sum::<f32>().sqrt();
+        let cos = dot / (nr * nn + 1e-9);
+        assert!(cos > 0.3, "reconstruction cosine {cos} too low");
+    }
+
+    /// RaBitQ recall@k with f32 rerank, through the on-disk stripe scoring path — the
+    /// contract the ANN search executor will rely on: rank candidates by the binary
+    /// estimator over decoded codes, then rerank the top candidates against full f32.
+    /// Proves recall is preserved at ~16-30x compression. Uses `encode_f32_vec_rabitq`
+    /// directly to avoid the process-global env kill-switch (same reason as the test above).
+    #[test]
+    fn rabitq_block_scoring_preserves_recall_at_k_with_rerank() {
+        use proximadb_codec::functions::rabitq;
+
+        const DIM: usize = 64;
+        const N: usize = 200;
+        const Q: usize = 20;
+        const K: usize = 10;
+        const REFINE: usize = 40; // candidate pool before f32 rerank
+
+        // Deterministic splitmix-seeded corpus (distinct directions → real ranking).
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+
+        // Encode the corpus to a RaBitQ stripe, then decode the codes back.
+        let refs: Vec<Option<&[f32]>> = corpus.iter().map(|v| Some(v.as_slice())).collect();
+        let (stripe, col) =
+            crate::writer::encode_f32_vec_rabitq(&refs, DIM as u32, col_id::EMBED_BASE);
+        let codes = parse_rabitq_codes(&stripe, N, DIM).unwrap();
+        let params = RaBitQParams {
+            dim: DIM,
+            seed: col.seed,
+            centroid: col.centroid.clone(),
+        };
+        let rotation = rabitq::build_rotation(DIM, col.seed);
+
+        // ~Compression: RaBitQ stride (8 + ceil(dim/8)) vs raw f32 (dim*4).
+        let stride = 8 + DIM.div_ceil(8);
+        let raw = DIM * 4;
+        assert!(
+            raw / stride >= 10,
+            "RaBitQ compression {}x below 10x (stride={stride}, raw={raw})",
+            raw / stride
+        );
+
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let exact_topk = |q: &[f32]| -> Vec<usize> {
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], q)
+                    .partial_cmp(&l2(&corpus[b], q))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(K).collect()
+        };
+
+        let mut recalls = Vec::new();
+        for qi in 0..Q {
+            // Query = a corpus vector + small perturbation.
+            let base = (qi * (N / Q)) % N;
+            let noise = gen_vec((qi as u64).wrapping_add(1_000_000));
+            let query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, n)| v + n * 0.01)
+                .collect();
+
+            // Stage 1: rank candidates by the binary estimator over codes — via the
+            // public `rank_candidates` primitive that Phase C wires into the cold scan.
+            let q_rot = rabitq::rotate_query(&query, &params, &rotation);
+            let mut refine = rabitq::rank_candidates(&q_rot, &codes, REFINE);
+
+            // Stage 2: f32 rerank the top-REFINE candidates → final top-K.
+            refine.sort_by(|&a, &b| {
+                l2(&corpus[a], &query)
+                    .partial_cmp(&l2(&corpus[b], &query))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let got: std::collections::HashSet<usize> = refine.into_iter().take(K).collect();
+
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / K as f32);
+        }
+        let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
+        assert!(
+            mean >= 0.80,
+            "RaBitQ recall@{K} with rerank = {mean:.3} < 0.80 (compression {}x)",
+            raw / stride
+        );
+    }
+
+    /// P3 Phase G — cold-recall harness at scale (N=1000) over a REAL two-column
+    /// PAX block. This is the *ratchet gate* the migration plan requires before the
+    /// cold-scan wiring (C.2): the writer emits RaBitQ codes (`EMBED_BASE`) plus a
+    /// co-located SQ8 rerank column (`RERANK_BASE`); the scan reads the block back,
+    /// runs the `rabitq_rank` stage-1 prefilter, then `rerank_rows` (the SQ8 cascade
+    /// stage-2) over the candidate pool — exactly the cascade C.2 drives. Recall@10
+    /// must hold within tolerance of the exact-f32 baseline at realistic N (small-N is
+    /// brute-force-served and doesn't exercise the approximate path). The rerank here
+    /// is the on-segment SQ8 column (4×, no external f32 GET); an f32 rerank column is
+    /// added only if SQ8 can't hold the gate. RATCHET: mean recall@10 >= 0.90 — only
+    /// goes up.
+    #[test]
+    fn rabitq_cold_recall_harness_n1000_recall_at_10() {
+        const DIM: usize = 64;
+        const N: usize = 1000;
+        const Q: usize = 50;
+        const K: usize = 10;
+        const REFINE: usize = 100; // candidate pool before SQ8 rerank
+        const RATCHET: f32 = 0.90;
+
+        let gen_vec = |seed: u64| -> Vec<f32> {
+            let mut s = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(1);
+            (0..DIM)
+                .map(|_| {
+                    s ^= s >> 30;
+                    s = s.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+                    s ^= s >> 27;
+                    ((s >> 11) as f32 / (1u64 << 53) as f32) * 2.0 - 1.0
+                })
+                .collect()
+        };
+        let corpus: Vec<Vec<f32>> = (0..N).map(|i| gen_vec(i as u64)).collect();
+
+        // Build the real two-column segment: RaBitQ codes + co-located SQ8 rerank.
+        let mut writer = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "col", 0, 1)
+            .with_quant(crate::writer::VectorQuant::RaBitQ);
+        for (i, v) in corpus.iter().enumerate() {
+            writer
+                .add_record(&make_record_with_embedding(
+                    &format!("r{i}"),
+                    "t",
+                    1000 + i as i64,
+                    v.clone(),
+                ))
+                .unwrap();
+        }
+        let block = writer.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+
+        // Both vector columns must be present and correctly quantized.
+        let emb = reader.vector_params().get(col_id::EMBED_BASE).unwrap();
+        assert_eq!(emb.quant_kind, crate::vparam::QUANT_RABITQ_RESERVED);
+        let rer = reader
+            .vector_params()
+            .get(crate::col_id::RERANK_BASE)
+            .unwrap();
+        assert_eq!(rer.quant_kind, QUANT_SQ8);
+
+        // ~30× target on the hot scan column: assert real compression so the gate
+        // is meaningful (RaBitQ codes ≪ SQ8 rerank ≪ raw f32).
+        let embed_len = reader
+            .column_metas()
+            .iter()
+            .find(|m| m.column_id == col_id::EMBED_BASE)
+            .unwrap()
+            .stripe_len as usize;
+        let rerank_len = reader
+            .column_metas()
+            .iter()
+            .find(|m| m.column_id == crate::col_id::RERANK_BASE)
+            .unwrap()
+            .stripe_len as usize;
+        let raw = N.div_ceil(8) + N * DIM * 4;
+        assert!(
+            embed_len < rerank_len && rerank_len < raw,
+            "expected RaBitQ ({embed_len}) < SQ8 ({rerank_len}) < raw ({raw})"
+        );
+
+        let l2 =
+            |a: &[f32], b: &[f32]| -> f32 { a.iter().zip(b).map(|(x, y)| (x - y) * (x - y)).sum() };
+        let exact_topk = |q: &[f32]| -> std::collections::HashSet<usize> {
+            let mut idx: Vec<usize> = (0..N).collect();
+            idx.sort_by(|&a, &b| {
+                l2(&corpus[a], q)
+                    .partial_cmp(&l2(&corpus[b], q))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            idx.into_iter().take(K).collect()
+        };
+
+        let mut recalls = Vec::with_capacity(Q);
+        for qi in 0..Q {
+            let base = (qi * (N / Q)) % N;
+            let noise = gen_vec((qi as u64).wrapping_add(7_000_000));
+            let query: Vec<f32> = corpus[base]
+                .iter()
+                .zip(&noise)
+                .map(|(v, n)| v + n * 0.01)
+                .collect();
+
+            // Stage 1: RaBitQ candidate prefilter (what C.2 calls in the cold scan).
+            let cand = reader.rabitq_rank(&query, REFINE).unwrap();
+            // Stage 2: SQ8 cascade rerank over the candidate pool → final top-K.
+            let reranked = reader.rerank_rows(0, &query, &cand).unwrap();
+            let got: std::collections::HashSet<usize> =
+                reranked.into_iter().take(K).map(|(row, _)| row).collect();
+
+            let truth = exact_topk(&query);
+            let hits = truth.iter().filter(|i| got.contains(i)).count();
+            recalls.push(hits as f32 / K as f32);
+        }
+        let mean = recalls.iter().sum::<f32>() / recalls.len() as f32;
+        assert!(
+            mean >= RATCHET,
+            "P3 Phase G: RaBitQ→SQ8 cascade recall@{K} at N={N} = {mean:.3} < ratchet \
+             {RATCHET}. Recall regressed — add an f32 rerank column rather than lowering \
+             the ratchet."
+        );
+    }
+
+    #[test]
+    fn raw_fallback_vector_stripe_round_trips_exactly() {
+        // The raw fixed-stride path (quant_kind = RAW_F32) is exact. Exercise the
+        // decoder directly so the test does not depend on a process-global env
+        // kill-switch.
+        use crate::vparam::{QUANT_RAW_F32, VectorParamEntry};
+        use proximadb_codec::Sq8Params;
+        let rows: Vec<Option<&[f32]>> = vec![Some(&[0.1, 0.2][..]), None, Some(&[0.3, 0.4][..])];
+        let dim = 2u32;
+        // build raw stripe via the writer's encoder
+        let data = crate::writer::encode_f32_vec_raw_v2(&rows, dim);
+        let entry = VectorParamEntry {
+            column_id: 20,
+            dim,
+            quant_kind: QUANT_RAW_F32,
+            params: Sq8Params {
+                scale: 0.0,
+                offset: 0.0,
+                vmin: 0.1,
+                vmax: 0.4,
+            },
+        };
+        let decoded = decode_f32_vec_v2(&data, rows.len(), &entry).unwrap();
+        assert_eq!(decoded[0], Some(vec![0.1, 0.2]));
+        assert_eq!(decoded[1], None);
+        assert_eq!(decoded[2], Some(vec![0.3, 0.4]));
     }
 
     #[test]

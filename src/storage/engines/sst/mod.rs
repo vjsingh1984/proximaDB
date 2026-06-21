@@ -253,6 +253,7 @@ pub mod manifest;
 pub mod pca_manager; // PCA caching for Z-Order spatial encoding
 pub mod progressive_stages; // ISP-compliant progressive search stages
 pub mod search;
+pub mod segment_format; // P3 Phase A: mixed-format (ProximaBlocks/PAX) read primitives
 pub mod text_column_support; // TEXT column storage integration
 pub mod tiering_integration;
 pub mod trait_impl;
@@ -755,6 +756,15 @@ pub struct IndexEntry {
         crate::storage::engines::core::formats::proximablocks::spatial_encoding::SpatialCode,
     >,
     // REMOVED: compression_ratio - can be calculated on-demand from size and DataBlock.uncompressed_size
+    /// TD-040: per-dimension vector component bounds for this block, enabling
+    /// L2 lower-bound block pruning (see `VectorBoundsPruner`). `None` for blocks
+    /// written before TD-040 (index magic < `IDX3`) or with no/mixed-dim vectors —
+    /// pruning then conservatively scans the block. Both must be present and
+    /// same-length to prune.
+    #[serde(default)]
+    pub block_component_min: Option<Vec<f32>>,
+    #[serde(default)]
+    pub block_component_max: Option<Vec<f32>>,
 }
 
 /// Minimal B+ tree descriptor persisted in the index blob for fast lookups.
@@ -1030,8 +1040,8 @@ impl IndexEntry {
         use std::io::Write;
         let mut buffer = Vec::new();
 
-        // Write magic header (upgraded to IDX2 for last_key support)
-        buffer.write_all(b"IDX2")?;
+        // Write magic header (IDX3 adds TD-040 per-block vector component bounds).
+        buffer.write_all(b"IDX3")?;
 
         // Write key
         let key_bytes = self.key.as_bytes();
@@ -1146,6 +1156,21 @@ impl IndexEntry {
             buffer.write_all(&format_byte.to_le_bytes())?;
         }
 
+        // IDX3: per-block vector component bounds (TD-040). Each is an optional
+        // f32 vec encoded as [present:u8][len:u32][f32 * len].
+        for bounds in [&self.block_component_min, &self.block_component_max] {
+            match bounds {
+                Some(values) => {
+                    buffer.write_all(&1u8.to_le_bytes())?;
+                    buffer.write_all(&(values.len() as u32).to_le_bytes())?;
+                    for v in values {
+                        buffer.write_all(&v.to_le_bytes())?;
+                    }
+                }
+                None => buffer.write_all(&0u8.to_le_bytes())?,
+            }
+        }
+
         Ok(buffer)
     }
 
@@ -1154,10 +1179,13 @@ impl IndexEntry {
         use std::io::Read;
         let mut cursor = std::io::Cursor::new(data);
 
-        // Read and validate magic header (IDX1 = legacy, IDX2 = with last_key)
+        // Read and validate magic header (IDX1 = legacy, IDX2 = with last_key,
+        // IDX3 = with TD-040 per-block vector component bounds).
         let mut magic = [0u8; 4];
         cursor.read_exact(&mut magic)?;
-        let is_v2 = &magic == b"IDX2";
+        let is_v3 = &magic == b"IDX3";
+        // IDX2-and-later share the same field layout up to vector_format.
+        let is_v2 = is_v3 || &magic == b"IDX2";
         if !is_v2 && &magic != b"IDX1" {
             return Err(anyhow::anyhow!("Invalid IndexEntry format"));
         }
@@ -1322,6 +1350,28 @@ impl IndexEntry {
 
         // REMOVED: No longer reading compression_ratio
 
+        // IDX3: per-block vector component bounds (TD-040). Older formats → None.
+        let mut read_opt_f32_vec = || -> anyhow::Result<Option<Vec<f32>>> {
+            if !is_v3 {
+                return Ok(None);
+            }
+            cursor.read_exact(&mut bool_buf)?;
+            if bool_buf[0] == 0 {
+                return Ok(None);
+            }
+            cursor.read_exact(&mut u32_buf)?;
+            let len = u32::from_le_bytes(u32_buf) as usize;
+            let mut values = Vec::with_capacity(len);
+            let mut f32_buf = [0u8; 4];
+            for _ in 0..len {
+                cursor.read_exact(&mut f32_buf)?;
+                values.push(f32::from_le_bytes(f32_buf));
+            }
+            Ok(Some(values))
+        };
+        let block_component_min = read_opt_f32_vec()?;
+        let block_component_max = read_opt_f32_vec()?;
+
         Ok(Self {
             key,
             last_key,
@@ -1339,6 +1389,8 @@ impl IndexEntry {
             block_metadata_bloom,
             vector_format,
             zorder_code: None, // Deserialized separately if present
+            block_component_min,
+            block_component_max,
         })
     }
 }
@@ -2028,8 +2080,40 @@ mod bplustree_tests {
                 block_metadata_bloom: None,
                 vector_format: VectorFormat::Fixed { dimension: 8 },
                 zorder_code: None,
+                block_component_min: None,
+                block_component_max: None,
             })
             .collect()
+    }
+
+    /// TD-040: the IDX3 index codec round-trips per-block vector component bounds,
+    /// and absent bounds (e.g. legacy/non-vector blocks) decode as `None`.
+    #[test]
+    fn index_entry_idx3_roundtrips_component_bounds() {
+        let entry = IndexEntry {
+            key: "k0".to_string(),
+            block_id: 7,
+            block_centroid: vec![1.0, 2.0, 3.0],
+            block_component_min: Some(vec![-1.0, 0.5, 2.0]),
+            block_component_max: Some(vec![3.0, 4.5, 9.0]),
+            ..Default::default()
+        };
+        let back =
+            IndexEntry::deserialize(&entry.serialize().expect("serialize")).expect("deserialize");
+        assert_eq!(back.key, "k0");
+        assert_eq!(back.block_id, 7);
+        assert_eq!(back.block_centroid, vec![1.0, 2.0, 3.0]);
+        assert_eq!(back.block_component_min, Some(vec![-1.0, 0.5, 2.0]));
+        assert_eq!(back.block_component_max, Some(vec![3.0, 4.5, 9.0]));
+
+        // Absent bounds decode as None (the conservative "scan the block" case).
+        let no_bounds = IndexEntry {
+            key: "k1".to_string(),
+            ..Default::default()
+        };
+        let back2 = IndexEntry::deserialize(&no_bounds.serialize().unwrap()).unwrap();
+        assert_eq!(back2.block_component_min, None);
+        assert_eq!(back2.block_component_max, None);
     }
 
     #[test]

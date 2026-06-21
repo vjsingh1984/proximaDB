@@ -1270,7 +1270,7 @@ pub fn create_router(state: AppState) -> axum::Router {
 
     let mut router = axum::Router::new()
         .route(
-            "/api/v2/progressive/search/:collection_id",
+            "/api/v2/progressive/search/{collection_id}",
             post(crate::network::rest::progressive_search_handler::progressive_search_handler),
         )
         .route(
@@ -1282,7 +1282,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             post(explain_table_write_route),
         )
         .route(
-            "/api/v2/collections/:collection_id/branches/:branch/merge",
+            "/api/v2/collections/{collection_id}/branches/{branch}/merge",
             post(merge_graph_branch),
         )
         // Multi-phase ranking pipeline (R-7c.1).
@@ -1308,7 +1308,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         // honors the override on its next evaluation. See
         // src/storage/collection_pinning.rs for the control/data plane split.
         .route(
-            "/api/v2/collections/:collection_id/pin",
+            "/api/v2/collections/{collection_id}/pin",
             axum::routing::patch(crate::network::rest::v1::pinning::patch_pin)
                 .get(crate::network::rest::v1::pinning::get_pin),
         )
@@ -1320,7 +1320,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         // Operators read or drop the affinity hint for routing
         // re-evaluation. See src/cluster/cache_affinity.rs.
         .route(
-            "/api/v2/collections/:collection_id/affinity",
+            "/api/v2/collections/{collection_id}/affinity",
             get(crate::network::rest::v1::affinity::get_affinity)
                 .delete(crate::network::rest::v1::affinity::delete_affinity),
         )
@@ -1337,7 +1337,7 @@ pub fn create_router(state: AppState) -> axum::Router {
         // `authorize_operator` then checks for the operator-level
         // permission.
         .route(
-            "/api/v2/primary-pod/:tenant_id/:collection_id",
+            "/api/v2/primary-pod/{tenant_id}/{collection_id}",
             get(crate::network::rest::v1::primary_pod::get_primary_pod)
                 .put(crate::network::rest::v1::primary_pod::put_primary_pod)
                 .delete(crate::network::rest::v1::primary_pod::delete_primary_pod),
@@ -1461,8 +1461,24 @@ pub fn create_router(state: AppState) -> axum::Router {
         use crate::network::rest::v1::iceberg_rest_catalog::{
             IcebergRestState, create_iceberg_rest_router,
         };
-        let iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone())
+        let mut iceberg_state = IcebergRestState::with_defaults(state.catalog_manager.clone())
             .with_segment_registry(state.segment_registry.clone());
+        // TD-119: persist/serve a real metadata.json from the SAME warehouse root the
+        // materialize/write path uses (`file://{data_dir}/warehouse`), so the manifest log
+        // drives snapshot history and `metadata-location` resolves. Best-effort: if the
+        // store is unavailable, metadata is still served inline (synthesized, no persistence).
+        let warehouse_root_url = format!("file://{}/warehouse", state.data_dir.display());
+        match proximadb_iceberg_engine::IcebergObjectStoreBridge::from_url(&warehouse_root_url) {
+            Ok(bridge) => {
+                iceberg_state = iceberg_state.with_object_store_bridge(std::sync::Arc::new(bridge));
+            }
+            Err(e) => {
+                info!(
+                    "Iceberg REST: warehouse object store unavailable at {warehouse_root_url}: \
+                     {e}; metadata served inline without persistence"
+                );
+            }
+        }
         router = router.nest(
             "/iceberg/v1",
             create_iceberg_rest_router().with_state(iceberg_state),

@@ -98,7 +98,7 @@ pub fn create_analytics_router() -> Router<AnalyticsRestState> {
         Router::new()
             .route("/entanglement", post(compute_entanglement))
             .route(
-                "/collections/:collection_id/entanglement",
+                "/collections/{collection_id}/entanglement",
                 get(get_collection_entanglement),
             ),
     )

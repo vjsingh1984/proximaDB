@@ -40,6 +40,8 @@ use proximadb_kernel::uuid::Uuid;
 /// Responsibilities: business logic, metadata configuration, service coordination
 #[derive(Clone)]
 pub struct SharedServices {
+    /// Filesystem factory for reading blocks
+    pub filesystem_factory: Arc<crate::storage::persistence::filesystem::FilesystemFactory>,
     /// Shared xCatalog control plane for REST, gRPC, Arrow Flight, SQL, and query routing.
     pub catalog_manager: Arc<crate::catalog::CatalogManager>,
     /// PAX segment registry — bridges write path with Iceberg REST snapshot stats.
@@ -225,6 +227,16 @@ pub struct SharedServices {
     /// (graph: tracing-only; pgwire: opens its own appender locally).
     pub canonical_wal_appender: Option<Arc<crate::services::FramedTableWalAppender>>,
 
+    /// The single canonical WAL-backed record store, built + WAL-recovered ONCE here and
+    /// shared across ALL surfaces — the REST/gRPC `DmlService` and the pgwire direct-write
+    /// path both route relational tables through this instance — so a write on any protocol
+    /// is visible to reads + the CDC change-feed on every protocol. Previously the REST/gRPC
+    /// `DmlService` used the vector-compatibility stub for relational tables while pgwire used
+    /// the real WAL store, leaving the cross-surface APIs unconverged. `None` on test paths
+    /// without `opt_config` (each consumer falls back to its own store).
+    pub canonical_record_store:
+        Option<Arc<crate::services::record_store::DirectWalTableRecordStore>>,
+
     /// Process-wide recall-probe gate (TD-064 / LLD §5). The gate enables
     /// the quantized candidate route only after the recall-probe set passes
     /// the tenant's target for three consecutive builds; a single failure
@@ -346,6 +358,56 @@ impl SharedServices {
             "🔧 SharedServices::new - Starting with storage_config: {:?}",
             storage_config
         );
+
+        // Initialize the process-global multitenant footer/index caches for the
+        // PAX v2 ranged read path. Work-conserving elasticity: 256 MiB pooled,
+        // an 8 MiB per-tenant floor (protected working set), and a 128 MiB (50%)
+        // hard ceiling as a runaway guard — a solo tenant borrows idle capacity
+        // up to 128 MiB; under pressure each is reclaimed toward the fair share
+        // (total / active tenants). ObjectStoreVectorRecordStore auto-picks up.
+        // Multitenant footer cache: 256 MiB pool, 8 MiB floor, 128 MiB hard
+        // ceiling, work-conserving elasticity (0.9 watermark). An operator may
+        // supply a tier policy via PROXIMADB_CACHE_TIERS_PATH (generic JSON, no
+        // commercial data in OSS); the resolver maps tenant→tier through the
+        // process-global registry the auth layer stamps (set_tenant_tier). With
+        // no config it stays uniform elastic fair share.
+        let cache_total_bytes: u64 = 256 * 1024 * 1024;
+        let cache_budget = proximadb_cache::CacheBudget::new(cache_total_bytes, 128 * 1024 * 1024)
+            .with_floor(8 * 1024 * 1024)
+            .with_high_watermark(0.9);
+        let limits_resolver = std::env::var("PROXIMADB_CACHE_TIERS_PATH")
+            .ok()
+            .and_then(|path| std::fs::read_to_string(&path).ok())
+            .and_then(|json| proximadb_cache::TierPolicy::from_json(&json).ok())
+            .map(|policy| {
+                let policy = std::sync::Arc::new(policy);
+                let default_tier = policy.default_tier.clone();
+                let tenant_to_tier: std::sync::Arc<dyn Fn(&str) -> String + Send + Sync> =
+                    std::sync::Arc::new(move |t: &str| {
+                        crate::services::record_store::tenant_tier(t)
+                            .unwrap_or_else(|| default_tier.clone())
+                    });
+                policy.resolver(cache_total_bytes, tenant_to_tier)
+            });
+        if limits_resolver.is_some() {
+            info!("🎟️  SharedServices: cache tier policy loaded from PROXIMADB_CACHE_TIERS_PATH");
+        }
+        crate::services::record_store::init_segment_caches(cache_budget, limits_resolver);
+
+        // Publish per-tenant cache stats for observability/chargeback (the
+        // multitenant fairness + noisy-neighbor signal) on the consumption gauge.
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                let stats = crate::services::record_store::segment_cache_tenant_stats();
+                if !stats.is_empty() {
+                    crate::metrics::consumption_metrics::record_cache_tenant_stats(
+                        "footer", &stats,
+                    );
+                }
+            }
+        });
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 
@@ -1172,6 +1234,36 @@ impl SharedServices {
                 None
             };
 
+        // Cross-surface unification: build the canonical WAL-backed record store ONCE and
+        // WAL-recover it here, then share it across every surface (REST/gRPC DmlService below
+        // + pgwire direct-write path). One store ⇒ one authoritative relational state and one
+        // CDC change-feed, regardless of which protocol wrote the data.
+        let canonical_record_store: Option<
+            Arc<crate::services::record_store::DirectWalTableRecordStore>,
+        > = if let Some(appender) = canonical_wal_appender.clone() {
+            let store = Arc::new(
+                crate::services::record_store::DirectWalTableRecordStore::new_partitioned(
+                    appender.clone(),
+                ),
+            );
+            match appender.read_entries().await {
+                Ok(entries) => {
+                    if let Err(e) = store.replay_wal_entries(entries).await {
+                        warn!("SharedServices: canonical record-store WAL replay failed: {e}");
+                    }
+                }
+                Err(e) => {
+                    warn!("SharedServices: reading canonical WAL for shared store failed: {e}")
+                }
+            }
+            info!(
+                "✅ SharedServices: shared canonical record store built + recovered (unifies REST/gRPC + pgwire relational state)"
+            );
+            Some(store)
+        } else {
+            None
+        };
+
         // Create GraphOperationsService for native graph database operations
         // IMPORTANT: Pass the shared GraphCollectionService instance
         debug!(
@@ -1534,10 +1626,17 @@ impl SharedServices {
         // routing). EXPLAIN INSERT … SELECT queries arriving on the ExecuteSql RPC
         // are detected in execute_sql_v1 / the adapter and dispatched here instead
         // of the legacy SQL frontend.
-        let dml_service_for_grpc = Arc::new(DmlService::new(
-            catalog_manager.clone(),
-            vector_operations_service.clone(),
-        ));
+        // Use the SHARED canonical store so REST/gRPC relational DML/reads/EXPLAIN and the
+        // CDC change-feed operate on the SAME state pgwire writes to. Fall back to the
+        // vector-compatibility store only when no canonical store exists (test paths).
+        let dml_service_for_grpc = Arc::new(match canonical_record_store.clone() {
+            Some(store) => DmlService::with_direct_record_storage(
+                catalog_manager.clone(),
+                vector_operations_service.clone(),
+                store,
+            ),
+            None => DmlService::new(catalog_manager.clone(), vector_operations_service.clone()),
+        });
 
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
         // This enables SQL queries to flow through the facade when the
@@ -1747,6 +1846,7 @@ impl SharedServices {
 
         Ok((
             Self {
+                filesystem_factory,
                 catalog_manager,
                 segment_registry: Arc::new(crate::catalog::SegmentRegistry::new()),
                 collection_service: collection_service.clone(),
@@ -1831,6 +1931,7 @@ impl SharedServices {
                 // for pgwire direct writes — guaranteeing both consumers
                 // share the same next_sequence counter.
                 canonical_wal_appender,
+                canonical_record_store,
                 // TD-064 / LLD §5: per-collection recall-probe gate. Empty
                 // at startup; populated as the stats refresher / search path
                 // observe probe outcomes. Route-health surfaces per-scope
