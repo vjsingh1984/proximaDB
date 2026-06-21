@@ -29,6 +29,8 @@
 //! - `ListSchemas` - List all schemas for a collection
 //! - `EvolveSchema` - Evolve schema with compatibility checks
 
+pub mod graph_service;
 pub mod record_service;
 
+pub use graph_service::ProximaGraphServiceImpl;
 pub use record_service::ProximaRecordServiceImpl;

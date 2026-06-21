@@ -127,6 +127,7 @@ pub use management::{
     CollectionCharacteristics,
     FilterOperator,
     HybridQuery,
+    IndexLocationResolver,
     MetadataComplexity,
     MetadataFilter,
     MigrationStatus,

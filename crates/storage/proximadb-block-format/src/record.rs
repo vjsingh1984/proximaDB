@@ -266,10 +266,17 @@ impl FlatRow {
     /// Reconstruct a `ProximaRecord` from a decoded `FlatRow`.
     ///
     /// Embedding model IDs and user column keys are provided externally (from the collection schema).
+    /// Reconstruct a [`ProximaRecord`]. `tenant_ctx` is the segment's owning tenant
+    /// (resolved from the catalog/path); it is stamped onto `tenant_id` only when the
+    /// row carries no stored tenant — i.e. a segment written with the tenant column
+    /// dropped (catalog-resolution). Segments that still store the column keep their
+    /// own value, so this is mixed-read-safe (old and new segments both reconstruct
+    /// the correct tenant). Pass `None` to keep the stored value verbatim.
     pub fn into_record(
         self,
         embedding_model_ids: &[String],
         user_column_keys: &[String],
+        tenant_ctx: Option<&str>,
     ) -> anyhow::Result<ProximaRecord> {
         use proximadb_records::{EdgeShape, EmbeddingCell, LabelSet};
         use std::collections::HashMap;
@@ -327,9 +334,17 @@ impl FlatRow {
             })
             .collect();
 
+        // Catalog-resolution: a segment with the tenant column dropped yields an
+        // empty stored tenant; stamp it from the segment's owning tenant context.
+        let tenant_id = if self.tenant_id.is_empty() {
+            tenant_ctx.unwrap_or_default().to_string()
+        } else {
+            self.tenant_id
+        };
+
         Ok(ProximaRecord {
             oid: self.oid,
-            tenant_id: self.tenant_id,
+            tenant_id,
             created_at_ns: self.created_at_ns,
             updated_at_ns: self.updated_at_ns,
             valid_from_ns: self.valid_from_ns,
@@ -629,6 +644,68 @@ mod tests {
         let emb0 = embeddings[0].as_ref().unwrap();
         assert!((emb0[0] - 0.1f32).abs() < 1e-6);
         assert!((emb0[3] - 0.4f32).abs() < 1e-6);
+    }
+
+    /// Catalog-resolution: with the flag on, the per-row tenant stripe is dropped
+    /// and `into_record` stamps tenant from the segment's catalog/path context. The
+    /// block-header RLS hash is retained. With the flag off (default) the stripe is
+    /// present, used, and a context argument never overrides it (mixed-read safety).
+    #[test]
+    fn tenant_col_dropped_and_stamped_from_context() {
+        let rec = |oid: &str, ts: i64| ProximaRecord {
+            oid: oid.into(),
+            tenant_id: "tenant-A".into(),
+            created_at_ns: ts,
+            updated_at_ns: ts,
+            ..Default::default()
+        };
+
+        // Flag ON: the tenant stripe is omitted entirely.
+        let mut w = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 0)
+            .with_drop_tenant_col(true);
+        w.add_record(&rec("a", 1)).unwrap();
+        w.add_record(&rec("b", 2)).unwrap();
+        let block = w.flush().unwrap();
+        let reader = PaxBlockReader::open(&block).unwrap();
+        assert!(
+            !reader
+                .column_metas()
+                .iter()
+                .any(|m| m.column_id == col_id::TENANT_ID),
+            "tenant stripe must be dropped when the flag is on"
+        );
+        // The block-header RLS skip is still derived from the tenant.
+        assert!(
+            reader
+                .header()
+                .tenant_matches(crate::header::fnv1a_hash("tenant-A")),
+            "block-header tenant hash must survive dropping the column"
+        );
+        // Reading back stamps tenant from the catalog/path context.
+        for flat in FlatRow::from_block_reader(&reader).unwrap() {
+            let record = flat.into_record(&[], &[], Some("tenant-A")).unwrap();
+            assert_eq!(record.tenant_id, "tenant-A");
+        }
+
+        // Flag OFF (default): the stripe is present and used; a different context
+        // never overrides the stored value (old segments stay correct).
+        let mut w2 = PaxBlockWriter::new(BlockMode::Pax, BlockCompression::None, "c", 0, 0);
+        w2.add_record(&rec("a", 1)).unwrap();
+        let block2 = w2.flush().unwrap();
+        let reader2 = PaxBlockReader::open(&block2).unwrap();
+        assert!(
+            reader2
+                .column_metas()
+                .iter()
+                .any(|m| m.column_id == col_id::TENANT_ID),
+            "tenant stripe present by default"
+        );
+        let flat2 = FlatRow::from_block_reader(&reader2).unwrap().remove(0);
+        let record2 = flat2.into_record(&[], &[], Some("tenant-OTHER")).unwrap();
+        assert_eq!(
+            record2.tenant_id, "tenant-A",
+            "a stored tenant must not be overridden by context"
+        );
     }
 
     #[test]

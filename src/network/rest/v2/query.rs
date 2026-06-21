@@ -59,6 +59,12 @@ fn json_to_proxima_values(params: Option<Vec<serde_json::Value>>) -> Option<Vec<
 }
 
 /// POST /api/v2/query
+///
+/// The canonical unified query surface: UQL (unified multi-modal), federated SQL
+/// extensions, and AQL. This is NOT plain SQL-over-REST and is NOT deprecated:
+/// pgwire is the canonical *SQL* surface, but UQL/AQL are non-SQL languages that
+/// pgwire cannot serve, so this endpoint is their canonical home. (TD-121 retires
+/// only the plain-SQL gRPC `ExecuteQuery` path, not this UQL/federated surface.)
 pub async fn execute_query(
     State(state): State<AppState>,
     Json(request): Json<QueryRequest>,

@@ -138,6 +138,12 @@ class ProximaRecordServiceStub(object):
             response_deserializer=proximadb_dot_v2_dot_record__pb2.V2QueryResponse.FromString,
             _registered_method=True,
         )
+        self.GetRecord = channel.unary_unary(
+            "/proximadb.v2.ProximaRecordService/GetRecord",
+            request_serializer=proximadb_dot_v2_dot_record__pb2.GetRecordRequest.SerializeToString,
+            response_deserializer=proximadb_dot_v2_dot_record__pb2.GetRecordResponse.FromString,
+            _registered_method=True,
+        )
 
 
 class ProximaRecordServiceServicer(object):
@@ -244,6 +250,12 @@ class ProximaRecordServiceServicer(object):
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")
 
+    def GetRecord(self, request, context):
+        """Point record get-by-id (v2 parity with v1 VectorService.VectorGet)"""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details("Method not implemented!")
+        raise NotImplementedError("Method not implemented!")
+
 
 def add_ProximaRecordServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -326,6 +338,11 @@ def add_ProximaRecordServiceServicer_to_server(servicer, server):
             servicer.ExecuteQuery,
             request_deserializer=proximadb_dot_v2_dot_record__pb2.V2QueryRequest.FromString,
             response_serializer=proximadb_dot_v2_dot_record__pb2.V2QueryResponse.SerializeToString,
+        ),
+        "GetRecord": grpc.unary_unary_rpc_method_handler(
+            servicer.GetRecord,
+            request_deserializer=proximadb_dot_v2_dot_record__pb2.GetRecordRequest.FromString,
+            response_serializer=proximadb_dot_v2_dot_record__pb2.GetRecordResponse.SerializeToString,
         ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -813,6 +830,36 @@ class ProximaRecordService(object):
             "/proximadb.v2.ProximaRecordService/ExecuteQuery",
             proximadb_dot_v2_dot_record__pb2.V2QueryRequest.SerializeToString,
             proximadb_dot_v2_dot_record__pb2.V2QueryResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True,
+        )
+
+    @staticmethod
+    def GetRecord(
+        request,
+        target,
+        options=(),
+        channel_credentials=None,
+        call_credentials=None,
+        insecure=False,
+        compression=None,
+        wait_for_ready=None,
+        timeout=None,
+        metadata=None,
+    ):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            "/proximadb.v2.ProximaRecordService/GetRecord",
+            proximadb_dot_v2_dot_record__pb2.GetRecordRequest.SerializeToString,
+            proximadb_dot_v2_dot_record__pb2.GetRecordResponse.FromString,
             options,
             channel_credentials,
             insecure,

@@ -92,7 +92,7 @@ pub mod turboquant_bridge;
 // The canonical implementations live in `src/index/axis/indexes/`.
 
 // Re-export main types for easier access
-pub use axis::{AxisConfig, AxisManager};
+pub use axis::{AxisConfig, AxisManager, IndexLocationResolver};
 pub use config::{
     IndexUpdateMode, RuntimeHnswConfig, RuntimeIndexConfig, RuntimeIvfConfig, RuntimeLshConfig,
 };

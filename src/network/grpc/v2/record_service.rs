@@ -24,7 +24,7 @@ use tracing::{debug, error, info, trace, warn};
 
 use crate::api_handlers::{
     RichFilterCondition, RichFilterOperator, RichRecordBatchRequest, RichRecordDeleteBatchRequest,
-    RichSearchRequest, RichSearchResponse, UnifiedHandlers,
+    RichRecordGetRequest, RichSearchRequest, RichSearchResponse, UnifiedHandlers,
 };
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v1::{CollectionOperation, CollectionRequest};
@@ -1755,6 +1755,44 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             } else {
                 Some(cfg.description.clone())
             },
+            index_configs: cfg
+                .index_specs
+                .iter()
+                .map(|s| crate::proto::proximadb_v1::IndexConfig {
+                    index_name: if s.algorithm.is_empty() {
+                        "default".to_string()
+                    } else {
+                        s.algorithm.clone()
+                    },
+                    algorithm: indexing_algorithm_from_str(&s.algorithm),
+                    hnsw_config: s
+                        .hnsw
+                        .as_ref()
+                        .map(|h| crate::proto::proximadb_v1::HnswConfig {
+                            m: h.m,
+                            ef_construction: h.ef_construction,
+                            ef_search: h.ef_search,
+                            ..Default::default()
+                        }),
+                    ivf_config: s
+                        .ivf
+                        .as_ref()
+                        .map(|i| crate::proto::proximadb_v1::IvfConfig {
+                            n_lists: i.n_lists,
+                            n_probe: i.n_probe,
+                            ..Default::default()
+                        }),
+                    is_primary: Some(s.is_primary),
+                    ..Default::default()
+                })
+                .collect(),
+            quantization: cfg.quantization.as_ref().map(|q| {
+                crate::proto::proximadb_v1::QuantizationConfig {
+                    enabled: Some(q.enabled),
+                    strategy: Some(quantization_strategy_from_str(&q.strategy)),
+                    ..Default::default()
+                }
+            }),
             ..Default::default()
         };
 
@@ -1884,6 +1922,51 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             execution_time_ms: resp.execution_time_ms,
         }))
     }
+
+    // ---- Point record get-by-id (v2 parity with v1 VectorService.VectorGet) ----
+
+    async fn get_record(
+        &self,
+        request: Request<proximadb_v2::GetRecordRequest>,
+    ) -> Result<Response<proximadb_v2::GetRecordResponse>, Status> {
+        let tenant_id = Self::extract_tenant_id(&request);
+        let req = request.into_inner();
+        let result = self
+            .request_handlers
+            .handle_record_get_for_tenant(
+                RichRecordGetRequest {
+                    collection_id: req.collection_id,
+                    record_id: req.id,
+                    include_vector: req.include_vector,
+                    include_props: true,
+                },
+                tenant_id.as_deref(),
+            )
+            .await
+            .map_err(|e| Status::internal(format!("GetRecord failed: {e}")))?;
+        match result {
+            Some(record) => {
+                let props = record
+                    .props
+                    .iter()
+                    .map(|(k, v)| (k.clone(), proxima_value_to_typed_value(v)))
+                    .collect();
+                Ok(Response::new(proximadb_v2::GetRecordResponse {
+                    found: true,
+                    record: Some(proximadb_v2::ProximaRecord {
+                        id: record.id,
+                        vector: record.vector,
+                        props,
+                        ..Default::default()
+                    }),
+                }))
+            }
+            None => Ok(Response::new(proximadb_v2::GetRecordResponse {
+                found: false,
+                record: None,
+            })),
+        }
+    }
 }
 
 // ---- V2 <-> v1 mapping helpers for the collection + query RPCs ----
@@ -1896,6 +1979,30 @@ fn distance_metric_from_str(s: &str) -> i32 {
 fn storage_engine_from_str(s: &str) -> i32 {
     crate::proto::proximadb_v1::StorageEngine::from_str_name(&s.to_ascii_uppercase())
         .unwrap_or(crate::proto::proximadb_v1::StorageEngine::Sst) as i32
+}
+
+fn indexing_algorithm_from_str(s: &str) -> i32 {
+    crate::proto::proximadb_v1::IndexingAlgorithm::from_str_name(&s.to_ascii_uppercase())
+        .unwrap_or(crate::proto::proximadb_v1::IndexingAlgorithm::Hnsw) as i32
+}
+
+fn quantization_strategy_from_str(s: &str) -> i32 {
+    crate::proto::proximadb_v1::quantization_config::Strategy::from_str_name(
+        &s.to_ascii_uppercase(),
+    )
+    .unwrap_or(crate::proto::proximadb_v1::quantization_config::Strategy::SmartDefaults) as i32
+}
+
+fn indexing_algorithm_to_str(v: i32) -> String {
+    crate::proto::proximadb_v1::IndexingAlgorithm::try_from(v)
+        .map(|a| a.as_str_name().to_ascii_lowercase())
+        .unwrap_or_default()
+}
+
+fn quantization_strategy_to_str(v: Option<i32>) -> String {
+    v.and_then(|s| crate::proto::proximadb_v1::quantization_config::Strategy::try_from(s).ok())
+        .map(|s| s.as_str_name().to_ascii_lowercase())
+        .unwrap_or_default()
 }
 
 fn collection_to_v2(c: crate::proto::proximadb_v1::Collection) -> V2Collection {
@@ -1919,6 +2026,29 @@ fn collection_to_v2(c: crate::proto::proximadb_v1::Collection) -> V2Collection {
             storage_engine,
             filterable_columns: cfg.filterable_columns.into_iter().map(|f| f.name).collect(),
             description: cfg.description.unwrap_or_default(),
+            index_specs: cfg
+                .index_configs
+                .into_iter()
+                .map(|ic| proximadb_v2::V2IndexSpec {
+                    algorithm: indexing_algorithm_to_str(ic.algorithm),
+                    hnsw: ic.hnsw_config.map(|h| proximadb_v2::V2HnswConfig {
+                        m: h.m,
+                        ef_construction: h.ef_construction,
+                        ef_search: h.ef_search,
+                    }),
+                    ivf: ic.ivf_config.map(|i| proximadb_v2::V2IvfConfig {
+                        n_lists: i.n_lists,
+                        n_probe: i.n_probe,
+                    }),
+                    is_primary: ic.is_primary.unwrap_or(false),
+                })
+                .collect(),
+            quantization: cfg
+                .quantization
+                .map(|q| proximadb_v2::V2QuantizationConfig {
+                    enabled: q.enabled.unwrap_or(false),
+                    strategy: quantization_strategy_to_str(q.strategy),
+                }),
         }),
         created_at: c.created_at,
         updated_at: c.updated_at,
