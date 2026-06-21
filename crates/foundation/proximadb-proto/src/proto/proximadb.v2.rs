@@ -862,6 +862,23 @@ pub struct V2QueryResponse {
     #[prost(uint64, tag = "4")]
     pub execution_time_ms: u64,
 }
+/// Point record get-by-id (v2 parity with v1 VectorService.VectorGet).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetRecordRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub include_vector: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetRecordResponse {
+    #[prost(bool, tag = "1")]
+    pub found: bool,
+    #[prost(message, optional, tag = "2")]
+    pub record: ::core::option::Option<ProximaRecord>,
+}
 /// # =============================================================================
 /// ColumnDataType: Rich data type enum for ProximaRecord columns
 ///
@@ -1968,6 +1985,33 @@ pub mod proxima_record_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        /// Point record get-by-id (v2 parity with v1 VectorService.VectorGet)
+        pub async fn get_record(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetRecordRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetRecordResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaRecordService/GetRecord",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaRecordService", "GetRecord"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -2108,6 +2152,14 @@ pub mod proxima_record_service_server {
             &self,
             request: tonic::Request<super::V2QueryRequest>,
         ) -> std::result::Result<tonic::Response<super::V2QueryResponse>, tonic::Status>;
+        /// Point record get-by-id (v2 parity with v1 VectorService.VectorGet)
+        async fn get_record(
+            &self,
+            request: tonic::Request<super::GetRecordRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetRecordResponse>,
+            tonic::Status,
+        >;
     }
     /// # =============================================================================
     /// gRPC Service definition
@@ -2924,6 +2976,52 @@ pub mod proxima_record_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = ExecuteQuerySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaRecordService/GetRecord" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetRecordSvc<T: ProximaRecordService>(pub Arc<T>);
+                    impl<
+                        T: ProximaRecordService,
+                    > tonic::server::UnaryService<super::GetRecordRequest>
+                    for GetRecordSvc<T> {
+                        type Response = super::GetRecordResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetRecordRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaRecordService>::get_record(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetRecordSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
