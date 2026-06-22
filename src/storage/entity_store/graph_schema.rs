@@ -34,10 +34,8 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
-use crate::graph::{Edge, Node, PropertyValue};
-use crate::proto::proximadb_v1::{
-    EmbeddingVersion, Entity, Relation, SqlValue, property_value, sql_value,
-};
+use crate::graph::{Edge, Node, PropertyValue, property_value};
+use crate::proto::proximadb_v1::{EmbeddingVersion, Entity, Relation, SqlValue, sql_value};
 
 /// Special property keys for storing SKS metadata in Orion nodes
 const TYPED_METADATA_KEY: &str = "__typed_metadata";
@@ -150,7 +148,7 @@ impl EntityNodeMapper {
             id: entity.id.clone(),
             labels: vec![entity.collection_id.clone()],
             properties,
-            embedding: entity.embeddings.first().cloned(),
+            embedding: entity.embeddings.first().cloned().map(Into::into),
             created_at_ms: chrono::Utc::now().timestamp_millis(),
             updated_at_ms: chrono::Utc::now().timestamp_millis(),
         })
@@ -174,7 +172,7 @@ impl EntityNodeMapper {
         // Start with node.embedding if present
         let mut embeddings = Vec::new();
         if let Some(embedding) = &node.embedding {
-            embeddings.push(embedding.clone());
+            embeddings.push(embedding.clone().into());
         }
 
         // Add additional embeddings if stored in properties

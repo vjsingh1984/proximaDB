@@ -2250,7 +2250,7 @@ mod tests {
             id: "A".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::proto::proximadb_v1::EmbeddingVersion {
+            embedding: Some(crate::graph::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![0.0, 0.0, 0.0],
@@ -2267,7 +2267,7 @@ mod tests {
             id: "B".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::proto::proximadb_v1::EmbeddingVersion {
+            embedding: Some(crate::graph::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![1.0, 0.0, 0.0],
@@ -2284,7 +2284,7 @@ mod tests {
             id: "C".to_string(),
             labels: vec!["Node".to_string()],
             properties: std::collections::HashMap::new(),
-            embedding: Some(crate::proto::proximadb_v1::EmbeddingVersion {
+            embedding: Some(crate::graph::EmbeddingVersion {
                 model_id: "test".to_string(),
                 model_version: "1".to_string(),
                 vector: vec![2.0, 0.0, 0.0],
@@ -2367,8 +2367,9 @@ mod tests {
     #[tokio::test]
     async fn test_vector_guided_astar_pure_graph() {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::{DistanceMetric, EmbeddingVersion};
+        use crate::proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -2493,8 +2494,9 @@ mod tests {
     #[tokio::test]
     async fn test_vector_guided_astar_balanced_blend() {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::{DistanceMetric, EmbeddingVersion};
+        use crate::proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -2673,8 +2675,9 @@ mod tests {
     #[tokio::test]
     async fn test_vector_guided_astar_alpha_clamping() {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::{DistanceMetric, EmbeddingVersion};
+        use crate::proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 
@@ -2780,8 +2783,9 @@ mod tests {
     #[tokio::test]
     async fn test_vector_guided_astar_no_path() {
         use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
+        use crate::graph::EmbeddingVersion;
         use crate::graph::engines::GraphEngine;
-        use crate::proto::proximadb_v1::{DistanceMetric, EmbeddingVersion};
+        use crate::proto::proximadb_v1::DistanceMetric;
 
         let engine = OrionGraphEngine::new();
 

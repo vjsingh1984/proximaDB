@@ -1454,8 +1454,8 @@ impl UnifiedHandlers {
             request.combination_strategy
         );
 
-        let mut nodes: Vec<crate::graph::Node> = Vec::new();
-        let mut edges: Vec<crate::graph::Edge> = Vec::new();
+        let mut nodes: Vec<crate::proto::proximadb_v1::Node> = Vec::new();
+        let mut edges: Vec<crate::proto::proximadb_v1::Edge> = Vec::new();
         let mut paths: Vec<crate::proto::proximadb_v1::GraphPath> = Vec::new();
         let mut vector_results: Vec<crate::proto::proximadb_v1::SearchVectorRecord> = Vec::new();
 
@@ -1477,7 +1477,7 @@ impl UnifiedHandlers {
                     // 2. Perform graph traversal from these nodes
                     if !start_node_ids.is_empty() {
                         let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
-                        let traversal_request = crate::proto::proximadb_v1::TraversalRequest {
+                        let traversal_request = crate::graph::TraversalRequest {
                             graph_id: "default".to_string(), // Deferred: Extract from request or pass as parameter
                             start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
                             max_depth: if graph_req.max_depth == 0 {
@@ -1487,7 +1487,7 @@ impl UnifiedHandlers {
                             },
                             edge_types: graph_req.edge_types,
                             node_labels: graph_req.node_labels,
-                            filters: graph_req.filters,
+                            filters: graph_req.filters.into_iter().map(Into::into).collect(),
                             algorithm: if graph_req.algorithm == 0 {
                                 1
                             } else {
@@ -1502,9 +1502,9 @@ impl UnifiedHandlers {
                             .graph_operations_service
                             .traverse("default", traversal_request)
                             .await?;
-                        nodes.extend(traversal_response.nodes);
-                        edges.extend(traversal_response.edges);
-                        paths.extend(traversal_response.paths);
+                        nodes.extend(traversal_response.nodes.into_iter().map(Into::into));
+                        edges.extend(traversal_response.edges.into_iter().map(Into::into));
+                        paths.extend(traversal_response.paths.into_iter().map(Into::into));
                     }
                 }
             }

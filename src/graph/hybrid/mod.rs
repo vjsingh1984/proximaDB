@@ -1123,23 +1123,20 @@ impl HybridQueryEngine {
     }
 
     /// Convert PropertyValue to JSON
-    fn property_value_to_json(
-        &self,
-        value: &crate::proto::proximadb_v1::PropertyValue,
-    ) -> serde_json::Value {
+    fn property_value_to_json(&self, value: &crate::graph::PropertyValue) -> serde_json::Value {
         match &value.value {
-            Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
+            Some(crate::graph::model::property_value::Value::StringValue(s)) => {
                 serde_json::Value::String(s.clone())
             }
-            Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
+            Some(crate::graph::model::property_value::Value::IntValue(i)) => {
                 serde_json::Value::Number(serde_json::Number::from(*i))
             }
-            Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
+            Some(crate::graph::model::property_value::Value::DoubleValue(d)) => {
                 serde_json::Value::Number(
                     serde_json::Number::from_f64(*d).unwrap_or_else(|| serde_json::Number::from(0)),
                 )
             }
-            Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
+            Some(crate::graph::model::property_value::Value::BoolValue(b)) => {
                 serde_json::Value::Bool(*b)
             }
             _ => serde_json::Value::Null,
@@ -1590,7 +1587,7 @@ impl HybridQueryEngine {
     /// Convert graph node properties to metadata HashMap
     fn convert_node_properties_to_metadata(
         &self,
-        properties: &HashMap<String, crate::proto::proximadb_v1::PropertyValue>,
+        properties: &HashMap<String, crate::graph::PropertyValue>,
     ) -> HashMap<String, String> {
         let mut metadata = HashMap::new();
 
@@ -1601,29 +1598,21 @@ impl HybridQueryEngine {
             }
 
             let value_str = match &prop_value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => {
-                    s.clone()
-                }
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => {
-                    i.to_string()
-                }
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                    d.to_string()
-                }
-                Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => {
-                    b.to_string()
-                }
-                Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(_)) => {
+                Some(crate::graph::model::property_value::Value::StringValue(s)) => s.clone(),
+                Some(crate::graph::model::property_value::Value::IntValue(i)) => i.to_string(),
+                Some(crate::graph::model::property_value::Value::DoubleValue(d)) => d.to_string(),
+                Some(crate::graph::model::property_value::Value::BoolValue(b)) => b.to_string(),
+                Some(crate::graph::model::property_value::Value::BytesValue(_)) => {
                     // Skip binary data in metadata conversion
                     continue;
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => {
+                Some(crate::graph::model::property_value::Value::ArrayValue(_)) => {
                     "array".to_string()
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
+                Some(crate::graph::model::property_value::Value::ObjectValue(_)) => {
                     "object".to_string()
                 }
-                Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
+                Some(crate::graph::model::property_value::Value::VectorValue(_)) => {
                     "vector".to_string()
                 }
                 None => "null".to_string(),

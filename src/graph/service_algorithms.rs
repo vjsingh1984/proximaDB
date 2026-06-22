@@ -441,7 +441,8 @@ impl GraphOperationsService {
 mod tests {
     use super::*;
     use crate::graph::service::GraphOperationsService;
-    use crate::proto::proximadb_v1::{CreateGraphRequest, Edge as ProtoEdge, Node as ProtoNode};
+    use crate::graph::{Edge as ProtoEdge, Node as ProtoNode};
+    use crate::proto::proximadb_v1::CreateGraphRequest;
     use std::collections::HashMap;
 
     async fn create_test_graph(service: &GraphOperationsService) -> String {

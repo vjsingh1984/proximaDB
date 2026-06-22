@@ -20,7 +20,8 @@
 //! verifying that the GraphCollectionService and GraphOperationsService are properly wired.
 
 use proximadb::graph::GraphOperationsService;
-use proximadb::proto::proximadb_v1::{CreateGraphRequest, Node, PropertyValue};
+use proximadb::graph::{Node, PropertyValue};
+use proximadb::proto::proximadb_v1::CreateGraphRequest;
 use proximadb::services::GraphCollectionService;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -66,11 +67,9 @@ async fn test_graph_collection_service_isolation_bug() {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(
-                proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                    "Alice".to_string(),
-                ),
-            ),
+            value: Some(proximadb::graph::property_value::Value::StringValue(
+                "Alice".to_string(),
+            )),
         },
     );
 
@@ -137,11 +136,9 @@ async fn test_graph_collection_service_shared_correctly() {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(
-                proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                    "Alice".to_string(),
-                ),
-            ),
+            value: Some(proximadb::graph::property_value::Value::StringValue(
+                "Alice".to_string(),
+            )),
         },
     );
 
@@ -211,7 +208,7 @@ async fn test_end_to_end_graph_operations() {
     assert_eq!(bob_node.id, "bob");
 
     // 3. Query nodes
-    let query = proximadb::proto::proximadb_v1::NodeQuery {
+    let query = proximadb::graph::NodeQuery {
         graph_id: "social_network".to_string(),
         labels: vec!["Person".to_string()],
         filters: vec![],
@@ -250,11 +247,9 @@ fn create_person_node(id: &str, name: &str) -> Node {
     properties.insert(
         "name".to_string(),
         PropertyValue {
-            value: Some(
-                proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                    name.to_string(),
-                ),
-            ),
+            value: Some(proximadb::graph::property_value::Value::StringValue(
+                name.to_string(),
+            )),
         },
     );
 

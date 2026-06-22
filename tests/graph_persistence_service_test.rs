@@ -4,8 +4,11 @@
 //! Tests actual WAL writing, recovery, and data integrity across engine restart.
 
 use proximadb::{
-    graph::{Edge, Node, PropertyValue, engines::GraphEngine, service::GraphOperationsService},
-    proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig, property_value::Value},
+    graph::{
+        Edge, Node, PropertyValue, engines::GraphEngine, property_value::Value,
+        service::GraphOperationsService,
+    },
+    proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig},
 };
 use std::collections::HashMap;
 use std::sync::Arc;

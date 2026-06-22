@@ -39,6 +39,7 @@ use tonic::{Request, Response, Status};
 use tracing::{debug, error};
 
 use crate::api_handlers::UnifiedHandlers;
+use crate::graph::model as mg;
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v1 as pv1;
 use crate::proto::proximadb_v2 as pv2;
@@ -94,11 +95,11 @@ impl ProximaGraphServiceImpl {
 // ============================================================================
 
 mod conv {
-    use super::{pv1, pv2};
+    use super::{mg, pv2};
 
     /// v2 property value -> internal property value.
-    pub(super) fn property_value_to_v1(p: pv2::GraphPropertyValue) -> pv1::PropertyValue {
-        use pv1::property_value::Value as V1;
+    pub(super) fn property_value_to_v1(p: pv2::GraphPropertyValue) -> mg::PropertyValue {
+        use mg::property_value::Value as V1;
         use pv2::graph_property_value::Value as V2;
         let value = p.value.map(|v| match v {
             V2::StringValue(s) => V1::StringValue(s),
@@ -106,10 +107,10 @@ mod conv {
             V2::DoubleValue(d) => V1::DoubleValue(d),
             V2::BoolValue(b) => V1::BoolValue(b),
             V2::BytesValue(b) => V1::BytesValue(b),
-            V2::ArrayValue(a) => V1::ArrayValue(pv1::PropertyArray {
+            V2::ArrayValue(a) => V1::ArrayValue(mg::PropertyArray {
                 values: a.values.into_iter().map(property_value_to_v1).collect(),
             }),
-            V2::MapValue(m) => V1::ObjectValue(pv1::PropertyObject {
+            V2::MapValue(m) => V1::ObjectValue(mg::PropertyObject {
                 fields: m
                     .fields
                     .into_iter()
@@ -117,15 +118,15 @@ mod conv {
                     .collect(),
             }),
         });
-        pv1::PropertyValue { value }
+        mg::PropertyValue { value }
     }
 
     /// Internal property value -> v2 property value.
     ///
     /// Vector-valued properties have no v2 representation (embeddings live on the
     /// dedicated `embedding` field) and map to an empty value.
-    pub(super) fn property_value_to_v2(p: pv1::PropertyValue) -> pv2::GraphPropertyValue {
-        use pv1::property_value::Value as V1;
+    pub(super) fn property_value_to_v2(p: mg::PropertyValue) -> pv2::GraphPropertyValue {
+        use mg::property_value::Value as V1;
         use pv2::graph_property_value::Value as V2;
         let value = p.value.and_then(|v| match v {
             V1::StringValue(s) => Some(V2::StringValue(s)),
@@ -148,8 +149,8 @@ mod conv {
         pv2::GraphPropertyValue { value }
     }
 
-    fn embedding_to_v1(e: pv2::GraphEmbedding) -> pv1::EmbeddingVersion {
-        pv1::EmbeddingVersion {
+    fn embedding_to_v1(e: pv2::GraphEmbedding) -> mg::EmbeddingVersion {
+        mg::EmbeddingVersion {
             model_id: e.model_id,
             model_version: e.model_version,
             vector: e.vector,
@@ -160,7 +161,7 @@ mod conv {
         }
     }
 
-    fn embedding_to_v2(e: pv1::EmbeddingVersion) -> pv2::GraphEmbedding {
+    fn embedding_to_v2(e: mg::EmbeddingVersion) -> pv2::GraphEmbedding {
         pv2::GraphEmbedding {
             vector: e.vector,
             dimension: e.dimension,
@@ -169,8 +170,8 @@ mod conv {
         }
     }
 
-    pub(super) fn node_to_v1(n: pv2::GraphNode) -> pv1::Node {
-        pv1::Node {
+    pub(super) fn node_to_v1(n: pv2::GraphNode) -> mg::Node {
+        mg::Node {
             id: n.id,
             labels: n.labels,
             properties: n
@@ -184,7 +185,7 @@ mod conv {
         }
     }
 
-    pub(super) fn node_to_v2(n: pv1::Node) -> pv2::GraphNode {
+    pub(super) fn node_to_v2(n: mg::Node) -> pv2::GraphNode {
         pv2::GraphNode {
             id: n.id,
             labels: n.labels,
@@ -199,8 +200,8 @@ mod conv {
         }
     }
 
-    pub(super) fn edge_to_v1(e: pv2::GraphEdge) -> pv1::Edge {
-        pv1::Edge {
+    pub(super) fn edge_to_v1(e: pv2::GraphEdge) -> mg::Edge {
+        mg::Edge {
             id: e.id,
             from_node_id: e.from_node_id,
             to_node_id: e.to_node_id,
@@ -216,7 +217,7 @@ mod conv {
         }
     }
 
-    pub(super) fn edge_to_v2(e: pv1::Edge) -> pv2::GraphEdge {
+    pub(super) fn edge_to_v2(e: mg::Edge) -> pv2::GraphEdge {
         pv2::GraphEdge {
             id: e.id,
             from_node_id: e.from_node_id,
@@ -235,15 +236,15 @@ mod conv {
 
     /// v2 property filter -> internal. Operator ordinals are aligned by design,
     /// so the enum is a direct numeric carry-over.
-    pub(super) fn filter_to_v1(f: pv2::GraphPropertyFilter) -> pv1::PropertyFilter {
-        pv1::PropertyFilter {
+    pub(super) fn filter_to_v1(f: pv2::GraphPropertyFilter) -> mg::PropertyFilter {
+        mg::PropertyFilter {
             key: f.key,
             operator: f.operator,
             value: f.value.map(property_value_to_v1),
         }
     }
 
-    pub(super) fn stats_to_v2(s: pv1::GraphStats) -> pv2::GraphStats {
+    pub(super) fn stats_to_v2(s: mg::GraphStats) -> pv2::GraphStats {
         pv2::GraphStats {
             total_nodes: s.total_nodes,
             total_edges: s.total_edges,
@@ -271,7 +272,7 @@ mod conv {
         }
     }
 
-    pub(super) fn traversal_stats_to_v2(s: pv1::TraversalStats) -> pv2::GraphTraversalStats {
+    pub(super) fn traversal_stats_to_v2(s: mg::TraversalStats) -> pv2::GraphTraversalStats {
         pv2::GraphTraversalStats {
             nodes_visited: s.nodes_visited,
             edges_traversed: s.edges_traversed,
@@ -285,8 +286,8 @@ mod conv {
     pub(super) fn traversal_request_to_v1(
         graph_id: String,
         req: pv2::TraverseGraphRequest,
-    ) -> pv1::TraversalRequest {
-        pv1::TraversalRequest {
+    ) -> mg::TraversalRequest {
+        mg::TraversalRequest {
             graph_id,
             start_node_id: req.start_node_id,
             max_depth: req.max_depth,
@@ -301,9 +302,9 @@ mod conv {
     }
 
     /// A v1 `GraphPath` (entity sequence) -> v2 `GraphPath` (node-id sequence).
-    pub(super) fn path_to_v2(p: pv1::GraphPath) -> pv2::GraphPath {
+    pub(super) fn path_to_v2(p: mg::GraphPath) -> pv2::GraphPath {
         pv2::GraphPath {
-            node_ids: p.entities.into_iter().map(|e| e.id).collect(),
+            node_ids: p.node_ids,
         }
     }
 }
@@ -520,7 +521,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
             req.labels
         );
         let offset = resolve_offset(req.offset, &req.continuation_token);
-        let query = pv1::NodeQuery {
+        let query = mg::NodeQuery {
             graph_id: graph_id.clone(),
             labels: req.labels,
             filters: req.filters.into_iter().map(conv::filter_to_v1).collect(),
@@ -552,7 +553,7 @@ impl ProximaGraphService for ProximaGraphServiceImpl {
         let req = request.into_inner();
         debug!("v2 gRPC QueryEdges graph={graph_id}");
         let offset = resolve_offset(req.offset, &req.continuation_token);
-        let query = pv1::EdgeQuery {
+        let query = mg::EdgeQuery {
             graph_id: graph_id.clone(),
             from_node_id: req.from_node_id,
             to_node_id: req.to_node_id,

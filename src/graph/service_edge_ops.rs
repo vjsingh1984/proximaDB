@@ -4,10 +4,10 @@
 //! querying, keeping the main service lean and focused.
 
 use super::Result;
+use crate::graph::EdgeQuery;
 use crate::graph::adjacency_projection::edge_to_canonical_record;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId};
-use crate::proto::proximadb_v1::EdgeQuery;
 use proximadb_graph::projection::GraphTopologyProjection;
 use proximadb_graph::record::GraphNodeKey;
 use std::sync::Arc;
@@ -218,7 +218,7 @@ impl super::GraphOperationsService {
         if !query.filters.is_empty() {
             results.retain(|edge| {
                 for filter in &query.filters {
-                    use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+                    use crate::graph::PropertyFilterOperator as Op;
                     let prop_val_opt = edge.properties.get(&filter.key);
                     let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
@@ -474,7 +474,7 @@ mod tests {
 
     #[tokio::test]
     async fn endpoint_bound_query_served_from_adjacency_projection() {
-        use crate::proto::proximadb_v1::EdgeQuery;
+        use crate::graph::EdgeQuery;
 
         let graph_id = format!("adj_query_test_{}", std::process::id());
         let graph_id = graph_id.as_str();
@@ -584,7 +584,7 @@ mod tests {
 
     #[tokio::test]
     async fn endpoint_bound_query_uses_fresh_csr_and_falls_back_when_stale() {
-        use crate::proto::proximadb_v1::EdgeQuery;
+        use crate::graph::EdgeQuery;
 
         let graph_id = format!("csr_query_test_{}", std::process::id());
         let graph_id = graph_id.as_str();

@@ -1637,7 +1637,7 @@ impl GraphOperationsService {
 
         // Use property indexes / ordered indexes for prefiltering
         for filter in &query.filters {
-            use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+            use crate::graph::PropertyFilterOperator as Op;
             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                 Op::Equals => {
                     // Look up index for this property
@@ -1793,7 +1793,7 @@ impl GraphOperationsService {
         'outer: for node_id in candidates {
             if let Some(node_arc) = engine.get_node(&node_id)? {
                 for filter in &query.filters {
-                    use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+                    use crate::graph::PropertyFilterOperator as Op;
                     let prop_val_opt = node_arc.properties.get(&filter.key);
                     let filter_value = match &filter.value {
                         Some(v) => v,
@@ -1879,7 +1879,7 @@ impl GraphOperationsService {
         // If neither from nor to specified and filters exist, prefilter by edge property indexes
         if query.from_node_id.is_none() && query.to_node_id.is_none() && (!query.filters.is_empty())
         {
-            use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+            use crate::graph::PropertyFilterOperator as Op;
             let mut candidate_ids: Option<std::collections::HashSet<EdgeId>> = None;
             for filter in &query.filters {
                 // Only handle equality and range/prefix on stringified keys
@@ -2050,7 +2050,7 @@ impl GraphOperationsService {
         if !query.filters.is_empty() {
             results.retain(|edge| {
                 for filter in &query.filters {
-                    use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+                    use crate::graph::PropertyFilterOperator as Op;
 
                     // Safely get filter value - if missing, filter fails (edge excluded)
                     let Some(filter_val) = filter.value.as_ref() else {
@@ -2097,10 +2097,7 @@ impl GraphOperationsService {
     // index_key_for_value moved to helpers
 
     /// Get graph statistics
-    pub async fn get_stats(
-        &self,
-        graph_id: &str,
-    ) -> Result<crate::proto::proximadb_v1::GraphStats> {
+    pub async fn get_stats(&self, graph_id: &str) -> Result<crate::graph::GraphStats> {
         if !self.graph_enabled() {
             return Err(ProximaDBError::InvalidInput(
                 "Graph operations disabled in current mode".to_string(),
@@ -2120,19 +2117,19 @@ impl GraphOperationsService {
             }
         }
 
-        let label_stats: Vec<crate::proto::proximadb_v1::LabelStats> = label_counts
+        let label_stats: Vec<crate::graph::LabelStats> = label_counts
             .into_iter()
-            .map(|(label, count)| crate::proto::proximadb_v1::LabelStats { label, count })
+            .map(|(label, count)| crate::graph::LabelStats { label, count })
             .collect();
 
-        let stats = crate::proto::proximadb_v1::GraphStats {
+        let stats = crate::graph::GraphStats {
             total_nodes: engine.node_count().unwrap_or(0) as u64,
             total_edges: self.stats_edges.load(std::sync::atomic::Ordering::Relaxed),
             label_stats,
             edge_type_stats: self
                 .edge_type_counts
                 .iter()
-                .map(|entry| crate::proto::proximadb_v1::EdgeTypeStats {
+                .map(|entry| crate::graph::EdgeTypeStats {
                     edge_type: entry.key().clone(),
                     count: entry.value().load(std::sync::atomic::Ordering::Relaxed),
                 })
@@ -2155,7 +2152,7 @@ impl GraphOperationsService {
     fn convert_properties_to_proto(
         &self,
         properties: &std::collections::HashMap<String, crate::graph::PropertyValue>,
-    ) -> std::collections::HashMap<String, crate::proto::proximadb_v1::PropertyValue> {
+    ) -> std::collections::HashMap<String, crate::graph::PropertyValue> {
         properties
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
@@ -2447,10 +2444,10 @@ impl GraphOperationsService {
     /* moved to service_schema_validation.rs
     fn validate_property_value_type(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         schema: &crate::proto::proximadb_v1::PropertySchema,
     ) -> Result<()> {
-        use crate::proto::proximadb_v1::property_value::Value as PV;
+        use crate::graph::model::property_value::Value as PV;
         use crate::proto::proximadb_v1::PropertyType as PT;
         match (schema.r#type, &value.value) {
             (x, Some(PV::StringValue(_))) if x == PT::String as i32 => Ok(()),
@@ -2468,7 +2465,7 @@ impl GraphOperationsService {
 
     fn validate_property_constraints(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         constraints: &Vec<crate::proto::proximadb_v1::PropertyConstraint>,
     ) -> Result<()> {
         for c in constraints {
@@ -2479,10 +2476,10 @@ impl GraphOperationsService {
 
     fn validate_property_constraint_one(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         c: &crate::proto::proximadb_v1::PropertyConstraint,
     ) -> Result<()> {
-        use crate::proto::proximadb_v1::property_value::Value as PV;
+        use crate::graph::model::property_value::Value as PV;
         if let Some(ref sc) = c.constraint.as_ref() {
             match sc {
                 crate::proto::proximadb_v1::property_constraint::Constraint::StringConstraint(sc) => {
@@ -2652,16 +2649,14 @@ mod tests {
 
     fn pv_str(s: &str) -> PropertyValue {
         PropertyValue {
-            value: Some(
-                crate::proto::proximadb_v1::property_value::Value::StringValue(s.to_string()),
-            ),
+            value: Some(crate::graph::model::property_value::Value::StringValue(
+                s.to_string(),
+            )),
         }
     }
     fn pv_int(i: i64) -> PropertyValue {
         PropertyValue {
-            value: Some(crate::proto::proximadb_v1::property_value::Value::IntValue(
-                i,
-            )),
+            value: Some(crate::graph::model::property_value::Value::IntValue(i)),
         }
     }
 
@@ -2714,7 +2709,7 @@ mod tests {
         // Wrong type (string) should fail
         let mut n1_props = std::collections::HashMap::new();
         n1_props.insert("age".to_string(), pv_str("twenty"));
-        let n1 = crate::proto::proximadb_v1::Node {
+        let n1 = crate::graph::Node {
             id: "n1".to_string(),
             labels: vec!["Person".to_string()],
             properties: n1_props,
@@ -2727,7 +2722,7 @@ mod tests {
         // Out of range should fail
         let mut n2_props = std::collections::HashMap::new();
         n2_props.insert("age".to_string(), pv_int(15));
-        let n2 = crate::proto::proximadb_v1::Node {
+        let n2 = crate::graph::Node {
             id: "n2".to_string(),
             labels: vec!["Person".to_string()],
             properties: n2_props,
@@ -2740,7 +2735,7 @@ mod tests {
         // Valid should succeed
         let mut n3_props = std::collections::HashMap::new();
         n3_props.insert("age".to_string(), pv_int(25));
-        let n3 = crate::proto::proximadb_v1::Node {
+        let n3 = crate::graph::Node {
             id: "n3".to_string(),
             labels: vec!["Person".to_string()],
             properties: n3_props,
@@ -2790,7 +2785,7 @@ mod tests {
         };
         service.create_graph_collection(req).await?;
         // Nodes
-        let mk = |id: &str| crate::proto::proximadb_v1::Node {
+        let mk = |id: &str| crate::graph::Node {
             id: id.to_string(),
             labels: vec!["Person".to_string()],
             properties: std::collections::HashMap::new(),
@@ -2802,7 +2797,7 @@ mod tests {
             service.create_node("g_card", mk(id)).await?;
         }
         // First marriage A->B ok
-        let e1 = crate::proto::proximadb_v1::Edge {
+        let e1 = crate::graph::Edge {
             id: "e1".to_string(),
             from_node_id: "A".to_string(),
             to_node_id: "B".to_string(),
@@ -2814,7 +2809,7 @@ mod tests {
         };
         service.create_edge("g_card", e1).await?;
         // Second marriage from A to C should fail (ONE_TO_ONE violates outgoing)
-        let e2 = crate::proto::proximadb_v1::Edge {
+        let e2 = crate::graph::Edge {
             id: "e2".to_string(),
             from_node_id: "A".to_string(),
             to_node_id: "C".to_string(),
@@ -2826,7 +2821,7 @@ mod tests {
         };
         assert!(service.create_edge("g_card", e2).await.is_err());
         // Another marriage to B from D should fail (ONE_TO_ONE violates incoming)
-        let e3 = crate::proto::proximadb_v1::Edge {
+        let e3 = crate::graph::Edge {
             id: "e3".to_string(),
             from_node_id: "D".to_string(),
             to_node_id: "B".to_string(),
@@ -2882,7 +2877,7 @@ mod tests {
         let mut p3 = std::collections::HashMap::new();
         p3.insert("email".to_string(), pv_str("a@test"));
         p3.insert("tenant".to_string(), pv_str("t2"));
-        let n1 = crate::proto::proximadb_v1::Node {
+        let n1 = crate::graph::Node {
             id: "p1".to_string(),
             labels: vec!["Person".to_string()],
             properties: p1,
@@ -2890,7 +2885,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        let n2 = crate::proto::proximadb_v1::Node {
+        let n2 = crate::graph::Node {
             id: "p2".to_string(),
             labels: vec!["Person".to_string()],
             properties: p2,
@@ -2898,7 +2893,7 @@ mod tests {
             created_at_ms: 0,
             updated_at_ms: 0,
         };
-        let n3 = crate::proto::proximadb_v1::Node {
+        let n3 = crate::graph::Node {
             id: "p3".to_string(),
             labels: vec!["Person".to_string()],
             properties: p3,
@@ -2946,11 +2941,9 @@ mod tests {
             properties: std::collections::HashMap::from([(
                 "name".to_string(),
                 PropertyValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::property_value::Value::StringValue(
-                            "Alice".to_string(),
-                        ),
-                    ),
+                    value: Some(crate::graph::model::property_value::Value::StringValue(
+                        "Alice".to_string(),
+                    )),
                 },
             )]),
             embedding: None,
