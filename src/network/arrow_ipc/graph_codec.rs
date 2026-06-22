@@ -120,6 +120,14 @@ pub fn graph_edge_schema() -> Arc<Schema> {
 /// first node that carries an embedding. Returns 0 when no node has one.
 /// Errors if two nodes carry embeddings of differing length (a single
 /// `FixedSizeList` batch is one stride wide — split mixed dims per graph).
+///
+/// Exposed so a streaming export can fix the schema dimension from the first
+/// page and reuse it for every subsequent page (one consistent Arrow schema
+/// across the whole DoGet stream).
+pub fn embedding_dim_of(nodes: &[Node]) -> Result<usize> {
+    batch_embedding_dim(nodes)
+}
+
 fn batch_embedding_dim(nodes: &[Node]) -> Result<usize> {
     let mut dim: Option<usize> = None;
     for n in nodes {
@@ -143,9 +151,18 @@ fn batch_embedding_dim(nodes: &[Node]) -> Result<usize> {
 
 // ── Node encode / decode ────────────────────────────────────────────────────
 
-/// Encode neutral graph nodes into a columnar Arrow [`RecordBatch`].
+/// Encode neutral graph nodes into a columnar Arrow [`RecordBatch`], deriving
+/// the embedding dimension from the batch.
 pub fn nodes_to_batch(nodes: &[Node]) -> Result<RecordBatch> {
     let embedding_dim = batch_embedding_dim(nodes)?;
+    nodes_to_batch_with_dim(nodes, embedding_dim)
+}
+
+/// Encode nodes with an explicit, caller-fixed embedding dimension. Used by the
+/// streaming export so every page shares one schema; a node whose embedding
+/// length differs from `embedding_dim` is rejected (mixed strides can't share a
+/// `FixedSizeList` column), and a node without an embedding emits a null list.
+pub fn nodes_to_batch_with_dim(nodes: &[Node], embedding_dim: usize) -> Result<RecordBatch> {
     let schema = graph_node_schema(embedding_dim);
 
     let ids = StringArray::from_iter_values(nodes.iter().map(|n| n.id.as_str()));
@@ -186,6 +203,12 @@ pub fn nodes_to_batch(nodes: &[Node]) -> Result<RecordBatch> {
                     present.push(true);
                     metas.push(serde_json::to_string(&EmbeddingMeta::from_embedding(e)).ok());
                 }
+                Some(e) if !e.vector.is_empty() => bail!(
+                    "node `{}` embedding dimension {} does not match the batch dimension {}",
+                    n.id,
+                    e.vector.len(),
+                    embedding_dim
+                ),
                 _ => {
                     flat.extend(std::iter::repeat_n(0.0f32, embedding_dim));
                     present.push(false);
