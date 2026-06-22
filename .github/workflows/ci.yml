@@ -334,6 +334,33 @@ jobs:
           git diff --exit-code -- clients/go/proximadb/internal/genrest/ \
             || (echo "::error::clients/go/proximadb/internal/genrest has drifted from the OpenAPI spec. Run 'make gen-go-sdk' and commit the result." && exit 1)
 
+  # TD-126 Phase 4 (spec-driven SDK pilot, TypeScript): the TS REST transport's
+  # wire types (clients/nodejs-embedded/src/generated) are GENERATED from the
+  # published OpenAPI spec via openapi-typescript (pinned in the SDK
+  # package.json). This job regenerates them and fails if the committed copy has
+  # drifted from the spec — the same generated-artifact pattern as
+  # go-sdk-codegen-drift / openapi-spec-drift. Regenerate locally with:
+  # make gen-ts-sdk
+  ts-sdk-codegen-drift:
+    name: TS SDK Codegen Drift (TD-126)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.nodejs_sdk == 'true' || needs.changes.outputs.openapi_spec == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        working-directory: clients/nodejs-embedded
+        run: npm ci
+      - name: Regenerate the TypeScript REST transport from the OpenAPI spec
+        run: make gen-ts-sdk
+      - name: Fail on uncommitted drift in the generated TS client
+        run: |
+          git diff --exit-code -- clients/nodejs-embedded/src/generated/ \
+            || (echo "::error::clients/nodejs-embedded/src/generated has drifted from the OpenAPI spec. Run 'make gen-ts-sdk' and commit the result." && exit 1)
+
   panic-policy-report:
     name: Panic Policy Report (WS-2 Stage 1)
     runs-on: ubuntu-latest
@@ -1431,6 +1458,7 @@ jobs:
       - go-lint
       - go-sdk-codegen-drift
       - nodejs-lint
+      - ts-sdk-codegen-drift
       - rust-sdk-lint
       - sdk-security-scan
       - sdk-contract-gates
