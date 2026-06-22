@@ -48,8 +48,8 @@ use std::sync::Arc;
 use tracing::debug;
 
 use super::hardware_accelerated::AcceleratedQuantization;
-use crate::compute::distance_computation::DistanceMetric;
-use crate::compute::distance_computation::engine::{SimilarityResult, UnifiedDistanceCompute};
+use proximadb_distance_kernel::DistanceMetric;
+use proximadb_distance_kernel::engine::{SimilarityResult, UnifiedDistanceCompute};
 
 // Use internal types (Release 1 - no legacy proto compatibility)
 pub use super::types::{
@@ -1861,11 +1861,7 @@ impl CodebookStore for InMemoryCodebookStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::{
-        BinaryQuantization, DistanceMetric, InMemoryCodebookStore, QuantizationLevel,
-        ScalarQuantization, UnifiedDistanceCompute, UnifiedQuantizationEngine,
-        UnifiedQuantizationLevel, UniformQuantization,
-    };
+    use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
     use std::sync::Arc;
 
     #[test]

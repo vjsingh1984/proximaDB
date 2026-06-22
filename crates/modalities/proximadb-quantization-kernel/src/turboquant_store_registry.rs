@@ -280,8 +280,8 @@ pub async fn hydrate_registry_from_policy_rows(
 }
 
 /// Single-row input to [`hydrate_registry_from_policy_rows`]. Mirrors the
-/// shape of [`proximadb_catalog::embedding_precision_policy::
-/// DerivedQuantizationLevel::TurboQuant`] but uses only primitives so
+/// shape of `proximadb_catalog::embedding_precision_policy::
+/// DerivedQuantizationLevel::TurboQuant` but uses only primitives so
 /// callers don't need a catalog dependency just to populate the input.
 ///
 /// The catalog adapter that constructs these rows is the responsibility
