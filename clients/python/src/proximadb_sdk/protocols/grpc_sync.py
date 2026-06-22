@@ -10,7 +10,6 @@ Features:
 
 import json
 import logging
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
@@ -676,15 +675,13 @@ class ProximaDBSyncGrpcClient:
         parameters: list | None = None,
         collection: str | None = None,
     ):
-        """Execute SQL over gRPC.
+        """Execute SQL over gRPC (a supported SQL surface).
 
-        .. deprecated::
-            SQL over gRPC/REST is deprecated. pgwire (the PostgreSQL wire
-            protocol) is the canonical SQL surface — connect any PostgreSQL
-            driver (psycopg2, asyncpg, JDBC, psql) and run SQL there. gRPC/REST
-            own record/vector/collection operations; SQL belongs on pgwire.
-            This method (and the v2 ``ExecuteQuery`` RPC) will be removed in a
-            future release.
+        gRPC SQL is a first-class, supported path — token/SSO-authenticated and
+        high-throughput programmatic SQL for SaaS/SDK clients. It is coequal with
+        pgwire (the PostgreSQL-ecosystem surface for psql/JDBC/BI/ORM); use
+        whichever fits the client. For non-SQL queries (UQL/AQL/Federated) use the
+        ``/api/v2/query`` surface.
 
         Args:
             query: SQL text
@@ -693,13 +690,6 @@ class ProximaDBSyncGrpcClient:
         Returns:
             ExecuteQueryResponse as dict-like (via proto object fields)
         """
-        warnings.warn(
-            "execute_sql over gRPC is deprecated; use pgwire (PostgreSQL wire "
-            "protocol) for SQL via any PostgreSQL driver. The gRPC SQL path will "
-            "be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
