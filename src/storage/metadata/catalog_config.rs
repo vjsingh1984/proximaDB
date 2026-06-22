@@ -23,7 +23,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::proto::proximadb_v1::{
-    CollectionConfig, HnswConfig, IndexConfig, IvfConfig, QuantizationConfig,
+    CollectionConfig, HnswConfig, IndexConfig, IvfConfig, QuantizationConfig, RecordSchemaConfig,
+    TextStorageConfig,
 };
 
 /// Catalog-bag key holding the neutral per-index config array.
@@ -234,6 +235,90 @@ pub(crate) fn quantization_from_json(json: &str) -> Option<QuantizationConfig> {
     }
 }
 
+// --- ProximaRecord schema (enable flag + enforcement + text columns) ---
+
+/// Neutral text-column sidecar config retained across a catalog round-trip
+/// (only the fields the read path reconstructs).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StoredTextStorage {
+    column_name: String,
+    chunk_size: u32,
+}
+
+/// Neutral ProximaRecord schema config retained across a catalog round-trip.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct StoredSchema {
+    enable_proxima_record: bool,
+    enforcement: i32,
+    auto_evolve: bool,
+    schema_id: String,
+    schema_version: String,
+    #[serde(default)]
+    text_columns: Vec<String>,
+    #[serde(default)]
+    text_storage: Vec<StoredTextStorage>,
+}
+
+/// Serialize the ProximaRecord schema config (enable flag, enforcement, text
+/// columns) to a neutral JSON string, or `None` when ProximaRecord is unset.
+pub(crate) fn record_schema_to_json(config: &CollectionConfig) -> Result<Option<String>> {
+    if !config.enable_proxima_record.unwrap_or(false) && config.record_schema.is_none() {
+        return Ok(None);
+    }
+    let rs = config.record_schema.as_ref();
+    let stored = StoredSchema {
+        enable_proxima_record: config.enable_proxima_record.unwrap_or(false),
+        enforcement: rs.map(|r| r.enforcement).unwrap_or(0),
+        auto_evolve: rs.map(|r| r.auto_evolve).unwrap_or(true),
+        schema_id: rs.map(|r| r.schema_id.clone()).unwrap_or_default(),
+        schema_version: rs.map(|r| r.schema_version.clone()).unwrap_or_default(),
+        text_columns: config.text_columns.clone(),
+        text_storage: config
+            .text_storage_configs
+            .iter()
+            .map(|t| StoredTextStorage {
+                column_name: t.column_name.clone(),
+                chunk_size: t.chunk_size,
+            })
+            .collect(),
+    };
+    serde_json::to_string(&stored)
+        .map(Some)
+        .map_err(|e| anyhow::anyhow!("serialize record_schema for catalog asset: {e}"))
+}
+
+/// Reconstruct the ProximaRecord schema config from a neutral JSON string onto
+/// the collection config (enable flag, record_schema, text columns). No-op on
+/// a decode error (legacy/corrupt) so the caller keeps its defaults.
+pub(crate) fn apply_record_schema_from_json(config: &mut CollectionConfig, json: &str) {
+    let stored: StoredSchema = match serde_json::from_str(json) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!("⚠️ catalog-asset record_schema decode failed, ignoring: {e}");
+            return;
+        }
+    };
+    config.enable_proxima_record = Some(stored.enable_proxima_record);
+    config.record_schema = Some(RecordSchemaConfig {
+        schema_id: stored.schema_id,
+        schema_version: stored.schema_version,
+        enforcement: stored.enforcement,
+        auto_evolve: stored.auto_evolve,
+        columns: Vec::new(),
+    });
+    config.text_columns = stored.text_columns;
+    config.text_storage_configs = stored
+        .text_storage
+        .into_iter()
+        .map(|t| TextStorageConfig {
+            column_name: t.column_name,
+            chunk_size: t.chunk_size,
+            strategy: 1, // TextStorage::Chunked (mirrors the create/PUT default)
+            ..Default::default()
+        })
+        .collect();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -316,5 +401,40 @@ mod tests {
         assert!(read_quantization(&map).is_none());
         assert!(index_configs_to_json(&config).expect("idx").is_none());
         assert!(quantization_to_json(&config).expect("quant").is_none());
+        assert!(record_schema_to_json(&config).expect("schema").is_none());
+    }
+
+    #[test]
+    fn round_trips_record_schema_through_json() {
+        let config = CollectionConfig {
+            enable_proxima_record: Some(true),
+            record_schema: Some(RecordSchemaConfig {
+                schema_id: "schema_x".to_string(),
+                schema_version: "1.0.0".to_string(),
+                enforcement: 3,
+                auto_evolve: true,
+                columns: Vec::new(),
+            }),
+            text_columns: vec!["body".to_string()],
+            text_storage_configs: vec![TextStorageConfig {
+                column_name: "body".to_string(),
+                chunk_size: 512,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        let json = record_schema_to_json(&config).expect("ser").expect("some");
+
+        let mut restored = CollectionConfig::default();
+        apply_record_schema_from_json(&mut restored, &json);
+        assert_eq!(restored.enable_proxima_record, Some(true));
+        let rs = restored.record_schema.expect("record_schema");
+        assert_eq!(rs.enforcement, 3);
+        assert!(rs.auto_evolve);
+        assert_eq!(rs.schema_id, "schema_x");
+        assert_eq!(restored.text_columns, vec!["body".to_string()]);
+        assert_eq!(restored.text_storage_configs.len(), 1);
+        assert_eq!(restored.text_storage_configs[0].column_name, "body");
+        assert_eq!(restored.text_storage_configs[0].chunk_size, 512);
     }
 }

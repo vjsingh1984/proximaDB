@@ -597,7 +597,7 @@ pub async fn create_collection_v2(
         }
     });
 
-    let collection_config = CollectionConfig {
+    let mut collection_config = CollectionConfig {
         name: request.name.clone(),
         dimension: request.dimension,
         storage_engine: Some(storage_engine_value),
@@ -606,8 +606,21 @@ pub async fn create_collection_v2(
         index_configs,
         quantization,
         tags: request.tags.take().unwrap_or_default(),
+        enable_proxima_record: Some(proxima_record_enabled),
         ..Default::default()
     };
+
+    // TD-122: persist the typed schema (ProximaRecord) set at create time so a
+    // read-after-create GetCollection echoes it. Reuses the same SchemaDefinition
+    // → proto mapping as the update-schema endpoint.
+    if let Some(schema) = request.schema.take() {
+        super::schema::apply_schema_definition(
+            &mut collection_config,
+            &schema,
+            schema_id.clone().unwrap_or_default(),
+            "1.0.0".to_string(),
+        );
+    }
 
     let collection_request = CollectionRequest {
         operation: CollectionOperation::CollectionCreate as i32,
@@ -848,22 +861,33 @@ pub async fn get_collection_v2(
                         .unwrap_or_default(),
                 });
 
+            // TD-122: surface the persisted ProximaRecord schema + flags that
+            // CreateCollection set (reconstructed from the catalog asset).
+            let proxima_record_enabled = config.enable_proxima_record.unwrap_or(false);
+            let schema = super::schema::build_existing_schema(&config);
+            let indexed_fields = config
+                .filterable_columns
+                .iter()
+                .filter(|c| c.indexed)
+                .count() as u32;
+            let text_field_count = config.text_columns.len() as u32;
+
             let response = CollectionV2Response {
                 collection_id: collection_id.clone(),
                 name: collection_id,
                 dimension: config.dimension,
                 engine: engine_str.to_string(),
                 distance_metric: distance_metric_str.to_string(),
-                proxima_record_enabled: false, // Would be stored in metadata
+                proxima_record_enabled,
                 canonical_embedding_precision: collection_embedding_precision_label(
                     config.canonical_embedding_precision,
                 ),
-                schema: None, // Would be loaded from metadata
+                schema,
                 stats: CollectionStatsV2 {
                     record_count: non_negative_stat(stats.vector_count),
                     storage_size_bytes: non_negative_stat(stats.data_size_bytes),
-                    indexed_fields: 0,
-                    text_field_count: 0,
+                    indexed_fields,
+                    text_field_count,
                 },
                 index_specs,
                 quantization,

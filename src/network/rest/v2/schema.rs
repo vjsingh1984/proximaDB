@@ -638,60 +638,14 @@ pub async fn update_schema(
             .map_or("0.0.0", |s| s.schema_version.as_str()),
     );
 
-    // Step 5: Build and store updated schema configuration
-    // Map enforcement mode to proto enum
-    let enforcement_value = match schema.enforcement.as_deref() {
-        Some("strict") => 1,   // SchemaEnforcement::Strict
-        Some("flexible") => 2, // SchemaEnforcement::Flexible
-        Some("hybrid") => 3,   // SchemaEnforcement::Hybrid
-        _ => 3,                // Default to hybrid
-    };
-
-    // Build text_columns from schema columns with text types
-    let text_columns: Vec<String> = schema
-        .columns
-        .iter()
-        .filter(|c| c.data_type == "text" || c.data_type == "text_large")
-        .map(|c| c.name.clone())
-        .collect();
-
-    // Build text_storage_configs for text_large columns
-    let text_storage_configs: Vec<crate::proto::proximadb_v1::TextStorageConfig> = schema
-        .columns
-        .iter()
-        .filter(|c| c.data_type == "text_large")
-        .map(|c| crate::proto::proximadb_v1::TextStorageConfig {
-            column_name: c.name.clone(),
-            strategy: 1, // TextStorage::Chunked
-            inline_threshold: 4096,
-            chunked_threshold: 1048576,
-            chunk_size: c.max_length.unwrap_or(512),
-            generate_chunk_embeddings: false,
-            embedding_model: String::new(),
-            enable_ngram_bloom: false,
-            ngram_size: 3,
-            sidecar_base_path: String::new(),
-            sidecar_compression: 0, // TextCompression::None
-            max_text_size: 0,       // Unlimited
-            enable_fulltext_index: false,
-            fulltext_analyzer: String::new(),
-        })
-        .collect();
-
-    // Create the new record schema config
-    let new_record_schema = crate::proto::proximadb_v1::RecordSchemaConfig {
-        schema_id: new_schema_id.clone(),
-        schema_version: new_version.clone(),
-        enforcement: enforcement_value,
-        auto_evolve: schema.allow_additional_fields.unwrap_or(true),
-        columns: Vec::new(), // Column definitions are stored separately in text_columns/text_storage_configs
-    };
-
-    // Update the collection config
-    config.record_schema = Some(new_record_schema);
-    config.enable_proxima_record = Some(true);
-    config.text_columns = text_columns;
-    config.text_storage_configs = text_storage_configs;
+    // Step 5: Build and store updated schema configuration via the shared
+    // SchemaDefinition → proto mapping (inverse of build_existing_schema).
+    apply_schema_definition(
+        &mut config,
+        schema,
+        new_schema_id.clone(),
+        new_version.clone(),
+    );
 
     // Step 6: Persist the updated collection
     let update_request = crate::proto::proximadb_v1::CollectionRequest {
@@ -728,8 +682,65 @@ pub async fn update_schema(
     }))
 }
 
+/// Map a REST schema-enforcement string to the proto `SchemaEnforcement`
+/// discriminant (1=strict, 2=flexible, 3=hybrid; default hybrid).
+pub(crate) fn enforcement_value(enforcement: Option<&str>) -> i32 {
+    match enforcement {
+        Some("strict") => 1,
+        Some("flexible") => 2,
+        Some("hybrid") => 3,
+        _ => 3,
+    }
+}
+
+/// Populate the ProximaRecord schema fields on a collection config from a REST
+/// `SchemaDefinition`. Text / text_large columns become `text_columns` +
+/// `text_storage_configs`; other typed columns are carried as
+/// `filterable_columns` elsewhere. Sets `enable_proxima_record = true`.
+///
+/// Shared by the create-collection and update-schema paths so both persist the
+/// same shape (the inverse of [`build_existing_schema`]).
+pub(crate) fn apply_schema_definition(
+    config: &mut crate::proto::proximadb_v1::CollectionConfig,
+    schema: &SchemaDefinition,
+    schema_id: String,
+    schema_version: String,
+) {
+    let text_columns: Vec<String> = schema
+        .columns
+        .iter()
+        .filter(|c| c.data_type == "text" || c.data_type == "text_large")
+        .map(|c| c.name.clone())
+        .collect();
+
+    let text_storage_configs: Vec<crate::proto::proximadb_v1::TextStorageConfig> = schema
+        .columns
+        .iter()
+        .filter(|c| c.data_type == "text_large")
+        .map(|c| crate::proto::proximadb_v1::TextStorageConfig {
+            column_name: c.name.clone(),
+            strategy: 1, // TextStorage::Chunked
+            inline_threshold: 4096,
+            chunked_threshold: 1048576,
+            chunk_size: c.max_length.unwrap_or(512),
+            ..Default::default()
+        })
+        .collect();
+
+    config.record_schema = Some(crate::proto::proximadb_v1::RecordSchemaConfig {
+        schema_id,
+        schema_version,
+        enforcement: enforcement_value(schema.enforcement.as_deref()),
+        auto_evolve: schema.allow_additional_fields.unwrap_or(true),
+        columns: Vec::new(), // typed columns travel via text_columns / filterable_columns
+    });
+    config.enable_proxima_record = Some(true);
+    config.text_columns = text_columns;
+    config.text_storage_configs = text_storage_configs;
+}
+
 /// Build existing schema from collection config
-fn build_existing_schema(
+pub(crate) fn build_existing_schema(
     config: &crate::proto::proximadb_v1::CollectionConfig,
 ) -> Option<SchemaDefinition> {
     // If ProximaRecord is not enabled or no schema config, return None
