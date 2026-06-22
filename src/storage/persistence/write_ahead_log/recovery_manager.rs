@@ -727,8 +727,17 @@ impl RecoveryManager {
             )
         })?;
 
-        // Try to get REAL collection config from metadata provider
-        let collection_config = if let Some(provider) = metadata_provider.read().await.as_ref() {
+        // The catalog is the read authority; resolve collection config from it
+        // first, then fall back to the legacy metadata provider.
+        let collection_config = if let Some(collection) =
+            super::resolve_collection_from_catalog(&file_info.collection_id).await
+        {
+            info!(
+                "✅ Using collection config from catalog for {}",
+                file_info.collection_id
+            );
+            Some(collection)
+        } else if let Some(provider) = metadata_provider.read().await.as_ref() {
             match provider.get_collection(&file_info.collection_id).await {
                 Ok(Some(collection)) => {
                     info!(

@@ -1629,6 +1629,12 @@ impl CollectionService {
         &self.metadata_backend
     }
 
+    /// The catalog this service reads/writes collection assets through, if wired.
+    /// Used to make the catalog the WAL/recovery collection-resolution authority.
+    pub fn catalog_manager(&self) -> Option<Arc<CatalogManager>> {
+        self.catalog_manager.clone()
+    }
+
     /// Resolve compression configuration based on SDK request and server defaults
     fn resolve_compression_config(
         &self,
@@ -2081,7 +2087,7 @@ impl CollectionService {
         Ok(collections)
     }
 
-    fn collection_from_catalog_schema(
+    pub(crate) fn collection_from_catalog_schema(
         table_id: &TableIdentifier,
         schema: &CatalogTableSchema,
     ) -> Result<Option<Collection>> {
