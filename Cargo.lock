@@ -6536,6 +6536,7 @@ dependencies = [
  "proximadb-graph-query",
  "proximadb-graph-subset",
  "proximadb-hardware",
+ "proximadb-hardware-caps",
  "proximadb-iceberg-engine",
  "proximadb-index-types",
  "proximadb-kernel",
@@ -6947,6 +6948,18 @@ version = "0.2.0"
 dependencies = [
  "num_cpus",
  "sysinfo",
+]
+
+[[package]]
+name = "proximadb-hardware-caps"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "num_cpus",
+ "proximadb-config",
+ "proximadb-hardware",
+ "serde",
+ "tracing",
 ]
 
 [[package]]

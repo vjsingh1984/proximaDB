@@ -310,7 +310,14 @@ async fn main() -> anyhow::Result<()> {
         config.server.node_id = node_id;
     }
 
-    // Initialize hardware capabilities detection early with configuration
+    // Initialize hardware capabilities detection early with configuration.
+    // Register the GPU detector first (compute owns GPU detection; the hardware
+    // layer only holds a hook — issue #162) so detection runs during the init
+    // below. Must precede initialize_hardware_capabilities() — no init race.
+    #[cfg(feature = "gpu")]
+    proximadb::core::hardware_capabilities::register_gpu_detector(
+        proximadb::compute::gpu::distance::detect_gpu_capabilities,
+    );
     info!("🔧 Initializing hardware detection...");
     let hardware_config = config.hardware.clone().unwrap_or_default();
     if let Err(e) = initialize_hardware_capabilities(hardware_config) {
