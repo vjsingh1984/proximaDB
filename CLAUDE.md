@@ -41,8 +41,9 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
    per-query predicate.
 4. **Vertical inside, standard outside.** Co-design internals (PAX + engine + cache) freely; expose
    only at stable seams (pgwire, Arrow Flight, Iceberg manifests, REST v2).
-5. **Meter every dimension as a TAM surface.** Storage (KSU), read/compute (KRU/KIU), egress (KEU —
-   the open gap to close), and cache are metered per-tenant; governance is metered as tier entitlement.
+5. **Meter every dimension as a TAM surface.** Storage (KSU), read/compute (KRU/KIU), network
+   **outgress (KOU — metered/shipped: read + result direction at pgwire/REST/Flight; distinct from
+   KEU = embedding)**, and cache are metered per-tenant; governance is metered as tier entitlement.
 ====
 
 ### Core Directives

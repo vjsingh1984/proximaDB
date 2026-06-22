@@ -1,4 +1,4 @@
-as_of_date = "2026-05-28"
+as_of_date = "2026-06-22"
 source_of_truth = "code+tests"
 # 2026-05-28: per-row entries below have NOT been re-audited against current code
 # since 2026-03-02. The header date is bumped only to satisfy release-check freshness;
@@ -161,4 +161,30 @@ evidence = [
   "docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md:1",
   "src/services/catalog_introspection.rs:1",
   "src/network/postgres/translator.rs:1",
+]
+
+# 2026-06-22: freshly-audited rows (KOU co-design, PRs #101/#110/#113) — not subject
+# to the header_status "stale-rows-not-reaudited" caveat above.
+[[capabilities]]
+id = "kou_egress_metering"
+status = "partial"
+notes = "KOU (Outgress Unit, Dimension 2) network-egress metering. Neutral multi-cloud KouLocality 6-bucket model; convergent meter proximadb_kou_bytes_total{tenant,kou_locality,direction}; read-egress derived from region + result-egress instrumented at pgwire/REST/Arrow Flight; cost term per_mib_egress live. Remaining: pgwire wire-compression, egress-aware lossy caps, Flight do_exchange."
+evidence = [
+  "src/metrics/consumption_metrics.rs:132",
+  "src/metrics/consumption_metrics.rs:574",
+  "src/query/route_cost_model.rs:174",
+  "src/network/arrow_ipc/service.rs:62",
+  "src/network/postgres/protocol.rs:4888",
+  "docs/12-design/OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc:1",
+]
+
+[[capabilities]]
+id = "edge_policy_consolidation"
+status = "partial"
+notes = "Edge collapse (HLD E0→E1). E0 shipped (pgwire through shared policy stages); EdgePolicyContext (client-IP → KouLocality) + ResultShapePolicy (locality-driven lossless ZSTD/gzip shaping) live, consumed across pgwire/REST/Flight. Remaining: full EdgeRequest + EdgePolicyPlane envelope (one plane over all four surfaces)."
+evidence = [
+  "src/metrics/consumption_metrics.rs:464",
+  "src/metrics/consumption_metrics.rs:517",
+  "src/network/middleware/metrics.rs:46",
+  "docs/12-design/IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc:1",
 ]

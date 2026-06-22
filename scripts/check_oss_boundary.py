@@ -35,7 +35,7 @@ DENY = [
     (re.compile(r"\b(estimated_)?monthly_cost(_cents)?\b"), "billing-cost field"),
     (re.compile(r"\bbilling_sku\b"), "billing SKU field"),
     (re.compile(r"\bper_gb_month\b|\bper_tb_scanned\b"), "pricing rate"),
-    (re.compile(r"\b(ksu|kru|kiu|keu)_per_[a-z_]+\b"), "pricing unit"),
+    (re.compile(r"\b(ksu|kru|kiu|keu|kou)_per_[a-z_]+\b"), "pricing unit"),
     (re.compile(r"\banvai\w*", re.IGNORECASE), "control-plane (anvaiops) reference"),
 ]
 

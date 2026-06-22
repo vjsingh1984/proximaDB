@@ -39,8 +39,9 @@ When changing a storage format, reader, codec, cache, or engine you MUST:
    fail-closed) and writes under `DrPathBuilder`; isolation is structural, never a per-query predicate.
 4. **Vertical inside, standard outside** — co-design internals freely; expose only at stable seams
    (pgwire, Arrow Flight, Iceberg, REST v2).
-5. **Meter every dimension as a TAM surface** — storage (KSU), read/compute (KRU/KIU), egress (KEU —
-   open gap), cache per-tenant; governance as tier entitlement.
+5. **Meter every dimension as a TAM surface** — storage (KSU), read/compute (KRU/KIU), network
+   outgress (KOU — metered/shipped at pgwire/REST/Flight; distinct from KEU = embedding), cache
+   per-tenant; governance as tier entitlement.
 ====
 
 ### Key Technologies
