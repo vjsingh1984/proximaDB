@@ -193,6 +193,7 @@ pub mod scan_cursor;
 pub mod schema;
 pub mod search;
 pub mod snapshot;
+pub mod system_catalog_state;
 #[cfg(feature = "tenant_access")]
 pub mod tenant_access;
 pub mod write_intent;

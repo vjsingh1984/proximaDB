@@ -1297,7 +1297,11 @@ impl DirectWalTableRecordStore {
                         .await?;
                     summary.deletes_replayed += 1;
                 }
-                CanonicalOperation::Checkpoint(_) | CanonicalOperation::CdcBarrier { .. } => {}
+                // Checkpoints, CDC barriers, and system-catalog mutations carry
+                // no record state for this partitioned store to replay.
+                CanonicalOperation::Checkpoint(_)
+                | CanonicalOperation::CdcBarrier { .. }
+                | CanonicalOperation::CatalogMutation { .. } => {}
             }
         }
         Ok(summary)
