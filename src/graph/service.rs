@@ -106,7 +106,7 @@ use crate::storage::cache::orchestrator::{
     CacheStatsProvider, CacheType, CrossCacheOrchestrator, UsageStats,
 };
 use dashmap::DashMap;
-use proximadb_graph::projection::{GraphTopologyProjection, TopologyEpoch};
+use proximadb_graph::projection::TopologyEpoch;
 use proximadb_kernel::error::ProximaDBError;
 use proximadb_records::{RecordKey, RecordStore};
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry, SnapshotManifest};
@@ -2352,11 +2352,16 @@ impl GraphOperationsService {
 
         let projection_start = std::time::Instant::now();
         if !inserted.is_empty() {
-            let projection = self.adjacency_projection(graph_id);
-            for edge in &inserted {
-                let edge_record = edge_to_canonical_record(graph_id, edge);
-                projection.apply_edge(&edge_record).await?;
-            }
+            // TD-130: build every canonical edge record, then apply the whole
+            // batch under ONE projection write-lock + ONE epoch bump — was one
+            // lock-cycle + epoch bump (and one await) per edge, the per-edge
+            // serialization that dominated bulk ingest.
+            let edge_records: Vec<_> = inserted
+                .iter()
+                .map(|edge| edge_to_canonical_record(graph_id, edge))
+                .collect();
+            self.adjacency_projection(graph_id)
+                .apply_edges(&edge_records)?;
             self.advance_edge_epoch(graph_id);
         }
         let projection_time = projection_start.elapsed();
