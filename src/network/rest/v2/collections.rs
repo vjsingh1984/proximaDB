@@ -148,6 +148,9 @@ pub struct CreateCollectionV2Request {
     /// `"target_vector_count:1000"`, `"modalities:text,image"`. Consumed by the
     /// recall advisor / route-health (`services/collection/recall_target.rs`).
     pub tags: Option<Vec<String>>,
+    /// Quantization config (gRPC-v2 parity). When omitted, quantization is
+    /// left unset (engine default).
+    pub quantization: Option<QuantizationConfigInput>,
 }
 
 /// REST input for a single index config (mirrors proto `IndexConfig`).
@@ -164,6 +167,18 @@ pub struct IndexConfigInput {
     pub hnsw_config: Option<HnswConfigInput>,
     /// IVF tuning (when algorithm == "ivf").
     pub ivf_config: Option<IvfConfigInput>,
+    /// Mark this index as the collection's primary ANN index (gRPC-v2 parity).
+    pub is_primary: Option<bool>,
+}
+
+/// REST input for quantization config (mirrors proto `QuantizationConfig`;
+/// gRPC-v2 parity with `V2QuantizationConfig`).
+#[derive(Debug, Deserialize)]
+pub struct QuantizationConfigInput {
+    /// Enable quantization for this collection.
+    pub enabled: Option<bool>,
+    /// Strategy: "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels".
+    pub strategy: Option<String>,
 }
 
 /// REST input for HNSW index params (mirrors proto `HnswConfig`).
@@ -546,12 +561,26 @@ pub async fn create_collection_v2(
                         n_probe: i.n_probe,
                         ..Default::default()
                     }),
+                    is_primary: cfg.is_primary,
                     ..Default::default()
                 });
             }
             out
         }
     };
+
+    // gRPC-v2 parity: map the optional quantization config onto the proto.
+    let quantization = request.quantization.take().map(|q| {
+        use crate::proto::proximadb_v1::{QuantizationConfig, quantization_config::Strategy};
+        QuantizationConfig {
+            enabled: q.enabled,
+            strategy: q.strategy.map(|s| {
+                Strategy::from_str_name(&s.to_ascii_uppercase()).unwrap_or(Strategy::SmartDefaults)
+                    as i32
+            }),
+            ..Default::default()
+        }
+    });
 
     let collection_config = CollectionConfig {
         name: request.name.clone(),
@@ -560,6 +589,7 @@ pub async fn create_collection_v2(
         distance_metric: distance_metric_value,
         canonical_embedding_precision,
         index_configs,
+        quantization,
         tags: request.tags.take().unwrap_or_default(),
         ..Default::default()
     };
@@ -638,10 +668,51 @@ pub struct CollectionV2Response {
     pub schema: Option<SchemaDefinition>,
     /// Collection statistics
     pub stats: CollectionStatsV2,
+    /// Per-index config (HNSW/IVF params, is_primary) as persisted at create
+    /// time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
+    pub index_specs: Vec<IndexSpecOutput>,
+    /// Quantization config as persisted at create time, or `None` when unset.
+    pub quantization: Option<QuantizationConfigOutput>,
     /// Creation timestamp
     pub created_at: String,
     /// Last update timestamp
     pub updated_at: Option<String>,
+}
+
+/// REST output for a single index config (mirrors gRPC `V2IndexSpec`).
+#[derive(Debug, Serialize)]
+pub struct IndexSpecOutput {
+    /// Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh".
+    pub algorithm: String,
+    /// HNSW params (present when the index is HNSW).
+    pub hnsw: Option<HnswConfigOutput>,
+    /// IVF params (present when the index is IVF).
+    pub ivf: Option<IvfConfigOutput>,
+    /// Whether this is the collection's primary ANN index.
+    pub is_primary: bool,
+}
+
+/// REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
+#[derive(Debug, Serialize)]
+pub struct HnswConfigOutput {
+    pub m: Option<u32>,
+    pub ef_construction: Option<u32>,
+    pub ef_search: Option<u32>,
+}
+
+/// REST output for IVF params (mirrors gRPC `V2IvfConfig`).
+#[derive(Debug, Serialize)]
+pub struct IvfConfigOutput {
+    pub n_lists: Option<u32>,
+    pub n_probe: Option<u32>,
+}
+
+/// REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).
+#[derive(Debug, Serialize)]
+pub struct QuantizationConfigOutput {
+    pub enabled: bool,
+    /// Strategy label, e.g. "smart_defaults" | "minimal" | "aggressive".
+    pub strategy: String,
 }
 
 /// Collection statistics for v2 API
@@ -710,6 +781,44 @@ pub async fn get_collection_v2(
             let engine_str = collection_storage_engine_label(config.storage_engine);
             let distance_metric_str = collection_distance_metric_label(config.distance_metric);
 
+            // TD-122 parity: surface the persisted per-index + quantization config
+            // (same vocabulary as the gRPC `collection_to_v2` mapper).
+            let index_specs = config
+                .index_configs
+                .iter()
+                .map(|ic| IndexSpecOutput {
+                    algorithm: crate::proto::proximadb_v1::IndexingAlgorithm::try_from(
+                        ic.algorithm,
+                    )
+                    .map(|a| a.as_str_name().to_ascii_lowercase())
+                    .unwrap_or_default(),
+                    hnsw: ic.hnsw_config.as_ref().map(|h| HnswConfigOutput {
+                        m: h.m,
+                        ef_construction: h.ef_construction,
+                        ef_search: h.ef_search,
+                    }),
+                    ivf: ic.ivf_config.as_ref().map(|i| IvfConfigOutput {
+                        n_lists: i.n_lists,
+                        n_probe: i.n_probe,
+                    }),
+                    is_primary: ic.is_primary.unwrap_or(false),
+                })
+                .collect();
+            let quantization = config
+                .quantization
+                .as_ref()
+                .map(|q| QuantizationConfigOutput {
+                    enabled: q.enabled.unwrap_or(false),
+                    strategy: q
+                        .strategy
+                        .and_then(|s| {
+                            crate::proto::proximadb_v1::quantization_config::Strategy::try_from(s)
+                                .ok()
+                        })
+                        .map(|s| s.as_str_name().to_ascii_lowercase())
+                        .unwrap_or_default(),
+                });
+
             let response = CollectionV2Response {
                 collection_id: collection_id.clone(),
                 name: collection_id,
@@ -727,6 +836,8 @@ pub async fn get_collection_v2(
                     indexed_fields: 0,
                     text_field_count: 0,
                 },
+                index_specs,
+                quantization,
                 created_at: chrono::Utc::now().to_rfc3339(),
                 updated_at: None,
             };
@@ -4267,5 +4378,71 @@ mod tests {
 
         // unknown type is rejected (the vocabulary is exactly the ProximaType-mappable set).
         assert!(parse_rest_data_type(&rest_col("not_a_type")).is_err());
+    }
+
+    /// TD-122 parity: the REST create request parses per-index `is_primary` and
+    /// a top-level `quantization` block (gRPC-v2 `V2IndexSpec`/`V2QuantizationConfig`).
+    #[test]
+    fn create_request_parses_is_primary_and_quantization() {
+        let json = r#"{
+            "name": "c",
+            "dimension": 128,
+            "index_configs": [
+                {"algorithm": "hnsw", "hnsw_config": {"m": 24, "ef_construction": 150}, "is_primary": true}
+            ],
+            "quantization": {"enabled": true, "strategy": "aggressive"}
+        }"#;
+        let req: CreateCollectionV2Request = serde_json::from_str(json).expect("parse");
+        let ics = req.index_configs.expect("index_configs");
+        assert_eq!(ics.len(), 1);
+        assert_eq!(ics[0].is_primary, Some(true));
+        assert_eq!(ics[0].hnsw_config.as_ref().and_then(|h| h.m), Some(24));
+        let q = req.quantization.expect("quantization");
+        assert_eq!(q.enabled, Some(true));
+        assert_eq!(q.strategy.as_deref(), Some("aggressive"));
+    }
+
+    /// TD-122 parity: the REST get response serializes `index_specs` (with
+    /// HNSW params + is_primary) and `quantization` so a read-after-create
+    /// echoes what was set.
+    #[test]
+    fn get_response_serializes_index_specs_and_quantization() {
+        let resp = CollectionV2Response {
+            collection_id: "c".into(),
+            name: "c".into(),
+            dimension: 128,
+            engine: "sst".into(),
+            distance_metric: "cosine".into(),
+            proxima_record_enabled: false,
+            canonical_embedding_precision: None,
+            schema: None,
+            stats: CollectionStatsV2 {
+                record_count: 0,
+                storage_size_bytes: 0,
+                indexed_fields: 0,
+                text_field_count: 0,
+            },
+            index_specs: vec![IndexSpecOutput {
+                algorithm: "hnsw".into(),
+                hnsw: Some(HnswConfigOutput {
+                    m: Some(24),
+                    ef_construction: Some(150),
+                    ef_search: Some(64),
+                }),
+                ivf: None,
+                is_primary: true,
+            }],
+            quantization: Some(QuantizationConfigOutput {
+                enabled: true,
+                strategy: "aggressive".into(),
+            }),
+            created_at: "now".into(),
+            updated_at: None,
+        };
+        let v: serde_json::Value = serde_json::to_value(&resp).expect("serialize");
+        assert_eq!(v["index_specs"][0]["hnsw"]["m"], 24);
+        assert_eq!(v["index_specs"][0]["is_primary"], true);
+        assert_eq!(v["quantization"]["enabled"], true);
+        assert_eq!(v["quantization"]["strategy"], "aggressive");
     }
 }
