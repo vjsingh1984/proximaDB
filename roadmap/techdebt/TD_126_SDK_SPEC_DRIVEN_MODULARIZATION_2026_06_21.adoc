@@ -556,6 +556,51 @@ are the remaining transport-gen increments.
 * The Python core install is lightweight (no tree-sitter/onnx/langchain in the default dependency
   set); chunking/embeddings/integrations are separate installable packages/extras.
 
+== Chunking concern refinement (2026-06-22)
+
+Post-review cleanup of the `chunking` extra (`clients/python/.../chunking_strategies/`),
+keeping the differentiator (symbol + call/import/inheritance extraction) — fixes/cleanups,
+not a rewrite. Landed as three sequenced PRs:
+
+* *Perf + correctness (PR #196, merged):*
+** *Lazy parser init* — `CodeChunkingStrategy` no longer eager-instantiates all ~23
+   tree-sitter parsers at construction (it loaded 23 grammars to chunk one file). Parsers
+   are now built per-language on first `chunk()` and cached; unavailable grammars are
+   remembered so they are not retried. Measured: chunking one file loads exactly **1/23**
+   grammars instead of 23.
+** *Narrowed exception swallowing* — the ~20 `_init_parser` sites used
+   `except (ImportError, TypeError, Exception)`, which swallowed every error into the regex
+   fallback and hid real bugs. Now `(ImportError, OSError)` for the expected missing-grammar
+   case + a broad `except` that **logs** the unexpected failure before falling back.
+** *Honest streaming docstring* — `PipelineExecutor.process_stream`/`_async` claimed
+   "memory-efficient for large documents" but materialize the whole input + chunk list first.
+   Docstrings corrected (see deferred item below for true streaming).
+* *Dead-code removal (PR #199):* deleted the parallel parser stack in `parser_utils.py`
+  (`ParserCache`/`get_parser_cache`, `ParserPlugin`/`ParserPluginRegistry`/`get_plugin_registry`,
+  the `CFamilyParser`/`JVMFamilyParser`/`DynamicLanguageParser`/`FunctionalLanguageParser`/
+  `MarkupParser` family base classes, `with_fallback`/`cached_parser` decorators,
+  `FallbackConfig`/`FallbackStrategy`, `parser_context`/`detect_language_from_content`,
+  `UnsupportedLanguageError`/`ParserInitializationError`) — never referenced by the live path
+  (~2.2k lines incl. tests). Kept the live surface (`ParserError`/`ParseError`, the metrics
+  collector + `with_metrics`, `BaseLanguageParser`, `ConfigValidator`/`ValidationResult`).
+  Also rewired `ConfigValidator.validate_languages` off the always-empty plugin registry onto
+  the real `code.get_supported_languages()` registry. Deleted the already-broken
+  `tests/chunking/test_parser_utils.py` (imported the long-renamed `proximadb` package; failed
+  pytest collection).
+* *Dependency currency (this PR):* bumped the `chunking`/`code-chunking` extras to
+  `tree-sitter>=0.25` and `tree-sitter-language-pack>=1.0` (code uses Query-free node traversal,
+  so it is 0.25-safe — verified no `Query()`/`captures()`/`QueryCursor` usage).
+
+*Deferred (follow-up):*
+
+* *True incremental streaming* — `process_stream`/`_async` still materialize the full document
+  and chunk list (every underlying strategy is a batch API). Real constant-memory streaming
+  requires an incremental contract across all strategies; out of scope for a cleanup pass.
+* *Embedding-based semantic chunking* — a percentile-breakpoint-over-sentence-embeddings mode
+  alongside the structural `SemanticStrategy`. The SDK has embedding infra to support it, but it
+  needs an embedding-provider injection seam, sentence splitting, and factory/config wiring +
+  tests; deferred rather than risk an oversized PR.
+
 == Related
 
 * TD-121 (retire plain-SQL gRPC `ExecuteQuery` -> pgwire) — narrows the gRPC surface the SDK wraps.
