@@ -589,7 +589,8 @@ fn filter_canonical_wal_for_collection(
                 collection_id, ..
             } => collection_id == collection,
             proximadb_storage_common::CanonicalOperation::Checkpoint(_)
-            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. } => false,
+            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. }
+            | proximadb_storage_common::CanonicalOperation::CatalogMutation { .. } => false,
         })
         .collect()
 }
