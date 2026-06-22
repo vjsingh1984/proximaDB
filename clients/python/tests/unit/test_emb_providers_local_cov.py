@@ -2,11 +2,10 @@
 Offline unit tests for embedding_providers.providers.{local,testing}.
 
 These are thin wrapper provider classes:
-- local/{bge,e5,gte_qwen,gte_qwen_new,sentence_transformer,sfr}.py — wrap a
+- local/{bge,e5,gte_qwen,sentence_transformer,sfr}.py — wrap a
   sentence-transformers model via SentenceTransformerMixin (model load is lazy,
   only inside _load_model()).
-- testing/{simulated,simulated_new}.py — deterministic hash/random/gaussian
-  embeddings, no model at all.
+- testing/simulated.py — deterministic hash-based embeddings, no model at all.
 
 EVERYTHING here is fully offline:
 - `sentence_transformers` is stubbed into sys.modules BEFORE the local providers
@@ -109,9 +108,6 @@ from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
     gte_qwen as gte_qwen_mod,
 )
 from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
-    gte_qwen_new as gte_qwen_new_mod,
-)
-from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
     sentence_transformer as st_mod,
 )
 from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
@@ -119,9 +115,6 @@ from proximadb_sdk.embedding_providers.providers.local import (  # noqa: E402
 )
 from proximadb_sdk.embedding_providers.providers.testing import (  # noqa: E402
     simulated as sim_mod,
-)
-from proximadb_sdk.embedding_providers.providers.testing import (  # noqa: E402
-    simulated_new as sim_new_mod,
 )
 
 
@@ -146,13 +139,6 @@ LOCAL_CASES = [
     (
         gte_qwen_mod,
         gte_qwen_mod.GTEQwenProvider,
-        "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
-        16,
-        True,
-    ),
-    (
-        gte_qwen_new_mod,
-        gte_qwen_new_mod.GTEQwenProvider,
         "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
         16,
         True,
@@ -290,19 +276,8 @@ def test_model_catalogs_are_populated():
     assert "BAAI/bge-large-en-v1.5" in bge_mod.BGE_MODELS
     assert "intfloat/e5-large-v2" in e5_mod.E5_MODELS
     assert "Alibaba-NLP/gte-Qwen2-7B-instruct" in gte_qwen_mod.GTE_QWEN_MODELS
-    assert "Alibaba-NLP/gte-Qwen2-7B-instruct" in gte_qwen_new_mod.GTE_QWEN_MODELS
     assert "all-mpnet-base-v2" in st_mod.SENTENCE_TRANSFORMER_MODELS
     assert "Salesforce/SFR-Embedding-2_R" in sfr_mod.SFR_MODELS
-
-
-def test_gte_qwen_new_v2_alias_class_is_subclass():
-    """gte_qwen_new defines GTEQwenProvider then re-defines it subclassing itself
-    for backward-compat registration; both forms must work end-to-end."""
-    provider = gte_qwen_new_mod.GTEQwenProvider()
-    out = provider.embed(["t"])
-    assert out.shape == (1, 4)
-    cfg = provider.default_config()
-    assert cfg.trust_remote_code is False
 
 
 # ===========================================================================
@@ -369,69 +344,6 @@ def test_simulated_large_dimension_rehashes():
     assert out.min() >= -1.0001 and out.max() <= 1.0001
 
 
-# --- simulated_new (v2) covers three generation methods -------------------
-
-
-def test_simulated_new_hash_method():
-    p = sim_new_mod.SimulatedEmbeddingProvider()
-    out = p.embed(["one", "two"])
-    assert out.shape == (2, 384)
-    np.testing.assert_array_equal(out, p.embed(["one", "two"]))
-    # _load_model returns None in the v2 implementation
-    assert p._load_model() is None
-
-
-def test_simulated_new_random_method():
-    model = ModelMetadata(name="simulated-embeddings", dimension=32)
-    cfg = ProviderConfig(
-        model=model, normalize=False, extra={"seed": 9, "method": "random"}
-    )
-    p = sim_new_mod.SimulatedEmbeddingProvider(cfg)
-    a = p.embed(["r1", "r2"])
-    assert a.shape == (2, 32)
-    # deterministic via per-text RandomState seed
-    np.testing.assert_array_equal(a, p.embed(["r1", "r2"]))
-
-
-def test_simulated_new_gaussian_method():
-    model = ModelMetadata(name="simulated-embeddings", dimension=24)
-    cfg = ProviderConfig(
-        model=model, normalize=True, extra={"seed": 3, "method": "gaussian"}
-    )
-    p = sim_new_mod.SimulatedEmbeddingProvider(cfg)
-    out = p.embed(["g"])
-    assert out.shape == (1, 24)
-    np.testing.assert_allclose(np.linalg.norm(out[0]), 1.0, rtol=1e-5, atol=1e-5)
-
-
-def test_simulated_new_unknown_method_raises():
-    model = ModelMetadata(name="simulated-embeddings", dimension=8)
-    cfg = ProviderConfig(model=model, extra={"seed": 1, "method": "nope"})
-    p = sim_new_mod.SimulatedEmbeddingProvider(cfg)
-    with pytest.raises(ValueError, match="Unknown method"):
-        p.embed(["boom"])
-
-
-def test_simulated_new_empty_input():
-    p = sim_new_mod.SimulatedEmbeddingProvider()
-    assert p.embed([]).size == 0
-
-
-def test_simulated_new_v2_alias_class():
-    p = sim_new_mod.SimulatedEmbeddingProviderV2()
-    assert isinstance(p, sim_new_mod.SimulatedEmbeddingProvider)
-    out = p.embed(["alias"])
-    assert out.shape == (1, 384)
-
-
-def test_simulated_new_default_config():
-    p = sim_new_mod.SimulatedEmbeddingProvider()
-    cfg = p.default_config()
-    assert cfg.batch_size == 1000
-    assert cfg.extra["method"] == "hash"
-    assert cfg.model.dimension == 384
-
-
 def test_simulated_zero_vector_normalization_guard():
     """If a generated row is all-zero, normalization must not divide by zero.
     We force this by mocking the per-text generator to emit zeros."""
@@ -439,8 +351,8 @@ def test_simulated_zero_vector_normalization_guard():
     cfg = ProviderConfig(
         model=model, normalize=True, extra={"seed": 0, "method": "hash"}
     )
-    p = sim_new_mod.SimulatedEmbeddingProvider(cfg)
-    p._hash_based_embedding = lambda text, dimension, seed: np.zeros(
+    p = sim_mod.SimulatedEmbeddingProvider(cfg)
+    p._hash_embedding = lambda text, dimension, seed: np.zeros(
         dimension, dtype=np.float32
     )
     out = p.embed(["zero"])

@@ -61,13 +61,23 @@ dependencies = [
 # extra deps and works core-only.
 #   pip install 'proximadb[embeddings]'
 embeddings = [
-    "sentence-transformers>=2.2.0",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+    "sentence-transformers>=3.2,<6",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+]
+
+# Hosted / OpenAI-compatible embedding providers (opt-in, reachable via
+# get_provider('openai'|'cohere'|'fastembed')). Kept separate from `embeddings`
+# so the local-model install stays light.
+#   pip install 'proximadb[embeddings-cloud]'
+embeddings-cloud = [
+    "openai>=2",  # OpenAIProvider (modern >=1.0 client)
+    "cohere>=5",  # CohereProvider (cohere.ClientV2)
+    "fastembed>=0.3",  # FastEmbedProvider (ONNX)
 ]
 
 # LLM integration via Victor framework
 llm = [
     "victor-ai>=0.2.0",  # Victor AI framework for embeddings and LLM
-    "sentence-transformers>=2.2.0",  # Local embedding models
+    "sentence-transformers>=3.2,<6",  # Local embedding models
 ]
 
 # Chunking concern (TD-126 Phase 3): text + code-aware AST chunking via
@@ -126,7 +136,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=2.2.0",
+    "sentence-transformers>=3.2,<6",
     "requests>=2.28.0",
     "grpcio-tools>=1.80.0",
     "black>=22.0.0",
@@ -143,7 +153,7 @@ test = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=2.2.0",
+    "sentence-transformers>=3.2,<6",
     "requests>=2.28.0",
 ]
 
