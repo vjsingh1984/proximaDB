@@ -907,9 +907,14 @@ pub async fn get_collection_v2(
                 .count() as u32;
             let text_field_count = config.text_columns.len() as u32;
 
+            let name = if config.name.is_empty() {
+                collection_id.clone()
+            } else {
+                config.name.clone()
+            };
             let response = CollectionV2Response {
                 collection_id: collection_id.clone(),
-                name: collection_id,
+                name,
                 dimension: config.dimension,
                 engine: engine_str.to_string(),
                 distance_metric: distance_metric_str.to_string(),
@@ -1079,7 +1084,10 @@ pub async fn list_collections_v2(
                     };
                     CollectionV2Summary {
                         collection_id: c.id.clone(),
-                        name: c.id.clone(),
+                        name: cfg
+                            .map(|c| c.name.clone())
+                            .filter(|n| !n.is_empty())
+                            .unwrap_or_else(|| c.id.clone()),
                         dimension: cfg.map_or(0, |cfg| cfg.dimension),
                         engine: engine_str.to_string(),
                         proxima_record_enabled: false,
