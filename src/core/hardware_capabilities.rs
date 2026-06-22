@@ -221,13 +221,14 @@ use num_cpus;
 use std::sync::{Arc, OnceLock};
 use tracing::info;
 
-// Import feature detection macros - these are macros, not functions
-// Only import ARM64 patch on ARM64 architecture
-#[cfg(target_arch = "aarch64")]
-#[allow(unused_imports)]
-use crate::compute::distance_computation::platform::distance_arm64_patch;
-
-// No longer importing duplicate CpuFeatures from compute module
+// NOTE: previously imported `crate::compute::distance_computation::platform::distance_arm64_patch`
+// here (aarch64-gated, allow(unused_imports)). Removed to break the
+// hardware_capabilities <-> compute::distance_computation circular dependency
+// (GitHub issue #162 / decomposition contracts). The x86 stub macros it provided
+// are only needed inside the `#[cfg(target_arch = "x86_64")]` SIMD block below —
+// which uses the std `is_x86_feature_detected!` on amd64 and is compiled out on
+// aarch64 — so the import was dead on every target. No behavioural change on
+// amd64 or arm64.
 use crate::core::config::HardwareConfig;
 
 // No longer importing PlatformCapability from compute - using our own HardwareBackend
