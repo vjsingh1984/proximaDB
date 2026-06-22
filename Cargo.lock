@@ -6525,6 +6525,9 @@ dependencies = [
  "proximadb-security",
  "proximadb-storage-common",
  "proximadb-storage-kv",
+ "proximadb-storage-optimization",
+ "proximadb-storage-strategy",
+ "proximadb-storage-tenant",
  "proximadb-telemetry",
  "proximadb-uql",
  "proximadb-vector",
@@ -7460,6 +7463,41 @@ dependencies = [
  "async-trait",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-storage-optimization"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb-data-model",
+ "proximadb-proto",
+ "proximadb-records",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-storage-strategy"
+version = "0.2.0"
+dependencies = [
+ "proximadb-proto",
+ "serde_json",
+]
+
+[[package]]
+name = "proximadb-storage-tenant"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap",
+ "proximadb-proto",
+ "proximadb-storage-common",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use super::{BusinessContext, DomainContext, TenantManager, UserContext};
-use crate::proto::proximadb_v1::Entity;
+use proximadb_proto::proximadb_v1::Entity;
 
 /// Domain knowledge graph with business intelligence
 pub struct DomainKnowledgeGraph {
@@ -756,9 +756,9 @@ impl OptimizationResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::DataSensitivityLevel;
-    use crate::storage::tenant::context::PerformanceRequirements;
-    use crate::storage::tenant::domain::DomainStatus;
+    use crate::DataSensitivityLevel;
+    use crate::context::PerformanceRequirements;
+    use crate::domain::DomainStatus;
 
     #[tokio::test]
     async fn test_domain_knowledge_graph_creation() {

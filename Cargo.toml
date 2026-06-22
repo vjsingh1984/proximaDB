@@ -64,6 +64,9 @@ members = [
     "crates/storage/proximadb-object-store",
     "crates/storage/proximadb-iceberg-engine",
     "crates/storage/proximadb-storage-kv",
+    "crates/storage/proximadb-storage-optimization",
+    "crates/storage/proximadb-storage-strategy",
+    "crates/storage/proximadb-storage-tenant",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
     "crates/query/proximadb-graph-query",
@@ -191,6 +194,9 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
+proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
+proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
 crc32fast = "1.4"
 rmp-serde = "1.1"
 tonic-prost = "0.14"
@@ -284,6 +290,9 @@ proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
+proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
+proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
 proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }

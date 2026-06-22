@@ -651,8 +651,8 @@ impl EnhancedRBACManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::context::ResourceLimits;
-    use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies, TenantConfig};
+    use crate::context::ResourceLimits;
+    use crate::{ComplianceFramework, Industry, SecurityPolicies, TenantConfig};
 
     async fn create_test_rbac_setup() -> (EnhancedRBACManager, UserContext) {
         let tenant_manager = Arc::new(TenantManager::new());

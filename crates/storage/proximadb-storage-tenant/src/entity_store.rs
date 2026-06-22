@@ -6,8 +6,8 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use tracing::debug;
 
-use crate::proto::proximadb_v1::Entity;
-use crate::storage::tenant::TenantManager;
+use crate::TenantManager;
+use proximadb_proto::proximadb_v1::Entity;
 
 /// Enhanced entity store with clean tenant separation
 pub struct TenantAwareEntityStore {
@@ -431,8 +431,8 @@ impl MetadataSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::context::ResourceLimits;
-    use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies, TenantConfig};
+    use crate::context::ResourceLimits;
+    use crate::{ComplianceFramework, Industry, SecurityPolicies, TenantConfig};
 
     async fn create_test_setup() -> (TenantAwareEntityStore, TenantUserContext) {
         let tenant_manager = Arc::new(TenantManager::new());
