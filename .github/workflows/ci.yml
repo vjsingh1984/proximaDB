@@ -185,15 +185,20 @@ jobs:
   # ============================================================================
   gpu-feature-check:
     name: GPU Feature Check (macOS)
-    runs-on: macos-14
+    # macos-13 (x86_64), NOT macos-14 (arm64): ring 0.17.x's aarch64 cpu module
+    # has a `CAPS_STATIC` const-assertion that panics on the macos-14 runner —
+    # even on the pinned 1.95.0 toolchain, and it does NOT reproduce on local
+    # Apple Silicon (the x86_64-linux jobs build ring fine). x86_64 macOS still
+    # compiles the `metal` GPU backend, so this verifies `--features gpu` builds
+    # without tripping the aarch64-runner ring bug. arm64-macOS GPU coverage is
+    # tracked separately (issue #184).
+    runs-on: macos-13
     needs: changes
     if: needs.changes.outputs.gpu_paths == 'true'
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      # Pin to the repo toolchain (1.95.0): `@stable` lands a newer Rust whose
-      # stricter const-eval trips ring 0.17.x's aarch64 CAPS_STATIC assertion on
-      # macOS (the x86_64-linux jobs are unaffected). 1.95.0 builds gpu cleanly.
+      # Match the repo toolchain pin (rust-toolchain.toml = 1.95.0).
       - uses: dtolnay/rust-toolchain@1.95.0
       - name: Install protobuf
         run: brew install protobuf
