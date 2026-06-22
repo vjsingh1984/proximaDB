@@ -498,8 +498,15 @@ pub struct CollectionInfo {
     pub name: String,
     /// Vector dimension
     pub dimension: u32,
-    /// Number of vectors
-    #[serde(default, alias = "record_count")]
+    /// Number of vectors. The v2 list surface
+    /// (`CollectionV2Summary.record_count`) emits `null` when
+    /// `include_stats=false`, so tolerate an explicit JSON `null` (→ 0)
+    /// in addition to an absent field.
+    #[serde(
+        default,
+        alias = "record_count",
+        deserialize_with = "crate::serde_compat::null_as_default"
+    )]
     pub vector_count: u64,
     /// Storage engine type
     #[serde(default)]
@@ -854,6 +861,57 @@ mod tests {
         assert_eq!(info.engine.as_deref(), Some("sst"));
         assert_eq!(info.stats.as_ref().unwrap().record_count, 19);
         assert_eq!(info.stats.as_ref().unwrap().storage_size_bytes, 1024);
+    }
+
+    /// Regression (TD-126 Phase 4): the v2 list surface
+    /// (`CollectionV2Summary.record_count`) is `Option<u64>` server-side
+    /// and emits an explicit JSON `null` when `include_stats=false`. The
+    /// facade `CollectionInfo.vector_count` is a non-`Option` `u64` for
+    /// callers, so a plain `#[serde(default)]` errored on `null` and broke
+    /// `list_collections` decode. `null_as_default` must map `null` → 0.
+    #[test]
+    fn collection_info_tolerates_null_record_count() {
+        let info: CollectionInfo = serde_json::from_value(json!({
+            "collection_id": "uuid-1",
+            "name": "items",
+            "dimension": 384,
+            "record_count": null,
+            "engine": "sst"
+        }))
+        .unwrap();
+
+        assert_eq!(info.name, "items");
+        assert_eq!(info.vector_count, 0);
+        assert_eq!(info.engine.as_deref(), Some("sst"));
+    }
+
+    /// The full wrapped list payload the server sends for
+    /// `GET /api/v2/collections` without stats — every summary carries a
+    /// `null` `record_count`. Exercises the same decode path
+    /// `list_collections` uses.
+    #[test]
+    fn list_collections_response_tolerates_null_record_counts() {
+        let response: ListCollectionsResponse = serde_json::from_value(json!({
+            "collections": [
+                {
+                    "collection_id": "uuid-1",
+                    "name": "items",
+                    "dimension": 128,
+                    "engine": "sst",
+                    "proxima_record_enabled": true,
+                    "record_count": null
+                }
+            ],
+            "total": 1,
+            "limit": 50,
+            "offset": 0,
+            "has_more": false
+        }))
+        .unwrap();
+
+        assert_eq!(response.collections.len(), 1);
+        assert_eq!(response.collections[0].name, "items");
+        assert_eq!(response.collections[0].vector_count, 0);
     }
 
     #[test]

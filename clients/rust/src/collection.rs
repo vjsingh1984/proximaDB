@@ -654,8 +654,14 @@ pub struct CollectionInfo {
     pub name: String,
     /// Vector dimension
     pub dimension: u32,
-    /// Number of vectors
-    #[serde(default, alias = "record_count")]
+    /// Number of vectors. The v2 collection surfaces may report
+    /// `record_count` as `null` (e.g. list without stats), so tolerate
+    /// an explicit JSON `null` (→ 0) as well as an absent field.
+    #[serde(
+        default,
+        alias = "record_count",
+        deserialize_with = "crate::serde_compat::null_as_default"
+    )]
     pub vector_count: u64,
     /// Storage engine
     #[serde(default)]
@@ -1006,8 +1012,15 @@ struct ProximaRecordBatchRequest {
 pub struct ProximaRecord {
     /// Record ID
     pub id: String,
-    /// Dense vector embedding
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// Dense vector embedding. The v2 `GET .../records/{id}` surface
+    /// (`RecordV2Response.vector`) emits `null` when `include_vector=false`,
+    /// so tolerate an explicit JSON `null` (→ empty) as well as an absent
+    /// field.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_compat::null_as_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub vector: Vec<f32>,
     /// Rich record properties
     #[serde(default, alias = "metadata", skip_serializing_if = "HashMap::is_empty")]
@@ -1015,7 +1028,15 @@ pub struct ProximaRecord {
     /// TEXT field payloads attached to the record (BM25 indexing / rerank
     /// inputs). v0.2 supports plain UTF-8 strings; richer encodings tracked
     /// post-v0.2. See `src/network/rest/v2/records.rs::TextFieldInput`.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    /// The v2 `GET .../records/{id}` surface emits `text_fields: null`
+    /// when `include_text=false`; `null_as_default` maps that to empty.
+    /// `TextFieldInput` decodes the server's richer `TextFieldOutput`
+    /// shape by ignoring its extra `chunk_count` / `truncated` fields.
+    #[serde(
+        default,
+        deserialize_with = "crate::serde_compat::null_as_default",
+        skip_serializing_if = "Vec::is_empty"
+    )]
     pub text_fields: Vec<TextFieldInput>,
     /// Original source text or external reference
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1294,6 +1315,61 @@ mod tests {
                 ]
             })
         );
+    }
+
+    /// Regression (TD-126 Phase 4): `get_vector` decodes the server's
+    /// `RecordV2Response`, whose `vector` and `text_fields` are
+    /// `Option<...>` and emit an explicit JSON `null` when
+    /// `include_vector` / `include_text` are false. The facade
+    /// `ProximaRecord` keeps non-`Option` `Vec` fields, so a plain
+    /// `#[serde(default)]` errored on `null` and broke `get_vector`
+    /// decode. `null_as_default` must map `null` → empty, and the
+    /// props-shaped record (rich `props`, server-only `version` /
+    /// `timestamp`) must round-trip.
+    #[test]
+    fn proxima_record_tolerates_null_vector_and_text_fields() {
+        let record: ProximaRecord = serde_json::from_value(json!({
+            "id": "rec_1",
+            "vector": null,
+            "props": {"category": "tech", "score": 0.9},
+            "text_fields": null,
+            "version": 3,
+            "timestamp": 1718000000
+        }))
+        .unwrap();
+
+        assert_eq!(record.id, "rec_1");
+        assert!(record.vector.is_empty());
+        assert!(record.text_fields.is_empty());
+        assert_eq!(record.props["category"], json!("tech"));
+        assert_eq!(record.props["score"], json!(0.9));
+    }
+
+    /// The server's `RecordV2Response` populates `text_fields` with the
+    /// richer `TextFieldOutput` shape (`name`, `content`, `chunk_count`,
+    /// `truncated`). `get_vector` decodes those into the SDK's
+    /// `TextFieldInput` by ignoring the extra fields, and a present
+    /// `vector` decodes normally.
+    #[test]
+    fn proxima_record_decodes_record_v2_response_shape() {
+        let record: ProximaRecord = serde_json::from_value(json!({
+            "id": "rec_2",
+            "vector": [0.1, 0.2, 0.3],
+            "props": {"k": "v"},
+            "text_fields": [
+                {"name": "title", "content": "ProximaDB", "chunk_count": 1, "truncated": false}
+            ],
+            "version": 1,
+            "timestamp": 42
+        }))
+        .unwrap();
+
+        assert_eq!(record.id, "rec_2");
+        assert_eq!(record.vector, vec![0.1, 0.2, 0.3]);
+        assert_eq!(record.text_fields.len(), 1);
+        assert_eq!(record.text_fields[0].name, "title");
+        assert_eq!(record.text_fields[0].content, "ProximaDB");
+        assert_eq!(record.props["k"], json!("v"));
     }
 
     /// TD-083: chained text_field builder calls accumulate. Matches the
