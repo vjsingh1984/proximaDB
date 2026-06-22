@@ -269,6 +269,77 @@ impl V2ApiTestHarness {
         Ok(body)
     }
 
+    /// Get collection details by an arbitrary identifier (name OR UUID).
+    async fn get_collection_by(
+        &self,
+        identifier: &str,
+    ) -> Result<(reqwest::StatusCode, JsonValue), Box<dyn std::error::Error>> {
+        let response = self
+            .http_client
+            .get(&format!(
+                "{}/api/v2/collections/{}",
+                REST_BASE_URL, identifier
+            ))
+            .send()
+            .await?;
+        let status = response.status();
+        let body: JsonValue = response.json().await?;
+        Ok((status, body))
+    }
+
+    /// Insert records targeting an arbitrary identifier (name OR UUID).
+    async fn insert_records_to(
+        &self,
+        identifier: &str,
+        records: Vec<JsonValue>,
+    ) -> Result<reqwest::StatusCode, Box<dyn std::error::Error>> {
+        let response = self
+            .http_client
+            .post(&format!(
+                "{}/api/v2/collections/{}/records/batch",
+                REST_BASE_URL, identifier
+            ))
+            .json(&json!({ "records": records }))
+            .send()
+            .await?;
+        Ok(response.status())
+    }
+
+    /// Search targeting an arbitrary identifier (name OR UUID).
+    async fn search_in(
+        &self,
+        identifier: &str,
+        query_vector: Vec<f32>,
+        top_k: usize,
+    ) -> Result<reqwest::StatusCode, Box<dyn std::error::Error>> {
+        let response = self
+            .http_client
+            .post(&format!(
+                "{}/api/v2/collections/{}/search",
+                REST_BASE_URL, identifier
+            ))
+            .json(&json!({ "vector": query_vector, "top_k": top_k }))
+            .send()
+            .await?;
+        Ok(response.status())
+    }
+
+    /// Delete a collection via V2 API by an arbitrary identifier (name OR UUID).
+    async fn delete_collection_by(
+        &self,
+        identifier: &str,
+    ) -> Result<reqwest::StatusCode, Box<dyn std::error::Error>> {
+        let response = self
+            .http_client
+            .delete(&format!(
+                "{}/api/v2/collections/{}",
+                REST_BASE_URL, identifier
+            ))
+            .send()
+            .await?;
+        Ok(response.status())
+    }
+
     /// Cleanup: Delete test collection
     async fn cleanup(&self) {
         // Try to delete via V1 API (V2 may not have delete endpoint yet)
@@ -401,6 +472,140 @@ async fn test_create_collection_basic() {
         }
     }
 
+    harness.cleanup().await;
+}
+
+/// Regression (#176 follow-up): the v2 `collection_id` identity is the
+/// collection's canonical UUID on create/get/list — NOT the request echo —
+/// while `name` stays the user-supplied name, and the returned UUID is a valid
+/// lookup key on every endpoint (get/insert/search/delete) alongside the name.
+#[tokio::test]
+async fn test_collection_id_is_canonical_uuid_and_resolves_both_ways() {
+    let harness = match V2ApiTestHarness::new().await {
+        Ok(h) => h,
+        Err(e) => {
+            eprintln!("Skipping test: Failed to create test harness: {}", e);
+            return;
+        }
+    };
+
+    if !harness.check_server().await {
+        eprintln!("Skipping test: Server not available at {}", REST_BASE_URL);
+        return;
+    }
+
+    let name = harness.test_collection_name.clone();
+
+    // --- CREATE: collection_id must be a UUID (≠ name), name == user name. ---
+    let create = match harness.create_basic_collection().await {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Skipping test: create failed: {}", e);
+            return;
+        }
+    };
+    let uuid = create
+        .get("collection_id")
+        .and_then(|v| v.as_str())
+        .expect("create response has collection_id")
+        .to_string();
+    assert_ne!(
+        uuid, name,
+        "create collection_id must be the canonical UUID, not the request name"
+    );
+    assert!(
+        !uuid.is_empty(),
+        "create collection_id (UUID) must not be empty"
+    );
+    assert_eq!(
+        create.get("name").and_then(|v| v.as_str()),
+        Some(name.as_str()),
+        "create name must be the user-supplied name"
+    );
+
+    // --- GET by NAME: collection_id is the same UUID, name is the user name. ---
+    let (st, by_name) = harness.get_collection_by(&name).await.expect("get by name");
+    assert!(st.is_success(), "get by name should succeed, got {}", st);
+    assert_eq!(
+        by_name.get("collection_id").and_then(|v| v.as_str()),
+        Some(uuid.as_str()),
+        "get-by-name collection_id must be the canonical UUID"
+    );
+    assert_eq!(
+        by_name.get("name").and_then(|v| v.as_str()),
+        Some(name.as_str()),
+        "get-by-name name must be the user-supplied name"
+    );
+
+    // --- GET by UUID: must succeed and round-trip the same identity. ---
+    let (st, by_uuid) = harness.get_collection_by(&uuid).await.expect("get by uuid");
+    assert!(st.is_success(), "get by UUID should succeed, got {}", st);
+    assert_eq!(
+        by_uuid.get("collection_id").and_then(|v| v.as_str()),
+        Some(uuid.as_str()),
+        "get-by-UUID collection_id must be the canonical UUID"
+    );
+    assert_eq!(
+        by_uuid.get("name").and_then(|v| v.as_str()),
+        Some(name.as_str()),
+        "get-by-UUID name must be the user-supplied name"
+    );
+
+    // --- LIST: our collection appears with UUID collection_id + user name. ---
+    let list = harness
+        .list_collections(Some(1000), Some(0), Some(false))
+        .await
+        .expect("list collections");
+    let empty = vec![];
+    let cols = list
+        .get("collections")
+        .and_then(|v| v.as_array())
+        .unwrap_or(&empty);
+    let ours = cols
+        .iter()
+        .find(|c| c.get("name").and_then(|v| v.as_str()) == Some(name.as_str()))
+        .expect("listed by user name");
+    assert_eq!(
+        ours.get("collection_id").and_then(|v| v.as_str()),
+        Some(uuid.as_str()),
+        "list collection_id must be the canonical UUID"
+    );
+
+    // --- INSERT + SEARCH by UUID (the create-returned key) must work. ---
+    let records = generate_test_records(3, TEST_DIMENSION as usize);
+    let st = harness
+        .insert_records_to(&uuid, records)
+        .await
+        .expect("insert by uuid");
+    assert!(
+        st.is_success(),
+        "insert by the returned UUID should succeed, got {}",
+        st
+    );
+    let st = harness
+        .search_in(&uuid, vec![0.1f32; TEST_DIMENSION as usize], 3)
+        .await
+        .expect("search by uuid");
+    assert!(
+        st.is_success(),
+        "search by the returned UUID should succeed, got {}",
+        st
+    );
+
+    // --- DELETE by the returned UUID must succeed (the create→delete flow). ---
+    // (Post-delete read-visibility is a separate, pre-existing concern — a stale
+    // read may briefly return a default stub — so we don't assert a 404 here.)
+    let st = harness
+        .delete_collection_by(&uuid)
+        .await
+        .expect("delete by uuid");
+    assert!(
+        st.is_success(),
+        "delete by the returned UUID should succeed, got {}",
+        st
+    );
+
+    println!("test_collection_id_is_canonical_uuid_and_resolves_both_ways PASSED");
     harness.cleanup().await;
 }
 

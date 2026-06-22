@@ -637,9 +637,22 @@ pub async fn create_collection_v2(
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
     {
-        Ok(_resp) => {
+        Ok(resp) => {
+            // #176 follow-up: `collection_id` is the collection's canonical UUID
+            // (`Collection.id`), NOT the request echo. Both the UUID and the user
+            // `name` resolve to the same collection on every endpoint (get/insert/
+            // search/delete) via `CollectionService::collection` → `get_native_proto`,
+            // so returning the UUID keeps a `create → use collection_id` flow working.
+            // Fall back to the request name only if the handler somehow omitted the
+            // created collection (it always populates it on success).
+            let canonical_id = resp
+                .collection
+                .as_ref()
+                .map(|c| c.id.clone())
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| request.name.clone());
             let response = CreateCollectionV2Response {
-                collection_id: request.name.clone(),
+                collection_id: canonical_id,
                 name: request.name,
                 dimension: request.dimension,
                 engine: engine.to_string(),
@@ -912,8 +925,19 @@ pub async fn get_collection_v2(
             } else {
                 config.name.clone()
             };
+            // #176 follow-up: return the canonical UUID (`Collection.id`), not the
+            // path echo (which may be the user-supplied name). The path identifier
+            // resolved to this collection by name OR UUID, and the returned UUID is
+            // itself a valid lookup key on every endpoint, so name- and UUID-based
+            // lookup both keep working. Fall back to the path echo only if the
+            // handler returned a collection without an id.
+            let canonical_id = if collection.id.is_empty() {
+                collection_id.clone()
+            } else {
+                collection.id.clone()
+            };
             let response = CollectionV2Response {
-                collection_id: collection_id.clone(),
+                collection_id: canonical_id,
                 name,
                 dimension: config.dimension,
                 engine: engine_str.to_string(),
