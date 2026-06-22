@@ -63,7 +63,7 @@ pub use lifecycle::StorageLifecycle;
 pub use metrics::StorageMetrics;
 pub use path_resolver::{
     CachedResolver, CollectionPathResolver, CompositeResolver, ConfigFallbackResolver,
-    MetadataProviderResolver, StorageAssignment,
+    StorageAssignment,
 };
 pub use reader::StorageReader;
 pub use scan::StorageScan;

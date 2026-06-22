@@ -969,30 +969,32 @@ mod tests {
     // Additional Unique Tests from parsing_tests.rs
     // ============================================================================
 
+    use crate::catalog::CatalogManager;
     use crate::core::config::StorageConfig;
     use crate::proto::proximadb_v1::CollectionConfig;
     use crate::services::collection::manager::CollectionService;
-    use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
     use std::sync::Arc;
 
     /// Create mock collection service for testing
     async fn setup_test_collection_service() -> Arc<CollectionService> {
-        let config = UniversalMetadataConfig::default();
-        let filesystem_config = Default::default();
-        let filesystem_factory =
-            Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
-        let backend =
-            crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(
-                config,
-                filesystem_factory,
-            )
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage_url = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &storage_url)
             .await
             .unwrap();
-        let storage_config = StorageConfig::default();
+        // Keep temp_dir alive for the lifetime of the test service.
+        std::mem::forget(temp_dir);
+        let storage_config = StorageConfig {
+            metadata_url: storage_url.clone(),
+            ..Default::default()
+        };
         let service = Arc::new(
-            CollectionService::new(Arc::new(backend), storage_config)
+            CollectionService::new(storage_config)
                 .await
-                .unwrap(),
+                .unwrap()
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         // Create test collection "products" (8 characters minimum)

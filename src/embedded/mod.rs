@@ -1094,14 +1094,8 @@ impl EmbeddedProximaDB {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        // Set global metadata provider for WAL path resolution
-        // This eliminates the "No metadata provider after 100ms" warning
-        // by ensuring WAL operations can resolve collection paths immediately
-        crate::storage::persistence::write_ahead_log::set_global_metadata_provider(
-            collection_service.metadata_backend().clone(),
-        )
-        .await;
-        tracing::debug!("✅ Embedded: Global metadata provider set for WAL path resolution");
+        // Set the global catalog for WAL path resolution. The catalog is the
+        // sole authority, so WAL operations resolve collection paths through it.
         if let Some(catalog_manager) = collection_service.catalog_manager() {
             crate::storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
             tracing::debug!("✅ Embedded: Global catalog set for WAL/recovery resolution");

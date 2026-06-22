@@ -172,18 +172,9 @@ impl ProximaDB {
             .map_err(|e| anyhow::anyhow!("Failed to init WAL manifest: {}", e))?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
-        // Step 4: Set global metadata provider BEFORE creating StorageEngine
-        // This ensures WAL pool instances can resolve collection paths correctly
-        tracing::debug!(
-            "🔧 ProximaDB::new - Setting global metadata provider for WAL path resolution..."
-        );
-        storage::persistence::write_ahead_log::set_global_metadata_provider(
-            collection_service.metadata_backend().clone(),
-        )
-        .await;
-        tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
-        // The catalog is the read authority for WAL/recovery collection
-        // resolution; set it so the legacy metadata provider becomes fallback-only.
+        // Step 4: Set global catalog BEFORE creating StorageEngine.
+        // The catalog is the sole authority for WAL/recovery collection
+        // resolution, so WAL pool instances resolve collection paths through it.
         if let Some(catalog_manager) = collection_service.catalog_manager() {
             storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
             tracing::info!("✅ ProximaDB::new - Global catalog set for WAL/recovery");
@@ -195,10 +186,6 @@ impl ProximaDB {
             storage::StorageEngine::new_without_collection_service(config.storage.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create storage engine: {}", e))?;
-
-        storage_engine
-            .set_metadata_provider(collection_service.metadata_backend().clone())
-            .await;
 
         // Wire CanonicalPrecisionResolver into Compaction. The catalog
         // already exists (constructed inside SharedServices::new above)

@@ -31,13 +31,12 @@
 //! // At construction, inject the resolver
 //! let wal_manager = WriteAheadLogManager::new(
 //!     config,
-//!     Arc::new(MetadataProviderResolver::new(metadata_backend)),
+//!     Arc::new(ConfigFallbackResolver::default()),
 //! )?;
 //! ```
 //!
 //! ## Available Implementations:
 //!
-//! - `MetadataProviderResolver`: Uses InternalCollectionProvider (default)
 //! - `ConfigFallbackResolver`: Uses WAL config paths (for testing)
 //! - `CachedResolver`: Caches resolved paths (for performance)
 
@@ -131,90 +130,6 @@ pub trait CollectionPathResolver: Send + Sync {
 // ============================================================================
 // Standard Implementations
 // ============================================================================
-
-/// Resolver using InternalCollectionProvider (production default)
-///
-/// Uses the metadata backend to resolve collection paths based on
-/// stored collection configuration.
-pub struct MetadataProviderResolver {
-    provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
-}
-
-impl MetadataProviderResolver {
-    /// Create a new resolver with the given metadata provider
-    pub fn new(provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>) -> Self {
-        Self { provider }
-    }
-}
-
-#[async_trait]
-impl CollectionPathResolver for MetadataProviderResolver {
-    fn name(&self) -> &'static str {
-        "MetadataProvider"
-    }
-
-    async fn resolve_base_location(&self, collection_id: &str) -> Result<String> {
-        let collection = self
-            .provider
-            .get_collection(collection_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
-
-        // Use storage_assignment's base_location if available
-        if let Some(ref assignment) = collection.storage_assignment {
-            if !assignment.base_location.is_empty() {
-                return Ok(assignment.base_location.clone());
-            }
-            if !assignment.primary_path.is_empty() {
-                return Ok(assignment.primary_path.clone());
-            }
-        }
-
-        // Fall back to constructing path from collection ID
-        Ok(format!(
-            "file:///tmp/proximadb/collections/{}",
-            collection_id
-        ))
-    }
-
-    async fn resolve_storage_assignment(&self, collection_id: &str) -> Result<StorageAssignment> {
-        let collection = self
-            .provider
-            .get_collection(collection_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
-
-        // Extract from proto StorageAssignment if available
-        let primary_url = if let Some(ref proto_assignment) = collection.storage_assignment {
-            if !proto_assignment.base_location.is_empty() {
-                proto_assignment.base_location.clone()
-            } else if !proto_assignment.primary_path.is_empty() {
-                proto_assignment.primary_path.clone()
-            } else {
-                format!("file:///tmp/proximadb/collections/{}", collection_id)
-            }
-        } else {
-            format!("file:///tmp/proximadb/collections/{}", collection_id)
-        };
-
-        let replica_urls = collection
-            .storage_assignment
-            .as_ref()
-            .map(|a| a.backup_paths.clone())
-            .unwrap_or_default();
-
-        Ok(StorageAssignment {
-            primary_url,
-            weight: 1,
-            available: true,
-            replica_urls,
-        })
-    }
-
-    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
-        self.provider.collection_exists(collection_id).await
-    }
-}
 
 /// Config-based fallback resolver (for testing or simple deployments)
 ///
