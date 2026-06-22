@@ -15,10 +15,13 @@
 //! root crate (mirrors the `function_store` / `rank_profile_store` recipe).
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
+use tokio::io::AsyncWriteExt;
 
 use proximadb_catalog::schema::{apply_evolution, validate_schema};
 use proximadb_catalog::{
@@ -37,6 +40,53 @@ fn now_millis() -> i64 {
         .as_millis() as i64
 }
 
+/// Atomically write `bytes` to `path`: temp file → fsync → atomic rename →
+/// best-effort parent-dir fsync. Guarantees the snapshot blob is never observed
+/// torn — a reader sees either the previous snapshot or the complete new one.
+async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    let tmp = path.with_extension("snapshot-tmp");
+    {
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .await
+            .with_context(|| format!("opening snapshot temp {}", tmp.display()))?;
+        file.write_all(bytes)
+            .await
+            .with_context(|| format!("writing snapshot temp {}", tmp.display()))?;
+        file.flush().await?;
+        file.sync_data()
+            .await
+            .with_context(|| format!("fsync snapshot temp {}", tmp.display()))?;
+    }
+    tokio::fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("atomically replacing snapshot {}", path.display()))?;
+    if let Some(dir) = path.parent()
+        && let Ok(handle) = std::fs::File::open(dir)
+    {
+        let _ = handle.sync_all();
+    }
+    Ok(())
+}
+
+/// Default number of committed mutations between automatic snapshots; mirrors
+/// the legacy metastore's compaction threshold. Override with
+/// `PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD`.
+const DEFAULT_SNAPSHOT_THRESHOLD: u64 = 1000;
+
+/// File locations + cadence for the snapshot/compaction machinery. Present only
+/// when the catalog owns an on-disk WAL (via [`SystemCatalog::open`]); the
+/// injected-appender constructor ([`SystemCatalog::new`]) leaves it `None`, so
+/// snapshotting is a no-op there.
+struct SnapshotConfig {
+    wal_path: PathBuf,
+    snapshot_path: PathBuf,
+    threshold: u64,
+}
+
 /// WAL-backed read-heavy system catalog.
 pub struct SystemCatalog {
     name: String,
@@ -46,13 +96,17 @@ pub struct SystemCatalog {
     /// never interleave such that a lower-LSN mutation applies after a higher
     /// one (which the idempotent `apply_committed` would then drop). DDL is
     /// rare, so this coarse lock is free in practice and also gives
-    /// read-your-writes on the committing path.
+    /// read-your-writes on the committing path. Also held during checkpointing
+    /// so no append races the WAL compaction.
     write_lock: tokio::sync::Mutex<()>,
+    snapshot: Option<SnapshotConfig>,
+    commits_since_snapshot: AtomicU64,
 }
 
 impl SystemCatalog {
     /// Construct over an in-RAM state (already replayed from the WAL by the
-    /// caller) and the appender that owns the same WAL file.
+    /// caller) and the appender that owns the same WAL file. Snapshotting is
+    /// disabled (no path bookkeeping); used by tests with an injected appender.
     pub fn new(
         name: impl Into<String>,
         state: SystemCatalogState,
@@ -63,24 +117,62 @@ impl SystemCatalog {
             state: Arc::new(state),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
+            snapshot: None,
+            commits_since_snapshot: AtomicU64::new(0),
         }
     }
 
-    /// Open (or create) the catalog WAL at `wal_path`, replay it into a fresh
-    /// in-RAM authority, and return a ready catalog. Boot entry point.
-    pub async fn open(
-        name: impl Into<String>,
-        wal_path: impl Into<std::path::PathBuf>,
-    ) -> Result<Self> {
-        let appender =
-            Arc::new(crate::services::FramedTableWalAppender::open(wal_path.into()).await?);
+    /// Open (or create) the catalog WAL at `wal_path`, restore the in-RAM
+    /// authority, and return a ready catalog. Boot entry point.
+    ///
+    /// Restore order (bounded restart): if a durable snapshot blob exists, seed
+    /// state + watermark from it, then replay only the WAL entries after the
+    /// watermark (idempotent on sequence). Otherwise replay the whole WAL from
+    /// empty. A snapshot that exists but fails to decode is **fatal** — after
+    /// compaction the WAL alone no longer carries the pre-watermark history, so
+    /// silently falling back to a WAL-only replay would lose committed DDL.
+    pub async fn open(name: impl Into<String>, wal_path: impl Into<PathBuf>) -> Result<Self> {
+        let wal_path = wal_path.into();
+        let snapshot_path = wal_path.with_extension("snapshot");
+        let appender = Arc::new(crate::services::FramedTableWalAppender::open(&wal_path).await?);
         let entries = appender.read_entries().await?;
-        let state = SystemCatalogState::from_wal_entries(&entries)?;
-        Ok(Self::new(name, state, appender))
+
+        let state = if tokio::fs::try_exists(&snapshot_path).await.unwrap_or(false) {
+            let bytes = tokio::fs::read(&snapshot_path)
+                .await
+                .with_context(|| format!("reading catalog snapshot {}", snapshot_path.display()))?;
+            let state = SystemCatalogState::from_snapshot_bytes(&bytes).with_context(|| {
+                format!("decoding catalog snapshot {}", snapshot_path.display())
+            })?;
+            state.replay(&entries)?;
+            state
+        } else {
+            SystemCatalogState::from_wal_entries(&entries)?
+        };
+
+        let threshold = std::env::var("PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .filter(|n| *n > 0)
+            .unwrap_or(DEFAULT_SNAPSHOT_THRESHOLD);
+
+        Ok(Self {
+            name: name.into(),
+            state: Arc::new(state),
+            appender,
+            write_lock: tokio::sync::Mutex::new(()),
+            snapshot: Some(SnapshotConfig {
+                wal_path,
+                snapshot_path,
+                threshold,
+            }),
+            commits_since_snapshot: AtomicU64::new(0),
+        })
     }
 
     /// Durably append the deltas to the WAL, then fold them into the in-RAM
-    /// authority — atomically with respect to other writers.
+    /// authority — atomically with respect to other writers. Triggers an
+    /// automatic checkpoint once enough mutations have accumulated.
     async fn commit_batch(&self, deltas: Vec<CatalogDelta>) -> Result<()> {
         let _guard = self.write_lock.lock().await;
         let ops = deltas
@@ -88,14 +180,68 @@ impl SystemCatalog {
             .map(|d| d.to_operation())
             .collect::<Result<Vec<_>>>()?;
         let entries = self.appender.append_operations(ops, None).await?;
+        let applied = entries.len() as u64;
         for (entry, delta) in entries.into_iter().zip(deltas) {
             self.state.apply_committed(entry.sequence_number, delta);
+        }
+        if let Some(cfg) = &self.snapshot {
+            let n = self
+                .commits_since_snapshot
+                .fetch_add(applied, Ordering::SeqCst)
+                + applied;
+            if n >= cfg.threshold {
+                self.checkpoint_locked(cfg).await?;
+                self.commits_since_snapshot.store(0, Ordering::SeqCst);
+            }
         }
         Ok(())
     }
 
     async fn commit(&self, delta: CatalogDelta) -> Result<()> {
         self.commit_batch(vec![delta]).await
+    }
+
+    /// Force a snapshot + WAL compaction now. No-op for injected-appender
+    /// catalogs. Takes the write lock; callers must not already hold it.
+    pub async fn checkpoint(&self) -> Result<()> {
+        if let Some(cfg) = &self.snapshot {
+            let _guard = self.write_lock.lock().await;
+            self.checkpoint_locked(cfg).await?;
+            self.commits_since_snapshot.store(0, Ordering::SeqCst);
+        }
+        Ok(())
+    }
+
+    /// Snapshot the in-RAM authority durably, then compact the WAL to drop the
+    /// entries the snapshot already covers. **The write lock must be held.**
+    ///
+    /// Crash-consistency ordering (the load-bearing invariant — a committed DDL
+    /// must never be lost): the snapshot is made durable *before* the WAL is
+    /// compacted. So at every crash point, recovery is correct:
+    /// - before the snapshot rename: snapshot blob is the previous one (or
+    ///   absent); the WAL still holds every entry → full/bounded replay, no loss.
+    /// - after the snapshot rename, before/during compaction: snapshot covers
+    ///   `watermark`; the WAL still holds everything; boot replays `> watermark`
+    ///   (entries `<= watermark` are idempotently skipped). No loss.
+    /// - after compaction: WAL holds only `> watermark`; boot seeds from the
+    ///   snapshot then replays exactly those. No loss.
+    async fn checkpoint_locked(&self, cfg: &SnapshotConfig) -> Result<()> {
+        let watermark = self.state.applied_seq();
+
+        // 1. Durable snapshot (write temp → fsync → atomic rename).
+        let bytes = self.state.to_snapshot_bytes()?;
+        write_atomic(&cfg.snapshot_path, &bytes).await?;
+
+        // 2. Compact the WAL: keep only entries the snapshot does not cover.
+        let entries = self.appender.read_all_entries().await?;
+        if entries.iter().any(|e| e.sequence_number <= watermark) {
+            let kept: Vec<_> = entries
+                .into_iter()
+                .filter(|e| e.sequence_number > watermark)
+                .collect();
+            crate::services::canonical_wal::rewrite_canonical_wal(&cfg.wal_path, &kept).await?;
+        }
+        Ok(())
     }
 
     /// Load a table's current schema or fail (the catalog's "table not found").
@@ -450,6 +596,16 @@ impl Catalog for SystemCatalog {
         .await?;
         Ok(schema)
     }
+
+    /// Take a final snapshot on graceful shutdown so the next restart replays an
+    /// empty WAL tail. Best-effort: a failed checkpoint is not fatal to close
+    /// (the durable WAL alone still recovers correctly).
+    async fn close(&self) -> Result<()> {
+        if let Err(e) = self.checkpoint().await {
+            tracing::warn!(error = %e, "SystemCatalog: checkpoint on close failed (recoverable from WAL)");
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -641,6 +797,190 @@ mod tests {
             .await?;
         assert_eq!(users.name, "users");
         assert_eq!(users.primary_pod.unwrap().pod, "pod-x");
+        Ok(())
+    }
+
+    // ── Phase 3: snapshot + WAL compaction (bounded restart) ──────────────
+
+    use crate::services::canonical_wal::FramedTableWalAppender;
+
+    fn wal_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("catalog.wal")
+    }
+    fn snapshot_path(dir: &std::path::Path) -> std::path::PathBuf {
+        dir.join("catalog.snapshot")
+    }
+
+    async fn wal_entry_count(dir: &std::path::Path) -> usize {
+        FramedTableWalAppender::read_entries_from_path(wal_path(dir))
+            .await
+            .map(|e| e.len())
+            .unwrap_or(0)
+    }
+
+    /// An explicit checkpoint writes a durable snapshot and compacts the WAL to
+    /// drop everything the snapshot covers; later mutations land as a short
+    /// tail, and a reopen restores snapshot + tail. This is the bounded-restart
+    /// guarantee: the WAL stops growing without bound.
+    #[tokio::test]
+    async fn snapshot_compacts_wal_and_survives_reopen() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        {
+            let cat = catalog(dir.path()).await;
+            cat.create_namespace(&nslevels(&["s"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t1"),
+                vec_schema("t1"),
+            )
+            .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t2"),
+                vec_schema("t2"),
+            )
+            .await?;
+            assert_eq!(wal_entry_count(dir.path()).await, 3);
+
+            cat.checkpoint().await?; // snapshot covers all 3; WAL compacted to empty
+            assert!(snapshot_path(dir.path()).exists());
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
+
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t3"),
+                vec_schema("t3"),
+            )
+            .await?;
+            // Only the post-snapshot tail remains on the WAL.
+            assert_eq!(wal_entry_count(dir.path()).await, 1);
+        }
+        let reopened = catalog(dir.path()).await;
+        for t in ["t1", "t2", "t3"] {
+            assert!(
+                reopened
+                    .table_exists(&TableIdentifier::new(nslevels(&["s"]), t))
+                    .await?,
+                "table {t} must survive snapshot+compaction+reopen"
+            );
+        }
+        Ok(())
+    }
+
+    /// Crash injection — crashed *after* the snapshot rename but *before* (or
+    /// during) WAL compaction. We reproduce that exact on-disk state: take a
+    /// checkpoint, then restore the pre-compaction WAL underneath the new
+    /// snapshot. Recovery must replay the now-covered entries idempotently — no
+    /// lost DDL, no duplicates.
+    #[tokio::test]
+    async fn crash_after_snapshot_before_compaction_is_idempotent() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        // Capture the full, uncompacted WAL (ns + t1 + t2).
+        {
+            let cat = catalog(dir.path()).await;
+            cat.create_namespace(&nslevels(&["s"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t1"),
+                vec_schema("t1"),
+            )
+            .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t2"),
+                vec_schema("t2"),
+            )
+            .await?;
+        }
+        let full_wal = tokio::fs::read(wal_path(dir.path())).await?;
+
+        // Checkpoint (snapshot + compact-to-empty), then simulate the crash by
+        // restoring the full WAL on top of the fresh snapshot.
+        {
+            let cat = catalog(dir.path()).await;
+            cat.checkpoint().await?;
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
+        }
+        tokio::fs::write(wal_path(dir.path()), &full_wal).await?;
+        assert_eq!(wal_entry_count(dir.path()).await, 3); // snapshot + full WAL both present
+
+        let reopened = catalog(dir.path()).await;
+        assert!(reopened.namespace_exists(&nslevels(&["s"])).await?);
+        for t in ["t1", "t2"] {
+            assert!(
+                reopened
+                    .table_exists(&TableIdentifier::new(nslevels(&["s"]), t))
+                    .await?
+            );
+        }
+        // Exactly two tables — the covered entries were skipped, not re-created.
+        assert_eq!(reopened.list_tables(&nslevels(&["s"])).await?.len(), 2);
+        Ok(())
+    }
+
+    /// A leftover compaction temp file (crash mid-rewrite, before the atomic
+    /// rename) must be ignored: the live WAL is untouched, so recovery is
+    /// unaffected.
+    #[tokio::test]
+    async fn leftover_compaction_temp_is_ignored() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        {
+            let cat = catalog(dir.path()).await;
+            cat.create_namespace(&nslevels(&["s"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t1"),
+                vec_schema("t1"),
+            )
+            .await?;
+        }
+        // Garbage temp from an interrupted compaction.
+        let tmp = wal_path(dir.path()).with_extension("wal-compact-tmp");
+        tokio::fs::write(&tmp, b"PXWAL001-garbage-partial-frame").await?;
+
+        let reopened = catalog(dir.path()).await;
+        assert!(reopened.namespace_exists(&nslevels(&["s"])).await?);
+        assert!(
+            reopened
+                .table_exists(&TableIdentifier::new(nslevels(&["s"]), "t1"))
+                .await?
+        );
+        Ok(())
+    }
+
+    /// Many mutations across several checkpoints converge to the correct final
+    /// state on reopen, and the WAL stays bounded (not proportional to total
+    /// DDL count).
+    #[tokio::test]
+    async fn multiple_checkpoints_preserve_state_and_bound_wal() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        {
+            let cat = catalog(dir.path()).await;
+            cat.create_namespace(&nslevels(&["s"]), HashMap::new())
+                .await?;
+            for round in 0..5 {
+                for i in 0..4 {
+                    let name = format!("t_{round}_{i}");
+                    cat.create_table(
+                        &TableIdentifier::new(nslevels(&["s"]), &name),
+                        vec_schema(&name),
+                    )
+                    .await?;
+                }
+                cat.checkpoint().await?;
+            }
+            // Drop half of them, checkpoint again.
+            for round in 0..5 {
+                cat.drop_table(
+                    &TableIdentifier::new(nslevels(&["s"]), &format!("t_{round}_0")),
+                    false,
+                )
+                .await?;
+            }
+            cat.checkpoint().await?;
+            // WAL is bounded (empty right after a checkpoint), not 25-ish entries.
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
+        }
+        let reopened = catalog(dir.path()).await;
+        let tables = reopened.list_tables(&nslevels(&["s"])).await?;
+        assert_eq!(tables.len(), 15); // 20 created - 5 dropped
         Ok(())
     }
 }
