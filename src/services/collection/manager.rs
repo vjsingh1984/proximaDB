@@ -950,17 +950,8 @@ impl CollectionService {
             ));
         }
 
-        // Store proto collection using protobuf serialization (zero-copy). This remains as a
-        // compatibility cache for storage engines until all callers read xCatalog directly.
-        if let Err(e) = self
-            .metadata_backend
-            .upsert_collection_proto(&proto_collection)
-            .await
-            .context("Failed to store collection metadata_info")
-        {
-            let _ = self.drop_collection_catalog_asset(&proto_collection).await;
-            return Err(e);
-        }
+        // The catalog asset write above is the sole authoritative store for the
+        // collection; the legacy metadata backend is no longer dual-written.
 
         info!(
             "✅ Collection created: {} (UUID: {}) with storage at: {} in {}μs",
@@ -1368,20 +1359,6 @@ impl CollectionService {
                 ));
             }
 
-            if let Err(e) = self
-                .metadata_backend
-                .delete_collection(collection_name.as_deref().unwrap_or(collection_identifier))
-                .await
-            {
-                if Self::is_not_found_error(&e) {
-                    debug!(
-                        "Legacy collection metadata cache was already absent for {}",
-                        collection_identifier
-                    );
-                } else {
-                    return Err(e);
-                }
-            }
             let deleted = true;
 
             if deleted {
@@ -1432,12 +1409,8 @@ impl CollectionService {
             collection_name, vector_delta, size_delta
         );
 
-        // Get current record, update stats, and save back
-        if let Some(mut record) = self
-            .metadata_backend
-            .get_collection(collection_name)
-            .await?
-        {
+        // Get current record from the catalog, update stats, and save back.
+        if let Some(mut record) = self.collection(collection_name).await? {
             // Update stats manually for Collection
             if let Some(stats) = record.stats.as_mut() {
                 stats.vector_count += vector_delta;
@@ -1446,10 +1419,6 @@ impl CollectionService {
             record.updated_at = chrono::Utc::now().timestamp_millis();
 
             self.upsert_collection_catalog_asset(&record).await?;
-
-            self.metadata_backend
-                .upsert_collection_proto(&record)
-                .await?;
         } else {
             warn!(
                 "⚠️ Attempted to update stats for non-existent collection: {}",
@@ -1599,12 +1568,6 @@ impl CollectionService {
             .await
             .context("Failed to update collection catalog metadata")?;
 
-        // Store updated record
-        self.metadata_backend
-            .upsert_collection_proto(&record)
-            .await
-            .context("Failed to update collection metadata_info")?;
-
         info!(
             "✅ Collection updated: {} in {}μs",
             identifier,
@@ -1711,16 +1674,10 @@ impl CollectionService {
             }
         }
 
-        // Store the updated collection. The catalog is the read authority, so the
-        // catalog asset write is what makes the compression change visible; the
-        // legacy backend write stays (dual-write) until it is removed wholesale.
+        // Store the updated collection in the catalog (the sole authority).
         self.upsert_collection_catalog_asset(&updated_collection)
             .await
             .context("Failed to update collection compression in catalog")?;
-        self.metadata_backend
-            .upsert_collection_proto(&updated_collection)
-            .await
-            .context("Failed to update collection metadata_info")?;
 
         info!(
             "✅ Updated compression for collection {}: algorithm={}, level={:?}",
@@ -1861,12 +1818,8 @@ impl CollectionService {
 
         let mut cleaned_components = 0;
 
-        // Get collection to find storage assignment
-        let collection = match self
-            .metadata_backend
-            .get_collection(collection_uuid)
-            .await?
-        {
+        // Get collection from the catalog to find storage assignment
+        let collection = match self.collection(collection_uuid).await? {
             Some(col) => col,
             None => {
                 warn!("Collection {} not found in metadata_info", collection_uuid);
@@ -2611,11 +2564,6 @@ impl CollectionService {
         }
     }
 
-    fn is_not_found_error(error: &anyhow::Error) -> bool {
-        let message = error.to_string().to_ascii_lowercase();
-        message.contains("not found") || message.contains("does not exist")
-    }
-
     /// Generate unique collection ID using UUIDs.
     ///
     /// Base62 timestamp IDs are still accepted as legacy identifiers by lookup paths, but new
@@ -3347,11 +3295,8 @@ mod tests {
         );
         assert_eq!(schema.projections.len(), 1);
 
-        service
-            .metadata_backend()
-            .delete_collection("catalog_vector_assets")
-            .await?;
-
+        // The catalog is the sole store; reads reconstruct the collection from the
+        // xCatalog asset (by name and by UUID).
         let catalog_backed_by_name = service
             .collection("catalog_vector_assets")
             .await?
