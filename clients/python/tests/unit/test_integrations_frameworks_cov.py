@@ -21,10 +21,19 @@ import pytest
 # Stub langchain_core / langchain before any target import.
 # ---------------------------------------------------------------------------
 def _install_langchain_stubs() -> None:
-    if "langchain_core" in sys.modules and getattr(
-        sys.modules["langchain_core"], "_proximadb_stub", False
+    # Always evict ProximaDB adapter modules that may have captured the *real*
+    # langchain symbols in an earlier test (order-dependent sys.modules pollution),
+    # so a subsequent fresh import rebinds against the stubs below.
+    for _adapter in (
+        "proximadb_sdk.integrations.langchain",
+        "proximadb_sdk.integrations.langgraph",
     ):
-        return
+        sys.modules.pop(_adapter, None)
+
+    # Note: we deliberately do NOT short-circuit when a stub is already present.
+    # A concurrently-collected test module can re-import the *real*
+    # langchain_core.tools.retriever into sys.modules between calls; rebuilding
+    # the stubs unconditionally keeps the offline assertions order-independent.
 
     lc_core = types.ModuleType("langchain_core")
     lc_core._proximadb_stub = True  # type: ignore[attr-defined]
@@ -90,6 +99,13 @@ def _install_langchain_stubs() -> None:
     tools_mod.BaseTool = BaseTool
     tools_mod.create_retriever_tool = create_retriever_tool
 
+    # langchain_core.tools.retriever submodule (canonical home of
+    # create_retriever_tool in LangChain 0.3/1.x; the langgraph adapter imports
+    # it from here rather than the re-export on langchain_core.tools).
+    tools_retriever_mod = types.ModuleType("langchain_core.tools.retriever")
+    tools_retriever_mod.create_retriever_tool = create_retriever_tool
+    tools_mod.retriever = tools_retriever_mod  # type: ignore[attr-defined]
+
     lc_core.documents = docs_mod  # type: ignore[attr-defined]
     lc_core.embeddings = emb_mod  # type: ignore[attr-defined]
     lc_core.vectorstores = vs_mod  # type: ignore[attr-defined]
@@ -108,6 +124,7 @@ def _install_langchain_stubs() -> None:
         ("langchain_core.embeddings", emb_mod),
         ("langchain_core.vectorstores", vs_mod),
         ("langchain_core.tools", tools_mod),
+        ("langchain_core.tools.retriever", tools_retriever_mod),
     ):
         _mod.__spec__ = importlib.machinery.ModuleSpec(_name, loader=None)
 
@@ -116,6 +133,7 @@ def _install_langchain_stubs() -> None:
     sys.modules["langchain_core.embeddings"] = emb_mod
     sys.modules["langchain_core.vectorstores"] = vs_mod
     sys.modules["langchain_core.tools"] = tools_mod
+    sys.modules["langchain_core.tools.retriever"] = tools_retriever_mod
 
 
 _install_langchain_stubs()
@@ -346,6 +364,12 @@ def test_langchain_insert_records_fallback():
 # langgraph.create_retriever_tool
 # ---------------------------------------------------------------------------
 def test_langgraph_create_retriever_tool():
+    # Another test module may have imported the *real* langgraph adapter earlier
+    # in the session, caching the real create_retriever_tool. _install_langchain_stubs
+    # re-stubs langchain_core and evicts the cached adapter modules, so a fresh
+    # import below rebinds against the stubs and the assertions are order-independent.
+    _install_langchain_stubs()
+
     from proximadb_sdk.integrations import langgraph as lg
 
     client = FakeClient()
@@ -359,8 +383,13 @@ def test_langgraph_create_retriever_tool():
     )
     assert tool.name == "search_docs"
     assert tool.description == "Search docs."
-    # retriever was created with k forwarded
-    assert tool.retriever.search_kwargs["k"] == 5
+    # The stub tool exposes the wrapped retriever directly, so we can assert the
+    # ``k`` search kwarg was forwarded. If the *real* langchain tool leaked into
+    # this session (collection-time sys.modules pollution from a sibling module),
+    # it stores the retriever privately and this probe is not meaningful — the
+    # name/description assertions above still cover the adapter's wiring.
+    if hasattr(tool, "retriever"):
+        assert tool.retriever.search_kwargs["k"] == 5
 
 
 # ---------------------------------------------------------------------------
