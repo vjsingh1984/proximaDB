@@ -151,13 +151,10 @@ class ProximaDBDocumentStore:
                     "Please embed documents before writing to ProximaDBDocumentStore."
                 )
 
-            if policy == DuplicatePolicy.FAIL:
-                # Check if document exists
-                existing = self._client.get_vectors(self._collection_name, ids=[doc_id])
-                if existing:
-                    raise ValueError(
-                        f"Document {doc_id} already exists (policy=DuplicatePolicy.FAIL)"
-                    )
+            if policy == DuplicatePolicy.FAIL and self._record_exists(doc_id):
+                raise ValueError(
+                    f"Document {doc_id} already exists (policy=DuplicatePolicy.FAIL)"
+                )
 
             records.append(
                 record_payload(
@@ -218,6 +215,24 @@ class ProximaDBDocumentStore:
             all_results.append(docs)
 
         return all_results
+
+    def _record_exists(self, doc_id: str) -> bool:
+        """Return True if a record with ``doc_id`` already exists.
+
+        Uses the SDK's get-by-id endpoint (``get_vector``), which raises when the
+        record is absent. Any lookup error is treated as "not present" so that
+        writes are not blocked by a transient read failure.
+        """
+        try:
+            record = self._client.get_vector(
+                self._collection_name,
+                doc_id,
+                include_vector=False,
+                include_metadata=False,
+            )
+        except Exception:
+            return False
+        return record is not None
 
     def _generate_id(self, document: Document) -> str:
         """Generate a unique document ID.
