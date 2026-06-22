@@ -790,9 +790,14 @@ class ChunkingPipeline:
         self, text: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> Generator[TextChunk, None, None]:
         """
-        Process text as a stream, yielding chunks as they're ready.
+        Yield validated/enriched chunks one at a time.
 
-        Memory-efficient for large documents.
+        NOTE: This is *not* an incremental (constant-memory) stream. The full
+        input ``text`` and the complete chunk list are materialized first (the
+        underlying chunking strategies are batch APIs); only the downstream
+        validation/enrichment stages run per-chunk as chunks are yielded. Use
+        this to begin consuming chunks without waiting for the whole pipeline,
+        not to bound memory on very large documents.
         """
         try:
             chunks = self.chunker.chunk(text, source_id, metadata)
@@ -816,7 +821,10 @@ class ChunkingPipeline:
         self, text: str, source_id: str, metadata: dict[str, Any] | None = None
     ) -> AsyncGenerator[TextChunk, None]:
         """
-        Async version of stream processing.
+        Async version of :meth:`process_stream`.
+
+        Same caveat applies: the input and chunk list are materialized first
+        (chunking runs in an executor); this is not constant-memory streaming.
         """
         try:
             loop = asyncio.get_event_loop()

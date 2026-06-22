@@ -193,12 +193,22 @@ class PythonParser(LanguageParser):
 
             self._parser = get_parser("python")
             self._language = get_language("python")
-        except (ImportError, TypeError, Exception) as e:
-            # Fallback to regex-based parsing if tree-sitter not available
-            # or if there's a version incompatibility (e.g., tree-sitter 0.25.x with older tree-sitter-languages)
+        except (ImportError, OSError) as e:
+            # Grammar not installed / native module unavailable -> regex fallback.
             import logging
 
-            logging.debug(f"Tree-sitter init failed, using regex fallback: {e}")
+            logging.debug(f"Tree-sitter unavailable, using regex fallback: {e}")
+            self._parser = None
+            self._language = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for python; "
+                "using regex fallback",
+                exc_info=True,
+            )
             self._parser = None
             self._language = None
 
@@ -896,7 +906,19 @@ class JavaScriptParser(LanguageParser):
 
             lang = "typescript" if self._typescript else "javascript"
             self._parser = get_parser(lang)
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -941,7 +963,19 @@ class RustParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("rust")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -1430,7 +1464,19 @@ class GoParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("go")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -1689,7 +1735,19 @@ class JavaParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("java")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2102,7 +2160,19 @@ class CppParser(LanguageParser):
 
             lang = "c" if self._c_mode else "cpp"
             self._parser = get_parser(lang)
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2387,7 +2457,19 @@ class RubyParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("ruby")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2688,7 +2770,19 @@ class CSharpParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("c_sharp")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2724,7 +2818,19 @@ class PhpParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("php")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2759,7 +2865,19 @@ class SwiftParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("swift")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2794,7 +2912,19 @@ class KotlinParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("kotlin")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2829,7 +2959,19 @@ class ScalaParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("scala")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -2864,7 +3006,19 @@ class BashParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("bash")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3001,7 +3155,19 @@ class SqlParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("sql")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3177,7 +3343,19 @@ class YamlParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("yaml")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3318,7 +3496,19 @@ class JsonParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("json")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3512,7 +3702,19 @@ class PerlParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("perl")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3687,7 +3889,19 @@ class LuaParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("lua")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3723,7 +3937,19 @@ class HaskellParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("haskell")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3758,7 +3984,19 @@ class ElixirParser(LanguageParser):
             from tree_sitter_language_pack import get_parser
 
             self._parser = get_parser("elixir")
-        except (ImportError, TypeError, Exception):
+        except (ImportError, OSError):
+            # Grammar not installed / native module unavailable -> regex fallback.
+            self._parser = None
+        except Exception:
+            # Unexpected failure: surface it (do not silently swallow), then fall back.
+            import logging
+
+            logging.warning(
+                "Unexpected tree-sitter parser init failure for %s; "
+                "using regex fallback",
+                getattr(self, "language", "unknown"),
+                exc_info=True,
+            )
             self._parser = None
 
     @property
@@ -3955,24 +4193,47 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
 
     def __init__(self, config: CodeChunkingConfig | None = None):
         self.config = config or CodeChunkingConfig()
+        # Lazily-instantiated parsers, keyed by language. We do NOT eagerly
+        # build all ~23 tree-sitter parsers here: loading every grammar to chunk
+        # a single file is wasteful. Each language's parser is instantiated on
+        # first use (see `_get_parser`) and cached for subsequent calls.
         self._parsers: dict[str, LanguageParser] = {}
-        self._init_parsers()
+        # `None` sentinel marks a language we already tried and failed to load,
+        # so we don't repeatedly retry a broken/unavailable grammar.
+        self._failed_languages: set[str] = set()
+        # Set of languages this strategy is allowed to parse (config-scoped).
+        self._allowed_languages: set[str] = set(
+            self.config.languages or LANGUAGE_PARSERS.keys()
+        )
 
-    def _init_parsers(self):
-        """Initialize parsers for configured languages"""
-        languages = self.config.languages or list(LANGUAGE_PARSERS.keys())
-        for lang in languages:
-            if lang in LANGUAGE_PARSERS:
-                parser_class = LANGUAGE_PARSERS[lang]
-                try:
-                    self._parsers[lang] = (
-                        parser_class() if callable(parser_class) else parser_class
-                    )
-                except (AttributeError, ImportError, OSError) as e:
-                    # Skip languages that aren't available in tree-sitter-languages
-                    import logging
+    def _get_parser(self, language: str | None) -> LanguageParser | None:
+        """Return the parser for `language`, instantiating it on first use.
 
-                    logging.debug(f"Skipping parser for {lang}: {e}")
+        Returns None if the language is unknown, not in the configured set, or
+        previously failed to initialize.
+        """
+        if (
+            language is None
+            or language not in LANGUAGE_PARSERS
+            or language not in self._allowed_languages
+            or language in self._failed_languages
+        ):
+            return None
+        parser = self._parsers.get(language)
+        if parser is not None:
+            return parser
+        parser_class = LANGUAGE_PARSERS[language]
+        try:
+            parser = parser_class() if callable(parser_class) else parser_class
+        except (AttributeError, ImportError, OSError) as e:
+            # Grammar not available in tree-sitter-language-pack -> fall back.
+            import logging
+
+            logging.debug(f"Skipping parser for {language}: {e}")
+            self._failed_languages.add(language)
+            return None
+        self._parsers[language] = parser
+        return parser
 
     def chunk(
         self, text: str, source_id: str, metadata: dict[str, Any] | None = None
@@ -3991,11 +4252,12 @@ class CodeChunkingStrategy(ChunkingStrategyInterface):
         metadata = metadata or {}
         language = metadata.get("language") or self._detect_language(source_id)
 
-        if language not in self._parsers:
+        parser = self._get_parser(language)
+        if parser is None:
             # Fall back to semantic text chunking
             return self._fallback_chunk(text, source_id, metadata)
 
-        parsed = self._parsers[language].parse(text, source_id)
+        parsed = parser.parse(text, source_id)
 
         chunks = []
         for i, symbol in enumerate(parsed.symbols):

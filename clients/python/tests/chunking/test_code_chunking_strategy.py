@@ -83,16 +83,22 @@ class TestCodeChunkingStrategy:
         assert isinstance(strategy.config, CodeChunkingConfig)
 
     def test_strategy_has_parsers(self, strategy):
-        """Test strategy initializes parsers."""
+        """Test strategy exposes the lazy parser cache and allowed languages."""
         assert hasattr(strategy, "_parsers")
         assert isinstance(strategy._parsers, dict)
-        assert len(strategy._parsers) > 0
+        # Parsers are instantiated lazily on first chunk(), so the cache starts
+        # empty, but the allowed-language set is populated at construction.
+        assert strategy._parsers == {}
+        assert len(strategy._allowed_languages) > 0
 
     def test_strategy_with_limited_languages(self, python_strategy):
-        """Test strategy with limited languages."""
+        """Test strategy with limited languages restricts the allowed set."""
+        assert python_strategy._allowed_languages == {"python"}
+        # Nothing instantiated until the first chunk() call.
+        assert python_strategy._parsers == {}
+        python_strategy.chunk("def f():\n    return 1\n", "x.py")
         assert "python" in python_strategy._parsers
-        # Should only have python parser
-        assert len(python_strategy._parsers) == 1
+        assert set(python_strategy._parsers) == {"python"}
 
     def test_chunk_python_code(self, strategy):
         """Test chunking Python code."""
@@ -216,8 +222,7 @@ class TestCreateCodeChunker:
     def test_create_chunker_with_languages(self):
         """Test creating a code chunker with specific languages."""
         chunker = create_code_chunker(languages=["python", "rust"])
-        assert "python" in chunker._parsers
-        assert "rust" in chunker._parsers
+        assert chunker._allowed_languages == {"python", "rust"}
 
     def test_create_chunker_with_config_kwargs(self):
         """Test creating a code chunker with config kwargs."""
