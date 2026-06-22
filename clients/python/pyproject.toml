@@ -86,14 +86,14 @@ llm = [
 # load lazily on first access (see proximadb_sdk/__init__.py __getattr__).
 #   pip install 'proximadb[chunking]'
 chunking = [
-    "tree-sitter>=0.24.0",
-    "tree-sitter-language-pack>=0.13.0",
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.0",
 ]
 
 # Back-compat alias for the pre-TD-126 extra name; identical to `chunking`.
 code-chunking = [
-    "tree-sitter>=0.24.0",
-    "tree-sitter-language-pack>=0.13.0",
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.0",
 ]
 
 langchain = [
