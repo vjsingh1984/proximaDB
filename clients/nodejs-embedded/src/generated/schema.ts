@@ -790,10 +790,16 @@ export interface components {
             distance_metric: string;
             /** @description Storage engine */
             engine: string;
+            /**
+             * @description Per-index config (HNSW/IVF params, is_primary) as persisted at create
+             *     time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
+             */
+            index_specs: components["schemas"]["IndexSpecOutput"][];
             /** @description Collection name */
             name: string;
             /** @description Whether ProximaRecord is enabled */
             proxima_record_enabled: boolean;
+            quantization?: null | components["schemas"]["QuantizationConfigOutput"];
             schema?: null | components["schemas"]["SchemaDefinition"];
             /** @description Collection statistics */
             stats: components["schemas"]["CollectionStatsV2"];
@@ -900,6 +906,7 @@ export interface components {
             initial_capacity?: number | null;
             /** @description Collection name (required) */
             name: string;
+            quantization?: null | components["schemas"]["QuantizationConfigInput"];
             schema?: null | components["schemas"]["SchemaDefinition"];
             /**
              * @description Operator metadata tags, e.g. `"recall_target:0.95"`,
@@ -1081,6 +1088,15 @@ export interface components {
             /** Format: int32 */
             m?: number | null;
         };
+        /** @description REST output for HNSW params (mirrors gRPC `V2HnswConfig`). */
+        HnswConfigOutput: {
+            /** Format: int32 */
+            ef_construction?: number | null;
+            /** Format: int32 */
+            ef_search?: number | null;
+            /** Format: int32 */
+            m?: number | null;
+        };
         /** @description REST input for a single index config (mirrors proto `IndexConfig`). */
         IndexConfigInput: {
             /** @description Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh". */
@@ -1088,11 +1104,22 @@ export interface components {
             hnsw_config?: null | components["schemas"]["HnswConfigInput"];
             /** @description Optional index name (defaults to `index_<n>`). */
             index_name?: string | null;
+            /** @description Mark this index as the collection's primary ANN index (gRPC-v2 parity). */
+            is_primary?: boolean | null;
             ivf_config?: null | components["schemas"]["IvfConfigInput"];
             /** @description Free-form algorithm parameters. */
             parameters?: {
                 [key: string]: string;
             };
+        };
+        /** @description REST output for a single index config (mirrors gRPC `V2IndexSpec`). */
+        IndexSpecOutput: {
+            /** @description Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh". */
+            algorithm: string;
+            hnsw?: null | components["schemas"]["HnswConfigOutput"];
+            /** @description Whether this is the collection's primary ANN index. */
+            is_primary: boolean;
+            ivf?: null | components["schemas"]["IvfConfigOutput"];
         };
         /** @description Error details for a failed record insertion */
         InsertError: {
@@ -1165,6 +1192,13 @@ export interface components {
         };
         /** @description REST input for IVF index params (mirrors proto `IvfConfig`). */
         IvfConfigInput: {
+            /** Format: int32 */
+            n_lists?: number | null;
+            /** Format: int32 */
+            n_probe?: number | null;
+        };
+        /** @description REST output for IVF params (mirrors gRPC `V2IvfConfig`). */
+        IvfConfigOutput: {
             /** Format: int32 */
             n_lists?: number | null;
             /** Format: int32 */
@@ -1244,6 +1278,22 @@ export interface components {
             text_fields?: components["schemas"]["TextFieldInput"][] | null;
             /** @description Vector embedding (required) */
             vector: number[];
+        };
+        /**
+         * @description REST input for quantization config (mirrors proto `QuantizationConfig`;
+         *     gRPC-v2 parity with `V2QuantizationConfig`).
+         */
+        QuantizationConfigInput: {
+            /** @description Enable quantization for this collection. */
+            enabled?: boolean | null;
+            /** @description Strategy: "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels". */
+            strategy?: string | null;
+        };
+        /** @description REST output for quantization config (mirrors gRPC `V2QuantizationConfig`). */
+        QuantizationConfigOutput: {
+            enabled: boolean;
+            /** @description Strategy label, e.g. "smart_defaults" | "minimal" | "aggressive". */
+            strategy: string;
         };
         /** @enum {string} */
         QueryLanguage: "uql" | "aql" | "federated";

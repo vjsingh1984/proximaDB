@@ -171,12 +171,24 @@ components:
         engine:
           description: Storage engine
           type: string
+        index_specs:
+          description: |-
+            Per-index config (HNSW/IVF params, is_primary) as persisted at create
+            time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
+          items:
+            $ref: '#/components/schemas/IndexSpecOutput'
+          type: array
         name:
           description: Collection name
           type: string
         proxima_record_enabled:
           description: Whether ProximaRecord is enabled
           type: boolean
+        quantization:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/QuantizationConfigOutput'
+            description: Quantization config as persisted at create time, or `None` when unset.
         schema:
           oneOf:
           - type: 'null'
@@ -198,6 +210,7 @@ components:
       - distance_metric
       - proxima_record_enabled
       - stats
+      - index_specs
       - created_at
       type: object
     CollectionV2Summary:
@@ -329,6 +342,13 @@ components:
           description: Collection name (required)
           minLength: 1
           type: string
+        quantization:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/QuantizationConfigInput'
+            description: |-
+              Quantization config (gRPC-v2 parity). When omitted, quantization is
+              left unset (engine default).
         schema:
           oneOf:
           - type: 'null'
@@ -654,6 +674,28 @@ components:
           - integer
           - 'null'
       type: object
+    HnswConfigOutput:
+      description: REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
+      properties:
+        ef_construction:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        ef_search:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        m:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      type: object
     IndexConfigInput:
       description: REST input for a single index config (mirrors proto `IndexConfig`).
       properties:
@@ -670,6 +712,11 @@ components:
           type:
           - string
           - 'null'
+        is_primary:
+          description: Mark this index as the collection's primary ANN index (gRPC-v2 parity).
+          type:
+          - boolean
+          - 'null'
         ivf_config:
           oneOf:
           - type: 'null'
@@ -684,6 +731,29 @@ components:
           type: object
       required:
       - algorithm
+      type: object
+    IndexSpecOutput:
+      description: REST output for a single index config (mirrors gRPC `V2IndexSpec`).
+      properties:
+        algorithm:
+          description: 'Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh".'
+          type: string
+        hnsw:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/HnswConfigOutput'
+            description: HNSW params (present when the index is HNSW).
+        is_primary:
+          description: Whether this is the collection's primary ANN index.
+          type: boolean
+        ivf:
+          oneOf:
+          - type: 'null'
+          - $ref: '#/components/schemas/IvfConfigOutput'
+            description: IVF params (present when the index is IVF).
+      required:
+      - algorithm
+      - is_primary
       type: object
     InsertError:
       description: Error details for a failed record insertion
@@ -792,6 +862,22 @@ components:
       type: object
     IvfConfigInput:
       description: REST input for IVF index params (mirrors proto `IvfConfig`).
+      properties:
+        n_lists:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+        n_probe:
+          format: int32
+          minimum: 0
+          type:
+          - integer
+          - 'null'
+      type: object
+    IvfConfigOutput:
+      description: REST output for IVF params (mirrors gRPC `V2IvfConfig`).
       properties:
         n_lists:
           format: int32
@@ -933,6 +1019,34 @@ components:
           type: array
       required:
       - vector
+      type: object
+    QuantizationConfigInput:
+      description: |-
+        REST input for quantization config (mirrors proto `QuantizationConfig`;
+        gRPC-v2 parity with `V2QuantizationConfig`).
+      properties:
+        enabled:
+          description: Enable quantization for this collection.
+          type:
+          - boolean
+          - 'null'
+        strategy:
+          description: 'Strategy: "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels".'
+          type:
+          - string
+          - 'null'
+      type: object
+    QuantizationConfigOutput:
+      description: REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).
+      properties:
+        enabled:
+          type: boolean
+        strategy:
+          description: Strategy label, e.g. "smart_defaults" | "minimal" | "aggressive".
+          type: string
+      required:
+      - enabled
+      - strategy
       type: object
     QueryLanguage:
       enum:
