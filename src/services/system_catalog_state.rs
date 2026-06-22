@@ -29,7 +29,9 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use proximadb_catalog::{CatalogNamespace, CatalogTableSchema, TableIdentifier};
+use proximadb_catalog::{
+    CatalogNamespace, CatalogTableSchema, CatalogTableStatistics, TableIdentifier,
+};
 use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry};
 
 /// One catalog DDL delta — the unit of change folded into the in-RAM authority
@@ -53,6 +55,11 @@ pub enum CatalogDelta {
     },
     /// Drop a table/collection.
     DropTable { identifier: TableIdentifier },
+    /// Set (replace) a table's statistics. Boxed to keep the enum small.
+    UpsertStatistics {
+        identifier: TableIdentifier,
+        stats: Box<CatalogTableStatistics>,
+    },
 }
 
 impl CatalogDelta {
@@ -70,6 +77,9 @@ impl CatalogDelta {
             }
             CatalogDelta::DropTable { identifier } => {
                 format!("table-delete:{}", identifier.to_fqn())
+            }
+            CatalogDelta::UpsertStatistics { identifier, .. } => {
+                format!("stats:{}", identifier.to_fqn())
             }
         }
     }
@@ -106,6 +116,9 @@ struct CatalogInner {
     /// Secondary index: namespace path → child table names, so `list_tables`
     /// never touches the filesystem.
     ns_children: HashMap<Vec<String>, HashSet<String>>,
+    /// Per-table statistics (stored separately, like NativeCatalog's
+    /// `TableMetadata.statistics`, not on the schema).
+    statistics: HashMap<TableIdentifier, CatalogTableStatistics>,
     /// Highest WAL sequence number folded in (the replay watermark).
     applied_seq: u64,
 }
@@ -122,8 +135,9 @@ impl CatalogInner {
                 self.namespaces.remove(&levels);
                 if let Some(children) = self.ns_children.remove(&levels) {
                     for name in children {
-                        self.tables
-                            .remove(&TableIdentifier::new(levels.clone(), name));
+                        let id = TableIdentifier::new(levels.clone(), name);
+                        self.tables.remove(&id);
+                        self.statistics.remove(&id);
                     }
                 }
             }
@@ -136,9 +150,13 @@ impl CatalogInner {
             }
             CatalogDelta::DropTable { identifier } => {
                 self.tables.remove(&identifier);
+                self.statistics.remove(&identifier);
                 if let Some(children) = self.ns_children.get_mut(&identifier.namespace) {
                     children.remove(&identifier.name);
                 }
+            }
+            CatalogDelta::UpsertStatistics { identifier, stats } => {
+                self.statistics.insert(identifier, *stats);
             }
         }
     }
@@ -151,6 +169,8 @@ impl CatalogInner {
 struct CatalogSnapshot {
     namespaces: HashMap<Vec<String>, CatalogNamespace>,
     tables: HashMap<TableIdentifier, CatalogTableSchema>,
+    #[serde(default)]
+    statistics: HashMap<TableIdentifier, CatalogTableStatistics>,
     applied_seq: u64,
 }
 
@@ -244,6 +264,16 @@ impl SystemCatalogState {
         self.inner.read().namespaces.keys().cloned().collect()
     }
 
+    /// List all namespace objects (clones).
+    pub fn all_namespaces(&self) -> Vec<CatalogNamespace> {
+        self.inner.read().namespaces.values().cloned().collect()
+    }
+
+    /// Get a table's statistics, if any have been recorded.
+    pub fn get_statistics(&self, identifier: &TableIdentifier) -> Option<CatalogTableStatistics> {
+        self.inner.read().statistics.get(identifier).cloned()
+    }
+
     /// The highest WAL sequence number folded in (replay watermark / snapshot
     /// cutover LSN).
     pub fn applied_seq(&self) -> u64 {
@@ -262,6 +292,7 @@ impl SystemCatalogState {
                 .iter()
                 .map(|(id, schema)| (id.clone(), (**schema).clone()))
                 .collect(),
+            statistics: inner.statistics.clone(),
             applied_seq: inner.applied_seq,
         };
         rmp_serde::to_vec_named(&snapshot).context("encoding catalog snapshot")
@@ -291,6 +322,7 @@ impl SystemCatalogState {
                 namespaces: snapshot.namespaces,
                 tables,
                 ns_children,
+                statistics: snapshot.statistics,
                 applied_seq: snapshot.applied_seq,
             }),
         })
