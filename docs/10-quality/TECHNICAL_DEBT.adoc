@@ -353,6 +353,78 @@ a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete Op
 | Graph has WAL but no cross-model atomicity. Cannot guarantee consistency for vector+graph operations.
 | 4-6 weeks
 | *COMPLETED Feb 2025*: `CrossModelTransactionCoordinator` implemented in `src/transaction/` with two-phase commit protocol. TransactionParticipant implementations for VectorEngineParticipant, DocumentEngineParticipant, GraphEngineParticipant, TimeSeriesEngineParticipant in `src/transaction/participants.rs`. 6 integration tests passing. Cross-model ACID transactions with prepare/commit/rollback phases. WAL coordination across models.
+
+| TD-127
+| Relational/OLTP — secondary indexes
+| P2
+| HIGH
+| *Open*
+| Volcano OLTP point lookup only covers PRIMARY KEY (`ScanAccess::PkLookup`). Code-graph lookups are by `name`/`file`, not oid → fall back to full scan + memory filter. Blocks the re-index hot path (symbols-in-file, by-name resolution). See `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc`.
+| 2-3 weeks
+| Add secondary-index support on native (LsmWriteOptimized) tables; planner emits an index-scan access path; reader capability `secondary_lookup`. Targets `crates/query/proximadb-relational-planner` (`push_predicates`) + `record_store.rs`.
+
+| TD-128
+| Relational/OLTP — IN-list / range pushdown
+| P2
+| HIGH
+| *Open*
+| `WHERE col IN (...)` / `BETWEEN` are not pushed to a multi-key point-batch; today full scan + in-memory filter. Incremental re-index touches a batch of files per debounce, so this is on the hot path.
+| 1-2 weeks
+| Extend planner predicate pushdown + `ScanAccess` with a multi-key batch lookup; reader `pk_lookup_batch`. Companion to TD-127.
+
+| TD-129
+| pgwire — `ON CONFLICT DO UPDATE`
+| P2
+| MED
+| *Open*
+| `TableRecordMutationKind::Upsert` exists at the DML boundary but pgwire has no `INSERT ... ON CONFLICT DO UPDATE` surface; idempotent re-index must read-then-write. Wire the upsert mutation through the pgwire parser/planner.
+| 1 week
+| `src/network/postgres/` parser + `src/services/dml/`. Map conflict target (PK) to `Upsert`.
+
+| TD-130
+| Graph — edge bulk-load
+| P3
+| MED
+| *Open*
+| `batch_create_edges` enforces per-edge composite uniqueness against a global in-memory index, serialized; bulk-loading large edge sets is minutes–hours. The code-graph Tier-A/B split avoids the worst case, but incremental re-index of a hot file still benefits.
+| 2-3 weeks
+| Add a sorted LSM-style bulk path (sort by `(from,to,type)`, single merge) mirroring the vector `BulkLoader`. `src/graph/service.rs`.
+
+| TD-131
+| Graph — REST v2 + co-planned hybrid endpoint
+| P3
+| MED
+| *Open*
+| Graph CRUD/traversal is REST v1 (legacy); v2 is vector-only. Hybrid (semantic-seed → k-hop expand → metadata filter) is clean only over gRPC `ExecuteHybridQuery`; REST `/api/v2/query` is rewrite-join, not co-planned.
+| 2-3 weeks
+| Promote graph routes to REST v2; add a first-class co-planned hybrid endpoint. `src/network/rest/v2/`.
+
+| TD-132
+| Storage — Tier-B CPG-fragment PAX + I/O trace
+| P3
+| MED
+| *Open*
+| Intra-procedural CPG (1.18M statements + 2.88M DDG/CFG/CDG edges; measured 100% intra-file) should be a per-function columnar PAX fragment, ranged-read on drill-down, NOT first-class graph elements. Needs a fragment storage contract + per-query I/O trace emission (co-design mandate).
+| 3-4 weeks
+| Define `cpg_fragment` layout + zone-map; emit query-scoped I/O trace so `ComputeScheduler` can cost it. See `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
+
+| TD-133
+| Cross-modal — transactional multi-modal write
+| P3
+| LOW
+| *Open*
+| Writing a symbol's node + embedding + edges is multiple record-store ops (no cross-modal atomicity for the code-graph collection). Acceptable today (idempotent single-writer re-index, eventual consistency), but an optional atomic multi-modal upsert would close gap G7.
+| 2-3 weeks
+| Optional; leverage `CrossModelTransactionCoordinator` (TD-020) for the code-graph collection.
+
+| TD-134
+| Metering/Governance — code-embedding KEU + per-repo RBAC
+| P2
+| MED
+| *Open*
+| Multi-tenant code-graph service needs a KEU meter variant for code embeddings and per-repo RBAC entitlement (tenant is atomic today). Mostly anvaiops-side; ProximaDB exposes the meter hook + field/row governance seam.
+| 2 weeks
+| KEU variant in the meter spine; per-repo `permitted_principals` scoping. See `../anvaiops` ADR.
 |===
 
 == Debt by Category

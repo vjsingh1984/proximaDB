@@ -204,3 +204,17 @@ hardware = ""
 date = ""
 version = ""
 notes = "Co-design C0 §4.3. The e2e bench currently runs over a tempdir-backed LOCAL filesystem (object_economy_e2e measured local-FS cold p50 20.83 ms / warm 19.97 ms @10K, 2026-06-16) — the S3 first-byte floor (~tens of ms cold; turbopuffer reports ~444 ms p90 cold to ~10-18 ms warm) that DOMINATES real cold ANN is NOT captured. To promote to measured: point the bench's FilesystemFactory at an S3-compatible backend (MinIO/Wasabi/real S3) and check in a dated artifact. The per-query GET-count + bytes half of the bench's own stated gap is now captured by the io_trace substrate (src/observability/io_trace.rs); the remaining half is real cloud latency."
+
+[[claims]]
+id = "code_graph_tier_a_footprint"
+claim = "Tier-A code-graph (symbol nodes + cross-fn edges + co-indexed 384-d vector) fits in-RAM at ~120 MB f32 / ~35 MB SQ8 per repo, and hybrid seed->expand is sub-ms at this scale"
+metric = "graph_footprint_mb, hybrid_query_latency_ms"
+status = "aspirational"
+asserted_in = ["docs/12-design/CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Sizing is PROJECTED from a measured SOURCE dataset (one real repo's SQLite CPG + LanceDB vectors): 79,744 symbol nodes, 96,538 cross-fn edges, 77,902 symbol embeddings @ 384-d = 114 MB f32 / 29 MB SQ8 + 5.5 MB co-stored snippet. No ProximaDB-side e2e bench yet for ingest/traversal/hybrid at this scale. To promote to measured: load Tier-A into an EmbeddedProximaDB, bench (a) Arrow Flight bulk-load time, (b) k-hop impact_analysis latency, (c) GraphHybridQuery seed->expand latency; check in a dated artifact. Tracked with TD-127..TD-132."
