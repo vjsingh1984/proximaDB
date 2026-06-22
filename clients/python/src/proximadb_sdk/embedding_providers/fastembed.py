@@ -1,8 +1,8 @@
 """
 FastEmbed embedding provider
 
-Uses the fastembed library (Apache 2.0 license) for fast,
-lightweight embedding models with ONNX runtime.
+Uses the fastembed library (Apache 2.0) for fast, lightweight ONNX embedding
+models with minimal dependencies.
 """
 
 import logging
@@ -10,175 +10,121 @@ from typing import Any
 
 import numpy as np
 
-from .base import EmbeddingConfig, EmbeddingProvider
+from .core.base import BaseEmbeddingProvider
+from .core.config import ModelMetadata, ProviderConfig
+from .core.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
 
+FASTEMBED_MODELS = {
+    "BAAI/bge-small-en-v1.5": ModelMetadata(
+        name="BAAI/bge-small-en-v1.5",
+        dimension=384,
+        max_length=512,
+        provider_type="onnx",
+        languages="en",
+        description="Fast and efficient, great for most use cases",
+        use_case="High-throughput CPU inference",
+    ),
+    "BAAI/bge-base-en-v1.5": ModelMetadata(
+        name="BAAI/bge-base-en-v1.5",
+        dimension=768,
+        max_length=512,
+        provider_type="onnx",
+        languages="en",
+        description="Better quality, still fast",
+        use_case="Balanced CPU inference",
+    ),
+    "sentence-transformers/all-MiniLM-L6-v2": ModelMetadata(
+        name="sentence-transformers/all-MiniLM-L6-v2",
+        dimension=384,
+        max_length=512,
+        provider_type="onnx",
+        languages="en",
+        description="Classic lightweight model",
+        use_case="Edge / low-resource inference",
+    ),
+}
 
-class FastEmbedProvider(EmbeddingProvider):
+# Known dimensions for models not in the curated metadata table above.
+_MODEL_DIMENSIONS = {
+    "BAAI/bge-small-en-v1.5": 384,
+    "BAAI/bge-base-en-v1.5": 768,
+    "BAAI/bge-large-en-v1.5": 1024,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+    "sentence-transformers/all-MiniLM-L12-v2": 384,
+    "jinaai/jina-embeddings-v2-small-en": 512,
+    "jinaai/jina-embeddings-v2-base-en": 768,
+    "snowflake/snowflake-arctic-embed-xs": 384,
+    "snowflake/snowflake-arctic-embed-s": 384,
+    "snowflake/snowflake-arctic-embed-m": 768,
+    "snowflake/snowflake-arctic-embed-l": 1024,
+}
+
+
+@ProviderRegistry.register(
+    name="fastembed",
+    models=FASTEMBED_MODELS,
+    aliases=["qdrant-fastembed"],
+    description="FastEmbed ONNX embeddings (fast, lightweight, Apache 2.0)",
+)
+class FastEmbedProvider(BaseEmbeddingProvider):
     """
-    Embedding provider using FastEmbed models
+    Embedding provider using FastEmbed models.
 
-    FastEmbed provides optimized ONNX models for fast inference
-    with minimal dependencies. All models are quantized for speed
-    and small model size.
-
-    Popular models:
-    - BAAI/bge-small-en-v1.5: 384 dims, fast and efficient
-    - BAAI/bge-base-en-v1.5: 768 dims, better quality
-    - sentence-transformers/all-MiniLM-L6-v2: 384 dims, classic choice
-    - jinaai/jina-embeddings-v2-small-en: 512 dims, optimized for search
-
-    All models use Apache 2.0 or similar permissive licenses.
+    FastEmbed provides optimized ONNX models for fast CPU inference with minimal
+    dependencies. Install with ``pip install fastembed``.
     """
 
-    # Model dimension mapping
-    MODEL_DIMENSIONS = {
-        "BAAI/bge-small-en-v1.5": 384,
-        "BAAI/bge-base-en-v1.5": 768,
-        "BAAI/bge-large-en-v1.5": 1024,
-        "sentence-transformers/all-MiniLM-L6-v2": 384,
-        "sentence-transformers/all-MiniLM-L12-v2": 384,
-        "jinaai/jina-embeddings-v2-small-en": 512,
-        "jinaai/jina-embeddings-v2-base-en": 768,
-        "snowflake/snowflake-arctic-embed-xs": 384,
-        "snowflake/snowflake-arctic-embed-s": 384,
-        "snowflake/snowflake-arctic-embed-m": 768,
-        "snowflake/snowflake-arctic-embed-l": 1024,
-    }
-
-    def _get_default_config(self) -> EmbeddingConfig:
-        """Get default configuration"""
-        return EmbeddingConfig(
-            model_name="BAAI/bge-small-en-v1.5",
-            dimension=384,
+    def default_config(self) -> ProviderConfig:
+        return ProviderConfig(
+            model=FASTEMBED_MODELS["BAAI/bge-small-en-v1.5"],
             batch_size=256,  # FastEmbed handles large batches well
             normalize=True,
-            cache_embeddings=True,
-            device=None,  # CPU optimized
+            extra={"max_length": 512},
         )
 
-    def _initialize(self) -> None:
-        """Initialize the FastEmbed model"""
+    def _load_model(self) -> Any:
         try:
             from fastembed import TextEmbedding
+        except ImportError as exc:  # pragma: no cover - exercised via stub
+            raise ImportError(
+                "fastembed is required for FastEmbedProvider. "
+                "Install with: pip install fastembed"
+            ) from exc
 
-            # Initialize model
-            self.model = TextEmbedding(
-                model_name=self.config.model_name,
-                max_length=512,  # Standard max length
-                normalize=self.config.normalize,
-                cache_dir=None,  # Use default cache
-            )
+        model = TextEmbedding(
+            model_name=self.config.model.name,
+            max_length=self.config.extra.get("max_length", 512),
+            cache_dir=self.config.cache_dir,
+        )
+        logger.info(
+            "Initialized FastEmbed with model %s (dimension %s)",
+            self.config.model.name,
+            self.get_dimension(),
+        )
+        return model
 
-            # Update dimension
-            if self.config.model_name in self.MODEL_DIMENSIONS:
-                self.config.dimension = self.MODEL_DIMENSIONS[self.config.model_name]
-            else:
-                # Get dimension from model
-                dummy_embedding = list(self.model.embed(["test"]))[0]
-                self.config.dimension = len(dummy_embedding)
-
-            self._available = True
-            logger.info(
-                f"Initialized FastEmbed with model: {self.config.model_name} "
-                f"(dimension: {self.config.dimension})"
-            )
-
-        except ImportError:
-            self._available = False
-            logger.warning(
-                "fastembed not installed. " "Install with: pip install fastembed"
-            )
-        except Exception as e:
-            self._available = False
-            logger.error(f"Failed to initialize FastEmbed: {e}")
-
-    def embed_texts(self, texts: list[str]) -> np.ndarray:
-        """
-        Generate embeddings for multiple texts
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            Array of embeddings with shape (len(texts), dimension)
-        """
-        if not self._available:
-            raise RuntimeError(
-                "FastEmbed not available. " "Install with: pip install fastembed"
-            )
-
+    def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.array([])
 
-        # Generate embeddings
-        # FastEmbed returns a generator, so we need to convert to list
-        embeddings_list = list(
-            self.model.embed(texts, batch_size=self.config.batch_size)
-        )
+        self.ensure_initialized()
 
-        # Convert to numpy array
-        embeddings = np.array(embeddings_list)
+        # FastEmbed returns a generator of (already L2-normalized) vectors.
+        embeddings_list = list(
+            self._model.embed(texts, batch_size=self.config.batch_size)
+        )
+        embeddings = np.array(embeddings_list, dtype=np.float32)
+
+        if self.config.normalize and embeddings.size:
+            norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
+            embeddings = embeddings / norms
 
         return embeddings
 
-    @property
-    def dimension(self) -> int:
-        """Get embedding dimension"""
-        return self.config.dimension
-
-    @property
-    def model_name(self) -> str:
-        """Get model name"""
-        return self.config.model_name
-
-    def is_available(self) -> bool:
-        """Check if provider is available"""
-        if self._available is None:
-            self._initialize()
-        return self._available
-
-    @classmethod
-    def list_recommended_models(cls) -> dict[str, dict[str, Any]]:
-        """List recommended models with their properties"""
-        return {
-            "BAAI/bge-small-en-v1.5": {
-                "dimension": 384,
-                "description": "Fast and efficient, great for most use cases",
-                "speed": "very fast",
-                "quality": "good",
-                "size_mb": 33,
-            },
-            "BAAI/bge-base-en-v1.5": {
-                "dimension": 768,
-                "description": "Better quality, still fast",
-                "speed": "fast",
-                "quality": "very good",
-                "size_mb": 109,
-            },
-            "jinaai/jina-embeddings-v2-small-en": {
-                "dimension": 512,
-                "description": "Optimized for search, supports long contexts",
-                "speed": "fast",
-                "quality": "very good",
-                "size_mb": 33,
-            },
-            "snowflake/snowflake-arctic-embed-s": {
-                "dimension": 384,
-                "description": "Optimized for retrieval tasks",
-                "speed": "very fast",
-                "quality": "good",
-                "size_mb": 33,
-            },
-        }
-
-    @classmethod
-    def list_all_models(cls) -> list[str]:
-        """List all available models"""
-        try:
-            from fastembed import TextEmbedding
-
-            return TextEmbedding.list_supported_models()
-        except:
-            return list(cls.MODEL_DIMENSIONS.keys())
+    def get_dimension(self) -> int:
+        return _MODEL_DIMENSIONS.get(
+            self.config.model.name, self.config.model.dimension
+        )

@@ -1,318 +1,205 @@
 """
 Cohere embedding provider
 
-Uses Cohere's embedding API.
-WARNING: Requires API key and incurs costs per token.
+Uses Cohere's embedding API via the modern ``cohere.ClientV2``.
+
+WARNING: Requires an API key and incurs costs per token.
 """
 
 import logging
 import os
 import warnings
-from typing import Any, Literal
+from typing import Any
 
 import numpy as np
 
-from .base import EmbeddingConfig, EmbeddingProvider
+from .core.base import BaseEmbeddingProvider
+from .core.config import ModelMetadata, ProviderConfig
+from .core.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
 
+COHERE_MODELS = {
+    "embed-english-light-v3.0": ModelMetadata(
+        name="embed-english-light-v3.0",
+        dimension=384,
+        max_length=512,
+        provider_type="api",
+        languages="en",
+        description="Lightweight English model, very cost-effective",
+        use_case="Cost-effective English retrieval",
+    ),
+    "embed-english-v3.0": ModelMetadata(
+        name="embed-english-v3.0",
+        dimension=1024,
+        max_length=512,
+        provider_type="api",
+        languages="en",
+        description="High-quality English embeddings",
+        use_case="High-accuracy English retrieval",
+    ),
+    "embed-multilingual-v3.0": ModelMetadata(
+        name="embed-multilingual-v3.0",
+        dimension=1024,
+        max_length=512,
+        provider_type="api",
+        languages="100+",
+        description="Supports 100+ languages",
+        use_case="Multilingual retrieval",
+    ),
+}
 
-class CohereProvider(EmbeddingProvider):
+# Cohere maps embedding intent to an `input_type` argument (v3 models).
+_INPUT_TYPES = (
+    "search_document",
+    "search_query",
+    "classification",
+    "clustering",
+)
+
+# Pricing (USD per 1M tokens) for rough cost estimates.
+_COST_PER_1M = {
+    "embed-english-light-v3.0": 0.02,
+    "embed-english-v3.0": 0.10,
+    "embed-multilingual-v3.0": 0.10,
+}
+
+
+@ProviderRegistry.register(
+    name="cohere",
+    models=COHERE_MODELS,
+    aliases=["cohere-embeddings"],
+    description="Cohere hosted embeddings (requires API key, incurs cost)",
+)
+class CohereProvider(BaseEmbeddingProvider):
     """
-    Embedding provider using Cohere's API
+    Embedding provider using Cohere's API (``cohere.ClientV2``).
 
-    ⚠️ WARNING: This provider requires a Cohere API key and will incur costs!
+    WARNING: This provider requires a Cohere API key and will incur costs.
 
-    Pricing (as of 2024):
-    - embed-english-v3.0: ~$0.1 per 1M tokens
-    - embed-multilingual-v3.0: ~$0.1 per 1M tokens
-    - embed-english-light-v3.0: ~$0.02 per 1M tokens
+    Set the API key via:
+    - Environment variable ``COHERE_API_KEY``
+    - ``extra={"api_key": "..."}`` on the :class:`ProviderConfig`
 
-    Models:
-    - embed-english-v3.0: 1024 dims, best for English
-    - embed-multilingual-v3.0: 1024 dims, supports 100+ languages
-    - embed-english-light-v3.0: 384 dims, faster and cheaper
-    - embed-english-v2.0: 4096 dims, legacy model
-
-    Set API key via:
-    - Environment variable: COHERE_API_KEY
-    - Config parameter: api_key
-
-    Special features:
-    - Input types: "search_document", "search_query", "classification", "clustering"
-    - Compression support for reduced dimensions
+    Optional ``extra`` parameters:
+    - ``api_key``: API key (falls back to ``COHERE_API_KEY``)
+    - ``input_type``: one of ``search_document`` (default), ``search_query``,
+      ``classification``, ``clustering``
+    - ``truncate``: ``NONE`` / ``START`` / ``END`` (default ``END``)
+    - ``show_cost_warnings``: emit a UserWarning about per-token cost (default True)
     """
 
-    MODEL_DIMENSIONS = {
-        "embed-english-v3.0": 1024,
-        "embed-multilingual-v3.0": 1024,
-        "embed-english-light-v3.0": 384,
-        "embed-english-v2.0": 4096,
-        "embed-multilingual-v2.0": 768,
-    }
-
-    # Supported input types for different use cases
-    INPUT_TYPES = ["search_document", "search_query", "classification", "clustering"]
-
-    def _get_default_config(self) -> EmbeddingConfig:
-        """Get default configuration"""
-        return EmbeddingConfig(
-            model_name="embed-english-light-v3.0",  # Cheaper option
-            dimension=384,
+    def default_config(self) -> ProviderConfig:
+        return ProviderConfig(
+            model=COHERE_MODELS["embed-english-light-v3.0"],
             batch_size=96,  # Cohere max batch size
             normalize=True,
-            cache_embeddings=True,  # Cache to reduce costs
-            device=None,
-            extra_params={
+            extra={
                 "api_key": None,
                 "input_type": "search_document",
-                "truncate": "END",  # How to handle long texts
-                "compress": False,  # Whether to use compression
-                "compression_codebook": None,
+                "truncate": "END",
                 "show_cost_warnings": True,
-                "timeout": 60.0,
             },
         )
 
-    def _initialize(self) -> None:
-        """Initialize the Cohere client"""
+    def _load_model(self) -> Any:
         try:
             import cohere
+        except ImportError as exc:  # pragma: no cover - exercised via stub
+            raise ImportError(
+                "cohere is required for CohereProvider. "
+                "Install with: pip install 'cohere>=5'"
+            ) from exc
 
-            # Get API key
-            api_key = self.config.extra_params.get("api_key") or os.getenv(
-                "COHERE_API_KEY"
+        extra = self.config.extra
+        api_key = extra.get("api_key") or os.getenv("COHERE_API_KEY")
+        if not api_key:
+            raise RuntimeError(
+                "Cohere API key not found. Set COHERE_API_KEY or pass "
+                "extra={'api_key': ...} in the provider config."
             )
 
-            if not api_key:
-                self._available = False
-                logger.error(
-                    "Cohere API key not found. Set COHERE_API_KEY environment variable or pass api_key in config."
-                )
-                return
-
-            # Show cost warning
-            if self.config.extra_params.get("show_cost_warnings", True):
-                warnings.warn(
-                    f"⚠️  Cohere embeddings will incur costs! Model '{self.config.model_name}' charges per token. "
-                    f"Consider using free alternatives like SentenceTransformer or FastEmbed for development.",
-                    UserWarning,
-                    stacklevel=2,
-                )
-
-            # Initialize client
-            self.client = cohere.Client(api_key=api_key)
-
-            # Update dimension
-            if self.config.model_name in self.MODEL_DIMENSIONS:
-                self.config.dimension = self.MODEL_DIMENSIONS[self.config.model_name]
-
-            self._available = True
-            self._token_count = 0  # Track usage
-
-            logger.info(
-                f"Initialized Cohere provider with model: {self.config.model_name} "
-                f"(dimension: {self.config.dimension})"
+        if extra.get("show_cost_warnings", True):
+            warnings.warn(
+                f"Cohere embeddings incur cost. Model '{self.config.model.name}' "
+                "charges per token. Consider a local provider for development.",
+                UserWarning,
+                stacklevel=2,
             )
-            logger.warning("Remember: Cohere embeddings incur costs per token!")
 
-        except ImportError:
-            self._available = False
-            logger.warning("cohere not installed. Install with: pip install cohere")
-        except Exception as e:
-            self._available = False
-            logger.error(f"Failed to initialize Cohere: {e}")
+        self._token_count = 0
+        client = cohere.ClientV2(api_key=api_key)
+        logger.info(
+            "Initialized Cohere provider with model %s (dimension %s)",
+            self.config.model.name,
+            self.config.model.dimension,
+        )
+        return client
 
-    def embed_texts(self, texts: list[str]) -> np.ndarray:
-        """
-        Generate embeddings for multiple texts
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            Array of embeddings with shape (len(texts), dimension)
-        """
-        if not self._available:
-            raise RuntimeError("Cohere not available. Check API key and installation.")
-
+    def embed(self, texts: list[str], input_type: str | None = None) -> np.ndarray:
         if not texts:
             return np.array([])
 
-        all_embeddings = []
+        self.ensure_initialized()
 
-        # Estimate tokens (rough estimate for Cohere)
-        estimated_tokens = sum(len(text.split()) for text in texts)
-        self._token_count += estimated_tokens
-
-        if (
-            self.config.extra_params.get("show_cost_warnings", True)
-            and estimated_tokens > 100000
-        ):
-            warnings.warn(
-                f"⚠️  About to process ~{estimated_tokens:,} tokens with {self.config.model_name}. "
-                f"Estimated cost: ${self._estimate_cost(estimated_tokens):.4f}",
-                UserWarning,
+        resolved_type = input_type or self.config.extra.get(
+            "input_type", "search_document"
+        )
+        if resolved_type not in _INPUT_TYPES:
+            raise ValueError(
+                f"Invalid input_type '{resolved_type}'. Expected one of {_INPUT_TYPES}."
             )
 
-        # Process in batches (Cohere max batch size is 96)
+        all_embeddings: list[list[float]] = []
         for i in range(0, len(texts), self.config.batch_size):
             batch = texts[i : i + self.config.batch_size]
-
             try:
-                response = self.client.embed(
+                response = self._model.embed(
                     texts=batch,
-                    model=self.config.model_name,
-                    input_type=self.config.extra_params.get(
-                        "input_type", "search_document"
-                    ),
-                    truncate=self.config.extra_params.get("truncate", "END"),
-                    compress=self.config.extra_params.get("compress", False),
-                    compression_codebook=self.config.extra_params.get(
-                        "compression_codebook"
-                    ),
+                    model=self.config.model.name,
+                    input_type=resolved_type,
+                    embedding_types=["float"],
+                    truncate=self.config.extra.get("truncate", "END"),
                 )
+            except Exception as exc:
+                logger.error("Cohere API error: %s", exc)
+                raise RuntimeError(f"Failed to generate embeddings: {exc}") from exc
 
-                # Extract embeddings
-                batch_embeddings = response.embeddings
-                all_embeddings.extend(batch_embeddings)
+            # ClientV2 returns embeddings keyed by type: response.embeddings.float
+            batch_embeddings = response.embeddings.float
+            all_embeddings.extend(batch_embeddings)
 
-                # Log token usage if available
-                if hasattr(response, "meta") and hasattr(response.meta, "billed_units"):
-                    tokens = response.meta.billed_units.input_tokens
-                    logger.info(
-                        f"Cohere API used {tokens} tokens for {len(batch)} texts"
-                    )
+            meta = getattr(response, "meta", None)
+            billed = getattr(meta, "billed_units", None) if meta else None
+            tokens = getattr(billed, "input_tokens", None) if billed else None
+            if tokens is not None:
+                self._token_count = getattr(self, "_token_count", 0) + tokens
 
-            except Exception as e:
-                logger.error(f"Cohere API error: {e}")
-                raise RuntimeError(f"Failed to generate embeddings: {e}")
+        embeddings = np.array(all_embeddings, dtype=np.float32)
 
-        embeddings = np.array(all_embeddings)
-
-        # Normalize if requested
         if self.config.normalize:
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
-            norms[norms == 0] = 1  # Avoid division by zero
+            norms[norms == 0] = 1.0
             embeddings = embeddings / norms
 
         return embeddings
 
-    def embed_with_type(
-        self,
-        texts: list[str],
-        input_type: Literal[
-            "search_document", "search_query", "classification", "clustering"
-        ],
-    ) -> np.ndarray:
-        """
-        Generate embeddings with specific input type
+    def embed_query(self, query: str) -> np.ndarray:
+        """Embed a single query with the ``search_query`` input type."""
+        return self.embed([query], input_type="search_query")[0]
 
-        Args:
-            texts: List of texts to embed
-            input_type: Type of input for optimization
-
-        Returns:
-            Array of embeddings
-        """
-        # Temporarily override input type
-        original_type = self.config.extra_params.get("input_type")
-        self.config.extra_params["input_type"] = input_type
-
-        try:
-            embeddings = self.embed_texts(texts)
-        finally:
-            # Restore original type
-            self.config.extra_params["input_type"] = original_type
-
-        return embeddings
+    def embed_passages(self, passages: list[str]) -> np.ndarray:
+        """Embed documents with the ``search_document`` input type."""
+        return self.embed(passages, input_type="search_document")
 
     def _estimate_cost(self, tokens: int) -> float:
-        """Estimate cost based on token count"""
-        # Cohere pricing per 1M tokens
-        cost_per_1m = {
-            "embed-english-v3.0": 0.10,
-            "embed-multilingual-v3.0": 0.10,
-            "embed-english-light-v3.0": 0.02,
-            "embed-english-v2.0": 0.10,
-            "embed-multilingual-v2.0": 0.10,
-        }
-
-        rate = cost_per_1m.get(self.config.model_name, 0.10)
+        rate = _COST_PER_1M.get(self.config.model.name, 0.10)
         return (tokens / 1_000_000) * rate
 
-    @property
-    def dimension(self) -> int:
-        """Get embedding dimension"""
-        return self.config.dimension
-
-    @property
-    def model_name(self) -> str:
-        """Get model name"""
-        return self.config.model_name
-
-    def is_available(self) -> bool:
-        """Check if provider is available"""
-        if self._available is None:
-            self._initialize()
-        return self._available
-
     def get_token_usage(self) -> dict[str, Any]:
-        """Get token usage statistics"""
+        tokens = getattr(self, "_token_count", 0)
         return {
-            "estimated_tokens": self._token_count,
-            "estimated_cost": self._estimate_cost(self._token_count),
-            "model": self.config.model_name,
+            "estimated_tokens": tokens,
+            "estimated_cost": self._estimate_cost(tokens),
+            "model": self.config.model.name,
         }
-
-    @classmethod
-    def list_models(cls) -> dict[str, dict[str, Any]]:
-        """List available models with details"""
-        return {
-            "embed-english-light-v3.0": {
-                "dimension": 384,
-                "description": "Lightweight English model, very cost-effective",
-                "cost_per_1m_tokens": "$0.02",
-                "max_tokens": 512,
-                "languages": ["en"],
-            },
-            "embed-english-v3.0": {
-                "dimension": 1024,
-                "description": "High-quality English embeddings",
-                "cost_per_1m_tokens": "$0.10",
-                "max_tokens": 512,
-                "languages": ["en"],
-            },
-            "embed-multilingual-v3.0": {
-                "dimension": 1024,
-                "description": "Supports 100+ languages",
-                "cost_per_1m_tokens": "$0.10",
-                "max_tokens": 512,
-                "languages": ["100+ languages"],
-            },
-            "embed-english-v2.0": {
-                "dimension": 4096,
-                "description": "Legacy model with larger dimensions",
-                "cost_per_1m_tokens": "$0.10",
-                "max_tokens": 512,
-                "languages": ["en"],
-            },
-        }
-
-    @classmethod
-    def create_for_search(
-        cls, model_name: str = "embed-english-light-v3.0", **kwargs
-    ) -> "CohereProvider":
-        """
-        Create provider optimized for search
-
-        Returns separate providers for documents and queries
-        """
-        # Document provider
-        doc_config = EmbeddingConfig(
-            model_name=model_name,
-            dimension=cls.MODEL_DIMENSIONS.get(model_name, 384),
-            extra_params={"input_type": "search_document", **kwargs},
-        )
-
-        return cls(doc_config)

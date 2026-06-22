@@ -42,6 +42,14 @@ _PROVIDER_EXPORTS = {
         ".providers.testing.simulated",
         "SimulatedEmbeddingProvider",
     ),
+    # Cloud / OpenAI-compatible providers (registered onto core.BaseEmbeddingProvider).
+    "OpenAIProvider": (".openai_provider", "OpenAIProvider"),
+    "CohereProvider": (".cohere", "CohereProvider"),
+    "FastEmbedProvider": (".fastembed", "FastEmbedProvider"),
+    "OpenAICompatibleProvider": (
+        ".openai_compatible",
+        "OpenAICompatibleProvider",
+    ),
 }
 
 _providers_registered = False
@@ -181,9 +189,12 @@ def recommend_free_providers() -> None:
     print("   provider = get_provider('bge')")
     print()
 
-    print("\n💡 For production, consider OpenAI or Cohere (paid services)")
-    print("   provider = get_provider('openai', api_key='...')")
-    print("   provider = get_provider('cohere', api_key='...')")
+    print("\n💡 For production, consider OpenAI or Cohere (PAID hosted APIs)")
+    print("   These are reachable via get_provider() but require an API key:")
+    print("   provider = get_provider('openai')   # OPENAI_API_KEY")
+    print("   provider = get_provider('cohere')   # COHERE_API_KEY")
+    print("   Or point at a local OpenAI-compatible server (free):")
+    print("   provider = get_provider('ollama')   # OpenAI-compatible endpoint")
 
 
 __all__ = [
@@ -204,4 +215,8 @@ __all__ = [
     # Providers
     "GTEQwenProvider",
     "SimulatedEmbeddingProvider",
+    "OpenAIProvider",
+    "CohereProvider",
+    "FastEmbedProvider",
+    "OpenAICompatibleProvider",
 ]
