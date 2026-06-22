@@ -7,7 +7,7 @@ Clean, extensible embedding provider system with:
 - Plugin-based provider registration
 """
 
-# Core components
+# Core components (light — registry, config, base classes; no model deps)
 from .core import (
     BaseEmbeddingProvider,
     ModelCache,
@@ -15,14 +15,62 @@ from .core import (
     ProviderConfig,
     ProviderRegistry,
 )
-from .providers.local.bge import BGEProvider
-from .providers.local.e5 import E5Provider
 
-# Import providers to trigger registration
-from .providers.local.gte_qwen import GTEQwenProvider
-from .providers.local.sentence_transformer import SentenceTransformerProvider
-from .providers.local.sfr import SFRProvider
-from .providers.testing.simulated import SimulatedEmbeddingProvider
+# TD-126 Phase 3 (embeddings concern): the concrete providers self-register via
+# the `@ProviderRegistry.register(...)` decorator at *module import* time. They
+# used to be imported EAGERLY here, so `import proximadb_sdk.embedding_providers`
+# paid the cost of importing every provider module (and, on first model use,
+# sentence-transformers / onnx) even when only the registry API was wanted. The
+# provider imports are now deferred: registration fires LAZILY the first time the
+# registry is consulted (`get_provider` / `list_providers` / `get_provider_info`)
+# or a provider class name is accessed. Public names stay importable
+# (`from proximadb_sdk.embedding_providers import GTEQwenProvider`); only the
+# import timing moved. Install the runtime deps with `pip install
+# 'proximadb[embeddings]'`.
+#
+# Public provider-class name -> (submodule, attribute).
+_PROVIDER_EXPORTS = {
+    "BGEProvider": (".providers.local.bge", "BGEProvider"),
+    "E5Provider": (".providers.local.e5", "E5Provider"),
+    "GTEQwenProvider": (".providers.local.gte_qwen", "GTEQwenProvider"),
+    "SentenceTransformerProvider": (
+        ".providers.local.sentence_transformer",
+        "SentenceTransformerProvider",
+    ),
+    "SFRProvider": (".providers.local.sfr", "SFRProvider"),
+    "SimulatedEmbeddingProvider": (
+        ".providers.testing.simulated",
+        "SimulatedEmbeddingProvider",
+    ),
+}
+
+_providers_registered = False
+
+
+def _ensure_providers_registered() -> None:
+    """Import the built-in provider modules so they self-register (idempotent)."""
+    global _providers_registered
+    if _providers_registered:
+        return
+    import importlib
+
+    for module_name, _attr in _PROVIDER_EXPORTS.values():
+        # The import side effect runs each module's @ProviderRegistry.register.
+        importlib.import_module(module_name, __name__)
+    _providers_registered = True
+
+
+def __getattr__(name: str):
+    """Lazily import a provider class on first attribute access."""
+    if name in _PROVIDER_EXPORTS:
+        import importlib
+
+        module_name, attr_name = _PROVIDER_EXPORTS[name]
+        module = importlib.import_module(module_name, __name__)
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def get_provider(name: str, **config_kwargs):
@@ -40,6 +88,7 @@ def get_provider(name: str, **config_kwargs):
         >>> provider = get_provider("gte-qwen")
         >>> provider = get_provider("simulated", dimension=768)
     """
+    _ensure_providers_registered()
     provider_class = ProviderRegistry.get_provider(name)
 
     if not config_kwargs:
@@ -69,11 +118,13 @@ def get_provider(name: str, **config_kwargs):
 
 def list_providers(include_aliases: bool = False) -> list[str]:
     """List all available providers"""
+    _ensure_providers_registered()
     return ProviderRegistry.list_providers(include_aliases=include_aliases)
 
 
 def get_provider_info(name: str) -> dict:
     """Get detailed provider information"""
+    _ensure_providers_registered()
     return ProviderRegistry.get_provider_info(name)
 
 

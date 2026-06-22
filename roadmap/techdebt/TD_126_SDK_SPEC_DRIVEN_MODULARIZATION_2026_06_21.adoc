@@ -8,9 +8,9 @@ transport generated from the spec, behind a thin facade, drift-gated); Phase 4 d
 TypeScript (REST transport generated via `openapi-typescript` + `openapi-fetch`), Rust
 (REST transport generated via progenitor), and Python (REST transport generated via
 `openapi-python-client`), all behind unchanged thin facades, drift-gated;
-Phase 3 first increment done (Python `chunking` concern made opt-in + lazy behind
-`proximadb[chunking]`); Phase 3 remaining splits (embeddings, integrations), Phase 5 +
-remaining Phase-4 languages (jvm) open +
+Phase 3 done (Python `chunking`, `embeddings`, and `integrations`/`adapters` concerns all made
+opt-in + lazy behind extras — `import proximadb_sdk` pulls zero heavy deps; core =
+transport+facade+models); Phase 5 + remaining Phase-4 languages (jvm) open +
 Date: 2026-06-21 +
 Owner: SDK / API surface
 
@@ -193,9 +193,11 @@ TS SDK method needs an operation the spec lacks, annotate the handler (Phase-1 `
 . *Modularize Python.* Extract `chunking_strategies` -> `proximadb-chunking`, `embedding_providers`
   + `llm` -> `proximadb-embeddings`, `integrations` + `adapters` -> `proximadb-langchain` /
   `proximadb-llamaindex`. Reduce `proximadb` (core) to generated transport + facade with light deps;
-  expose the rest as extras. *(First increment shipped 2026-06-22: the `chunking` concern is now
-  opt-in + lazy behind `proximadb[chunking]` — `import proximadb_sdk` no longer pulls tree-sitter;
-  embeddings / integrations splits remain as follow-ups. See the Phase-3 NOTE below.)*
+  expose the rest as extras. *(Shipped 2026-06-22 across two increments: the `chunking`,
+  `embeddings`, and `integrations`/`adapters` concerns are all now opt-in + lazy behind extras —
+  `import proximadb_sdk` pulls zero of tree-sitter / sentence-transformers / langchain; core is
+  transport+facade+models. Promoting any concern to a genuinely separate distribution is the only
+  optional follow-up left. See the Phase-3 NOTEs below.)*
 . *Roll out generation* to the remaining network SDKs (go, jvm, rust); retire the now-redundant
   per-SDK contract tests (generation guarantees conformance).
 +
@@ -389,6 +391,66 @@ lowest-risk reviewable step. Still open, as separate increments: (a) extract
 and the `embedding_providers` provider auto-registration remain the eager-pull sources to defer);
 (c) optionally promote any of these to genuinely separate distributions
 (`proximadb-chunking` / `-embeddings` / `-langchain`) once the in-tree lazy boundaries are proven.
+====
+
+[NOTE]
+.Phase 3 second increment shipped (2026-06-22) — embeddings + integrations made opt-in + lazy
+====
+Follow-ups (a) and (b) above are now done, completing the kitchen-sink modularization: a bare
+`import proximadb_sdk` (plus client construction) is now strictly transport + facade + models and
+pulls *zero* of sentence-transformers / onnx / langchain / llama-index / chromadb / lancedb /
+tree-sitter.
+
+*What changed (public API unchanged).*
+
+. *Integrations — the real measurable eager-pull.* `_optional_export_is_available()` in
+  `proximadb_sdk/__init__.py` used to *import* each optional dependency (`importlib.import_module`)
+  to test availability while building `__all__` at package load. That eagerly pulled
+  `langchain_core` / `victor` / `crewai` / `dspy` / `autogen` whenever they happened to be
+  installed, defeating the lazy `__getattr__`. It now probes with `importlib.util.find_spec` ONLY
+  (no import) — exactly the chunking-concern probe pattern from increment 1. Measured: with
+  `langchain-core` + `sentence-transformers` installed, `import proximadb_sdk` previously pulled
+  `langchain_core`; it now pulls none.
+
+. *Adapters.* The eager `from .adapters import (BaseProtocolAdapter, create_adapter)` at module top
+  (the entry point into the embedded / integration code paths) is now loaded lazily via the
+  package-level `__getattr__` through a new `_ADAPTER_EXPORTS` registry. Public names stay
+  importable (`from proximadb_sdk import BaseProtocolAdapter, create_adapter`) and unconditionally
+  present in `__all__`; only the import timing moved.
+
+. *Embeddings — provider auto-registration.* `embedding_providers/__init__.py` used to eagerly
+  `from .providers.local.X import …` for every built-in provider (BGE, E5, GTE-Qwen,
+  sentence-transformer, SFR, simulated), which self-register via the `@ProviderRegistry.register`
+  decorator at *module import*. So `import proximadb_sdk.embedding_providers` imported every
+  provider module up front. Registration is now deferred behind `_ensure_providers_registered()`
+  (idempotent), invoked lazily by `get_provider` / `list_providers` / `get_provider_info`; the
+  provider *classes* are exposed via a module-level `__getattr__` over `_PROVIDER_EXPORTS`. Public
+  names stay importable (`from proximadb_sdk.embedding_providers import GTEQwenProvider`); the
+  registry API behaves identically. (The provider modules already deferred the actual
+  `sentence_transformers` import to model-load time, so the *third-party* pull was already lazy;
+  this increment makes the provider-module imports + registration lazy too.)
+
+*Extras.* Added a canonical `embeddings` extra (`pip install 'proximadb[embeddings]'` →
+sentence-transformers). The `langchain` / `llama_index` integration extras already existed; the
+integration exports were already lazy via `_OPTIONAL_EXPORTS`.
+
+*Measured core-dep reduction.* Clean core-only venv (`pip install -e .`, no extras), then with
+`langchain-core` + `sentence-transformers` additionally installed to detect eager pulls:
+`import proximadb_sdk` + `ProximaDBClient(...)` heavy-module set went from `['langchain_core']`
+(before) to `[]` (after). With the extra installed, lazy access loads the concern on first use
+exactly as before. The remaining top-level third-party modules pulled by core import are all
+legitimate transport deps (numpy, grpc, httpx, pydantic, requests, rich, zstandard, …).
+
+*Test isolation.* No new stubs were introduced. The pre-existing, separately-quarantined
+collection-time `sys.modules` stub leak between the `*_cov` embedding tests and the real-model
+`test_embedding_providers_v2` (`requires_models`) is handled in CI by per-file process isolation
+(`ci.yml` runs each `tests/unit/test_*.py` in its own process via `xargs -P 4 -n 1`), so this
+change does not affect it.
+
+*Kitchen-sink status: fully modularized.* Core = transport + facade + models only. The three heavy
+concerns (chunking, embeddings, integrations) are all opt-in + lazy behind extras. Follow-up (c) —
+promoting any concern to a genuinely separate distribution (`proximadb-chunking` / `-embeddings` /
+`-langchain`) — remains optional and is the only Phase-3 work left.
 ====
 
 == Scope / non-goals

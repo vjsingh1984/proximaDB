@@ -52,6 +52,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# Embeddings concern (TD-126 Phase 3): the built-in local embedding providers
+# (BGE, E5, GTE-Qwen, sentence-transformer, SFR) and their runtime model deps.
+# Opt-in so the core install stays light — `import proximadb_sdk` and even
+# `import proximadb_sdk.embedding_providers` no longer eagerly import the
+# provider modules; provider self-registration fires lazily on first registry
+# use (see embedding_providers/__init__.py). The `simulated` provider needs no
+# extra deps and works core-only.
+#   pip install 'proximadb[embeddings]'
+embeddings = [
+    "sentence-transformers>=2.2.0",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+]
+
 # LLM integration via Victor framework
 llm = [
     "victor-ai>=0.2.0",  # Victor AI framework for embeddings and LLM
