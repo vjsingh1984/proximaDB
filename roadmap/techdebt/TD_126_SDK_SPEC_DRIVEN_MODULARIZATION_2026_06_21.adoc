@@ -667,6 +667,67 @@ not a rewrite. Landed as three sequenced PRs:
   needs an embedding-provider injection seam, sentence splitting, and factory/config wiring +
   tests; deferred rather than risk an oversized PR.
 
+== Integrations concern refinement (2026-06-22)
+
+Post-review cleanup of the framework integrations
+(`clients/python/.../integrations/`) — fixing adapters that were broken or stale
+against current stable framework versions. Fixes/cleanups, not a rewrite. Landed
+as three sequenced PRs.
+
+* *P0 — dead-on-load fixes (PR #202, merged):*
+** *LangGraph* — `from langchain_core.tools import create_retriever_tool` raised
+   `ImportError`; corrected to the canonical, version-stable
+   `langchain_core.tools.retriever` submodule (works on 0.3.x + 1.x; the
+   `langchain.tools.retriever` shim was removed in 1.x). Integration was
+   dead-on-arrival before this.
+** *Haystack* — the `DuplicatePolicy.FAIL` write path called
+   `client.get_vectors(...)`, which the SDK does not expose (`AttributeError` on
+   every default `write_documents`). Replaced with a `_record_exists()` helper
+   backed by the real `get_vector()` get-by-id API.
+** *LlamaIndex* — `ProximaDBVectorStore(BasePydanticVectorStore)` assigned
+   undeclared private attrs on a Pydantic v2 model (raised on construction with
+   current `llama-index-core`); now declared as `PrivateAttr`. Switched to
+   `TextNode` (the `Node` alias was removed) + `BaseNode.get_content()`, called
+   `super().__init__()` in the retriever, and added async `aquery()`.
+** Hardened `test_integrations_frameworks_cov` (new submodule stub + order-
+   independent langgraph test).
+* *P1 — currency/correctness (PR #204, merged):*
+** *AutoGen* — the module reimplemented AutoGen *0.2's* `VectorDB` abstraction
+   (removed in the 0.4 rewrite) and `get_docs_by_ids` returned empty-content
+   stubs. Added `ProximaDBMemory` implementing the 0.4
+   `autogen_core.memory.Memory` protocol (the canonical 0.4 RAG seam), re-scoped
+   `ProximaDBVectorDB` as an explicit standalone 0.2-shaped helper (fixed the
+   overclaiming docstring), and fixed `get_docs_by_ids` to fetch real records via
+   `get_vector` (skip missing ids, no empty stubs).
+** *Haystack `filter_documents`* — replaced the fake dummy-zero-vector ANN
+   (`top_k=10000`) with real Haystack 2.x filter-tree conversion (AND/OR/NOT,
+   `meta.` prefix stripped) pushed down as a server-side metadata predicate over a
+   bounded, configurable window; made `ProximaDBRetriever` a proper Haystack 2.x
+   `@component`.
+** *Floors* — `langchain-core>=0.3`, `langgraph>=1.0`, `llama-index-core>=0.12`,
+   `crewai>=1.0`, `dspy>=3.0`; `autogen-agentchat>=0.4` retained.
+* *P2 — async (PR #205):* explicit async paths offloading the sync SDK client to a
+  worker thread via `asyncio.to_thread`: LangChain `aadd_texts` / `adelete` /
+  `asimilarity_search(_with_score)` / `asimilarity_search_by_vector(_with_score)`
+  (the async retriever `ainvoke` flows through these); Haystack
+  `ProximaDBRetriever.run_async` for `AsyncPipeline`. LlamaIndex `aquery` shipped
+  in P0.
+
+*Not changed (idiomatic, only stale floors bumped in P1):* LangChain, CrewAI,
+DSPy adapters.
+
+*Deferred (follow-up):*
+
+* *Pure metadata scan for Haystack `filter_documents`* — the SDK has no
+  vector-free scan endpoint, so the filter predicate is evaluated over a bounded
+  retrieval window (`max_filter_window`, default 10000) using a constant probe
+  vector. A true unbounded metadata-only scan needs a server-side scan API
+  (out of scope for an integration cleanup).
+* *Native async SDK client* — these async paths thread-offload a synchronous
+  client. A genuinely async transport (`unified_client_async` currently only
+  covers graph ops) would let the integrations await real async I/O instead of a
+  worker thread; tracked as a transport-layer follow-up.
+
 == Related
 
 * TD-121 (retire plain-SQL gRPC `ExecuteQuery` -> pgwire) — narrows the gRPC surface the SDK wraps.
