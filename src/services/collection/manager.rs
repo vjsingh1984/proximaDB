@@ -1013,8 +1013,10 @@ impl CollectionService {
             return Ok(Some(collection));
         }
 
-        // Use the metadata backend's collection_metadata which handles both legacy name and UUID.
-        self.metadata_backend.collection_metadata(identifier).await
+        // The catalog is the sole read authority: collection_from_catalog_asset
+        // already resolves by both name and UUID, so a miss means the collection
+        // does not exist.
+        Ok(None)
     }
 
     /// ✅ RESOLVE COLLECTION NAME/ID TO COLLECTION ID
@@ -1304,31 +1306,8 @@ impl CollectionService {
     /// List all collections - returns proto Collections directly (proto-first architecture)
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
         debug!("📋 Listing all collections");
-        let mut collections = self.list_collections_from_catalog().await?;
-        let mut seen = HashSet::new();
-        for collection in &collections {
-            seen.insert(collection.id.clone());
-            if let Some(config) = &collection.config {
-                seen.insert(config.name.clone());
-            }
-        }
-
-        for collection in self.metadata_backend.list_collections().await? {
-            let mut duplicate = seen.contains(&collection.id);
-            if let Some(config) = &collection.config {
-                duplicate |= seen.contains(&config.name);
-            }
-            if duplicate {
-                continue;
-            }
-            seen.insert(collection.id.clone());
-            if let Some(config) = &collection.config {
-                seen.insert(config.name.clone());
-            }
-            collections.push(collection);
-        }
-
-        Ok(collections)
+        // The catalog is the sole read authority.
+        self.list_collections_from_catalog().await
     }
 
     /// Delete collection with comprehensive cleanup across all storage components
@@ -2211,6 +2190,11 @@ impl CollectionService {
             })
             .collect();
 
+        config.distance_metric = schema
+            .properties
+            .get("vector.distance_metric")
+            .and_then(|metric| metric.parse::<i32>().ok());
+
         config.index_configs = schema
             .indexes
             .iter()
@@ -2435,6 +2419,11 @@ impl CollectionService {
         schema
             .properties
             .insert("vector.dimension".to_string(), config.dimension.to_string());
+        if let Some(metric) = config.distance_metric {
+            schema
+                .properties
+                .insert("vector.distance_metric".to_string(), metric.to_string());
+        }
         if let Some(owner) = &config.owner {
             schema.properties.insert("owner".to_string(), owner.clone());
         }
@@ -2605,9 +2594,7 @@ impl CollectionService {
     async fn generate_unique_collection_id(&self) -> Result<String> {
         for _ in 0..8 {
             let id = uuid::Uuid::new_v4().to_string();
-            if !self.metadata_backend.collection_id_exists(&id).await?
-                && self.collection_from_catalog_asset(&id).await?.is_none()
-            {
+            if self.collection_from_catalog_asset(&id).await?.is_none() {
                 return Ok(id);
             }
         }
@@ -3005,7 +2992,7 @@ mod tests {
         let temp_dir = TempDir::new().context("temp dir")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
         let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
+            storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
@@ -3023,9 +3010,15 @@ mod tests {
                 .await
                 .context("metadata backend")?,
         );
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
         let service = CollectionService::new(backend, StorageConfig::default())
             .await
-            .context("collection service")?;
+            .context("collection service")?
+            .with_catalog_manager(catalog_manager.clone());
 
         // A short, standard SQL identifier (4 chars) — would have been rejected by
         // the old 8-char floor.
@@ -3090,7 +3083,7 @@ mod tests {
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
+            storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
@@ -3109,9 +3102,15 @@ mod tests {
                 .await
                 .context("Failed to create metadata backend for test")?,
         );
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
         let service = CollectionService::new(backend, StorageConfig::default())
             .await
-            .context("Failed to create collection service for test")?;
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
 
         let config = CollectionConfig {
             name: "metric_default_test".to_string(),
@@ -3167,7 +3166,7 @@ mod tests {
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
+            storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
@@ -3186,9 +3185,15 @@ mod tests {
                 .await
                 .context("Failed to create metadata backend for test")?,
         );
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
         let service = CollectionService::new(backend, StorageConfig::default())
             .await
-            .context("Failed to create collection service for test")?;
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
 
         let config = CollectionConfig {
             name: "exact_default_case".to_string(),
