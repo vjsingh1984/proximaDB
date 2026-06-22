@@ -79,6 +79,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
 | Supported
 
+| *gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery`*
+| ANSI *SQL* (same DataFusion execution as pgwire)
+| Token/SSO-authenticated and high-throughput programmatic SQL: gRPC carries
+  bearer/JWT in metadata (pgwire cannot) and uses HTTP/2 + protobuf. The SQL
+  path for SaaS/SSO and SDK clients.
+| Supported
+
 | *REST/gRPC `/api/v2/query`* (unified query port)
 | *UQL* (unified multi-modal), *Federated* SQL extensions, *AQL*
 | ProximaDB-native cross-modal queries (vector + graph + relational) that SQL cannot express.
@@ -110,9 +117,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 ====
 * pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
   unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
-* The plain-SQL gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery` RPC is *deprecated* in
-  favour of pgwire (TD-121); it is the only SQL path on gRPC/REST being retired. The
-  `/api/v2/query` UQL/Federated surface is *not* deprecated.
+* SQL is served by *two complementary, supported* surfaces (TD-121), not one: *pgwire* for the
+  PostgreSQL ecosystem (psql/JDBC/BI/ORM, Postgres-native auth), and the gRPC
+  `ProximaRecordService.ExecuteQuery` RPC for *token/SSO-authenticated and high-throughput
+  programmatic* SQL. They differ by *auth mechanism and transport*, not by SQL dialect (both
+  execute through DataFusion). pgwire auth is password/MD5 and cannot carry a bearer/JWT, so the
+  gRPC SQL path is required for SSO/OIDC clients — it is *not* deprecated. For large columnar
+  result sets prefer Arrow Flight.
 * *Apache Calcite*, if adopted, is an *internal* federated-SQL planner behind pgwire and the
   Federated path — not a client surface, and not a substitute for the non-SQL languages.
 * SSO/governance (auth, RLS, tenancy) is enforced uniformly at the `TenantContext` I/O boundary,

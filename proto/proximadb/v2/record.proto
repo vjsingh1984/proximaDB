@@ -813,10 +813,14 @@ service ProximaRecordService {
   rpc ListCollections(V2ListCollectionsRequest) returns (V2ListCollectionsResponse);
   rpc DeleteCollection(V2DeleteCollectionRequest) returns (V2DeleteCollectionResponse);
 
-  // DEPRECATED: SQL over gRPC is deprecated. pgwire (the PostgreSQL wire
-  // protocol) is the canonical SQL surface; connect any PostgreSQL driver and
-  // run SQL there. gRPC owns record/vector/collection operations, not SQL.
-  // This RPC will be removed in a future release (see TD-121).
+  // SQL over gRPC: the SSO-authenticated, performant programmatic SQL surface
+  // (TD-121). gRPC carries bearer/JWT in request metadata, whereas pgwire auth
+  // is Postgres-native (password/MD5) and cannot carry a bearer token — so this
+  // RPC is the SQL path for token/SSO-authenticated and high-throughput
+  // programmatic clients (HTTP/2 + protobuf). pgwire remains the canonical SQL
+  // surface for the PostgreSQL ecosystem (psql/JDBC/BI/ORM); the two are
+  // complementary, not redundant. For bulk columnar result sets prefer Arrow
+  // Flight; for UQL/AQL/Federated (non-SQL) use /api/v2/query.
   rpc ExecuteQuery(V2QueryRequest) returns (V2QueryResponse);
 
   // Point record get-by-id (v2 parity with v1 VectorService.VectorGet)
