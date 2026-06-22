@@ -97,7 +97,7 @@ code-chunking = [
 ]
 
 langchain = [
-    "langchain-core>=0.1.0",
+    "langchain-core>=0.3.0",
 ]
 
 victor = [
@@ -105,24 +105,26 @@ victor = [
 ]
 
 crewai = [
-    "crewai>=0.80.0",
+    "crewai>=1.0.0",
 ]
 
 langgraph = [
-    "langgraph>=0.2.0",
-    "langchain-core>=0.1.0",
+    "langgraph>=1.0.0",
+    "langchain-core>=0.3.0",
 ]
 
 dspy = [
-    "dspy>=2.5.0",
+    "dspy>=3.0.0",
 ]
 
 autogen = [
+    # ProximaDBMemory targets the 0.4 autogen_core.memory protocol; the
+    # ProximaDBVectorDB helper also works on the 0.2 line (pyautogen).
     "autogen-agentchat>=0.4.0",
 ]
 
 llama_index = [
-    "llama-index-core>=0.10.0",
+    "llama-index-core>=0.12.0",
 ]
 
 haystack = [
