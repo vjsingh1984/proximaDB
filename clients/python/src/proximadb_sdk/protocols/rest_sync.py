@@ -78,6 +78,7 @@ from ..models import (
 )
 from ..models_v2 import ProximaRecord
 from ..proto_conversion import ProtoConverter
+from . import _rest_codegen as _gen
 
 logger = logging.getLogger(__name__)
 
@@ -866,9 +867,10 @@ class ProximaDBClient:
                 v2_request_data["schema"] = schema
         if initial_capacity is not None:
             v2_request_data["initial_capacity"] = initial_capacity
-        response = self._make_request(
-            "POST", "/api/v2/collections", json=v2_request_data
-        )
+        # Spec-driven request shape/path via the generated REST transport
+        # (TD-126 Phase 4); the HTTP call still goes through _make_request.
+        call = _gen.create_collection(v2_request_data)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
         response_data = response.json()
 
         # Handle unified API response format
@@ -1006,7 +1008,8 @@ class ProximaDBClient:
         logger.debug(
             f"Collection get request to GET /api/v2/collections/{collection_id}"
         )
-        response = self._make_request("GET", f"/api/v2/collections/{collection_id}")
+        call = _gen.get_collection(collection_id)
+        response = self._make_request(call.method, call.endpoint)
         response_data = response.json()
 
         # Check for error responses
@@ -1144,19 +1147,14 @@ class ProximaDBClient:
             offset: Page offset (OpenAPI default 0).
             include_stats: Include CollectionStats in each entry.
         """
-        params: dict[str, Any] = {}
-        if limit is not None:
-            params["limit"] = limit
-        if offset is not None:
-            params["offset"] = offset
-        if include_stats is not None:
-            params["include_stats"] = "true" if include_stats else "false"
-
         logger.debug("Collection list request to GET /api/v2/collections")
+        call = _gen.list_collections(
+            limit=limit, offset=offset, include_stats=include_stats
+        )
         request_kwargs: dict[str, Any] = {}
-        if params:
-            request_kwargs["params"] = params
-        response = self._make_request("GET", "/api/v2/collections", **request_kwargs)
+        if call.params:
+            request_kwargs["params"] = call.params
+        response = self._make_request(call.method, call.endpoint, **request_kwargs)
         response_data = response.json()
 
         # Server returns:
@@ -1263,7 +1261,8 @@ class ProximaDBClient:
         logger.debug(
             f"Collection delete request to DELETE /api/v2/collections/{collection_id}"
         )
-        response = self._make_request("DELETE", f"/api/v2/collections/{collection_id}")
+        call = _gen.delete_collection(collection_id)
+        response = self._make_request(call.method, call.endpoint)
         return response.json().get("success", False)
 
     def get_schema(self, collection_id: str) -> SchemaResponse:
@@ -1468,15 +1467,15 @@ class ProximaDBClient:
         all_errors = []
         for start in range(0, len(record_data), effective_batch_size):
             batch_data = record_data[start : start + effective_batch_size]
-            response = self._make_request(
-                "POST",
-                f"/api/v2/collections/{collection_id}/records/batch",
-                json={
+            call = _gen.insert_records(
+                collection_id,
+                {
                     "records": batch_data,
                     "validate_schema": validate_schema,
                     "upsert": upsert,
                 },
             )
+            response = self._make_request(call.method, call.endpoint, json=call.json)
             result = self._record_write_result(response.json())
             total_successful += result.success
             total_failed += result.failed
@@ -1696,10 +1695,11 @@ class ProximaDBClient:
             if optimization:
                 request_data["search_optimization"] = optimization
 
+        call = _gen.search_records(collection_id, request_data)
         response = self._make_request(
-            "POST",
-            f"/api/v2/collections/{collection_id}/search",
-            json=request_data,
+            call.method,
+            call.endpoint,
+            json=call.json,
             timeout=timeout or self.config.timeout,
         )
         response_data = response.json()
@@ -2095,15 +2095,13 @@ class ProximaDBClient:
         """Get a single vector by ID"""
         self._auto_warmup(collection_id)
 
-        params = {
-            "include_vector": include_vector,
-            "include_text": False,
-        }
-        response = self._make_request(
-            "GET",
-            f"/api/v2/collections/{collection_id}/records/{vector_id}",
-            params=params,
+        call = _gen.get_record(
+            collection_id,
+            vector_id,
+            include_vector=include_vector,
+            include_text=False,
         )
+        response = self._make_request(call.method, call.endpoint, params=call.params)
         data = response.json()
 
         # Handle VectorOperationResponse format
@@ -3141,7 +3139,8 @@ class ProximaDBClient:
         if limit is not None:
             payload["limit"] = limit
 
-        response = self._make_request("POST", "/api/v2/query", json=payload)
+        call = _gen.execute_query(payload)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
         return response.json()
 
     def explain_query(
@@ -3156,7 +3155,8 @@ class ProximaDBClient:
         if collection is not None:
             payload["collection"] = collection
 
-        response = self._make_request("POST", "/api/v2/query/explain", json=payload)
+        call = _gen.explain_query(payload)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
         return response.json()
 
     def execute_uql(
