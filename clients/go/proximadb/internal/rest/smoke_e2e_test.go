@@ -62,23 +62,21 @@ func TestLiveSmokeE2E(t *testing.T) {
 	t.Logf("created collection %q (engine=%s)", created.Name, created.Engine)
 	defer func() { _ = a.DeleteCollection(ctx, name) }()
 
-	cols, err := a.ListCollections(ctx)
-	if err != nil {
+	// ListCollections must succeed and round-trip the wire shape. Membership of
+	// our freshly-created collection is asserted via GetCollection by name below
+	// (the list endpoint paginates and may return server-assigned identifiers for
+	// pre-existing collections, so a name scan over the page is not a reliable
+	// membership check against a shared/dirty data dir).
+	if _, err := a.ListCollections(ctx); err != nil {
 		t.Fatalf("ListCollections: %v", err)
 	}
-	found := false
-	for _, c := range cols {
-		if c.Name == name {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Fatalf("ListCollections did not include %q", name)
-	}
 
-	if _, err := a.GetCollection(ctx, name); err != nil {
+	got, err := a.GetCollection(ctx, name)
+	if err != nil {
 		t.Fatalf("GetCollection: %v", err)
+	}
+	if got.Name != name {
+		t.Fatalf("GetCollection name: got %q, want %q", got.Name, name)
 	}
 
 	recID := "smoke_rec_1"
@@ -89,10 +87,10 @@ func TestLiveSmokeE2E(t *testing.T) {
 	}
 
 	// Record visibility may lag the write path; retry the read briefly.
-	var got []*VectorRecord
+	var recs []*VectorRecord
 	for i := 0; i < 10; i++ {
-		got, err = a.Get(ctx, name, []string{recID})
-		if err == nil && len(got) == 1 && got[0].ID == recID {
+		recs, err = a.Get(ctx, name, []string{recID})
+		if err == nil && len(recs) == 1 && recs[0].ID == recID {
 			break
 		}
 		time.Sleep(300 * time.Millisecond)
@@ -100,10 +98,10 @@ func TestLiveSmokeE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if len(got) != 1 || got[0].ID != recID {
-		t.Fatalf("Get round-trip mismatch: got %+v", got)
+	if len(recs) != 1 || recs[0].ID != recID {
+		t.Fatalf("Get round-trip mismatch: got %+v", recs)
 	}
-	t.Logf("record round-trip OK: id=%s vector_len=%d", got[0].ID, len(got[0].Vector))
+	t.Logf("record round-trip OK: id=%s vector_len=%d", recs[0].ID, len(recs[0].Vector))
 
 	if err := a.DeleteCollection(ctx, name); err != nil {
 		t.Fatalf("DeleteCollection: %v", err)
