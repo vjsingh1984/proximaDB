@@ -6524,6 +6524,7 @@ dependencies = [
  "proximadb-compression-types",
  "proximadb-config",
  "proximadb-data-model",
+ "proximadb-distance-kernel",
  "proximadb-distance-types",
  "proximadb-document",
  "proximadb-document-query",
@@ -6789,6 +6790,23 @@ dependencies = [
  "rmp-serde",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "proximadb-distance-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "dashmap",
+ "proximadb-hardware",
+ "proximadb-hardware-caps",
+ "proximadb-proto",
+ "proximadb-runtime-common",
+ "proximadb-vector",
+ "serde",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

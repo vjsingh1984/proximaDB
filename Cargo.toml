@@ -32,6 +32,7 @@ members = [
     "crates/foundation/proximadb-filter-expression",
     "crates/foundation/proximadb-hardware",
     "crates/foundation/proximadb-hardware-caps",
+    "crates/foundation/proximadb-distance-kernel",
     "crates/foundation/proximadb-kernel",
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
@@ -144,6 +145,7 @@ proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
+proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
@@ -271,6 +273,7 @@ proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
+proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
@@ -570,6 +573,7 @@ simd-experimental = []
 experimental-turboquant = [
     "proximadb-quantization-types/experimental-turboquant",
     "proximadb-vector/experimental-turboquant",
+    "proximadb-distance-kernel/experimental-turboquant",
 ]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
 avx512 = []
@@ -685,7 +689,7 @@ graph-first-sks = []
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
 
 # Hardware acceleration features
-gpu = ["metal", "proximadb-hardware-caps/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
+gpu = ["metal", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
 metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation

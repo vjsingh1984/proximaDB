@@ -28,7 +28,7 @@
 //! Actual data shows < 10% variation across all sparsity levels.
 
 use super::detector::SparsityInfo;
-use crate::compute::distance_computation::DistanceMetric;
+use crate::DistanceMetric;
 use std::fmt;
 
 /// Warning about using cosine similarity on sparse vectors

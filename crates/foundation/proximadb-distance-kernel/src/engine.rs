@@ -54,7 +54,7 @@ use std::sync::{Arc, OnceLock};
 use tracing::{info, trace};
 
 // Use proto enum as the single source of truth for DistanceMetric
-pub use crate::proto::proximadb_v1::DistanceMetric;
+pub use proximadb_proto::proximadb_v1::DistanceMetric;
 
 // Extension trait for DistanceMetric
 pub trait DistanceMetricExt {
@@ -67,16 +67,14 @@ impl DistanceMetricExt for DistanceMetric {
     }
 }
 #[cfg(feature = "gpu")]
-use crate::compute::gpu::distance::create_gpu_accelerator;
-#[cfg(feature = "gpu")]
-use crate::core::hardware_capabilities::get_hardware_capabilities;
+use proximadb_hardware_caps::get_hardware_capabilities;
 #[cfg(feature = "gpu")]
 use tokio::runtime::{Builder as TokioRuntimeBuilder, Handle as TokioHandle};
 
 use proximadb_hardware::{SimdLevel, best_simd_level};
 
 // Re-export HardwareBackend for public use
-pub use crate::core::hardware_capabilities::HardwareBackend;
+pub use proximadb_hardware_caps::HardwareBackend;
 
 // Platform-specific SIMD imports
 #[cfg(target_arch = "x86_64")]
@@ -287,6 +285,23 @@ fn get_platform_capability() -> PlatformCapability {
 // ============================================================================
 // Core Types and Traits
 // ============================================================================
+
+/// Factory that builds a GPU distance accelerator. Registered by the
+/// feature-gated `compute::gpu` layer at startup (`src/bin/server.rs`) so this
+/// kernel crate holds only the `GpuAccelerator` trait + a hook and stays free of a
+/// `compute` dependency (issue #162). No registration (default builds) => CPU path.
+#[cfg(feature = "gpu")]
+pub type GpuAcceleratorFactory = fn() -> anyhow::Result<Arc<dyn GpuAccelerator>>;
+
+#[cfg(feature = "gpu")]
+static GPU_ACCELERATOR_FACTORY: OnceLock<GpuAcceleratorFactory> = OnceLock::new();
+
+/// Register the GPU-accelerator factory. Call once at startup from the
+/// `compute::gpu` layer (under `#[cfg(feature = "gpu")]`). No-op if already set.
+#[cfg(feature = "gpu")]
+pub fn register_gpu_accelerator_factory(factory: GpuAcceleratorFactory) {
+    let _ = GPU_ACCELERATOR_FACTORY.set(factory);
+}
 
 /// GPU accelerator trait for hardware acceleration
 #[async_trait]
@@ -672,7 +687,10 @@ impl UnifiedDistanceCompute {
                     }
 
                     // Try to create GPU accelerator based on detected hardware
-                    match create_gpu_accelerator() {
+                    let Some(factory) = GPU_ACCELERATOR_FACTORY.get() else {
+                        return None;
+                    };
+                    match factory() {
                         Ok(accel) => {
                             if accel.is_available() {
                                 trace!(
