@@ -182,6 +182,12 @@ impl ProximaDB {
         )
         .await;
         tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
+        // The catalog is the read authority for WAL/recovery collection
+        // resolution; set it so the legacy metadata provider becomes fallback-only.
+        if let Some(catalog_manager) = collection_service.catalog_manager() {
+            storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
+            tracing::info!("✅ ProximaDB::new - Global catalog set for WAL/recovery");
+        }
 
         // Step 5: Initialize the storage engine (SST/VIPER/etc)
         tracing::info!("🌐 ProximaDB::new - Creating StorageEngine...");

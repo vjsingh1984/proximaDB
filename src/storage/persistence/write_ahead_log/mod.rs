@@ -1059,6 +1059,7 @@ static GLOBAL_METADATA_PROVIDER: ResettableOnceLock<GlobalMetadataValue> =
 pub(crate) unsafe fn reset_global_wal_state_for_tests() {
     unsafe {
         GLOBAL_METADATA_PROVIDER.reset();
+        GLOBAL_CATALOG.reset();
         GLOBAL_WRITE_BUFFER_BEHAVIOR.wal_behavior.reset();
         WAL_MANAGER_REGISTRY.reset();
     }
@@ -1094,6 +1095,84 @@ pub async fn set_global_metadata_provider(
     let mut lock = global.write().await;
     *lock = Some(provider);
     tracing::info!("✅ Global metadata provider set for WAL path resolution");
+}
+
+/// Global catalog singleton — the read-authoritative source for collection
+/// metadata during WAL path resolution and recovery. Mirrors the global metadata
+/// provider above. When set, WAL/recovery resolve a collection's config + storage
+/// assignment straight from the catalog (the system-of-record), falling back to
+/// the legacy `InternalCollectionProvider` only when the catalog has no entry —
+/// the path by which the WAL stops depending on the legacy provider.
+type GlobalCatalogValue = Arc<tokio::sync::RwLock<Option<Arc<crate::catalog::CatalogManager>>>>;
+
+static GLOBAL_CATALOG: ResettableOnceLock<GlobalCatalogValue> = ResettableOnceLock::new();
+
+fn get_global_catalog() -> GlobalCatalogValue {
+    GLOBAL_CATALOG
+        .get()
+        .get_or_init(|| Arc::new(tokio::sync::RwLock::new(None)))
+        .clone()
+}
+
+/// Set the global catalog used for WAL/recovery collection resolution. Call once
+/// at boot, before any WAL writes or recovery.
+pub async fn set_global_catalog(catalog: Arc<crate::catalog::CatalogManager>) {
+    let global = get_global_catalog();
+    let mut lock = global.write().await;
+    *lock = Some(catalog);
+    tracing::info!("✅ Global catalog set for WAL/recovery collection resolution");
+}
+
+/// Resolve a collection (by id or name) to its proto `Collection` via the
+/// catalog, or `None` if no catalog is wired / the collection is absent. The
+/// catalog asset carries the full collection shape (config, storage assignment,
+/// stats), so this faithfully replaces a legacy `provider.get_collection()`
+/// lookup. Resolves by FQN first, then scans by collection id/name (collections
+/// are catalog tables keyed by name, with the id carried as an asset property).
+pub(crate) async fn resolve_collection_from_catalog(
+    collection_id: &str,
+) -> Option<crate::proto::proximadb_v1::Collection> {
+    let global = get_global_catalog();
+    let catalog_manager = global.read().await.clone()?;
+
+    // Fast path: the identifier is a fully-qualified table name.
+    if let Ok((catalog, table_id)) = catalog_manager.resolve_table(collection_id).await
+        && catalog.table_exists(&table_id).await.unwrap_or(false)
+        && let Ok(schema) = catalog.get_table(&table_id).await
+        && let Ok(Some(collection)) =
+            crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+                &table_id, &schema,
+            )
+    {
+        return Some(collection);
+    }
+
+    // Fallback: the identifier is an opaque collection id (UUID). Scan the
+    // catalog and match by id or name.
+    let catalog = catalog_manager.default_catalog().await.ok()?;
+    for namespace in catalog.list_namespaces(None).await.ok()? {
+        let Ok(table_ids) = catalog.list_tables(&namespace.levels).await else {
+            continue;
+        };
+        for table_id in table_ids {
+            let Ok(schema) = catalog.get_table(&table_id).await else {
+                continue;
+            };
+            if let Ok(Some(collection)) =
+                crate::services::collection::manager::CollectionService::collection_from_catalog_schema(
+                    &table_id, &schema,
+                )
+                && (collection.id == collection_id
+                    || collection
+                        .config
+                        .as_ref()
+                        .is_some_and(|cfg| cfg.name == collection_id))
+            {
+                return Some(collection);
+            }
+        }
+    }
+    None
 }
 
 /// Check if global metadata provider is available
@@ -1634,7 +1713,24 @@ impl WriteAheadLogManager {
             }
         }
 
-        // Now try to resolve from metadata provider
+        // The catalog is the read authority: resolve from it first.
+        if let Some(collection) = resolve_collection_from_catalog(collection_id).await {
+            if let Some(assignment) = collection.storage_assignment {
+                tracing::debug!(
+                    "WAL path resolved via catalog: {} -> {}",
+                    collection_id,
+                    assignment.base_location
+                );
+                return Ok(assignment.base_location.clone());
+            }
+            tracing::warn!(
+                "Collection {} in catalog has no storage_assignment, using fallback",
+                collection_id
+            );
+            return Ok(self.get_fallback_base_location());
+        }
+
+        // Fall back to the legacy metadata provider while it still exists.
         let metadata_provider_lock = self.metadata_provider.read().await;
         if let Some(provider) = metadata_provider_lock.as_ref() {
             match provider.get_collection(collection_id).await {
@@ -2336,7 +2432,21 @@ impl WriteAheadLogManager {
 
             // Get base location for this collection from metadata provider
             // CRITICAL FIX: Query collection metadata for actual storage_assignment
-            let base_location = {
+            let base_location = if let Some(collection) =
+                resolve_collection_from_catalog(&collection_id).await
+            {
+                // Catalog is the read authority.
+                match collection.storage_assignment {
+                    Some(assignment) => assignment.base_location.clone(),
+                    None => self
+                        .config
+                        .multi_disk
+                        .data_directories
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "/tmp/proximadb/d1".to_string()),
+                }
+            } else {
                 let metadata_provider_lock = self.metadata_provider.read().await;
                 if let Some(provider) = metadata_provider_lock.as_ref() {
                     match provider.get_collection(&collection_id).await {

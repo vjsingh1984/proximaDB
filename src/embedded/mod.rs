@@ -1102,6 +1102,10 @@ impl EmbeddedProximaDB {
         )
         .await;
         tracing::debug!("✅ Embedded: Global metadata provider set for WAL path resolution");
+        if let Some(catalog_manager) = collection_service.catalog_manager() {
+            crate::storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
+            tracing::debug!("✅ Embedded: Global catalog set for WAL/recovery resolution");
+        }
 
         let collection_port: std::sync::Arc<dyn proximadb_runtime::CollectionPort> =
             collection_service;
