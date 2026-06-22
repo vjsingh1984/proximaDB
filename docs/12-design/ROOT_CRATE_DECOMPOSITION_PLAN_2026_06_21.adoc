@@ -88,6 +88,42 @@ Existing seams that help:
 4. *Cold subtrees first.* Verify a subtree is not under active edit before moving it (see
    Coordination).
 
+== Crate granularity (natural boundaries)
+
+Crate boundaries follow *bounded-context cohesion*, not line count — neither random crate
+accretion (file-per-crate sprawl) nor periodic merge/split churn (the "oscillation" to avoid).
+The natural seam is the attractor.
+
+*Isolate* a subtree into its own crate when ANY holds:
+
+* *Distinct dependency profile* (crate-level ISP) — don't force a dep onto unrelated consumers
+  (e.g. `proximadb-storage-tenant` pulls `dashmap`/`uuid`/`serde_json` that `optimization`/
+  `strategy` must not inherit).
+* *Distinct consumer fan-out* — reused by multiple modules/crates (`kv`, the `*-types` crates,
+  `proximadb-index-types`).
+* *Different stability gradient* — pure serde-only `*-types` (stable) stay separate from
+  volatile `*-kernel`/impl crates.
+* It is a *genuine reusable primitive*.
+
+*Group* an entire context into ONE crate when ALL hold: same bounded context AND co-change axis,
+same dependency profile, and no distinct external consumer (only the root/one consumer uses it).
+
+Rules of thumb:
+
+* *Default extraction unit = the bounded context* (a storage engine, persistence, metadata, a
+  types layer) — extracted whole, never file-by-file.
+* Avoid both extremes: a *mega-crate* recreates the monolith; *crate-per-file* inflates the
+  dependency graph, `Cargo.toml` churn, and resolution time.
+* Size is a guide, not a gate: a cohesive crate is typically ~1–15K LOC; below a few hundred LOC
+  justify isolation by reuse/distinct-deps (`kv` qualifies); above ~20K look for a sub-boundary.
+
+Applied so far: `kv` keeps its own crate (reusable primitive + distinct consumer);
+`optimization`/`strategy`/`tenant` stay separate by distinct dep profile (crate-ISP) — if any
+later prove to co-change with a shared dep profile and no distinct consumer, fold them into one
+`proximadb-storage-support` crate then (don't churn already-merged work). Future large slices
+extract *whole contexts*: one crate per engine (`sst`/`nova`/`raptor`/…), one persistence crate,
+the compute kernels by the distance/quant/bridge seam — not per file.
+
 == Sequencing (incremental)
 
 [cols="1,3,1,1",options="header"]
