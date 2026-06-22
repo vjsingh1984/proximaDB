@@ -193,3 +193,84 @@ async fn columnar_edge_ingest_and_export_round_trip() {
         assert_eq!(orig.weight, got.weight);
     }
 }
+
+/// Read one page of nodes (full scan; empty label set) — mirrors the streaming
+/// export's `query_node_page`.
+async fn query_page(
+    graph: &GraphOperationsService,
+    graph_id: &str,
+    limit: u32,
+    offset: u32,
+) -> Vec<Node> {
+    let query = proximadb::graph::NodeQuery {
+        graph_id: graph_id.to_string(),
+        labels: Vec::new(),
+        filters: Vec::new(),
+        limit: Some(limit),
+        offset: Some(offset),
+        continuation_token: None,
+    };
+    let nodes = graph
+        .query_nodes(graph_id, query)
+        .await
+        .expect("query page");
+    nodes.iter().map(|n| (**n).clone()).collect()
+}
+
+/// The streaming export pages `query_nodes` and re-encodes each page with the
+/// dimension fixed from the first page, so every page shares ONE Arrow schema.
+/// This verifies that paginated re-encode reconstructs every node and the
+/// per-page schema is stable (what the `FlightDataEncoder` requires).
+#[tokio::test]
+async fn columnar_node_export_paginates_with_fixed_schema() {
+    let graph = Arc::new(GraphOperationsService::new());
+    let graph_id = "g_columnar_paged";
+    create_graph(&graph, graph_id).await;
+
+    // Ingest 5 nodes, all embedding dim 4.
+    let originals: Vec<Node> = (0..5).map(|i| node(&format!("n{i}"), 4)).collect();
+    let batch = graph_codec::nodes_to_batch(&originals).expect("encode");
+    let decoded = graph_codec::batch_to_nodes(&batch).expect("decode");
+    graph
+        .batch_create_nodes_with_strategy(graph_id, decoded, "update")
+        .await
+        .expect("bulk create");
+
+    // Fix the schema dimension from the first page (the streaming contract).
+    let page = 2u32;
+    let first = query_page(&graph, graph_id, page, 0).await;
+    let dim = graph_codec::embedding_dim_of(&first).expect("dim");
+    assert_eq!(dim, 4);
+    let fixed_schema = graph_codec::graph_node_schema(dim);
+
+    // Page through, re-encoding each page with the FIXED dim; every page must
+    // carry the identical schema, and the union reconstructs all nodes.
+    let mut all: Vec<Node> = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let nodes = if offset == 0 {
+            first.clone()
+        } else {
+            query_page(&graph, graph_id, page, offset).await
+        };
+        if nodes.is_empty() {
+            break;
+        }
+        let b = graph_codec::nodes_to_batch_with_dim(&nodes, dim as usize).expect("encode page");
+        assert_eq!(b.schema(), fixed_schema, "every page shares one schema");
+        all.extend(graph_codec::batch_to_nodes(&b).expect("decode page"));
+        let n = nodes.len();
+        offset += page;
+        if (n as u32) < page {
+            break;
+        }
+    }
+
+    let mut ids: Vec<String> = all.iter().map(|n| n.id.clone()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["n0", "n1", "n2", "n3", "n4"],
+        "pagination reconstructs every node exactly once"
+    );
+}
