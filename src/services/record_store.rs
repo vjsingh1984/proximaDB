@@ -570,6 +570,26 @@ pub trait TableRecordStore: Send + Sync {
         Ok(None)
     }
 
+    /// TD-127: probe a single-column OLTP secondary index for the oids whose
+    /// `column` value text is in `values`. Returns `None` when the store has no
+    /// secondary index for `column` (or it is disabled) so the caller falls back
+    /// to a scan; `Some(oids)` (possibly empty) when the index answered. The
+    /// caller MUST still re-check each candidate against the full predicate — the
+    /// index only narrows the candidate set.
+    ///
+    /// Default opts out (`None`); index-backed stores (e.g.
+    /// `DirectWalTableRecordStore`) override this.
+    async fn lookup_secondary(
+        &self,
+        table_schema: &CatalogTableSchema,
+        column: &str,
+        values: &std::collections::HashSet<String>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<Vec<String>>> {
+        let _ = (table_schema, column, values, tenant_context);
+        Ok(None)
+    }
+
     /// CDC change-feed: return row-level changes for `collection_id` with WAL sequence
     /// number strictly greater than `since_lsn`, oldest first. The default returns nothing
     /// (stores without a readable change log opt out); the WAL-backed store overrides it.
@@ -702,6 +722,79 @@ pub(crate) fn schema_primary_key_column(table_schema: &CatalogTableSchema) -> Op
     })
 }
 
+/// Index-eligible scalar column types for an OLTP secondary (hash-equality)
+/// index. Floats/decimals are excluded — equality on a float is semantically
+/// fragile and `f32`/`f64` shortest-round-trip text can diverge for the same
+/// decimal, which would make the probe text miss the indexed text — as are
+/// non-scalar, temporal, and binary types; those columns fall back to the scan
+/// path. (TD-127.)
+fn is_secondary_indexable_type(data_type: &proximadb_data_model::ProximaType) -> bool {
+    use proximadb_data_model::ProximaType;
+    matches!(
+        data_type,
+        ProximaType::Boolean
+            | ProximaType::Int8
+            | ProximaType::Int16
+            | ProximaType::Int32
+            | ProximaType::Int64
+            | ProximaType::UInt8
+            | ProximaType::UInt16
+            | ProximaType::UInt32
+            | ProximaType::UInt64
+            | ProximaType::String
+            | ProximaType::Symbol
+    )
+}
+
+/// The single-column non-unique secondary indexes declared on a table,
+/// restricted to index-eligible scalar columns. The motivating consumer is the
+/// code-graph workload (look up symbols by `name`/`file`, neither the PK). Unit
+/// #1 indexes single columns only (composite is a follow-on). Shared by
+/// `DmlService` (probe extraction) and `DirectWalTableRecordStore` (index
+/// build/maintenance) so both agree on exactly which columns are indexed.
+/// (TD-127.)
+pub(crate) fn schema_secondary_index_columns(table_schema: &CatalogTableSchema) -> Vec<String> {
+    let eligible: std::collections::HashMap<&str, &proximadb_data_model::ProximaType> =
+        table_schema
+            .columns
+            .iter()
+            .map(|column| (column.name.as_str(), &column.data_type))
+            .collect();
+    let mut columns: Vec<String> = Vec::new();
+    for index in &table_schema.relational_capabilities.secondary_indexes {
+        let [column] = index.columns.as_slice() else {
+            continue; // single-column hash indexes only in unit #1
+        };
+        if columns.iter().any(|existing| existing == column) {
+            continue;
+        }
+        if eligible
+            .get(column.as_str())
+            .is_some_and(|data_type| is_secondary_indexable_type(data_type))
+        {
+            columns.push(column.clone());
+        }
+    }
+    columns
+}
+
+/// Render a record's scalar value for `column` as comparable text for the
+/// secondary index — `None` when NULL/absent/non-scalar. Reuses
+/// [`record_unique_tuple`] (with no primary key, so the value is read from
+/// `props`) so the indexed text and the query-side probe text derive
+/// identically through [`proxima_value_to_unique_text`]. (TD-127.)
+fn record_secondary_text(record: &ProximaRecord, column: &str) -> Option<String> {
+    let columns = [column.to_string()];
+    record_unique_tuple(record, &columns, None).map(|mut tuple| tuple.remove(0))
+}
+
+/// TD-127 kill-switch: `PROXIMADB_SECONDARY_INDEX_DISABLE` forces the OLTP
+/// secondary-index build/maintain/probe off (scan fallback), mirroring the
+/// scan-index escape hatch (`PROXIMADB_SCAN_INDEX_DISABLE`).
+fn secondary_index_disabled() -> bool {
+    std::env::var_os("PROXIMADB_SECONDARY_INDEX_DISABLE").is_some()
+}
+
 /// Build the per-set candidate tuples for `records`, rejecting a tuple that
 /// repeats within this statement (NULL tuples exempt). Shared by the INSERT /
 /// UPDATE enforcement in `DmlService` and the INSERT-SELECT native executor so
@@ -824,6 +917,22 @@ impl TableRecordStore for CatalogRoutingTableRecordStore {
     ) -> Result<TableRecordScanResponse> {
         self.store_for_schema(table_schema)
             .scan_records_filtered(table_schema, request, predicate, tenant_context)
+            .await
+    }
+
+    /// TD-127: forward the secondary-index probe to the schema's routed store, so
+    /// an index-backed route (the WAL-backed native store) is actually consulted
+    /// instead of falling through to the `None` trait default (which would force
+    /// every reader behind the router onto the scan path).
+    async fn lookup_secondary(
+        &self,
+        table_schema: &CatalogTableSchema,
+        column: &str,
+        values: &std::collections::HashSet<String>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<Vec<String>>> {
+        self.store_for_schema(table_schema)
+            .lookup_secondary(table_schema, column, values, tenant_context)
             .await
     }
 
@@ -1192,6 +1301,103 @@ impl TableUniqueIndex {
     }
 }
 
+/// TD-127: one column's hash secondary index — `value-text → owning oids`.
+#[derive(Default)]
+struct ColumnSecondaryIndex {
+    column: String,
+    value_to_oids: std::collections::HashMap<String, std::collections::HashSet<String>>,
+}
+
+/// Per-table non-unique secondary index over single columns. Each oid
+/// self-tracks its current per-column value text (`oid_values`) so an update or
+/// delete drops the OLD value without re-reading storage — the same maintenance
+/// shape as [`TableUniqueIndex`]. Built lazily on first probe (scanning the
+/// WAL-rebuilt current state) and maintained incrementally on every write.
+#[derive(Default)]
+struct TableSecondaryIndex {
+    /// One per indexed column, in `schema_secondary_index_columns` order.
+    columns: Vec<ColumnSecondaryIndex>,
+    /// oid → its current per-column value text (`None` = NULL/absent for that
+    /// column, so it is not indexed).
+    oid_values: std::collections::HashMap<String, Vec<Option<String>>>,
+}
+
+impl TableSecondaryIndex {
+    fn with_columns(columns: &[String]) -> Self {
+        Self {
+            columns: columns
+                .iter()
+                .map(|column| ColumnSecondaryIndex {
+                    column: column.clone(),
+                    value_to_oids: std::collections::HashMap::new(),
+                })
+                .collect(),
+            oid_values: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Insert/update `record`: drop its previous per-column values (if any) then
+    /// add its current ones. Uniform across INSERT/UPSERT/UPDATE.
+    fn upsert(&mut self, record: &ProximaRecord) {
+        self.remove_oid(&record.oid);
+        let mut per_column = Vec::with_capacity(self.columns.len());
+        for column in &mut self.columns {
+            let text = record_secondary_text(record, &column.column);
+            if let Some(text) = &text {
+                column
+                    .value_to_oids
+                    .entry(text.clone())
+                    .or_default()
+                    .insert(record.oid.clone());
+            }
+            per_column.push(text);
+        }
+        self.oid_values.insert(record.oid.clone(), per_column);
+    }
+
+    /// Remove `oid` entirely (DELETE).
+    fn delete(&mut self, oid: &str) {
+        self.remove_oid(oid);
+        self.oid_values.remove(oid);
+    }
+
+    /// Detach `oid`'s currently-indexed values from `value_to_oids` (shared by
+    /// upsert's replace and delete). Leaves `oid_values[oid]` for the caller.
+    fn remove_oid(&mut self, oid: &str) {
+        let Some(previous) = self.oid_values.get(oid).cloned() else {
+            return;
+        };
+        for (column, value) in self.columns.iter_mut().zip(previous.iter()) {
+            if let Some(value) = value
+                && let Some(oids) = column.value_to_oids.get_mut(value)
+            {
+                oids.remove(oid);
+                if oids.is_empty() {
+                    column.value_to_oids.remove(value);
+                }
+            }
+        }
+    }
+
+    /// Union of oids whose `column` value text is in `values`. `None` when the
+    /// column is not indexed by this table index (caller scans); `Some` (possibly
+    /// empty) when the column is indexed.
+    fn probe(
+        &self,
+        column: &str,
+        values: &std::collections::HashSet<String>,
+    ) -> Option<std::collections::HashSet<String>> {
+        let index = self.columns.iter().find(|c| c.column == column)?;
+        let mut oids = std::collections::HashSet::new();
+        for value in values {
+            if let Some(owners) = index.value_to_oids.get(value) {
+                oids.extend(owners.iter().cloned());
+            }
+        }
+        Some(oids)
+    }
+}
+
 pub struct DirectWalTableRecordStore {
     /// Per-(tenant_id, collection) record partitions, created on demand via
     /// `storage_factory`. TD-064: tenant + collection isolation is STRUCTURAL —
@@ -1210,6 +1416,12 @@ pub struct DirectWalTableRecordStore {
     /// every `write_mutations`.
     unique_index:
         parking_lot::RwLock<std::collections::HashMap<(String, String), TableUniqueIndex>>,
+    /// TD-127: non-unique OLTP secondary index keyed by `(tenant_id, collection)`
+    /// so a table's secondary indexes are per-tenant, mirroring `unique_index`.
+    /// Presence of a key == "index built". Lazily built on first
+    /// `lookup_secondary`, then maintained on every `write_mutations`.
+    secondary_index:
+        parking_lot::RwLock<std::collections::HashMap<(String, String), TableSecondaryIndex>>,
 }
 
 impl DirectWalTableRecordStore {
@@ -1242,6 +1454,7 @@ impl DirectWalTableRecordStore {
             storage_factory,
             wal_appender,
             unique_index: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            secondary_index: parking_lot::RwLock::new(std::collections::HashMap::new()),
         }
     }
 
@@ -1344,6 +1557,52 @@ impl DirectWalTableRecordStore {
         }
         // Double-checked insert: keep an index another writer built meanwhile.
         self.unique_index.write().entry(index_key).or_insert(index);
+        Ok(())
+    }
+
+    /// TD-127: build the secondary index for `(tenant_id, table_schema)` if not
+    /// already built, by scanning the tenant's current visible state (WAL
+    /// recovery has rebuilt it). A no-op when the table declares no eligible
+    /// secondary-index columns or the kill-switch is set.
+    async fn ensure_secondary_index_built(
+        &self,
+        table_schema: &CatalogTableSchema,
+        tenant_id: &str,
+    ) -> Result<()> {
+        if secondary_index_disabled() {
+            return Ok(());
+        }
+        let index_key = (tenant_id.to_string(), table_schema.name.clone());
+        if self.secondary_index.read().contains_key(&index_key) {
+            return Ok(());
+        }
+        let columns = schema_secondary_index_columns(table_schema);
+        if columns.is_empty() {
+            return Ok(());
+        }
+        let existing =
+            RecordStorageTableRecordStore::new(self.partition(tenant_id, &table_schema.name))
+                .scan_records(
+                    table_schema,
+                    TableRecordScanRequest {
+                        filter: None,
+                        table_id: table_schema.name.clone(),
+                        limit: None,
+                        include_vector: false,
+                        include_props: true,
+                    },
+                    None,
+                )
+                .await?;
+        let mut index = TableSecondaryIndex::with_columns(&columns);
+        for record in &existing {
+            index.upsert(record);
+        }
+        // Double-checked insert: keep an index another writer built meanwhile.
+        self.secondary_index
+            .write()
+            .entry(index_key)
+            .or_insert(index);
         Ok(())
     }
 }
@@ -1491,6 +1750,13 @@ impl TableRecordStore for DirectWalTableRecordStore {
         let index_primary_key = schema_primary_key_column(table_schema);
         let maintain_index = !schema_unique_column_sets(table_schema).is_empty()
             && self.unique_index.read().contains_key(&index_key);
+        // TD-127: maintain the secondary index on the same once-built basis as the
+        // UNIQUE/PK index — until first `lookup_secondary` builds it, the lazy
+        // build captures these writes from current state, so skipping is safe.
+        let maintain_secondary = !secondary_index_disabled()
+            && !schema_secondary_index_columns(table_schema).is_empty()
+            && self.secondary_index.read().contains_key(&index_key);
+        let maintain_any = maintain_index || maintain_secondary;
 
         let mut record_ids = Vec::with_capacity(storage_actions.len());
         for (kind, record) in storage_actions {
@@ -1498,11 +1764,18 @@ impl TableRecordStore for DirectWalTableRecordStore {
                 TableRecordMutationKind::Insert
                 | TableRecordMutationKind::Upsert
                 | TableRecordMutationKind::Update => {
-                    if maintain_index {
+                    if maintain_any {
                         let written = partition.upsert_record(record.clone()).await?;
                         record_ids.push(written.oid);
-                        if let Some(index) = self.unique_index.write().get_mut(&index_key) {
+                        if maintain_index
+                            && let Some(index) = self.unique_index.write().get_mut(&index_key)
+                        {
                             index.upsert(&record, index_primary_key.as_deref());
+                        }
+                        if maintain_secondary
+                            && let Some(index) = self.secondary_index.write().get_mut(&index_key)
+                        {
+                            index.upsert(&record);
                         }
                     } else {
                         let written = partition.upsert_record(record).await?;
@@ -1513,6 +1786,11 @@ impl TableRecordStore for DirectWalTableRecordStore {
                     partition.delete_record(&RecordKey::from(&record)).await?;
                     if maintain_index
                         && let Some(index) = self.unique_index.write().get_mut(&index_key)
+                    {
+                        index.delete(&record.oid);
+                    }
+                    if maintain_secondary
+                        && let Some(index) = self.secondary_index.write().get_mut(&index_key)
                     {
                         index.delete(&record.oid);
                     }
@@ -1597,6 +1875,39 @@ impl TableRecordStore for DirectWalTableRecordStore {
             }
         }
         Ok(None)
+    }
+
+    /// TD-127: index-backed secondary lookup. Builds the per-table index on first
+    /// use (from current state), then probes for candidate oids. Returns `None`
+    /// (scan fallback) when `column` is not an indexed column or the kill-switch
+    /// is set.
+    async fn lookup_secondary(
+        &self,
+        table_schema: &CatalogTableSchema,
+        column: &str,
+        values: &std::collections::HashSet<String>,
+        tenant_context: Option<&TenantContext>,
+    ) -> Result<Option<Vec<String>>> {
+        if secondary_index_disabled() {
+            return Ok(None);
+        }
+        if !schema_secondary_index_columns(table_schema)
+            .iter()
+            .any(|indexed| indexed == column)
+        {
+            return Ok(None);
+        }
+        let tenant_scope = Self::tenant_key(tenant_context);
+        self.ensure_secondary_index_built(table_schema, &tenant_scope)
+            .await?;
+        let index_key = (tenant_scope, table_schema.name.clone());
+        let index = self.secondary_index.read();
+        let Some(table_index) = index.get(&index_key) else {
+            return Ok(None);
+        };
+        Ok(table_index
+            .probe(column, values)
+            .map(|oids| oids.into_iter().collect()))
     }
 }
 
@@ -2229,6 +2540,204 @@ mod tests {
             wal.entries.lock().expect("recording WAL read lock").len(),
             1
         );
+    }
+
+    // ── TD-127: OLTP secondary index (build / probe / IN-list / maintenance) ──────
+
+    /// Build a `code_symbol`-shaped schema declaring non-unique secondary indexes
+    /// on `name` and `file` (the code-graph lookup columns) plus an unindexed
+    /// `lang` column, PK `oid`.
+    fn secondary_index_schema() -> CatalogTableSchema {
+        use proximadb_catalog::{CatalogIndex, CatalogIndexType, RelationalCapabilities};
+        CatalogTableSchema::new("code_symbol")
+            .with_column(CatalogColumn::new(1, "oid", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
+            .with_column(CatalogColumn::new(3, "file", ProximaType::String))
+            .with_column(CatalogColumn::new(4, "lang", ProximaType::String))
+            .with_primary_key(vec!["oid".to_string()])
+            .with_storage_specialization(CatalogStorageSpecialization::PaxOltp)
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["oid".to_string()],
+                secondary_indexes: vec![
+                    CatalogIndex::new(
+                        "sym_name_idx",
+                        vec!["name".to_string()],
+                        CatalogIndexType::Hash,
+                    ),
+                    CatalogIndex::new(
+                        "sym_file_idx",
+                        vec!["file".to_string()],
+                        CatalogIndexType::Hash,
+                    ),
+                ],
+                ..Default::default()
+            })
+    }
+
+    fn symbol_record(oid: &str, name: &str, file: &str) -> ProximaRecord {
+        ProximaRecord {
+            oid: oid.to_string(),
+            local_id: Some(oid.to_string()),
+            variation_id: Some("code_symbol".to_string()),
+            props: proximadb_records::ProximaTree::from([
+                (
+                    "name".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String(name.to_string())),
+                ),
+                (
+                    "file".to_string(),
+                    ProximaTreeNode::Value(ProximaValue::String(file.to_string())),
+                ),
+            ]),
+            ..Default::default()
+        }
+    }
+
+    async fn write_one(
+        store: &DirectWalTableRecordStore,
+        schema: &CatalogTableSchema,
+        kind: TableRecordMutationKind,
+        record: ProximaRecord,
+    ) {
+        let result = store
+            .write_mutations(schema, vec![TableRecordMutation::new(kind, record)], None)
+            .await
+            .expect("write_mutations");
+        assert!(result.success, "write failed: {:?}", result.error_code);
+    }
+
+    /// Probe `column IN values` and return the matching oids, sorted.
+    async fn probe_sorted(
+        store: &DirectWalTableRecordStore,
+        schema: &CatalogTableSchema,
+        column: &str,
+        values: &[&str],
+    ) -> Option<Vec<String>> {
+        let set: std::collections::HashSet<String> = values.iter().map(|v| v.to_string()).collect();
+        store
+            .lookup_secondary(schema, column, &set, None)
+            .await
+            .expect("lookup_secondary")
+            .map(|mut oids| {
+                oids.sort();
+                oids
+            })
+    }
+
+    #[tokio::test]
+    async fn secondary_index_probes_equality_and_in_list() {
+        let store = DirectWalTableRecordStore::new(
+            Arc::new(MemoryRecordStorage::default()),
+            Arc::new(RecordingWalAppender::default()),
+        );
+        let schema = secondary_index_schema();
+        for (oid, name, file) in [
+            ("s1", "parse", "a.rs"),
+            ("s2", "parse", "b.rs"), // same name in another file
+            ("s3", "emit", "b.rs"),
+            ("s4", "emit", "c.rs"),
+        ] {
+            write_one(
+                &store,
+                &schema,
+                TableRecordMutationKind::Insert,
+                symbol_record(oid, name, file),
+            )
+            .await;
+        }
+
+        // Equality on the indexed `name` column → both `parse` symbols.
+        assert_eq!(
+            probe_sorted(&store, &schema, "name", &["parse"]).await,
+            Some(vec!["s1".to_string(), "s2".to_string()])
+        );
+        // IN-list on the indexed `file` column → union of a.rs + c.rs.
+        assert_eq!(
+            probe_sorted(&store, &schema, "file", &["a.rs", "c.rs"]).await,
+            Some(vec!["s1".to_string(), "s4".to_string()])
+        );
+        // A value with no rows → an empty (but present) answer, NOT a scan fallback.
+        assert_eq!(
+            probe_sorted(&store, &schema, "name", &["missing"]).await,
+            Some(vec![])
+        );
+        // An unindexed column → `None` so the caller scans.
+        assert_eq!(probe_sorted(&store, &schema, "lang", &["rust"]).await, None);
+    }
+
+    #[tokio::test]
+    async fn secondary_index_maintained_on_update_and_delete() {
+        let store = DirectWalTableRecordStore::new(
+            Arc::new(MemoryRecordStorage::default()),
+            Arc::new(RecordingWalAppender::default()),
+        );
+        let schema = secondary_index_schema();
+        write_one(
+            &store,
+            &schema,
+            TableRecordMutationKind::Insert,
+            symbol_record("s1", "parse", "a.rs"),
+        )
+        .await;
+        // First probe builds the index from current state.
+        assert_eq!(
+            probe_sorted(&store, &schema, "name", &["parse"]).await,
+            Some(vec!["s1".to_string()])
+        );
+
+        // UPDATE the indexed value: the OLD value must stop matching, the NEW one start.
+        write_one(
+            &store,
+            &schema,
+            TableRecordMutationKind::Update,
+            symbol_record("s1", "lex", "a.rs"),
+        )
+        .await;
+        assert_eq!(
+            probe_sorted(&store, &schema, "name", &["parse"]).await,
+            Some(vec![]),
+            "old indexed value detached on update"
+        );
+        assert_eq!(
+            probe_sorted(&store, &schema, "name", &["lex"]).await,
+            Some(vec!["s1".to_string()]),
+            "new indexed value attached on update"
+        );
+
+        // DELETE removes the oid from the index entirely.
+        write_one(
+            &store,
+            &schema,
+            TableRecordMutationKind::Delete,
+            symbol_record("s1", "lex", "a.rs"),
+        )
+        .await;
+        assert_eq!(
+            probe_sorted(&store, &schema, "name", &["lex"]).await,
+            Some(vec![])
+        );
+    }
+
+    #[tokio::test]
+    async fn secondary_index_kill_switch_disables_probe() {
+        // SAFETY: single-threaded test; set + remove the process env around the probe.
+        unsafe { std::env::set_var("PROXIMADB_SECONDARY_INDEX_DISABLE", "1") };
+        let store = DirectWalTableRecordStore::new(
+            Arc::new(MemoryRecordStorage::default()),
+            Arc::new(RecordingWalAppender::default()),
+        );
+        let schema = secondary_index_schema();
+        write_one(
+            &store,
+            &schema,
+            TableRecordMutationKind::Insert,
+            symbol_record("s1", "parse", "a.rs"),
+        )
+        .await;
+        // Kill-switch on → `None` (scan fallback), even for an indexed column.
+        let result = probe_sorted(&store, &schema, "name", &["parse"]).await;
+        unsafe { std::env::remove_var("PROXIMADB_SECONDARY_INDEX_DISABLE") };
+        assert_eq!(result, None, "kill-switch forces the scan fallback");
     }
 
     // ── Retirement gate #2: prior-version closure and tombstone visibility ─────────
