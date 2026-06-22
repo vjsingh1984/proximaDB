@@ -11,7 +11,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use tracing::{debug, info};
 
-use super::quantization_engine::{Codebook, CodebookStore};
+use crate::compute::quantization::quantization_engine::{Codebook, CodebookStore};
 use crate::storage::cache::orchestrator::{CacheType, CrossCacheOrchestrator};
 use proximadb_kernel::hash::XxHash64;
 
@@ -287,7 +287,7 @@ impl GlobalQuantizationCache {
 
     /// Estimate codebook memory usage
     fn estimate_codebook_size(codebook: &Codebook) -> usize {
-        use super::quantization_engine::CodebookData;
+        use crate::compute::quantization::quantization_engine::CodebookData;
         // Rough estimation based on codebook structure
         // This is a simplified calculation - in production you'd want more precise measurement
         match &codebook.data {

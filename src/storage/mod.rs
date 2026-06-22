@@ -255,6 +255,11 @@ pub mod formats;
 // Arrow-native schema system for compute engine compatibility
 pub mod schema;
 
+/// Storage↔compute glue relocated from `src/compute/quantization` (quantization
+/// kernel split, step Q2): code that needs the storage/core layers and so cannot
+/// live in a foundation kernel crate.
+pub mod compute_bridge;
+
 // Lock-free implementations have been integrated into the main implementations
 // TransactionCoordinator now uses DashMap for active_operations
 // StorageEngine now uses DashMap for lsm_trees and mmap_readers
