@@ -121,6 +121,15 @@ Read these in order for future-shaping architecture work:
    hand-written ergonomic facade, and split the kitchen-sink per-language packages (e.g. Python's
    ~86k `proximadb_sdk`, of which the wire client is only ~19k) into focused, opt-in packages
    (core client / chunking / embeddings / integrations). Tracked as TD-126.
+21. `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc` +
+   Co-design spec for hosting an external coding agent's Code Property Graph as a correlated
+   OLTP + graph + vector substrate: one `ProximaRecord`/`oid` per code symbol simultaneously a
+   relational row, an ORION graph node, and an HNSW vector. Trace-driven from a measured 1.26M-node
+   CPG (94% statements, 96.5K cross-fn edges, 77,902 symbol embeddings) → a three-tier split:
+   Tier-A semantic graph in ORION + co-indexed vector (in-RAM, ~120 MB f32 / ~35 MB SQ8), Tier-B
+   intra-procedural CPG in columnar PAX (offloaded), Tier-C relational over Volcano-OLTP. Embedded
+   and multi-tenant (anvaiops) shapes. Engine asks: TD-127..TD-134. Subordinate to the 2026-06-04
+   course correction and `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
 
 == Stable Reference Docs
 
