@@ -26,3 +26,12 @@ serde = { workspace = true, features = ["derive"] }
 tracing.workspace = true
 proximadb-hardware.workspace = true
 proximadb-config.workspace = true
+
+# `raw_cpuid` is used only inside `#[cfg(target_arch = "x86_64")]` blocks
+# (CPUID vendor/model/cache probing in `get_cpu_info`), so gate the dependency to
+# x86_64 — non-x86 targets (e.g. aarch64/macOS) don't compile those paths. The
+# crate extraction (#180) moved the code here but left the dependency on the root
+# crate, which broke the x86_64 build (`use raw_cpuid` resolved to an undeclared
+# crate). Pinned to match the root crate's existing `raw-cpuid = "11.0"`.
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+raw-cpuid = "11.0"
