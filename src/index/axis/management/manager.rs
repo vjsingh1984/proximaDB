@@ -2720,7 +2720,7 @@ impl AxisManager {
         &self,
         collection_id: &str,
     ) -> Option<crate::compute::distance_computation::DistanceMetric> {
-        use crate::compute::distance_computation::conversion::proto_distance_to_internal;
+        use proximadb_vector::distance::conversion::proto_distance_to_internal;
 
         // Try to get from shared cache first
         if let Some(cache) = &self.shared_collection_cache
@@ -3960,10 +3960,10 @@ impl AxisManager {
         quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
         collection_config: &crate::proto::proximadb_v1::CollectionConfig,
     ) -> Result<ProximaRecord> {
-        use crate::compute::distance_computation::conversion::proto_distance_to_internal;
         use crate::compute::quantization::storage_engine::{
             StorageQuantizationConfig, StorageQuantizationEngine,
         };
+        use proximadb_vector::distance::conversion::proto_distance_to_internal;
 
         // Extract the vector data
         let vector_data = vector
