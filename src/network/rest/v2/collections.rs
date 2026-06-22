@@ -176,7 +176,7 @@ pub struct IndexConfigInput {
 
 /// REST input for quantization config (mirrors proto `QuantizationConfig`;
 /// gRPC-v2 parity with `V2QuantizationConfig`).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct QuantizationConfigInput {
     /// Enable quantization for this collection.
     pub enabled: Option<bool>,
@@ -695,7 +695,7 @@ pub struct CollectionV2Response {
 }
 
 /// REST output for a single index config (mirrors gRPC `V2IndexSpec`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IndexSpecOutput {
     /// Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh".
     pub algorithm: String,
@@ -708,7 +708,7 @@ pub struct IndexSpecOutput {
 }
 
 /// REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct HnswConfigOutput {
     pub m: Option<u32>,
     pub ef_construction: Option<u32>,
@@ -716,14 +716,14 @@ pub struct HnswConfigOutput {
 }
 
 /// REST output for IVF params (mirrors gRPC `V2IvfConfig`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct IvfConfigOutput {
     pub n_lists: Option<u32>,
     pub n_probe: Option<u32>,
 }
 
 /// REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct QuantizationConfigOutput {
     pub enabled: bool,
     /// Strategy label, e.g. "smart_defaults" | "minimal" | "aggressive".
