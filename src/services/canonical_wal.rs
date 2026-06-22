@@ -305,6 +305,49 @@ fn encode_frame(entry: &CanonicalWalEntry, out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
+/// Atomically rewrite the canonical WAL at `path` so it contains exactly
+/// `entries`, **preserving their original `sequence_number`s**. Writes a temp
+/// file, fsyncs it, atomically renames it over `path`, then best-effort fsyncs
+/// the parent directory so the rename is durable.
+///
+/// Used by the system catalog to compact its WAL after a durable snapshot: the
+/// snapshot covers every mutation up to its watermark LSN, so the WAL is
+/// rewritten to keep only the entries after it. Because the sequence numbers are
+/// preserved verbatim (not reassigned), the live appender's monotonic counter
+/// and the snapshot watermark stay consistent across the rewrite.
+pub async fn rewrite_canonical_wal(path: &Path, entries: &[CanonicalWalEntry]) -> Result<()> {
+    let mut frames = Vec::new();
+    for entry in entries {
+        encode_frame(entry, &mut frames)?;
+    }
+    let tmp = path.with_extension("wal-compact-tmp");
+    {
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&tmp)
+            .await
+            .with_context(|| format!("opening compaction temp {}", tmp.display()))?;
+        file.write_all(&frames)
+            .await
+            .with_context(|| format!("writing compaction temp {}", tmp.display()))?;
+        file.flush().await?;
+        file.sync_data()
+            .await
+            .with_context(|| format!("fsync compaction temp {}", tmp.display()))?;
+    }
+    tokio::fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("atomically replacing canonical WAL {}", path.display()))?;
+    if let Some(dir) = path.parent()
+        && let Ok(handle) = std::fs::File::open(dir)
+    {
+        let _ = handle.sync_all();
+    }
+    Ok(())
+}
+
 fn decode_frame(bytes: &[u8]) -> Result<Option<(CanonicalWalEntry, usize)>> {
     if bytes.len() < FRAME_HEADER_LEN {
         return Ok(None);
