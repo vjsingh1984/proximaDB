@@ -65,9 +65,16 @@ pub type TenantContext = MiddlewareTenantContext;
 pub struct MiddlewareTenantContext {
     /// The tenant identifier
     pub tenant_id: String,
+    /// Owning customer **account** — the SaaS billing/isolation boundary above
+    /// `tenant_id` (a tenant is a workspace/sub-org inside an account). `None`
+    /// is single-account / default mode (resolve via
+    /// [`account_or_default`](Self::account_or_default)); the account tier is
+    /// inert until provisioned (Phase 5 two-tier operator/account model).
+    pub account_id: Option<String>,
     /// Source of the tenant ID (for audit logging)
     pub source: TenantIdSource,
-    /// Whether this is a system/admin tenant with elevated privileges
+    /// Whether this is a system/admin tenant with elevated privileges. Doubles
+    /// as the operator (control-plane) marker.
     pub is_system_tenant: bool,
 }
 
@@ -78,6 +85,7 @@ impl MiddlewareTenantContext {
         let is_system_tenant = tenant_id == "system" || tenant_id == "admin";
         Self {
             tenant_id,
+            account_id: None,
             source,
             is_system_tenant,
         }
@@ -86,6 +94,23 @@ impl MiddlewareTenantContext {
     /// Create a default/anonymous tenant context
     pub fn default_tenant() -> Self {
         Self::new("default", TenantIdSource::Default)
+    }
+
+    /// Set the owning customer account (Phase 5). Activates the account-rooted
+    /// isolation tree for this request; leaving it unset keeps single-account
+    /// / default behaviour.
+    pub fn with_account(mut self, account_id: impl Into<String>) -> Self {
+        self.account_id = Some(account_id.into());
+        self
+    }
+
+    /// The owning account ID, falling back to the reserved default-account ID
+    /// when none was provisioned. Use at I/O boundaries that always need an
+    /// account segment (e.g. `DrPathBuilder` account-rooted paths).
+    pub fn account_or_default(&self) -> &str {
+        self.account_id.as_deref().unwrap_or(
+            crate::storage::trait_components::path_resolver::DrPathBuilder::DEFAULT_ACCOUNT_ID,
+        )
     }
 
     /// Check if this is a valid tenant (not empty)
@@ -482,6 +507,19 @@ mod tests {
         let ctx = MiddlewareTenantContext::default_tenant();
         assert_eq!(ctx.tenant_id, "default");
         assert_eq!(ctx.source, TenantIdSource::Default);
+    }
+
+    #[test]
+    fn test_account_tier_inert_until_set() {
+        // Unset account → resolves to the reserved default-account ID.
+        let ctx = MiddlewareTenantContext::new("tnt_acme", TenantIdSource::Header);
+        assert!(ctx.account_id.is_none());
+        assert_eq!(ctx.account_or_default(), "default");
+
+        // Provisioned account → used verbatim.
+        let ctx = ctx.with_account("acct_acme");
+        assert_eq!(ctx.account_id.as_deref(), Some("acct_acme"));
+        assert_eq!(ctx.account_or_default(), "acct_acme");
     }
 
     #[test]

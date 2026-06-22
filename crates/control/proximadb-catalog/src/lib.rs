@@ -72,6 +72,50 @@ pub enum StoragePoolClass {
     Dedicated,
 }
 
+/// Plane a catalog instance serves in the two-tier operator/account isolation
+/// model (Phase 5).
+///
+/// * [`Operator`](Self::Operator) — the SaaS provider's **control-plane**
+///   registry of all customer accounts (entitlements, storage bindings,
+///   billing). It holds metadata-*about*-accounts, never tenant table data,
+///   and is stored under the reserved `_operator/` root.
+/// * [`Account`](Self::Account) — a customer account's **data-plane** catalog
+///   (its tenants → namespaces → objects), stored under
+///   `accounts/{account_id}/…`. A per-account catalog is structurally unable to
+///   name another account's objects — isolation is structural, not a query
+///   predicate.
+///
+/// Single-deployment default is one `Operator`-roled system catalog (it holds
+/// the whole deployment's objects until multi-account provisioning splits
+/// data-plane catalogs out per account).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogRole {
+    /// Control-plane registry of accounts (under `_operator/`).
+    Operator,
+    /// Data-plane catalog scoped to one customer account.
+    Account {
+        /// The owning account ID (roots the catalog under `accounts/{id}/…`).
+        account_id: String,
+    },
+}
+
+impl CatalogRole {
+    /// The owning account ID for an [`Account`](Self::Account) catalog, or
+    /// `None` for the [`Operator`](Self::Operator) control plane.
+    pub fn account_id(&self) -> Option<&str> {
+        match self {
+            CatalogRole::Operator => None,
+            CatalogRole::Account { account_id } => Some(account_id.as_str()),
+        }
+    }
+
+    /// True for the control-plane operator catalog.
+    pub fn is_operator(&self) -> bool {
+        matches!(self, CatalogRole::Operator)
+    }
+}
+
 /// Namespace metadata.
 ///
 /// Serves two roles:
@@ -2858,6 +2902,28 @@ mod tests {
         assert!(ns.default_dr_region_pair_id.is_none());
         assert_eq!(ns.storage_pool_class, StoragePoolClass::Pooled);
         assert!(!ns.is_dr_addressable());
+    }
+
+    #[test]
+    fn catalog_role_accessors_and_serde() {
+        let op = CatalogRole::Operator;
+        assert!(op.is_operator());
+        assert_eq!(op.account_id(), None);
+
+        let acct = CatalogRole::Account {
+            account_id: "acct_acme".to_string(),
+        };
+        assert!(!acct.is_operator());
+        assert_eq!(acct.account_id(), Some("acct_acme"));
+
+        // snake_case, round-trips.
+        let j = serde_json::to_string(&op).expect("ser operator");
+        assert_eq!(j, "\"operator\"");
+        let back: CatalogRole = serde_json::from_str(&j).expect("de operator");
+        assert_eq!(back, op);
+        let j2 = serde_json::to_string(&acct).expect("ser account");
+        let back2: CatalogRole = serde_json::from_str(&j2).expect("de account");
+        assert_eq!(back2, acct);
     }
 
     #[test]

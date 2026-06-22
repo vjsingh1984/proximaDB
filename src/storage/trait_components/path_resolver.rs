@@ -726,6 +726,15 @@ impl DrPathBuilder {
     /// `None` account keeps the legacy flat `data/…` render instead.
     pub const DEFAULT_ACCOUNT_ID: &'static str = "default";
 
+    /// Reserved subpath under [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) that holds
+    /// the deployment's system catalog (WAL + snapshot). Single canonical
+    /// constant so boot and any tooling agree on the location.
+    pub const SYSTEM_CATALOG_SUBPATH: &'static str = "catalog";
+
+    /// File name of the system catalog's canonical WAL within
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix).
+    pub const SYSTEM_CATALOG_WAL_FILE: &'static str = "system-catalog.wal";
+
     /// Build a validated control-plane (operator) subprefix
     /// `_operator/<subpath>/`. `subpath` runs through the same
     /// [`validate_id`](Self::validate_id) guard as a path segment (e.g.
@@ -733,6 +742,27 @@ impl DrPathBuilder {
     pub fn operator_subprefix(subpath: &str) -> Result<String, PathResolverError> {
         Self::validate_id("operator_subpath", subpath)?;
         Ok(format!("{}{}/", Self::OPERATOR_ROOT, subpath))
+    }
+
+    /// Control-plane subprefix for the deployment's **system catalog**:
+    /// `_operator/catalog/`. The system catalog is the (currently single)
+    /// `Operator`-roled catalog holding the deployment's objects until
+    /// multi-account provisioning splits data-plane catalogs out per account.
+    pub fn system_catalog_subprefix() -> String {
+        // Constants are pre-validated single segments — infallible.
+        format!("{}{}/", Self::OPERATOR_ROOT, Self::SYSTEM_CATALOG_SUBPATH)
+    }
+
+    /// Relative object key of the system catalog WAL under
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/system-catalog.wal`. The snapshot blob is derived
+    /// from this by the catalog (`.with_extension("snapshot")`).
+    pub fn system_catalog_wal_relpath() -> String {
+        format!(
+            "{}{}",
+            Self::system_catalog_subprefix(),
+            Self::SYSTEM_CATALOG_WAL_FILE
+        )
     }
 }
 
@@ -1095,6 +1125,24 @@ mod tests {
         // The subpath cannot escape the operator root.
         assert!(DrPathBuilder::operator_subprefix("../etc").is_err());
         assert!(DrPathBuilder::operator_subprefix("a/b").is_err());
+    }
+
+    #[test]
+    fn system_catalog_path_is_under_operator_root() {
+        // The deployment's system catalog lives under the control-plane root.
+        assert_eq!(
+            DrPathBuilder::system_catalog_subprefix(),
+            "_operator/catalog/"
+        );
+        assert_eq!(
+            DrPathBuilder::system_catalog_wal_relpath(),
+            "_operator/catalog/system-catalog.wal"
+        );
+        // It is exactly the validated operator subprefix for "catalog".
+        assert_eq!(
+            DrPathBuilder::system_catalog_subprefix(),
+            DrPathBuilder::operator_subprefix(DrPathBuilder::SYSTEM_CATALOG_SUBPATH).unwrap()
+        );
     }
 
     #[test]

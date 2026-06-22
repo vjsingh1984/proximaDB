@@ -44,8 +44,9 @@ use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry};
 /// implement it (it absorbs storage-plane fields that are not comparable).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CatalogDelta {
-    /// Create or replace a namespace.
-    UpsertNamespace { namespace: CatalogNamespace },
+    /// Create or replace a namespace. Boxed to keep the enum small (the
+    /// namespace carries the account/tenant/DR authority fields).
+    UpsertNamespace { namespace: Box<CatalogNamespace> },
     /// Drop a namespace and all of its tables.
     DropNamespace { levels: Vec<String> },
     /// Create or replace a table/collection.
@@ -129,7 +130,7 @@ impl CatalogInner {
             CatalogDelta::UpsertNamespace { namespace } => {
                 let key = namespace.levels.clone();
                 self.ns_children.entry(key.clone()).or_default();
-                self.namespaces.insert(key, namespace);
+                self.namespaces.insert(key, *namespace);
             }
             CatalogDelta::DropNamespace { levels } => {
                 self.namespaces.remove(&levels);
@@ -367,7 +368,7 @@ mod tests {
                 .append_operations(
                     vec![
                         CatalogDelta::UpsertNamespace {
-                            namespace: ns(&["sales"]),
+                            namespace: Box::new(ns(&["sales"])),
                         }
                         .to_operation()?,
                         upsert_table_op(&["sales"], "orders"),
@@ -413,7 +414,7 @@ mod tests {
         state.apply_committed(
             1,
             CatalogDelta::UpsertNamespace {
-                namespace: ns(&["app"]),
+                namespace: Box::new(ns(&["app"])),
             },
         );
         state.apply_committed(
@@ -485,7 +486,7 @@ mod tests {
         state.apply_committed(
             1,
             CatalogDelta::UpsertNamespace {
-                namespace: ns(&["db", "public"]),
+                namespace: Box::new(ns(&["db", "public"])),
             },
         );
         state.apply_committed(
@@ -536,7 +537,7 @@ mod tests {
             .append_operations(
                 vec![
                     CatalogDelta::UpsertNamespace {
-                        namespace: ns(&["s"]),
+                        namespace: Box::new(ns(&["s"])),
                     }
                     .to_operation()?,
                     upsert_table_op(&["s"], "committed"),

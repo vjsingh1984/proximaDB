@@ -427,7 +427,21 @@ impl SharedServices {
                 && storage_config.metadata_url.starts_with("file://");
             if use_system_catalog {
                 let base = storage_config.metadata_url.trim_start_matches("file://");
-                let wal_path = std::path::Path::new(base).join("system-catalog.wal");
+                // Phase 5 (two-tier operator/account): route the system
+                // catalog's own WAL + snapshot under the DrPathBuilder-validated
+                // operator control-plane prefix (`_operator/catalog/…`) so
+                // catalog I/O honours the structural-isolation mandate instead
+                // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
+                // default (mirrors `PROXIMADB_WAREHOUSE_DRPATH`): the local path
+                // is unchanged until a deployment opts in, keeping existing
+                // on-disk catalog state in place. The catalog is `Operator`-roled.
+                let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {
+                    std::path::Path::new(base).join(
+                        crate::storage::trait_components::path_resolver::DrPathBuilder::system_catalog_wal_relpath(),
+                    )
+                } else {
+                    std::path::Path::new(base).join("system-catalog.wal")
+                };
                 if let Some(parent) = wal_path.parent() {
                     tokio::fs::create_dir_all(parent).await.with_context(|| {
                         format!("creating system-catalog dir {}", parent.display())
