@@ -567,6 +567,7 @@ pub mod types {
     ///    "dimension",
     ///    "distance_metric",
     ///    "engine",
+    ///    "index_specs",
     ///    "name",
     ///    "proxima_record_enabled",
     ///    "stats"
@@ -601,6 +602,13 @@ pub mod types {
     ///      "description": "Storage engine",
     ///      "type": "string"
     ///    },
+    ///    "index_specs": {
+    ///      "description": "Per-index config (HNSW/IVF params, is_primary) as persisted at create\ntime. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/IndexSpecOutput"
+    ///      }
+    ///    },
     ///    "name": {
     ///      "description": "Collection name",
     ///      "type": "string"
@@ -608,6 +616,9 @@ pub mod types {
     ///    "proxima_record_enabled": {
     ///      "description": "Whether ProximaRecord is enabled",
     ///      "type": "boolean"
+    ///    },
+    ///    "quantization": {
+    ///      "$ref": "#/components/schemas/QuantizationConfigOutput"
     ///    },
     ///    "schema": {
     ///      "$ref": "#/components/schemas/SchemaDefinition"
@@ -645,10 +656,15 @@ pub mod types {
         pub distance_metric: ::std::string::String,
         ///Storage engine
         pub engine: ::std::string::String,
+        /// Per-index config (HNSW/IVF params, is_primary) as persisted at create
+        /// time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
+        pub index_specs: ::std::vec::Vec<IndexSpecOutput>,
         ///Collection name
         pub name: ::std::string::String,
         ///Whether ProximaRecord is enabled
         pub proxima_record_enabled: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub quantization: ::std::option::Option<QuantizationConfigOutput>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub schema: ::std::option::Option<SchemaDefinition>,
         pub stats: CollectionStatsV2,
@@ -824,6 +840,9 @@ pub mod types {
     ///      "type": "string",
     ///      "minLength": 1
     ///    },
+    ///    "quantization": {
+    ///      "$ref": "#/components/schemas/QuantizationConfigInput"
+    ///    },
     ///    "schema": {
     ///      "$ref": "#/components/schemas/SchemaDefinition"
     ///    },
@@ -888,6 +907,8 @@ pub mod types {
         pub initial_capacity: ::std::option::Option<i64>,
         ///Collection name (required)
         pub name: CreateCollectionV2RequestName,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub quantization: ::std::option::Option<QuantizationConfigInput>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub schema: ::std::option::Option<SchemaDefinition>,
         /// Operator metadata tags, e.g. `"recall_target:0.95"`,
@@ -2663,6 +2684,66 @@ pub mod types {
             Default::default()
         }
     }
+    ///REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST output for HNSW params (mirrors gRPC `V2HnswConfig`).",
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "ef_construction": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "ef_search": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "m": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct HnswConfigOutput {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ef_construction: ::std::option::Option<i32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ef_search: ::std::option::Option<i32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub m: ::std::option::Option<i32>,
+    }
+    impl ::std::default::Default for HnswConfigOutput {
+        fn default() -> Self {
+            Self {
+                ef_construction: Default::default(),
+                ef_search: Default::default(),
+                m: Default::default(),
+            }
+        }
+    }
+    impl HnswConfigOutput {
+        pub fn builder() -> builder::HnswConfigOutput {
+            Default::default()
+        }
+    }
     ///`HybridIndexBody`
     ///
     /// <details><summary>JSON schema</summary>
@@ -2765,6 +2846,13 @@ pub mod types {
     ///        "null"
     ///      ]
     ///    },
+    ///    "is_primary": {
+    ///      "description": "Mark this index as the collection's primary ANN index (gRPC-v2 parity).",
+    ///      "type": [
+    ///        "boolean",
+    ///        "null"
+    ///      ]
+    ///    },
     ///    "ivf_config": {
     ///      "$ref": "#/components/schemas/IvfConfigInput"
     ///    },
@@ -2788,6 +2876,9 @@ pub mod types {
         ///Optional index name (defaults to `index_<n>`).
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub index_name: ::std::option::Option<::std::string::String>,
+        ///Mark this index as the collection's primary ANN index (gRPC-v2 parity).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub is_primary: ::std::option::Option<bool>,
         #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
         pub ivf_config: ::std::option::Option<IvfConfigInput>,
         ///Free-form algorithm parameters.
@@ -2799,6 +2890,53 @@ pub mod types {
     }
     impl IndexConfigInput {
         pub fn builder() -> builder::IndexConfigInput {
+            Default::default()
+        }
+    }
+    ///REST output for a single index config (mirrors gRPC `V2IndexSpec`).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST output for a single index config (mirrors gRPC `V2IndexSpec`).",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "algorithm",
+    ///    "is_primary"
+    ///  ],
+    ///  "properties": {
+    ///    "algorithm": {
+    ///      "description": "Algorithm: \"hnsw\" | \"ivf\" | \"pq\" | \"flat\" | \"annoy\" | \"lsh\".",
+    ///      "type": "string"
+    ///    },
+    ///    "hnsw": {
+    ///      "$ref": "#/components/schemas/HnswConfigOutput"
+    ///    },
+    ///    "is_primary": {
+    ///      "description": "Whether this is the collection's primary ANN index.",
+    ///      "type": "boolean"
+    ///    },
+    ///    "ivf": {
+    ///      "$ref": "#/components/schemas/IvfConfigOutput"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IndexSpecOutput {
+        ///Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh".
+        pub algorithm: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub hnsw: ::std::option::Option<HnswConfigOutput>,
+        ///Whether this is the collection's primary ANN index.
+        pub is_primary: bool,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub ivf: ::std::option::Option<IvfConfigOutput>,
+    }
+    impl IndexSpecOutput {
+        pub fn builder() -> builder::IndexSpecOutput {
             Default::default()
         }
     }
@@ -3044,6 +3182,55 @@ pub mod types {
     }
     impl IvfConfigInput {
         pub fn builder() -> builder::IvfConfigInput {
+            Default::default()
+        }
+    }
+    ///REST output for IVF params (mirrors gRPC `V2IvfConfig`).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST output for IVF params (mirrors gRPC `V2IvfConfig`).",
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "n_lists": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "n_probe": {
+    ///      "type": [
+    ///        "integer",
+    ///        "null"
+    ///      ],
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct IvfConfigOutput {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub n_lists: ::std::option::Option<i32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub n_probe: ::std::option::Option<i32>,
+    }
+    impl ::std::default::Default for IvfConfigOutput {
+        fn default() -> Self {
+            Self {
+                n_lists: Default::default(),
+                n_probe: Default::default(),
+            }
+        }
+    }
+    impl IvfConfigOutput {
+        pub fn builder() -> builder::IvfConfigOutput {
             Default::default()
         }
     }
@@ -3421,6 +3608,91 @@ pub mod types {
     }
     impl ProximaRecordInput {
         pub fn builder() -> builder::ProximaRecordInput {
+            Default::default()
+        }
+    }
+    /// REST input for quantization config (mirrors proto `QuantizationConfig`;
+    /// gRPC-v2 parity with `V2QuantizationConfig`).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST input for quantization config (mirrors proto `QuantizationConfig`;\ngRPC-v2 parity with `V2QuantizationConfig`).",
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "enabled": {
+    ///      "description": "Enable quantization for this collection.",
+    ///      "type": [
+    ///        "boolean",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "strategy": {
+    ///      "description": "Strategy: \"smart_defaults\" (default) | \"minimal\" | \"aggressive\" | \"custom_levels\".",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct QuantizationConfigInput {
+        ///Enable quantization for this collection.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub enabled: ::std::option::Option<bool>,
+        ///Strategy: "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels".
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub strategy: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for QuantizationConfigInput {
+        fn default() -> Self {
+            Self {
+                enabled: Default::default(),
+                strategy: Default::default(),
+            }
+        }
+    }
+    impl QuantizationConfigInput {
+        pub fn builder() -> builder::QuantizationConfigInput {
+            Default::default()
+        }
+    }
+    ///REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "description": "REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).",
+    ///  "type": "object",
+    ///  "required": [
+    ///    "enabled",
+    ///    "strategy"
+    ///  ],
+    ///  "properties": {
+    ///    "enabled": {
+    ///      "type": "boolean"
+    ///    },
+    ///    "strategy": {
+    ///      "description": "Strategy label, e.g. \"smart_defaults\" | \"minimal\" | \"aggressive\".",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct QuantizationConfigOutput {
+        pub enabled: bool,
+        ///Strategy label, e.g. "smart_defaults" | "minimal" | "aggressive".
+        pub strategy: ::std::string::String,
+    }
+    impl QuantizationConfigOutput {
+        pub fn builder() -> builder::QuantizationConfigOutput {
             Default::default()
         }
     }
@@ -5511,8 +5783,16 @@ pub mod types {
             dimension: ::std::result::Result<i32, ::std::string::String>,
             distance_metric: ::std::result::Result<::std::string::String, ::std::string::String>,
             engine: ::std::result::Result<::std::string::String, ::std::string::String>,
+            index_specs: ::std::result::Result<
+                ::std::vec::Vec<super::IndexSpecOutput>,
+                ::std::string::String,
+            >,
             name: ::std::result::Result<::std::string::String, ::std::string::String>,
             proxima_record_enabled: ::std::result::Result<bool, ::std::string::String>,
+            quantization: ::std::result::Result<
+                ::std::option::Option<super::QuantizationConfigOutput>,
+                ::std::string::String,
+            >,
             schema: ::std::result::Result<
                 ::std::option::Option<super::SchemaDefinition>,
                 ::std::string::String,
@@ -5532,10 +5812,12 @@ pub mod types {
                     dimension: Err("no value supplied for dimension".to_string()),
                     distance_metric: Err("no value supplied for distance_metric".to_string()),
                     engine: Err("no value supplied for engine".to_string()),
+                    index_specs: Err("no value supplied for index_specs".to_string()),
                     name: Err("no value supplied for name".to_string()),
                     proxima_record_enabled: Err(
                         "no value supplied for proxima_record_enabled".to_string()
                     ),
+                    quantization: Ok(Default::default()),
                     schema: Ok(Default::default()),
                     stats: Err("no value supplied for stats".to_string()),
                     updated_at: Ok(Default::default()),
@@ -5605,6 +5887,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for engine: {e}"));
                 self
             }
+            pub fn index_specs<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::IndexSpecOutput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.index_specs = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for index_specs: {e}"));
+                self
+            }
             pub fn name<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::string::String>,
@@ -5623,6 +5915,16 @@ pub mod types {
                 self.proxima_record_enabled = value.try_into().map_err(|e| {
                     format!("error converting supplied value for proxima_record_enabled: {e}")
                 });
+                self
+            }
+            pub fn quantization<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::QuantizationConfigOutput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.quantization = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for quantization: {e}"));
                 self
             }
             pub fn schema<T>(mut self, value: T) -> Self
@@ -5668,8 +5970,10 @@ pub mod types {
                     dimension: value.dimension?,
                     distance_metric: value.distance_metric?,
                     engine: value.engine?,
+                    index_specs: value.index_specs?,
                     name: value.name?,
                     proxima_record_enabled: value.proxima_record_enabled?,
+                    quantization: value.quantization?,
                     schema: value.schema?,
                     stats: value.stats?,
                     updated_at: value.updated_at?,
@@ -5685,8 +5989,10 @@ pub mod types {
                     dimension: Ok(value.dimension),
                     distance_metric: Ok(value.distance_metric),
                     engine: Ok(value.engine),
+                    index_specs: Ok(value.index_specs),
                     name: Ok(value.name),
                     proxima_record_enabled: Ok(value.proxima_record_enabled),
+                    quantization: Ok(value.quantization),
                     schema: Ok(value.schema),
                     stats: Ok(value.stats),
                     updated_at: Ok(value.updated_at),
@@ -5830,6 +6136,10 @@ pub mod types {
                 ::std::result::Result<::std::option::Option<i64>, ::std::string::String>,
             name:
                 ::std::result::Result<super::CreateCollectionV2RequestName, ::std::string::String>,
+            quantization: ::std::result::Result<
+                ::std::option::Option<super::QuantizationConfigInput>,
+                ::std::string::String,
+            >,
             schema: ::std::result::Result<
                 ::std::option::Option<super::SchemaDefinition>,
                 ::std::string::String,
@@ -5850,6 +6160,7 @@ pub mod types {
                     index_configs: Ok(Default::default()),
                     initial_capacity: Ok(Default::default()),
                     name: Err("no value supplied for name".to_string()),
+                    quantization: Ok(Default::default()),
                     schema: Ok(Default::default()),
                     tags: Ok(Default::default()),
                 }
@@ -5940,6 +6251,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for name: {e}"));
                 self
             }
+            pub fn quantization<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::QuantizationConfigInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.quantization = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for quantization: {e}"));
+                self
+            }
             pub fn schema<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<super::SchemaDefinition>>,
@@ -5977,6 +6298,7 @@ pub mod types {
                     index_configs: value.index_configs?,
                     initial_capacity: value.initial_capacity?,
                     name: value.name?,
+                    quantization: value.quantization?,
                     schema: value.schema?,
                     tags: value.tags?,
                 })
@@ -5993,6 +6315,7 @@ pub mod types {
                     index_configs: Ok(value.index_configs),
                     initial_capacity: Ok(value.initial_capacity),
                     name: Ok(value.name),
+                    quantization: Ok(value.quantization),
                     schema: Ok(value.schema),
                     tags: Ok(value.tags),
                 }
@@ -7351,6 +7674,75 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct HnswConfigOutput {
+            ef_construction:
+                ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            ef_search: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            m: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for HnswConfigOutput {
+            fn default() -> Self {
+                Self {
+                    ef_construction: Ok(Default::default()),
+                    ef_search: Ok(Default::default()),
+                    m: Ok(Default::default()),
+                }
+            }
+        }
+        impl HnswConfigOutput {
+            pub fn ef_construction<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ef_construction = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for ef_construction: {e}")
+                });
+                self
+            }
+            pub fn ef_search<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ef_search = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for ef_search: {e}"));
+                self
+            }
+            pub fn m<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.m = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for m: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<HnswConfigOutput> for super::HnswConfigOutput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: HnswConfigOutput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    ef_construction: value.ef_construction?,
+                    ef_search: value.ef_search?,
+                    m: value.m?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::HnswConfigOutput> for HnswConfigOutput {
+            fn from(value: super::HnswConfigOutput) -> Self {
+                Self {
+                    ef_construction: Ok(value.ef_construction),
+                    ef_search: Ok(value.ef_search),
+                    m: Ok(value.m),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct HybridIndexBody {
             collection: ::std::result::Result<::serde_json::Value, ::std::string::String>,
             documents: ::std::result::Result<::serde_json::Value, ::std::string::String>,
@@ -7517,6 +7909,7 @@ pub mod types {
                 ::std::option::Option<::std::string::String>,
                 ::std::string::String,
             >,
+            is_primary: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
             ivf_config: ::std::result::Result<
                 ::std::option::Option<super::IvfConfigInput>,
                 ::std::string::String,
@@ -7532,6 +7925,7 @@ pub mod types {
                     algorithm: Err("no value supplied for algorithm".to_string()),
                     hnsw_config: Ok(Default::default()),
                     index_name: Ok(Default::default()),
+                    is_primary: Ok(Default::default()),
                     ivf_config: Ok(Default::default()),
                     parameters: Ok(Default::default()),
                 }
@@ -7568,6 +7962,16 @@ pub mod types {
                     .map_err(|e| format!("error converting supplied value for index_name: {e}"));
                 self
             }
+            pub fn is_primary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.is_primary = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for is_primary: {e}"));
+                self
+            }
             pub fn ivf_config<T>(mut self, value: T) -> Self
             where
                 T: ::std::convert::TryInto<::std::option::Option<super::IvfConfigInput>>,
@@ -7600,6 +8004,7 @@ pub mod types {
                     algorithm: value.algorithm?,
                     hnsw_config: value.hnsw_config?,
                     index_name: value.index_name?,
+                    is_primary: value.is_primary?,
                     ivf_config: value.ivf_config?,
                     parameters: value.parameters?,
                 })
@@ -7611,8 +8016,97 @@ pub mod types {
                     algorithm: Ok(value.algorithm),
                     hnsw_config: Ok(value.hnsw_config),
                     index_name: Ok(value.index_name),
+                    is_primary: Ok(value.is_primary),
                     ivf_config: Ok(value.ivf_config),
                     parameters: Ok(value.parameters),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IndexSpecOutput {
+            algorithm: ::std::result::Result<::std::string::String, ::std::string::String>,
+            hnsw: ::std::result::Result<
+                ::std::option::Option<super::HnswConfigOutput>,
+                ::std::string::String,
+            >,
+            is_primary: ::std::result::Result<bool, ::std::string::String>,
+            ivf: ::std::result::Result<
+                ::std::option::Option<super::IvfConfigOutput>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for IndexSpecOutput {
+            fn default() -> Self {
+                Self {
+                    algorithm: Err("no value supplied for algorithm".to_string()),
+                    hnsw: Ok(Default::default()),
+                    is_primary: Err("no value supplied for is_primary".to_string()),
+                    ivf: Ok(Default::default()),
+                }
+            }
+        }
+        impl IndexSpecOutput {
+            pub fn algorithm<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.algorithm = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for algorithm: {e}"));
+                self
+            }
+            pub fn hnsw<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::HnswConfigOutput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.hnsw = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for hnsw: {e}"));
+                self
+            }
+            pub fn is_primary<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.is_primary = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for is_primary: {e}"));
+                self
+            }
+            pub fn ivf<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::IvfConfigOutput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.ivf = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for ivf: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IndexSpecOutput> for super::IndexSpecOutput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IndexSpecOutput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    algorithm: value.algorithm?,
+                    hnsw: value.hnsw?,
+                    is_primary: value.is_primary?,
+                    ivf: value.ivf?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IndexSpecOutput> for IndexSpecOutput {
+            fn from(value: super::IndexSpecOutput) -> Self {
+                Self {
+                    algorithm: Ok(value.algorithm),
+                    hnsw: Ok(value.hnsw),
+                    is_primary: Ok(value.is_primary),
+                    ivf: Ok(value.ivf),
                 }
             }
         }
@@ -7893,6 +8387,60 @@ pub mod types {
         }
         impl ::std::convert::From<super::IvfConfigInput> for IvfConfigInput {
             fn from(value: super::IvfConfigInput) -> Self {
+                Self {
+                    n_lists: Ok(value.n_lists),
+                    n_probe: Ok(value.n_probe),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct IvfConfigOutput {
+            n_lists: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            n_probe: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for IvfConfigOutput {
+            fn default() -> Self {
+                Self {
+                    n_lists: Ok(Default::default()),
+                    n_probe: Ok(Default::default()),
+                }
+            }
+        }
+        impl IvfConfigOutput {
+            pub fn n_lists<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.n_lists = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for n_lists: {e}"));
+                self
+            }
+            pub fn n_probe<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.n_probe = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for n_probe: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<IvfConfigOutput> for super::IvfConfigOutput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: IvfConfigOutput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    n_lists: value.n_lists?,
+                    n_probe: value.n_probe?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::IvfConfigOutput> for IvfConfigOutput {
+            fn from(value: super::IvfConfigOutput) -> Self {
                 Self {
                     n_lists: Ok(value.n_lists),
                     n_probe: Ok(value.n_probe),
@@ -8366,6 +8914,117 @@ pub mod types {
                     props: Ok(value.props),
                     text_fields: Ok(value.text_fields),
                     vector: Ok(value.vector),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct QuantizationConfigInput {
+            enabled: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            strategy: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for QuantizationConfigInput {
+            fn default() -> Self {
+                Self {
+                    enabled: Ok(Default::default()),
+                    strategy: Ok(Default::default()),
+                }
+            }
+        }
+        impl QuantizationConfigInput {
+            pub fn enabled<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.enabled = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for enabled: {e}"));
+                self
+            }
+            pub fn strategy<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.strategy = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for strategy: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<QuantizationConfigInput> for super::QuantizationConfigInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: QuantizationConfigInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    enabled: value.enabled?,
+                    strategy: value.strategy?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::QuantizationConfigInput> for QuantizationConfigInput {
+            fn from(value: super::QuantizationConfigInput) -> Self {
+                Self {
+                    enabled: Ok(value.enabled),
+                    strategy: Ok(value.strategy),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct QuantizationConfigOutput {
+            enabled: ::std::result::Result<bool, ::std::string::String>,
+            strategy: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for QuantizationConfigOutput {
+            fn default() -> Self {
+                Self {
+                    enabled: Err("no value supplied for enabled".to_string()),
+                    strategy: Err("no value supplied for strategy".to_string()),
+                }
+            }
+        }
+        impl QuantizationConfigOutput {
+            pub fn enabled<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.enabled = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for enabled: {e}"));
+                self
+            }
+            pub fn strategy<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.strategy = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for strategy: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<QuantizationConfigOutput> for super::QuantizationConfigOutput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: QuantizationConfigOutput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    enabled: value.enabled?,
+                    strategy: value.strategy?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::QuantizationConfigOutput> for QuantizationConfigOutput {
+            fn from(value: super::QuantizationConfigOutput) -> Self {
+                Self {
+                    enabled: Ok(value.enabled),
+                    strategy: Ok(value.strategy),
                 }
             }
         }

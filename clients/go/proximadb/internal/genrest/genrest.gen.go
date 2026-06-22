@@ -114,11 +114,18 @@ type CollectionV2Response struct {
 	// Engine Storage engine
 	Engine string `json:"engine"`
 
+	// IndexSpecs Per-index config (HNSW/IVF params, is_primary) as persisted at create
+	// time. Mirrors the gRPC-v2 `GetCollection` `index_specs` (TD-122 parity).
+	IndexSpecs []IndexSpecOutput `json:"index_specs"`
+
 	// Name Collection name
 	Name string `json:"name"`
 
 	// ProximaRecordEnabled Whether ProximaRecord is enabled
 	ProximaRecordEnabled bool `json:"proxima_record_enabled"`
+
+	// Quantization REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).
+	Quantization *QuantizationConfigOutput `json:"quantization,omitempty"`
 
 	// Schema Schema definition for a collection
 	//
@@ -223,6 +230,10 @@ type CreateCollectionV2Request struct {
 
 	// Name Collection name (required)
 	Name string `json:"name"`
+
+	// Quantization REST input for quantization config (mirrors proto `QuantizationConfig`;
+	// gRPC-v2 parity with `V2QuantizationConfig`).
+	Quantization *QuantizationConfigInput `json:"quantization,omitempty"`
 
 	// Schema Schema definition for a collection
 	//
@@ -416,6 +427,13 @@ type HnswConfigInput struct {
 	M              *int32 `json:"m"`
 }
 
+// HnswConfigOutput REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
+type HnswConfigOutput struct {
+	EfConstruction *int32 `json:"ef_construction"`
+	EfSearch       *int32 `json:"ef_search"`
+	M              *int32 `json:"m"`
+}
+
 // IndexConfigInput REST input for a single index config (mirrors proto `IndexConfig`).
 type IndexConfigInput struct {
 	// Algorithm Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh".
@@ -427,11 +445,29 @@ type IndexConfigInput struct {
 	// IndexName Optional index name (defaults to `index_<n>`).
 	IndexName *string `json:"index_name"`
 
+	// IsPrimary Mark this index as the collection's primary ANN index (gRPC-v2 parity).
+	IsPrimary *bool `json:"is_primary"`
+
 	// IvfConfig REST input for IVF index params (mirrors proto `IvfConfig`).
 	IvfConfig *IvfConfigInput `json:"ivf_config,omitempty"`
 
 	// Parameters Free-form algorithm parameters.
 	Parameters *map[string]string `json:"parameters,omitempty"`
+}
+
+// IndexSpecOutput REST output for a single index config (mirrors gRPC `V2IndexSpec`).
+type IndexSpecOutput struct {
+	// Algorithm Algorithm: "hnsw" | "ivf" | "pq" | "flat" | "annoy" | "lsh".
+	Algorithm string `json:"algorithm"`
+
+	// Hnsw REST output for HNSW params (mirrors gRPC `V2HnswConfig`).
+	Hnsw *HnswConfigOutput `json:"hnsw,omitempty"`
+
+	// IsPrimary Whether this is the collection's primary ANN index.
+	IsPrimary bool `json:"is_primary"`
+
+	// Ivf REST output for IVF params (mirrors gRPC `V2IvfConfig`).
+	Ivf *IvfConfigOutput `json:"ivf,omitempty"`
 }
 
 // InsertError Error details for a failed record insertion
@@ -517,6 +553,12 @@ type IvfConfigInput struct {
 	NProbe *int32 `json:"n_probe"`
 }
 
+// IvfConfigOutput REST output for IVF params (mirrors gRPC `V2IvfConfig`).
+type IvfConfigOutput struct {
+	NLists *int32 `json:"n_lists"`
+	NProbe *int32 `json:"n_probe"`
+}
+
 // ListCollectionsV2Response Response for listing collections
 type ListCollectionsV2Response struct {
 	// Collections List of collections
@@ -582,6 +624,24 @@ type ProximaRecordInput struct {
 
 	// Vector Vector embedding (required)
 	Vector []float32 `json:"vector"`
+}
+
+// QuantizationConfigInput REST input for quantization config (mirrors proto `QuantizationConfig`;
+// gRPC-v2 parity with `V2QuantizationConfig`).
+type QuantizationConfigInput struct {
+	// Enabled Enable quantization for this collection.
+	Enabled *bool `json:"enabled"`
+
+	// Strategy Strategy: "smart_defaults" (default) | "minimal" | "aggressive" | "custom_levels".
+	Strategy *string `json:"strategy"`
+}
+
+// QuantizationConfigOutput REST output for quantization config (mirrors gRPC `V2QuantizationConfig`).
+type QuantizationConfigOutput struct {
+	Enabled bool `json:"enabled"`
+
+	// Strategy Strategy label, e.g. "smart_defaults" | "minimal" | "aggressive".
+	Strategy string `json:"strategy"`
 }
 
 // QueryLanguage defines model for QueryLanguage.
