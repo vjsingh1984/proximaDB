@@ -272,7 +272,8 @@ class ProximaDBClient:
         if cached is not None and not refresh:
             return cached
         try:
-            resp = self._make_request("GET", "/api/v2/_meta/capabilities")
+            call = _gen.get_capabilities()
+            resp = self._make_request(call.method, call.endpoint)
             caps = resp.json() if hasattr(resp, "json") else {}
             if not isinstance(caps, dict):
                 caps = {}
@@ -491,7 +492,8 @@ class ProximaDBClient:
 
     def health(self) -> HealthStatus:
         """Check server health status"""
-        response = self._make_request("GET", "/health")
+        call = _gen.get_health()
+        response = self._make_request(call.method, call.endpoint)
         data = response.json()
 
         # Transform response to match HealthStatus model
@@ -528,12 +530,14 @@ class ProximaDBClient:
 
     def live(self) -> ProbeResponse:
         """Kubernetes liveness probe — GET /health/live."""
-        response = self._make_request("GET", "/health/live")
+        call = _gen.get_liveness()
+        response = self._make_request(call.method, call.endpoint)
         return ProbeResponse.model_validate(response.json())
 
     def ready(self) -> ProbeResponse:
         """Kubernetes readiness probe — GET /health/ready."""
-        response = self._make_request("GET", "/health/ready")
+        call = _gen.get_readiness()
+        response = self._make_request(call.method, call.endpoint)
         return ProbeResponse.model_validate(response.json())
 
     def create_collection(
@@ -2766,10 +2770,8 @@ class ProximaDBClient:
 
         payload = {"node": node_data}
 
-        response = self._http_client.post(
-            f"/api/v2/graphs/{graph_id}/nodes", json=payload
-        )
-        response.raise_for_status()
+        call = _gen.create_node(graph_id, payload)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
         return response.json()
 
     def create_edge(
@@ -2808,10 +2810,8 @@ class ProximaDBClient:
 
         payload = {"edge": edge_data}
 
-        response = self._http_client.post(
-            f"/api/v2/graphs/{graph_id}/edges", json=payload
-        )
-        response.raise_for_status()
+        call = _gen.create_edge(graph_id, payload)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
         return response.json()
 
     def traverse_graph(
@@ -2849,10 +2849,8 @@ class ProximaDBClient:
         if limit is not None:
             payload["limit"] = limit
 
-        response = self._http_client.post(
-            f"/api/v2/graphs/{graph_id}/traverse", json=payload
-        )
-        response.raise_for_status()
+        call = _gen.traverse_graph(graph_id, payload)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
         result = response.json()
 
         # Transform REST response to match gRPC format
@@ -2960,8 +2958,8 @@ class ProximaDBClient:
         graph_id: str = "default",
     ) -> dict[str, Any] | None:
         """Get a graph node by ID via REST."""
-        response = self._http_client.get(f"/api/v2/graphs/{graph_id}/nodes/{node_id}")
-        response.raise_for_status()
+        call = _gen.get_node(graph_id, node_id)
+        response = self._make_request(call.method, call.endpoint)
         result = response.json()
         return result.get("data", result)
 
@@ -3009,10 +3007,8 @@ class ProximaDBClient:
         graph_id: str = "default",
     ) -> dict[str, Any]:
         """Delete a graph node by ID via REST."""
-        response = self._http_client.delete(
-            f"/api/v2/graphs/{graph_id}/nodes/{node_id}"
-        )
-        response.raise_for_status()
+        call = _gen.delete_node(graph_id, node_id)
+        response = self._make_request(call.method, call.endpoint)
         result = response.json()
         return result.get("data", result)
 
@@ -3048,8 +3044,8 @@ class ProximaDBClient:
         if schema is not None:
             payload["schema"] = schema
 
-        response = self._http_client.post("/api/v2/graphs", json=payload)
-        response.raise_for_status()
+        call = _gen.create_graph(payload)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
         return response.json()
 
     def delete_graph(self, graph_id: str) -> dict[str, Any]:
@@ -3064,8 +3060,8 @@ class ProximaDBClient:
         Example:
             >>> result = client.delete_graph("social_network")
         """
-        response = self._http_client.delete(f"/api/v2/graphs/{graph_id}")
-        response.raise_for_status()
+        call = _gen.delete_graph(graph_id)
+        response = self._make_request(call.method, call.endpoint)
         return response.json()
 
     def get_graph(self, graph_id: str) -> dict[str, Any]:
@@ -3081,8 +3077,8 @@ class ProximaDBClient:
             >>> graph = client.get_graph("social_network")
             >>> print(graph["name"])
         """
-        response = self._http_client.get(f"/api/v2/graphs/{graph_id}")
-        response.raise_for_status()
+        call = _gen.get_graph(graph_id)
+        response = self._make_request(call.method, call.endpoint)
         return response.json()
 
     def list_graphs(self) -> dict[str, Any]:
@@ -3096,8 +3092,8 @@ class ProximaDBClient:
             >>> for graph in graphs.get("graphs", []):
             ...     print(graph["graph_id"])
         """
-        response = self._http_client.get("/api/v2/graphs")
-        response.raise_for_status()
+        call = _gen.list_graphs()
+        response = self._make_request(call.method, call.endpoint)
         return response.json()
 
     def get_graph_stats(self, graph_id: str) -> dict[str, Any]:
@@ -3113,8 +3109,8 @@ class ProximaDBClient:
             >>> stats = client.get_graph_stats("social_network")
             >>> print(f"Nodes: {stats['node_count']}, Edges: {stats['edge_count']}")
         """
-        response = self._http_client.get(f"/api/v2/graphs/{graph_id}/stats")
-        response.raise_for_status()
+        call = _gen.get_graph_stats(graph_id)
+        response = self._make_request(call.method, call.endpoint)
         return response.json()
 
     # ==================== End Graph Collection Management ====================

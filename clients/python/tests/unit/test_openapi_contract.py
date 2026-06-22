@@ -308,3 +308,44 @@ def test_update_schema_request_matches_spec(monkeypatch, openapi_spec, ref_resol
     assert req_schema is not None
     _validate(req_schema, captured.json_body, ref_resolver)
     assert captured.json_body["force"] is True
+
+
+def test_create_graph_request_matches_spec(monkeypatch, openapi_spec, ref_resolver):
+    # Proves the rebased graph create_graph op (full-model round-trip through
+    # CreateGraphRequest) emits a spec-conformant method/URL/body via the
+    # generated REST client.
+    response_body = {"graph_id": "social", "name": "Social", "node_count": 0}
+    client, captured = _patched_client(monkeypatch, response_body)
+
+    client.create_graph("social", name="Social", description="people")
+
+    op = _operation_for(openapi_spec, "/api/v2/graphs", "post")
+    assert op["operationId"] == "createGraph"
+    assert captured.method == "POST"
+    assert captured.endpoint == "/api/v2/graphs"
+
+    req_schema = _request_body_schema(openapi_spec, op)
+    assert req_schema is not None
+    _validate(req_schema, captured.json_body, ref_resolver)
+    assert captured.json_body["graph_id"] == "social"
+
+
+def test_create_node_request_matches_spec(monkeypatch, openapi_spec, ref_resolver):
+    # Proves the rebased graph create_node op (sourced via _path_only because the
+    # public API's bare-list embedding does not conform to EmbeddingInput) still
+    # emits the spec-governed method/URL and a spec-conformant body when no
+    # embedding is supplied.
+    response_body = {"id": "n1", "labels": ["Person"]}
+    client, captured = _patched_client(monkeypatch, response_body)
+
+    client.create_node("n1", ["Person"], properties={"age": 30}, graph_id="social")
+
+    op = _operation_for(openapi_spec, "/api/v2/graphs/{graph_id}/nodes", "post")
+    assert op["operationId"] == "createNode"
+    assert captured.method == "POST"
+    assert captured.endpoint == "/api/v2/graphs/social/nodes"
+
+    req_schema = _request_body_schema(openapi_spec, op)
+    assert req_schema is not None
+    _validate(req_schema, captured.json_body, ref_resolver)
+    assert captured.json_body["node"]["id"] == "n1"

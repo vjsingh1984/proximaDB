@@ -127,12 +127,12 @@ def test_execute_uql_aql_federated_sql(client):
     assert _req_paths(client) == ["/api/v2/query"] * 3
 
 
-# ---- graph nodes/edges/traverse (via _http_client) ---------------------------
+# ---- graph nodes/edges/traverse (rebased via _make_request) ------------------
 
 
 def test_create_node_path_and_payload(client):
     client.create_node("n1", ["L"], {"k": "v"}, embedding=[0.1, 0.2])
-    verb, path, kw = client._captured["http"].calls[-1]
+    verb, path, kw = client._captured["req"][-1]
     assert verb == "POST"
     assert path == "/api/v2/graphs/default/nodes"
     assert kw["json"]["node"]["id"] == "n1"
@@ -141,12 +141,12 @@ def test_create_node_path_and_payload(client):
 
 def test_create_node_custom_graph(client):
     client.create_node("n2", ["L"], graph_id="g7")
-    assert _http_paths(client)[-1] == "/api/v2/graphs/g7/nodes"
+    assert _req_paths(client)[-1] == "/api/v2/graphs/g7/nodes"
 
 
 def test_create_edge_path_and_payload(client):
     client.create_edge("e1", "n1", "n2", "REL", {"p": 1}, weight=2.5)
-    verb, path, kw = client._captured["http"].calls[-1]
+    verb, path, kw = client._captured["req"][-1]
     assert verb == "POST"
     assert path == "/api/v2/graphs/default/edges"
     assert kw["json"]["edge"]["weight"] == 2.5
@@ -156,7 +156,10 @@ def test_traverse_graph_path(client):
     client.traverse_graph(
         "n1", max_depth=2, edge_types=["R"], algorithm="dfs", limit=10
     )
-    assert _http_paths(client)[-1] == "/api/v2/graphs/default/traverse"
+    assert _req_paths(client)[-1] == "/api/v2/graphs/default/traverse"
+
+
+# ---- graph queries (still via _http_client — no generated op) ----------------
 
 
 def test_query_nodes_and_edges(client):
@@ -170,7 +173,7 @@ def test_query_nodes_and_edges(client):
 def test_get_node_and_delete_node(client):
     client.get_node("n1", graph_id="default")
     client.delete_node("n1", graph_id="default")
-    paths = _http_paths(client)
+    paths = _req_paths(client)
     assert any(p == "/api/v2/graphs/default/nodes/n1" for p in paths)
 
 
@@ -191,7 +194,7 @@ def test_create_get_list_delete_graph(client):
     client.list_graphs()
     client.delete_graph("default")
     client.get_graph_stats("default")
-    paths = _http_paths(client)
+    paths = _req_paths(client)
     assert any(p == "/api/v2/graphs" for p in paths)
     assert any(p == "/api/v2/graphs/default" for p in paths)
     assert any(p == "/api/v2/graphs/default/stats" for p in paths)

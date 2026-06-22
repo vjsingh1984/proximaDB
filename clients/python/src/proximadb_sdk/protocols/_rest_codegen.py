@@ -38,6 +38,20 @@ from .._generated.rest.api.collections import (
 )
 from .._generated.rest.api.collections import get_collection as _gen_get_collection
 from .._generated.rest.api.collections import list_collections as _gen_list_collections
+from .._generated.rest.api.graphs import create_edge as _gen_create_edge
+from .._generated.rest.api.graphs import create_graph as _gen_create_graph
+from .._generated.rest.api.graphs import create_node as _gen_create_node
+from .._generated.rest.api.graphs import delete_graph as _gen_delete_graph
+from .._generated.rest.api.graphs import delete_node as _gen_delete_node
+from .._generated.rest.api.graphs import get_graph as _gen_get_graph
+from .._generated.rest.api.graphs import get_graph_stats as _gen_get_graph_stats
+from .._generated.rest.api.graphs import get_node as _gen_get_node
+from .._generated.rest.api.graphs import list_graphs as _gen_list_graphs
+from .._generated.rest.api.graphs import traverse_graph as _gen_traverse_graph
+from .._generated.rest.api.health import get_health as _gen_get_health
+from .._generated.rest.api.health import get_liveness as _gen_get_liveness
+from .._generated.rest.api.health import get_readiness as _gen_get_readiness
+from .._generated.rest.api.meta import get_capabilities as _gen_get_capabilities
 from .._generated.rest.api.query import execute_query as _gen_execute_query
 from .._generated.rest.api.query import explain_query as _gen_explain_query
 from .._generated.rest.api.records import get_record as _gen_get_record
@@ -46,9 +60,13 @@ from .._generated.rest.api.search import search_records as _gen_search_records
 from .._generated.rest.models.create_collection_v2_request import (
     CreateCollectionV2Request,
 )
+from .._generated.rest.models.create_edge_request import CreateEdgeRequest
+from .._generated.rest.models.create_graph_request import CreateGraphRequest
+from .._generated.rest.models.create_node_request import CreateNodeRequest
 from .._generated.rest.models.explain_query_request import ExplainQueryRequest
 from .._generated.rest.models.insert_records_request import InsertRecordsRequest
 from .._generated.rest.models.query_request import QueryRequest
+from .._generated.rest.models.traverse_request import TraverseRequest
 from .._generated.rest.models.typed_search_request import TypedSearchRequest
 from .._generated.rest.types import UNSET
 
@@ -195,3 +213,86 @@ def execute_query(body: dict[str, Any]) -> RestCall:
 
 def explain_query(body: dict[str, Any]) -> RestCall:
     return _path_only(_gen_explain_query._get_kwargs, body, ExplainQueryRequest)
+
+
+# ---------------------------------------------------------------------------
+# Health / meta (path-only — no request body)
+# ---------------------------------------------------------------------------
+
+
+def get_health() -> RestCall:
+    return _normalize(_gen_get_health._get_kwargs())
+
+
+def get_liveness() -> RestCall:
+    return _normalize(_gen_get_liveness._get_kwargs())
+
+
+def get_readiness() -> RestCall:
+    return _normalize(_gen_get_readiness._get_kwargs())
+
+
+def get_capabilities() -> RestCall:
+    return _normalize(_gen_get_capabilities._get_kwargs())
+
+
+# ---------------------------------------------------------------------------
+# Graph — nodes / edges / traversal
+# ---------------------------------------------------------------------------
+
+
+def create_node(graph_id: str, body: dict[str, Any]) -> RestCall:
+    # The public API accepts ``node.embedding`` as a bare ``list[float]``, but the
+    # generated ``CreateNodeRequest`` nests it through ``EmbeddingInput`` (an
+    # object with a ``vector`` field), whose ``from_dict`` rejects a raw list.
+    # Round-tripping valid facade input would therefore raise (the AQL/UQL
+    # precedent), so we bind the spec-governed method+URL and send the raw body.
+    return _path_only(
+        lambda **_kw: _gen_create_node._get_kwargs(graph_id=graph_id, **_kw),
+        body,
+        CreateNodeRequest,
+    )
+
+
+def create_edge(graph_id: str, body: dict[str, Any]) -> RestCall:
+    model = _from_dict(CreateEdgeRequest, body)
+    return _normalize(_gen_create_edge._get_kwargs(graph_id=graph_id, body=model))
+
+
+def traverse_graph(graph_id: str, body: dict[str, Any]) -> RestCall:
+    model = _from_dict(TraverseRequest, body)
+    return _normalize(_gen_traverse_graph._get_kwargs(graph_id=graph_id, body=model))
+
+
+def get_node(graph_id: str, node_id: str) -> RestCall:
+    return _normalize(_gen_get_node._get_kwargs(graph_id=graph_id, node_id=node_id))
+
+
+def delete_node(graph_id: str, node_id: str) -> RestCall:
+    return _normalize(_gen_delete_node._get_kwargs(graph_id=graph_id, node_id=node_id))
+
+
+# ---------------------------------------------------------------------------
+# Graph — collection management
+# ---------------------------------------------------------------------------
+
+
+def create_graph(body: dict[str, Any]) -> RestCall:
+    model = _from_dict(CreateGraphRequest, body)
+    return _normalize(_gen_create_graph._get_kwargs(body=model))
+
+
+def delete_graph(graph_id: str) -> RestCall:
+    return _normalize(_gen_delete_graph._get_kwargs(graph_id))
+
+
+def get_graph(graph_id: str) -> RestCall:
+    return _normalize(_gen_get_graph._get_kwargs(graph_id))
+
+
+def list_graphs() -> RestCall:
+    return _normalize(_gen_list_graphs._get_kwargs())
+
+
+def get_graph_stats(graph_id: str) -> RestCall:
+    return _normalize(_gen_get_graph_stats._get_kwargs(graph_id))
