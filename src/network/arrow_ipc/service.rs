@@ -72,6 +72,26 @@ struct AuthenticatedFlightContext {
     capability: Option<DataPlaneCapability>,
 }
 
+/// DoGet ticket for the batched columnar graph export path. JSON-encoded in the
+/// Flight `Ticket` bytes; `model` selects nodes vs edges and the optional fields
+/// scope the query (label / edge type / endpoints / limit).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GraphTicket {
+    /// `"graph_nodes"` or `"graph_edges"`.
+    model: String,
+    graph_id: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    edge_type: Option<String>,
+    #[serde(default)]
+    from_node_id: Option<String>,
+    #[serde(default)]
+    to_node_id: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
 /// ProximaDB Flight service implementation
 ///
 /// Thin wrapper around UnifiedHandlers that converts Arrow Flight messages
@@ -112,6 +132,13 @@ pub struct ProximaFlightService {
     /// any of them landing on the wrong pod's memtable would be
     /// invisible to the readers on the primary pod.
     primary_pod_gate: Option<FlightPrimaryPodGate>,
+    /// Graph backing service for the batched columnar graph path
+    /// (`graph_nodes`/`graph_edges` DoExchange + DoGet). Held directly (like the
+    /// vector-ops service) so bulk graph ingest lands in the live graph engine
+    /// rather than the generic record store. `None` outside production wiring
+    /// (e.g. the port-only test constructor), in which case the graph Flight
+    /// routes return `Unimplemented`.
+    graph_service: Option<Arc<crate::graph::GraphOperationsService>>,
     _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
 }
@@ -195,9 +222,21 @@ impl ProximaFlightService {
             catalog_manager: None,
             rank_services: None,
             primary_pod_gate: None,
+            graph_service: None,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
+    }
+
+    /// Attach the graph backing service so the `graph_nodes`/`graph_edges`
+    /// DoExchange ingest and DoGet export routes are live. Same
+    /// `GraphOperationsService` the gRPC/REST graph surfaces use.
+    pub fn with_graph_service(
+        mut self,
+        graph_service: Arc<crate::graph::GraphOperationsService>,
+    ) -> Self {
+        self.graph_service = Some(graph_service);
+        self
     }
 
     /// Boot adapter that derives the injected pieces from a root `UnifiedHandlers`.
@@ -229,6 +268,7 @@ impl ProximaFlightService {
             collection_service,
             storage_locations,
         )
+        .with_graph_service(request_handlers.graph_operations_service.clone())
     }
 
     /// Slice 6.2: attach the primary-pod write router. Once set,
@@ -1273,6 +1313,35 @@ impl FlightService for ProximaFlightService {
 
             let stream = stream::iter(flight_data.into_iter().map(Ok));
 
+            return Ok(TonicResponse::new(Box::pin(stream)));
+        }
+
+        // Batched columnar graph export: a graph ticket reads nodes/edges from
+        // the live graph engine and streams them as columnar Arrow batches.
+        if let Some(graph_ticket) = Self::parse_graph_ticket(&ticket) {
+            Self::validate_flight_search_capability(
+                auth_context.capability.as_ref(),
+                &graph_ticket.graph_id,
+            )?;
+            let batches = self
+                .handle_graph_export(&graph_ticket, auth_context.tenant_id.as_deref())
+                .await
+                .map_err(|e| TonicStatus::internal(format!("Graph export failed: {}", e)))?;
+            let compression = if edge.shape_policy().compress {
+                FlightCompression::Zstd.to_arrow_compression()
+            } else {
+                None
+            };
+            let flight_data =
+                ArrowProtoCodec::batches_to_flight_data_with_compression(&batches, compression)
+                    .map_err(|e| {
+                        TonicStatus::internal(format!("Failed to encode graph batches: {}", e))
+                    })?;
+            edge.record_result_egress(
+                auth_context.tenant_id.as_deref(),
+                flight_data_wire_bytes(&flight_data),
+            );
+            let stream = stream::iter(flight_data.into_iter().map(Ok));
             return Ok(TonicResponse::new(Box::pin(stream)));
         }
 
@@ -2386,6 +2455,26 @@ impl FlightService for ProximaFlightService {
                 )
                 .await
             }
+            "graph_nodes" | "graph_edges" => {
+                // Bulk columnar graph ingest. Upsert semantics: the columnar
+                // batch is idempotent re-ingestible. Capability + tenant
+                // namespacing mirror the record write path.
+                Self::validate_flight_write_capability(
+                    auth_context.capability.as_ref(),
+                    &collection_id,
+                    FlightWriteOperation::Upsert,
+                    0,
+                )?;
+                let is_nodes = exchange_type == "graph_nodes";
+                self.handle_graph_write_exchange(
+                    collection_id,
+                    is_nodes,
+                    auth_context.tenant_id.clone(),
+                    first_msg,
+                    stream,
+                )
+                .await
+            }
             "bulk_search" => {
                 Self::validate_flight_search_capability(
                     auth_context.capability.as_ref(),
@@ -2404,7 +2493,7 @@ impl FlightService for ProximaFlightService {
                     .await
             }
             _ => Err(TonicStatus::unimplemented(format!(
-                "Unknown exchange type: {}. Supported: bulk_insert, bulk_upsert, bulk_delete, bulk_search, data_transfer",
+                "Unknown exchange type: {}. Supported: bulk_insert, bulk_upsert, bulk_delete, bulk_search, data_transfer, graph_nodes, graph_edges",
                 exchange_type
             ))),
         }
@@ -2538,6 +2627,172 @@ impl ProximaFlightService {
 
         let stream = stream::iter(results);
         Ok(TonicResponse::new(Box::pin(stream)))
+    }
+
+    /// Derive the effective backing graph namespace from the request tenant.
+    ///
+    /// Structural isolation: the tenant is folded into the graph storage key
+    /// (mirrors the gRPC v2 graph surface's `effective_graph_id`), never a
+    /// per-query predicate. Unauthenticated calls (no tenant) fall back to the
+    /// raw graph id.
+    fn effective_graph_id(tenant: Option<&str>, graph_id: &str) -> String {
+        match tenant {
+            Some(t) if !t.is_empty() => format!("{t}::{graph_id}"),
+            _ => graph_id.to_string(),
+        }
+    }
+
+    /// Handle the batched columnar graph ingest exchange (`graph_nodes` /
+    /// `graph_edges`). Each streamed Arrow `RecordBatch` is decoded via
+    /// [`super::graph_codec`] into neutral nodes/edges and upserted through the
+    /// live `GraphOperationsService`, so the rows are immediately
+    /// queryable/traversable (not parked in the generic record store).
+    async fn handle_graph_write_exchange(
+        &self,
+        graph_id: String,
+        is_nodes: bool,
+        tenant_id: Option<String>,
+        first_msg: FlightData,
+        stream: TonicStreaming<FlightData>,
+    ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
+        let graph = self.graph_service.as_ref().ok_or_else(|| {
+            TonicStatus::unimplemented("graph Flight path requires the graph backing service")
+        })?;
+        let effective_graph_id = Self::effective_graph_id(tenant_id.as_deref(), &graph_id);
+
+        let mut total_rows = 0u64;
+        let mut total_batches = 0u64;
+        let mut all_success = true;
+        let mut results = Vec::new();
+
+        let mut batch_stream = Self::record_batch_stream(first_msg, stream);
+        while let Some(batch) = batch_stream.next().await {
+            let batch = batch.map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?;
+            total_batches += 1;
+            let row_count = batch.num_rows() as u64;
+
+            let written = if is_nodes {
+                let nodes = super::graph_codec::batch_to_nodes(&batch)
+                    .map_err(|e| TonicStatus::invalid_argument(format!("decode nodes: {}", e)))?;
+                graph
+                    .batch_create_nodes_with_strategy(&effective_graph_id, nodes, "update")
+                    .await
+                    .map(|created| created.len() as u64)
+            } else {
+                let edges = super::graph_codec::batch_to_edges(&batch)
+                    .map_err(|e| TonicStatus::invalid_argument(format!("decode edges: {}", e)))?;
+                graph
+                    .batch_create_edges(&effective_graph_id, edges)
+                    .await
+                    .map(|created| created.len() as u64)
+            };
+
+            let (written, ok) = match written {
+                Ok(n) => (n, true),
+                Err(e) => {
+                    all_success = false;
+                    tracing::error!(graph_id = %effective_graph_id, error = %e, "graph Flight ingest batch failed");
+                    (0, false)
+                }
+            };
+            total_rows += written;
+
+            let progress = serde_json::json!({
+                "kind": if is_nodes { "graph_nodes" } else { "graph_edges" },
+                "batch": total_batches,
+                "rows_in": row_count,
+                "rows_written": written,
+                "success": ok,
+            });
+            results.push(Ok(FlightData {
+                flight_descriptor: None,
+                data_header: Default::default(),
+                app_metadata: progress.to_string().into_bytes().into(),
+                data_body: Default::default(),
+            }));
+        }
+
+        let final_meta = serde_json::json!({
+            "kind": if is_nodes { "graph_nodes" } else { "graph_edges" },
+            "complete": true,
+            "total_batches": total_batches,
+            "total_rows_written": total_rows,
+            "success": all_success,
+        });
+        results.push(Ok(FlightData {
+            flight_descriptor: None,
+            data_header: Default::default(),
+            app_metadata: final_meta.to_string().into_bytes().into(),
+            data_body: Default::default(),
+        }));
+
+        info!(
+            graph_id = %effective_graph_id,
+            kind = if is_nodes { "graph_nodes" } else { "graph_edges" },
+            total_batches = total_batches,
+            total_rows_written = total_rows,
+            "Arrow Flight: graph columnar ingest completed"
+        );
+
+        Ok(TonicResponse::new(Box::pin(stream::iter(results))))
+    }
+
+    /// Parse a DoGet `Ticket` as a graph export request. Returns `None` for
+    /// non-graph tickets so they fall through to the vector-search path.
+    fn parse_graph_ticket(ticket: &Ticket) -> Option<GraphTicket> {
+        let parsed: GraphTicket = serde_json::from_slice(&ticket.ticket).ok()?;
+        matches!(parsed.model.as_str(), "graph_nodes" | "graph_edges").then_some(parsed)
+    }
+
+    /// Read nodes or edges from the live graph engine and encode them as columnar
+    /// Arrow batches (the DoGet half of the batched columnar graph path).
+    async fn handle_graph_export(
+        &self,
+        ticket: &GraphTicket,
+        tenant_id: Option<&str>,
+    ) -> Result<Vec<arrow_array::RecordBatch>> {
+        let graph = self
+            .graph_service
+            .as_ref()
+            .context("graph Flight path requires the graph backing service")?;
+        let effective_graph_id = Self::effective_graph_id(tenant_id, &ticket.graph_id);
+
+        if ticket.model == "graph_nodes" {
+            let query = crate::graph::NodeQuery {
+                graph_id: effective_graph_id.clone(),
+                labels: ticket.label.clone().into_iter().collect(),
+                filters: Vec::new(),
+                limit: ticket.limit,
+                offset: None,
+                continuation_token: None,
+            };
+            let nodes = graph.query_nodes(&effective_graph_id, query).await?;
+            let nodes: Vec<crate::graph::Node> = nodes.iter().map(|n| (**n).clone()).collect();
+            Ok(vec![super::graph_codec::nodes_to_batch(&nodes)?])
+        } else {
+            // The graph engine has no full edge scan; edge export is scoped to a
+            // node's adjacency. Require an endpoint so the contract is explicit
+            // rather than silently returning an empty batch.
+            if ticket.from_node_id.is_none() && ticket.to_node_id.is_none() {
+                anyhow::bail!(
+                    "graph_edges export requires `from_node_id` or `to_node_id` \
+                     (the engine has no full edge scan)"
+                );
+            }
+            let query = crate::graph::EdgeQuery {
+                graph_id: effective_graph_id.clone(),
+                from_node_id: ticket.from_node_id.clone(),
+                to_node_id: ticket.to_node_id.clone(),
+                edge_types: ticket.edge_type.clone().into_iter().collect(),
+                filters: Vec::new(),
+                limit: ticket.limit,
+                offset: None,
+                continuation_token: None,
+            };
+            let edges = graph.query_edges(&effective_graph_id, query).await?;
+            let edges: Vec<crate::graph::Edge> = edges.iter().map(|e| (**e).clone()).collect();
+            Ok(vec![super::graph_codec::edges_to_batch(&edges)?])
+        }
     }
 
     /// Handle bulk search exchange - stream query vectors and return results
