@@ -1013,8 +1013,10 @@ impl CollectionService {
             return Ok(Some(collection));
         }
 
-        // Use the metadata backend's collection_metadata which handles both legacy name and UUID.
-        self.metadata_backend.collection_metadata(identifier).await
+        // The catalog is the sole read authority: collection_from_catalog_asset
+        // already resolves by both name and UUID, so a miss means the collection
+        // does not exist.
+        Ok(None)
     }
 
     /// ✅ RESOLVE COLLECTION NAME/ID TO COLLECTION ID
@@ -1304,31 +1306,8 @@ impl CollectionService {
     /// List all collections - returns proto Collections directly (proto-first architecture)
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
         debug!("📋 Listing all collections");
-        let mut collections = self.list_collections_from_catalog().await?;
-        let mut seen = HashSet::new();
-        for collection in &collections {
-            seen.insert(collection.id.clone());
-            if let Some(config) = &collection.config {
-                seen.insert(config.name.clone());
-            }
-        }
-
-        for collection in self.metadata_backend.list_collections().await? {
-            let mut duplicate = seen.contains(&collection.id);
-            if let Some(config) = &collection.config {
-                duplicate |= seen.contains(&config.name);
-            }
-            if duplicate {
-                continue;
-            }
-            seen.insert(collection.id.clone());
-            if let Some(config) = &collection.config {
-                seen.insert(config.name.clone());
-            }
-            collections.push(collection);
-        }
-
-        Ok(collections)
+        // The catalog is the sole read authority.
+        self.list_collections_from_catalog().await
     }
 
     /// Delete collection with comprehensive cleanup across all storage components
@@ -2605,9 +2584,7 @@ impl CollectionService {
     async fn generate_unique_collection_id(&self) -> Result<String> {
         for _ in 0..8 {
             let id = uuid::Uuid::new_v4().to_string();
-            if !self.metadata_backend.collection_id_exists(&id).await?
-                && self.collection_from_catalog_asset(&id).await?.is_none()
-            {
+            if self.collection_from_catalog_asset(&id).await?.is_none() {
                 return Ok(id);
             }
         }
