@@ -37,6 +37,7 @@ Example::
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from typing import Any, cast
 
@@ -431,6 +432,22 @@ class ProximaDBRetriever:
             filters=filters if filters is not None else self._filters,
         )
         return {"documents": results[0] if results else []}
+
+    @component.output_types(documents=list[Document])
+    async def run_async(
+        self,
+        query_embedding: list[float],
+        top_k: int | None = None,
+        filters: dict[str, Any] | None = None,
+    ) -> dict[str, list[Document]]:
+        """Async variant of :meth:`run` for Haystack's ``AsyncPipeline``.
+
+        The ProximaDB SDK client is synchronous, so the blocking retrieval is
+        offloaded to a worker thread to keep the event loop responsive.
+        """
+        return await asyncio.to_thread(
+            self.run, query_embedding, top_k=top_k, filters=filters
+        )
 
     def retrieve(self, query_embedding: list[float]) -> list[Document]:
         """Backward-compatible retrieve returning a plain list of documents."""

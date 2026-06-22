@@ -24,6 +24,7 @@ Example::
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from collections.abc import Iterable
 from typing import Any
@@ -160,6 +161,78 @@ class ProximaDBVectorStore(VectorStore):
             )
 
         return docs_and_scores
+
+    # ------------------------------------------------------------------
+    # Async API
+    #
+    # The ProximaDB SDK client is synchronous, so these offload the blocking
+    # calls to a worker thread via ``asyncio.to_thread`` rather than relying on
+    # ``VectorStore``'s default executor wrappers. This keeps the event loop
+    # responsive and gives explicit, documented async entry points for the
+    # async retriever path (``as_retriever().ainvoke``) and async chains.
+    # ------------------------------------------------------------------
+
+    async def aadd_texts(
+        self,
+        texts: Iterable[str],
+        metadatas: list[dict[str, Any]] | None = None,
+        *,
+        ids: list[str] | None = None,
+        **kwargs: Any,
+    ) -> list[str]:
+        """Async embed texts and insert them into ProximaDB."""
+        return await asyncio.to_thread(
+            self.add_texts, texts, metadatas=metadatas, ids=ids, **kwargs
+        )
+
+    async def adelete(self, ids: list[str] | None = None, **kwargs: Any) -> bool | None:
+        """Async delete vectors by ID."""
+        return await asyncio.to_thread(self.delete, ids, **kwargs)
+
+    async def asimilarity_search(
+        self,
+        query: str,
+        k: int = 4,
+        **kwargs: Any,
+    ) -> list[Document]:
+        """Async return documents most similar to the query string."""
+        results = await self.asimilarity_search_with_score(query, k=k, **kwargs)
+        return [doc for doc, _ in results]
+
+    async def asimilarity_search_with_score(
+        self,
+        query: str,
+        k: int = 4,
+        **kwargs: Any,
+    ) -> list[tuple[Document, float]]:
+        """Async return documents most similar to the query with scores."""
+        query_vector = await asyncio.to_thread(self._embedding.embed_query, query)
+        return await self.asimilarity_search_by_vector_with_score(
+            query_vector, k=k, **kwargs
+        )
+
+    async def asimilarity_search_by_vector(
+        self,
+        embedding: list[float],
+        k: int = 4,
+        **kwargs: Any,
+    ) -> list[Document]:
+        """Async return documents most similar to the given embedding vector."""
+        results = await self.asimilarity_search_by_vector_with_score(
+            embedding, k=k, **kwargs
+        )
+        return [doc for doc, _ in results]
+
+    async def asimilarity_search_by_vector_with_score(
+        self,
+        embedding: list[float],
+        k: int = 4,
+        **kwargs: Any,
+    ) -> list[tuple[Document, float]]:
+        """Async return documents and scores for the given embedding vector."""
+        return await asyncio.to_thread(
+            self.similarity_search_by_vector_with_score, embedding, k=k, **kwargs
+        )
 
     @classmethod
     def from_texts(
