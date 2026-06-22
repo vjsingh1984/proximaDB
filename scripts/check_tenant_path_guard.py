@@ -31,18 +31,25 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SCAN_ROOTS = ("src", "crates")
 
-# Tenant-prefix shape: a string literal `data/{...}/` — an interpolated FIRST
-# segment followed by at least one more path segment. This is the canonical
-# DrPathBuilder prefix shape. `data/{}` (single segment, local fs) and
-# `data/tnt_acme/{x}` (literal-first test fixture) do not match.
-PREFIX_RE = re.compile(r'"data/\{[^"}]*\}/')
+# Tenant-prefix shape: a string literal whose FIRST segment is an isolation
+# root (`data/`, the legacy flat render; `accounts/`, the Phase-5 account-rooted
+# render; or `_operator/`, the control-plane root) immediately followed by an
+# interpolated segment and at least one more path segment. These are the
+# canonical DrPathBuilder prefix shapes. `data/{}` (single segment, local fs)
+# and `data/tnt_acme/{x}` (literal-first test fixture) do not match.
+PREFIX_RE = re.compile(r'"(?:data|accounts|_operator)/\{[^"}]*\}/')
+
+# Cheap pre-filter substrings — any of these must appear before we line-scan.
+PREFILTER = ('"data/{', '"accounts/{', '"_operator/{')
 
 # Files allowed to emit the canonical prefix literally (the one place it is
 # constructed and validated).
 ALLOWLIST: dict[str, str] = {
     "src/storage/trait_components/path_resolver.rs": (
         "DrPathBuilder canonical implementation — the single place the "
-        "`data/{tenant}/{ns}/{collection}/` prefix is built and validated."
+        "`data/{tenant}/{ns}/{collection}/`, account-rooted "
+        "`accounts/{account}/{tenant}/{ns}/{collection}/`, and `_operator/` "
+        "control-plane prefixes are built and validated."
     ),
 }
 
@@ -129,7 +136,7 @@ def scan() -> list[Finding]:
                 text = path.read_text(encoding="utf-8")
             except UnicodeDecodeError:
                 continue
-            if '"data/{' not in text:  # cheap pre-filter
+            if not any(sub in text for sub in PREFILTER):  # cheap pre-filter
                 continue
             lines = text.splitlines()
             test_spans = cfg_test_line_spans(lines)

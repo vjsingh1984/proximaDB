@@ -120,6 +120,14 @@ pub struct CatalogNamespace {
     /// `"tnt_legacy_system"` until operator re-parents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
+    /// Owning customer **account** — the SaaS billing/isolation boundary
+    /// that sits *above* `tenant_id` (a tenant is a workspace/sub-org
+    /// inside an account). Drives the account-rooted physical path
+    /// `accounts/{account_id}/{tenant_id}/{namespace_id}/{object_id}/`.
+    /// `None` keeps the legacy flat `data/{tenant_id}/...` render
+    /// (mixed-safe; the account tier is inert until provisioned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Region where authoritative writes land. `None` is allowed only
     /// for namespaces with no DR policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -157,6 +165,7 @@ impl CatalogNamespace {
             updated_at_ms: now,
             namespace_id: None,
             tenant_id: None,
+            account_id: None,
             region_home: None,
             default_dr_region_pair_id: None,
             storage_pool_class: StoragePoolClass::default(),
@@ -195,6 +204,14 @@ impl CatalogNamespace {
     /// Set the owning tenant.
     pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
         self.tenant_id = Some(tenant_id.into());
+        self
+    }
+
+    /// Set the owning customer account (the billing/isolation boundary
+    /// above `tenant_id`). Activates the account-rooted physical path;
+    /// leaving it unset keeps the legacy flat `data/{tenant_id}/...` render.
+    pub fn with_account(mut self, account_id: impl Into<String>) -> Self {
+        self.account_id = Some(account_id.into());
         self
     }
 
@@ -2846,12 +2863,14 @@ mod tests {
     #[test]
     fn namespace_dr_builders_compose() {
         let ns = CatalogNamespace::new(vec!["catalog".into(), "db".into()])
+            .with_account("acct_acme")
             .with_tenant("tnt_acme")
             .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
             .with_region_home("us-east-1")
             .with_default_dr_region_pair("aws:us-east-1:us-west-2")
             .with_storage_pool_class(StoragePoolClass::Standard);
 
+        assert_eq!(ns.account_id.as_deref(), Some("acct_acme"));
         assert_eq!(ns.tenant_id.as_deref(), Some("tnt_acme"));
         assert_eq!(
             ns.namespace_id.as_deref(),
@@ -2883,6 +2902,7 @@ mod tests {
             serde_json::from_str(legacy_json).expect("legacy namespace JSON must deserialize");
         assert!(ns.namespace_id.is_none());
         assert!(ns.tenant_id.is_none());
+        assert!(ns.account_id.is_none());
         assert_eq!(ns.storage_pool_class, StoragePoolClass::Pooled);
 
         // Re-serializing must skip the None fields so legacy consumers
@@ -2890,6 +2910,7 @@ mod tests {
         let reserialized = serde_json::to_string(&ns).expect("serialize");
         assert!(!reserialized.contains("namespace_id"));
         assert!(!reserialized.contains("tenant_id"));
+        assert!(!reserialized.contains("account_id"));
         assert!(!reserialized.contains("region_home"));
         assert!(!reserialized.contains("default_dr_region_pair_id"));
         // `storage_pool_class` is non-Option so it does show up; that's
