@@ -81,13 +81,15 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 
 | *gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery`*
 | *SQL with vector/graph extensions* (e.g. `VECTOR_SEARCH`) *and tenant-scoped
-  relational SELECT reads* (`SELECT`/`JOIN`/aggregate over `CREATE TABLE`).
+  relational SQL* — SELECT reads + DDL (`CREATE`/`ALTER`/`DROP`) + DML
+  (`INSERT`/`UPDATE`/`DELETE`).
 | Token/SSO-authenticated programmatic queries: gRPC carries bearer/JWT in
   metadata (pgwire cannot) and uses HTTP/2 + protobuf. Relational SELECTs route
-  through the same pipeline as pgwire (ComputeScheduler → DataFusion/Volcano),
-  scoped to the `x-tenant-id` tenant (TD-064). Relational *DDL/DML*
-  (CREATE/INSERT/UPDATE/DELETE) is not yet wired here — use pgwire for writes.
-| Supported (vector/graph SQL + relational SELECT; relational DDL/DML is pgwire-only)
+  through the same pipeline as pgwire (ComputeScheduler → DataFusion/Volcano);
+  DDL/DML route through the same tenant-scoped `DdlService`/`DmlService` seams —
+  all scoped to the `x-tenant-id` tenant (TD-064). Multi-statement transactions
+  (BEGIN/COMMIT) remain pgwire-only (this RPC is single-statement).
+| Supported (vector/graph SQL + tenant-scoped relational SELECT/DDL/DML)
 
 | *REST/gRPC `/api/v2/query`* (unified query port)
 | *UQL* (unified multi-modal), *Federated* SQL extensions, *AQL*
@@ -120,16 +122,17 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 ====
 * pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
   unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
-* SQL is served by *two surfaces with different capabilities* (TD-121), not one. *pgwire* serves
-  the PostgreSQL ecosystem (psql/JDBC/BI/ORM, Postgres-native auth) and is the surface for
-  full relational SQL incl. DDL/DML. The gRPC `ProximaRecordService.ExecuteQuery` RPC is
-  *token/SSO-authenticated* (bearer/JWT in metadata, which pgwire's password/MD5 auth cannot
-  carry) and serves vector/graph-extension SQL (e.g. `VECTOR_SEARCH`) plus *tenant-scoped
-  relational SELECT reads*: relational SELECTs route through the *same* pipeline pgwire uses
-  (`ComputeScheduler::route_select` → DataFusion/Volcano) with the `x-tenant-id` tenant scoping
-  every read (TD-064). Relational *DDL/DML* (CREATE/INSERT/UPDATE/DELETE) over gRPC SQL is not yet
-  wired — use pgwire for writes (tracked future work). It is *not* deprecated. For large columnar
-  result sets prefer Arrow Flight.
+* SQL is served by *two surfaces* (TD-121/TD-135). *pgwire* serves the PostgreSQL ecosystem
+  (psql/JDBC/BI/ORM, Postgres-native auth) and supports multi-statement transactions. The gRPC
+  `ProximaRecordService.ExecuteQuery` RPC is *token/SSO-authenticated* (bearer/JWT in metadata,
+  which pgwire's password/MD5 auth cannot carry) and serves vector/graph-extension SQL (e.g.
+  `VECTOR_SEARCH`) plus *tenant-scoped relational SQL — SELECT reads AND DDL/DML writes*: SELECTs
+  route through the *same* pipeline pgwire uses (`ComputeScheduler::route_select` →
+  DataFusion/Volcano); DDL (CREATE/ALTER/DROP) and DML (INSERT/UPDATE/DELETE) route through the
+  *same* tenant-scoped `DdlService`/`DmlService` seams — all scoped to the `x-tenant-id` tenant
+  (TD-064). *Out of scope on gRPC:* multi-statement transactions (BEGIN/COMMIT) — the RPC is
+  single-statement; use pgwire for transactional batches. It is *not* deprecated. For large
+  columnar result sets prefer Arrow Flight.
 * *Apache Calcite*, if adopted, is an *internal* federated-SQL planner behind pgwire and the
   Federated path — not a client surface, and not a substitute for the non-SQL languages.
 * SSO/governance (auth, RLS, tenancy) is enforced uniformly at the `TenantContext` I/O boundary,
