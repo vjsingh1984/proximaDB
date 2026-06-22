@@ -542,6 +542,72 @@ ops). The remaining open Phase-4 language is **jvm**; closing it + generating th
 are the remaining transport-gen increments.
 ====
 
+[NOTE]
+.Embeddings concern refinement — provider currency + perf levers (2026-06-22) — Python
+====
+A 3-PR sequence refining `clients/python/.../embedding_providers` (+ `llm/`) against current
+dependency versions. The good `core/` design (config / registry / cache / mixins, lazy thread-safe
+init, float32-out + server-side-quantization contract) was kept; only the providers, registry
+guard, mixin, cache, and their tests changed. The OpenAPI spec, generated transport, and the
+chunking / integration concerns were untouched.
+
+*PR #197 — P0 broken-against-current.*
+
+* *OpenAI provider was broken on `openai` 2.x.* `openai_provider.py` used the pre-1.0 API removed
+  Nov 2023 (`openai.api_key=`, `client.Embedding.create(...)`, dict `response["data"]`) →
+  `AttributeError`. Rewritten onto `OpenAI()` + `client.embeddings.create` +
+  `response.data[i].embedding` (mirroring the already-correct `llm/embedding.py`), with the
+  Matryoshka `dimensions` param for `text-embedding-3-*` and index-ordered result parsing.
+* *OpenAI-compatible `/v1` drop.* `urljoin(api_base=".../v1", "/embeddings")` discarded `/v1`;
+  fixed via `_embeddings_url()` (regression-tested).
+* *E5 passage-prefix regression.* `E5Provider.embed_passages` now prepends the mandatory
+  `"passage: "` prefix (the generic `InstructionMixin` left documents unprefixed → silent recall
+  degradation on E5's asymmetric query/passage scheme).
+* *Cloud providers were unreachable.* `get_provider('openai'|'cohere'|'fastembed')` raised
+  `ValueError` (they subclassed the legacy base, not registered). OpenAI / Cohere / FastEmbed /
+  OpenAI-compatible were ported onto `core.BaseEmbeddingProvider` + `@ProviderRegistry.register`;
+  `recommend_free_providers()` messaging corrected. Cohere modernized onto `cohere.ClientV2`
+  (`embedding_types=['float']`, `response.embeddings.float`).
+
+*PR #201 — currency + dedup.*
+
+* `pyproject` bumped `sentence-transformers>=2.2.0` → `>=3.2,<6` (current 5.x) across the
+  embeddings / llm / dev / test extras; added an opt-in `embeddings-cloud` extra
+  (`openai>=2`, `cohere>=5`, `fastembed>=0.3`).
+* Deleted dead scaffolding (`__init__new.py`, `providers/local/gte_qwen_new.py`,
+  `providers/testing/simulated_new.py`) that re-registered LIVE primary names and was never wired
+  into `__init__`. Added a *primary-name collision guard* to `ProviderRegistry.register` (duplicate
+  primary name now raises instead of silently overwriting; idempotent same-class re-import allowed).
+
+*PR #203 — P2 perf levers (local sentence-transformers path).*
+
+* ONNX / OpenVINO backend via a new `ProviderConfig.backend` flag (~2-4x CPU inference), with a
+  graceful fallback to the torch backend on older sentence-transformers.
+* Native ST `prompts` / `prompt_name` (v2.4+) support with `encode_query` / `encode_document`,
+  alongside the existing `InstructionMixin`.
+* Device auto-detect (`core/device.resolve_device`): `device=None` now means cuda → mps → cpu.
+* Capacity-bounded LRU model cache (`PROXIMADB_MODEL_CACHE_CAPACITY`, default 4; best-effort
+  release on eviction; key includes device + backend + prompts).
+
+*Deferred (follow-up).*
+
+* *System-B base-overlay collapse.* The orphaned legacy overlay — the `embedding_providers/base.py`
+  shim plus the root-level duplicate providers (`bge`, `e5`, `sfr`, `sentence_transformer`,
+  `finbert_provider`, `multi_bert_provider`, `instructor`) and the `embedding_interface`
+  `EmbeddingProvider`/`EmbeddingConfig` duplicate-provider stack (~2500 LOC, only exercised by
+  `*_cov` tests, no live importers in `src` except the chunking concern's use of
+  `embedding_interface`) — should be deleted/collapsed onto `core.BaseEmbeddingProvider`. Deferred
+  as its own PR because `instructor`/`finbert`/`multi_bert` still ride the legacy base and
+  `embedding_interface` is referenced by the chunking concern; bundling it risked an oversized,
+  cross-concern PR.
+* *Embedding-provider DI seam for semantic chunking* — see the chunking "Deferred" item above.
+
+*Test isolation.* Same pre-existing hazard noted above: `test_emb_providers_local_cov` stubs
+`sentence_transformers` in `sys.modules`, which leaks to the real-model `requires_models`
+`TestGTEQwenProvider` tests when the whole embedding suite runs in one process. They pass per-file /
+under CI process isolation; reproduced on a clean tree, so unrelated to these PRs.
+====
+
 == Scope / non-goals
 
 * The `*-embedded` SDKs (maturin/FFI in-process) are NOT spec-generated — they stay hand-written.
