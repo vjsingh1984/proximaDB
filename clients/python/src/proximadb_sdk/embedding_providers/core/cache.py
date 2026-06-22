@@ -6,19 +6,44 @@ and improve initialization performance.
 """
 
 import logging
+import os
 import threading
+from collections import OrderedDict
 from collections.abc import Callable
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Default maximum number of distinct models held resident. Embedding models are
+# large (hundreds of MB to GBs each), so an unbounded cache pins memory forever
+# as different models/devices/backends are exercised. Override with the
+# PROXIMADB_MODEL_CACHE_CAPACITY env var (<= 0 disables eviction).
+_DEFAULT_CAPACITY = 4
+
+
+def _env_capacity() -> int:
+    raw = os.getenv("PROXIMADB_MODEL_CACHE_CAPACITY")
+    if raw is None:
+        return _DEFAULT_CAPACITY
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning(
+            "Invalid PROXIMADB_MODEL_CACHE_CAPACITY=%r; using default %d",
+            raw,
+            _DEFAULT_CAPACITY,
+        )
+        return _DEFAULT_CAPACITY
+
 
 class ModelCache:
     """
-    Thread-safe singleton model cache
+    Thread-safe singleton model cache with LRU eviction
 
     This cache allows sharing model instances across multiple provider instances,
-    reducing memory usage and initialization time.
+    reducing memory usage and initialization time. It is capacity-bounded: the
+    least-recently-used model is evicted (and best-effort released) when the
+    capacity is exceeded, so loading many large models does not pin GBs forever.
 
     Example:
         # Provider 1
@@ -34,8 +59,9 @@ class ModelCache:
 
     _instance: Optional["ModelCache"] = None
     _lock = threading.Lock()
-    _models: dict[str, Any] = {}
-    _stats: dict[str, int] = {"hits": 0, "misses": 0, "loads": 0}
+    _models: "OrderedDict[str, Any]" = OrderedDict()
+    _stats: dict[str, int] = {"hits": 0, "misses": 0, "loads": 0, "evictions": 0}
+    _capacity: int = _env_capacity()
 
     def __new__(cls):
         """Singleton pattern"""
@@ -44,6 +70,40 @@ class ModelCache:
                 if cls._instance is None:
                     cls._instance = super().__new__(cls)
         return cls._instance
+
+    def set_capacity(self, capacity: int) -> None:
+        """Set the maximum number of resident models (<= 0 disables eviction).
+
+        Evicts immediately if the new capacity is smaller than the current size.
+        """
+        with self._lock:
+            type(self)._capacity = capacity
+            self._evict_to_capacity_locked()
+
+    @property
+    def capacity(self) -> int:
+        return type(self)._capacity
+
+    def _evict_to_capacity_locked(self) -> None:
+        """Evict LRU entries until size <= capacity. Caller must hold the lock."""
+        cap = type(self)._capacity
+        if cap is None or cap <= 0:
+            return
+        while len(self._models) > cap:
+            key, model = self._models.popitem(last=False)  # LRU = oldest
+            self._stats["evictions"] += 1
+            logger.info("Evicting LRU cached model: %s", key)
+            self._release(model)
+
+    @staticmethod
+    def _release(model: Any) -> None:
+        """Best-effort release of an evicted model's resources."""
+        cleanup = getattr(model, "cleanup", None)
+        if callable(cleanup):
+            try:
+                cleanup()
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("Model cleanup on eviction raised: %s", exc)
 
     def get_or_load(
         self, key: str, loader: Callable[[], Any], force_reload: bool = False
@@ -72,18 +132,12 @@ class ModelCache:
                 logger.info(f"Force reloading model: {key}")
                 self._models.pop(key, None)
 
-        # Fast path: model already cached
-        if key in self._models:
-            self._stats["hits"] += 1
-            logger.debug(f"Cache hit: {key}")
-            return self._models[key]
-
-        # Slow path: load model
+        # Fast path: model already cached (refresh LRU recency under the lock).
         with self._lock:
-            # Double-check locking pattern
             if key in self._models:
                 self._stats["hits"] += 1
-                logger.debug(f"Cache hit (after lock): {key}")
+                self._models.move_to_end(key)
+                logger.debug(f"Cache hit: {key}")
                 return self._models[key]
 
             # Load model
@@ -94,6 +148,8 @@ class ModelCache:
             try:
                 model = loader()
                 self._models[key] = model
+                self._models.move_to_end(key)
+                self._evict_to_capacity_locked()
                 logger.info(f"Model loaded and cached: {key}")
                 return model
             except Exception as e:
@@ -198,7 +254,7 @@ class ModelCache:
             >>> cache.reset_stats()
         """
         with self._lock:
-            self._stats = {"hits": 0, "misses": 0, "loads": 0}
+            self._stats = {"hits": 0, "misses": 0, "loads": 0, "evictions": 0}
             logger.debug("Cache statistics reset")
 
     def __repr__(self) -> str:
