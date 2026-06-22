@@ -2190,6 +2190,11 @@ impl CollectionService {
             })
             .collect();
 
+        config.distance_metric = schema
+            .properties
+            .get("vector.distance_metric")
+            .and_then(|metric| metric.parse::<i32>().ok());
+
         config.index_configs = schema
             .indexes
             .iter()
@@ -2414,6 +2419,11 @@ impl CollectionService {
         schema
             .properties
             .insert("vector.dimension".to_string(), config.dimension.to_string());
+        if let Some(metric) = config.distance_metric {
+            schema
+                .properties
+                .insert("vector.distance_metric".to_string(), metric.to_string());
+        }
         if let Some(owner) = &config.owner {
             schema.properties.insert("owner".to_string(), owner.clone());
         }
@@ -2982,7 +2992,7 @@ mod tests {
         let temp_dir = TempDir::new().context("temp dir")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
         let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
+            storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
@@ -3000,9 +3010,15 @@ mod tests {
                 .await
                 .context("metadata backend")?,
         );
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
         let service = CollectionService::new(backend, StorageConfig::default())
             .await
-            .context("collection service")?;
+            .context("collection service")?
+            .with_catalog_manager(catalog_manager.clone());
 
         // A short, standard SQL identifier (4 chars) — would have been rejected by
         // the old 8-char floor.
@@ -3067,7 +3083,7 @@ mod tests {
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
+            storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
@@ -3086,9 +3102,15 @@ mod tests {
                 .await
                 .context("Failed to create metadata backend for test")?,
         );
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
         let service = CollectionService::new(backend, StorageConfig::default())
             .await
-            .context("Failed to create collection service for test")?;
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
 
         let config = CollectionConfig {
             name: "metric_default_test".to_string(),
@@ -3144,7 +3166,7 @@ mod tests {
         let temp_path = format!("file://{}", temp_dir.path().display());
 
         let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
+            storage_url: temp_path.clone(),
             compression: false,
             enable_snapshots: false,
             snapshot_threshold: 1000,
@@ -3163,9 +3185,15 @@ mod tests {
                 .await
                 .context("Failed to create metadata backend for test")?,
         );
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
+            .await
+            .context("Failed to create test xCatalog")?;
         let service = CollectionService::new(backend, StorageConfig::default())
             .await
-            .context("Failed to create collection service for test")?;
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
 
         let config = CollectionConfig {
             name: "exact_default_case".to_string(),
