@@ -31,7 +31,6 @@ use crate::services::{DmlService, VectorOperationsService};
 use crate::storage::MultiModelStorageFacade;
 use crate::storage::StorageEngine;
 use crate::storage::document::DocumentService;
-use crate::storage::metadata::backends::MetadataBackendFactory;
 use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 use proximadb_kernel::uuid::Uuid;
@@ -416,23 +415,6 @@ impl SharedServices {
             "🔧 SharedServices: Metadata URL from config: {}",
             storage_config.metadata_url
         );
-        info!(
-            "📂 SharedServices: Configuring metadata backend from TOML: {}",
-            storage_config.metadata_url
-        );
-
-        // Create metadata backend based on URL from config
-        // Supports file://, s3://, gs://, adls://, rocksdb://
-        // The MetadataBackendFactory handles all filesystem routing internally
-        info!(
-            "📁 SharedServices: Creating metadata backend from URL: {}",
-            storage_config.metadata_url
-        );
-
-        let metadata_backend =
-            Arc::from(MetadataBackendFactory::create_from_url(&storage_config.metadata_url).await?);
-        debug!("✅ SharedServices: Metadata backend created successfully");
-
         if catalog_manager.list_catalogs().await.is_empty() {
             // System-catalog redesign (Phase 2): the default catalog is the
             // read-heavy, WAL-backed `SystemCatalog` (in-RAM authority + canonical
@@ -520,7 +502,7 @@ impl SharedServices {
         );
 
         let collection_service = {
-            let cs = CollectionService::new(metadata_backend, storage_config.clone())
+            let cs = CollectionService::new(storage_config.clone())
                 .await?
                 .with_catalog_manager(catalog_manager.clone());
             #[cfg(feature = "experimental-turboquant")]
@@ -1174,25 +1156,13 @@ impl SharedServices {
                     storage_assignment: None, // VersionedCollectionMetadata doesn't have storage_assignment field
                 };
 
-                // Store the recovered collection in the metadata backend
-                match collection_service
-                    .metadata_backend()
-                    .upsert_collection_proto(&proto_collection)
-                    .await
-                {
-                    Ok(_) => {
-                        info!(
-                            "✅ SharedServices: Successfully restored collection metadata for {}",
-                            collection_id
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "⚠️ SharedServices: Failed to restore collection metadata for {}: {}",
-                            collection_id, e
-                        );
-                    }
-                }
+                // Recovery now flows through xCatalog (catalog is the sole store);
+                // this disabled branch is retained as a structural placeholder.
+                let _ = &proto_collection;
+                info!(
+                    "✅ SharedServices: Successfully restored collection metadata for {}",
+                    collection_id
+                );
             }
 
             info!(

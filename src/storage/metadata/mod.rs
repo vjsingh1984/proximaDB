@@ -70,7 +70,6 @@ pub use crate::storage::transaction_coordinator;
 pub mod atomic;
 pub mod backends;
 pub mod catalog_config;
-// universal_backend moved to backends/universal_backend.rs
 pub mod single_index;
 pub mod store;
 pub mod write_ahead_log;

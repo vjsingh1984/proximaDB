@@ -4527,19 +4527,16 @@ mod index_first_search_tests {
             )
             .await?,
         );
-        let metadata_backend = Arc::new(
-            crate::storage::metadata::MetadataStore::new(
-                crate::storage::metadata::MetadataStoreConfig::default(),
-            )
-            .await?,
-        )
-            as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
+        let metadata_url = format!("file://{}", temp_dir.path().join("metadata").display());
+        config.storage.metadata_url = metadata_url.clone();
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &metadata_url)
+            .await?;
         let collection_service = Arc::new(
-            crate::services::collection::manager::CollectionService::new(
-                metadata_backend,
-                config.storage.clone(),
-            )
-            .await?,
+            crate::services::collection::manager::CollectionService::new(config.storage.clone())
+                .await?
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         let service = Arc::new(VectorOperationsService::new(

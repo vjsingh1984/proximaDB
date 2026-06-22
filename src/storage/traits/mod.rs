@@ -16,7 +16,6 @@
 //!
 //! - `StorageEngineStrategy`: Enum for selecting the appropriate storage engine
 //! - `UnifiedStorageFormat`: Main trait that all storage engines must implement
-//! - `InternalCollectionProvider`: Trait for accessing collection metadata without circular dependencies
 //! - `PerformanceTier`: Data temperature hints for intelligent tiering
 //!
 //! ## Storage Engine Types
@@ -99,66 +98,6 @@ use crate::storage::trait_components::capabilities::CapabilityFactory;
 use crate::core::types::StorageEngineType;
 
 // Core types imported as needed in implementations
-
-/// Core metadata provider trait for collection metadata operations
-///
-/// ## Design Philosophy:
-///
-/// MetadataProvider separates metadata management from storage operations,
-/// preventing circular dependencies between storage engines and collection service.
-///
-/// ## Implementation Requirements:
-///
-/// Implementors must provide thread-safe, async metadata operations.
-/// Typically backed by a metadata store (PostgreSQL, etcd, etc.).
-///
-/// ## Caching Strategy:
-///
-/// Implementations should cache frequently accessed metadata:
-/// - Collection UUID mappings (immutable, cache forever)
-/// - Collection configs (cache with TTL)
-/// - Existence checks (cache negative results briefly)
-///
-/// This trait focuses solely on metadata CRUD operations
-#[async_trait]
-pub trait MetadataProvider: Send + Sync {
-    /// Get collection UUID by name or ID
-    async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>>;
-
-    /// Get full collection metadata
-    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>>;
-
-    /// Get collection as unified type
-    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>>;
-
-    /// List all collections
-    async fn list_collections(&self) -> Result<Vec<Collection>>;
-
-    /// Check if collection exists
-    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
-        Ok(self.get_uuid(collection_id).await?.is_some())
-    }
-
-    /// Fast check if collection ID exists (for collision detection)
-    /// This should be optimized for speed, returning just bool
-    async fn collection_id_exists(&self, collection_id: &str) -> Result<bool> {
-        // Default implementation delegates to collection_exists
-        // Backends can override with more efficient implementation
-        self.collection_exists(collection_id).await
-    }
-
-    /// Create or update a collection from protobuf
-    async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()>;
-
-    /// Delete a collection by ID  
-    async fn delete_collection(&self, collection_id: &str) -> Result<()>;
-
-    /// Find collection by name or ID (sync convenience method)
-    fn find_collection(&self, _collection_id: &str) -> Option<Collection> {
-        // Default sync implementation - backends can override
-        None
-    }
-}
 
 /// Unified metrics collector that can be shared across backends
 ///
@@ -460,18 +399,6 @@ pub struct StorageTraitCacheStats {
     pub size_bytes: u64,
     pub entry_count: u64,
     pub hit_rate: f64,
-}
-
-/// Marker trait for internal collection metadata providers.
-/// This trait exists solely to break circular dependencies between StorageEngine and CollectionService.
-/// It adds no new methods - all functionality comes from MetadataProvider.
-///
-/// Implementations: LocalRocksDbBackend, UniversalMetadataBackend
-/// Consumers: CollectionService (via metadata_backend field)
-#[async_trait]
-pub trait InternalCollectionProvider: MetadataProvider + Send + Sync {
-    // This is intentionally a marker trait with no methods.
-    // All methods are inherited from MetadataProvider.
 }
 
 /// Canonical statistics for cost-based query optimization

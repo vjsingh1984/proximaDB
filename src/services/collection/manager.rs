@@ -53,9 +53,8 @@
 //!
 //! - **Upstream**: Called by `UnifiedHandlers` for all collection operations
 //! - **Downstream**:
-//!   - `UniversalMetadataBackend` for metadata persistence
+//!   - `CatalogManager` (xCatalog) for collection metadata persistence
 //!   - `FilesystemFactory` for storage access
-//!   - Storage engines via `InternalCollectionProvider` trait
 //!
 //! ## Performance Optimizations
 //!
@@ -81,7 +80,6 @@ use crate::proto::proximadb_v1::{
     IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::InternalCollectionProvider;
 use proximadb_data_model::ProximaType;
 use proximadb_storage_common::storage_path::StoragePath;
 
@@ -101,8 +99,6 @@ enum StorageComponentType {
 
 /// Collection service for unified business logic with multi-disk coordination
 pub struct CollectionService {
-    /// Backend provider for collection metadata persistence
-    metadata_backend: Arc<dyn InternalCollectionProvider>,
     /// Factory for creating filesystem instances per collection path
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
@@ -110,8 +106,8 @@ pub struct CollectionService {
     index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::RuntimeIndexConfig>>,
     /// Global storage configuration for engine and WAL settings
     storage_config: StorageConfig,
-    /// Optional xCatalog manager. When present, collection lifecycle metadata is
-    /// mirrored through xCatalog and the legacy backend remains a storage-compatibility cache.
+    /// xCatalog manager — the sole authoritative store for collection lifecycle
+    /// metadata. When wired, collection reads/writes resolve through xCatalog.
     catalog_manager: Option<Arc<CatalogManager>>,
 
     // NEW: Multi-tenant integration
@@ -139,10 +135,7 @@ pub struct CollectionService {
 
 impl CollectionService {
     /// Create new collection service with multi-disk coordination
-    pub async fn new(
-        metadata_backend: Arc<dyn InternalCollectionProvider>,
-        storage_config: StorageConfig,
-    ) -> Result<Self> {
+    pub async fn new(storage_config: StorageConfig) -> Result<Self> {
         // Create filesystem factory with proper config from storage_config
         let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
             default_fs: Some(storage_config.metadata_url.clone()),
@@ -160,7 +153,6 @@ impl CollectionService {
         );
 
         Ok(Self {
-            metadata_backend,
             filesystem_factory,
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
@@ -1587,11 +1579,6 @@ impl CollectionService {
         })
     }
 
-    /// Get access to the metadata backend for recovery operations
-    pub fn metadata_backend(&self) -> &Arc<dyn InternalCollectionProvider> {
-        &self.metadata_backend
-    }
-
     /// The catalog this service reads/writes collection assets through, if wired.
     /// Used to make the catalog the WAL/recovery collection-resolution authority.
     pub fn catalog_manager(&self) -> Option<Arc<CatalogManager>> {
@@ -2586,7 +2573,6 @@ impl CollectionService {
 impl std::fmt::Debug for CollectionService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CollectionService")
-            .field("metadata_backend", &"UniversalMetadataBackend")
             .field("assignment_service", &"AssignmentService")
             .field("filesystem_factory", &"FilesystemFactory")
             .field("index_config_cache_info", &"HashMap<String, IndexConfig>")
@@ -2654,8 +2640,6 @@ impl CollectionServiceResponse {
 
 /// Builder for collection service with dependencies
 pub struct CollectionServiceBuilder {
-    /// Optional metadata backend to set during construction
-    metadata_backend: Option<Arc<dyn InternalCollectionProvider>>,
     /// Optional storage configuration to set during construction
     storage_config: Option<StorageConfig>,
 }
@@ -2664,15 +2648,8 @@ impl CollectionServiceBuilder {
     /// Create a new builder with no dependencies configured.
     pub fn new() -> Self {
         Self {
-            metadata_backend: None,
             storage_config: None,
         }
-    }
-
-    /// Set the metadata backend used for collection persistence.
-    pub fn with_metadata_backend(mut self, backend: Arc<dyn InternalCollectionProvider>) -> Self {
-        self.metadata_backend = Some(backend);
-        self
     }
 
     /// Set the storage configuration (data paths, engine settings, etc.).
@@ -2682,16 +2659,10 @@ impl CollectionServiceBuilder {
     }
 
     /// Consume the builder and construct a [`CollectionService`].
-    ///
-    /// Returns an error if the required metadata backend has not been provided.
     pub async fn build(self) -> Result<CollectionService> {
-        let metadata_backend = self
-            .metadata_backend
-            .ok_or_else(|| anyhow::anyhow!("Metadata backend is required"))?;
-
         let storage_config = self.storage_config.unwrap_or_default();
 
-        CollectionService::new(metadata_backend, storage_config).await
+        CollectionService::new(storage_config).await
     }
 }
 
@@ -2708,41 +2679,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_validation() -> Result<()> {
-        // Use filestore backend with temporary directory for testing
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
-        let temp_path = format!("file://{}", temp_dir.path().display());
-
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(filesystem_config)
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
-
-        let storage_config = StorageConfig::default();
-        let service = CollectionService::new(backend, storage_config)
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?;
 
@@ -2850,41 +2787,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_name_length_validation() -> Result<()> {
-        // Create a minimal test setup
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
-        let temp_path = format!("file://{}", temp_dir.path().display());
-
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(filesystem_config)
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
-
-        let storage_config = StorageConfig::default();
-        let service = CollectionService::new(backend, storage_config)
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?;
 
@@ -2961,39 +2864,16 @@ mod tests {
     /// resolution is name-authoritative.
     #[tokio::test]
     async fn test_short_name_resolves_name_authoritative() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("temp dir")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("fs factory")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("metadata backend")?,
-        );
         let catalog_manager = Arc::new(CatalogManager::new());
         catalog_manager
             .create_native_catalog("default", &temp_path)
             .await
             .context("Failed to create test xCatalog")?;
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("collection service")?
             .with_catalog_manager(catalog_manager.clone());
@@ -3051,41 +2931,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_collection_persists_explicit_cosine_metric() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
         let catalog_manager = Arc::new(CatalogManager::new());
         catalog_manager
             .create_native_catalog("default", &temp_path)
             .await
             .context("Failed to create test xCatalog")?;
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?
             .with_catalog_manager(catalog_manager.clone());
@@ -3134,41 +2990,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_collection_preserves_exact_default_without_indexes() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
         let catalog_manager = Arc::new(CatalogManager::new());
         catalog_manager
             .create_native_catalog("default", &temp_path)
             .await
             .context("Failed to create test xCatalog")?;
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?
             .with_catalog_manager(catalog_manager.clone());
@@ -3205,35 +3037,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_lifecycle_mirrors_to_xcatalog_with_uuid_id() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
-
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
 
         let catalog_manager = Arc::new(CatalogManager::new());
         catalog_manager
@@ -3241,7 +3048,7 @@ mod tests {
             .await
             .context("Failed to create test xCatalog")?;
 
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?
             .with_catalog_manager(catalog_manager.clone());
@@ -3424,11 +3231,6 @@ mod tests {
         assert_eq!(quant.strategy, Some(Strategy::Aggressive as i32));
     }
 }
-
-// CollectionService does NOT implement MetadataProvider - it USES a MetadataProvider backend!
-// The backend (LocalRocksDbBackend or UniversalMetadataBackend) implements MetadataProvider.
-// CollectionService can implement InternalCollectionProvider if needed for backward compatibility,
-// but it delegates to its metadata_backend which is the actual MetadataProvider.
 
 // ── CollectionPort impl ───────────────────────────────────────────────────────
 
