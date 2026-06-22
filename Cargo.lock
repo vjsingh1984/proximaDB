@@ -6801,9 +6801,8 @@ dependencies = [
  "dashmap",
  "proximadb-hardware",
  "proximadb-hardware-caps",
+ "proximadb-memory-pool",
  "proximadb-proto",
- "proximadb-runtime-common",
- "proximadb-vector",
  "serde",
  "tokio",
  "tracing",
@@ -7022,6 +7021,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-memory-pool"
+version = "0.2.0"
+dependencies = [
+ "parking_lot",
  "tracing",
 ]
 
@@ -7450,6 +7457,7 @@ dependencies = [
  "bincode",
  "dashmap",
  "parking_lot",
+ "proximadb-memory-pool",
  "serde",
  "tokio",
  "tracing",

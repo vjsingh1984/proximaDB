@@ -18,8 +18,10 @@ path = "src/lib.rs"
 # hook. The GPU accelerator impl is injected at runtime via
 # register_gpu_accelerator_factory (no compute dependency here).
 gpu = []
-# TurboQuant numerics (ADR-021); the kernels live in proximadb-vector.
-experimental-turboquant = ["proximadb-vector/experimental-turboquant"]
+# TurboQuant numerics (ADR-021). Gates the foundation-local TurboQuantVectorData
+# wire type in quantized.rs. The SIMD kernels live in proximadb-vector and are
+# gated there independently via the root crate's forward.
+experimental-turboquant = []
 
 [dependencies]
 anyhow.workspace = true
@@ -31,5 +33,4 @@ tracing.workspace = true
 proximadb-hardware.workspace = true
 proximadb-hardware-caps.workspace = true
 proximadb-proto.workspace = true
-proximadb-runtime-common.workspace = true
-proximadb-vector.workspace = true
+proximadb-memory-pool.workspace = true
