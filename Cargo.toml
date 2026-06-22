@@ -54,6 +54,7 @@ members = [
     "crates/platform/proximadb-runtime",
     "crates/modalities/proximadb-graph",
     "crates/modalities/proximadb-vector",
+    "crates/modalities/proximadb-quantization-kernel",
     "crates/modalities/proximadb-document",
     "crates/modalities/proximadb-observability",
     "crates/modalities/proximadb-embedding",
@@ -187,6 +188,7 @@ toml = "0.8"
 tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
@@ -318,6 +320,7 @@ proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
 proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
 proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
 proximadb-graph-subset = { path = "crates/query/proximadb-graph-subset" }
@@ -576,6 +579,7 @@ experimental-turboquant = [
     "proximadb-quantization-types/experimental-turboquant",
     "proximadb-vector/experimental-turboquant",
     "proximadb-distance-kernel/experimental-turboquant",
+    "proximadb-quantization-kernel/experimental-turboquant",
 ]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
 avx512 = []

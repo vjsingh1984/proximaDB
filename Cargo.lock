@@ -6547,6 +6547,7 @@ dependencies = [
  "proximadb-observability-query",
  "proximadb-pipeline-operator",
  "proximadb-proto",
+ "proximadb-quantization-kernel",
  "proximadb-quantization-types",
  "proximadb-query",
  "proximadb-query-capability",
@@ -6975,6 +6976,7 @@ dependencies = [
  "num_cpus",
  "proximadb-config",
  "proximadb-hardware",
+ "raw-cpuid",
  "serde",
  "tracing",
 ]
@@ -7143,6 +7145,25 @@ dependencies = [
  "async-trait",
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "proximadb-quantization-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "proximadb-distance-kernel",
+ "proximadb-hardware",
+ "proximadb-quantization-types",
+ "proximadb-vector",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

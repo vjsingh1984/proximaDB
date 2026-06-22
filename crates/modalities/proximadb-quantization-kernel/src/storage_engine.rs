@@ -13,9 +13,9 @@ use super::quantization_engine::{
     InMemoryCodebookStore, QuantizationLevel, QuantizationMetadata, QuantizedVector,
     UnifiedQuantizationEngine, UnifiedQuantizationLevel,
 };
-use crate::compute::distance_computation::engine::{DistanceMetric, UnifiedDistanceCompute};
+use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
 // Note: create_distance_calculator is available but not currently used
-// use crate::compute::distance_computation::create_distance_calculator;
+// use proximadb_distance_kernel::create_distance_calculator;
 use proximadb_hardware::{SimdLevel, best_simd_level};
 
 /// Common configuration for storage engine quantization
@@ -27,7 +27,7 @@ pub struct StorageQuantizationConfig {
     pub fast_level: Option<UnifiedQuantizationLevel>,   // e.g., INT8
 
     /// Distance metric to use for quantization (affects PQ code generation)
-    pub distance_metric: crate::compute::distance_computation::engine::DistanceMetric,
+    pub distance_metric: proximadb_distance_kernel::engine::DistanceMetric,
 
     /// Progressive resolution settings
     pub enable_progressive: bool,
@@ -54,7 +54,7 @@ impl Default for StorageQuantizationConfig {
             fast_level: Some(UnifiedQuantizationLevel::int8()),
 
             // Default to Cosine distance (most common for embeddings)
-            distance_metric: crate::compute::distance_computation::engine::DistanceMetric::Cosine,
+            distance_metric: proximadb_distance_kernel::engine::DistanceMetric::Cosine,
 
             enable_progressive: true,
             filter_threshold: 0.3,
@@ -1138,7 +1138,7 @@ impl StorageQuantizationEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compute::quantization::quantization_engine::InMemoryCodebookStore;
+    use crate::quantization_engine::InMemoryCodebookStore;
 
     fn generate_test_distances() -> Vec<f32> {
         vec![
