@@ -318,6 +318,13 @@ async fn main() -> anyhow::Result<()> {
     proximadb::core::hardware_capabilities::register_gpu_detector(
         proximadb::compute::gpu::distance::detect_gpu_capabilities,
     );
+    // Likewise register the GPU distance-accelerator factory so the distance kernel
+    // (a foundation crate) can build a GPU accelerator without depending on
+    // `compute::gpu` (issue #162). Registered before any query serving.
+    #[cfg(feature = "gpu")]
+    proximadb::compute::distance_computation::register_gpu_accelerator_factory(
+        proximadb::compute::gpu::distance::create_gpu_accelerator,
+    );
     info!("🔧 Initializing hardware detection...");
     let hardware_config = config.hardware.clone().unwrap_or_default();
     if let Err(e) = initialize_hardware_capabilities(hardware_config) {

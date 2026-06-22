@@ -1,3 +1,15 @@
+// Crate-level lint allows carried over from the root crate — this code moved out of
+// the monolith verbatim and inherits its pre-existing patterns as-is (the first four
+// match the root crate's lib.rs; the rest are surfaced by `--all-targets` here).
+#![allow(clippy::missing_docs_in_private_items)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::type_complexity)]
+#![allow(clippy::result_large_err)]
+#![allow(clippy::legacy_numeric_constants)]
+#![allow(clippy::manual_range_contains)]
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::assertions_on_constants)]
+
 //! Distance Computation Module
 //!
 //! Provides unified distance calculation APIs across all storage engines and hardware backends.
@@ -27,6 +39,11 @@ pub use engine::{
     DistanceComputeProvider, DistanceMetric, DistanceMode, MetricProperties, SimilarityResult,
     UnifiedDistanceCompute,
 };
+
+// GPU-accelerator injection hook (issue #162): the `compute::gpu` layer registers
+// its factory at startup so this crate stays free of a `compute` dependency.
+#[cfg(feature = "gpu")]
+pub use engine::register_gpu_accelerator_factory;
 
 // Re-export quantized distance computation types
 pub use quantized::{

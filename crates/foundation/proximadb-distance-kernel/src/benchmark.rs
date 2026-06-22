@@ -27,10 +27,7 @@ mod tests {
                 DistanceMetric::Euclidean,
                 DistanceMetric::DotProduct,
             ] {
-                let calc =
-                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-                        metric,
-                    );
+                let calc = crate::engine::UnifiedDistanceCompute::new(metric);
 
                 for _ in 0..100 {
                     let _ = calc.distance(&a, &b);

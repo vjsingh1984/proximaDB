@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow};
 use std::sync::Arc;
 use tracing::{info, trace};
 
-use crate::compute::distance_computation::{DistanceMetric, engine::UnifiedDistanceCompute};
+use crate::{DistanceMetric, engine::UnifiedDistanceCompute};
 use proximadb_hardware::{SimdLevel, best_simd_level};
 
 /// Configuration for distance calculations on quantized data
