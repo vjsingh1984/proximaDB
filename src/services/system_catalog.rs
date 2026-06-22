@@ -15,14 +15,14 @@
 //! root crate (mirrors the `function_store` / `rank_profile_store` recipe).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
 
+use crate::services::catalog_snapshot_store::{CatalogSnapshotStore, LocalSnapshotStore};
 use proximadb_catalog::schema::{apply_evolution, validate_schema};
 use proximadb_catalog::{
     Catalog, CatalogIndex, CatalogNamespace, CatalogPrimaryPod, CatalogSchemaEvolution,
@@ -40,38 +40,6 @@ fn now_millis() -> i64 {
         .as_millis() as i64
 }
 
-/// Atomically write `bytes` to `path`: temp file → fsync → atomic rename →
-/// best-effort parent-dir fsync. Guarantees the snapshot blob is never observed
-/// torn — a reader sees either the previous snapshot or the complete new one.
-async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("snapshot-tmp");
-    {
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp)
-            .await
-            .with_context(|| format!("opening snapshot temp {}", tmp.display()))?;
-        file.write_all(bytes)
-            .await
-            .with_context(|| format!("writing snapshot temp {}", tmp.display()))?;
-        file.flush().await?;
-        file.sync_data()
-            .await
-            .with_context(|| format!("fsync snapshot temp {}", tmp.display()))?;
-    }
-    tokio::fs::rename(&tmp, path)
-        .await
-        .with_context(|| format!("atomically replacing snapshot {}", path.display()))?;
-    if let Some(dir) = path.parent()
-        && let Ok(handle) = std::fs::File::open(dir)
-    {
-        let _ = handle.sync_all();
-    }
-    Ok(())
-}
-
 /// Default number of committed mutations between automatic snapshots; mirrors
 /// the legacy metastore's compaction threshold. Override with
 /// `PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD`.
@@ -83,7 +51,10 @@ const DEFAULT_SNAPSHOT_THRESHOLD: u64 = 1000;
 /// snapshotting is a no-op there.
 struct SnapshotConfig {
     wal_path: PathBuf,
-    snapshot_path: PathBuf,
+    /// Durable home for the snapshot blob — local filesystem by default
+    /// ([`LocalSnapshotStore`]) or object storage ([`ObjectStoreSnapshotStore`])
+    /// for `s3/gs/az` deployments (Phase 5c).
+    store: Arc<dyn CatalogSnapshotStore>,
     threshold: u64,
 }
 
@@ -151,21 +122,37 @@ impl SystemCatalog {
     /// silently falling back to a WAL-only replay would lose committed DDL.
     pub async fn open(name: impl Into<String>, wal_path: impl Into<PathBuf>) -> Result<Self> {
         let wal_path = wal_path.into();
-        let snapshot_path = wal_path.with_extension("snapshot");
+        // Default: the snapshot blob lives next to the local WAL.
+        let snapshot_store = Arc::new(LocalSnapshotStore::new(wal_path.with_extension("snapshot")));
+        Self::open_with_snapshot_store(name, wal_path, snapshot_store).await
+    }
+
+    /// Like [`open`](Self::open) but with an injected snapshot store. The WAL
+    /// itself stays on the local filesystem at `wal_path` (object-store-native
+    /// WAL durability is Phase 6); only the snapshot blob's durable home is
+    /// pluggable — local fs (default) or object storage (`s3/gs/az`/`memory`)
+    /// under the tenant/operator DrPath prefix (Phase 5c).
+    pub async fn open_with_snapshot_store(
+        name: impl Into<String>,
+        wal_path: impl Into<PathBuf>,
+        snapshot_store: Arc<dyn CatalogSnapshotStore>,
+    ) -> Result<Self> {
+        let wal_path = wal_path.into();
         let appender = Arc::new(crate::services::FramedTableWalAppender::open(&wal_path).await?);
         let entries = appender.read_entries().await?;
 
-        let state = if tokio::fs::try_exists(&snapshot_path).await.unwrap_or(false) {
-            let bytes = tokio::fs::read(&snapshot_path)
-                .await
-                .with_context(|| format!("reading catalog snapshot {}", snapshot_path.display()))?;
-            let state = SystemCatalogState::from_snapshot_bytes(&bytes).with_context(|| {
-                format!("decoding catalog snapshot {}", snapshot_path.display())
-            })?;
-            state.replay(&entries)?;
-            state
-        } else {
-            SystemCatalogState::from_wal_entries(&entries)?
+        // A snapshot that exists but fails to decode is **fatal**: after a
+        // compaction the WAL alone no longer carries the pre-watermark history,
+        // so silently falling back to a WAL-only replay would lose committed DDL.
+        let state = match snapshot_store.read().await? {
+            Some(bytes) => {
+                let state = SystemCatalogState::from_snapshot_bytes(&bytes).with_context(|| {
+                    format!("decoding catalog snapshot {}", snapshot_store.describe())
+                })?;
+                state.replay(&entries)?;
+                state
+            }
+            None => SystemCatalogState::from_wal_entries(&entries)?,
         };
 
         let threshold = std::env::var("PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD")
@@ -182,7 +169,7 @@ impl SystemCatalog {
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: Some(SnapshotConfig {
                 wal_path,
-                snapshot_path,
+                store: snapshot_store,
                 threshold,
             }),
             commits_since_snapshot: AtomicU64::new(0),
@@ -247,9 +234,11 @@ impl SystemCatalog {
     async fn checkpoint_locked(&self, cfg: &SnapshotConfig) -> Result<()> {
         let watermark = self.state.applied_seq();
 
-        // 1. Durable snapshot (write temp → fsync → atomic rename).
+        // 1. Durable snapshot. The store guarantees an atomic replace (local:
+        //    temp → fsync → rename; object store: atomic whole-object PUT), so a
+        //    reader sees the old or new blob, never a torn one.
         let bytes = self.state.to_snapshot_bytes()?;
-        write_atomic(&cfg.snapshot_path, &bytes).await?;
+        cfg.store.write_atomic(&bytes).await?;
 
         // 2. Compact the WAL: keep only entries the snapshot does not cover.
         let entries = self.appender.read_all_entries().await?;
@@ -881,6 +870,77 @@ mod tests {
                     .table_exists(&TableIdentifier::new(nslevels(&["s"]), t))
                     .await?,
                 "table {t} must survive snapshot+compaction+reopen"
+            );
+        }
+        Ok(())
+    }
+
+    /// Phase 5c — the catalog snapshot persists to **object storage** while the
+    /// per-DDL WAL stays local. A reopen over the same object store restores the
+    /// in-RAM authority from the object-store snapshot + the local WAL tail. This
+    /// is the same bounded-restart guarantee as the local case, proving the
+    /// `ObjectStoreSnapshotStore` path end-to-end (over `memory://`).
+    #[tokio::test]
+    async fn snapshot_to_object_store_survives_reopen() -> Result<()> {
+        use crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+        // One backing in-memory object store shared across both opens (a fresh
+        // `from_url("memory://")` would be empty — we need the same instance).
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let key = "_operator/catalog/system-catalog.snapshot";
+
+        {
+            let store = Arc::new(ObjectStoreSnapshotStore::new(
+                ProximaObjectStore::new(backing.clone()),
+                "memory:///",
+                key,
+            ));
+            let cat = SystemCatalog::open_with_snapshot_store("default", &wal, store).await?;
+            cat.create_namespace(&nslevels(&["s"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t1"),
+                vec_schema("t1"),
+            )
+            .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t2"),
+                vec_schema("t2"),
+            )
+            .await?;
+
+            // Checkpoint pushes the snapshot to the object store and compacts the
+            // local WAL to empty.
+            cat.checkpoint().await?;
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
+
+            // A post-snapshot DDL lands only on the local WAL tail.
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t3"),
+                vec_schema("t3"),
+            )
+            .await?;
+            assert_eq!(wal_entry_count(dir.path()).await, 1);
+        }
+
+        // Reopen with a new store handle over the SAME backing object store and
+        // the same local WAL → restore = object-store snapshot + WAL tail.
+        let store2 = Arc::new(ObjectStoreSnapshotStore::new(
+            ProximaObjectStore::new(backing.clone()),
+            "memory:///",
+            key,
+        ));
+        let reopened = SystemCatalog::open_with_snapshot_store("default", &wal, store2).await?;
+        for t in ["t1", "t2", "t3"] {
+            assert!(
+                reopened
+                    .table_exists(&TableIdentifier::new(nslevels(&["s"]), t))
+                    .await?,
+                "table {t} must survive object-store snapshot + WAL tail + reopen"
             );
         }
         Ok(())

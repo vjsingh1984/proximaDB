@@ -299,6 +299,7 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
