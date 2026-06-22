@@ -2238,6 +2238,14 @@ impl CollectionService {
             config.quantization =
                 crate::storage::metadata::catalog_config::quantization_from_json(json);
         }
+        // TD-122: restore the ProximaRecord schema config (enable flag, enforcement,
+        // text columns) so the v2 get surface can reconstruct the schema/flags.
+        if let Some(json) = schema.properties.get("collection.record_schema") {
+            crate::storage::metadata::catalog_config::apply_record_schema_from_json(
+                &mut config,
+                json,
+            );
+        }
 
         let location = schema
             .storage_layouts
@@ -2488,6 +2496,15 @@ impl CollectionService {
             schema
                 .properties
                 .insert("collection.quantization".to_string(), json);
+        }
+        // TD-122: persist the ProximaRecord schema config (enable flag, enforcement,
+        // text columns) neutrally so get_collection_v2 echoes the schema/flags set
+        // at create time.
+        if let Some(json) = crate::storage::metadata::catalog_config::record_schema_to_json(config)?
+        {
+            schema
+                .properties
+                .insert("collection.record_schema".to_string(), json);
         }
 
         Ok(schema)
