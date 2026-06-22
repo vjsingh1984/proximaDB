@@ -131,6 +131,17 @@ Read these in order for future-shaping architecture work:
    and multi-tenant (anvaiops) shapes. Engine asks: TD-127..TD-134. Subordinate to the 2026-06-04
    course correction and `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
 
+22. `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc` +
+   One reusable fusion seam (`seed → expand → calibrate → fuse-by-oid → rank`) converging the three
+   overlapping hybrid impls (vector+BM25/`doc_id`, vector+graph/`NodeId`, proto vector→graph) onto the
+   canonical `oid`. Literature-grounded (10 papers read in full: Samyama/NaviX/HMGI, HELIOS/Calibrated-
+   Fusion/Beyond-Similarity-Search, BoomHQ/UNIFY, HybridRAG + GraphRAG survey). Load-bearing decision:
+   **PIT/percentile-rank calibration**, not the fusion operator, is what makes heterogeneous scores
+   commensurable; prefilter-by-`oid`-membership-mask (NaviX); structural isolation/freshness/alias before
+   the blend; late-materialization + quantized in-place distance (Samyama/NaviX). Modalities are pluggable
+   `ModalityExpander`s; calibrate+fuse+rank is written once. Phase 1 = graph instance on REST v2.
+   Engine asks: TD-136..TD-143.
+
 == Stable Reference Docs
 
 * `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and
