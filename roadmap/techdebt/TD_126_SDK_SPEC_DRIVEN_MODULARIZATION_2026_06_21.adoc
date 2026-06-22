@@ -8,7 +8,9 @@ transport generated from the spec, behind a thin facade, drift-gated); Phase 4 d
 TypeScript (REST transport generated via `openapi-typescript` + `openapi-fetch`), Rust
 (REST transport generated via progenitor), and Python (REST transport generated via
 `openapi-python-client`), all behind unchanged thin facades, drift-gated;
-Phases 3, 5 + remaining Phase-4 languages (jvm) open +
+Phase 3 first increment done (Python `chunking` concern made opt-in + lazy behind
+`proximadb[chunking]`); Phase 3 remaining splits (embeddings, integrations), Phase 5 +
+remaining Phase-4 languages (jvm) open +
 Date: 2026-06-21 +
 Owner: SDK / API surface
 
@@ -191,7 +193,9 @@ TS SDK method needs an operation the spec lacks, annotate the handler (Phase-1 `
 . *Modularize Python.* Extract `chunking_strategies` -> `proximadb-chunking`, `embedding_providers`
   + `llm` -> `proximadb-embeddings`, `integrations` + `adapters` -> `proximadb-langchain` /
   `proximadb-llamaindex`. Reduce `proximadb` (core) to generated transport + facade with light deps;
-  expose the rest as extras.
+  expose the rest as extras. *(First increment shipped 2026-06-22: the `chunking` concern is now
+  opt-in + lazy behind `proximadb[chunking]` — `import proximadb_sdk` no longer pulls tree-sitter;
+  embeddings / integrations splits remain as follow-ups. See the Phase-3 NOTE below.)*
 . *Roll out generation* to the remaining network SDKs (go, jvm, rust); retire the now-redundant
   per-SDK contract tests (generation guarantees conformance).
 +
@@ -334,6 +338,57 @@ ops. Document/graph/observability/meta REST ops still build requests by hand in 
 (generated endpoints exist for them under `_generated/rest/api/`); routing them through the
 adapter is a mechanical follow-up. Phase 3 (modularizing the kitchen-sink package) is the next
 Python increment.
+====
++
+[NOTE]
+====
+*Phase 3 first increment shipped (2026-06-22) — Python `chunking` concern made opt-in + lazy.*
+The chunking concern (text chunking, code-aware AST chunking, the code-knowledge builder — the
+`proximadb_sdk.chunking` / `chunking_strategies` / `code_knowledge` modules, ~9.4k LOC) was the
+heaviest non-transport concern: importing it pulls tree-sitter and, transitively, the
+embedding/integration stacks. It used to be imported EAGERLY in `proximadb_sdk/__init__.py`, so a
+bare `import proximadb_sdk` paid that cost even for pure transport use.
+
+*What changed (public API unchanged).* The three eager `from .chunking* import (...)` blocks were
+replaced with lazy registry entries loaded on first access via the package-level `__getattr__`
+(the same mechanism the `integrations` exports already use). The public names stay importable —
+`from proximadb_sdk import TextChunker`, `CodeChunkingStrategy`, etc. — and the submodule import
+paths (`import proximadb_sdk.chunking_strategies`) are untouched; only the *timing* of the heavy
+import moved to first use. Availability is now probed with `importlib.util.find_spec` (no import),
+so `import proximadb_sdk` never touches tree-sitter. When the extra is absent, the chunking names
+are omitted from `__all__` and accessing one raises a helpful
+`AttributeError("... install the chunking extra: pip install 'proximadb[chunking]'")`.
+
+*Extras.* Added a canonical `chunking` extra (`pip install 'proximadb[chunking]'`); the
+pre-existing `code-chunking` extra is kept as a back-compat alias. Also fixed a latent core-install
+bug surfaced by the lighter import: `auth.py` imported `requests` unconditionally but it was only
+in the dev/test extras, so a core-only install failed to `import proximadb_sdk` — `requests` is now
+a (light) core dependency.
+
+*Dependency reduction (measured).* In a clean core-only virtualenv (core deps only — no
+tree-sitter / langchain / sentence-transformers / chromadb / lancedb / victor installed),
+`import proximadb_sdk` now pulls ZERO of those heavy modules and `ProximaDBClient` works; before
+this change the eager chunking + integration-availability probe pulled them in. With
+`proximadb[chunking]` installed, lazy access loads the chunking modules on first use exactly as
+before.
+
+*Test hardening.* The optional-export availability probe (`_optional_export_is_available`) and the
+chunking probe now tolerate a half-initialized module on `sys.modules` (catching the
+`ValueError: <mod>.__spec__ is None` that `find_spec` raises). Fixed a pre-existing test-isolation
+bug in `test_integrations_frameworks_cov.py` (its `langchain_core` stub leaked into `sys.modules`
+with `__spec__ = None`, breaking later tests' `find_spec`) by giving each stub a valid
+`ModuleSpec`. Unit suites green (1634 passed across chunking/import/integration/document/repository;
+`test_openapi_contract` still green).
+
+*Remaining Phase-3 splits (follow-ups).* This increment delivers the chunking concern as the first
+clean modularization (lazy + extra) without moving code across distribution boundaries — the
+lowest-risk reviewable step. Still open, as separate increments: (a) extract
+`embedding_providers` + `llm` behind a `proximadb[embeddings]` extra with the same lazy treatment;
+(b) extract `integrations` + `adapters` behind `proximadb[langchain]` / `proximadb[llamaindex]`
+(the integration *exports* are already lazy; the eager `from .adapters import ...` at module top
+and the `embedding_providers` provider auto-registration remain the eager-pull sources to defer);
+(c) optionally promote any of these to genuinely separate distributions
+(`proximadb-chunking` / `-embeddings` / `-langchain`) once the in-tree lazy boundaries are proven.
 ====
 
 == Scope / non-goals

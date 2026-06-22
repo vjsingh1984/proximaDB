@@ -254,61 +254,77 @@ def connect_arrow_flight(url: str = None, **kwargs) -> ProximaDBClient:
     return ProximaDBClient(**kwargs)
 
 
-# Text chunking utilities (if available)
-try:
-    from .chunking import (
-        ChunkingConfig,
-        ChunkingStrategy,
-        TextChunk,
-        TextChunker,
-        chunk_and_embed_records,
-        chunk_and_embed_text,
-        chunk_by_paragraphs,
-        chunk_by_sentences,
-        chunk_sliding_window,
-        create_chunker,
-        create_records,
-        create_vector_records,
-        prepare_records,
-        prepare_vector_records,
+# TD-126 Phase 3: the chunking concern (text chunking, code-aware AST chunking,
+# code-knowledge builder — the `proximadb_sdk.chunking` / `chunking_strategies` /
+# `code_knowledge` modules, ~9.4k LOC) is the heaviest non-transport concern: it
+# pulls tree-sitter and, transitively, the embedding/integration stacks. It used
+# to be imported EAGERLY here, so a bare `import proximadb_sdk` paid that cost
+# even for pure transport use. It is now opt-in (extra `proximadb[chunking]`) and
+# loaded LAZILY via the package-level `__getattr__` below — the public names stay
+# importable (`from proximadb_sdk import TextChunker`) but the heavy import only
+# fires on first access. Availability is probed without importing the heavy
+# modules (so `import proximadb_sdk` never touches tree-sitter).
+#
+# Each entry: public name -> (submodule, attribute).
+_CHUNKING_EXPORTS = {
+    name: (".chunking", name)
+    for name in (
+        "ChunkingConfig",
+        "ChunkingStrategy",
+        "TextChunk",
+        "TextChunker",
+        "chunk_and_embed_records",
+        "chunk_and_embed_text",
+        "chunk_by_paragraphs",
+        "chunk_by_sentences",
+        "chunk_sliding_window",
+        "create_chunker",
+        "create_records",
+        "create_vector_records",
+        "prepare_records",
+        "prepare_vector_records",
     )
-
-    _chunking_available = True
-except ImportError:
-    _chunking_available = False
-
-# Code-aware chunking and knowledge builder (if available)
-try:
-    from .chunking_strategies import (
-        CodeChunkingConfig,
-        CodeChunkingStrategy,
-        CodeRelation,
-        CodeRelationType,
-        CodeSymbol,
-        CodeSymbolType,
-        create_code_chunker,
-        get_supported_extensions,
-        get_supported_languages,
-        register_language_parser,
+}
+_CODE_CHUNKING_EXPORTS = {
+    name: (".chunking_strategies", name)
+    for name in (
+        "CodeChunkingConfig",
+        "CodeChunkingStrategy",
+        "CodeRelation",
+        "CodeRelationType",
+        "CodeSymbol",
+        "CodeSymbolType",
+        "create_code_chunker",
+        "get_supported_extensions",
+        "get_supported_languages",
+        "register_language_parser",
     )
-
-    _code_chunking_available = True
-except ImportError:
-    _code_chunking_available = False
-
-# Code knowledge builder (if available)
-try:
-    from .code_knowledge import (
-        CodeIndexConfig,
-        CodeKnowledgeBuilder,
-        CodeSearchResult,
-        IndexingResult,
-        create_code_knowledge_store,
+}
+_CODE_KNOWLEDGE_EXPORTS = {
+    name: (".code_knowledge", name)
+    for name in (
+        "CodeIndexConfig",
+        "CodeKnowledgeBuilder",
+        "CodeSearchResult",
+        "IndexingResult",
+        "create_code_knowledge_store",
     )
+}
 
-    _code_knowledge_available = True
-except ImportError:
-    _code_knowledge_available = False
+
+def _chunking_concern_available() -> bool:
+    """True if the `chunking` extra's deps are importable (no heavy import)."""
+    import importlib.util
+
+    try:
+        return importlib.util.find_spec("tree_sitter") is not None
+    except (ImportError, ValueError):
+        return False
+
+
+_chunking_available = _chunking_concern_available()
+_code_chunking_available = _chunking_available
+_code_knowledge_available = _chunking_available
 
 # Additional config classes
 try:
@@ -642,7 +658,14 @@ def _optional_export_is_available(name: str) -> bool:
         alternatives = dep if isinstance(dep, tuple) else (dep,)
         found = False
         for alternative in alternatives:
-            if importlib.util.find_spec(alternative) is None:
+            try:
+                spec = importlib.util.find_spec(alternative)
+            except (ImportError, ValueError):
+                # find_spec raises ValueError when a half-initialized module
+                # (e.g. one a test left with `__spec__ = None`) is on
+                # sys.modules; treat that as "not cleanly available".
+                continue
+            if spec is None:
                 continue
             try:
                 importlib.import_module(alternative)
@@ -670,8 +693,18 @@ __all__.extend(
 )
 
 
+# TD-126 Phase 3: chunking exports are lazy too — same machinery, but their
+# availability is gated on the `chunking` extra (tree-sitter) rather than a
+# per-integration dependency probe.
+_LAZY_CHUNKING_EXPORTS = {
+    **_CHUNKING_EXPORTS,
+    **_CODE_CHUNKING_EXPORTS,
+    **_CODE_KNOWLEDGE_EXPORTS,
+}
+
+
 def __getattr__(name):
-    """Load optional integrations only when their public export is accessed."""
+    """Load optional integrations / chunking only when first accessed."""
     if name in _OPTIONAL_EXPORTS:
         import importlib
 
@@ -687,6 +720,25 @@ def __getattr__(name):
             raise AttributeError(
                 f"module {__name__!r} has no attribute {name!r} "
                 f"(optional dependency import failed: {exc})"
+            ) from exc
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    if name in _LAZY_CHUNKING_EXPORTS:
+        import importlib
+
+        if not _chunking_available:
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(install the chunking extra: pip install 'proximadb[chunking]')"
+            )
+        module_name, attr_name = _LAZY_CHUNKING_EXPORTS[name]
+        try:
+            module = importlib.import_module(module_name, __name__)
+        except Exception as exc:
+            raise AttributeError(
+                f"module {__name__!r} has no attribute {name!r} "
+                f"(chunking extra import failed: {exc})"
             ) from exc
         value = getattr(module, attr_name)
         globals()[name] = value

@@ -95,6 +95,22 @@ def _install_langchain_stubs() -> None:
     lc_core.vectorstores = vs_mod  # type: ignore[attr-defined]
     lc_core.tools = tools_mod  # type: ignore[attr-defined]
 
+    # Give each stub a valid ModuleSpec. Without it, `__spec__` is None, and a
+    # later test that does `importlib.util.find_spec("langchain_core")` (e.g. the
+    # SDK's optional-export availability probe) raises
+    # `ValueError: langchain_core.__spec__ is None`. The stub leaks into
+    # sys.modules for the rest of the session, so this isolates the pollution.
+    import importlib.machinery
+
+    for _name, _mod in (
+        ("langchain_core", lc_core),
+        ("langchain_core.documents", docs_mod),
+        ("langchain_core.embeddings", emb_mod),
+        ("langchain_core.vectorstores", vs_mod),
+        ("langchain_core.tools", tools_mod),
+    ):
+        _mod.__spec__ = importlib.machinery.ModuleSpec(_name, loader=None)
+
     sys.modules["langchain_core"] = lc_core
     sys.modules["langchain_core.documents"] = docs_mod
     sys.modules["langchain_core.embeddings"] = emb_mod
