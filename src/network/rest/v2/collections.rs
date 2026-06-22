@@ -864,7 +864,42 @@ pub async fn get_collection_v2(
             // TD-122: surface the persisted ProximaRecord schema + flags that
             // CreateCollection set (reconstructed from the catalog asset).
             let proxima_record_enabled = config.enable_proxima_record.unwrap_or(false);
-            let schema = super::schema::build_existing_schema(&config);
+            // Text columns + enforcement come from build_existing_schema; the
+            // scalar filterable columns are appended so the view is complete.
+            let mut schema = super::schema::build_existing_schema(&config);
+            let scalar_columns: Vec<RestColumnDefinition> = config
+                .filterable_columns
+                .iter()
+                .map(|f| RestColumnDefinition {
+                    name: f.name.clone(),
+                    data_type: super::schema::filterable_type_to_rest(f.data_type).to_string(),
+                    nullable: Some(true),
+                    indexed: Some(f.indexed),
+                    filterable: Some(true),
+                    max_length: None,
+                    precision: None,
+                    scale: None,
+                    vector_dimension: None,
+                })
+                .collect();
+            if !scalar_columns.is_empty() {
+                match &mut schema {
+                    Some(existing) => {
+                        for col in scalar_columns {
+                            if !existing.columns.iter().any(|c| c.name == col.name) {
+                                existing.columns.push(col);
+                            }
+                        }
+                    }
+                    None => {
+                        schema = Some(SchemaDefinition {
+                            columns: scalar_columns,
+                            enforcement: None,
+                            allow_additional_fields: Some(true),
+                        });
+                    }
+                }
+            }
             let indexed_fields = config
                 .filterable_columns
                 .iter()
