@@ -35,6 +35,7 @@ members = [
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-quantization-types",
+    "crates/foundation/proximadb-index-types",
     "crates/foundation/proximadb-records",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
@@ -147,6 +148,7 @@ proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
@@ -276,6 +278,7 @@ proximadb-relational-planner = { path = "crates/query/proximadb-relational-plann
 proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
+proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }

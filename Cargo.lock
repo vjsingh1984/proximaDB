@@ -6537,6 +6537,7 @@ dependencies = [
  "proximadb-graph-subset",
  "proximadb-hardware",
  "proximadb-iceberg-engine",
+ "proximadb-index-types",
  "proximadb-kernel",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
@@ -6969,6 +6970,14 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-index-types"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
