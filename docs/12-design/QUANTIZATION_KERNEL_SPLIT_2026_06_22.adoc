@@ -10,6 +10,45 @@ extraction. Companion to
 `STORAGE_INDEX_COMPUTE_DECOUPLING_CONTRACTS_2026_06_21.adoc` (the cost-spine
 contracts) and `ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc` (the program).
 
+[IMPORTANT]
+====
+**MEASURED CORRECTION (2026-06-22) — Q1 is a no-op; it has been removed.**
+
+Per the "Measure, Don't Assert" mandate, the config-type duplication this doc's
+first draft attributed to step Q1 was re-measured against the code and does **not
+exist as described**. The three named types are *not* duplicates to reconcile:
+
+* `storage::traits::QuantizationType` is **already** the canonical type —
+  `src/storage/traits/query.rs:9` is literally
+  `pub use proximadb_quantization_types::QuantizationType;`. Zero work.
+* `storage::traits::ParsedQuantizationConfig` (`query.rs:132`) is a **rich
+  progressive-search config** carrying the proto `quantization_config::Strategy`,
+  selectivity thresholds, and an ordered `Vec<QuantizationLevel>`. The
+  `proximadb-quantization-types` "ParsedQuantizationConfig" was a `#[deprecated]`
+  2-string stub that **nothing imported** (dead scaffolding) — its name collision
+  is what made it *look* like a duplicate. The storage type has ~1 real consumer
+  (`quantization_engine.rs`) and is progressive-search glue, not a kernel config.
+* `storage::traits::QuantizationLevel` (`query.rs:160`) is a progressive-search
+  **level descriptor struct** that already *embeds* the canonical
+  `QuantizationType`; the canonical `QuantizationLevel` is a bit-width *enum* — a
+  different concept, not a copy.
+* The scattered engine enums (`nova::QuantizationLevel`,
+  `progressive::stage::QuantizationLevel { Pq{bits}, … }`,
+  `requantization::QuantizationType { …, FullRequantization }`,
+  `proxima_tensor_encoding::QuantizationType { ProductQuantization{subvectors,
+  codebook_size}, … }`) are **semantically distinct domain types** (operation
+  kinds, stage descriptors and encoders with payloads), deliberately *not* the
+  canonical type-tag. Folding them onto it would lose information and churn hot
+  engine files for zero kernel-extraction benefit.
+
+**Consequence:** there is no 19–39-consumer config rewrite, so the *announced
+window* Q1 reserved is not needed. The kernel boundary (Q3) already speaks the
+canonical config; the progressive-search glue types move **as-is** under Q2. The
+only real cleanup — removing the dead deprecated stub from
+`proximadb-quantization-types` — ships with this correction (foundation-crate +
+docs only, no engine files). The sequence below is now **Q2 → Q3** (Q1 struck).
+====
+
 == Context
 
 Root-crate decomposition step 2 (compute kernels). Already shipped, in order:
@@ -40,10 +79,13 @@ be peeled off in isolation.
 
 | `storage::traits::{QuantizationLevel, QuantizationType, ParsedQuantizationConfig}`
 | `quantization_engine.rs` (2746 LOC)
-| **Config types** used by 19–39 files repo-wide. CRUX: these are *duplicated* —
-  canonical versions already live in `proximadb-quantization-types`
-  (`QuantizationType`, `QuantizationLevel`, `ParsedQuantizationConfig`). The
-  storage::traits copies are a proliferation to reconcile, not a new type to move.
+| **Config types.** First-draft claim ("duplicated; reconcile onto canonical") was
+  **wrong on re-measurement** — see the MEASURED CORRECTION at the top.
+  `QuantizationType` is already a canonical re-export; `ParsedQuantizationConfig`
+  and `QuantizationLevel` are distinct progressive-search glue types (rich
+  proto-`Strategy` config / level-descriptor struct), ~1 real consumer
+  (`quantization_engine.rs`), and move as-is under Q2. The canonical
+  `ParsedQuantizationConfig` was a dead `#[deprecated]` stub (removed here).
 
 | `storage::traits::FlushParameters`
 | `selection.rs` (368 LOC)
@@ -111,12 +153,12 @@ principle the index contract uses for `AxisHybridQuery`.
 | Step | Work | Risk
 
 | Q1
-| **Reconcile the duplicated quant-config types** onto `proximadb-quantization-types`
-  (canonicalize `QuantizationType`/`QuantizationLevel`/`ParsedQuantizationConfig`;
-  add `From`/`Into` where storage's shape differs; storage::traits re-exports or
-  converts). Do NOT touch `FlushParameters`.
-| **HOT** — touches 19–39 consumers incl. storage::traits (engine sessions).
-  Needs an announced window per the plan's coordination protocol.
+| **STRUCK (measured no-op, 2026-06-22).** `QuantizationType` is already a
+  canonical re-export; `ParsedQuantizationConfig`/`QuantizationLevel` are distinct
+  progressive-search glue types (move under Q2, not canonicalize); the engine enums
+  are distinct domain types. No config rewrite exists. Only the dead deprecated stub
+  in `proximadb-quantization-types` is removed (foundation-crate + docs only).
+| None — no engine files, no announced window. See the MEASURED CORRECTION above.
 
 | Q2
 | **Move the glue** (`global_cache.rs`, `precompute.rs`, `selection.rs`, and the
@@ -134,11 +176,13 @@ principle the index contract uses for `AxisHybridQuery`.
 
 == Coordination
 
-Step Q1 edits `storage::traits` config types used across 19–39 files that 5+
-engine sessions actively touch. Per `ROOT_CRATE_DECOMPOSITION_PLAN`'s coordination
-protocol this is an **announced-window** change, not a solo opportunistic PR. Q2/Q3
-are low-conflict once Q1 lands. `FlushParameters` (70 files) is explicitly excluded
-to keep the blast radius bounded.
+With Q1 struck (see the MEASURED CORRECTION), the remaining work is **not** the
+hot, multi-session config rewrite the first draft feared. Q2 (glue relocation into
+`src/storage/compute_bridge/`) is storage-internal and medium-risk; Q3 (kernel
+`git mv` + facade) is mechanical, like `distance-kernel`. Neither edits the
+`storage::traits` config types across 19–39 engine consumers, so neither needs an
+announced window — they are sequenceable as ordinary PRs. `FlushParameters` (70
+files) remains explicitly excluded to keep the blast radius bounded.
 
 == Non-goals
 
