@@ -312,7 +312,10 @@ impl ProximaClient {
         crate::graph::GraphBuilder::new(self, name)
     }
 
-    /// Delete a graph
+    /// Delete a graph via the generated `delete_graph` operation's
+    /// path/verb (`DELETE /api/v2/graphs/{graph_id}`), through the shared
+    /// generated transport connection (see `graph::GraphBuilder::execute`
+    /// for why the fully-typed builder is not used).
     #[cfg(feature = "client")]
     pub async fn delete_graph(&self, name: &str) -> Result<()> {
         let url = format!("{}/api/v2/graphs/{}", self.inner.config.url, name);
@@ -320,7 +323,16 @@ impl ProximaClient {
         Ok(())
     }
 
-    /// List all graphs
+    /// List all graphs (`GET /api/v2/graphs`, the generated `list_graphs`
+    /// operation's path/verb).
+    ///
+    /// Kept on the facade's permissive `GraphInfo` DTO + hand-formatted path
+    /// rather than the typed `list_graphs().send()`: the facade `GraphInfo`
+    /// exposes a required `name` plus node/edge counts, while the generated
+    /// `GraphCollectionResponse` makes every field optional and names them
+    /// differently (`graph_id`), so the typed path would need a lossy
+    /// field-by-field lowering. The wire connection flows through the shared
+    /// transport via `self.get`.
     #[cfg(feature = "client")]
     pub async fn list_graphs(&self) -> Result<Vec<GraphInfo>> {
         let url = format!("{}/api/v2/graphs", self.inner.config.url);
