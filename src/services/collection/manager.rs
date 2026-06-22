@@ -1711,7 +1711,12 @@ impl CollectionService {
             }
         }
 
-        // Store updated collection
+        // Store the updated collection. The catalog is the read authority, so the
+        // catalog asset write is what makes the compression change visible; the
+        // legacy backend write stays (dual-write) until it is removed wholesale.
+        self.upsert_collection_catalog_asset(&updated_collection)
+            .await
+            .context("Failed to update collection compression in catalog")?;
         self.metadata_backend
             .upsert_collection_proto(&updated_collection)
             .await
@@ -2236,6 +2241,16 @@ impl CollectionService {
                 json,
             );
         }
+        // Lossless round-trip: if the asset carries the full serialized config it
+        // is authoritative — it captures every field (including ones not mapped to
+        // a typed catalog property), so no collection config is ever silently
+        // dropped on read. The per-field properties above remain for pg_catalog
+        // introspection.
+        if let Some(json) = schema.properties.get("collection.config_json")
+            && let Ok(full) = serde_json::from_str::<CollectionConfig>(json)
+        {
+            config = full;
+        }
 
         let location = schema
             .storage_layouts
@@ -2501,6 +2516,15 @@ impl CollectionService {
                 .properties
                 .insert("collection.record_schema".to_string(), json);
         }
+        // Lossless round-trip: store the full serialized config so the catalog
+        // asset never drops any collection field (the typed properties above stay
+        // for pg_catalog introspection). This makes the catalog a complete,
+        // sole-authority store for collection metadata.
+        schema.properties.insert(
+            "collection.config_json".to_string(),
+            serde_json::to_string(config)
+                .context("serializing collection config for catalog asset")?,
+        );
 
         Ok(schema)
     }
