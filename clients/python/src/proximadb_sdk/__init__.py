@@ -11,11 +11,12 @@ Licensed under the Apache License, Version 2.0
 __version__ = "0.2.0"
 __author__ = "ProximaDB Contributors"
 
-# Protocol adapters
-from .adapters import (
-    BaseProtocolAdapter,
-    create_adapter,
-)
+# Protocol adapters (TD-126 Phase 3): loaded LAZILY via the package-level
+# `__getattr__` below. The adapter package itself is light, but it is the entry
+# point into the embedded / integration code paths, so deferring it keeps a bare
+# `import proximadb_sdk` strictly transport+facade+models. Public names stay
+# importable (`from proximadb_sdk import BaseProtocolAdapter, create_adapter`);
+# only the import timing moves to first access.
 
 # Authentication
 from .auth import (
@@ -636,6 +637,14 @@ _OPTIONAL_EXPORTS = {
     "ProximaDBVectorDB": (".integrations.autogen", "ProximaDBVectorDB"),
 }
 
+# TD-126 Phase 3: protocol adapters are always importable (light, no third-party
+# dep), but loaded lazily so they don't run at package import. public name ->
+# (submodule, attribute).
+_ADAPTER_EXPORTS = {
+    "BaseProtocolAdapter": (".adapters", "BaseProtocolAdapter"),
+    "create_adapter": (".adapters", "create_adapter"),
+}
+
 _OPTIONAL_EXPORT_DEPENDENCIES = {
     "ProximaDBVectorStore": ("langchain_core",),
     "ProximaDBEmbeddingProvider": ("victor", "victor_contracts"),
@@ -648,7 +657,14 @@ _OPTIONAL_EXPORT_DEPENDENCIES = {
 
 
 def _optional_export_is_available(name: str) -> bool:
-    import importlib
+    # TD-126 Phase 3: availability is probed with importlib.util.find_spec ONLY
+    # (no importlib.import_module) — mirroring the chunking concern probe above.
+    # Previously this *imported* each optional dependency to test it, which meant
+    # building `__all__` at package load eagerly pulled langchain_core / victor /
+    # crewai / dspy / autogen whenever they happened to be installed, defeating
+    # the lazy `__getattr__` below. find_spec answers "is it importable?" without
+    # running the import, so a bare `import proximadb_sdk` no longer touches the
+    # integration stacks; the heavy import still fires lazily on first access.
     import importlib.util
 
     dependencies = _OPTIONAL_EXPORT_DEPENDENCIES.get(name, ())
@@ -665,14 +681,9 @@ def _optional_export_is_available(name: str) -> bool:
                 # (e.g. one a test left with `__spec__ = None`) is on
                 # sys.modules; treat that as "not cleanly available".
                 continue
-            if spec is None:
-                continue
-            try:
-                importlib.import_module(alternative)
+            if spec is not None:
                 found = True
                 break
-            except Exception:
-                continue
         if not found:
             return False
     return True
@@ -691,6 +702,8 @@ __all__.extend(
 __all__.extend(
     name for name in _OPTIONAL_EXPORTS if _optional_export_is_available(name)
 )
+# Protocol adapters are always available (lazy, but unconditional).
+__all__.extend(_ADAPTER_EXPORTS)
 
 
 # TD-126 Phase 3: chunking exports are lazy too — same machinery, but their
@@ -704,7 +717,15 @@ _LAZY_CHUNKING_EXPORTS = {
 
 
 def __getattr__(name):
-    """Load optional integrations / chunking only when first accessed."""
+    """Load optional integrations / chunking / adapters only when first accessed."""
+    if name in _ADAPTER_EXPORTS:
+        import importlib
+
+        module_name, attr_name = _ADAPTER_EXPORTS[name]
+        module = importlib.import_module(module_name, __name__)
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
     if name in _OPTIONAL_EXPORTS:
         import importlib
 
