@@ -2004,10 +2004,14 @@ pub mod proxima_record_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        /// DEPRECATED: SQL over gRPC is deprecated. pgwire (the PostgreSQL wire
-        /// protocol) is the canonical SQL surface; connect any PostgreSQL driver and
-        /// run SQL there. gRPC owns record/vector/collection operations, not SQL.
-        /// This RPC will be removed in a future release (see TD-121).
+        /// SQL over gRPC: the SSO-authenticated, performant programmatic SQL surface
+        /// (TD-121). gRPC carries bearer/JWT in request metadata, whereas pgwire auth
+        /// is Postgres-native (password/MD5) and cannot carry a bearer token — so this
+        /// RPC is the SQL path for token/SSO-authenticated and high-throughput
+        /// programmatic clients (HTTP/2 + protobuf). pgwire remains the canonical SQL
+        /// surface for the PostgreSQL ecosystem (psql/JDBC/BI/ORM); the two are
+        /// complementary, not redundant. For bulk columnar result sets prefer Arrow
+        /// Flight; for UQL/AQL/Federated (non-SQL) use /api/v2/query.
         pub async fn execute_query(
             &mut self,
             request: impl tonic::IntoRequest<super::V2QueryRequest>,
@@ -2196,10 +2200,14 @@ pub mod proxima_record_service_server {
             tonic::Response<super::V2DeleteCollectionResponse>,
             tonic::Status,
         >;
-        /// DEPRECATED: SQL over gRPC is deprecated. pgwire (the PostgreSQL wire
-        /// protocol) is the canonical SQL surface; connect any PostgreSQL driver and
-        /// run SQL there. gRPC owns record/vector/collection operations, not SQL.
-        /// This RPC will be removed in a future release (see TD-121).
+        /// SQL over gRPC: the SSO-authenticated, performant programmatic SQL surface
+        /// (TD-121). gRPC carries bearer/JWT in request metadata, whereas pgwire auth
+        /// is Postgres-native (password/MD5) and cannot carry a bearer token — so this
+        /// RPC is the SQL path for token/SSO-authenticated and high-throughput
+        /// programmatic clients (HTTP/2 + protobuf). pgwire remains the canonical SQL
+        /// surface for the PostgreSQL ecosystem (psql/JDBC/BI/ORM); the two are
+        /// complementary, not redundant. For bulk columnar result sets prefer Arrow
+        /// Flight; for UQL/AQL/Federated (non-SQL) use /api/v2/query.
         async fn execute_query(
             &self,
             request: tonic::Request<super::V2QueryRequest>,
