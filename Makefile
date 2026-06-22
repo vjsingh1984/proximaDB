@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk release-check docs-claim-check release-smoke
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -138,6 +138,18 @@ verify-openapi-spec:
 gen-go-sdk:
 	@echo "🧬 Generating Go REST transport from OpenAPI spec (TD-126 Phase 2)..."
 	PYTHON=$(PYTHON) bash clients/go/codegen/gen.sh
+
+# TD-126 Phase 4 (spec-driven SDK pilot, TypeScript): the TS REST transport's
+# wire types (clients/nodejs-embedded/src/generated) are GENERATED from the
+# published OpenAPI spec via openapi-typescript (pinned in the SDK package.json),
+# driven by openapi-fetch behind a thin hand-written ergonomic facade
+# (src/client.ts + src/transport.ts). This regenerates the types; commit the
+# result. The CI gate `ts-sdk-codegen-drift` runs this and
+# `git diff --exit-code`s the generated dir — same pattern as gen-go-sdk /
+# verify-openapi-spec. openapi-typescript is 3.1-native, so no down-conversion.
+gen-ts-sdk:
+	@echo "🧬 Generating TypeScript REST transport from OpenAPI spec (TD-126 Phase 4)..."
+	cd clients/nodejs-embedded && npm run gen-sdk
 
 workspace-boundaries-check:
 	@echo "🧱 Validating workspace dependency boundaries..."
@@ -335,6 +347,7 @@ help:
 	@echo "  proto-check        - Validate generated proto crate and Python/OpenAPI contract drift"
 	@echo "  verify-openapi-spec - Regenerate OpenAPI spec from handlers; fail on drift (TD-126)"
 	@echo "  gen-go-sdk         - Regenerate the Go REST transport from the OpenAPI spec (TD-126 Phase 2)"
+	@echo "  gen-ts-sdk         - Regenerate the TypeScript REST transport types from the OpenAPI spec (TD-126 Phase 4)"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
 	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
