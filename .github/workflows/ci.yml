@@ -80,6 +80,7 @@ jobs:
       storage_changes: ${{ steps.filter.outputs.storage_changes }}
       graph_changes: ${{ steps.filter.outputs.graph_changes }}
       core_changes: ${{ steps.filter.outputs.core_changes }}
+      gpu_paths: ${{ steps.filter.outputs.gpu_paths }}
       network_changes: ${{ steps.filter.outputs.network_changes }}
       # SDK change detection
       go_sdk: ${{ steps.filter.outputs.go_sdk }}
@@ -142,6 +143,11 @@ jobs:
               - 'src/lib.rs'
               - 'Cargo.toml'
               - 'Cargo.lock'
+            gpu_paths:
+              - 'src/compute/gpu/**'
+              - 'src/compute/distance_computation/**'
+              - 'src/core/hardware_capabilities.rs'
+              - 'Cargo.toml'
             network_changes:
               - 'src/network/**'
               - 'src/api_handlers/**'
@@ -167,6 +173,32 @@ jobs:
               - 'crates/binding/proximadb-spark-jni/**'
               - 'clients/jvm/spark-connector/**'
               - 'src/connectors/spark.rs'
+
+  # ============================================================================
+  # GPU FEATURE CHECK (macOS) — the `gpu = ["metal"]` feature is macOS-only
+  # (metal) and was previously built by NO CI job, so the GPU path could rot
+  # silently. This compiles `--features gpu` on a macOS runner whenever GPU /
+  # hardware-capabilities / distance code changes, making that path verifiable
+  # (prerequisite for the hardware_capabilities GPU-edge inversion — issue #162).
+  # Advisory (not in `ci-success` needs) until proven stable; promote to required
+  # once it's green across a few runs.
+  # ============================================================================
+  gpu-feature-check:
+    name: GPU Feature Check (macOS)
+    runs-on: macos-14
+    needs: changes
+    if: needs.changes.outputs.gpu_paths == 'true'
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install protobuf
+        run: brew install protobuf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-rust-gpu-macos"
+      - name: cargo check --features gpu
+        run: cargo check -p proximadb --lib --features gpu
 
   # ============================================================================
   # QUALITY CHECKS - Run in parallel, fast feedback
