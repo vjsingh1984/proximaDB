@@ -1477,8 +1477,18 @@ impl UnifiedHandlers {
                     // 2. Perform graph traversal from these nodes
                     if !start_node_ids.is_empty() {
                         let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
+                        // TD-131: honor the caller's graph id (REST v2 sets it from
+                        // the {graph_id} path param) instead of the hardcoded
+                        // "default" graph, so per-graph hybrid search — e.g. a
+                        // per-repo code-graph — targets the right graph. Falls back
+                        // to "default" only when the request leaves it unset.
+                        let effective_graph_id = if graph_req.graph_id.is_empty() {
+                            "default".to_string()
+                        } else {
+                            graph_req.graph_id.clone()
+                        };
                         let traversal_request = crate::graph::TraversalRequest {
-                            graph_id: "default".to_string(), // Deferred: Extract from request or pass as parameter
+                            graph_id: effective_graph_id.clone(),
                             start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
                             max_depth: if graph_req.max_depth == 0 {
                                 3
@@ -1500,7 +1510,7 @@ impl UnifiedHandlers {
 
                         let traversal_response = self
                             .graph_operations_service
-                            .traverse("default", traversal_request)
+                            .traverse(&effective_graph_id, traversal_request)
                             .await?;
                         nodes.extend(traversal_response.nodes.into_iter().map(Into::into));
                         edges.extend(traversal_response.edges.into_iter().map(Into::into));

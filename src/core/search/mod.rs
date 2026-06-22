@@ -1,6 +1,7 @@
 //! Search module for ProximaDB storage-aware search implementations
 
 pub mod bounded_queue;
+pub mod cross_modal_fusion;
 pub mod engine_benchmarks;
 pub mod filter_contract; // Filter contracts for hybrid search (Issue #38, SB-08)
 pub mod filter_pushdown_engine;

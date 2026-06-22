@@ -425,6 +425,71 @@ a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete Op
 | Multi-tenant code-graph service needs a KEU meter variant for code embeddings and per-repo RBAC entitlement (tenant is atomic today). Mostly anvaiops-side; ProximaDB exposes the meter hook + field/row governance seam.
 | 2 weeks
 | KEU variant in the meter spine; per-repo `permitted_principals` scoping. See `../anvaiops` ADR.
+
+| TD-136
+| Fusion — neutral `Fuser` core + PIT calibration
+| P1
+| HIGH
+| *In progress*
+| One calibrated fuse-by-`oid` core for all modalities: PIT/percentile-rank calibration (cosine≈Gaussian vs graph/PPR≈power-law are incommensurable; naive weighted-sum + min-max both fail) + calibrated-linear + consensus boost + RRF fallback + skip-gates. Phase 1 of `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc`.
+| 1 week
+| `src/core/search/fusion/`. Calibration is the load-bearing step; the operator is secondary (Calibrated-Fusion).
+| TD-137
+| Fusion — `GraphExpander` + REST v2 `fusion-search`
+| P1
+| HIGH
+| *In progress*
+| Graph modality as the first expander on the seam (oid-keyed percentile-rank graph candidates, bounded k-hop, retiring `1/(dist+1)`) + vector seed; `POST /api/v2/graphs/{graph_id}/fusion-search`, tenant-scoped. Subsumes the old TD-131 graph-on-REST-v2 goal.
+| 1 week
+| Reuse `HybridQueryEngine` internals + `VectorOperationsService`. Honor the request graph_id (not "default").
+| TD-138
+| Fusion — converge `DocumentExpander`
+| P2
+| MED
+| *Open*
+| Fold the 12-strategy `HybridFusionEngine` (vector+BM25, `doc_id`) onto the seam as the `DocumentExpander`, keyed by `oid`.
+| 1-2 weeks
+| Collapse the 12 strategies to D4 (calibrated-linear default, RRF fallback); keep exotics behind a flag.
+| TD-139
+| Fusion — `RelationalExpander` prefilter (semimask)
+| P2
+| MED
+| *Open*
+| Relational predicate as an `oid`-keyed membership mask (roaring bitset) passed by SIP into the seed — prefilter, not postfilter (NaviX: prefilter wins below 50% selectivity). Reuse TD-127/128.
+| 2 weeks
+| The mask is the universal expander→seed interface.
+| TD-140
+| Fusion — edge-grain fusion
+| P3
+| LOW
+| *Open*
+| Optional edge/relationship-grain fusion unit (HELIOS: edge-level carries 6–12% more signal than node-level) in addition to node/`oid`-keyed merge.
+| 2 weeks
+| Differentiator; gate behind query class.
+| TD-141
+| Fusion — `ComputeScheduler` cost-routed fusion
+| P2
+| MED
+| *Open*
+| Route the fused query from a measured per-query trace: invoke fusion only when multi-modal; cardinality-driven filter strategy (UNIFY); per-modality weight+selectivity-aware candidate budget + cheap local pre-probe (BoomHQ). Measured threshold router, not learned.
+| 3-4 weeks
+| Keep plan-construction cheap (Samyama: parse+plan was 98% of latency).
+| TD-142
+| Fusion — `oid` / entity alias resolution
+| P2
+| MED
+| *Open*
+| Cross-source consensus requires `oid`/entity alias resolution (synonym linking); else fusion silently loses the consensus boost (Calibrated-Fusion).
+| 2 weeks
+| Precondition for *true* cross-modal fusion across collections; within one collection `oid` is canonical.
+| TD-143
+| Fusion — retire weak proto path
+| P3
+| LOW
+| *Open*
+| Retire `request_handlers.rs` `execute_hybrid_query` (hardcoded graph, no tenant) once the seam covers gRPC; collapse the 12-strategy engine to D4.
+| 1 week
+| Cleanup after F-A..F-C land.
 |===
 
 == Debt by Category
