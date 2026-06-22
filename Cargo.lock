@@ -6543,6 +6543,7 @@ dependencies = [
  "proximadb-kernel",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
+ "proximadb-object-store",
  "proximadb-observability",
  "proximadb-observability-query",
  "proximadb-pipeline-operator",
@@ -6975,6 +6976,7 @@ dependencies = [
  "num_cpus",
  "proximadb-config",
  "proximadb-hardware",
+ "raw-cpuid",
  "serde",
  "tracing",
 ]
