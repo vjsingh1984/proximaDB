@@ -2004,14 +2004,16 @@ pub mod proxima_record_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        /// SQL over gRPC: the SSO-authenticated, performant programmatic SQL surface
-        /// (TD-121). gRPC carries bearer/JWT in request metadata, whereas pgwire auth
-        /// is Postgres-native (password/MD5) and cannot carry a bearer token — so this
-        /// RPC is the SQL path for token/SSO-authenticated and high-throughput
-        /// programmatic clients (HTTP/2 + protobuf). pgwire remains the canonical SQL
-        /// surface for the PostgreSQL ecosystem (psql/JDBC/BI/ORM); the two are
-        /// complementary, not redundant. For bulk columnar result sets prefer Arrow
-        /// Flight; for UQL/AQL/Federated (non-SQL) use /api/v2/query.
+        /// SQL over gRPC (TD-121): SSO/bearer-authenticated programmatic SQL for
+        /// vector/graph-extension queries (e.g. VECTOR_SEARCH). gRPC carries bearer/JWT
+        /// in request metadata, which pgwire (Postgres-native password/MD5) cannot — so
+        /// this is the token-authenticated SQL path. NOTE: this RPC routes through the
+        /// legacy unified query engine and does NOT execute relational table SQL
+        /// (SELECT/JOIN/aggregate over CREATE TABLE) — those return "Relational
+        /// execution not yet supported". Full relational SQL is *pgwire-only* (the
+        /// tenant-scoped relational pipeline). Wiring this RPC through that pipeline is
+        /// tracked future work. For bulk columnar results prefer Arrow Flight; for
+        /// UQL/AQL/Federated (non-SQL) use /api/v2/query.
         pub async fn execute_query(
             &mut self,
             request: impl tonic::IntoRequest<super::V2QueryRequest>,
@@ -2200,14 +2202,16 @@ pub mod proxima_record_service_server {
             tonic::Response<super::V2DeleteCollectionResponse>,
             tonic::Status,
         >;
-        /// SQL over gRPC: the SSO-authenticated, performant programmatic SQL surface
-        /// (TD-121). gRPC carries bearer/JWT in request metadata, whereas pgwire auth
-        /// is Postgres-native (password/MD5) and cannot carry a bearer token — so this
-        /// RPC is the SQL path for token/SSO-authenticated and high-throughput
-        /// programmatic clients (HTTP/2 + protobuf). pgwire remains the canonical SQL
-        /// surface for the PostgreSQL ecosystem (psql/JDBC/BI/ORM); the two are
-        /// complementary, not redundant. For bulk columnar result sets prefer Arrow
-        /// Flight; for UQL/AQL/Federated (non-SQL) use /api/v2/query.
+        /// SQL over gRPC (TD-121): SSO/bearer-authenticated programmatic SQL for
+        /// vector/graph-extension queries (e.g. VECTOR_SEARCH). gRPC carries bearer/JWT
+        /// in request metadata, which pgwire (Postgres-native password/MD5) cannot — so
+        /// this is the token-authenticated SQL path. NOTE: this RPC routes through the
+        /// legacy unified query engine and does NOT execute relational table SQL
+        /// (SELECT/JOIN/aggregate over CREATE TABLE) — those return "Relational
+        /// execution not yet supported". Full relational SQL is *pgwire-only* (the
+        /// tenant-scoped relational pipeline). Wiring this RPC through that pipeline is
+        /// tracked future work. For bulk columnar results prefer Arrow Flight; for
+        /// UQL/AQL/Federated (non-SQL) use /api/v2/query.
         async fn execute_query(
             &self,
             request: tonic::Request<super::V2QueryRequest>,
