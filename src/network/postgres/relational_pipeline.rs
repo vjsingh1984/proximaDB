@@ -129,6 +129,14 @@ pub async fn try_run_select(
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
     tenant: Option<&str>,
     controls: ExecutionControls,
+    // pgwire passes `true`: only joins/GROUP BY/aggregates/set-ops engage the
+    // real-data relational engine, leaving simple SELECTs on pgwire's hardened
+    // legacy path. Off-pgwire callers (gRPC/REST `ExecuteQuery`, TD-121) have no
+    // such legacy single-table path, so they pass `false` to route *any*
+    // resolvable relational SELECT through this tenant-scoped pipeline; queries
+    // whose tables don't resolve return `None` and fall back to the caller's
+    // vector/graph engine.
+    require_engagement: bool,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
@@ -171,8 +179,10 @@ pub async fn try_run_select(
         return None;
     };
     // Engaged = a relational shape the legacy single-table path can't serve
-    // (joins / GROUP BY / aggregates / set-ops). Simple SELECTs stay on legacy.
-    if !query_engages_relational_engine(query) {
+    // (joins / GROUP BY / aggregates / set-ops). pgwire keeps simple SELECTs on
+    // its legacy path (`require_engagement = true`); off-pgwire callers route any
+    // resolvable relational SELECT here (`require_engagement = false`).
+    if require_engagement && !query_engages_relational_engine(query) {
         return None;
     }
 

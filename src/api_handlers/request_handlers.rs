@@ -1996,6 +1996,9 @@ impl UnifiedHandlers {
         query: String,
         parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         collection: Option<String>,
+        // TD-121: the authenticated tenant (gRPC `x-tenant-id`, REST/JWT). Scopes
+        // relational SQL to the tenant's partition (TD-064), mirroring pgwire.
+        tenant_id: Option<&str>,
     ) -> Result<crate::proto::proximadb_v1::ExecuteQueryResponse> {
         let start_time = std::time::Instant::now();
 
@@ -2050,6 +2053,29 @@ impl UnifiedHandlers {
             // DmlService not wired — fall through to legacy path so EXPLAIN degrades gracefully.
         }
 
+        // TD-121: route RELATIONAL SQL through the same tenant-scoped relational
+        // pipeline pgwire uses (ComputeScheduler::route_select → DataFusion/Volcano,
+        // TD-064 tenant partitioning), instead of the legacy vector/graph engine
+        // which rejects relational plans. `require_engagement = false` routes any
+        // resolvable relational SELECT here; queries whose tables don't resolve
+        // (vector/graph SQL) return None and fall through to the legacy engine.
+        if let Some(dml) = self.get_dml_service()
+            && let Some(outcome) = crate::network::postgres::relational_pipeline::try_run_select(
+                &query,
+                Some(&dml),
+                None,
+                tenant_id,
+                crate::query::execution::ExecutionControls::default(),
+                false,
+            )
+            .await
+        {
+            return match outcome {
+                Ok(result) => Ok(Self::pipeline_result_to_sql_response(result, start_time)),
+                Err(msg) => Err(anyhow::anyhow!("Relational query execution failed: {msg}")),
+            };
+        }
+
         // Route through unified facade when feature is enabled and adapter is available
         #[cfg(feature = "unified-facade-routing")]
         if let Some(adapter) = self.get_query_adapter() {
@@ -2096,6 +2122,59 @@ impl UnifiedHandlers {
             columns: result.columns.iter().map(|c| c.0.clone()).collect(),
             column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
         })
+    }
+
+    /// Convert a relational [`ExecutionPipelineResult`] (the tenant-scoped pgwire
+    /// pipeline output) into the v1 `ExecuteQueryResponse` carried by the gRPC/REST
+    /// SQL surfaces (TD-121). Mirrors pgwire's `emit_pipeline_result`: column names
+    /// + types come from the result schema; each `ProximaValue` cell maps to a
+    /// typed `SqlValue` via the canonical converter.
+    fn pipeline_result_to_sql_response(
+        result: crate::query::execution::engine::ExecutionPipelineResult,
+        start_time: std::time::Instant,
+    ) -> crate::proto::proximadb_v1::ExecuteQueryResponse {
+        use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
+        let columns: Vec<String> = result
+            .schema
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        let column_types: Vec<String> = result
+            .schema
+            .columns
+            .iter()
+            .map(|c| format!("{:?}", c.ty))
+            .collect();
+        let rows_returned = result.rows.len() as u64;
+        let rows: Vec<SqlRow> = result
+            .rows
+            .into_iter()
+            .map(|row| {
+                let fields = row
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, value)| SqlRowField {
+                        key: columns.get(i).cloned().unwrap_or_else(|| format!("col{i}")),
+                        value: Some(crate::core::search::results::proxima_value_to_sql_value(
+                            value,
+                        )),
+                    })
+                    .collect();
+                SqlRow {
+                    fields,
+                    similarity: None,
+                }
+            })
+            .collect();
+        crate::proto::proximadb_v1::ExecuteQueryResponse {
+            rows,
+            rows_scanned: 0,
+            rows_returned,
+            execution_time_ms: start_time.elapsed().as_millis() as u64,
+            columns,
+            column_types,
+        }
     }
 
     /// Convert QueryResult from unified facade to ExecuteQueryResponse
@@ -3740,7 +3819,10 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
                 .map(proximadb_records::conversions::proxima_to_sql_value)
                 .collect()
         });
-        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection).await
+        // ApiHandlersPort::execute_sql_v1 carries no tenant; relational SQL stays
+        // unscoped on this trait path (callers that need TD-064 scoping use the
+        // inherent method with a tenant — e.g. the gRPC ExecuteQuery handler).
+        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection, None).await
     }
 }
 
