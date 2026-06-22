@@ -1,6 +1,6 @@
 # ProximaDB Build and Test Makefile
 
-.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk release-check docs-claim-check release-smoke
+.PHONY: all clean build test test-python test-rust test-fast check-fast install-fast-tools benchmark release install help capability-matrix-check workspace-boundaries-check tenant-path-check deterministic-commit-contract-check work-commit-check validated-commit-check workspace-rebuild-baseline panic-policy-report panic-policy-no-regression panic-policy-module-guard panic-policy-baseline hygiene-check proto-check verify-openapi-spec gen-go-sdk gen-ts-sdk gen-rust-sdk gen-python-sdk release-check docs-claim-check release-smoke
 
 # Default target
 all: build test
@@ -161,6 +161,19 @@ gen-ts-sdk:
 gen-rust-sdk:
 	@echo "🧬 Generating Rust REST transport from OpenAPI spec (TD-126 Phase 4)..."
 	PYTHON=$(PYTHON) bash clients/rust/codegen/gen.sh
+
+# TD-126 Phase 4 (spec-driven SDK, Python): the Python REST transport's wire
+# plumbing (clients/python/src/proximadb_sdk/_generated/rest) is GENERATED from
+# the published OpenAPI spec via openapi-python-client (pinned in
+# clients/python/codegen/requirements.txt), behind the unchanged hand-written
+# ergonomic facade (protocols/rest_sync.py). openapi-python-client is 3.1-native,
+# so the published spec is consumed directly (no down-conversion). This
+# regenerates the client; commit the result. The CI gate `python-sdk-codegen-drift`
+# runs this and `git diff --exit-code`s the generated dir — same pattern as
+# gen-go-sdk / gen-rust-sdk / verify-openapi-spec / the proto-sync gate.
+gen-python-sdk:
+	@echo "🧬 Generating Python REST transport from OpenAPI spec (TD-126 Phase 4)..."
+	PYTHON=$(PYTHON) bash clients/python/codegen/gen.sh
 
 workspace-boundaries-check:
 	@echo "🧱 Validating workspace dependency boundaries..."
@@ -360,6 +373,7 @@ help:
 	@echo "  gen-go-sdk         - Regenerate the Go REST transport from the OpenAPI spec (TD-126 Phase 2)"
 	@echo "  gen-ts-sdk         - Regenerate the TypeScript REST transport types from the OpenAPI spec (TD-126 Phase 4)"
 	@echo "  gen-rust-sdk       - Regenerate the Rust REST transport from the OpenAPI spec (TD-126 Phase 4)"
+	@echo "  gen-python-sdk     - Regenerate the Python REST transport from the OpenAPI spec (TD-126 Phase 4)"
 	@echo "  panic-policy-report - WS-2 panic metrics report (non-blocking)"
 	@echo "  panic-policy-no-regression - Fail on total panic-pattern regression"
 	@echo "  panic-policy-module-guard - Fail on critical module panic regression"
