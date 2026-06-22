@@ -72,6 +72,22 @@ class ProviderRegistry:
                     f"{provider_class.__name__} must inherit from BaseEmbeddingProvider"
                 )
 
+            # Primary-name collision guard: a primary provider name is a stable
+            # public identity (consumed by get_provider(name)). Silently
+            # overwriting it — e.g. a stray `*_new.py` scaffolding module
+            # re-registering "gte-qwen" — would shadow the live provider with
+            # no signal. Fail loud instead, unless it is the SAME class being
+            # re-imported (idempotent module reload).
+            existing = cls._providers.get(name)
+            if existing is not None and existing is not provider_class:
+                raise ValueError(
+                    f"Provider name '{name}' is already registered to "
+                    f"{existing.__module__}.{existing.__name__}; refusing to "
+                    f"overwrite it with {provider_class.__module__}."
+                    f"{provider_class.__name__}. Use a distinct name or remove "
+                    f"the duplicate registration."
+                )
+
             # Register provider
             cls._providers[name] = provider_class
             cls._metadata[name] = models
