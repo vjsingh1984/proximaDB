@@ -215,15 +215,15 @@ pub mod collection_pinning;
 pub mod memtable;
 pub mod metadata;
 // Quantization now handled by unified compute module
-// Storage optimization utilities
-pub mod optimization;
-// Strategy module for collection lifecycle configuration
-pub mod strategy;
+// Storage optimization utilities — extracted to proximadb-storage-optimization (decomp slice B)
+pub use proximadb_storage_optimization as optimization;
+// Strategy module for collection lifecycle configuration — extracted to proximadb-storage-strategy (decomp slice B)
+pub use proximadb_storage_strategy as strategy;
 // Specialized cache system with shared infrastructure
 pub mod cache;
 
-// Multi-tenant architecture modules
-pub mod tenant;
+// Multi-tenant architecture modules — extracted to proximadb-storage-tenant (decomp slice B)
+pub use proximadb_storage_tenant as tenant;
 
 // Auto-tiering policy engine for data lifecycle management
 pub mod tiering;

@@ -56,7 +56,7 @@ impl TenantManager {
         };
 
         // Initialize resource tracker - convert ResourceLimits from context to resources
-        let resource_limits = crate::storage::tenant::resources::ResourceLimits {
+        let resource_limits = crate::resources::ResourceLimits {
             max_memory_mb: config.resource_limits.max_memory_mb,
             max_storage_mb: config.resource_limits.max_storage_mb,
             max_operations_per_minute: config.resource_limits.max_operations_per_minute,
@@ -190,8 +190,8 @@ pub struct TenantResourceUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::context::ResourceLimits;
-    use crate::storage::tenant::{ComplianceFramework, Industry, SecurityPolicies};
+    use crate::context::ResourceLimits;
+    use crate::{ComplianceFramework, Industry, SecurityPolicies};
 
     #[tokio::test]
     async fn test_tenant_creation() {

@@ -225,7 +225,7 @@ impl Default for BusinessContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::Industry;
+    use crate::Industry;
 
     #[test]
     fn test_tenant_context_creation() {

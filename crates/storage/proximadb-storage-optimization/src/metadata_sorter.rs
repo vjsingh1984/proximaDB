@@ -14,8 +14,8 @@ use anyhow::Result;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
-use crate::proto::proximadb_v1::FilterableColumnSpec;
 use proximadb_data_model::ProximaValue;
+use proximadb_proto::proximadb_v1::FilterableColumnSpec;
 use proximadb_records::{ProximaRecord, ProximaTreeNode};
 
 /// Configuration for metadata-based sorting

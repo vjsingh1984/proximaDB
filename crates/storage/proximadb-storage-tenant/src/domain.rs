@@ -7,7 +7,7 @@ use std::sync::Arc;
 use tracing::info;
 
 use super::BusinessContext;
-use crate::storage::tenant::entity_store::UserContext;
+use crate::entity_store::UserContext;
 
 /// Domain manager for business context separation
 pub struct DomainManager {
@@ -375,16 +375,16 @@ pub enum DomainAuditEventType {
 }
 
 // Placeholder types for clean compilation
-pub type Entity = crate::proto::proximadb_v1::Entity;
-pub type EntityHeader = crate::storage::tenant::entity_store::EntityHeader;
+pub type Entity = proximadb_proto::proximadb_v1::Entity;
+pub type EntityHeader = crate::entity_store::EntityHeader;
 pub type BusinessRule = String; // Will be enhanced in future phases
 pub type OptimizationRule = String; // Will be enhanced in future phases
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::tenant::PerformanceRequirements;
-    use crate::storage::tenant::context::DataSensitivityLevel;
+    use crate::PerformanceRequirements;
+    use crate::context::DataSensitivityLevel;
 
     #[tokio::test]
     async fn test_domain_creation() {
