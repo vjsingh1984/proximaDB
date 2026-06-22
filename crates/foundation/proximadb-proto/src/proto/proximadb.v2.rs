@@ -2004,16 +2004,17 @@ pub mod proxima_record_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
-        /// SQL over gRPC (TD-121): SSO/bearer-authenticated programmatic SQL. gRPC
-        /// carries bearer/JWT in request metadata, which pgwire (Postgres-native
+        /// SQL over gRPC (TD-121/TD-135): SSO/bearer-authenticated programmatic SQL.
+        /// gRPC carries bearer/JWT in request metadata, which pgwire (Postgres-native
         /// password/MD5) cannot — so this is the token-authenticated SQL path. Serves
         /// vector/graph-extension queries (e.g. VECTOR_SEARCH) AND tenant-scoped
-        /// relational SELECT reads (SELECT/JOIN/aggregate over CREATE TABLE), which
-        /// route through the SAME relational pipeline pgwire uses (ComputeScheduler →
-        /// DataFusion/Volcano) with the request tenant from `x-tenant-id` scoping every
-        /// read to the tenant's partition (TD-064). Relational DDL/DML (CREATE/INSERT/
-        /// UPDATE/DELETE) over this RPC is not yet wired — use pgwire for writes. For
-        /// bulk columnar results prefer Arrow Flight; for UQL/AQL/Federated (non-SQL)
+        /// relational SQL: SELECT reads route through the SAME relational pipeline
+        /// pgwire uses (ComputeScheduler → DataFusion/Volcano), and DDL (CREATE/ALTER/
+        /// DROP) + DML (INSERT/UPDATE/DELETE) route through the SAME tenant-scoped
+        /// DdlService/DmlService seams pgwire uses — all with the `x-tenant-id` tenant
+        /// scoping reads and writes to its partition (TD-064). Multi-statement
+        /// transactions (BEGIN/COMMIT) remain pgwire-only (this RPC is single-statement).
+        /// For bulk columnar results prefer Arrow Flight; for UQL/AQL/Federated (non-SQL)
         /// use /api/v2/query.
         pub async fn execute_query(
             &mut self,
@@ -2203,16 +2204,17 @@ pub mod proxima_record_service_server {
             tonic::Response<super::V2DeleteCollectionResponse>,
             tonic::Status,
         >;
-        /// SQL over gRPC (TD-121): SSO/bearer-authenticated programmatic SQL. gRPC
-        /// carries bearer/JWT in request metadata, which pgwire (Postgres-native
+        /// SQL over gRPC (TD-121/TD-135): SSO/bearer-authenticated programmatic SQL.
+        /// gRPC carries bearer/JWT in request metadata, which pgwire (Postgres-native
         /// password/MD5) cannot — so this is the token-authenticated SQL path. Serves
         /// vector/graph-extension queries (e.g. VECTOR_SEARCH) AND tenant-scoped
-        /// relational SELECT reads (SELECT/JOIN/aggregate over CREATE TABLE), which
-        /// route through the SAME relational pipeline pgwire uses (ComputeScheduler →
-        /// DataFusion/Volcano) with the request tenant from `x-tenant-id` scoping every
-        /// read to the tenant's partition (TD-064). Relational DDL/DML (CREATE/INSERT/
-        /// UPDATE/DELETE) over this RPC is not yet wired — use pgwire for writes. For
-        /// bulk columnar results prefer Arrow Flight; for UQL/AQL/Federated (non-SQL)
+        /// relational SQL: SELECT reads route through the SAME relational pipeline
+        /// pgwire uses (ComputeScheduler → DataFusion/Volcano), and DDL (CREATE/ALTER/
+        /// DROP) + DML (INSERT/UPDATE/DELETE) route through the SAME tenant-scoped
+        /// DdlService/DmlService seams pgwire uses — all with the `x-tenant-id` tenant
+        /// scoping reads and writes to its partition (TD-064). Multi-statement
+        /// transactions (BEGIN/COMMIT) remain pgwire-only (this RPC is single-statement).
+        /// For bulk columnar results prefer Arrow Flight; for UQL/AQL/Federated (non-SQL)
         /// use /api/v2/query.
         async fn execute_query(
             &self,

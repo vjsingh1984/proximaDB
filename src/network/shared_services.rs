@@ -1677,6 +1677,17 @@ impl SharedServices {
         request_handlers.set_dml_service(dml_service_for_grpc);
         debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
 
+        // TD-135: wire a DdlService built from the SAME catalog_manager pgwire uses
+        // (DdlService is a thin wrapper over the shared catalog), so relational
+        // CREATE/ALTER/DROP submitted over the gRPC ExecuteQuery RPC addresses the
+        // same catalog state and executes tenant-scoped.
+        request_handlers.set_ddl_service(std::sync::Arc::new(crate::services::DdlService::new(
+            catalog_manager.clone(),
+        )));
+        debug!(
+            "✅ SharedServices::new - DdlService wired to UnifiedHandlers for relational DDL routing"
+        );
+
         // Build a port-backed runtime handler for collection/vector REST routes.
         // Uses trait objects so API routes are decoupled from root-crate concrete services.
         let runtime_api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort> =
