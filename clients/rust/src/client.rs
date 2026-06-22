@@ -139,8 +139,14 @@ pub struct ProximaClient {
 
 struct ProximaClientInner {
     config: ClientConfig,
+    /// Generated REST transport (TD-126 Phase 4). The facade owns the
+    /// `reqwest::Client` configuration, bearer auth, error mapping, and the
+    /// permissive response DTOs; the generated `genrest::Client` owns the wire
+    /// plumbing (the configured `reqwest::Client` + base URL). This mirrors the
+    /// Go pilot, where the facade calls into the generated raw `Client`. The
+    /// transport helpers below route through `transport.client()` / `transport.baseurl()`.
     #[cfg(feature = "client")]
-    http_client: reqwest::Client,
+    transport: crate::genrest::Client,
 }
 
 impl ProximaClient {
@@ -160,7 +166,7 @@ impl ProximaClient {
         })?;
 
         #[cfg(feature = "client")]
-        let http_client = {
+        let transport = {
             let mut builder = reqwest::Client::builder()
                 .timeout(Duration::from_millis(config.timeout_ms))
                 .pool_max_idle_per_host(config.max_idle_connections);
@@ -169,19 +175,22 @@ impl ProximaClient {
                 builder = builder.pool_max_idle_per_host(0);
             }
 
-            builder.build().map_err(|e| {
+            let http_client = builder.build().map_err(|e| {
                 ProximaError::Network(NetworkError::ConnectionFailed {
                     url: config.url.clone(),
                     reason: e.to_string(),
                 })
-            })?
+            })?;
+
+            // Hand the configured reqwest client to the generated transport.
+            crate::genrest::Client::new_with_client(&config.url, http_client)
         };
 
         Ok(Self {
             inner: Arc::new(ProximaClientInner {
                 config,
                 #[cfg(feature = "client")]
-                http_client,
+                transport,
             }),
         })
     }
@@ -327,11 +336,25 @@ impl ProximaClient {
         Ok(response.collections)
     }
 
-    // Internal HTTP methods
+    // Internal HTTP methods.
+    //
+    // These route through the generated transport's configured `reqwest::Client`
+    // (`self.inner.transport.client()`, exposed via the progenitor `ClientInfo` trait).
+    // The generated client owns the wire plumbing (reqwest config + base URL);
+    // the facade keeps the permissive serde DTOs, bearer auth, and error mapping
+    // — the same division of labour as the Go pilot's facade over the raw
+    // generated `Client`.
+
+    /// Borrow the generated transport's configured reqwest client.
+    #[cfg(feature = "client")]
+    pub(crate) fn http(&self) -> &reqwest::Client {
+        use crate::genrest::ClientInfo;
+        self.inner.transport.client()
+    }
 
     #[cfg(feature = "client")]
     pub(crate) async fn get<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
-        let mut request = self.inner.http_client.get(url);
+        let mut request = self.http().get(url);
 
         if let Some(ref api_key) = self.inner.config.api_key {
             request = request.header("Authorization", format!("Bearer {api_key}"));
@@ -347,7 +370,7 @@ impl ProximaClient {
         url: &str,
         body: &B,
     ) -> Result<T> {
-        let mut request = self.inner.http_client.post(url).json(body);
+        let mut request = self.http().post(url).json(body);
 
         if let Some(ref api_key) = self.inner.config.api_key {
             request = request.header("Authorization", format!("Bearer {api_key}"));
@@ -363,7 +386,7 @@ impl ProximaClient {
         url: &str,
         body: &B,
     ) -> Result<T> {
-        let mut request = self.inner.http_client.put(url).json(body);
+        let mut request = self.http().put(url).json(body);
 
         if let Some(ref api_key) = self.inner.config.api_key {
             request = request.header("Authorization", format!("Bearer {api_key}"));
@@ -375,7 +398,7 @@ impl ProximaClient {
 
     #[cfg(feature = "client")]
     pub(crate) async fn delete<T: for<'de> Deserialize<'de>>(&self, url: &str) -> Result<T> {
-        let mut request = self.inner.http_client.delete(url);
+        let mut request = self.http().delete(url);
 
         if let Some(ref api_key) = self.inner.config.api_key {
             request = request.header("Authorization", format!("Bearer {api_key}"));
@@ -444,12 +467,10 @@ impl ProximaClient {
             .pool_max_idle_per_host(config.max_idle_connections)
             .build()
             .expect("test client should build without system proxy lookup");
+        let transport = crate::genrest::Client::new_with_client(&config.url, http_client);
 
         Self {
-            inner: Arc::new(ProximaClientInner {
-                config,
-                http_client,
-            }),
+            inner: Arc::new(ProximaClientInner { config, transport }),
         }
     }
 }

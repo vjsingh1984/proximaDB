@@ -211,6 +211,13 @@
 pub mod error;
 pub mod filter;
 
+// Generated, do-not-edit REST transport (TD-126 Phase 4). progenitor emits the
+// typed low-level client + models from the published OpenAPI spec; the
+// hand-written `client` facade below wraps it. Regenerate with `make
+// gen-rust-sdk`; CI gate `rust-sdk-codegen-drift` enforces it stays in sync.
+#[cfg(feature = "client")]
+pub mod genrest;
+
 #[cfg(feature = "client")]
 pub mod client;
 

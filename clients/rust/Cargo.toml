@@ -19,8 +19,17 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-# HTTP client for REST mode
-reqwest = { version = "0.11", features = ["json", "rustls-tls"], default-features = false }
+# HTTP client for REST mode. Pinned to the reqwest major the generated REST
+# transport (src/genrest.rs, progenitor) targets so the facade and the generated
+# client share one reqwest::Client type.
+reqwest = { version = "0.13", features = ["json", "rustls"], default-features = false }
+
+# Generated REST transport runtime (TD-126 Phase 4). progenitor's generated
+# `Client` (src/genrest.rs) is a thin wrapper over reqwest that re-exports this
+# small runtime (Error/ResponseValue/request builders); it is NOT the heavy
+# generator toolchain (that lives in the isolated codegen/ crate). Version is
+# pinned to match the generator pinned in codegen/Cargo.toml.
+progenitor-client = "=0.14.0"
 
 # Async runtime
 tokio = { version = "1.37", features = ["rt-multi-thread", "macros"] }
