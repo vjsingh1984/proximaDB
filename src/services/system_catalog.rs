@@ -90,6 +90,11 @@ struct SnapshotConfig {
 /// WAL-backed read-heavy system catalog.
 pub struct SystemCatalog {
     name: String,
+    /// Plane this catalog serves (Phase 5 two-tier operator/account model).
+    /// Defaults to [`CatalogRole::Operator`] — the single-deployment system
+    /// catalog holds the whole deployment's objects until multi-account
+    /// provisioning splits data-plane catalogs out per account.
+    role: proximadb_catalog::CatalogRole,
     state: Arc<SystemCatalogState>,
     appender: Arc<dyn TableWalAppender>,
     /// Serializes the durable-append → in-RAM-apply pair so concurrent DDL can
@@ -114,12 +119,25 @@ impl SystemCatalog {
     ) -> Self {
         Self {
             name: name.into(),
+            role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
             commits_since_snapshot: AtomicU64::new(0),
         }
+    }
+
+    /// Set this catalog's plane in the two-tier operator/account model
+    /// (Phase 5). Default is [`CatalogRole::Operator`].
+    pub fn with_role(mut self, role: proximadb_catalog::CatalogRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// The plane this catalog serves.
+    pub fn role(&self) -> &proximadb_catalog::CatalogRole {
+        &self.role
     }
 
     /// Open (or create) the catalog WAL at `wal_path`, restore the in-RAM
@@ -158,6 +176,7 @@ impl SystemCatalog {
 
         Ok(Self {
             name: name.into(),
+            role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
@@ -272,7 +291,7 @@ impl SystemCatalog {
         ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
         ns.tenant_id = tenant_id;
         self.commit(CatalogDelta::UpsertNamespace {
-            namespace: ns.clone(),
+            namespace: Box::new(ns.clone()),
         })
         .await?;
         Ok(ns)
@@ -370,8 +389,10 @@ impl Catalog for SystemCatalog {
             ns.properties.remove(&k);
         }
         ns.updated_at_ms = now_millis();
-        self.commit(CatalogDelta::UpsertNamespace { namespace: ns })
-            .await
+        self.commit(CatalogDelta::UpsertNamespace {
+            namespace: Box::new(ns),
+        })
+        .await
     }
 
     // ── Table operations ──────────────────────────────────────────────────
