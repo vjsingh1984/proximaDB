@@ -693,10 +693,50 @@ pub(crate) fn enforcement_value(enforcement: Option<&str>) -> i32 {
     }
 }
 
+/// Map a REST scalar column `data_type` to its `(FilterableDataType discriminant,
+/// supports_range)` pair, or `None` for text / structured / array types that are
+/// not metadata-filterable scalar columns (text → `text_columns`). Inverse:
+/// [`filterable_type_to_rest`].
+pub(crate) fn rest_scalar_filterable_type(data_type: &str) -> Option<(i32, bool)> {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    let (ty, supports_range) = match data_type {
+        "integer" => (F::FilterableInteger, true),
+        "float" => (F::FilterableFloat, true),
+        "decimal" => (F::FilterableDecimal, true),
+        "boolean" => (F::FilterableBoolean, false),
+        "timestamp" => (F::FilterableDatetime, true),
+        "timestamp_tz" => (F::FilterableTimestampTz, true),
+        "date" => (F::FilterableDate, true),
+        "time" => (F::FilterableTime, true),
+        "uuid" => (F::FilterableUuid, false),
+        _ => return None,
+    };
+    Some((ty as i32, supports_range))
+}
+
+/// Inverse of [`rest_scalar_filterable_type`]: a `FilterableDataType`
+/// discriminant back to its REST `data_type` label (for the GET schema view).
+pub(crate) fn filterable_type_to_rest(v: i32) -> &'static str {
+    use crate::proto::proximadb_v1::FilterableDataType as F;
+    match F::try_from(v) {
+        Ok(F::FilterableInteger) => "integer",
+        Ok(F::FilterableFloat) => "float",
+        Ok(F::FilterableDecimal) => "decimal",
+        Ok(F::FilterableBoolean) => "boolean",
+        Ok(F::FilterableDatetime) => "timestamp",
+        Ok(F::FilterableTimestampTz) => "timestamp_tz",
+        Ok(F::FilterableDate) => "date",
+        Ok(F::FilterableTime) => "time",
+        Ok(F::FilterableUuid) => "uuid",
+        _ => "text",
+    }
+}
+
 /// Populate the ProximaRecord schema fields on a collection config from a REST
 /// `SchemaDefinition`. Text / text_large columns become `text_columns` +
-/// `text_storage_configs`; other typed columns are carried as
-/// `filterable_columns` elsewhere. Sets `enable_proxima_record = true`.
+/// `text_storage_configs`; scalar (numeric/temporal/boolean/uuid) columns that
+/// are filterable become typed `filterable_columns`. Sets
+/// `enable_proxima_record = true`.
 ///
 /// Shared by the create-collection and update-schema paths so both persist the
 /// same shape (the inverse of [`build_existing_schema`]).
@@ -711,6 +751,26 @@ pub(crate) fn apply_schema_definition(
         .iter()
         .filter(|c| c.data_type == "text" || c.data_type == "text_large")
         .map(|c| c.name.clone())
+        .collect();
+
+    // Scalar columns marked filterable (default true) become typed
+    // filterable_columns so metadata filters can push down and GetCollection's
+    // indexed_fields reflects them.
+    let filterable_columns: Vec<crate::proto::proximadb_v1::FilterableColumnSpec> = schema
+        .columns
+        .iter()
+        .filter(|c| c.filterable != Some(false))
+        .filter_map(|c| {
+            rest_scalar_filterable_type(&c.data_type).map(|(data_type, supports_range)| {
+                crate::proto::proximadb_v1::FilterableColumnSpec {
+                    name: c.name.clone(),
+                    data_type,
+                    indexed: c.indexed.unwrap_or(false),
+                    supports_range,
+                    estimated_cardinality: None,
+                }
+            })
+        })
         .collect();
 
     let text_storage_configs: Vec<crate::proto::proximadb_v1::TextStorageConfig> = schema
@@ -737,6 +797,7 @@ pub(crate) fn apply_schema_definition(
     config.enable_proxima_record = Some(true);
     config.text_columns = text_columns;
     config.text_storage_configs = text_storage_configs;
+    config.filterable_columns = filterable_columns;
 }
 
 /// Build existing schema from collection config
@@ -1212,6 +1273,77 @@ mod tests {
         assert_eq!(schema.columns[0].name, "title");
         assert_eq!(schema.columns[0].data_type, "text");
         assert_eq!(schema.columns[1].name, "body");
+    }
+
+    #[test]
+    fn apply_schema_definition_populates_typed_filterable_columns() {
+        use crate::proto::proximadb_v1::FilterableDataType as F;
+        let schema = SchemaDefinition {
+            columns: vec![
+                ColumnDefinition {
+                    name: "body".to_string(),
+                    data_type: "text".to_string(),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "price".to_string(),
+                    data_type: "float".to_string(),
+                    indexed: Some(true),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "active".to_string(),
+                    data_type: "boolean".to_string(),
+                    ..blank_col()
+                },
+                ColumnDefinition {
+                    name: "secret".to_string(),
+                    data_type: "integer".to_string(),
+                    filterable: Some(false), // opted out
+                    ..blank_col()
+                },
+            ],
+            enforcement: Some("strict".to_string()),
+            allow_additional_fields: Some(false),
+        };
+        let mut config = crate::proto::proximadb_v1::CollectionConfig::default();
+        apply_schema_definition(&mut config, &schema, "s".to_string(), "1.0.0".to_string());
+
+        // text → text_columns, not filterable_columns.
+        assert_eq!(config.text_columns, vec!["body".to_string()]);
+        // scalar filterable columns: price (indexed, range) + active; secret opted out.
+        assert_eq!(config.filterable_columns.len(), 2);
+        let price = config
+            .filterable_columns
+            .iter()
+            .find(|c| c.name == "price")
+            .expect("price");
+        assert_eq!(price.data_type, F::FilterableFloat as i32);
+        assert!(price.indexed);
+        assert!(price.supports_range);
+        let active = config
+            .filterable_columns
+            .iter()
+            .find(|c| c.name == "active")
+            .expect("active");
+        assert_eq!(active.data_type, F::FilterableBoolean as i32);
+        assert!(!active.indexed);
+        assert!(!active.supports_range);
+        assert!(!config.filterable_columns.iter().any(|c| c.name == "secret"));
+    }
+
+    fn blank_col() -> ColumnDefinition {
+        ColumnDefinition {
+            name: String::new(),
+            data_type: String::new(),
+            nullable: None,
+            indexed: None,
+            filterable: None,
+            max_length: None,
+            precision: None,
+            scale: None,
+            vector_dimension: None,
+        }
     }
 
     #[test]
