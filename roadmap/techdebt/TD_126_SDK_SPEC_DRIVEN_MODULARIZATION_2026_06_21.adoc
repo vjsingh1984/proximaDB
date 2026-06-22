@@ -10,8 +10,10 @@ TypeScript (REST transport generated via `openapi-typescript` + `openapi-fetch`)
 `openapi-python-client`), all behind unchanged thin facades, drift-gated;
 Phase 3 done (Python `chunking`, `embeddings`, and `integrations`/`adapters` concerns all made
 opt-in + lazy behind extras — `import proximadb_sdk` pulls zero heavy deps; core =
-transport+facade+models); Phase 5 + remaining Phase-4 languages (jvm) open +
-Date: 2026-06-21 +
+transport+facade+models); remaining-ops re-base done (2026-06-22 — graph/health/observability/meta
+ops routed through the generated client across Go/TS/Rust/Python, contract tests kept); Phase 5 +
+remaining Phase-4 languages (jvm) + generating the facades themselves open +
+Date: 2026-06-21 (updated 2026-06-22) +
 Owner: SDK / API surface
 
 == Context
@@ -451,6 +453,93 @@ change does not affect it.
 concerns (chunking, embeddings, integrations) are all opt-in + lazy behind extras. Follow-up (c) —
 promoting any concern to a genuinely separate distribution (`proximadb-chunking` / `-embeddings` /
 `-langchain`) — remains optional and is the only Phase-3 work left.
+====
+
+[NOTE]
+.Remaining-ops re-base + transport-gen-coverage closeout (2026-06-22) — Go / TS / Rust / Python
+====
+The Phase-2/4 PRs re-based each SDK's *core* ops (collection / record / search / query) onto the
+generated REST client and left the *remaining* ops (graph, document-collections, observability,
+`_meta`/capabilities, health) hand-built in the facade. This increment closes that residual: the
+remaining facade-built ops are now routed through the already-generated client wherever the
+generated client exposes the endpoint, behind the unchanged thin facade. This re-routes the facade
+to USE more of the generated client; it does NOT change the generated client itself, so the
+`*-sdk-codegen-drift` gates were unaffected (each PR verified `make gen-<lang>-sdk` →
+`git diff --exit-code` of the generated dir = no diff) and no spec change / cascade occurred. Public
+SDK APIs are unchanged across all four languages.
+
+*Per-SDK disposition.*
+
+* *Go (no PR needed — already complete).* The Go facade
+  (`clients/go/proximadb/internal/rest/adapter.go`) exposes only the 15 core ops, *all* already
+  routed through `internal/genrest` since the Phase-2 pilot. The Go SDK exposes no
+  graph / document / observability / meta ops in its public surface (those endpoints exist in the
+  generated `genrest.gen.go` but are not surfaced by the facade), so there were no remaining
+  facade-built ops to re-base. Adding new public ops is out of scope (the task re-bases ops the
+  facade already builds, not new API). Go transport-gen coverage was therefore already complete.
+
+* *TypeScript — PR #189 (merged).* Re-based onto the generated typed (`openapi-fetch`) client: the
+  graph ops (`createGraph`, `listGraphs`, `getGraph`, `deleteGraph`, `createNode`, `getNode`,
+  `deleteNode`, `createEdge`, `batchCreateNodes`, `batchCreateEdges`, `traverseGraph`,
+  `getGraphStats`) and the three health probes (`/health`, `/health/live`, `/health/ready`) — via
+  new typed seam methods on the client mirroring the core-op seams. *Left facade-built:*
+  `deleteEdge(source, target, rel)` — the generated client has no operation for the SDK's 3-segment
+  `/edges/{source}/{target}/{rel}` route (the spec models edge deletion as `/edges/{edge_id}`); kept
+  on the generic path with an inline comment. No body-shape exceptions otherwise.
+
+* *Rust — PR #190 (merged).* All exposed graph ops route through the shared generated-transport
+  connection; this PR makes the binding explicit (documents each op's genrest operation/path/verb,
+  drops a dead `CreateGraphResponse` DTO). *Notable:* a fully-typed `genrest::Client::<op>().send()`
+  routing was implemented then deliberately reverted to sourcing path/verb from the generated ops
+  while keeping the facade's 2xx-tolerant dispatch — progenitor's generated success-matcher accepts
+  only the spec-declared `200`, but the live server returns `201 Created` for `create_graph`; the
+  facade's `is_success()` path tolerates any 2xx, so forcing the typed path would have rejected a
+  response the existing path accepts (the TD-126 "don't break error semantics / DTO permissiveness"
+  fallback). `list_graphs` / `get_node` / batch / `traverse` likewise stay on permissive facade DTOs
+  (genrest response types diverge: `labels: Vec` vs single `label`, batch lacks legacy
+  `added_count`, `404→Ok(None)` vs genrest folding 404 into `Error`). *Left hand-built:*
+  `delete_edge` (same `/edges/{edge_id}` vs 3-segment mismatch as TS — no genrest op).
+
+* *Python — PR #188 (merged).* Re-based via the `protocols/_rest_codegen.py` adapter (calling each
+  generated `_get_kwargs`) → the unchanged `_make_request` seam: graph
+  `create_edge`, `traverse_graph`, `create_graph`, `delete_graph`, `get_graph`, `list_graphs`,
+  `get_graph_stats`, `get_node`, `delete_node` (full generated-model round-trip), plus
+  `health` / `live` / `ready` / `server_capabilities` (path-only). `create_node` uses the
+  `_path_only` shim (source method+URL from the generated op, send the facade body verbatim) — the
+  generated `CreateNodeRequest` nests `embedding` through an `EmbeddingInput` object whose
+  `from_dict` rejects the public API's bare `list[float]` (same AQL/UQL strict-model precedent;
+  confirmed by a live server `422`). *Left hand-built:* `query_nodes`, `query_edges`,
+  `get_outgoing_edges`, `get_incoming_edges` — `/api/v2/graphs/{id}/query/{nodes,edges}` have no
+  OpenAPI path / generated op. Document / observability / hybrid ops live in `unified_client.py`
+  (embedded/adapter-routed), not in the `rest_sync.py` REST surface, so they were out of this REST
+  facade's scope.
+
+*Contract-test disposition — KEPT across all SDKs (assessed, not blindly dropped).* The
+per-SDK contract tests validate facade↔generated-client *wiring* — that each public method reaches
+the right generated operation, with the spec's required body keys, and that the permissive response
+DTOs deserialize real/mocked responses — against a stubbed `fetch` (TS), an `httpmock` server
+(Rust), or a patched `_make_request` (Python). The merge-blocking `*-sdk-codegen-drift` gates are a
+pure `git diff` of the generated artifact and do NOT exercise that wiring, so the fuller generated
+coverage does **not** subsume the contract tests. They remain load-bearing: TS kept as-is, Rust
+kept, Python kept + extended 6→8 cases (adding `create_graph` full-model + `create_node`
+`_path_only` to prove the new wiring), Go's `openapi_contract` (`AllV2OperationsCovered`) kept as
+its sole wiring check. **No contract test was retired and no `SDK OpenAPI Contract Gate` CI job was
+removed**, so the conditional "one final coordinated CI-retirement PR" was not needed. Full
+contract-test retirement still waits until the facades themselves are generated (a later increment).
+
+*Pre-existing findings surfaced (out of scope, not fixed here; candidate follow-ups):* (a) TS
+`handleResponse` calls `.json()` on `204 No Content` (`deleteGraph`) → parse error; unchanged by the
+re-base (the old path was identical). (b) Rust facade `GraphNode` does not unwrap the live
+`{success, data:{…}}` envelope `GET .../nodes/{id}` returns. (c) The bare-`list[float]` vs
+`EmbeddingInput`-object node-embedding contract gap between the public SDKs and the server's
+`CreateNodeRequest` (orthogonal to TD-126 wiring).
+
+*Transport-gen coverage status:* every REST op each SDK's facade builds and that the generated
+client can express is now routed through the generated client; the only facade-built REST ops left
+are those with no generated/spec equivalent (the 3-segment `delete_edge`, Python's `query_*`/edge
+listing) or where typed routing would break response/DTO semantics (Rust's `201`/permissive-DTO
+ops). The remaining open Phase-4 language is **jvm**; closing it + generating the facades themselves
+are the remaining transport-gen increments.
 ====
 
 == Scope / non-goals
