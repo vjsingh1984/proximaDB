@@ -1,0 +1,28 @@
+[package]
+name = "proximadb-hardware-caps"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "ProximaDB rich hardware-capability detection (CPU/SIMD/memory/GPU) layered on proximadb-hardware; GPU detection is injected via register_gpu_detector so this foundation layer stays free of compute"
+
+[lib]
+name = "proximadb_hardware_caps"
+path = "src/lib.rs"
+
+[features]
+# Mirrors the root crate's `gpu` feature: gates GPU-backend selection + the
+# GPU-aware `Display` impls in this crate. GPU *detection* itself is injected at
+# runtime via `register_gpu_detector` (no compute dependency here).
+gpu = []
+
+[dependencies]
+anyhow.workspace = true
+num_cpus = "1.16"
+serde = { workspace = true, features = ["derive"] }
+tracing.workspace = true
+proximadb-hardware.workspace = true
+proximadb-config.workspace = true

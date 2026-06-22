@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
-use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, GpuBackend, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
+use crate::{HardwareCapabilities, HardwareBackend, HardwareQuery, SimdCapabilities, GpuBackend, initialize_hardware_capabilities_default, get_hardware_capabilities, try_get_hardware_capabilities};
 
     #[test]
     fn test_hardware_config_defaults() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         let config = HardwareConfig::default();
         
         assert!(config.enable_detection);
@@ -19,7 +19,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_hardware_capabilities_detection_with_config() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         // Test with default config (everything enabled)
         let config = HardwareConfig::default();
         let caps = HardwareCapabilities::detect_with_config(config).unwrap();
@@ -39,7 +39,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_hardware_capabilities_disabled() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_detection = false;
         
@@ -53,7 +53,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_hardware_capabilities_gpu_disabled() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_gpu_acceleration = false;
         
@@ -67,7 +67,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_hardware_capabilities_simd_disabled() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_simd = false;
         
@@ -80,7 +80,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_hardware_capabilities_avx512_disabled() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         let mut config = HardwareConfig::default();
         config.enable_avx512 = false;
         
@@ -93,7 +93,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_gpu_threshold_checks() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         let config = HardwareConfig {
             gpu_min_vector_size: 128,
             gpu_min_batch_size: 500,
@@ -123,7 +123,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_preferred_backend_logic() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         let config = HardwareConfig::default();
         let caps = HardwareCapabilities::detect_with_config(config).unwrap();
 
@@ -269,7 +269,7 @@ use crate::core::hardware_capabilities::{HardwareCapabilities, HardwareBackend, 
     
     #[test]
     fn test_configuration_edge_cases() {
-        use crate::core::config::HardwareConfig;
+        use proximadb_config::HardwareConfig;
         // Test configuration with all features disabled
         let config = HardwareConfig {
             enable_detection: true, // Keep detection on
