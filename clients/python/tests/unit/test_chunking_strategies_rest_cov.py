@@ -558,8 +558,9 @@ def test_factory_list_strategies():
     names = ChunkingStrategyFactory.list_strategies()
     assert "paragraph" in names
     assert "semantic" in names
+    assert "semantic_embedding" in names
     assert "code" in names
-    assert len(names) == 7
+    assert len(names) == 8
 
 
 def test_get_chunking_strategy_by_string():

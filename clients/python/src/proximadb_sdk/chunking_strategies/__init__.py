@@ -113,6 +113,7 @@ from .pipeline import (  # Configuration; Pipeline stages; Core components; Fact
 )
 from .recursive import RecursiveStrategy
 from .semantic import SemanticStrategy
+from .semantic_embedding import SemanticEmbeddingStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy
 
@@ -127,6 +128,7 @@ __all__ = [
     "SentenceStrategy",
     "ParagraphStrategy",
     "SemanticStrategy",
+    "SemanticEmbeddingStrategy",
     "RecursiveStrategy",
     # Factory
     "ChunkingStrategyFactory",
