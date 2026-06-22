@@ -45,6 +45,10 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
     "tabulate>=0.9.0",
+    # auth.py uses requests (sync token/refresh flows) on the core path; it was
+    # previously only pulled in via the dev/test extras, so a core-only install
+    # failed to `import proximadb_sdk`. Light dep, belongs in core.
+    "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
@@ -54,7 +58,17 @@ llm = [
     "sentence-transformers>=2.2.0",  # Local embedding models
 ]
 
-# Code chunking with tree-sitter (requires Python 3.10+)
+# Chunking concern (TD-126 Phase 3): text + code-aware AST chunking via
+# tree-sitter (requires Python 3.10+). Opt-in so the core install stays light —
+# `import proximadb_sdk` no longer pulls tree-sitter; the chunking public names
+# load lazily on first access (see proximadb_sdk/__init__.py __getattr__).
+#   pip install 'proximadb[chunking]'
+chunking = [
+    "tree-sitter>=0.24.0",
+    "tree-sitter-language-pack>=0.13.0",
+]
+
+# Back-compat alias for the pre-TD-126 extra name; identical to `chunking`.
 code-chunking = [
     "tree-sitter>=0.24.0",
     "tree-sitter-language-pack>=0.13.0",
