@@ -434,10 +434,43 @@ impl SharedServices {
         debug!("✅ SharedServices: Metadata backend created successfully");
 
         if catalog_manager.list_catalogs().await.is_empty() {
-            catalog_manager
-                .create_native_catalog("default", &storage_config.metadata_url)
-                .await
-                .context("Failed to initialize default xCatalog backend")?;
+            // System-catalog redesign (Phase 2): the default catalog is the
+            // read-heavy, WAL-backed `SystemCatalog` (in-RAM authority + canonical
+            // WAL) rather than the file-per-object `NativeCatalog`. It serves
+            // catalog reads from RAM and persists each DDL as one fsync'd WAL
+            // append. Scoped to `file://` for now (object-store paths land in
+            // Phase 5); `PROXIMADB_DISABLE_SYSTEM_CATALOG` is a kill-switch back
+            // to `NativeCatalog` for the duration of the cutover.
+            let use_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_err()
+                && storage_config.metadata_url.starts_with("file://");
+            if use_system_catalog {
+                let base = storage_config.metadata_url.trim_start_matches("file://");
+                let wal_path = std::path::Path::new(base).join("system-catalog.wal");
+                if let Some(parent) = wal_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.with_context(|| {
+                        format!("creating system-catalog dir {}", parent.display())
+                    })?;
+                }
+                let system_catalog =
+                    crate::services::system_catalog::SystemCatalog::open("default", &wal_path)
+                        .await
+                        .with_context(|| {
+                            format!("opening SystemCatalog WAL at {}", wal_path.display())
+                        })?;
+                catalog_manager
+                    .register(Arc::new(system_catalog))
+                    .await
+                    .context("Failed to register default SystemCatalog backend")?;
+                info!(
+                    "✅ SharedServices: registered WAL-backed SystemCatalog (default) at {}",
+                    wal_path.display()
+                );
+            } else {
+                catalog_manager
+                    .create_native_catalog("default", &storage_config.metadata_url)
+                    .await
+                    .context("Failed to initialize default xCatalog backend")?;
+            }
         }
         // TD-080 (2026-05-28 round 2): explicitly designate the "default"
         // catalog as the manager's default so `catalog_manager.default_catalog()`
