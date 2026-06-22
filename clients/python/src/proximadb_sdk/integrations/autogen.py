@@ -1,26 +1,43 @@
-"""AutoGen vector database adapter for ProximaDB.
+"""AutoGen integrations for ProximaDB.
 
-Provides a ``ProximaDBVectorDB`` class that follows AutoGen's ``VectorDB``
-interface conventions, allowing ProximaDB to be used as the vector store
-backend for AutoGen RAG agents.
+This module exposes two adapters, targeting the two AutoGen lines:
 
-Compatible with both AutoGen 0.2 (pyautogen) and AutoGen 0.4+ (autogen-agentchat).
-The adapter defines its own type aliases so it works regardless of which AutoGen
-version is installed.
+``ProximaDBMemory`` (AutoGen 0.4+, *recommended*)
+    Implements the ``autogen_core.memory.Memory`` protocol, which is the
+    canonical RAG / just-in-time-memory integration point in AutoGen 0.4 (the
+    0.2 ``VectorDB`` abstraction was removed in the 0.4 rewrite). Plug it into an
+    ``AssistantAgent(memory=[...])`` to back retrieval with ProximaDB.
+
+``ProximaDBVectorDB`` (AutoGen 0.2 ``VectorDB``-shaped, standalone helper)
+    A standalone helper that mirrors the *shape* of AutoGen 0.2's ``VectorDB``
+    abstract class (``create_collection`` / ``insert_docs`` / ``retrieve_docs`` /
+    ``get_docs_by_ids`` / ...). AutoGen 0.4 does NOT consume this interface; it is
+    retained for users still on 0.2 (``pyautogen``) and as a thin, framework-free
+    convenience wrapper. It does not subclass any AutoGen base class.
 
 Requires: ``pip install proximadb-python[autogen]``
 
-Example::
+Example (0.4 Memory)::
+
+    from autogen_agentchat.agents import AssistantAgent
+    from proximadb_sdk import ProximaDBClient
+    from proximadb_sdk.integrations.autogen import ProximaDBMemory
+
+    client = ProximaDBClient(url="http://localhost:5678")
+    memory = ProximaDBMemory(
+        client=client,
+        collection_name="docs",
+        embedding_fn=my_embed,  # str -> list[float]
+    )
+    agent = AssistantAgent("assistant", model_client=..., memory=[memory])
+
+Example (0.2-shaped standalone helper)::
 
     from proximadb_sdk import ProximaDBClient
     from proximadb_sdk.integrations.autogen import ProximaDBVectorDB
 
     client = ProximaDBClient(url="http://localhost:5678")
-    db = ProximaDBVectorDB(
-        client=client,
-        embedding_fn=my_embed,
-        dimension=768,
-    )
+    db = ProximaDBVectorDB(client=client, embedding_fn=my_embed, dimension=768)
     db.create_collection("docs")
     db.insert_docs([{"id": "1", "content": "Hello", "embedding": [0.1]*768}], "docs")
     results = db.retrieve_docs(["What is this?"], "docs", n_results=5)
@@ -32,7 +49,10 @@ import uuid
 from collections.abc import Callable
 from typing import Any, Union
 
-# Verify that at least one autogen package is available
+# Verify that at least one autogen package is available. ``ProximaDBMemory``
+# additionally requires the 0.4 ``autogen_core`` memory protocol; that import is
+# performed lazily inside the class so the 0.2-shaped helper stays usable on
+# ``pyautogen`` alone.
 try:
     import autogen_agentchat  # noqa: F401
 
@@ -53,18 +73,21 @@ if not _AUTOGEN_AVAILABLE:
 
 from proximadb_sdk.integrations._records import insert_records, record_payload
 
-# Type aliases matching AutoGen's VectorDB conventions
+# Type aliases matching the *shape* of AutoGen 0.2's VectorDB conventions.
 Document = dict[str, Any]
 ItemID = Union[str, int]
 QueryResults = list[list[tuple[Document, float]]]
 
 
 class ProximaDBVectorDB:
-    """AutoGen-compatible VectorDB backed by ProximaDB.
+    """ProximaDB-backed helper shaped after AutoGen 0.2's ``VectorDB``.
 
-    Implements the same interface as AutoGen's ``VectorDB`` abstract class
-    (``create_collection``, ``insert_docs``, ``retrieve_docs``, etc.) without
-    requiring a specific AutoGen version.
+    This mirrors the *method shape* of AutoGen 0.2's ``VectorDB`` abstract class
+    (``create_collection`` / ``insert_docs`` / ``retrieve_docs`` /
+    ``get_docs_by_ids`` / ...) but does NOT subclass any AutoGen type and is NOT
+    consumed by AutoGen 0.4 (which removed ``VectorDB`` in favour of the
+    ``Memory`` protocol — see :class:`ProximaDBMemory`). Use it on ``pyautogen``
+    (0.2), or as a standalone, framework-free convenience wrapper over the SDK.
 
     Args:
         client: A ``ProximaDBClient`` instance.
@@ -240,21 +263,210 @@ class ProximaDBVectorDB:
         include: list[str] | None = None,
         **kwargs: Any,
     ) -> list[Document]:
-        """Retrieve documents by their IDs.
+        """Retrieve documents by their IDs via the SDK's get-by-id endpoint.
 
-        Returns stub documents since ProximaDB SDK doesn't expose a
-        direct get-by-id endpoint.
+        Uses ``client.get_vector`` per id (the SDK does expose a direct get-by-id
+        API). IDs that are missing or fail to resolve are skipped rather than
+        returned as empty placeholders, so callers never receive silently
+        content-less documents.
+
+        Args:
+            ids: Document IDs to fetch. ``None`` or empty returns ``[]``.
+            collection_name: Collection to read from.
+            include: Optional ``["content", "metadata", "embedding"]`` selector;
+                when omitted all available fields are returned.
+
+        Returns:
+            The resolved documents (a subset of ``ids`` if some were not found).
         """
         if not ids:
             return []
 
+        want = set(include) if include else None
+        include_embedding = want is None or "embedding" in want
+
         docs: list[Document] = []
         for doc_id in ids:
-            docs.append(
-                {
-                    "id": str(doc_id),
-                    "content": "",
-                    "metadata": {},
-                }
-            )
+            try:
+                record = self._client.get_vector(
+                    collection_name,
+                    str(doc_id),
+                    include_vector=include_embedding,
+                    include_metadata=True,
+                )
+            except Exception:
+                # Missing id or backend lookup error -> skip (no empty stub).
+                continue
+            if record is None:
+                continue
+
+            metadata = dict(getattr(record, "metadata", {}) or {})
+            doc: Document = {
+                "id": getattr(record, "id", str(doc_id)),
+                "content": getattr(record, "source", None) or "",
+                "metadata": metadata,
+            }
+            if include_embedding:
+                embedding = getattr(record, "vector", None)
+                if embedding is not None:
+                    doc["embedding"] = list(embedding)
+            docs.append(doc)
         return docs
+
+
+# The 0.4 Memory protocol lives in autogen_core. Import lazily at *module* load
+# but tolerate its absence so the 0.2-only (pyautogen) install can still import
+# this module and use ProximaDBVectorDB. ProximaDBMemory is only defined when the
+# 0.4 protocol is available; otherwise it is a stub that raises on instantiation.
+try:
+    from autogen_core.memory import Memory as _Memory
+    from autogen_core.memory import MemoryContent as _MemoryContent
+    from autogen_core.memory import MemoryMimeType as _MemoryMimeType
+    from autogen_core.memory import MemoryQueryResult as _MemoryQueryResult
+    from autogen_core.memory import UpdateContextResult as _UpdateContextResult
+
+    _MEMORY_AVAILABLE = True
+    _MemoryBase: type = _Memory
+except ImportError:  # pragma: no cover - 0.2-only installs
+    _MEMORY_AVAILABLE = False
+    _MemoryBase = object  # so the class below can still be defined / imported
+
+
+class ProximaDBMemory(_MemoryBase):
+    """AutoGen 0.4 ``Memory`` implementation backed by ProximaDB.
+
+    This is the idiomatic AutoGen 0.4 RAG integration point: attach it to an
+    ``AssistantAgent(memory=[...])`` and the agent will query ProximaDB and inject
+    the retrieved snippets into its model context on each turn.
+
+    Args:
+        client: A ``ProximaDBClient`` instance.
+        collection_name: Collection to read/write.
+        embedding_fn: Callable mapping a string to a ``list[float]`` embedding.
+            Required because the SDK search API is vector-based and the ``Memory``
+            protocol's ``query``/``add`` operate on text.
+        top_k: Number of memories to retrieve per query. Defaults to 5.
+        text_key: Metadata key used to persist the original text. Defaults to
+            ``"text"``.
+    """
+
+    def __init__(
+        self,
+        client: Any,
+        collection_name: str,
+        *,
+        embedding_fn: Callable[[str], list[float]],
+        top_k: int = 5,
+        text_key: str = "text",
+    ) -> None:
+        if not _MEMORY_AVAILABLE:
+            raise ImportError(
+                "ProximaDBMemory requires AutoGen 0.4+ (the autogen_core.memory "
+                "protocol). Install with: pip install autogen-agentchat"
+            )
+        self._client = client
+        self._collection_name = collection_name
+        self._embedding_fn = embedding_fn
+        self._top_k = top_k
+        self._text_key = text_key
+
+    async def add(self, content: Any, cancellation_token: Any = None) -> None:
+        """Embed and store a ``MemoryContent`` entry in ProximaDB."""
+        text = self._content_to_text(content)
+        if not text:
+            return
+        metadata = dict(getattr(content, "metadata", None) or {})
+        record = record_payload(
+            record_id=str(uuid.uuid4()),
+            vector=self._embedding_fn(text),
+            text=text,
+            metadata=metadata,
+        )
+        insert_records(self._client, self._collection_name, [record])
+
+    async def query(
+        self,
+        query: Any,
+        cancellation_token: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Retrieve the most relevant stored memories for ``query``.
+
+        Returns a ``MemoryQueryResult`` of ``MemoryContent`` entries.
+        """
+        text = self._content_to_text(query)
+        if not text:
+            return _MemoryQueryResult(results=[])
+
+        top_k = int(kwargs.get("top_k", self._top_k))
+        search_results = self._client.search(
+            self._collection_name,
+            vector=self._embedding_fn(text),
+            top_k=top_k,
+        )
+
+        results = []
+        for r in search_results:
+            metadata = dict(getattr(r, "metadata", None) or {})
+            content_text = getattr(r, "source", None) or metadata.pop(
+                self._text_key, ""
+            )
+            metadata.setdefault("score", getattr(r, "score", None))
+            metadata.setdefault("id", getattr(r, "id", None))
+            results.append(
+                _MemoryContent(
+                    content=content_text,
+                    mime_type=_MemoryMimeType.TEXT,
+                    metadata=metadata,
+                )
+            )
+        return _MemoryQueryResult(results=results)
+
+    async def update_context(self, model_context: Any) -> Any:
+        """Inject retrieved memories into the agent's ``model_context``.
+
+        Queries using the most recent message text and, if any memories are
+        found, appends a ``SystemMessage`` summarising them — mirroring the
+        behaviour of AutoGen's built-in memory implementations.
+        """
+        messages = await model_context.get_messages()
+        if not messages:
+            return _UpdateContextResult(memories=_MemoryQueryResult(results=[]))
+
+        last_text = self._content_to_text(getattr(messages[-1], "content", ""))
+        query_result = await self.query(last_text)
+
+        if query_result.results:
+            from autogen_core.models import SystemMessage
+
+            snippets = "\n".join(
+                f"{i}. {str(m.content)}" for i, m in enumerate(query_result.results, 1)
+            )
+            await model_context.add_message(
+                SystemMessage(
+                    content=(
+                        "Relevant memory content (in order of relevance):\n"
+                        f"{snippets}"
+                    )
+                )
+            )
+        return _UpdateContextResult(memories=query_result)
+
+    async def clear(self) -> None:
+        """Clear all entries by dropping and recreating the collection."""
+        try:
+            self._client.delete_collection(self._collection_name)
+        except Exception:
+            pass
+
+    async def close(self) -> None:
+        """No persistent resources to release (the client is owned by the caller)."""
+        return None
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        """Coerce a ``MemoryContent``/str/other into plain query text."""
+        if isinstance(content, str):
+            return content
+        inner = getattr(content, "content", content)
+        return inner if isinstance(inner, str) else str(inner)
