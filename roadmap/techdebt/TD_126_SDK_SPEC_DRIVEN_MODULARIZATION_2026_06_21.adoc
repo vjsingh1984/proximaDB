@@ -456,6 +456,35 @@ promoting any concern to a genuinely separate distribution (`proximadb-chunking`
 ====
 
 [NOTE]
+.Embedding-based semantic chunking shipped (2026-06-22) — `SemanticEmbeddingStrategy` (DONE)
+====
+The previously-deferred *true embedding-based* semantic chunking mode is now implemented as a new
+`SemanticEmbeddingStrategy` (`ChunkingStrategy.SEMANTIC_EMBEDDING`, value `"semantic_embedding"`),
+added *alongside* the existing structural/regex `SemanticStrategy` (both kept — different value).
+Algorithm follows LlamaIndex's `SemanticSplitterNodeParser`: split into sentences (reusing
+`SentenceStrategy._split_into_sentences` — no new dep), embed sentences in a single *batched* call,
+compute cosine distance between consecutive `buffer_size`-windowed sentence groups, and place a
+breakpoint wherever the distance exceeds the `breakpoint_percentile_threshold` (default 95th
+percentile); groups become `TextChunk`s under the existing `min_chunk_size`/`max_chunk_size`
+guardrails.
+
+*Provider-injection seam.* The embedding provider is *injected* via new `ChunkingConfig` fields
+(`embedding_provider`, `buffer_size`, `breakpoint_percentile_threshold`). It accepts either a
+`core.BaseEmbeddingProvider`-style object (batch `embed`/`encode`) or a plain
+`Callable[[list[str]], list[list[float]]]`. *Lazy boundary intact:* `proximadb_sdk.embedding_providers`
+is NOT imported at module top — the new strategy module pulls only `numpy` (core dep) + the
+sentence splitter, so `import proximadb_sdk` / `import proximadb_sdk.chunking_strategies` stay
+free of sentence-transformers. Selecting the strategy without a provider raises an actionable
+`ValueError` naming the `embedding_provider` field and the `proximadb[embeddings]` extra — no
+silent fallback. Registered in `ChunkingStrategyFactory`, the enum, `chunking_strategies.__init__`,
+and threaded through `TextChunker._initialize_strategy`. Deterministic unit tests
+(`tests/unit/test_semantic_embedding_chunking.py`) use a stub provider (no model download): clean
+topic-shift split, single-topic no-spurious-break, empty/1-sentence, missing-provider error,
+batched-embedding assertion, plain-callable acceptance, max-size guardrail, and a subprocess
+lazy-boundary check.
+====
+
+[NOTE]
 .Remaining-ops re-base + transport-gen-coverage closeout (2026-06-22) — Go / TS / Rust / Python
 ====
 The Phase-2/4 PRs re-based each SDK's *core* ops (collection / record / search / query) onto the

@@ -10,6 +10,7 @@ from .fixed_size import FixedSizeStrategy
 from .paragraph import ParagraphStrategy
 from .recursive import RecursiveStrategy
 from .semantic import SemanticStrategy
+from .semantic_embedding import SemanticEmbeddingStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy
 
@@ -23,6 +24,7 @@ class ChunkingStrategyFactory:
         ChunkingStrategy.SENTENCE: SentenceStrategy,
         ChunkingStrategy.PARAGRAPH: ParagraphStrategy,
         ChunkingStrategy.SEMANTIC: SemanticStrategy,
+        ChunkingStrategy.SEMANTIC_EMBEDDING: SemanticEmbeddingStrategy,
         ChunkingStrategy.RECURSIVE: RecursiveStrategy,
         ChunkingStrategy.FIXED_SIZE: FixedSizeStrategy,
         ChunkingStrategy.CODE: CodeChunkingStrategy,
