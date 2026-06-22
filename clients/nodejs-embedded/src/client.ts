@@ -524,24 +524,176 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
   /**
    * Delete a graph
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: DELETE /api/v2/graphs/{graph_id}
    * OpenAPI operationId: deleteGraph
    */
   async deleteGraph(name: string): Promise<void> {
-    const requestUrl = this.config.url + "/api/v2/graphs/" + name;
-    await this.delete<unknown>(requestUrl);
+    await this.gen.DELETE("/api/v2/graphs/{graph_id}", {
+      params: { path: { graph_id: name } },
+    });
   }
 
   /**
    * List all graphs
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: GET /api/v2/graphs
    * OpenAPI operationId: listGraphs
    */
   async listGraphs(): Promise<GraphInfo[]> {
-    const requestUrl = this.config.url + "/api/v2/graphs";
-    const response = await this.get<{ graphs: GraphInfo[] }>(requestUrl);
-    return response.graphs;
+    const { data } = await this.gen.GET("/api/v2/graphs", {});
+    return ((data?.graphs ?? []) as unknown[]) as GraphInfo[];
+  }
+
+  // =========================================================================
+  // Typed transport for graph ops (TD-126 Phase 4)
+  //
+  // Seam methods routing the graph builders' / handle's wire calls through the
+  // generated typed client, mirroring the core collection / record / search
+  // seams above. The public graph API (graph.ts builders + handle) is
+  // unchanged; only the wire dispatch moves off hand-built URL strings.
+  // =========================================================================
+
+  /**
+   * Create a graph collection.
+   * Wire endpoint: POST /api/v2/graphs (createGraph)
+   */
+  async createGraphRequest(body: Record<string, unknown>): Promise<unknown> {
+    const { data } = await this.gen.POST("/api/v2/graphs", {
+      body: body as never,
+    });
+    return data;
+  }
+
+  /**
+   * Get a graph collection by id.
+   * Wire endpoint: GET /api/v2/graphs/{graph_id} (getGraph)
+   */
+  async getGraphRequest(graphId: string): Promise<unknown> {
+    const { data } = await this.gen.GET("/api/v2/graphs/{graph_id}", {
+      params: { path: { graph_id: graphId } },
+    });
+    return data;
+  }
+
+  /**
+   * Get graph statistics.
+   * Wire endpoint: GET /api/v2/graphs/{graph_id}/stats (getGraphStats)
+   */
+  async getGraphStatsRequest(graphId: string): Promise<unknown> {
+    const { data } = await this.gen.GET("/api/v2/graphs/{graph_id}/stats", {
+      params: { path: { graph_id: graphId } },
+    });
+    return data;
+  }
+
+  /**
+   * Create a node in a graph.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/nodes (createNode)
+   */
+  async createNodeRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST("/api/v2/graphs/{graph_id}/nodes", {
+      params: { path: { graph_id: graphId } },
+      body: body as never,
+    });
+    return data;
+  }
+
+  /**
+   * Create multiple nodes in a single call.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/nodes/batch (batchCreateNodes)
+   */
+  async batchCreateNodesRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/graphs/{graph_id}/nodes/batch",
+      {
+        params: { path: { graph_id: graphId } },
+        body: body as never,
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Get a node by id.
+   * Wire endpoint: GET /api/v2/graphs/{graph_id}/nodes/{node_id} (getNode)
+   */
+  async getNodeRequest(graphId: string, nodeId: string): Promise<unknown> {
+    const { data } = await this.gen.GET(
+      "/api/v2/graphs/{graph_id}/nodes/{node_id}",
+      {
+        params: { path: { graph_id: graphId, node_id: nodeId } },
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Delete a node by id.
+   * Wire endpoint: DELETE /api/v2/graphs/{graph_id}/nodes/{node_id} (deleteNode)
+   */
+  async deleteNodeRequest(graphId: string, nodeId: string): Promise<void> {
+    await this.gen.DELETE("/api/v2/graphs/{graph_id}/nodes/{node_id}", {
+      params: { path: { graph_id: graphId, node_id: nodeId } },
+    });
+  }
+
+  /**
+   * Create an edge in a graph.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/edges (createEdge)
+   */
+  async createEdgeRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST("/api/v2/graphs/{graph_id}/edges", {
+      params: { path: { graph_id: graphId } },
+      body: body as never,
+    });
+    return data;
+  }
+
+  /**
+   * Create multiple edges in a single call.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/edges/batch (batchCreateEdges)
+   */
+  async batchCreateEdgesRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/graphs/{graph_id}/edges/batch",
+      {
+        params: { path: { graph_id: graphId } },
+        body: body as never,
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Traverse a graph from a start node.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/traverse (traverseGraph)
+   */
+  async traverseGraphRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/graphs/{graph_id}/traverse",
+      {
+        params: { path: { graph_id: graphId } },
+        body: body as never,
+      },
+    );
+    return data;
   }
 
   // =========================================================================
@@ -550,32 +702,38 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
 
   /**
    * Check if the server is healthy
+   *
+   * Routed through the generated typed transport (TD-126 Phase 4).
+   * Wire endpoint: GET /health
+   * OpenAPI operationId: getHealth
    */
   async health(): Promise<HealthStatus> {
-    const requestUrl = this.config.url + "/health";
-    return await this.get<HealthStatus>(requestUrl);
+    const { data } = await this.gen.GET("/health", {});
+    return data as unknown as HealthStatus;
   }
 
   /**
    * Kubernetes-style liveness probe
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: GET /health/live
    * OpenAPI operationId: getLiveness
    */
   async healthLive(): Promise<ProbeResponse> {
-    const requestUrl = this.config.url + "/health/live";
-    return await this.get<ProbeResponse>(requestUrl);
+    const { data } = await this.gen.GET("/health/live", {});
+    return data as unknown as ProbeResponse;
   }
 
   /**
    * Kubernetes-style readiness probe
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: GET /health/ready
    * OpenAPI operationId: getReadiness
    */
   async healthReady(): Promise<ProbeResponse> {
-    const requestUrl = this.config.url + "/health/ready";
-    return await this.get<ProbeResponse>(requestUrl);
+    const { data } = await this.gen.GET("/health/ready", {});
+    return data as unknown as ProbeResponse;
   }
 
   /**
