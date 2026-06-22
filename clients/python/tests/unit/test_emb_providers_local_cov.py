@@ -236,6 +236,18 @@ def test_e5_query_prefix_is_distinct_from_bge():
     assert e5_instructed == "query: cats"
 
 
+def test_e5_applies_passage_prefix_to_documents():
+    """E5 REQUIRES a "passage: " prefix on documents (asymmetric query/passage
+    training). The generic InstructionMixin leaves passages unprefixed; E5
+    overrides embed_passages so recall does not silently degrade."""
+    e5 = e5_mod.E5Provider()
+    e5.embed_passages(["doc one", "doc two"])
+    assert e5._model.encode_calls[-1]["texts"] == [
+        "passage: doc one",
+        "passage: doc two",
+    ]
+
+
 def test_non_instruction_provider_query_is_plain():
     """SentenceTransformerProvider has no InstructionMixin, so embed exists but
     there is no embed_query; embedding text passes through unchanged."""

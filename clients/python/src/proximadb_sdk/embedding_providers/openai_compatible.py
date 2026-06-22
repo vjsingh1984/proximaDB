@@ -1,204 +1,170 @@
 """
 OpenAI-compatible embedding provider
 
-Supports any OpenAI-compatible API including local models
+Supports any OpenAI-compatible ``/embeddings`` endpoint, including local models
 served by vLLM, Ollama, LocalAI, etc.
 """
 
 import logging
 import os
-from urllib.parse import urljoin
+from typing import Any
 
 import numpy as np
 import requests
 
-from .base import EmbeddingConfig, EmbeddingProvider
+from .core.base import BaseEmbeddingProvider
+from .core.config import ModelMetadata, ProviderConfig
+from .core.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
 
+OPENAI_COMPATIBLE_MODELS = {
+    "nomic-embed-text": ModelMetadata(
+        name="nomic-embed-text",
+        dimension=768,
+        max_length=8192,
+        provider_type="api",
+        languages="en",
+        description="Free local Ollama embedding model",
+        use_case="Local OpenAI-compatible inference (Ollama)",
+    ),
+    "all-minilm": ModelMetadata(
+        name="all-minilm",
+        dimension=384,
+        max_length=512,
+        provider_type="api",
+        languages="en",
+        description="Lightweight local model",
+        use_case="Local OpenAI-compatible inference",
+    ),
+    "mxbai-embed-large": ModelMetadata(
+        name="mxbai-embed-large",
+        dimension=1024,
+        max_length=512,
+        provider_type="api",
+        languages="en",
+        description="Higher-quality local model",
+        use_case="Local OpenAI-compatible inference",
+    ),
+}
 
-class OpenAICompatibleProvider(EmbeddingProvider):
+_MODEL_DIMENSIONS = {
+    "text-embedding-ada-002": 1536,
+    "text-embedding-3-small": 1536,
+    "text-embedding-3-large": 3072,
+    "nomic-embed-text": 768,
+    "all-minilm": 384,
+    "mxbai-embed-large": 1024,
+    "BAAI/bge-base-en-v1.5": 768,
+    "BAAI/bge-small-en-v1.5": 384,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+}
+
+
+def _embeddings_url(api_base: str) -> str:
+    """Join the ``/embeddings`` path onto an API base WITHOUT dropping a path
+    segment such as ``/v1``.
+
+    ``urljoin("http://x/v1", "/embeddings")`` returns ``http://x/embeddings`` —
+    the leading slash makes it absolute and discards ``/v1``. We instead append
+    to the (slash-normalized) base.
     """
-    Embedding provider for OpenAI-compatible APIs
+    return api_base.rstrip("/") + "/embeddings"
 
-    This provider works with:
-    - Local models served by vLLM, Ollama, LocalAI
-    - OpenAI API (requires API key)
-    - Any OpenAI-compatible endpoint
 
-    For truly free usage, use with local models like:
-    - Ollama with nomic-embed-text, all-minilm, etc.
-    - vLLM with any HuggingFace embedding model
-    - LocalAI with BERT, sentence-transformers models
+@ProviderRegistry.register(
+    name="openai-compatible",
+    models=OPENAI_COMPATIBLE_MODELS,
+    aliases=["ollama", "vllm", "localai"],
+    description="Any OpenAI-compatible /embeddings endpoint (Ollama, vLLM, LocalAI)",
+)
+class OpenAICompatibleProvider(BaseEmbeddingProvider):
+    """
+    Embedding provider for OpenAI-compatible REST endpoints.
+
+    Works with local models served by vLLM, Ollama, LocalAI, or any
+    OpenAI-compatible ``/embeddings`` endpoint.
+
+    Optional ``extra`` parameters:
+    - ``api_base``: base URL (default ``http://localhost:11434/v1`` for Ollama;
+      also honours the ``OPENAI_API_BASE`` env var)
+    - ``api_key``: bearer token (falls back to ``OPENAI_API_KEY``; not needed
+      for local models)
+    - ``timeout``: per-request timeout in seconds (default 30.0)
     """
 
-    # Known model dimensions for common models
-    MODEL_DIMENSIONS = {
-        # OpenAI models (require API key)
-        "text-embedding-ada-002": 1536,
-        "text-embedding-3-small": 1536,
-        "text-embedding-3-large": 3072,
-        # Common Ollama models (free, local)
-        "nomic-embed-text": 768,
-        "all-minilm": 384,
-        "mxbai-embed-large": 1024,
-        # Common vLLM/LocalAI models (free, local)
-        "BAAI/bge-base-en-v1.5": 768,
-        "BAAI/bge-small-en-v1.5": 384,
-        "sentence-transformers/all-MiniLM-L6-v2": 384,
-    }
-
-    def _get_default_config(self) -> EmbeddingConfig:
-        """Get default configuration"""
-        return EmbeddingConfig(
-            model_name="nomic-embed-text",  # Free Ollama model
-            dimension=768,
+    def default_config(self) -> ProviderConfig:
+        return ProviderConfig(
+            model=OPENAI_COMPATIBLE_MODELS["nomic-embed-text"],
             batch_size=100,
             normalize=True,
-            cache_embeddings=True,
-            device=None,
-            extra_params={
+            extra={
                 "api_base": "http://localhost:11434/v1",  # Ollama default
-                "api_key": None,  # Not needed for local models
+                "api_key": None,
                 "timeout": 30.0,
-                "max_retries": 3,
             },
         )
 
-    def _initialize(self) -> None:
-        """Initialize the OpenAI-compatible client"""
-        try:
-            # Get API configuration
-            self.api_base = self.config.extra_params.get("api_base") or os.getenv(
-                "OPENAI_API_BASE", "http://localhost:11434/v1"
-            )
-            self.api_key = self.config.extra_params.get("api_key") or os.getenv(
-                "OPENAI_API_KEY", ""
-            )
+    def _load_model(self) -> Any:
+        """Resolve connection settings; there is no in-process model to load."""
+        extra = self.config.extra
+        self.api_base = extra.get("api_base") or os.getenv(
+            "OPENAI_API_BASE", "http://localhost:11434/v1"
+        )
+        self.api_key = extra.get("api_key") or os.getenv("OPENAI_API_KEY", "")
+        logger.info(
+            "Initialized OpenAI-compatible provider with model %s at %s",
+            self.config.model.name,
+            self.api_base,
+        )
+        return self.api_base
 
-            # Update dimension if known
-            if self.config.model_name in self.MODEL_DIMENSIONS:
-                self.config.dimension = self.MODEL_DIMENSIONS[self.config.model_name]
-
-            # Test connection with a simple embedding
-            self._test_connection()
-
-            self._available = True
-            logger.info(
-                f"Initialized OpenAI-compatible provider with model: {self.config.model_name} "
-                f"at {self.api_base}"
-            )
-
-        except Exception as e:
-            self._available = False
-            logger.error(f"Failed to initialize OpenAI-compatible provider: {e}")
-
-    def _test_connection(self):
-        """Test the connection with a simple embedding request"""
+    def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
+        return headers
 
-        data = {
-            "model": self.config.model_name,
-            "input": ["test"],
-        }
-
-        response = requests.post(
-            urljoin(self.api_base, "/embeddings"),
-            json=data,
-            headers=headers,
-            timeout=self.config.extra_params.get("timeout", 30.0),
-        )
-
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"API test failed: {response.status_code} - {response.text}"
-            )
-
-        # Update dimension from response
-        result = response.json()
-        if "data" in result and len(result["data"]) > 0:
-            embedding = result["data"][0]["embedding"]
-            self.config.dimension = len(embedding)
-
-    def embed_texts(self, texts: list[str]) -> np.ndarray:
-        """
-        Generate embeddings for multiple texts
-
-        Args:
-            texts: List of texts to embed
-
-        Returns:
-            Array of embeddings with shape (len(texts), dimension)
-        """
-        if not self._available:
-            raise RuntimeError("OpenAI-compatible provider not available")
-
+    def embed(self, texts: list[str]) -> np.ndarray:
         if not texts:
             return np.array([])
 
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+        self.ensure_initialized()
 
-        all_embeddings = []
+        url = _embeddings_url(self.api_base)
+        timeout = self.config.extra.get("timeout", 30.0)
+        all_embeddings: list[list[float]] = []
 
-        # Process in batches
         for i in range(0, len(texts), self.config.batch_size):
             batch = texts[i : i + self.config.batch_size]
-
-            data = {
-                "model": self.config.model_name,
-                "input": batch,
-            }
-
-            # Add encoding format if normalizing
-            if self.config.normalize:
-                data["encoding_format"] = "float"
+            data = {"model": self.config.model.name, "input": batch}
 
             response = requests.post(
-                urljoin(self.api_base, "/embeddings"),
-                json=data,
-                headers=headers,
-                timeout=self.config.extra_params.get("timeout", 30.0),
+                url, json=data, headers=self._headers(), timeout=timeout
             )
-
             if response.status_code != 200:
                 raise RuntimeError(
-                    f"Embedding request failed: {response.status_code} - {response.text}"
+                    f"Embedding request failed: {response.status_code} - "
+                    f"{response.text}"
                 )
 
             result = response.json()
+            ordered = sorted(result["data"], key=lambda item: item.get("index", 0))
+            all_embeddings.extend(item["embedding"] for item in ordered)
 
-            # Extract embeddings
-            batch_embeddings = [item["embedding"] for item in result["data"]]
-            all_embeddings.extend(batch_embeddings)
+        embeddings = np.array(all_embeddings, dtype=np.float32)
 
-        embeddings = np.array(all_embeddings)
-
-        # Normalize if requested and not already done by API
-        if self.config.normalize and not data.get("encoding_format"):
+        if self.config.normalize and embeddings.size:
             norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+            norms[norms == 0] = 1.0
             embeddings = embeddings / norms
 
         return embeddings
 
-    @property
-    def dimension(self) -> int:
-        """Get embedding dimension"""
-        return self.config.dimension
-
-    @property
-    def model_name(self) -> str:
-        """Get model name"""
-        return self.config.model_name
-
-    def is_available(self) -> bool:
-        """Check if provider is available"""
-        if self._available is None:
-            self._initialize()
-        return self._available
+    def get_dimension(self) -> int:
+        return _MODEL_DIMENSIONS.get(
+            self.config.model.name, self.config.model.dimension
+        )
 
     @classmethod
     def create_ollama_provider(
@@ -206,27 +172,20 @@ class OpenAICompatibleProvider(EmbeddingProvider):
         model_name: str = "nomic-embed-text",
         host: str = "localhost",
         port: int = 11434,
-        **kwargs,
+        **extra: Any,
     ) -> "OpenAICompatibleProvider":
-        """
-        Create provider configured for Ollama
-
-        Args:
-            model_name: Ollama model name
-            host: Ollama host
-            port: Ollama port
-            **kwargs: Additional config parameters
-
-        Returns:
-            Configured provider for Ollama
-        """
-        config = EmbeddingConfig(
-            model_name=model_name,
-            dimension=cls.MODEL_DIMENSIONS.get(model_name, 768),
-            extra_params={
+        """Create a provider configured for an Ollama endpoint."""
+        model = OPENAI_COMPATIBLE_MODELS.get(model_name) or ModelMetadata(
+            name=model_name,
+            dimension=_MODEL_DIMENSIONS.get(model_name, 768),
+            provider_type="api",
+        )
+        config = ProviderConfig(
+            model=model,
+            extra={
                 "api_base": f"http://{host}:{port}/v1",
                 "api_key": None,
-                **kwargs,
+                **extra,
             },
         )
         return cls(config)
@@ -237,27 +196,20 @@ class OpenAICompatibleProvider(EmbeddingProvider):
         model_name: str = "BAAI/bge-base-en-v1.5",
         host: str = "localhost",
         port: int = 8000,
-        **kwargs,
+        **extra: Any,
     ) -> "OpenAICompatibleProvider":
-        """
-        Create provider configured for vLLM
-
-        Args:
-            model_name: HuggingFace model name
-            host: vLLM host
-            port: vLLM port
-            **kwargs: Additional config parameters
-
-        Returns:
-            Configured provider for vLLM
-        """
-        config = EmbeddingConfig(
-            model_name=model_name,
-            dimension=cls.MODEL_DIMENSIONS.get(model_name, 768),
-            extra_params={
+        """Create a provider configured for a vLLM endpoint."""
+        model = OPENAI_COMPATIBLE_MODELS.get(model_name) or ModelMetadata(
+            name=model_name,
+            dimension=_MODEL_DIMENSIONS.get(model_name, 768),
+            provider_type="api",
+        )
+        config = ProviderConfig(
+            model=model,
+            extra={
                 "api_base": f"http://{host}:{port}/v1",
                 "api_key": None,
-                **kwargs,
+                **extra,
             },
         )
         return cls(config)
