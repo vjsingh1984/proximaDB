@@ -628,11 +628,33 @@ async fn test_list_collections() {
                 .and_then(|v| v.as_array())
                 .unwrap_or(&empty_vec);
 
-            let found = collections.iter().any(|c| {
+            let our_collection = collections.iter().find(|c| {
                 c.get("name").and_then(|v| v.as_str()) == Some(&harness.test_collection_name)
             });
 
-            assert!(found, "Created collection should be in the list");
+            assert!(
+                our_collection.is_some(),
+                "Created collection should be in the list (matched by user-supplied name, not UUID id)"
+            );
+
+            // Regression (list_collections name vs UUID): the summary `name`
+            // MUST be the user-supplied collection name, not the UUID id.
+            let coll = our_collection.unwrap();
+            let listed_name = coll.get("name").and_then(|v| v.as_str()).unwrap_or("");
+            let listed_id = coll
+                .get("collection_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            assert_eq!(
+                listed_name, harness.test_collection_name,
+                "Listed name should equal the user-supplied name, got '{}'",
+                listed_name
+            );
+            assert_ne!(
+                listed_name, listed_id,
+                "Listed name must not be the UUID collection_id ('{}')",
+                listed_id
+            );
 
             println!("test_list_collections PASSED");
         }
@@ -753,6 +775,13 @@ async fn test_get_collection_details() {
             assert!(
                 response.get("name").is_some(),
                 "Response should contain name"
+            );
+            // Regression (get_collection name vs UUID): `name` must be the
+            // user-supplied collection name, not the UUID id.
+            assert_eq!(
+                response.get("name").and_then(|v| v.as_str()),
+                Some(harness.test_collection_name.as_str()),
+                "Get should return the user-supplied name, not the UUID id"
             );
             assert!(
                 response.get("dimension").is_some(),
