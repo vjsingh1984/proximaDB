@@ -825,15 +825,18 @@ impl GlobalQuantizationCache {
     pub async fn get_or_create_engine(
         &self,
         _collection_id: String,
-    ) -> Arc<super::quantization_engine::UnifiedQuantizationEngine> {
+    ) -> Arc<crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine> {
         // For now, create a simple UnifiedQuantizationEngine with the global cache as codebook store
         // This provides the unified interface expected by the engines
-        Arc::new(super::quantization_engine::UnifiedQuantizationEngine::new(
-            Arc::new(
-                crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+        Arc::new(
+            crate::compute::quantization::quantization_engine::UnifiedQuantizationEngine::new(
+                Arc::new(
+                    crate::compute::distance_computation::engine::UnifiedDistanceCompute::default(),
+                ),
+                Self::global()
+                    as Arc<dyn crate::compute::quantization::quantization_engine::CodebookStore>,
             ),
-            Self::global() as Arc<dyn super::quantization_engine::CodebookStore>,
-        ))
+        )
     }
 
     /// Update collection size for adaptive storage strategy decisions
