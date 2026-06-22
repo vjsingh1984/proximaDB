@@ -4,7 +4,8 @@ pub use proximadb_query::graph_runtime::*;
 #[cfg(test)]
 mod tests {
     use crate::graph::GraphOperationsService;
-    use crate::proto::proximadb_v1::{CreateGraphRequest, Edge, Node as ProtoNode, property_value};
+    use crate::graph::{Edge, Node as ProtoNode, property_value};
+    use crate::proto::proximadb_v1::CreateGraphRequest;
     use proximadb_graph_query::declarative::LoweredGraphQuery as GraphQueryExpr;
     use proximadb_graph_subset::{
         graph_query_row_id, legacy_graph_row_to_node, shape_graph_query_row,
@@ -37,7 +38,7 @@ mod tests {
                     labels: vec!["Person".to_string()],
                     properties: HashMap::from([(
                         "name".to_string(),
-                        crate::proto::proximadb_v1::PropertyValue {
+                        crate::graph::PropertyValue {
                             value: Some(property_value::Value::StringValue("Alice".to_string())),
                         },
                     )]),
@@ -92,7 +93,7 @@ mod tests {
                     labels: vec!["Person".to_string()],
                     properties: HashMap::from([(
                         "name".to_string(),
-                        crate::proto::proximadb_v1::PropertyValue {
+                        crate::graph::PropertyValue {
                             value: Some(property_value::Value::StringValue("Bob".to_string())),
                         },
                     )]),

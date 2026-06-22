@@ -454,12 +454,12 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .create_node(&req.graph_id, node)
+            .create_node(&req.graph_id, node.into())
             .await
         {
             Ok(created_node) => {
                 info!("Successfully created node via gRPC: {}", created_node.id);
-                Ok(Response::new((*created_node).clone()))
+                Ok(Response::new((*created_node).clone().into()))
             }
             Err(err) => {
                 error!("Failed to create node via gRPC: {}", err);
@@ -484,7 +484,7 @@ impl GraphServiceImpl {
         {
             Ok(Some(node)) => {
                 info!("Successfully retrieved node via gRPC: {}", req.node_id);
-                Ok(Response::new((*node).clone()))
+                Ok(Response::new((*node).clone().into()))
             }
             Ok(None) => {
                 warn!("Node not found via gRPC: {}", req.node_id);
@@ -518,12 +518,12 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .update_node(&req.graph_id, node)
+            .update_node(&req.graph_id, node.into())
             .await
         {
             Ok(updated_node) => {
                 info!("Successfully updated node via gRPC: {}", updated_node.id);
-                Ok(Response::new((*updated_node).clone()))
+                Ok(Response::new((*updated_node).clone().into()))
             }
             Err(err) => {
                 error!("Failed to update node via gRPC: {}", err);
@@ -551,7 +551,7 @@ impl GraphServiceImpl {
         {
             Ok(Some(deleted_node)) => {
                 info!("Successfully deleted node via gRPC: {}", req.node_id);
-                Ok(Response::new((*deleted_node).clone()))
+                Ok(Response::new((*deleted_node).clone().into()))
             }
             Ok(None) => {
                 warn!("Node not found for deletion via gRPC: {}", req.node_id);
@@ -585,12 +585,12 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .create_edge(&req.graph_id, edge)
+            .create_edge(&req.graph_id, edge.into())
             .await
         {
             Ok(created_edge) => {
                 info!("Successfully created edge via gRPC: {}", created_edge.id);
-                Ok(Response::new((*created_edge).clone()))
+                Ok(Response::new((*created_edge).clone().into()))
             }
             Err(err) => {
                 error!("Failed to create edge via gRPC: {}", err);
@@ -615,7 +615,7 @@ impl GraphServiceImpl {
         {
             Ok(Some(edge)) => {
                 info!("Successfully retrieved edge via gRPC: {}", req.edge_id);
-                Ok(Response::new((*edge).clone()))
+                Ok(Response::new((*edge).clone().into()))
             }
             Ok(None) => {
                 warn!("Edge not found via gRPC: {}", req.edge_id);
@@ -649,12 +649,12 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .update_edge(&req.graph_id, edge)
+            .update_edge(&req.graph_id, edge.into())
             .await
         {
             Ok(updated_edge) => {
                 info!("Successfully updated edge via gRPC: {}", updated_edge.id);
-                Ok(Response::new((*updated_edge).clone()))
+                Ok(Response::new((*updated_edge).clone().into()))
             }
             Err(err) => {
                 error!("Failed to update edge via gRPC: {}", err);
@@ -682,7 +682,7 @@ impl GraphServiceImpl {
         {
             Ok(Some(deleted_edge)) => {
                 info!("Successfully deleted edge via gRPC: {}", req.edge_id);
-                Ok(Response::new((*deleted_edge).clone()))
+                Ok(Response::new((*deleted_edge).clone().into()))
             }
             Ok(None) => {
                 warn!("Edge not found for deletion via gRPC: {}", req.edge_id);
@@ -720,12 +720,13 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .query_nodes(&query.graph_id, query.clone())
+            .query_nodes(&query.graph_id, query.clone().into())
             .await
         {
             Ok(nodes) => {
                 info!("Successfully queried {} nodes via gRPC", nodes.len());
-                let nodes_vec: Vec<Node> = nodes.into_iter().map(|n| (*n).clone()).collect();
+                let nodes_vec: Vec<crate::proto::proximadb_v1::Node> =
+                    nodes.into_iter().map(|n| (*n).clone().into()).collect();
                 let response =
                     create_query_response_for_nodes(nodes_vec, query.limit, query.offset);
                 Ok(Response::new(response))
@@ -755,12 +756,13 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .query_edges(&query.graph_id, query.clone())
+            .query_edges(&query.graph_id, query.clone().into())
             .await
         {
             Ok(edges) => {
                 info!("Successfully queried {} edges via gRPC", edges.len());
-                let edges_vec: Vec<Edge> = edges.into_iter().map(|e| (*e).clone()).collect();
+                let edges_vec: Vec<crate::proto::proximadb_v1::Edge> =
+                    edges.into_iter().map(|e| (*e).clone().into()).collect();
                 let response =
                     create_query_response_for_edges(edges_vec, query.limit, query.offset);
                 Ok(Response::new(response))
@@ -795,7 +797,8 @@ impl GraphServiceImpl {
                     neighbors.len(),
                     req.node_id
                 );
-                let nodes_vec: Vec<Node> = neighbors.into_iter().map(|n| (*n).clone()).collect();
+                let nodes_vec: Vec<crate::proto::proximadb_v1::Node> =
+                    neighbors.into_iter().map(|n| (*n).clone().into()).collect();
                 let response = create_batch_response_for_nodes(nodes_vec, true, None);
                 Ok(Response::new(response))
             }
@@ -824,7 +827,7 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .traverse(&req.graph_id, req.clone())
+            .traverse(&req.graph_id, req.clone().into())
             .await
         {
             Ok(mut response) => {
@@ -835,7 +838,7 @@ impl GraphServiceImpl {
                 {
                     stats.execution_time_microseconds = start_time.elapsed().as_micros() as u64;
                 }
-                Ok(Response::new(response))
+                Ok(Response::new(response.into()))
             }
             Err(err) => {
                 error!("Failed to traverse graph via gRPC: {}", err);
@@ -929,7 +932,7 @@ impl GraphServiceImpl {
         {
             Ok(stats) => {
                 info!("Successfully retrieved graph statistics via gRPC");
-                Ok(Response::new(stats))
+                Ok(Response::new(stats.into()))
             }
             Err(err) => {
                 error!("Failed to get graph statistics via gRPC: {}", err);
@@ -953,12 +956,16 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .batch_create_nodes(&req.graph_id, req.nodes)
+            .batch_create_nodes(
+                &req.graph_id,
+                req.nodes.into_iter().map(Into::into).collect(),
+            )
             .await
         {
             Ok(nodes) => {
                 info!("Successfully batch created {} nodes via gRPC", nodes.len());
-                let nodes_vec: Vec<Node> = nodes.into_iter().map(|n| (*n).clone()).collect();
+                let nodes_vec: Vec<crate::proto::proximadb_v1::Node> =
+                    nodes.into_iter().map(|n| (*n).clone().into()).collect();
                 let response = create_batch_response_for_nodes(nodes_vec, true, None);
                 Ok(Response::new(response))
             }
@@ -984,12 +991,16 @@ impl GraphServiceImpl {
         match self
             .request_handlers
             .graph_operations_service
-            .batch_create_edges(&req.graph_id, req.edges)
+            .batch_create_edges(
+                &req.graph_id,
+                req.edges.into_iter().map(Into::into).collect(),
+            )
             .await
         {
             Ok(edges) => {
                 info!("Successfully batch created {} edges via gRPC", edges.len());
-                let edges_vec: Vec<Edge> = edges.into_iter().map(|e| (*e).clone()).collect();
+                let edges_vec: Vec<crate::proto::proximadb_v1::Edge> =
+                    edges.into_iter().map(|e| (*e).clone().into()).collect();
                 let response = create_batch_response_for_edges(edges_vec, true, None);
                 Ok(Response::new(response))
             }

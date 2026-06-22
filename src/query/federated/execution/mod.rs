@@ -33,9 +33,10 @@ use super::optimizer::{
     PredicateValue, VectorSource,
 };
 use crate::core::search::SearchParams;
+use crate::graph::{Node, PropertyValue, property_value};
 use crate::proto::proximadb_v1::{
-    Collection, DocFilterCondition, DocFilterOperator, DocumentFilter, Node, PropertyValue,
-    SqlObject, SqlValue, property_value, sql_value,
+    Collection, DocFilterCondition, DocFilterOperator, DocumentFilter, SqlObject, SqlValue,
+    sql_value,
 };
 use crate::query::graph_lowering::lower_supported_graph_query_expr;
 use crate::query::graph_runtime::execute_graph_query_expr_with_start_nodes;
@@ -963,11 +964,16 @@ impl FederatedExecutor {
                 )
                 .await?;
                 if graph_query.uses_legacy_node_rows {
+                    // `legacy_graph_row_to_node` (proto-typed graph subset) yields
+                    // proto nodes; the batch builder speaks the neutral model.
                     let nodes = executed
                         .rows
                         .iter()
-                        .map(legacy_graph_row_to_node)
-                        .collect::<Result<Vec<_>>>()?;
+                        .map(|row| {
+                            legacy_graph_row_to_node(row)
+                                .map(|n| std::sync::Arc::new((*n).clone().into()))
+                        })
+                        .collect::<Result<Vec<std::sync::Arc<Node>>>>()?;
 
                     if nodes.is_empty() {
                         return Ok(FederatedExecutionResult::empty_with_schema(
@@ -1758,7 +1764,7 @@ impl FederatedExecutor {
     fn property_value_to_vector(value: &PropertyValue) -> Option<Vec<f32>> {
         match value.value.as_ref()? {
             property_value::Value::VectorValue(vector) => {
-                (!vector.values.is_empty()).then(|| vector.values.clone())
+                (!vector.is_empty()).then(|| vector.clone())
             }
             property_value::Value::ArrayValue(array) => array
                 .values

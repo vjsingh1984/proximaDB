@@ -78,7 +78,7 @@ pub enum GraphOperation {
 pub struct NodeUpdate {
     pub labels: Option<Vec<String>>,
     pub properties: Option<std::collections::HashMap<String, crate::graph::PropertyValue>>,
-    pub embedding: Option<crate::proto::proximadb_v1::EmbeddingVersion>,
+    pub embedding: Option<crate::graph::EmbeddingVersion>,
 }
 
 /// Edge update structure

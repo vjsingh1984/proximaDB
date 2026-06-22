@@ -544,8 +544,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Convert to proto Node for storage
-    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Node {
-        use crate::proto::proximadb_v1::{Node, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> crate::graph::Node {
+        use crate::graph::{Node, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -571,8 +571,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Create from proto Node
-    pub fn from_proto(node: &crate::proto::proximadb_v1::Node) -> Self {
-        use crate::proto::proximadb_v1::property_value::Value;
+    pub fn from_proto(node: &crate::graph::Node) -> Self {
+        use crate::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = node
             .properties
@@ -662,8 +662,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Convert to proto Edge
-    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Edge {
-        use crate::proto::proximadb_v1::{Edge, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> crate::graph::Edge {
+        use crate::graph::{Edge, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -691,8 +691,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Create from proto Edge
-    pub fn from_proto(edge: &crate::proto::proximadb_v1::Edge) -> Self {
-        use crate::proto::proximadb_v1::property_value::Value;
+    pub fn from_proto(edge: &crate::graph::Edge) -> Self {
+        use crate::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = edge
             .properties
@@ -3514,7 +3514,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let node_query = crate::proto::proximadb_v1::NodeQuery {
+            let node_query = crate::graph::NodeQuery {
                 labels,
                 ..Default::default()
             };
@@ -3548,7 +3548,7 @@ impl EmbeddedProximaDB {
             let proto_nodes = graph_service
                 .query_nodes(
                     graph_id,
-                    crate::proto::proximadb_v1::NodeQuery {
+                    crate::graph::NodeQuery {
                         graph_id: graph_id.to_string(),
                         labels: labels.unwrap_or_default(),
                         filters: properties
@@ -3581,7 +3581,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+            let edge_query = crate::graph::EdgeQuery {
                 from_node_id: Some(node_id.to_string()),
                 to_node_id: None,
                 edge_types: edge_types.unwrap_or_default(),
@@ -3612,7 +3612,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+            let edge_query = crate::graph::EdgeQuery {
                 from_node_id: None,
                 to_node_id: Some(node_id.to_string()),
                 edge_types: edge_types.unwrap_or_default(),
@@ -3690,14 +3690,14 @@ impl EmbeddedProximaDB {
                 .graph_service
                 .traverse(
                     graph_id,
-                    crate::proto::proximadb_v1::TraversalRequest {
+                    crate::graph::TraversalRequest {
                         graph_id: graph_id.to_string(),
                         start_node_id: start_node_id.to_string(),
                         max_depth,
                         edge_types: edge_types.unwrap_or_default(),
                         node_labels: Vec::new(),
                         filters: Vec::new(),
-                        algorithm: crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32,
+                        algorithm: crate::graph::TraversalAlgorithm::Bfs as i32,
                         limit,
                         timeout_ms: None,
                         max_frontier: None,
@@ -4785,8 +4785,8 @@ impl EmbeddedProximaDB {
 
     fn property_filters_from_map(
         properties: &std::collections::HashMap<String, String>,
-    ) -> Vec<crate::proto::proximadb_v1::PropertyFilter> {
-        use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+    ) -> Vec<crate::graph::PropertyFilter> {
+        use crate::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
 
         properties
             .iter()
@@ -4794,11 +4794,9 @@ impl EmbeddedProximaDB {
                 key: key.clone(),
                 operator: PropertyFilterOperator::Equals as i32,
                 value: Some(PropertyValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::property_value::Value::StringValue(
-                            value.clone(),
-                        ),
-                    ),
+                    value: Some(crate::graph::model::property_value::Value::StringValue(
+                        value.clone(),
+                    )),
                 }),
             })
             .collect()
@@ -4826,7 +4824,7 @@ impl EmbeddedProximaDB {
     }
 
     fn traversal_response_to_embedded(
-        response: crate::proto::proximadb_v1::TraversalResponse,
+        response: crate::graph::TraversalResponse,
     ) -> EmbeddedGraphTraversalResult {
         let nodes = response
             .nodes
@@ -4841,7 +4839,7 @@ impl EmbeddedProximaDB {
         let paths = response
             .paths
             .into_iter()
-            .map(|path| path.entities.into_iter().map(|entity| entity.id).collect())
+            .map(|path| path.node_ids)
             .collect();
         let stats = response.stats.map(|stats| EmbeddedTraversalStats {
             nodes_visited: stats.nodes_visited,

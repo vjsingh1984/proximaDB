@@ -1282,7 +1282,7 @@ impl Default for OrionGraphEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proto::proximadb_v1::{PropertyValue, property_value};
+    use crate::graph::{PropertyValue, property_value};
 
     #[tokio::test]
     async fn test_orion_engine_creation() {

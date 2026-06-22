@@ -180,11 +180,11 @@ impl super::GraphOperationsService {
     // ===== Validation helpers =====
     pub(super) fn validate_property_value_type(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         schema: &crate::proto::proximadb_v1::PropertySchema,
     ) -> Result<()> {
+        use crate::graph::model::property_value::Value as PV;
         use crate::proto::proximadb_v1::PropertyType as PT;
-        use crate::proto::proximadb_v1::property_value::Value as PV;
         match (schema.r#type, &value.value) {
             (x, Some(PV::StringValue(_))) if x == PT::String as i32 => Ok(()),
             (x, Some(PV::IntValue(_))) if x == PT::Integer as i32 => Ok(()),
@@ -202,7 +202,7 @@ impl super::GraphOperationsService {
 
     pub(super) fn validate_property_constraints(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         constraints: &Vec<crate::proto::proximadb_v1::PropertyConstraint>,
     ) -> Result<()> {
         for c in constraints {
@@ -213,11 +213,11 @@ impl super::GraphOperationsService {
 
     pub(super) fn validate_property_constraint_one(
         key: &str,
-        value: &crate::proto::proximadb_v1::PropertyValue,
+        value: &crate::graph::PropertyValue,
         constraint: &crate::proto::proximadb_v1::PropertyConstraint,
     ) -> Result<()> {
+        use crate::graph::model::property_value::Value as PV;
         use crate::proto::proximadb_v1::property_constraint::Constraint as C;
-        use crate::proto::proximadb_v1::property_value::Value as PV;
         let constraint_type = constraint.constraint.as_ref().ok_or_else(|| {
             ProximaDBError::InvalidInput("Property constraint has no type specified".to_string())
         })?;

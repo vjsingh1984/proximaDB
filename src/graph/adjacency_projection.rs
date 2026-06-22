@@ -36,7 +36,7 @@ use proximadb_graph::record::{CanonicalEdge, CanonicalNode, GraphNodeKey};
 use proximadb_records::{ProximaRecord, ProximaTree, ProximaTreeNode};
 
 use crate::graph::{Edge, Node};
-use crate::proto::proximadb_v1::{PropertyValue, property_value};
+use crate::graph::{PropertyValue, property_value};
 
 /// In-memory adjacency table projection for one graph dataset.
 #[derive(Debug)]
@@ -253,7 +253,7 @@ fn property_value_to_proxima(value: &PropertyValue) -> ProximaValue {
                 .collect(),
         ),
         Some(property_value::Value::VectorValue(vector)) => {
-            ProximaValue::DenseVector(vector.values.clone())
+            ProximaValue::DenseVector(vector.clone())
         }
         None => ProximaValue::Null,
     }

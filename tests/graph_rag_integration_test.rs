@@ -4,7 +4,7 @@ use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::rag::RagPipeline;
 use proximadb::graph::rag::engine_impls::KHopSubgraphBuilder;
 use proximadb::graph::rag::{RagBudget, RagQuery};
-use proximadb::proto::proximadb_v1::{Edge, Node};
+use proximadb::graph::{Edge, Node};
 use std::collections::HashMap;
 use std::sync::Arc;
 

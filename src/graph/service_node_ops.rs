@@ -4,10 +4,10 @@
 //! single-field and multi-field unique constraints for per-graph scopes.
 
 use super::Result;
+use crate::graph::NodeQuery;
 use crate::graph::adjacency_projection::edge_to_canonical_record;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Node, NodeId};
-use crate::proto::proximadb_v1::NodeQuery;
 use proximadb_graph::projection::GraphTopologyProjection;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -55,20 +55,18 @@ impl super::GraphOperationsService {
         label: Option<&str>,
         property_filters: &[(String, String)],
     ) -> Result<Vec<Arc<Node>>> {
-        use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+        use crate::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
 
         // Build property filters
         let filters: Vec<PropertyFilter> = property_filters
             .iter()
             .map(|(key, value)| PropertyFilter {
                 key: key.clone(),
-                operator: PropertyFilterOperator::Equals.into(),
+                operator: PropertyFilterOperator::Equals as i32,
                 value: Some(PropertyValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::property_value::Value::StringValue(
-                            value.clone(),
-                        ),
-                    ),
+                    value: Some(crate::graph::model::property_value::Value::StringValue(
+                        value.clone(),
+                    )),
                 }),
             })
             .collect();
@@ -116,7 +114,7 @@ impl super::GraphOperationsService {
 
         // Use property indexes / ordered indexes for prefiltering
         for filter in &query.filters {
-            use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+            use crate::graph::PropertyFilterOperator as Op;
             match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                 Op::Equals => {
                     // Look up index for this property
@@ -261,7 +259,7 @@ impl super::GraphOperationsService {
                 if !query.filters.is_empty() {
                     let mut pass_all = true;
                     for filter in &query.filters {
-                        use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+                        use crate::graph::PropertyFilterOperator as Op;
                         let prop_val_opt = node.properties.get(&filter.key);
 
                         // Safely get filter value - if missing, filter fails

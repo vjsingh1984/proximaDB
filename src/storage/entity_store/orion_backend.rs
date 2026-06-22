@@ -55,10 +55,11 @@ use std::sync::{Arc, OnceLock};
 
 use super::EntityStore;
 use super::graph_schema::{EntityNodeMapper, RelationEdgeMapper};
-use crate::graph::{GraphOperationsService, Node, PropertyValue};
+use crate::graph::{
+    EdgeQuery, GraphOperationsService, Node, NodeQuery, PropertyValue, property_value,
+};
 use crate::proto::proximadb_v1::{
-    ComparisonOp, EdgeQuery, Entity, LogicalOp, MetadataFilter, NodeQuery, Relation, filter_clause,
-    property_value,
+    ComparisonOp, Entity, LogicalOp, MetadataFilter, Relation, filter_clause,
 };
 use crate::{core::VectorId, index::AxisManager};
 

@@ -63,6 +63,8 @@ pub mod canonical;
 pub mod catapult;
 pub mod engines;
 pub mod merge;
+pub mod model;
+pub mod proto_convert;
 pub mod rag;
 // Generic, engine-agnostic traversal utilities
 pub use engines::generic_traversal;
@@ -102,12 +104,13 @@ pub use canonical::{
     TraversalResults, TraversalStats as CanonicalTraversalStats,
 };
 
-// Export proto types for convenience
-pub use crate::proto::proximadb_v1::{
-    BatchEdgeRequest, BatchNodeRequest, BatchResponse, Edge, EdgeQuery, EdgeTypeStats, GraphPath,
-    GraphStats, LabelStats, Node, NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator,
-    PropertyObject, PropertyValue, TraversalAlgorithm, TraversalRequest, TraversalResponse,
-    TraversalStats, property_value::Value,
+// Neutral, transport-agnostic graph domain types (TD-123 Step 1). The engine and
+// services speak these; wire adapters convert proto <-> these at the boundary.
+pub use model::{
+    Edge, EdgeQuery, EdgeTypeStats, EmbeddingVersion, GraphPath, GraphStats, LabelStats, Node,
+    NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator, PropertyObject,
+    PropertyValue, TraversalAlgorithm, TraversalRequest, TraversalResponse, TraversalStats,
+    property_value, property_value::Value,
 };
 
 use dashmap::DashMap;
@@ -282,7 +285,7 @@ impl GraphMemoryPool {
             // Ordered string index
             if matches!(
                 value.value,
-                Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
+                Some(crate::graph::model::property_value::Value::StringValue(_))
             ) {
                 let map_lock = self
                     .node_property_str_ordered
@@ -296,10 +299,8 @@ impl GraphMemoryPool {
 
             // Numeric index (convert doubles to i64 for indexing)
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                    Some(*d as i64)
-                }
+                Some(crate::graph::model::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::graph::model::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } {
                 let map_lock = self
@@ -334,7 +335,7 @@ impl GraphMemoryPool {
             // Ordered string index (for string values)
             if matches!(
                 value.value,
-                Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
+                Some(crate::graph::model::property_value::Value::StringValue(_))
             ) {
                 let map_lock = self
                     .edge_property_str_ordered
@@ -348,10 +349,8 @@ impl GraphMemoryPool {
 
             // Ordered numeric index (for int/double)
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                    Some(*d as i64)
-                }
+                Some(crate::graph::model::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::graph::model::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } {
                 let map_lock = self
@@ -396,7 +395,7 @@ impl GraphMemoryPool {
             // Remove from ordered string index
             if matches!(
                 value.value,
-                Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
+                Some(crate::graph::model::property_value::Value::StringValue(_))
             ) && let Some(map_lock) = self.node_property_str_ordered.get(key)
             {
                 let mut map = map_lock.write();
@@ -410,10 +409,8 @@ impl GraphMemoryPool {
 
             // Remove from ordered numeric index
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                    Some(*d as i64)
-                }
+                Some(crate::graph::model::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::graph::model::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } && let Some(map_lock) = self.node_property_num_indexes.get(key)
             {
@@ -448,7 +445,7 @@ impl GraphMemoryPool {
             // Remove from ordered string index
             if matches!(
                 value.value,
-                Some(crate::proto::proximadb_v1::property_value::Value::StringValue(_))
+                Some(crate::graph::model::property_value::Value::StringValue(_))
             ) && let Some(map_lock) = self.edge_property_str_ordered.get(key)
             {
                 let mut map = map_lock.write();
@@ -462,10 +459,8 @@ impl GraphMemoryPool {
 
             // Remove from ordered numeric index
             if let Some(num) = match &value.value {
-                Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => Some(*i),
-                Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => {
-                    Some(*d as i64)
-                }
+                Some(crate::graph::model::property_value::Value::IntValue(i)) => Some(*i),
+                Some(crate::graph::model::property_value::Value::DoubleValue(d)) => Some(*d as i64),
                 _ => None,
             } && let Some(map_lock) = self.edge_property_num_indexes.get(key)
             {
@@ -498,22 +493,16 @@ impl Default for GraphMemoryPool {
 /// Convert PropertyValue to string for indexing
 fn property_value_to_string(value: &PropertyValue) -> String {
     match &value.value {
-        Some(crate::proto::proximadb_v1::property_value::Value::StringValue(s)) => s.clone(),
-        Some(crate::proto::proximadb_v1::property_value::Value::IntValue(i)) => i.to_string(),
-        Some(crate::proto::proximadb_v1::property_value::Value::DoubleValue(d)) => d.to_string(),
-        Some(crate::proto::proximadb_v1::property_value::Value::BoolValue(b)) => b.to_string(),
-        Some(crate::proto::proximadb_v1::property_value::Value::BytesValue(b)) => {
+        Some(crate::graph::model::property_value::Value::StringValue(s)) => s.clone(),
+        Some(crate::graph::model::property_value::Value::IntValue(i)) => i.to_string(),
+        Some(crate::graph::model::property_value::Value::DoubleValue(d)) => d.to_string(),
+        Some(crate::graph::model::property_value::Value::BoolValue(b)) => b.to_string(),
+        Some(crate::graph::model::property_value::Value::BytesValue(b)) => {
             format!("bytes:{}", b.len())
         }
-        Some(crate::proto::proximadb_v1::property_value::Value::ArrayValue(_)) => {
-            "array".to_string()
-        }
-        Some(crate::proto::proximadb_v1::property_value::Value::ObjectValue(_)) => {
-            "object".to_string()
-        }
-        Some(crate::proto::proximadb_v1::property_value::Value::VectorValue(_)) => {
-            "vector".to_string()
-        }
+        Some(crate::graph::model::property_value::Value::ArrayValue(_)) => "array".to_string(),
+        Some(crate::graph::model::property_value::Value::ObjectValue(_)) => "object".to_string(),
+        Some(crate::graph::model::property_value::Value::VectorValue(_)) => "vector".to_string(),
         None => "null".to_string(),
     }
 }

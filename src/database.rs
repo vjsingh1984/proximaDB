@@ -984,7 +984,7 @@ impl ProximaDB {
     pub async fn get_graph_stats(
         &self,
         graph_id: &str,
-    ) -> anyhow::Result<proto::proximadb_v1::GraphStats> {
+    ) -> anyhow::Result<crate::graph::GraphStats> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services

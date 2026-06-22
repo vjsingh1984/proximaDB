@@ -23,6 +23,7 @@
 
 use dashmap::DashMap;
 use proximadb::compute::distance_computation::engine::UnifiedDistanceCompute;
+use proximadb::graph::EmbeddingVersion;
 use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::engines::orion::traversal::TraversalConfig;
@@ -30,7 +31,7 @@ use proximadb::graph::engines::orion::traversal::vector_guided_astar;
 use proximadb::graph::hybrid::ranking::{HybridRankingStrategy, RankingContext, RankingStrategy};
 use proximadb::graph::hybrid::semantic_traversal::{SemanticBFSTraversal, SemanticTraversalInput};
 use proximadb::graph::{Edge, Node};
-use proximadb::proto::proximadb_v1::{DistanceMetric, EmbeddingVersion};
+use proximadb::proto::proximadb_v1::DistanceMetric;
 use std::collections::HashMap;
 use std::sync::Arc;
 
