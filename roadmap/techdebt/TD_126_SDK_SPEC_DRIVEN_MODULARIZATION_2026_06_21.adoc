@@ -589,18 +589,48 @@ chunking / integration concerns were untouched.
 * Capacity-bounded LRU model cache (`PROXIMADB_MODEL_CACHE_CAPACITY`, default 4; best-effort
   release on eviction; key includes device + backend + prompts).
 
+*System-B base-overlay collapse — DONE (2026-06-22).* The orphaned legacy overlay inside
+`embedding_providers/` was collapsed onto `core.BaseEmbeddingProvider` in a 2-PR sequence
+(branch `refine/embeddings-base-collapse`):
+
+* *PR 1 — port + register the domain providers (was the blocker for deletion).* The three domain
+  providers that still rode the legacy `EmbeddingProvider` base were re-based onto
+  `core.BaseEmbeddingProvider` and made first-class registered providers (previously DEAD —
+  unregistered, imported only by `*_cov` tests):
++
+[cols="1,2",options="header"]
+|===
+| Canonical name | Class (aliases)
+| `instructor` | `InstructorProvider` (`hkunlp`, `instructor-embedding`)
+| `finbert` | `FinBERTProvider` (`financial-bert`, `prosus-finbert`)
+| `sec-bert` | `SECBERTProvider` (`secbert`, `legal-bert`)
+| `multi-bert` | `MultiBERTProvider` (`bert`, `multibert`)
+| `adaptive-bert` | `AdaptiveBERTProvider` (`adaptive`)
+|===
++
+The heavy `torch` / `transformers` / `sentence_transformers` / `InstructorEmbedding` imports were
+moved out of module scope into the model-load + encoding paths, so the lazy boundary holds even
+after the registry is consulted. `MultiBERTProvider` keeps its ergonomic
+`(model_name=…, size=…)` constructor while also accepting a standard `ProviderConfig`. The two
+dead-provider `*_cov` tests were converted to real registered-provider tests and a
+`finbert`/`sec-bert` cov test was added (66 offline tests, deps stubbed). `get_provider(…)` now
+resolves all 15 providers (the #197 cloud set + the core local set + the 5 newly-activated above).
+
+* *PR 2 — delete the dead overlay (~1187 LOC).* `embedding_providers/base.py` (the 15-line legacy
+  re-export shim) and the four pure-duplicate root-level providers (`bge`, `e5`, `sfr`,
+  `sentence_transformer`) — functional dups of the canonical, registered `providers/local/*` —
+  were removed. They subclassed the legacy base, were never registered, and had no live importers.
+
+*Retained (intentional scope boundary).* The standalone `proximadb_sdk.embedding_interface` root
+module (its own `EmbeddingProvider`/`EmbeddingConfig` + `create_embedding_provider` factory) is
+NOT deleted: it is a separate public module still consumed by the chunking concern and its tests,
+outside the `embedding_providers` overlay. Collapsing it would require rewriting working
+cross-concern (chunking) tests and is tracked with the chunking DI-seam item below.
+
 *Deferred (follow-up).*
 
-* *System-B base-overlay collapse.* The orphaned legacy overlay — the `embedding_providers/base.py`
-  shim plus the root-level duplicate providers (`bge`, `e5`, `sfr`, `sentence_transformer`,
-  `finbert_provider`, `multi_bert_provider`, `instructor`) and the `embedding_interface`
-  `EmbeddingProvider`/`EmbeddingConfig` duplicate-provider stack (~2500 LOC, only exercised by
-  `*_cov` tests, no live importers in `src` except the chunking concern's use of
-  `embedding_interface`) — should be deleted/collapsed onto `core.BaseEmbeddingProvider`. Deferred
-  as its own PR because `instructor`/`finbert`/`multi_bert` still ride the legacy base and
-  `embedding_interface` is referenced by the chunking concern; bundling it risked an oversized,
-  cross-concern PR.
-* *Embedding-provider DI seam for semantic chunking* — see the chunking "Deferred" item above.
+* *Embedding-provider DI seam for semantic chunking* — see the chunking "Deferred" item above;
+  folding `embedding_interface` into `core` belongs with that seam.
 
 *Test isolation.* Same pre-existing hazard noted above: `test_emb_providers_local_cov` stubs
 `sentence_transformers` in `sys.modules`, which leaks to the real-model `requires_models`

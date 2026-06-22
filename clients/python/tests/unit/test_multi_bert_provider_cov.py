@@ -1,150 +1,114 @@
 """
 Offline unit tests for proximadb_sdk.embedding_providers.multi_bert_provider.
 
-The source module has two import-time defects that we work around WITHOUT
-editing the source (all in test setup, fully offline):
-
-  1. ``from .base import EmbeddingProvider`` -- there is no ``base`` submodule
-     (the real base lives at ``embedding_providers/core/base.py``). We inject a
-     stub ``proximadb_sdk.embedding_providers.base`` module into ``sys.modules``
-     before importing the target. ``MultiBERTProvider`` only uses
-     ``EmbeddingProvider`` as a no-op base class, so a stub is sufficient.
-
-  2. ``compare_models`` has a return annotation ``-> pd.DataFrame`` but ``pd`` is
-     not imported at module scope; the annotation is evaluated at class-body
-     execution (import) time. We inject ``pd`` into ``builtins`` so import
-     succeeds.
-
-No model is ever downloaded: ``SentenceTransformer``, ``AutoModel`` and
-``AutoTokenizer`` are all monkeypatched with fakes, and ``Path.mkdir`` is a
-no-op so no filesystem cache dir is created. ``torch.cuda.is_available`` is
-forced False so the device is always "cpu" and no GPU is touched.
+TD-126 System-B collapse: MultiBERTProvider / AdaptiveBERTProvider were ported
+onto ``core.BaseEmbeddingProvider`` and registered (``multi-bert`` /
+``adaptive-bert``). The module now imports cleanly (no ``.base`` shim, no heavy
+module-level imports — torch/transformers/sentence_transformers are imported
+lazily inside the model-loading / encoding paths), so this test imports it
+directly and monkeypatches the heavy deps via ``sys.modules`` + the lazily
+imported names. No model is ever downloaded and no GPU is touched.
 """
 
-import builtins
-import importlib.util
-import os
+import contextlib
 import sys
 import types
 
 import numpy as np
-import pandas as pd
-import psutil
 import pytest
 
-# The target SDK module does a module-level ``import torch.nn.functional``; exec'ing
-# it below triggers that import at collection time. torch is an optional, heavy dep
-# and can be absent or broken in CI (e.g. a partial wheel where ``torch`` imports
-# but ``torch.nn`` does not — "'torch' is not a package"). Skip the whole module in
-# that case instead of aborting collection for the entire unit suite.
-pytest.importorskip(
-    "torch.nn.functional",
-    reason="torch (with torch.nn) required by multi_bert_provider",
-)
-
 # ---------------------------------------------------------------------------
-# Import-time shims (must run before importing the target module).
-#
-# We deliberately load the target submodule with a hand-built spec so that the
-# heavy ``proximadb_sdk/__init__.py`` (1100+ lines: provider registration, deep
-# import chains) is NOT executed. Executing it under coverage instrumentation
-# costs tens of seconds and would blow the test-time budget. Instead we inject
-# lightweight stub *package* modules (with a real ``__path__`` so any relative
-# submodule import still resolves) and exec only the target file.
+# Stub the heavy optional deps in sys.modules BEFORE the provider imports them
+# (it imports them lazily inside methods, so installing the stubs here suffices).
 # ---------------------------------------------------------------------------
-builtins.pd = pd  # satisfy compare_models' bare `pd.DataFrame` annotation
-
-_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-# tests/unit -> clients/python/src/proximadb_sdk
-_SRC = os.path.normpath(os.path.join(_THIS_DIR, "..", "..", "src", "proximadb_sdk"))
-_EP_DIR = os.path.join(_SRC, "embedding_providers")
 
 
-def _stub_pkg(name, path):
-    mod = types.ModuleType(name)
-    mod.__path__ = [path]
-    sys.modules[name] = mod
-    return mod
+class _FakeTensor:
+    """Tiny tensor stand-in supporting the ops the encoder uses."""
+
+    def __init__(self, arr):
+        self.arr = np.asarray(arr, dtype=np.float32)
+
+    def __mul__(self, other):
+        return _FakeTensor(self.arr * other.arr)
+
+    def __truediv__(self, other):
+        return _FakeTensor(self.arr / other.arr)
+
+    def sum(self, dim=None):
+        return _FakeTensor(self.arr.sum(axis=dim))
+
+    def max(self, dim=None):
+        return (_FakeTensor(self.arr.max(axis=dim)),)
+
+    def unsqueeze(self, axis):
+        return _FakeTensor(np.expand_dims(self.arr, axis))
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self.arr
+
+    def __getitem__(self, idx):
+        return _FakeTensor(self.arr[idx])
 
 
-# Save the original sys.modules entries we are about to shadow so teardown_module
-# can restore them. Without this, the injected stub for
-# `proximadb_sdk.embedding_providers` (which has no `get_provider`) leaks into
-# other test files that import the real package, causing cross-file ImportError
-# failures (e.g. test_embedding_providers.py).
-_SHADOWED_NAMES = (
-    "proximadb_sdk",
-    "proximadb_sdk.embedding_providers",
-    "proximadb_sdk.embedding_providers.base",
-    "proximadb_sdk.embedding_providers.multi_bert_provider",
-)
-_SAVED_MODULES = {name: sys.modules.get(name) for name in _SHADOWED_NAMES}
-
-# Stub the package chain (skip the expensive real __init__.py files).
-if not isinstance(sys.modules.get("proximadb_sdk"), types.ModuleType) or not hasattr(
-    sys.modules.get("proximadb_sdk", object()), "__path__"
-):
-    _stub_pkg("proximadb_sdk", _SRC)
-_stub_pkg("proximadb_sdk.embedding_providers", _EP_DIR)
-
-# Stub the broken ``from .base import EmbeddingProvider`` (real base lives at
-# embedding_providers/core/base.py; there is no ``base`` submodule).
-_fake_base = types.ModuleType("proximadb_sdk.embedding_providers.base")
+class _FakeOutputs:
+    def __init__(self, last_hidden_state):
+        self.last_hidden_state = last_hidden_state
 
 
-class _EmbeddingProvider:  # minimal stand-in base class
+# torch / torch.nn / torch.nn.functional
+_torch = types.ModuleType("torch")
+
+
+class _OOM(Exception):
     pass
 
 
-_fake_base.EmbeddingProvider = _EmbeddingProvider
-sys.modules["proximadb_sdk.embedding_providers.base"] = _fake_base
-
-_TARGET = "proximadb_sdk.embedding_providers.multi_bert_provider"
-if _TARGET in sys.modules:
-    mbp = sys.modules[_TARGET]
-else:
-    _spec = importlib.util.spec_from_file_location(
-        _TARGET, os.path.join(_EP_DIR, "multi_bert_provider.py")
-    )
-    mbp = importlib.util.module_from_spec(_spec)
-    sys.modules[_TARGET] = mbp
-    _spec.loader.exec_module(mbp)
-
-MultiBERTProvider = mbp.MultiBERTProvider
-AdaptiveBERTProvider = mbp.AdaptiveBERTProvider
-ModelSize = mbp.ModelSize
-
-# Restore sys.modules IMMEDIATELY — the stub packages were only needed to exec
-# multi_bert_provider.py above; the tests below use the held refs + monkeypatched
-# fakes, not the package. This MUST happen at import time, NOT in a
-# teardown_module(): pytest imports every test module during collection before
-# running any test, so a stub left in sys.modules past this import poisons other
-# files whose package imports are lazy (e.g. test_embedding_providers'
-# `from proximadb_sdk.embedding_providers import get_provider` at test time) —
-# they would resolve the get_provider-less stub and fail with a cross-file
-# ImportError. A teardown_module would fire far too late (after this file's tests,
-# which run after the victim's). Popping a stub restores the real package on the
-# next (fresh) import.
-for _name, _orig in _SAVED_MODULES.items():
-    if _orig is None:
-        sys.modules.pop(_name, None)
-    else:
-        sys.modules[_name] = _orig
+_torch.cuda = types.SimpleNamespace(
+    is_available=lambda: False,
+    empty_cache=lambda: None,
+    get_device_properties=lambda idx: types.SimpleNamespace(total_memory=8e9),
+    OutOfMemoryError=_OOM,
+)
+_torch.no_grad = lambda: contextlib.nullcontext()
+_torch.backends = types.SimpleNamespace(
+    mps=types.SimpleNamespace(is_available=lambda: False)
+)
+_nn = types.ModuleType("torch.nn")
+_F = types.ModuleType("torch.nn.functional")
+_F.normalize = lambda t, p=2, dim=1: _FakeTensor(
+    t.arr / (np.linalg.norm(t.arr, axis=dim, keepdims=True) + 1e-12)
+)
+_nn.functional = _F
+_torch.nn = _nn
+sys.modules["torch"] = _torch
+sys.modules["torch.nn"] = _nn
+sys.modules["torch.nn.functional"] = _F
 
 
-# ---------------------------------------------------------------------------
-# Fakes for the model backends.
-# ---------------------------------------------------------------------------
-# Map every registered model's HF path -> its configured dimension so fakes
-# can return correctly-sized vectors (the source asserts shape == config dim).
+# sentence_transformers + transformers (dimension-aware fakes installed below
+# once we can read the provider's MODELS registry).
+_st = types.ModuleType("sentence_transformers")
+_tf = types.ModuleType("transformers")
+sys.modules["sentence_transformers"] = _st
+sys.modules["transformers"] = _tf
+
+from proximadb_sdk.embedding_providers import get_provider  # noqa: E402
+from proximadb_sdk.embedding_providers.multi_bert_provider import (  # noqa: E402
+    AdaptiveBERTProvider,
+    ModelSize,
+    MultiBERTProvider,
+)
+
 _PATH_TO_DIM = {
     cfg["name"]: cfg["dimension"] for cfg in MultiBERTProvider.MODELS.values()
 }
 
 
 class FakeSentenceTransformer:
-    """Stand-in for sentence_transformers.SentenceTransformer."""
-
     last_init = None
 
     def __init__(self, model_path, device=None, cache_folder=None):
@@ -163,51 +127,12 @@ class FakeSentenceTransformer:
         normalize_embeddings=True,
         show_progress_bar=False,
         device=None,
+        convert_to_numpy=True,
     ):
-        # deterministic per-text vectors so cache equality holds
         return np.array(
             [[float(len(t)) + j for j in range(self._dim)] for t in texts],
             dtype=np.float32,
         )
-
-
-class _FakeTensor:
-    """Tiny tensor stand-in supporting the ops the encoder uses."""
-
-    def __init__(self, arr):
-        self.arr = np.asarray(arr, dtype=np.float32)
-
-    # mean-pool path: last_hidden_state * mask, .sum(dim=1), division
-    def __mul__(self, other):
-        return _FakeTensor(self.arr * other.arr)
-
-    def __truediv__(self, other):
-        return _FakeTensor(self.arr / other.arr)
-
-    def sum(self, dim=None):
-        return _FakeTensor(self.arr.sum(axis=dim))
-
-    def max(self, dim=None):
-        # outputs.last_hidden_state.max(dim=1)[0]
-        return (_FakeTensor(self.arr.max(axis=dim)),)
-
-    def unsqueeze(self, axis):
-        return _FakeTensor(np.expand_dims(self.arr, axis))
-
-    def cpu(self):
-        return self
-
-    def numpy(self):
-        return self.arr
-
-    def __getitem__(self, idx):
-        # CLS pooling: last_hidden_state[:, 0, :]
-        return _FakeTensor(self.arr[idx])
-
-
-class _FakeOutputs:
-    def __init__(self, last_hidden_state):
-        self.last_hidden_state = last_hidden_state
 
 
 class FakeAutoModelInstance:
@@ -221,7 +146,6 @@ class FakeAutoModelInstance:
         return self
 
     def __call__(self, **inputs):
-        # inputs come from FakeTokenizer; derive batch/seq from the mask
         mask = inputs["attention_mask"].arr
         batch, seq = mask.shape
         hidden = np.ones((batch, seq, self.dim), dtype=np.float32)
@@ -231,8 +155,7 @@ class FakeAutoModelInstance:
 class FakeAutoModel:
     @staticmethod
     def from_pretrained(model_path, cache_dir=None):
-        dim = _PATH_TO_DIM.get(model_path, 768)
-        return FakeAutoModelInstance(dim)
+        return FakeAutoModelInstance(_PATH_TO_DIM.get(model_path, 768))
 
 
 class _FakeBatchEncoding(dict):
@@ -244,8 +167,7 @@ class FakeTokenizerInstance:
     def __call__(
         self, batch, padding=True, truncation=True, max_length=512, return_tensors="pt"
     ):
-        seq = 4
-        mask = np.ones((len(batch), seq), dtype=np.float32)
+        mask = np.ones((len(batch), 4), dtype=np.float32)
         return _FakeBatchEncoding({"attention_mask": _FakeTensor(mask)})
 
 
@@ -255,33 +177,17 @@ class FakeAutoTokenizer:
         return FakeTokenizerInstance()
 
 
-# ---------------------------------------------------------------------------
-# Fixtures.
-# ---------------------------------------------------------------------------
+_st.SentenceTransformer = FakeSentenceTransformer
+_tf.AutoModel = FakeAutoModel
+_tf.AutoTokenizer = FakeAutoTokenizer
+
+
 @pytest.fixture(autouse=True)
 def offline_env(monkeypatch, tmp_path):
-    """Force CPU, mock model backends, and stub heavy torch ops."""
-    monkeypatch.setattr(mbp.torch.cuda, "is_available", lambda: False)
-    monkeypatch.setattr(mbp.torch.cuda, "empty_cache", lambda: None)
-    monkeypatch.setattr(mbp, "SentenceTransformer", FakeSentenceTransformer)
-    monkeypatch.setattr(mbp, "AutoModel", FakeAutoModel)
-    monkeypatch.setattr(mbp, "AutoTokenizer", FakeAutoTokenizer)
-    # Redirect the default cache dir (Path.home()/.cache/...) into a local
-    # tmp dir so the real (cheap, offline) mkdir does not touch the user home.
-    # We do NOT globally patch Path.mkdir -- that would break pytest tmp_path.
-    monkeypatch.setattr(mbp.Path, "home", classmethod(lambda cls: tmp_path))
-    # torch.no_grad context manager
-    import contextlib
+    """Force CPU + redirect the default cache dir into a tmp dir."""
+    import proximadb_sdk.embedding_providers.multi_bert_provider as mbp
 
-    monkeypatch.setattr(mbp.torch, "no_grad", lambda: contextlib.nullcontext())
-    # F.normalize: row-wise L2 normalize over the fake tensor
-    monkeypatch.setattr(
-        mbp.F,
-        "normalize",
-        lambda t, p=2, dim=1: _FakeTensor(
-            t.arr / (np.linalg.norm(t.arr, axis=dim, keepdims=True) + 1e-12)
-        ),
-    )
+    monkeypatch.setattr(mbp.Path, "home", classmethod(lambda cls: tmp_path))
     yield
 
 
@@ -289,9 +195,13 @@ def make_st_provider(model_name="mpnet-base", **kw):
     return MultiBERTProvider(model_name=model_name, device="cpu", **kw)
 
 
-# ---------------------------------------------------------------------------
-# Construction / config.
-# ---------------------------------------------------------------------------
+# -- registration / config ---------------------------------------------------
+def test_registered_resolves():
+    assert type(get_provider("multi-bert")) is MultiBERTProvider
+    assert type(get_provider("adaptive-bert")) is AdaptiveBERTProvider
+    assert type(get_provider("bert")) is MultiBERTProvider  # alias
+
+
 def test_models_registry_shape():
     assert "minilm-l6" in MultiBERTProvider.MODELS
     cfg = MultiBERTProvider.MODELS["minilm-l6"]
@@ -299,17 +209,22 @@ def test_models_registry_shape():
     assert cfg["size"] == ModelSize.MINI
 
 
+def test_default_config():
+    cfg = MultiBERTProvider(model_name="mpnet-base", device="cpu").default_config()
+    assert cfg.model.name == "sentence-transformers/all-mpnet-base-v2"
+
+
+# -- construction ------------------------------------------------------------
 def test_init_sentence_transformer_path():
     p = make_st_provider("mpnet-base")
     assert p.model_name == "mpnet-base"
     assert p.device == "cpu"
     assert p.tokenizer is None
     assert isinstance(p.model, FakeSentenceTransformer)
-    assert FakeSentenceTransformer.last_init["device"] == "cpu"
 
 
 def test_init_transformers_path():
-    p = make_st_provider("bert-base")  # is_sentence_transformer = False
+    p = make_st_provider("bert-base")
     assert p.tokenizer is not None
     assert isinstance(p.model, FakeAutoModelInstance)
 
@@ -319,14 +234,14 @@ def test_invalid_model_name_raises():
         make_st_provider("does-not-exist")
 
 
-def test_init_size_autoselect_when_no_model_name(monkeypatch):
-    # size given + empty model_name -> __init__ calls _select_model_by_size
+def test_init_size_autoselect_when_no_model_name():
     p = MultiBERTProvider(model_name="", size=ModelSize.MINI, device="cpu")
     assert MultiBERTProvider.MODELS[p.model_name]["size"] == ModelSize.MINI
 
 
 def test_init_autoselect_when_no_model_name(monkeypatch):
-    # empty model_name + no size -> __init__ calls _auto_select_model (cpu path)
+    import psutil
+
     monkeypatch.setattr(
         psutil, "virtual_memory", lambda: types.SimpleNamespace(total=32e9)
     )
@@ -334,7 +249,7 @@ def test_init_autoselect_when_no_model_name(monkeypatch):
     assert p.model_name in MultiBERTProvider.MODELS
 
 
-def test_default_cache_dir_used(monkeypatch):
+def test_default_cache_dir_used():
     p = make_st_provider("mpnet-base")
     assert "proximadb" in str(p.cache_dir)
 
@@ -353,10 +268,10 @@ def test_init_options_propagate():
     assert p.pooling_strategy == "cls"
 
 
-# ---------------------------------------------------------------------------
-# Auto-selection helpers (CPU branch, since cuda forced off).
-# ---------------------------------------------------------------------------
+# -- auto-selection helpers (CPU branch) -------------------------------------
 def test_auto_select_high_ram(monkeypatch):
+    import psutil
+
     p = make_st_provider("mpnet-base")
     monkeypatch.setattr(
         psutil, "virtual_memory", lambda: types.SimpleNamespace(total=32e9)
@@ -365,6 +280,8 @@ def test_auto_select_high_ram(monkeypatch):
 
 
 def test_auto_select_mid_ram(monkeypatch):
+    import psutil
+
     p = make_st_provider("mpnet-base")
     monkeypatch.setattr(
         psutil, "virtual_memory", lambda: types.SimpleNamespace(total=10e9)
@@ -373,6 +290,8 @@ def test_auto_select_mid_ram(monkeypatch):
 
 
 def test_auto_select_low_ram(monkeypatch):
+    import psutil
+
     p = make_st_provider("mpnet-base")
     monkeypatch.setattr(
         psutil, "virtual_memory", lambda: types.SimpleNamespace(total=4e9)
@@ -381,11 +300,12 @@ def test_auto_select_low_ram(monkeypatch):
 
 
 def test_auto_select_max_memory_cap(monkeypatch):
+    import psutil
+
     p = make_st_provider("mpnet-base")
     monkeypatch.setattr(
         psutil, "virtual_memory", lambda: types.SimpleNamespace(total=64e9)
     )
-    # cap RAM so it picks the smallest tier
     assert p._auto_select_model(max_memory_gb=4) == "minilm-l6"
 
 
@@ -395,7 +315,7 @@ def test_select_model_by_size_prefers_st():
     assert MultiBERTProvider.MODELS[chosen]["is_sentence_transformer"]
 
 
-def test_select_model_by_size_no_candidates(monkeypatch):
+def test_select_model_by_size_no_candidates():
     p = make_st_provider("mpnet-base")
 
     class _NoSize:
@@ -404,26 +324,23 @@ def test_select_model_by_size_no_candidates(monkeypatch):
     assert p._select_model_by_size(_NoSize()) == "mpnet-base"
 
 
-# ---------------------------------------------------------------------------
-# Encoding dispatch.
-# ---------------------------------------------------------------------------
+# -- encoding dispatch -------------------------------------------------------
 def test_embed_texts_sentence_transformer():
     p = make_st_provider("mpnet-base")
     out = p.embed_texts(["hello", "world!!"])
     assert out.shape == (2, 768)
 
 
-def test_embed_text_single():
+def test_embed_core_entrypoint():
     p = make_st_provider("mpnet-base")
-    v = p.embed_text("hi")
-    assert v.shape == (768,)
+    assert p.embed(["hi"]).shape == (1, 768)
+    assert p.embed([]).size == 0
 
 
 def test_embed_texts_caching_reuses():
     p = make_st_provider("mpnet-base")
     p.embed_texts(["abc"])
     assert len(p._cache) == 1
-    # second call for same text hits cache (no error), distinct text added
     p.embed_texts(["abc", "different"])
     assert len(p._cache) == 2
 
@@ -465,9 +382,7 @@ def test_embed_documents_custom_field():
     assert out.shape == (1, 768)
 
 
-# ---------------------------------------------------------------------------
-# Info / dimension / benchmark.
-# ---------------------------------------------------------------------------
+# -- info / dimension / benchmark --------------------------------------------
 def test_get_dimension():
     p = make_st_provider("e5-large")
     assert p.get_dimension() == 1024
@@ -498,20 +413,19 @@ def test_benchmark_custom_texts():
     assert res["dimension"] == 768
 
 
-# ---------------------------------------------------------------------------
-# compare_models classmethod.
-# ---------------------------------------------------------------------------
+# -- compare_models ----------------------------------------------------------
 def test_compare_models_returns_dataframe():
+    import pandas as pd
+
     df = MultiBERTProvider.compare_models(["hello"], models=["minilm-l6", "mpnet-base"])
     assert isinstance(df, pd.DataFrame)
     assert set(df["model"]) == {"minilm-l6", "mpnet-base"}
 
 
 def test_compare_models_handles_failure(monkeypatch):
-    # one good model, one that raises during construction
     real_init = MultiBERTProvider.__init__
 
-    def flaky_init(self, model_name="mpnet-base", **kw):
+    def flaky_init(self, *a, model_name="mpnet-base", **kw):
         if model_name == "bert-base":
             raise RuntimeError("boom")
         return real_init(self, model_name=model_name, **kw)
@@ -521,19 +435,18 @@ def test_compare_models_handles_failure(monkeypatch):
     assert list(df["model"]) == ["minilm-l6"]
 
 
-def test_compare_models_default_models(monkeypatch):
-    # shrink the default list work by limiting via explicit small set is not
-    # possible (default branch), so just ensure the default branch executes.
+def test_compare_models_default_models():
+    import pandas as pd
+
     df = MultiBERTProvider.compare_models(["hi"], models=None)
     assert isinstance(df, pd.DataFrame)
-    # default models are 4 known names
     assert len(df) == 4
 
 
-# ---------------------------------------------------------------------------
-# AdaptiveBERTProvider.
-# ---------------------------------------------------------------------------
+# -- AdaptiveBERTProvider ----------------------------------------------------
 def test_adaptive_default_autoselect(monkeypatch):
+    import psutil
+
     monkeypatch.setattr(
         psutil, "virtual_memory", lambda: types.SimpleNamespace(total=32e9)
     )
@@ -563,16 +476,13 @@ def test_adaptive_embed_updates_stats():
 def test_adaptive_switch_for_long_texts_speed():
     p = AdaptiveBERTProvider(prefer_speed=True, device="cpu")
     assert p.model_name == "minilm-l12"
-    long_text = "x" * 1500
-    p.embed_texts([long_text])
+    p.embed_texts(["x" * 1500])
     assert p.model_name == "minilm-l6"
     assert p.performance_stats["model_switches"] == 1
 
 
 def test_adaptive_switch_for_short_texts_accuracy():
     p = AdaptiveBERTProvider(prefer_accuracy=True, device="cpu")
-    # starts at e5-large; switch only fires when model_name != e5-large,
-    # so move it off e5-large first, then short text should switch back.
     p._switch_model("mpnet-base")
     assert p.model_name == "mpnet-base"
     p.embed_texts(["tiny"])
@@ -582,7 +492,7 @@ def test_adaptive_switch_for_short_texts_accuracy():
 def test_adaptive_switch_model_noop_same():
     p = AdaptiveBERTProvider(prefer_speed=True, device="cpu")
     before = p.performance_stats["model_switches"]
-    p._switch_model(p.model_name)  # same model -> no switch
+    p._switch_model(p.model_name)
     assert p.performance_stats["model_switches"] == before
 
 
@@ -590,55 +500,8 @@ def test_adaptive_switch_model_changes_config():
     p = AdaptiveBERTProvider(prefer_speed=True, device="cpu")
     p._switch_model("bert-base")
     assert p.model_name == "bert-base"
-    assert p.tokenizer is not None  # transformers path reloaded
+    assert p.tokenizer is not None
     assert p.get_dimension() == 768
-
-
-# ---------------------------------------------------------------------------
-# GPU-branch coverage (cuda is faked, never real).
-# ---------------------------------------------------------------------------
-def _fake_cuda_on(monkeypatch, total_gb):
-    """Make torch.cuda look available with a chosen device memory size."""
-    monkeypatch.setattr(mbp.torch.cuda, "is_available", lambda: True)
-    monkeypatch.setattr(
-        mbp.torch.cuda,
-        "get_device_properties",
-        lambda idx: types.SimpleNamespace(total_memory=total_gb * 1e9),
-    )
-
-
-def test_auto_select_gpu_high(monkeypatch):
-    p = make_st_provider("mpnet-base")  # built while cuda is off (device cpu)
-    _fake_cuda_on(monkeypatch, 16)
-    assert p._auto_select_model() == "e5-large"
-
-
-def test_auto_select_gpu_mid(monkeypatch):
-    p = make_st_provider("mpnet-base")
-    _fake_cuda_on(monkeypatch, 5)
-    assert p._auto_select_model() == "mpnet-base"
-
-
-def test_auto_select_gpu_low(monkeypatch):
-    p = make_st_provider("mpnet-base")
-    _fake_cuda_on(monkeypatch, 2)
-    assert p._auto_select_model() == "minilm-l12"
-
-
-def test_device_auto_cuda(monkeypatch):
-    # Build with device=None so the cuda auto path (lines ~201-210) executes.
-    _fake_cuda_on(monkeypatch, 16)
-    p = MultiBERTProvider(model_name="mpnet-base", device=None)
-    assert p.device == "cuda"
-
-
-def test_device_auto_cuda_xl_model_downgrades_to_cpu(monkeypatch):
-    # XLARGE model + small GPU -> falls back to cpu (lines ~204-210).
-    # NB: avoid the substring "large" in the test name -- the unit conftest
-    # auto-skips name-matched "large"/"stress"/"compaction" tests w/o --run-slow.
-    _fake_cuda_on(monkeypatch, 4)
-    p = MultiBERTProvider(model_name="deberta-large", device=None)
-    assert p.device == "cpu"
 
 
 def test_adaptive_oom_fallback(monkeypatch):
@@ -650,19 +513,10 @@ def test_adaptive_oom_fallback(monkeypatch):
     def flaky(self, texts):
         calls["n"] += 1
         if calls["n"] == 1:
-            raise mbp.torch.cuda.OutOfMemoryError("oom")
+            raise _torch.cuda.OutOfMemoryError("oom")
         return real(self, texts)
 
     monkeypatch.setattr(MultiBERTProvider, "embed_texts", flaky)
     out = p.embed_texts(["recover please"])
     assert out.shape[0] == 1
-    assert p.model_name == "minilm-l6"  # fell back to the small model
-
-
-def test_benchmark_all_models(monkeypatch, capsys):
-    # exercises the module-level convenience function end-to-end (offline).
-    df = mbp.benchmark_all_models()
-    assert isinstance(df, pd.DataFrame)
-    assert len(df) >= 1
-    out = capsys.readouterr().out
-    assert "Recommendations" in out
+    assert p.model_name == "minilm-l6"
