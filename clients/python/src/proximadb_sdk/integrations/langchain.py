@@ -54,11 +54,17 @@ class ProximaDBVectorStore(VectorStore):
         embedding: Embeddings,
         *,
         text_key: str = "text",
+        async_client: Any | None = None,
     ) -> None:
         self._client = client
         self._collection_name = collection_name
         self._embedding = embedding
         self._text_key = text_key
+        # Optional native-async client (ProximaDBAsyncUnified). When provided +
+        # started, the async read path awaits real async I/O instead of
+        # thread-offloading the sync client. Sync construction/methods are
+        # unaffected when this is omitted.
+        self._async_client = async_client
 
     @property
     def embeddings(self) -> Embeddings:
@@ -229,7 +235,30 @@ class ProximaDBVectorStore(VectorStore):
         k: int = 4,
         **kwargs: Any,
     ) -> list[tuple[Document, float]]:
-        """Async return documents and scores for the given embedding vector."""
+        """Async return documents and scores for the given embedding vector.
+
+        Uses the native-async client (real async I/O over the generated REST
+        transport) when one was provided at construction; otherwise falls back
+        to offloading the synchronous client onto a worker thread.
+        """
+        if self._async_client is not None:
+            search_results = await self._async_client.search(
+                self._collection_name,
+                vector=embedding,
+                top_k=k,
+                metadata_filter=kwargs.get("filter"),
+            )
+            docs_and_scores: list[tuple[Document, float]] = []
+            for result in search_results:
+                metadata = dict(result.metadata) if result.metadata else {}
+                page_content = result.source or metadata.pop(self._text_key, "")
+                docs_and_scores.append(
+                    (
+                        Document(page_content=page_content, metadata=metadata),
+                        result.score,
+                    )
+                )
+            return docs_and_scores
         return await asyncio.to_thread(
             self.similarity_search_by_vector_with_score, embedding, k=k, **kwargs
         )
