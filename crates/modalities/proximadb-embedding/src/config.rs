@@ -5,18 +5,22 @@ use serde::{Deserialize, Serialize};
 
 /// Embedding route. Stored on each cataloged collection (sticky across
 /// tenant tier changes — see `resolve_collection_route`) and resolved
-/// per-tenant from the AnvaiOps tenant registry for new collections that
-/// don't carry their own choice.
+/// per-tenant from the tenant registry (operator/control-plane adapter)
+/// for new collections that don't carry their own choice.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum EmbedRoute {
-    /// `bge-small-en-v1.5`, 384-dim, in-process. Default for Free / Starter / Standard tiers.
+    /// `bge-small-en-v1.5`, 384-dim, in-process. Default for the lower
+    /// capability tiers (Tier0 / Tier1 / Tier2).
     BgeSmall,
-    /// `bge-large-en-v1.5`, 1024-dim, in-process. Default for Pro / Business tiers.
+    /// `bge-large-en-v1.5`, 1024-dim, in-process. Default for the mid
+    /// capability tiers (Tier3 / Tier4).
     BgeLarge,
-    /// `bge-m3` multilingual, 1024-dim, in-process. Default for Enterprise tier.
+    /// `bge-m3` multilingual, 1024-dim, in-process. Default for the upper
+    /// capability tiers (Tier5 / Tier6).
     BgeM3,
-    /// `text-embedding-3-large` via Azure OpenAI, 3072-dim. Premium add-on.
+    /// `text-embedding-3-large` via Azure OpenAI, 3072-dim. Highest-tier
+    /// add-on.
     AzureOpenAi { model: AzureModel },
     /// Direct OpenAI public API. Requires per-tenant API key from secret store.
     /// Stub: HTTP client follows the same pattern as `Byo` / `AzureOpenAi`.
@@ -89,7 +93,7 @@ impl EmbedRoute {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum OpenAiModel {
-    /// text-embedding-3-large, 3072-dim. Premium default.
+    /// text-embedding-3-large, 3072-dim. Highest-tier default.
     TextEmbed3Large,
     /// text-embedding-3-small, 1536-dim. Lighter, lower cost per token.
     TextEmbed3Small,
@@ -128,30 +132,41 @@ impl CohereModel {
     }
 }
 
-/// Tenant tier as seen by the embedding service. Mirrors the AnvaiOps
-/// commercial tier ladder. The mapping from tier → default
-/// [`EmbedRoute`] lives in [`tier_default_route`] so it can be tested
-/// in isolation and overridden per-tenant via
+/// Tenant capability tier as seen by the embedding service. These are
+/// neutral, non-commercial capability classes; the mapping from any
+/// commercial tier ladder to these classes is operator/control-plane
+/// policy and lives in the operator layer. Legacy commercial wire values
+/// are read via `#[serde(alias)]` for backward compatibility. The mapping
+/// from tier → default [`EmbedRoute`] lives in [`tier_default_route`] so it
+/// can be tested in isolation and overridden per-tenant via
 /// `EmbeddingService::update_tenant_route`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Tier {
-    /// Free / trial. Lowest-cost embedding.
-    Free,
-    /// Entry-level paid. Same model as Free.
-    Starter,
-    /// Mid-market. Same model as Free / Starter but with higher quotas.
-    Standard,
-    /// Pro — bumps to a larger English model.
-    Pro,
-    /// Business — same model as Pro.
-    Business,
-    /// Enterprise — multilingual model by default.
-    Enterprise,
-    /// Premium add-on (Enterprise + Azure OpenAI fallback). The actual
+    /// Lowest capability class. Lowest-cost embedding.
+    #[serde(alias = "free")]
+    Tier0,
+    /// Entry capability class. Same model as [`Tier0`](Self::Tier0).
+    #[serde(alias = "starter")]
+    Tier1,
+    /// Mid capability class. Same model as Tier0 / Tier1 but with higher
+    /// quotas.
+    #[serde(alias = "standard")]
+    Tier2,
+    /// Higher capability class — bumps to a larger English model.
+    #[serde(alias = "pro")]
+    Tier3,
+    /// Capability class with the same model as [`Tier3`](Self::Tier3).
+    #[serde(alias = "business")]
+    Tier4,
+    /// Capability class with the multilingual model by default.
+    #[serde(alias = "enterprise")]
+    Tier5,
+    /// Highest capability class — adds the Azure OpenAI fallback. The actual
     /// AzureOpenAi parameters come from per-tenant config; the resolver
     /// defaults to BGE-M3 if Azure isn't wired.
-    Premium,
+    #[serde(alias = "premium")]
+    Tier6,
 }
 
 /// Map a tenant tier to its default in-process [`EmbedRoute`].
@@ -167,23 +182,26 @@ pub enum Tier {
 /// in one place.
 pub fn tier_default_route(tier: Tier) -> EmbedRoute {
     match tier {
-        Tier::Free | Tier::Starter | Tier::Standard => EmbedRoute::BgeSmall,
-        Tier::Pro | Tier::Business => EmbedRoute::BgeLarge,
-        Tier::Enterprise | Tier::Premium => EmbedRoute::BgeM3,
+        Tier::Tier0 | Tier::Tier1 | Tier::Tier2 => EmbedRoute::BgeSmall,
+        Tier::Tier3 | Tier::Tier4 => EmbedRoute::BgeLarge,
+        Tier::Tier5 | Tier::Tier6 => EmbedRoute::BgeM3,
     }
 }
 
 /// Parse a tier name from an optional env var or config string.
-/// Case-insensitive; unknown values fall back to `Free`.
+/// Case-insensitive; unknown values fall back to the lowest capability
+/// class ([`Tier0`](Tier::Tier0)). Both the neutral class names
+/// (`tier0`..`tier6`) and the legacy commercial aliases are accepted for
+/// backward compatibility.
 pub fn resolve_tier(value: Option<&str>) -> Tier {
     match value.map(|s| s.trim().to_ascii_lowercase()).as_deref() {
-        Some("starter") => Tier::Starter,
-        Some("standard") => Tier::Standard,
-        Some("pro") => Tier::Pro,
-        Some("business") => Tier::Business,
-        Some("enterprise") => Tier::Enterprise,
-        Some("premium") => Tier::Premium,
-        _ => Tier::Free,
+        Some("tier1") | Some("starter") => Tier::Tier1,
+        Some("tier2") | Some("standard") => Tier::Tier2,
+        Some("tier3") | Some("pro") => Tier::Tier3,
+        Some("tier4") | Some("business") => Tier::Tier4,
+        Some("tier5") | Some("enterprise") => Tier::Tier5,
+        Some("tier6") | Some("premium") => Tier::Tier6,
+        _ => Tier::Tier0,
     }
 }
 
@@ -205,7 +223,7 @@ pub enum CollectionEmbeddingChoice {
     OpenAi { model: OpenAiModel },
     /// Cohere embeddings. Per-tenant API key resolved from secret store.
     Cohere { model: CohereModel },
-    /// Azure OpenAI (Premium add-on).
+    /// Azure OpenAI (highest-tier add-on).
     AzureOpenAi { model: AzureModel },
     /// Bring-your-own endpoint.
     Byo {
@@ -267,22 +285,22 @@ impl CollectionEmbeddingChoice {
 pub fn tier_allows_route(tier: Tier, route: &EmbedRoute) -> bool {
     use EmbedRoute::*;
     match (tier, route) {
-        // Free / Starter: only the smallest in-process model.
-        (Tier::Free | Tier::Starter, BgeSmall) => true,
-        (Tier::Free | Tier::Starter, _) => false,
-        // Standard: small or large in-process. No external endpoints.
-        (Tier::Standard, BgeSmall | BgeLarge) => true,
-        (Tier::Standard, _) => false,
-        // Pro / Business: all in-process variants.
-        (Tier::Pro | Tier::Business, BgeSmall | BgeLarge | BgeM3) => true,
-        (Tier::Pro | Tier::Business, _) => false,
-        // Enterprise: in-process + BYO + Cohere/OpenAI direct.
-        (Tier::Enterprise, BgeSmall | BgeLarge | BgeM3) => true,
-        (Tier::Enterprise, OpenAi { .. } | Cohere { .. } | Byo { .. }) => true,
-        // Azure OpenAI is the explicit Premium add-on per existing comments.
-        (Tier::Enterprise, AzureOpenAi { .. }) => false,
-        // Premium: everything.
-        (Tier::Premium, _) => true,
+        // Tier0 / Tier1: only the smallest in-process model.
+        (Tier::Tier0 | Tier::Tier1, BgeSmall) => true,
+        (Tier::Tier0 | Tier::Tier1, _) => false,
+        // Tier2: small or large in-process. No external endpoints.
+        (Tier::Tier2, BgeSmall | BgeLarge) => true,
+        (Tier::Tier2, _) => false,
+        // Tier3 / Tier4: all in-process variants.
+        (Tier::Tier3 | Tier::Tier4, BgeSmall | BgeLarge | BgeM3) => true,
+        (Tier::Tier3 | Tier::Tier4, _) => false,
+        // Tier5: in-process + BYO + Cohere/OpenAI direct.
+        (Tier::Tier5, BgeSmall | BgeLarge | BgeM3) => true,
+        (Tier::Tier5, OpenAi { .. } | Cohere { .. } | Byo { .. }) => true,
+        // Azure OpenAI is reserved for the highest capability class.
+        (Tier::Tier5, AzureOpenAi { .. }) => false,
+        // Tier6: everything.
+        (Tier::Tier6, _) => true,
     }
 }
 
@@ -326,7 +344,7 @@ pub fn validate_collection_route(
 pub enum AzureModel {
     /// text-embedding-3-large, 3072-dim.
     TextEmbed3Large,
-    /// text-embedding-3-small, 1536-dim. Allowed but not the Premium default.
+    /// text-embedding-3-small, 1536-dim. Allowed but not the default.
     TextEmbed3Small,
 }
 
@@ -402,49 +420,62 @@ mod tier_tests {
     // ---------- resolve_tier ----------
 
     #[test]
-    fn tier_defaults_to_free_when_unset() {
-        assert_eq!(resolve_tier(None), Tier::Free);
-        assert_eq!(resolve_tier(Some("")), Tier::Free);
-        assert_eq!(resolve_tier(Some("garbage")), Tier::Free);
+    fn tier_defaults_to_lowest_when_unset() {
+        assert_eq!(resolve_tier(None), Tier::Tier0);
+        assert_eq!(resolve_tier(Some("")), Tier::Tier0);
+        assert_eq!(resolve_tier(Some("garbage")), Tier::Tier0);
     }
 
     #[test]
     fn tier_parses_all_known_levels() {
-        assert_eq!(resolve_tier(Some("free")), Tier::Free);
-        assert_eq!(resolve_tier(Some("starter")), Tier::Starter);
-        assert_eq!(resolve_tier(Some("standard")), Tier::Standard);
-        assert_eq!(resolve_tier(Some("pro")), Tier::Pro);
-        assert_eq!(resolve_tier(Some("business")), Tier::Business);
-        assert_eq!(resolve_tier(Some("enterprise")), Tier::Enterprise);
-        assert_eq!(resolve_tier(Some("premium")), Tier::Premium);
+        // Neutral capability-class names.
+        assert_eq!(resolve_tier(Some("tier0")), Tier::Tier0);
+        assert_eq!(resolve_tier(Some("tier1")), Tier::Tier1);
+        assert_eq!(resolve_tier(Some("tier2")), Tier::Tier2);
+        assert_eq!(resolve_tier(Some("tier3")), Tier::Tier3);
+        assert_eq!(resolve_tier(Some("tier4")), Tier::Tier4);
+        assert_eq!(resolve_tier(Some("tier5")), Tier::Tier5);
+        assert_eq!(resolve_tier(Some("tier6")), Tier::Tier6);
+    }
+
+    #[test]
+    fn tier_parses_legacy_aliases_for_back_compat() {
+        // Legacy wire values are still accepted via aliases.
+        assert_eq!(resolve_tier(Some("free")), Tier::Tier0);
+        assert_eq!(resolve_tier(Some("starter")), Tier::Tier1);
+        assert_eq!(resolve_tier(Some("standard")), Tier::Tier2);
+        assert_eq!(resolve_tier(Some("pro")), Tier::Tier3);
+        assert_eq!(resolve_tier(Some("business")), Tier::Tier4);
+        assert_eq!(resolve_tier(Some("enterprise")), Tier::Tier5);
+        assert_eq!(resolve_tier(Some("premium")), Tier::Tier6);
     }
 
     #[test]
     fn tier_parsing_is_case_insensitive() {
-        assert_eq!(resolve_tier(Some("PRO")), Tier::Pro);
-        assert_eq!(resolve_tier(Some("Enterprise")), Tier::Enterprise);
-        assert_eq!(resolve_tier(Some("  premium  ")), Tier::Premium);
+        assert_eq!(resolve_tier(Some("TIER3")), Tier::Tier3);
+        assert_eq!(resolve_tier(Some("Enterprise")), Tier::Tier5);
+        assert_eq!(resolve_tier(Some("  premium  ")), Tier::Tier6);
     }
 
     // ---------- tier_default_route ----------
 
     #[test]
-    fn free_starter_standard_map_to_bge_small() {
-        for tier in [Tier::Free, Tier::Starter, Tier::Standard] {
+    fn lower_tiers_map_to_bge_small() {
+        for tier in [Tier::Tier0, Tier::Tier1, Tier::Tier2] {
             assert!(matches!(tier_default_route(tier), EmbedRoute::BgeSmall));
         }
     }
 
     #[test]
-    fn pro_business_map_to_bge_large() {
-        for tier in [Tier::Pro, Tier::Business] {
+    fn mid_tiers_map_to_bge_large() {
+        for tier in [Tier::Tier3, Tier::Tier4] {
             assert!(matches!(tier_default_route(tier), EmbedRoute::BgeLarge));
         }
     }
 
     #[test]
-    fn enterprise_premium_map_to_bge_m3() {
-        for tier in [Tier::Enterprise, Tier::Premium] {
+    fn upper_tiers_map_to_bge_m3() {
+        for tier in [Tier::Tier5, Tier::Tier6] {
             assert!(matches!(tier_default_route(tier), EmbedRoute::BgeM3));
         }
     }
@@ -452,9 +483,9 @@ mod tier_tests {
     #[test]
     fn tier_routes_have_documented_dimensions() {
         // Sanity check that the dimensions match the doc comments.
-        assert_eq!(tier_default_route(Tier::Free).dimension(), 384);
-        assert_eq!(tier_default_route(Tier::Pro).dimension(), 1024);
-        assert_eq!(tier_default_route(Tier::Enterprise).dimension(), 1024);
+        assert_eq!(tier_default_route(Tier::Tier0).dimension(), 384);
+        assert_eq!(tier_default_route(Tier::Tier3).dimension(), 1024);
+        assert_eq!(tier_default_route(Tier::Tier5).dimension(), 1024);
     }
 }
 
@@ -465,18 +496,18 @@ mod collection_route_tests {
     // ---------- tier_allows_route (the gatekeeper) ----------
 
     #[test]
-    fn free_tier_allows_only_bge_small() {
-        assert!(tier_allows_route(Tier::Free, &EmbedRoute::BgeSmall));
-        assert!(!tier_allows_route(Tier::Free, &EmbedRoute::BgeLarge));
-        assert!(!tier_allows_route(Tier::Free, &EmbedRoute::BgeM3));
+    fn lowest_tier_allows_only_bge_small() {
+        assert!(tier_allows_route(Tier::Tier0, &EmbedRoute::BgeSmall));
+        assert!(!tier_allows_route(Tier::Tier0, &EmbedRoute::BgeLarge));
+        assert!(!tier_allows_route(Tier::Tier0, &EmbedRoute::BgeM3));
         assert!(!tier_allows_route(
-            Tier::Free,
+            Tier::Tier0,
             &EmbedRoute::OpenAi {
                 model: OpenAiModel::TextEmbed3Small
             }
         ));
         assert!(!tier_allows_route(
-            Tier::Free,
+            Tier::Tier0,
             &EmbedRoute::Cohere {
                 model: CohereModel::EmbedEnglishLightV3
             }
@@ -484,12 +515,12 @@ mod collection_route_tests {
     }
 
     #[test]
-    fn standard_tier_allows_small_and_large_only() {
-        assert!(tier_allows_route(Tier::Standard, &EmbedRoute::BgeSmall));
-        assert!(tier_allows_route(Tier::Standard, &EmbedRoute::BgeLarge));
-        assert!(!tier_allows_route(Tier::Standard, &EmbedRoute::BgeM3));
+    fn mid_tier_allows_small_and_large_only() {
+        assert!(tier_allows_route(Tier::Tier2, &EmbedRoute::BgeSmall));
+        assert!(tier_allows_route(Tier::Tier2, &EmbedRoute::BgeLarge));
+        assert!(!tier_allows_route(Tier::Tier2, &EmbedRoute::BgeM3));
         assert!(!tier_allows_route(
-            Tier::Standard,
+            Tier::Tier2,
             &EmbedRoute::Cohere {
                 model: CohereModel::EmbedEnglishV3
             }
@@ -497,12 +528,12 @@ mod collection_route_tests {
     }
 
     #[test]
-    fn pro_business_allow_all_in_process_models_no_external() {
-        for tier in [Tier::Pro, Tier::Business] {
+    fn mid_upper_tiers_allow_all_in_process_models_no_external() {
+        for tier in [Tier::Tier3, Tier::Tier4] {
             assert!(tier_allows_route(tier, &EmbedRoute::BgeSmall));
             assert!(tier_allows_route(tier, &EmbedRoute::BgeLarge));
             assert!(tier_allows_route(tier, &EmbedRoute::BgeM3));
-            // External providers are NOT in the Pro/Business allow list.
+            // External providers are NOT in the Tier3/Tier4 allow list.
             assert!(!tier_allows_route(
                 tier,
                 &EmbedRoute::OpenAi {
@@ -530,24 +561,24 @@ mod collection_route_tests {
     }
 
     #[test]
-    fn enterprise_allows_all_in_process_plus_openai_cohere_byo_but_not_azure() {
-        assert!(tier_allows_route(Tier::Enterprise, &EmbedRoute::BgeSmall));
-        assert!(tier_allows_route(Tier::Enterprise, &EmbedRoute::BgeLarge));
-        assert!(tier_allows_route(Tier::Enterprise, &EmbedRoute::BgeM3));
+    fn tier5_allows_all_in_process_plus_openai_cohere_byo_but_not_azure() {
+        assert!(tier_allows_route(Tier::Tier5, &EmbedRoute::BgeSmall));
+        assert!(tier_allows_route(Tier::Tier5, &EmbedRoute::BgeLarge));
+        assert!(tier_allows_route(Tier::Tier5, &EmbedRoute::BgeM3));
         assert!(tier_allows_route(
-            Tier::Enterprise,
+            Tier::Tier5,
             &EmbedRoute::OpenAi {
                 model: OpenAiModel::TextEmbed3Large
             }
         ));
         assert!(tier_allows_route(
-            Tier::Enterprise,
+            Tier::Tier5,
             &EmbedRoute::Cohere {
                 model: CohereModel::EmbedMultilingualV3
             }
         ));
         assert!(tier_allows_route(
-            Tier::Enterprise,
+            Tier::Tier5,
             &EmbedRoute::Byo {
                 url: "https://example.com".into(),
                 auth: ByoAuth::None,
@@ -557,9 +588,9 @@ mod collection_route_tests {
                 timeout_ms: 5000,
             }
         ));
-        // Azure OpenAI is the Premium add-on; Enterprise alone doesn't get it.
+        // Azure OpenAI is reserved for the highest tier; Tier5 doesn't get it.
         assert!(!tier_allows_route(
-            Tier::Enterprise,
+            Tier::Tier5,
             &EmbedRoute::AzureOpenAi {
                 model: AzureModel::TextEmbed3Large
             }
@@ -567,7 +598,7 @@ mod collection_route_tests {
     }
 
     #[test]
-    fn premium_allows_everything() {
+    fn highest_tier_allows_everything() {
         for route in [
             EmbedRoute::BgeSmall,
             EmbedRoute::BgeLarge,
@@ -591,8 +622,8 @@ mod collection_route_tests {
             },
         ] {
             assert!(
-                tier_allows_route(Tier::Premium, &route),
-                "Premium should allow {route:?}"
+                tier_allows_route(Tier::Tier6, &route),
+                "highest tier should allow {route:?}"
             );
         }
     }
@@ -601,24 +632,24 @@ mod collection_route_tests {
 
     #[test]
     fn explicit_choice_wins_over_tier_default() {
-        // Premium tenant who explicitly picked the small model gets small,
-        // not the Premium default M3.
-        let route = resolve_collection_route(Some(EmbedRoute::BgeSmall), Tier::Premium);
+        // A Tier6 tenant who explicitly picked the small model gets small,
+        // not the Tier6 default M3.
+        let route = resolve_collection_route(Some(EmbedRoute::BgeSmall), Tier::Tier6);
         assert_eq!(route, EmbedRoute::BgeSmall);
     }
 
     #[test]
     fn no_explicit_choice_falls_back_to_tier_default() {
         assert_eq!(
-            resolve_collection_route(None, Tier::Free),
+            resolve_collection_route(None, Tier::Tier0),
             EmbedRoute::BgeSmall
         );
         assert_eq!(
-            resolve_collection_route(None, Tier::Pro),
+            resolve_collection_route(None, Tier::Tier3),
             EmbedRoute::BgeLarge
         );
         assert_eq!(
-            resolve_collection_route(None, Tier::Enterprise),
+            resolve_collection_route(None, Tier::Tier5),
             EmbedRoute::BgeM3
         );
     }
@@ -627,12 +658,12 @@ mod collection_route_tests {
 
     #[test]
     fn downgrade_preserves_existing_collection_route() {
-        // Customer was Premium, created a collection with explicit BgeM3.
-        // Customer downgrades to Free. Existing collection's route is
+        // Tenant was Tier6, created a collection with explicit BgeM3.
+        // Tenant downgrades to Tier0. Existing collection's route is
         // stored on the catalog row; resolve_collection_route returns
-        // BgeM3, NOT the new (Free) tier's default.
+        // BgeM3, NOT the new (Tier0) tier's default.
         let stored_collection_route = Some(EmbedRoute::BgeM3); // From catalog
-        let new_tier = Tier::Free; // After downgrade
+        let new_tier = Tier::Tier0; // After downgrade
         let active = resolve_collection_route(stored_collection_route, new_tier);
         assert_eq!(active, EmbedRoute::BgeM3);
     }
@@ -640,22 +671,22 @@ mod collection_route_tests {
     #[test]
     fn downgrade_new_collection_uses_new_tier_default() {
         // After downgrade, a NEW collection without an explicit choice
-        // uses the (current) Free tier's default, not the prior tier.
-        let new_collection = resolve_collection_route(None, Tier::Free);
+        // uses the (current) Tier0 tier's default, not the prior tier.
+        let new_collection = resolve_collection_route(None, Tier::Tier0);
         assert_eq!(new_collection, EmbedRoute::BgeSmall);
     }
 
     #[test]
     fn downgrade_new_collection_with_disallowed_explicit_choice_rejected() {
-        // Customer downgrades to Free, then tries to create a new
+        // Tenant downgrades to Tier0, then tries to create a new
         // collection with BgeM3. The create-collection handler must
         // reject this via validate_collection_route — even though
         // resolve_collection_route would happily return BgeM3 if
         // persisted, the gatekeeper denies it BEFORE persistence.
         let requested = EmbedRoute::BgeM3;
-        let err = validate_collection_route(Tier::Free, &requested).unwrap_err();
+        let err = validate_collection_route(Tier::Tier0, &requested).unwrap_err();
         assert!(
-            err.contains("Free"),
+            err.contains("Tier0"),
             "rejection should name the tier: {err}"
         );
         assert!(
@@ -668,18 +699,18 @@ mod collection_route_tests {
 
     #[test]
     fn upgrade_unlocks_broader_choices_going_forward() {
-        // Free customer upgrades to Pro. Now BgeLarge is allowed.
-        assert!(!tier_allows_route(Tier::Free, &EmbedRoute::BgeLarge));
-        assert!(tier_allows_route(Tier::Pro, &EmbedRoute::BgeLarge));
+        // Tier0 tenant upgrades to Tier3. Now BgeLarge is allowed.
+        assert!(!tier_allows_route(Tier::Tier0, &EmbedRoute::BgeLarge));
+        assert!(tier_allows_route(Tier::Tier3, &EmbedRoute::BgeLarge));
     }
 
     #[test]
     fn upgrade_does_not_change_existing_collection_routes() {
-        // Customer was Free with BgeSmall collections. Upgrades to Pro.
+        // Tenant was Tier0 with BgeSmall collections. Upgrades to Tier3.
         // Existing collections keep BgeSmall — operationally a separate
         // reindex would be needed to migrate them to BgeLarge.
         let stored_collection_route = Some(EmbedRoute::BgeSmall);
-        let new_tier = Tier::Pro;
+        let new_tier = Tier::Tier3;
         let active = resolve_collection_route(stored_collection_route, new_tier);
         assert_eq!(active, EmbedRoute::BgeSmall);
     }
@@ -688,10 +719,10 @@ mod collection_route_tests {
 
     #[test]
     fn validate_accepts_in_tier_choice() {
-        assert!(validate_collection_route(Tier::Pro, &EmbedRoute::BgeLarge).is_ok());
+        assert!(validate_collection_route(Tier::Tier3, &EmbedRoute::BgeLarge).is_ok());
         assert!(
             validate_collection_route(
-                Tier::Enterprise,
+                Tier::Tier5,
                 &EmbedRoute::OpenAi {
                     model: OpenAiModel::TextEmbed3Small
                 }
@@ -703,13 +734,13 @@ mod collection_route_tests {
     #[test]
     fn validate_rejects_out_of_tier_choice_with_actionable_message() {
         let err = validate_collection_route(
-            Tier::Standard,
+            Tier::Tier2,
             &EmbedRoute::Cohere {
                 model: CohereModel::EmbedEnglishV3,
             },
         )
         .unwrap_err();
-        assert!(err.contains("Standard"));
+        assert!(err.contains("Tier2"));
         assert!(err.contains("upgrade tier or pick a permitted route"));
     }
 
@@ -761,12 +792,12 @@ mod collection_route_tests {
         // customer's storage bill keeps reflecting the larger vectors
         // until they reindex.
         let pre_downgrade = resolve_collection_route(
-            Some(EmbedRoute::BgeM3), // Was created on Premium
-            Tier::Free,              // After downgrade
+            Some(EmbedRoute::BgeM3), // Was created on Tier6
+            Tier::Tier0,             // After downgrade
         );
         assert_eq!(pre_downgrade.dimension(), 1024);
-        // A new collection on Free tier uses the small default = 384 dim.
-        let post_downgrade_new = resolve_collection_route(None, Tier::Free);
+        // A new collection on Tier0 uses the small default = 384 dim.
+        let post_downgrade_new = resolve_collection_route(None, Tier::Tier0);
         assert_eq!(post_downgrade_new.dimension(), 384);
         // Confirming the dimension delta the customer would see for new vs old.
         assert!(pre_downgrade.dimension() > post_downgrade_new.dimension());

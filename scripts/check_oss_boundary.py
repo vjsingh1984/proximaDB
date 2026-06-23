@@ -39,6 +39,36 @@ DENY = [
     (re.compile(r"\banvai\w*", re.IGNORECASE), "control-plane (anvaiops) reference"),
 ]
 
+# Bare commercial SKU/tier names. These are flagged ONLY when they appear in an
+# enum-variant context — either a fully-qualified reference (``Enum::Variant``)
+# or a bare variant *declaration* (a line that is just ``Variant,`` / ``Variant {``
+# / ``Variant(``). Compound identifiers (``BusinessContext``, ``BusinessRule``,
+# ``EnterpriseAuthManager``, ``AzurePremium``) are NOT matched thanks to ``\b``
+# word boundaries, and free-text occurrences inside string literals (log/UI copy
+# in the enterprise-BI surfaces) are skipped by ``looks_like_string_literal``.
+COMMERCIAL_SKU = re.compile(r"\b(Business|Enterprise|Premium|Pro)\b")
+SKU_VARIANT_REF = re.compile(r"::(Business|Enterprise|Premium|Pro)\b")
+SKU_VARIANT_DECL = re.compile(r"^\s*(Business|Enterprise|Premium|Pro)\s*[,{(]")
+
+# Enum prefixes whose ``::<Variant>`` uses are architectural posture / already
+# neutralized-via-alias, NOT commercial pricing (per the §3 rubric "No action"
+# list). A reference qualified by one of these prefixes is exempt; so is a bare
+# variant declaration belonging to one of these enums (allowlisted by the file
+# that defines them, below).
+SKU_ALLOWED_PREFIXES = (
+    "SecurityMode::",  # architectural security posture, not pricing
+    "StoragePoolClass::",  # neutralized pool class (commercial name only as alias)
+    "LicenseTier::",  # license editions live behind the licensing_surface gate
+)
+
+# Files allowed to *declare* a bare commercial-named variant because the enum is
+# a sanctioned architectural/neutralized type (not a pricing SKU). Path suffix →
+# allowed bare variant names.
+SKU_DECL_ALLOWED: dict[str, set[str]] = {
+    "src/security/security_coordinator.rs": {"Enterprise"},  # SecurityMode::Enterprise
+    "crates/control/proximadb-catalog/src/lib.rs": {"Premium"},  # StoragePoolClass::Premium
+}
+
 # Roots to scan (the OSS engine).
 SCAN_ROOTS = ["src", "crates"]
 
@@ -51,6 +81,15 @@ EXEMPT_DIR_PARTS = {
     "executive",
     "target",
 }
+
+# TODO(oss-boundary follow-up): ``src/ai/**`` (LLM/analytics/executive-dashboard
+# "Business Intelligence" surface) is an un-gated enterprise-BI surface that
+# carries commercial-flavoured *string copy* (log/UI text). It is NOT yet behind
+# a feature gate; that is a separate, scheduled remediation (feature-gate the
+# tree, like revenue/sales/licensing/executive). This guard does not flag it
+# today because its commercial terms live in string literals, not enum-variant
+# identifiers — ``sku_variant_leak`` only fires on enum-variant contexts, and the
+# DENY pricing/anvai patterns don't appear there. Track the gating separately.
 
 # Known, not-yet-remediated leaks — tracked bypasses (WARN, do not fail). All
 # remediation phases B1–B3 have LANDED (StoragePoolClass neutralized; DR billing
@@ -71,6 +110,41 @@ def is_comment(line: str) -> bool:
 
 def is_serde_alias(line: str) -> bool:
     return "serde(alias" in line or "alias =" in line
+
+
+def strip_string_literals(line: str) -> str:
+    """Blank out the contents of ``"..."`` string literals so identifier checks
+    don't fire on log/UI copy (e.g. ``"Enterprise trial created"``). Best-effort:
+    a simple non-escaped double-quote pairing, which is sufficient for the
+    enum-variant detection this guard does (it never needs to reason *about* the
+    text inside a string)."""
+    return re.sub(r'"(?:[^"\\]|\\.)*"', '""', line)
+
+
+def sku_variant_leak(rel: str, line: str) -> str | None:
+    """Return a reason string if ``line`` references a bare commercial SKU/tier
+    enum variant outside the allowlisted (architectural / neutralized) enums, or
+    ``None`` if clean. Operates on the string-literal-stripped line so free-text
+    mentions in log/UI copy are ignored."""
+    code = strip_string_literals(line)
+    if not COMMERCIAL_SKU.search(code):
+        return None
+    # Fully-qualified ``Enum::Variant`` reference. The enum name is the run of
+    # identifier chars immediately preceding the ``::`` of the match; allow it
+    # when that ``Enum::`` qualifier is on the allowlist (architectural posture /
+    # neutralized type), flag it otherwise.
+    for m in SKU_VARIANT_REF.finditer(code):
+        enum_name = re.search(r"([A-Za-z0-9_]+)::$", code[: m.start() + 2])
+        qualifier = f"{enum_name.group(1)}::" if enum_name else ""
+        if qualifier not in SKU_ALLOWED_PREFIXES:
+            return f"commercial SKU/tier variant reference ({m.group(1)})"
+    # Bare variant declaration (e.g. a line that is just ``Enterprise,``).
+    decl = SKU_VARIANT_DECL.match(code)
+    if decl:
+        variant = decl.group(1)
+        if variant not in SKU_DECL_ALLOWED.get(rel, set()):
+            return f"commercial SKU/tier variant declaration ({variant})"
+    return None
 
 
 def tracked(rel: str, line: str) -> bool:
@@ -106,6 +180,15 @@ def scan(repo: Path):
                             warnings.append(loc)
                         else:
                             errors.append(loc)
+                # Bare commercial SKU/tier enum-variant leak (enum-context only;
+                # compound identifiers + string-literal copy are not flagged).
+                sku = sku_variant_leak(rel, line)
+                if sku:
+                    loc = f"{rel}:{i}: commercial leak ({sku}): {line.strip()[:100]}"
+                    if tracked(rel, line):
+                        warnings.append(loc)
+                    else:
+                        errors.append(loc)
     return errors, warnings
 
 

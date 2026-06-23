@@ -261,7 +261,7 @@ mod tests {
             tenant_id: "tnt_acme".into(),
             namespace_id: "ns_1".into(),
             collection_id: "col_orders".into(),
-            tier: "business".into(),
+            tier: "standard".into(),
             state: DrState::Active,
             provider: ObjectProvider::AwsS3,
             source_region: "us-east-1".into(),
@@ -332,9 +332,9 @@ mod tests {
     fn observe_tick_increments_outcome_counter() {
         let m = PrometheusDrMetrics::new();
         let l = sample_labels();
-        let before = ticks_count("business", "aws_s3", "deferred_backoff");
+        let before = ticks_count("standard", "aws_s3", "deferred_backoff");
         m.observe_tick(&l, &TickOutcome::DeferredBackoff);
-        let after = ticks_count("business", "aws_s3", "deferred_backoff");
+        let after = ticks_count("standard", "aws_s3", "deferred_backoff");
         assert!((after - before - 1.0).abs() < f64::EPSILON);
     }
 
@@ -355,12 +355,12 @@ mod tests {
     fn observe_tick_repair_increments_both_tick_and_drift() {
         let m = PrometheusDrMetrics::new();
         let l = sample_labels();
-        let ticks_before = ticks_count("business", "aws_s3", "repaired_drift");
+        let ticks_before = ticks_count("standard", "aws_s3", "repaired_drift");
         let drift_before = drift_count("aws_s3", "rule_missing");
         let outcome =
             TickOutcome::Reconciled(ReconcileOutcome::RepairedDrift(DriftReason::RuleMissing));
         m.observe_tick(&l, &outcome);
-        let ticks_after = ticks_count("business", "aws_s3", "repaired_drift");
+        let ticks_after = ticks_count("standard", "aws_s3", "repaired_drift");
         let drift_after = drift_count("aws_s3", "rule_missing");
         assert!((ticks_after - ticks_before - 1.0).abs() < f64::EPSILON);
         assert!((drift_after - drift_before - 1.0).abs() < f64::EPSILON);
@@ -431,12 +431,12 @@ mod tests {
     fn idle_outcomes_only_increment_ticks_not_drift_or_error() {
         let m = PrometheusDrMetrics::new();
         let l = sample_labels();
-        let ticks_before = ticks_count("business", "aws_s3", "idle_healthy");
+        let ticks_before = ticks_count("standard", "aws_s3", "idle_healthy");
         let drift_before = drift_count("aws_s3", "rule_missing");
         let err_before = error_count("aws_s3", "transient");
         let outcome = TickOutcome::Reconciled(ReconcileOutcome::Idle(IdleReason::HealthyActive));
         m.observe_tick(&l, &outcome);
-        let ticks_after = ticks_count("business", "aws_s3", "idle_healthy");
+        let ticks_after = ticks_count("standard", "aws_s3", "idle_healthy");
         let drift_after = drift_count("aws_s3", "rule_missing");
         let err_after = error_count("aws_s3", "transient");
         assert!((ticks_after - ticks_before - 1.0).abs() < f64::EPSILON);
