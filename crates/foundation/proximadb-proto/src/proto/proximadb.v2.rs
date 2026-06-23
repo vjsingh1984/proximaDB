@@ -5840,3 +5840,541 @@ pub mod proxima_graph_service_server {
         const NAME: &'static str = SERVICE_NAME;
     }
 }
+/// A document: a collection-scoped, versioned bag of ProximaValue-typed fields.
+/// `props` is the document body; each value is a `TypedValue` (nested objects use
+/// the `TypedValueMap`/`array_value` variants), so the full ProximaValue type
+/// system round-trips without loss.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Document {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(map = "string, message", tag = "3")]
+    pub props: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
+    #[prost(uint64, tag = "4")]
+    pub version: u64,
+    #[prost(string, optional, tag = "5")]
+    pub schema_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "6")]
+    pub document_type: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(int64, tag = "7")]
+    pub updated_at_ms: i64,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct CreateDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    /// Optional client-supplied id; the server generates a UUID when empty.
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(map = "string, message", tag = "3")]
+    pub props: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
+    #[prost(string, optional, tag = "4")]
+    pub schema_id: ::core::option::Option<::prost::alloc::string::String>,
+    #[prost(string, optional, tag = "5")]
+    pub document_type: ::core::option::Option<::prost::alloc::string::String>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentResponse {
+    #[prost(message, optional, tag = "1")]
+    pub document: ::core::option::Option<Document>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteDocumentResponse {
+    #[prost(bool, tag = "1")]
+    pub deleted: bool,
+}
+/// Generated client implementations.
+pub mod proxima_document_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    #[derive(Debug, Clone)]
+    pub struct ProximaDocumentServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl ProximaDocumentServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> ProximaDocumentServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> ProximaDocumentServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            ProximaDocumentServiceClient::new(
+                InterceptedService::new(inner, interceptor),
+            )
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Document CRUD (first slice). Query/update/aggregate are deferred follow-ups,
+        /// mirroring how the graph service staged its advanced RPCs (TD-124).
+        pub async fn create_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::CreateDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaDocumentService/CreateDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaDocumentService",
+                        "CreateDocument",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaDocumentService/GetDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaDocumentService", "GetDocument"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteDocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaDocumentService/DeleteDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaDocumentService",
+                        "DeleteDocument",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod proxima_document_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with ProximaDocumentServiceServer.
+    #[async_trait]
+    pub trait ProximaDocumentService: std::marker::Send + std::marker::Sync + 'static {
+        /// Document CRUD (first slice). Query/update/aggregate are deferred follow-ups,
+        /// mirroring how the graph service staged its advanced RPCs (TD-124).
+        async fn create_document(
+            &self,
+            request: tonic::Request<super::CreateDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DocumentResponse>,
+            tonic::Status,
+        >;
+        async fn get_document(
+            &self,
+            request: tonic::Request<super::GetDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DocumentResponse>,
+            tonic::Status,
+        >;
+        async fn delete_document(
+            &self,
+            request: tonic::Request<super::DeleteDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteDocumentResponse>,
+            tonic::Status,
+        >;
+    }
+    #[derive(Debug)]
+    pub struct ProximaDocumentServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> ProximaDocumentServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>>
+    for ProximaDocumentServiceServer<T>
+    where
+        T: ProximaDocumentService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v2.ProximaDocumentService/CreateDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct CreateDocumentSvc<T: ProximaDocumentService>(pub Arc<T>);
+                    impl<
+                        T: ProximaDocumentService,
+                    > tonic::server::UnaryService<super::CreateDocumentRequest>
+                    for CreateDocumentSvc<T> {
+                        type Response = super::DocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::CreateDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaDocumentService>::create_document(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = CreateDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaDocumentService/GetDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetDocumentSvc<T: ProximaDocumentService>(pub Arc<T>);
+                    impl<
+                        T: ProximaDocumentService,
+                    > tonic::server::UnaryService<super::GetDocumentRequest>
+                    for GetDocumentSvc<T> {
+                        type Response = super::DocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaDocumentService>::get_document(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaDocumentService/DeleteDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteDocumentSvc<T: ProximaDocumentService>(pub Arc<T>);
+                    impl<
+                        T: ProximaDocumentService,
+                    > tonic::server::UnaryService<super::DeleteDocumentRequest>
+                    for DeleteDocumentSvc<T> {
+                        type Response = super::DeleteDocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaDocumentService>::delete_document(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for ProximaDocumentServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v2.ProximaDocumentService";
+    impl<T> tonic::server::NamedService for ProximaDocumentServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}
