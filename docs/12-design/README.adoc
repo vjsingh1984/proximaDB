@@ -142,6 +142,21 @@ Read these in order for future-shaping architecture work:
    `ModalityExpander`s; calibrate+fuse+rank is written once. Phase 1 = graph instance on REST v2.
    Engine asks: TD-136..TD-143.
 
+23. `NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc` +
+   Future shape of ProximaDB's native, Rust, object-store-first, multimodal OLAP execution engine,
+   derived from a source-level study of eight OSS MPP / data-engineering engines (DataFusion,
+   Ballista, DuckDB, Velox, Trino, Spark, ClickHouse, Polars). Positions Volcano as the OLTP
+   authority and DataFusion as the interim OLAP seed; specifies the target as a **push-based,
+   morsel-driven, vectorized columnar** core (DuckDB/Velox model in the Polars-stream Rust idiom)
+   over a **ClickHouse-style PAX scan spine** (sparse mark index + granules, PREWHERE late
+   materialization, zone-map/learned skip, codecs), distributed by a **Ballista-style stage cut
+   inverted onto object-store shuffle** and adapted by **Spark-style AQE from measured stats**, with
+   one operator trait into which vector (ANN scan→rerank), graph (traversal), and document operators
+   fold. Phased N0–N5 behind the `ComputeBackend` seam, mixed-read-safe and trace-gated. Subordinate
+   to the 2026-06-04 course correction and `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`;
+   supplies the intra-node engine + object-store shuffle detail that
+   `DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc` leaves open.
+
 == Stable Reference Docs
 
 * `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and
