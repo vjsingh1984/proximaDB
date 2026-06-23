@@ -731,11 +731,43 @@ not a rewrite. Landed as three sequenced PRs:
   `tree-sitter>=0.25` and `tree-sitter-language-pack>=1.0` (code uses Query-free node traversal,
   so it is 0.25-safe — verified no `Query()`/`captures()`/`QueryCursor` usage).
 
+*True incremental streaming — SHIPPED (2026-06-23).* `process_stream`/`process_stream_async`
+no longer materialize the full document + chunk list. A capability contract was added to
+`ChunkingStrategyInterface` (`base.py`): a `supports_streaming` flag (default `False`) plus a
+`chunk_stream(text_source, source_id, base_metadata) -> Iterator[TextChunk]` method, where
+`text_source` is a `str` (back-compat) OR an iterable of text pieces (e.g. successive file reads).
+
+* *Genuine incremental streaming (4 strategies, `supports_streaming = True`):* `FixedSizeStrategy`,
+  `SlidingWindowStrategy`, `SentenceStrategy`, `ParagraphStrategy` override `chunk_stream` to keep
+  only a BOUNDED local buffer (the pending unflushed window / in-progress sentence-or-paragraph)
+  and emit `TextChunk`s as boundaries are crossed — never accumulating the full input or the full
+  output list. Sliding-window preserves overlap carry-over by retaining the buffer from the next
+  window's start; sentence/paragraph carry the RAW (unstripped) buffer tail across piece boundaries
+  so inter-piece whitespace is preserved and the split is identical to feeding the whole text. The
+  streaming path produces chunks IDENTICAL to batch `chunk()` (text/offsets/id/overlap) — the only
+  difference is `total_chunks`, an inherently global count that streaming cannot know without
+  draining the input, so it is left as the existing `-1` sentinel (batch back-fills it).
+* *Honest fallback (non-streamable strategies):* `CodeChunkingStrategy` (tree-sitter parses the whole
+  file), `SemanticEmbeddingStrategy` (needs all sentence embeddings), `RecursiveStrategy` (cascade),
+  and structural `SemanticStrategy` (whole-doc structure) keep `supports_streaming = False` and use
+  the default `chunk_stream`, which materializes `text_source` and `yield from chunk()` — chunks are
+  still produced incrementally but memory is not constant. Docstrings state honestly which path
+  applies per strategy.
+* *Pipeline:* `process_stream`/`_async` accept `str` or an iterable/async source, route through
+  `strategy.chunk_stream(...)`, and run the per-chunk validation/enrichment/filter stages as before
+  (the `chunks = chunker.chunk(...)` full-materialization is gone). The async path advances the chunk
+  iterator in a thread-pool executor so CPU-bound chunking does not block the loop. Backward compat:
+  `process_stream(str_input)` works unchanged for every strategy.
+* *Tests* (`tests/unit/test_chunking_true_streaming.py`, 404 cases): (1) equivalence —
+  `chunk_stream(pieces) == chunk("".join(pieces))` for the 4 streamable strategies across awkward
+  piece boundaries (1-char, mid-word, single-piece, unicode, abbreviations) and high-overlap windows;
+  (2) bounded memory — a streamable strategy fed a generator yields its first chunk after consuming
+  only a couple of pieces (not all N), proving true streaming; (3) honest fallback — non-streamable
+  strategies via `process_stream` yield chunks equal to batch; (4) backward compat — `process_stream(str)`
+  for all strategies. `import proximadb_sdk` lazy boundary intact (no heavy deps pulled).
+
 *Deferred (follow-up):*
 
-* *True incremental streaming* — `process_stream`/`_async` still materialize the full document
-  and chunk list (every underlying strategy is a batch API). Real constant-memory streaming
-  requires an incremental contract across all strategies; out of scope for a cleanup pass.
 * *Embedding-based semantic chunking* — a percentile-breakpoint-over-sentence-embeddings mode
   alongside the structural `SemanticStrategy`. The SDK has embedding infra to support it, but it
   needs an embedding-provider injection seam, sentence splitting, and factory/config wiring +
