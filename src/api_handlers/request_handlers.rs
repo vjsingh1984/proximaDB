@@ -400,6 +400,18 @@ impl UnifiedHandlers {
         self.record_ops.get_dml_service()
     }
 
+    /// Wire a `DdlService` so relational DDL (CREATE/ALTER/DROP) submitted over the
+    /// gRPC `ExecuteQuery` RPC executes tenant-scoped (TD-135), mirroring pgwire.
+    /// Callable post-initialization; thread-safe. Delegated to `RecordOpsService`.
+    pub fn set_ddl_service(&self, svc: Arc<crate::services::DdlService>) {
+        self.record_ops.set_ddl_service(svc);
+        tracing::info!("DdlService set on UnifiedHandlers for relational DDL routing");
+    }
+
+    fn get_ddl_service(&self) -> Option<Arc<crate::services::DdlService>> {
+        self.record_ops.get_ddl_service()
+    }
+
     /// CDC change-feed: row-level changes for `table` with WAL sequence number strictly
     /// greater than `since_lsn`, oldest first. Backed by the unified canonical `DmlService`
     /// (the single cross-surface record store), so it reflects writes from EVERY protocol
@@ -1477,8 +1489,18 @@ impl UnifiedHandlers {
                     // 2. Perform graph traversal from these nodes
                     if !start_node_ids.is_empty() {
                         let graph_req = request.graph_traversal_request.clone().unwrap_or_default();
+                        // TD-131: honor the caller's graph id (REST v2 sets it from
+                        // the {graph_id} path param) instead of the hardcoded
+                        // "default" graph, so per-graph hybrid search — e.g. a
+                        // per-repo code-graph — targets the right graph. Falls back
+                        // to "default" only when the request leaves it unset.
+                        let effective_graph_id = if graph_req.graph_id.is_empty() {
+                            "default".to_string()
+                        } else {
+                            graph_req.graph_id.clone()
+                        };
                         let traversal_request = crate::graph::TraversalRequest {
-                            graph_id: "default".to_string(), // Deferred: Extract from request or pass as parameter
+                            graph_id: effective_graph_id.clone(),
                             start_node_id: start_node_ids.first().cloned().unwrap_or_default(), // Use first for now, need to handle multiple starts
                             max_depth: if graph_req.max_depth == 0 {
                                 3
@@ -1500,7 +1522,7 @@ impl UnifiedHandlers {
 
                         let traversal_response = self
                             .graph_operations_service
-                            .traverse("default", traversal_request)
+                            .traverse(&effective_graph_id, traversal_request)
                             .await?;
                         nodes.extend(traversal_response.nodes.into_iter().map(Into::into));
                         edges.extend(traversal_response.edges.into_iter().map(Into::into));
@@ -1996,6 +2018,9 @@ impl UnifiedHandlers {
         query: String,
         parameters: Option<Vec<crate::proto::proximadb_v1::SqlValue>>,
         collection: Option<String>,
+        // TD-121: the authenticated tenant (gRPC `x-tenant-id`, REST/JWT). Scopes
+        // relational SQL to the tenant's partition (TD-064), mirroring pgwire.
+        tenant_id: Option<&str>,
     ) -> Result<crate::proto::proximadb_v1::ExecuteQueryResponse> {
         let start_time = std::time::Instant::now();
 
@@ -2050,6 +2075,103 @@ impl UnifiedHandlers {
             // DmlService not wired — fall through to legacy path so EXPLAIN degrades gracefully.
         }
 
+        // TD-135: route relational WRITES (DDL + DML) through the same tenant-scoped
+        // service seams pgwire uses, instead of the legacy vector/graph engine which
+        // rejects them. Cheap leading-keyword guards avoid re-parsing read queries.
+        // The request tenant (x-tenant-id, threaded as `tenant_id`) scopes the write
+        // to its partition (TD-064); a None tenant writes unscoped, exactly as pgwire
+        // does for a connection with no `database` — never another tenant's partition.
+        {
+            let leading = query.trim_start().get(..7).map(str::to_ascii_uppercase);
+            let leading = leading.as_deref().unwrap_or("");
+            // DDL: CREATE / ALTER / DROP.
+            if (leading.starts_with("CREATE ")
+                || leading.starts_with("ALTER ")
+                || leading.starts_with("DROP "))
+                && let Some(ddl) = self.get_ddl_service()
+            {
+                let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+                match parser.parse_ddl(&query) {
+                    Ok(Some(statement)) => {
+                        let result = ddl
+                            .execute_scoped(statement, tenant_id)
+                            .await
+                            .map_err(|e| anyhow::anyhow!("DDL failed: {e}"))?;
+                        return Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
+                            rows: vec![],
+                            rows_scanned: 0,
+                            rows_returned: result.affected_count as u64,
+                            execution_time_ms: start_time.elapsed().as_millis() as u64,
+                            columns: vec![],
+                            column_types: vec![],
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(e) => return Err(anyhow::anyhow!("DDL parse error: {e}")),
+                }
+            }
+            // DML writes: INSERT / UPDATE / DELETE (+ UPSERT/MERGE shapes via parse_dml).
+            if (leading.starts_with("INSERT ")
+                || leading.starts_with("UPDATE ")
+                || leading.starts_with("DELETE ")
+                || leading.starts_with("UPSERT ")
+                || leading.starts_with("MERGE "))
+                && let Some(dml) = self.get_dml_service()
+                && let Ok(Some(statement)) =
+                    crate::query::sql_frontend::SqlFrontendParser::new().parse_dml(&query)
+            {
+                use crate::services::dml::DmlStatement;
+                let is_write = matches!(
+                    statement,
+                    DmlStatement::Insert { .. }
+                        | DmlStatement::Update { .. }
+                        | DmlStatement::Delete { .. }
+                        | DmlStatement::Upsert { .. }
+                        | DmlStatement::InsertSelect { .. }
+                        | DmlStatement::InsertOverwrite { .. }
+                );
+                if is_write {
+                    let tenant_ctx = tenant_id
+                        .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+                    let result = dml
+                        .execute_scoped(statement, tenant_ctx.as_ref())
+                        .await
+                        .map_err(|e| anyhow::anyhow!("DML failed: {e}"))?;
+                    return Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
+                        rows: vec![],
+                        rows_scanned: 0,
+                        rows_returned: result.rows_affected,
+                        execution_time_ms: start_time.elapsed().as_millis() as u64,
+                        columns: vec![],
+                        column_types: vec![],
+                    });
+                }
+            }
+        }
+
+        // TD-121: route RELATIONAL SQL through the same tenant-scoped relational
+        // pipeline pgwire uses (ComputeScheduler::route_select → DataFusion/Volcano,
+        // TD-064 tenant partitioning), instead of the legacy vector/graph engine
+        // which rejects relational plans. `require_engagement = false` routes any
+        // resolvable relational SELECT here; queries whose tables don't resolve
+        // (vector/graph SQL) return None and fall through to the legacy engine.
+        if let Some(dml) = self.get_dml_service()
+            && let Some(outcome) = crate::network::postgres::relational_pipeline::try_run_select(
+                &query,
+                Some(&dml),
+                None,
+                tenant_id,
+                crate::query::execution::ExecutionControls::default(),
+                false,
+            )
+            .await
+        {
+            return match outcome {
+                Ok(result) => Ok(Self::pipeline_result_to_sql_response(result, start_time)),
+                Err(msg) => Err(anyhow::anyhow!("Relational query execution failed: {msg}")),
+            };
+        }
+
         // Route through unified facade when feature is enabled and adapter is available
         #[cfg(feature = "unified-facade-routing")]
         if let Some(adapter) = self.get_query_adapter() {
@@ -2096,6 +2218,59 @@ impl UnifiedHandlers {
             columns: result.columns.iter().map(|c| c.0.clone()).collect(),
             column_types: result.columns.iter().map(|c| c.1.clone()).collect(),
         })
+    }
+
+    /// Convert a relational [`ExecutionPipelineResult`] (the tenant-scoped pgwire
+    /// pipeline output) into the v1 `ExecuteQueryResponse` carried by the gRPC/REST
+    /// SQL surfaces (TD-121). Mirrors pgwire's `emit_pipeline_result`: column names
+    /// + types come from the result schema; each `ProximaValue` cell maps to a
+    /// typed `SqlValue` via the canonical converter.
+    fn pipeline_result_to_sql_response(
+        result: crate::query::execution::engine::ExecutionPipelineResult,
+        start_time: std::time::Instant,
+    ) -> crate::proto::proximadb_v1::ExecuteQueryResponse {
+        use crate::proto::proximadb_v1::{SqlRow, SqlRowField};
+        let columns: Vec<String> = result
+            .schema
+            .columns
+            .iter()
+            .map(|c| c.name.clone())
+            .collect();
+        let column_types: Vec<String> = result
+            .schema
+            .columns
+            .iter()
+            .map(|c| format!("{:?}", c.ty))
+            .collect();
+        let rows_returned = result.rows.len() as u64;
+        let rows: Vec<SqlRow> = result
+            .rows
+            .into_iter()
+            .map(|row| {
+                let fields = row
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, value)| SqlRowField {
+                        key: columns.get(i).cloned().unwrap_or_else(|| format!("col{i}")),
+                        value: Some(crate::core::search::results::proxima_value_to_sql_value(
+                            value,
+                        )),
+                    })
+                    .collect();
+                SqlRow {
+                    fields,
+                    similarity: None,
+                }
+            })
+            .collect();
+        crate::proto::proximadb_v1::ExecuteQueryResponse {
+            rows,
+            rows_scanned: 0,
+            rows_returned,
+            execution_time_ms: start_time.elapsed().as_millis() as u64,
+            columns,
+            column_types,
+        }
     }
 
     /// Convert QueryResult from unified facade to ExecuteQueryResponse
@@ -3740,7 +3915,10 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
                 .map(proximadb_records::conversions::proxima_to_sql_value)
                 .collect()
         });
-        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection).await
+        // ApiHandlersPort::execute_sql_v1 carries no tenant; relational SQL stays
+        // unscoped on this trait path (callers that need TD-064 scoping use the
+        // inherent method with a tenant — e.g. the gRPC ExecuteQuery handler).
+        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection, None).await
     }
 }
 

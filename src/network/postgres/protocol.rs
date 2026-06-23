@@ -1554,6 +1554,9 @@ impl PostgresProtocol {
             Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
             Some(read_tenant.as_str()),
             controls,
+            // pgwire keeps simple single-table SELECTs on its hardened legacy
+            // path; only relational-engaging shapes go through this pipeline.
+            true,
         )
         .await
     }

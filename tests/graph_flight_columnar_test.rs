@@ -193,3 +193,142 @@ async fn columnar_edge_ingest_and_export_round_trip() {
         assert_eq!(orig.weight, got.weight);
     }
 }
+
+/// Read one page of nodes (full scan; empty label set) — mirrors the streaming
+/// export's `query_node_page`.
+async fn query_page(
+    graph: &GraphOperationsService,
+    graph_id: &str,
+    limit: u32,
+    offset: u32,
+) -> Vec<Node> {
+    let query = proximadb::graph::NodeQuery {
+        graph_id: graph_id.to_string(),
+        labels: Vec::new(),
+        filters: Vec::new(),
+        limit: Some(limit),
+        offset: Some(offset),
+        continuation_token: None,
+    };
+    let nodes = graph
+        .query_nodes(graph_id, query)
+        .await
+        .expect("query page");
+    nodes.iter().map(|n| (**n).clone()).collect()
+}
+
+/// The streaming export pages `query_nodes` and re-encodes each page with the
+/// dimension fixed from the first page, so every page shares ONE Arrow schema.
+/// This verifies that paginated re-encode reconstructs every node and the
+/// per-page schema is stable (what the `FlightDataEncoder` requires).
+#[tokio::test]
+async fn columnar_node_export_paginates_with_fixed_schema() {
+    let graph = Arc::new(GraphOperationsService::new());
+    let graph_id = "g_columnar_paged";
+    create_graph(&graph, graph_id).await;
+
+    // Ingest 5 nodes, all embedding dim 4.
+    let originals: Vec<Node> = (0..5).map(|i| node(&format!("n{i}"), 4)).collect();
+    let batch = graph_codec::nodes_to_batch(&originals).expect("encode");
+    let decoded = graph_codec::batch_to_nodes(&batch).expect("decode");
+    graph
+        .batch_create_nodes_with_strategy(graph_id, decoded, "update")
+        .await
+        .expect("bulk create");
+
+    // Fix the schema dimension from the first page (the streaming contract).
+    let page = 2u32;
+    let first = query_page(&graph, graph_id, page, 0).await;
+    let dim = graph_codec::embedding_dim_of(&first).expect("dim");
+    assert_eq!(dim, 4);
+    let fixed_schema = graph_codec::graph_node_schema(dim);
+
+    // Page through, re-encoding each page with the FIXED dim; every page must
+    // carry the identical schema, and the union reconstructs all nodes.
+    let mut all: Vec<Node> = Vec::new();
+    let mut offset = 0u32;
+    loop {
+        let nodes = if offset == 0 {
+            first.clone()
+        } else {
+            query_page(&graph, graph_id, page, offset).await
+        };
+        if nodes.is_empty() {
+            break;
+        }
+        let b = graph_codec::nodes_to_batch_with_dim(&nodes, dim as usize).expect("encode page");
+        assert_eq!(b.schema(), fixed_schema, "every page shares one schema");
+        all.extend(graph_codec::batch_to_nodes(&b).expect("decode page"));
+        let n = nodes.len();
+        offset += page;
+        if (n as u32) < page {
+            break;
+        }
+    }
+
+    let mut ids: Vec<String> = all.iter().map(|n| n.id.clone()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["n0", "n1", "n2", "n3", "n4"],
+        "pagination reconstructs every node exactly once"
+    );
+}
+
+/// `all_edges` (the full-graph edge scan backing the endpoint-less `graph_edges`
+/// Flight export) returns every edge exactly once — even those whose source node
+/// differs — and the columnar codec round-trips the whole set. Without this, a
+/// whole-graph Arrow dump can export all nodes but not all edges.
+#[tokio::test]
+async fn all_edges_full_scan_returns_every_edge() {
+    use proximadb::graph::model::Edge;
+    let graph = Arc::new(GraphOperationsService::new());
+    let graph_id = "g_all_edges";
+    create_graph(&graph, graph_id).await;
+
+    let nodes = vec![node("a", 0), node("b", 0), node("c", 0)];
+    let nb = graph_codec::nodes_to_batch(&nodes).expect("encode nodes");
+    graph
+        .batch_create_nodes_with_strategy(
+            graph_id,
+            graph_codec::batch_to_nodes(&nb).unwrap(),
+            "update",
+        )
+        .await
+        .expect("create nodes");
+
+    // Edges spread across two distinct source nodes (a, b) — a per-source
+    // adjacency query for any single node would miss the others.
+    let mk = |id: &str, from: &str, to: &str| Edge {
+        id: id.to_string(),
+        from_node_id: from.to_string(),
+        to_node_id: to.to_string(),
+        edge_type: "KNOWS".to_string(),
+        properties: HashMap::new(),
+        weight: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+    };
+    graph
+        .batch_create_edges(
+            graph_id,
+            vec![mk("e1", "a", "b"), mk("e2", "b", "c"), mk("e3", "a", "c")],
+        )
+        .await
+        .expect("create edges");
+
+    let all = graph.all_edges(graph_id).await.expect("all_edges");
+    let mut ids: Vec<String> = all.iter().map(|e| e.id.clone()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["e1", "e2", "e3"],
+        "full scan returns every edge exactly once (no dups, no misses)"
+    );
+
+    // The whole edge set survives the columnar codec round-trip.
+    let owned: Vec<Edge> = all.iter().map(|e| (**e).clone()).collect();
+    let batch = graph_codec::edges_to_batch(&owned).expect("encode all edges");
+    let back = graph_codec::batch_to_edges(&batch).expect("decode all edges");
+    assert_eq!(back.len(), 3);
+}

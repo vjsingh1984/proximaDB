@@ -303,6 +303,10 @@ pub struct RelationalSelectPredicateInput {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationalSelectAccessPath {
     PrimaryKeyLookup,
+    /// TD-127: a single-column equality / `IN`-list on a non-PK secondary-indexed
+    /// column was answered by probing the OLTP secondary index for candidate oids
+    /// (each re-checked against the full predicate) instead of a full scan.
+    SecondaryIndexLookup,
     TableScan,
 }
 
@@ -1309,6 +1313,51 @@ impl DmlService {
                 }
             }
             return Ok((RelationalSelectAccessPath::PrimaryKeyLookup, records));
+        }
+
+        // TD-127 secondary-index fast-path: a single-column equality / IN-list on
+        // a non-PK secondary-indexed column → probe the index for candidate oids,
+        // then re-check each against the FULL tree (the index only narrows; the
+        // tree still decides). `None` from `lookup_secondary` (no built index /
+        // kill-switch) falls through to the scan below.
+        if let Some((column, values)) =
+            self.extract_secondary_index_probe(where_clause, table_schema)?
+        {
+            let value_set: std::collections::HashSet<String> = values.into_iter().collect();
+            if let Some(candidate_oids) = self
+                .record_store
+                .lookup_secondary(table_schema, &column, &value_set, tenant_context)
+                .await?
+            {
+                let cap = limit.unwrap_or(usize::MAX);
+                let mut records = Vec::new();
+                for oid in candidate_oids {
+                    if records.len() >= cap {
+                        break;
+                    }
+                    let Some(rich) = self
+                        .record_store
+                        .get_by_key(
+                            table_schema,
+                            TableRecordGetRequest {
+                                table_id: table_id_name.to_string(),
+                                key: oid,
+                                include_vector: true,
+                                include_props: true,
+                            },
+                            tenant_context,
+                        )
+                        .await?
+                    else {
+                        continue;
+                    };
+                    let record = Self::rich_result_to_record(rich);
+                    if Self::eval_predicate_tree(&record, tree, primary_key) {
+                        records.push(record);
+                    }
+                }
+                return Ok((RelationalSelectAccessPath::SecondaryIndexLookup, records));
+            }
         }
 
         // No usable PK predicate: push the full tree into the store scan + limit.
@@ -3659,6 +3708,76 @@ impl DmlService {
     /// an empty Vec (NOT an error) when the clause has no usable PK predicate, so
     /// the caller can fall back to a predicate scan. Candidates are still
     /// re-checked against the full predicate by [`Self::resolve_matching_ids`].
+    /// TD-127: extract a single-column equality / non-negated `IN`-list on a
+    /// secondary-indexed non-PK column from `where_clause`, returning
+    /// `(column, value-texts)` to probe the OLTP secondary index. Value text is
+    /// rendered through the SAME [`proxima_value_to_unique_text`] the index uses,
+    /// so the probe text matches the indexed text exactly. Returns `None` (scan
+    /// fallback) when no such leaf exists.
+    ///
+    /// OR-safety: only sound under a top-level conjunction — `name = 'x' OR ...`
+    /// would under-bound the match set — mirroring [`Self::extract_pk_candidate_ids`].
+    fn extract_secondary_index_probe(
+        &self,
+        where_clause: &WhereClause,
+        table_schema: &CatalogTableSchema,
+    ) -> Result<Option<(String, Vec<String>)>> {
+        if matches!(where_clause.operator, LogicalOperator::Or) && where_clause.conditions.len() > 1
+        {
+            return Ok(None);
+        }
+        let indexed = crate::services::record_store::schema_secondary_index_columns(table_schema);
+        if indexed.is_empty() {
+            return Ok(None);
+        }
+        let is_indexed = |column: &String| indexed.iter().any(|c| c == column);
+        for condition in &where_clause.conditions {
+            match condition {
+                Condition::Comparison {
+                    column,
+                    operator,
+                    value,
+                } if matches!(operator, ComparisonOperator::Equal)
+                    && is_indexed(column)
+                    && !Self::literal_is_null(value) =>
+                {
+                    return Ok(Some((
+                        column.clone(),
+                        vec![self.literal_to_secondary_text(value)?],
+                    )));
+                }
+                Condition::In {
+                    column,
+                    values,
+                    negated,
+                } if !*negated && is_indexed(column) && !values.is_empty() => {
+                    let mut texts = Vec::with_capacity(values.len());
+                    for value in values {
+                        if Self::literal_is_null(value) {
+                            continue; // NULL never equals anything; skip the term
+                        }
+                        texts.push(self.literal_to_secondary_text(value)?);
+                    }
+                    if !texts.is_empty() {
+                        return Ok(Some((column.clone(), texts)));
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(None)
+    }
+
+    /// Render a WHERE literal as secondary-index probe text, going through the
+    /// same `ProximaValue` → [`proxima_value_to_unique_text`] path the index uses
+    /// for stored values so probe text and indexed text are byte-identical. (TD-127.)
+    fn literal_to_secondary_text(&self, val: &SqlValueLiteral) -> Result<String> {
+        let value = self.literal_to_proxima_value(val)?;
+        Ok(crate::services::record_store::proxima_value_to_unique_text(
+            &value,
+        ))
+    }
+
     fn extract_pk_candidate_ids(
         &self,
         where_clause: &WhereClause,
@@ -6386,6 +6505,177 @@ mod tests {
         assert_eq!(path, RelationalSelectAccessPath::TableScan);
         assert_eq!(pc, 0, "no WHERE → zero predicate leaves");
         assert_eq!(ids, vec!["i1", "i2", "i3", "i4"]);
+    }
+
+    /// TD-127: a single-column equality / IN-list on a non-PK secondary-indexed
+    /// column is answered by the OLTP secondary index (`SecondaryIndexLookup`),
+    /// not a full `TableScan`, and returns exactly the rows the scan would — while
+    /// the kill-switch falls back to a scan with identical rows. The schema is
+    /// registered programmatically because no DDL surface declares secondary
+    /// indexes yet (a noted follow-on); the cataloged `secondary_indexes` survive
+    /// the `ObjectSchema` round-trip, so the read path sees them.
+    #[tokio::test]
+    async fn select_where_uses_secondary_index_for_nonpk_name_and_file() {
+        use crate::services::record_store::DirectWalTableRecordStore;
+        use crate::services::{FramedTableWalAppender, MemtableRecordStorage};
+        use proximadb_catalog::{
+            CatalogColumn, CatalogIndex, CatalogIndexType, CatalogStorageSpecialization,
+            CatalogTableSchema, RelationalCapabilities,
+        };
+        use proximadb_data_model::ProximaType;
+
+        let temp_dir = tempfile::tempdir().expect("tempdir");
+        let wal_path = temp_dir.path().join("dml-secondary-index.wal");
+        let manager = Arc::new(CatalogManager::new());
+        manager
+            .create_native_catalog("native", temp_dir.path().to_string_lossy().as_ref())
+            .await
+            .expect("native catalog");
+
+        // Register a `code_symbol` table with non-unique secondary indexes on the
+        // code-graph lookup columns (`name`, `file`), PK `oid`.
+        let (catalog, table_id) = manager
+            .resolve_table_scoped("code_symbol", None)
+            .await
+            .expect("resolve table");
+        if !catalog
+            .namespace_exists(&table_id.namespace)
+            .await
+            .expect("namespace_exists")
+        {
+            catalog
+                .create_namespace_for_tenant(&table_id.namespace, HashMap::new(), None)
+                .await
+                .expect("create namespace");
+        }
+        let schema = CatalogTableSchema::new(&table_id.name)
+            .with_column(CatalogColumn::new(1, "oid", ProximaType::String).nullable(false))
+            .with_column(CatalogColumn::new(2, "name", ProximaType::String))
+            .with_column(CatalogColumn::new(3, "file", ProximaType::String))
+            .with_primary_key(vec!["oid".to_string()])
+            .with_storage_specialization(CatalogStorageSpecialization::PaxOltp)
+            .with_relational_capabilities(RelationalCapabilities {
+                primary_key: vec!["oid".to_string()],
+                secondary_indexes: vec![
+                    CatalogIndex::new(
+                        "sym_name_idx",
+                        vec!["name".to_string()],
+                        CatalogIndexType::Hash,
+                    ),
+                    CatalogIndex::new(
+                        "sym_file_idx",
+                        vec!["file".to_string()],
+                        CatalogIndexType::Hash,
+                    ),
+                ],
+                ..Default::default()
+            });
+        catalog
+            .create_table(&table_id, schema)
+            .await
+            .expect("register table");
+
+        let record_store = Arc::new(DirectWalTableRecordStore::new(
+            Arc::new(MemtableRecordStorage::new()),
+            Arc::new(
+                FramedTableWalAppender::open(&wal_path)
+                    .await
+                    .expect("open WAL"),
+            ),
+        ));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            manager.clone(),
+            record_store,
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        );
+
+        let parser = crate::query::sql_frontend::SqlFrontendParser::new();
+        for (oid, name, file) in [
+            ("s1", "parse", "a.rs"),
+            ("s2", "parse", "b.rs"),
+            ("s3", "emit", "b.rs"),
+            ("s4", "emit", "c.rs"),
+        ] {
+            let stmt = parser
+                .parse_dml(&format!(
+                    "INSERT INTO code_symbol (oid, name, file) VALUES ('{oid}', '{name}', '{file}');"
+                ))
+                .expect("parse insert")
+                .expect("insert stmt");
+            dml.execute(stmt).await.expect("insert");
+        }
+
+        async fn run(
+            dml: &DmlService,
+            parser: &crate::query::sql_frontend::SqlFrontendParser,
+            sql: &str,
+        ) -> (RelationalSelectAccessPath, Vec<String>) {
+            let where_clause = parser.parse_select_where_clause(sql).expect("parse where");
+            let res = dml
+                .select_table_records_with_projection_where(
+                    "code_symbol",
+                    &["oid".to_string()],
+                    None,
+                    where_clause.as_ref(),
+                    None,
+                )
+                .await
+                .expect("select");
+            let mut ids: Vec<String> = res
+                .rows
+                .iter()
+                .map(|row| match &row[0] {
+                    ProximaValue::String(s) => s.clone(),
+                    other => format!("{other:?}"),
+                })
+                .collect();
+            ids.sort();
+            (res.route_metadata.access_path, ids)
+        }
+
+        // Equality on the indexed non-PK `name` → secondary-index lookup, both rows.
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT oid FROM code_symbol WHERE name = 'parse'",
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::SecondaryIndexLookup);
+        assert_eq!(ids, vec!["s1", "s2"]);
+
+        // IN-list on the indexed `file` → secondary-index lookup, union a.rs + c.rs.
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT oid FROM code_symbol WHERE file IN ('a.rs', 'c.rs')",
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::SecondaryIndexLookup);
+        assert_eq!(ids, vec!["s1", "s4"]);
+
+        // The index narrows; the FULL predicate still decides: name='parse' AND
+        // file='b.rs' → only s2 (s1 is a.rs, dropped by the re-check).
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT oid FROM code_symbol WHERE name = 'parse' AND file = 'b.rs'",
+        )
+        .await;
+        assert_eq!(path, RelationalSelectAccessPath::SecondaryIndexLookup);
+        assert_eq!(ids, vec!["s2"]);
+
+        // Kill-switch → scan fallback with identical rows.
+        // SAFETY: single-threaded test; restored immediately after the probe.
+        unsafe { std::env::set_var("PROXIMADB_SECONDARY_INDEX_DISABLE", "1") };
+        let (path, ids) = run(
+            &dml,
+            &parser,
+            "SELECT oid FROM code_symbol WHERE name = 'parse'",
+        )
+        .await;
+        unsafe { std::env::remove_var("PROXIMADB_SECONDARY_INDEX_DISABLE") };
+        assert_eq!(path, RelationalSelectAccessPath::TableScan);
+        assert_eq!(ids, vec!["s1", "s2"], "scan fallback returns the same rows");
     }
 
     /// `scan_table_relational` (PATH B reader backend) pushes the output

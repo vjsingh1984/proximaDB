@@ -1088,6 +1088,8 @@ impl EmbeddedProximaDB {
                 &storage_config,
                 Some(orchestrator),
                 None, // No full config needed
+                // Fused in-process: no Prometheus/billing/scrape background work.
+                crate::network::multi_server::ServiceProfile::Embedded,
             )
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4245,6 +4247,7 @@ impl EmbeddedProximaDB {
                     query.to_string(),
                     proto_params,
                     collection.map(str::to_string),
+                    None, // embedded single-process: no per-request tenant
                 )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4258,9 +4261,10 @@ impl EmbeddedProximaDB {
     /// Insert or upsert Arrow IPC stream bytes through the embedded vector batch path.
     ///
     /// This is the in-process equivalent of Arrow Flight vector bulk_insert/bulk_upsert:
-    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to ProximaRecord
-    /// batches with the shared Arrow codec, and routed directly to the embedded
-    /// vector service without binding ports or starting a Flight server.
+    /// Arrow IPC stream bytes are decoded to RecordBatches and delegated to
+    /// [`Self::insert_arrow_batches`]. This entry point exists for byte-stream
+    /// sources; in-process callers should prefer the batch path (Arrow C Data
+    /// Interface) which avoids the IPC serialize/deserialize round-trip.
     pub fn insert_arrow_ipc(
         &self,
         collection: &str,
@@ -4268,9 +4272,6 @@ impl EmbeddedProximaDB {
         insert_only: bool,
         tenant_id: Option<&str>,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        self.check_write_access()?;
-
-        let start = std::time::Instant::now();
         let cursor = std::io::Cursor::new(ipc_stream);
         let reader = arrow_ipc::reader::StreamReader::try_new(cursor, None).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4292,6 +4293,27 @@ impl EmbeddedProximaDB {
                 })?,
             );
         }
+
+        self.insert_arrow_batches(collection, batches, insert_only, tenant_id)
+    }
+
+    /// Zero-copy sibling of [`Self::insert_arrow_ipc`]: ingest already-decoded
+    /// Arrow `RecordBatch`es. The Python embedding hands these across the FFI
+    /// boundary via the **Arrow C Data Interface** (`arrow::pyarrow`), so there is
+    /// no IPC serialize on the Python side and no IPC deserialize here — only the
+    /// unavoidable Arrow→ProximaRecord model conversion remains. Co-design Pillar C
+    /// (move the dominant cost term of the boundary that replaced the deleted
+    /// network dimension). Routed to the same embedded vector service; no ports.
+    pub fn insert_arrow_batches(
+        &self,
+        collection: &str,
+        batches: Vec<arrow::record_batch::RecordBatch>,
+        insert_only: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        self.check_write_access()?;
+
+        let start = std::time::Instant::now();
 
         let mut records =
             crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)

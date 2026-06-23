@@ -7,37 +7,16 @@ use tempfile::TempDir;
 use proximadb::core::config::StorageConfig;
 use proximadb::proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 use proximadb::services::collection_service::CollectionService;
-use proximadb::storage::metadata::backends::universal_backend::{
-    UniversalMetadataBackend, UniversalMetadataConfig,
-};
-use proximadb::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
 use proximadb::storage::tenant::{TenantConfig, TenantContext, TenantManager};
 
 /// Create test collection service
 async fn create_test_service() -> Result<(Arc<CollectionService>, TempDir)> {
     let temp_dir = TempDir::new()?;
 
-    // Create filesystem
-    let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
-
-    // Create metadata backend
-    let metadata_config = UniversalMetadataConfig {
-        storage_url: format!("file://{}/metadata", temp_dir.path().display()),
-        compression: true,
-        enable_snapshots: true,
-        snapshot_threshold: 100,
-        keep_snapshots: 3,
-        backup_url: None,
-        temp_dir: None,
-    };
-
-    let metadata_backend =
-        Arc::new(UniversalMetadataBackend::new(metadata_config, filesystem).await?);
-
-    // Create collection service with storage config
-    let storage_config = StorageConfig::default();
-    let service = Arc::new(CollectionService::new(metadata_backend, storage_config).await?);
+    // Create collection service with storage config rooted at the temp dir
+    let mut storage_config = StorageConfig::default();
+    storage_config.metadata_url = format!("file://{}/metadata", temp_dir.path().display());
+    let service = Arc::new(CollectionService::new(storage_config).await?);
 
     Ok((service, temp_dir))
 }
@@ -52,22 +31,6 @@ async fn create_test_service_with_tenant_manager(
 )> {
     let temp_dir = TempDir::new()?;
 
-    let fs_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(fs_config).await?);
-
-    let metadata_config = UniversalMetadataConfig {
-        storage_url: format!("file://{}/metadata", temp_dir.path().display()),
-        compression: true,
-        enable_snapshots: true,
-        snapshot_threshold: 100,
-        keep_snapshots: 3,
-        backup_url: None,
-        temp_dir: None,
-    };
-
-    let metadata_backend =
-        Arc::new(UniversalMetadataBackend::new(metadata_config, filesystem).await?);
-
     let tenant_manager = Arc::new(TenantManager::new());
     let mut tenant_config = TenantConfig::default();
     tenant_config.resource_limits.max_collections = max_collections;
@@ -79,9 +42,10 @@ async fn create_test_service_with_tenant_manager(
         .create_tenant("tenant_b".to_string(), tenant_config)
         .await?;
 
-    let storage_config = StorageConfig::default();
+    let mut storage_config = StorageConfig::default();
+    storage_config.metadata_url = format!("file://{}/metadata", temp_dir.path().display());
     let service = Arc::new(
-        CollectionService::new(metadata_backend, storage_config)
+        CollectionService::new(storage_config)
             .await?
             .with_tenant_manager(tenant_manager),
     );

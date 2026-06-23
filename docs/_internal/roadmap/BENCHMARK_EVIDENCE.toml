@@ -218,3 +218,31 @@ hardware = ""
 date = ""
 version = ""
 notes = "Sizing is PROJECTED from a measured SOURCE dataset (one real repo's SQLite CPG + LanceDB vectors): 79,744 symbol nodes, 96,538 cross-fn edges, 77,902 symbol embeddings @ 384-d = 114 MB f32 / 29 MB SQ8 + 5.5 MB co-stored snippet. No ProximaDB-side e2e bench yet for ingest/traversal/hybrid at this scale. To promote to measured: load Tier-A into an EmbeddedProximaDB, bench (a) Arrow Flight bulk-load time, (b) k-hop impact_analysis latency, (c) GraphHybridQuery seed->expand latency; check in a dated artifact. Tracked with TD-127..TD-132."
+
+[[claims]]
+id = "cross_modal_fusion_calibrated_seam"
+claim = "A single PIT-calibrated fuse-by-oid seam (seed->expand->calibrate->fuse->rank) matches or beats per-modality retrieval and the legacy 12-strategy engine, because calibration (not the operator) is the load-bearing step"
+metric = "recall@k, fusion_latency_ms, score_commensurability"
+status = "aspirational"
+asserted_in = ["docs/12-design/CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Design is literature-grounded (Calibrated-Fusion: post-PIT the operator is empirically indistinguishable; NaviX prefilter<50% selectivity; Samyama late-materialization 4-4.7x; HELIOS edge-grain +6-12%) but NOT yet measured in ProximaDB. To promote to measured: build a fixture corpus with correlated vector+graph signal, compare (a) vector-only, (b) graph-only, (c) uncalibrated weighted-sum, (d) PIT-calibrated linear, (e) RRF on recall@k and latency; check in a dated artifact. Tracked with TD-136..TD-143."
+
+[[claims]]
+id = "embedded_ffi_boundary_zero_copy"
+claim = "Embedded Arrow insert: the FFI boundary serialize is NOT the dominant cost term — swapping pyarrow-IPC for the zero-copy Arrow C Data Interface is perf-neutral; the dominant term is the Arrow->ProximaRecord conversion + insert_batch"
+metric = "insert_p50_ms"
+status = "measured"
+asserted_in = ["docs/_internal/status/EMBEDDED_ARROW_ZEROCOPY_BENCH_2026_06_22.adoc:1"]
+bench_source = "clients/python-embedded/benches/bench_arrow_zerocopy.py"
+bench_command = "python clients/python-embedded/benches/bench_arrow_zerocopy.py"
+artifact = "docs/_internal/status/EMBEDDED_ARROW_ZEROCOPY_BENCH_2026_06_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-06-22"
+version = "v0.2"
+notes = "Co-design Pillar C / TD-145. MEASURED (5000x128 f32, 2 warmup + 9 timed, median): insert_arrow_ipc 96.8/95.0 ms vs zero-copy insert_arrow_batches 95.8/107.3 ms = PARITY within run-to-run noise, despite eliminating a 2,669,512-byte IPC serialize/deserialize. The plan's hypothesis (boundary copy = dominant embedded cost term) is REFUTED at the insert path: the ~95 ms is dominated by ArrowProtoCodec::batches_to_proxima_records + insert_batch (WAL/storage), not the serialize. The insert_arrow_batches seam is kept (correct, cross-language, lighter memory) but NOT as a latency win; the real Pillar-C lever is redirected to Arrow-native ingestion (TD-145). Trace before you tune."

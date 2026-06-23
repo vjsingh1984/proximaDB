@@ -1,65 +1,18 @@
 """
-Offline unit tests for the legacy InstructorProvider.
+Offline unit tests for the (now core-based, registered) InstructorProvider.
 
-InstructorProvider still subclasses the System-B ``EmbeddingProvider`` base
-(via the ``embedding_providers.base`` shim), so we stub the optional
-``InstructorEmbedding`` dep through ``sys.modules`` and exercise it without any
-real model download. (The cloud providers were ported onto core and are covered
-in ``test_emb_providers_cloud_cov.py``.)
+TD-126 System-B collapse: InstructorProvider was ported onto
+``core.BaseEmbeddingProvider`` and registered under ``instructor``. It no longer
+subclasses the legacy ``embedding_providers.base`` shim, so this test resolves it
+through the real registry (``get_provider("instructor")``) and stubs the optional
+``InstructorEmbedding`` dependency via ``sys.modules`` — no model is downloaded.
 """
 
 import sys
 import types
-from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 import pytest
-
-
-def _install_base_stub() -> types.ModuleType:
-    """Inject the permissive legacy base the overlay was written against.
-
-    The canonical ``embedding_interface.EmbeddingProvider`` is abstract
-    (``__init__`` + ``embed_text`` are abstractmethods), so we provide the
-    lazy, concrete base the InstructorProvider overlay expects.
-    """
-    mod = types.ModuleType("proximadb_sdk.embedding_providers.base")
-
-    @dataclass
-    class EmbeddingConfig:
-        model_name: str
-        dimension: int
-        batch_size: int = 32
-        normalize: bool = True
-        cache_embeddings: bool = True
-        timeout_seconds: float = 30.0
-        device: Any = None
-        api_key: str | None = None
-        api_url: str | None = None
-        extra_params: dict[str, Any] = field(default_factory=dict)
-
-    class EmbeddingProvider:
-        def __init__(self, config: "EmbeddingConfig | None" = None):
-            self.config = config if config is not None else self._get_default_config()
-            self._available = None
-            self.client = None
-            self.model = None
-            self._token_count = 0
-
-        def _get_default_config(self):  # pragma: no cover - overridden
-            raise NotImplementedError
-
-        def _initialize(self):  # pragma: no cover - overridden
-            raise NotImplementedError
-
-    mod.EmbeddingConfig = EmbeddingConfig
-    mod.EmbeddingProvider = EmbeddingProvider
-    sys.modules["proximadb_sdk.embedding_providers.base"] = mod
-    return mod
-
-
-_install_base_stub()
 
 
 def _install_instructor_stub():
@@ -78,7 +31,8 @@ def _install_instructor_stub():
             normalize_embeddings=None,
             convert_to_numpy=None,
         ):
-            return np.array([[0.1, 0.2, 0.3, 0.4] for _ in instruction_pairs])
+            # 768-dim deterministic vectors (all hkunlp/instructor-* are 768d).
+            return np.ones((len(instruction_pairs), 768), dtype=np.float32)
 
     instructor_mod.INSTRUCTOR = _INSTRUCTOR
     sys.modules["InstructorEmbedding"] = instructor_mod
@@ -86,45 +40,72 @@ def _install_instructor_stub():
 
 _install_instructor_stub()
 
+from proximadb_sdk.embedding_providers import get_provider  # noqa: E402
 from proximadb_sdk.embedding_providers.instructor import (  # noqa: E402
+    DEFAULT_INSTRUCTIONS,
     InstructorProvider,
 )
 
 
 class TestInstructorProvider:
+    def test_registered_resolves(self):
+        cls = type(get_provider("instructor"))
+        assert cls is InstructorProvider
+        # aliases resolve too
+        assert type(get_provider("hkunlp")) is InstructorProvider
+
     def test_default_config(self):
         p = InstructorProvider()
-        cfg = p._get_default_config()
-        assert cfg.model_name == "hkunlp/instructor-base"
-        assert cfg.dimension == 768
-        assert "instruction" in cfg.extra_params
+        cfg = p.default_config()
+        assert cfg.model.name == "hkunlp/instructor-base"
+        assert cfg.model.dimension == 768
+        assert cfg.extra["instruction"] == DEFAULT_INSTRUCTIONS["retrieval"]
 
-    def test_initialize_success(self):
+    def test_dimension_and_instruction(self):
         p = InstructorProvider()
-        p._initialize()
-        assert p._available is True
-        assert p.config.dimension == 768
-        assert p.is_available() is True
+        assert p.get_dimension() == 768
+        assert p.instruction == DEFAULT_INSTRUCTIONS["retrieval"]
 
-    def test_initialize_import_error(self, monkeypatch):
+    def test_embed_dispatch(self):
+        p = InstructorProvider()
+        out = p.embed(["foo", "bar"])
+        assert out.shape == (2, 768)
+
+    def test_embed_empty(self):
+        p = InstructorProvider()
+        assert p.embed([]).size == 0
+
+    def test_embed_with_instructions_single(self):
+        p = InstructorProvider()
+        out = p.embed_texts_with_instructions(["a", "b"], "Represent X:")
+        assert out.shape == (2, 768)
+
+    def test_embed_with_instructions_per_text(self):
+        p = InstructorProvider()
+        out = p.embed_texts_with_instructions(["a", "b"], ["i1:", "i2:"])
+        assert out.shape == (2, 768)
+
+    def test_embed_with_instructions_length_mismatch(self):
+        p = InstructorProvider()
+        with pytest.raises(ValueError):
+            p.embed_texts_with_instructions(["a", "b"], ["only-one:"])
+
+    def test_load_model_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "InstructorEmbedding", None)
         p = InstructorProvider()
-        p._initialize()
-        assert p._available is False
+        with pytest.raises(ImportError):
+            p.ensure_initialized()
 
-    def test_embed_texts_dispatch(self):
-        p = InstructorProvider()
-        p._initialize()
-        out = p.embed_texts(["foo", "bar"])
-        assert out.shape == (2, 4)
+    def test_create_with_instruction(self):
+        p = InstructorProvider.create_with_instruction(
+            "Custom instruction:", batch_size=8
+        )
+        assert p.instruction == "Custom instruction:"
+        assert p.config.batch_size == 8
+        assert p.get_dimension() == 768
 
-    def test_embed_texts_unavailable(self):
-        p = InstructorProvider()
-        p._available = False
-        with pytest.raises(RuntimeError):
-            p.embed_texts(["a"])
-
-    def test_props(self):
-        p = InstructorProvider()
-        assert p.dimension == p.config.dimension
-        assert p.model_name == p.config.model_name
+    def test_create_with_instruction_unknown_model(self):
+        p = InstructorProvider.create_with_instruction(
+            "Instr:", model_name="hkunlp/instructor-xl"
+        )
+        assert p.config.model.name == "hkunlp/instructor-xl"

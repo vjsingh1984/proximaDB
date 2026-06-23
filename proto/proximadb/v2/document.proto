@@ -1,0 +1,68 @@
+// ProximaDB v2 Document service.
+//
+// Self-contained `proximadb.v2` surface for the document modality, mirroring the
+// graph (`graph.proto`) and record (`record.proto`) v2 services. The document
+// body is carried as the canonical v2 `TypedValue` (full ProximaValue coverage)
+// — NOT the legacy v1 `SqlValue` — so decimals, timestamps, UUIDs, and vectors
+// survive losslessly. The server maps these messages to the neutral, ProximaTree
+// -native `DocumentRecord` only at the handler boundary; the engine never sees a
+// wire type. Tenant isolation is structural (the `x-tenant-id` header namespaces
+// the collection), never a per-request predicate.
+//
+// To regenerate the committed stubs after editing this file:
+//   PROXIMADB_REGEN_PROTO=1 cargo build -p proximadb-proto
+
+syntax = "proto3";
+
+package proximadb.v2;
+
+import "proximadb/v2/record.proto"; // TypedValue — the canonical v2 value type
+
+// A document: a collection-scoped, versioned bag of ProximaValue-typed fields.
+// `props` is the document body; each value is a `TypedValue` (nested objects use
+// the `TypedValueMap`/`array_value` variants), so the full ProximaValue type
+// system round-trips without loss.
+message Document {
+  string collection_id = 1;
+  string id = 2;
+  map<string, TypedValue> props = 3;
+  uint64 version = 4;
+  optional string schema_id = 5;
+  optional string document_type = 6;
+  int64 updated_at_ms = 7;
+}
+
+message CreateDocumentRequest {
+  string collection_id = 1;
+  // Optional client-supplied id; the server generates a UUID when empty.
+  string id = 2;
+  map<string, TypedValue> props = 3;
+  optional string schema_id = 4;
+  optional string document_type = 5;
+}
+
+message DocumentResponse {
+  Document document = 1;
+}
+
+message GetDocumentRequest {
+  string collection_id = 1;
+  string id = 2;
+}
+
+message DeleteDocumentRequest {
+  string collection_id = 1;
+  string id = 2;
+}
+
+message DeleteDocumentResponse {
+  bool deleted = 1;
+}
+
+service ProximaDocumentService {
+  // Document CRUD (first slice). Query/update/aggregate are deferred follow-ups,
+  // mirroring how the graph service staged its advanced RPCs (TD-124).
+  rpc CreateDocument(CreateDocumentRequest) returns (DocumentResponse);
+  rpc GetDocument(GetDocumentRequest) returns (DocumentResponse);
+  rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+}

@@ -15,14 +15,17 @@
 //! root crate (mirrors the `function_store` / `rank_profile_store` recipe).
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use tokio::io::AsyncWriteExt;
 
+use crate::services::catalog_snapshot_store::{
+    CatalogSnapshotStore, LocalSnapshotStore, SnapshotWrite,
+};
 use proximadb_catalog::schema::{apply_evolution, validate_schema};
 use proximadb_catalog::{
     Catalog, CatalogIndex, CatalogNamespace, CatalogPrimaryPod, CatalogSchemaEvolution,
@@ -32,6 +35,13 @@ use proximadb_catalog::{
 use crate::services::record_store::TableWalAppender;
 use crate::services::system_catalog_state::{CatalogDelta, SystemCatalogState};
 
+/// Whether `candidate` is a strictly newer snapshot pointer version than the
+/// `loaded` one — treating the [`NO_VERSION`] sentinel ("nothing observed yet")
+/// as older than any real version. Monotonic: never reload an equal/older blob.
+fn version_is_newer(loaded: u64, candidate: u64) -> bool {
+    loaded == NO_VERSION || candidate > loaded
+}
+
 /// Current wall-clock milliseconds since the Unix epoch.
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
@@ -40,42 +50,35 @@ fn now_millis() -> i64 {
         .as_millis() as i64
 }
 
-/// Atomically write `bytes` to `path`: temp file → fsync → atomic rename →
-/// best-effort parent-dir fsync. Guarantees the snapshot blob is never observed
-/// torn — a reader sees either the previous snapshot or the complete new one.
-async fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
-    let tmp = path.with_extension("snapshot-tmp");
-    {
-        let mut file = tokio::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&tmp)
-            .await
-            .with_context(|| format!("opening snapshot temp {}", tmp.display()))?;
-        file.write_all(bytes)
-            .await
-            .with_context(|| format!("writing snapshot temp {}", tmp.display()))?;
-        file.flush().await?;
-        file.sync_data()
-            .await
-            .with_context(|| format!("fsync snapshot temp {}", tmp.display()))?;
-    }
-    tokio::fs::rename(&tmp, path)
-        .await
-        .with_context(|| format!("atomically replacing snapshot {}", path.display()))?;
-    if let Some(dir) = path.parent()
-        && let Ok(handle) = std::fs::File::open(dir)
-    {
-        let _ = handle.sync_all();
-    }
-    Ok(())
-}
-
 /// Default number of committed mutations between automatic snapshots; mirrors
 /// the legacy metastore's compaction threshold. Override with
 /// `PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD`.
 const DEFAULT_SNAPSHOT_THRESHOLD: u64 = 1000;
+
+/// Sentinel for "no object-store snapshot version observed yet" — distinct from
+/// version `0`, the first real published version. Versions never reach `u64::MAX`.
+const NO_VERSION: u64 = u64::MAX;
+
+/// Outcome of a Phase 6b sinval staleness check ([`SystemCatalog::reload_if_stale`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReloadOutcome {
+    /// Coherence is not applicable — this catalog has no object-store snapshot
+    /// store (an injected-appender / local single-pod catalog never tails).
+    Disabled,
+    /// The in-RAM cache was already current with the published snapshot.
+    UpToDate,
+    /// The in-RAM authority was reloaded from a newer published snapshot.
+    Reloaded {
+        /// Pointer version adopted.
+        version: u64,
+        /// Fencing generation the adopted snapshot was committed under.
+        generation: u64,
+        /// Whether the adopted snapshot was published by a **newer** pod (its
+        /// generation outranks this pod's write generation), meaning this pod has
+        /// been superseded and has stepped down to read-only.
+        superseded: bool,
+    },
+}
 
 /// File locations + cadence for the snapshot/compaction machinery. Present only
 /// when the catalog owns an on-disk WAL (via [`SystemCatalog::open`]); the
@@ -83,13 +86,21 @@ const DEFAULT_SNAPSHOT_THRESHOLD: u64 = 1000;
 /// snapshotting is a no-op there.
 struct SnapshotConfig {
     wal_path: PathBuf,
-    snapshot_path: PathBuf,
+    /// Durable home for the snapshot blob — local filesystem by default
+    /// ([`LocalSnapshotStore`]) or object storage ([`ObjectStoreSnapshotStore`])
+    /// for `s3/gs/az` deployments (Phase 5c).
+    store: Arc<dyn CatalogSnapshotStore>,
     threshold: u64,
 }
 
 /// WAL-backed read-heavy system catalog.
 pub struct SystemCatalog {
     name: String,
+    /// Plane this catalog serves (Phase 5 two-tier operator/account model).
+    /// Defaults to [`CatalogRole::Operator`] — the single-deployment system
+    /// catalog holds the whole deployment's objects until multi-account
+    /// provisioning splits data-plane catalogs out per account.
+    role: proximadb_catalog::CatalogRole,
     state: Arc<SystemCatalogState>,
     appender: Arc<dyn TableWalAppender>,
     /// Serializes the durable-append → in-RAM-apply pair so concurrent DDL can
@@ -101,6 +112,29 @@ pub struct SystemCatalog {
     write_lock: tokio::sync::Mutex<()>,
     snapshot: Option<SnapshotConfig>,
     commits_since_snapshot: AtomicU64,
+    /// Monotonic fencing generation this pod writes snapshots under (Phase 6a).
+    /// Claimed at boot as `prior_committed_generation + 1`, so a pod that takes
+    /// the catalog over outranks the one it replaced; the object-store snapshot
+    /// commit is fenced on it. Single-pod / local: effectively inert (the local
+    /// store never fences and each restart simply bumps it monotonically).
+    generation: AtomicU64,
+    /// Pointer **version** of the object-store snapshot currently reflected in
+    /// [`state`](Self::state) (Phase 6b sinval key). [`NO_VERSION`] until the
+    /// first published snapshot is observed. The follower poll compares the
+    /// store's `latest_version()` against this to decide whether to reload; it is
+    /// advanced on every successful publish (our own) and every reload (a peer's).
+    loaded_version: AtomicU64,
+    /// Fencing generation of the snapshot currently reflected in `state`. Equal
+    /// to `generation` once we have published; raised to a peer's generation when
+    /// we adopt a newer snapshot. Informational for reads + the step-down check.
+    loaded_generation: AtomicU64,
+    /// Read-only mode (Phase 6b): a **follower** replica (opened via
+    /// [`open_follower`](Self::open_follower)) or an ex-owner that has been
+    /// **superseded** by a newer-generation pod. While set, DDL is rejected and
+    /// the in-RAM authority is driven solely by tailing the object-store
+    /// snapshot — the bounded-staleness read replica. The single-pod default
+    /// (an owner) leaves this `false`, so behaviour is unchanged.
+    read_only: AtomicBool,
 }
 
 impl SystemCatalog {
@@ -114,12 +148,29 @@ impl SystemCatalog {
     ) -> Self {
         Self {
             name: name.into(),
+            role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
             commits_since_snapshot: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
+            loaded_version: AtomicU64::new(NO_VERSION),
+            loaded_generation: AtomicU64::new(0),
+            read_only: AtomicBool::new(false),
         }
+    }
+
+    /// Set this catalog's plane in the two-tier operator/account model
+    /// (Phase 5). Default is [`CatalogRole::Operator`].
+    pub fn with_role(mut self, role: proximadb_catalog::CatalogRole) -> Self {
+        self.role = role;
+        self
+    }
+
+    /// The plane this catalog serves.
+    pub fn role(&self) -> &proximadb_catalog::CatalogRole {
+        &self.role
     }
 
     /// Open (or create) the catalog WAL at `wal_path`, restore the in-RAM
@@ -133,21 +184,98 @@ impl SystemCatalog {
     /// silently falling back to a WAL-only replay would lose committed DDL.
     pub async fn open(name: impl Into<String>, wal_path: impl Into<PathBuf>) -> Result<Self> {
         let wal_path = wal_path.into();
-        let snapshot_path = wal_path.with_extension("snapshot");
+        // Default: the snapshot blob lives next to the local WAL.
+        let snapshot_store = Arc::new(LocalSnapshotStore::new(wal_path.with_extension("snapshot")));
+        Self::open_with_snapshot_store(name, wal_path, snapshot_store).await
+    }
+
+    /// Like [`open`](Self::open) but with an injected snapshot store. The WAL
+    /// itself stays on the local filesystem at `wal_path` (object-store-native
+    /// WAL durability is Phase 6); only the snapshot blob's durable home is
+    /// pluggable — local fs (default) or object storage (`s3/gs/az`/`memory`)
+    /// under the tenant/operator DrPath prefix (Phase 5c).
+    pub async fn open_with_snapshot_store(
+        name: impl Into<String>,
+        wal_path: impl Into<PathBuf>,
+        snapshot_store: Arc<dyn CatalogSnapshotStore>,
+    ) -> Result<Self> {
+        // An owner: claims the next generation and serves writes.
+        Self::open_inner(name, wal_path, snapshot_store, true).await
+    }
+
+    /// Open the catalog as a **read-only follower** (Phase 6b): seed the in-RAM
+    /// authority from the current object-store snapshot, but do **not** claim a
+    /// higher fencing generation (a follower never takes the catalog over) and
+    /// **reject DDL**. A follower tails the object-store snapshot — call
+    /// [`reload_if_stale`](Self::reload_if_stale) periodically (or
+    /// [`spawn_follower_poll`](Self::spawn_follower_poll)) to pull the owner's
+    /// published mutations into RAM within the poll interval (bounded staleness).
+    /// Reads are served from RAM exactly as on the owner; only writes differ.
+    pub async fn open_follower(
+        name: impl Into<String>,
+        wal_path: impl Into<PathBuf>,
+        snapshot_store: Arc<dyn CatalogSnapshotStore>,
+    ) -> Result<Self> {
+        // A follower: keeps the prior generation (no takeover) and is read-only.
+        Self::open_inner(name, wal_path, snapshot_store, false).await
+    }
+
+    /// Shared boot path for owner ([`open_with_snapshot_store`](Self::open_with_snapshot_store))
+    /// and follower ([`open_follower`](Self::open_follower)) catalogs.
+    ///
+    /// `claim_owner = true` makes this an owner: it claims `prior_generation + 1`
+    /// so its fenced snapshot commits outrank the pod it replaced, and it serves
+    /// writes. `claim_owner = false` makes this a read-only follower: it stays at
+    /// the prior generation and rejects DDL.
+    async fn open_inner(
+        name: impl Into<String>,
+        wal_path: impl Into<PathBuf>,
+        snapshot_store: Arc<dyn CatalogSnapshotStore>,
+        claim_owner: bool,
+    ) -> Result<Self> {
+        let wal_path = wal_path.into();
         let appender = Arc::new(crate::services::FramedTableWalAppender::open(&wal_path).await?);
         let entries = appender.read_entries().await?;
 
-        let state = if tokio::fs::try_exists(&snapshot_path).await.unwrap_or(false) {
-            let bytes = tokio::fs::read(&snapshot_path)
-                .await
-                .with_context(|| format!("reading catalog snapshot {}", snapshot_path.display()))?;
-            let state = SystemCatalogState::from_snapshot_bytes(&bytes).with_context(|| {
-                format!("decoding catalog snapshot {}", snapshot_path.display())
-            })?;
-            state.replay(&entries)?;
-            state
+        // A snapshot that exists but fails to decode is **fatal**: after a
+        // compaction the WAL alone no longer carries the pre-watermark history,
+        // so silently falling back to a WAL-only replay would lose committed DDL.
+        // `read` also yields the snapshot's pointer version + fencing generation.
+        let (state, prior_version, prior_generation) = match snapshot_store.read().await? {
+            Some(read) => {
+                let state =
+                    SystemCatalogState::from_snapshot_bytes(&read.bytes).with_context(|| {
+                        format!("decoding catalog snapshot {}", snapshot_store.describe())
+                    })?;
+                // The local WAL tail (entries past the snapshot watermark) is a
+                // no-op for a follower (it never appends), and the owner's own
+                // post-snapshot durability for an owner.
+                state.replay(&entries)?;
+                (state, read.version, read.generation)
+            }
+            None => (
+                SystemCatalogState::from_wal_entries(&entries)?,
+                NO_VERSION,
+                0,
+            ),
+        };
+
+        // Seed the appender's sequence floor from the snapshot watermark so a
+        // fresh local WAL (compacted-to-empty, or a peer's snapshot adopted into
+        // a different local sequence space) cannot mint a sequence the in-RAM
+        // authority has already applied (which `apply_committed` would drop). A
+        // no-op when the local WAL already carries the watermark.
+        appender.advance_sequence_floor(state.applied_seq());
+
+        // Owner claims the next generation — a pod taking the catalog over
+        // outranks the one it replaced, so its first fenced commit fences any
+        // stale writer. For the local (unfenced) store this is inert. A follower
+        // keeps the prior generation: it never publishes, so it must not outrank
+        // the owner whose snapshot it tails.
+        let generation = if claim_owner {
+            prior_generation + 1
         } else {
-            SystemCatalogState::from_wal_entries(&entries)?
+            prior_generation
         };
 
         let threshold = std::env::var("PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD")
@@ -158,15 +286,20 @@ impl SystemCatalog {
 
         Ok(Self {
             name: name.into(),
+            role: proximadb_catalog::CatalogRole::Operator,
             state: Arc::new(state),
             appender,
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: Some(SnapshotConfig {
                 wal_path,
-                snapshot_path,
+                store: snapshot_store,
                 threshold,
             }),
             commits_since_snapshot: AtomicU64::new(0),
+            generation: AtomicU64::new(generation),
+            loaded_version: AtomicU64::new(prior_version),
+            loaded_generation: AtomicU64::new(prior_generation),
+            read_only: AtomicBool::new(!claim_owner),
         })
     }
 
@@ -174,6 +307,15 @@ impl SystemCatalog {
     /// authority — atomically with respect to other writers. Triggers an
     /// automatic checkpoint once enough mutations have accumulated.
     async fn commit_batch(&self, deltas: Vec<CatalogDelta>) -> Result<()> {
+        // Phase 6b: a follower replica / superseded ex-owner serves reads only;
+        // DDL must go to the owning pod. (Single-pod owner: never read-only.)
+        if self.read_only.load(Ordering::SeqCst) {
+            return Err(anyhow!(
+                "system catalog '{}' is read-only (a follower replica or superseded by a \
+                 newer pod); route DDL to the owning pod",
+                self.name
+            ));
+        }
         let _guard = self.write_lock.lock().await;
         let ops = deltas
             .iter()
@@ -202,8 +344,12 @@ impl SystemCatalog {
     }
 
     /// Force a snapshot + WAL compaction now. No-op for injected-appender
-    /// catalogs. Takes the write lock; callers must not already hold it.
+    /// catalogs and for read-only followers (they never publish). Takes the
+    /// write lock; callers must not already hold it.
     pub async fn checkpoint(&self) -> Result<()> {
+        if self.read_only.load(Ordering::SeqCst) {
+            return Ok(());
+        }
         if let Some(cfg) = &self.snapshot {
             let _guard = self.write_lock.lock().await;
             self.checkpoint_locked(cfg).await?;
@@ -228,9 +374,38 @@ impl SystemCatalog {
     async fn checkpoint_locked(&self, cfg: &SnapshotConfig) -> Result<()> {
         let watermark = self.state.applied_seq();
 
-        // 1. Durable snapshot (write temp → fsync → atomic rename).
+        // 1. Durable snapshot. The store guarantees an atomic replace (local:
+        //    temp → fsync → rename; object store: a generation-fenced commit), so
+        //    a reader sees the old or new blob, never a torn one.
+        let generation = self.generation.load(Ordering::SeqCst);
         let bytes = self.state.to_snapshot_bytes()?;
-        write_atomic(&cfg.snapshot_path, &bytes).await?;
+        match cfg.store.write_atomic(generation, &bytes).await? {
+            SnapshotWrite::Published { version } => {
+                // Our publish IS the latest snapshot now — record its version +
+                // generation so the sinval check does not mistake our own write
+                // for a peer's and reload it away (read-your-writes).
+                self.loaded_version.store(version, Ordering::SeqCst);
+                self.loaded_generation.store(generation, Ordering::SeqCst);
+            }
+            SnapshotWrite::Fenced => {
+                // Fenced (Phase 6a): a newer pod (higher generation) has taken
+                // the catalog over. We are a stale writer — the snapshot we tried
+                // to publish did NOT land, so we MUST NOT compact our local WAL.
+                // Phase 6b step-down: pull the newer pod's snapshot into RAM
+                // (discarding our now-doomed post-snapshot writes) and flip to
+                // read-only so we stop emitting writes the fence will reject. We
+                // already hold the write lock, so reload directly.
+                tracing::warn!(
+                    catalog = %self.name,
+                    generation,
+                    store = %cfg.store.describe(),
+                    "catalog snapshot checkpoint was fenced by a newer pod; \
+                     stepping down to read-only and reloading its snapshot"
+                );
+                self.reload_from_store_locked(cfg).await?;
+                return Ok(());
+            }
+        }
 
         // 2. Compact the WAL: keep only entries the snapshot does not cover.
         let entries = self.appender.read_all_entries().await?;
@@ -242,6 +417,152 @@ impl SystemCatalog {
             crate::services::canonical_wal::rewrite_canonical_wal(&cfg.wal_path, &kept).await?;
         }
         Ok(())
+    }
+
+    // ── Phase 6b: cross-pod cache coherence (sinval-style invalidation) ───────
+
+    /// **Sinval staleness check.** Compare this pod's cached snapshot version
+    /// against the object store's latest published version; if a newer snapshot
+    /// has been published (by the owner, or by a pod that took the catalog over),
+    /// lazily reload the in-RAM authority from it. This is the Postgres-`sinval`
+    /// analog: the published pointer's monotonic version is the invalidation
+    /// signal; a follower (or a superseded ex-owner) reloads on mismatch and is
+    /// thereafter consistent within the poll interval (bounded staleness).
+    ///
+    /// Cheap when nothing changed: a single object-store `list` probe
+    /// ([`CatalogSnapshotStore::latest_version`]) with no payload fetch. The
+    /// (larger) snapshot payload is read only on a version advance. Inert for the
+    /// local single-pod store (it reports no version) and for injected-appender
+    /// catalogs (no snapshot store).
+    pub async fn reload_if_stale(&self) -> Result<ReloadOutcome> {
+        let cfg = match &self.snapshot {
+            Some(cfg) => cfg,
+            None => return Ok(ReloadOutcome::Disabled),
+        };
+        // Cheap probe first — no payload fetch.
+        let latest = cfg.store.latest_version().await?;
+        let loaded = self.loaded_version.load(Ordering::SeqCst);
+        match latest {
+            Some(v) if version_is_newer(loaded, v) => {
+                // A newer snapshot exists — take the write lock so no DDL or
+                // checkpoint interleaves the state swap, then reload.
+                let _guard = self.write_lock.lock().await;
+                self.reload_from_store_locked(cfg).await
+            }
+            _ => Ok(ReloadOutcome::UpToDate),
+        }
+    }
+
+    /// Reload the in-RAM authority from the current object-store snapshot,
+    /// **assuming the write lock is held**. Used by [`reload_if_stale`] (after it
+    /// detects a version advance) and by the fenced-checkpoint step-down path.
+    /// Re-checks the version under the lock so two concurrent reloaders don't
+    /// double-apply, and never moves backward.
+    async fn reload_from_store_locked(&self, cfg: &SnapshotConfig) -> Result<ReloadOutcome> {
+        let read = match cfg.store.read().await? {
+            Some(read) => read,
+            // Nothing published (or it vanished) — nothing to adopt.
+            None => return Ok(ReloadOutcome::UpToDate),
+        };
+        let loaded = self.loaded_version.load(Ordering::SeqCst);
+        if !version_is_newer(loaded, read.version) {
+            // Another reload already pulled this version (or newer); never reload
+            // an older snapshot over a current one (monotonic reads).
+            return Ok(ReloadOutcome::UpToDate);
+        }
+
+        self.state
+            .load_from_snapshot_bytes(&read.bytes)
+            .with_context(|| {
+                format!(
+                    "reloading catalog '{}' from snapshot {}",
+                    self.name,
+                    cfg.store.describe()
+                )
+            })?;
+        self.loaded_version.store(read.version, Ordering::SeqCst);
+        self.loaded_generation
+            .store(read.generation, Ordering::SeqCst);
+
+        // Superseded: the adopted snapshot was committed under a generation that
+        // outranks this pod's write generation, i.e. a newer pod owns the
+        // catalog. Step down to read-only so we stop emitting writes the fence
+        // would reject (reacquiring write ownership is the Phase 7 lease).
+        let superseded = read.generation > self.generation.load(Ordering::SeqCst);
+        if superseded {
+            self.read_only.store(true, Ordering::SeqCst);
+        }
+        Ok(ReloadOutcome::Reloaded {
+            version: read.version,
+            generation: read.generation,
+            superseded,
+        })
+    }
+
+    /// Spawn a background task that tails the object-store snapshot, calling
+    /// [`reload_if_stale`](Self::reload_if_stale) every `interval`. This is the
+    /// **follower tailer** — it pulls the owner's published DDL into a follower's
+    /// (or a superseded ex-owner's) RAM within `interval` (bounded staleness).
+    ///
+    /// The returned [`JoinHandle`](tokio::task::JoinHandle) **owns the task**: the
+    /// caller must `abort()` it on shutdown (it is a cooperative tokio task, not
+    /// an OS thread, so it never blocks process exit, but a clean abort avoids a
+    /// stray reload firing during teardown). Inert for catalogs without a
+    /// snapshot store / version concept (each tick is a no-op `Disabled`).
+    pub fn spawn_follower_poll(self: Arc<Self>, interval: Duration) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(interval);
+            ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            // The first tick fires immediately; skip it so we honour `interval`.
+            ticker.tick().await;
+            loop {
+                ticker.tick().await;
+                match self.reload_if_stale().await {
+                    Ok(ReloadOutcome::Reloaded {
+                        version,
+                        generation,
+                        superseded,
+                    }) => {
+                        tracing::info!(
+                            catalog = %self.name,
+                            version,
+                            generation,
+                            superseded,
+                            "catalog follower reloaded in-RAM authority from a newer \
+                             object-store snapshot"
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        tracing::warn!(
+                            catalog = %self.name,
+                            error = %e,
+                            "catalog follower poll failed; will retry next interval"
+                        );
+                    }
+                }
+            }
+        })
+    }
+
+    /// The fencing generation this pod writes snapshots under (Phase 6a/6b).
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
+    }
+
+    /// The object-store snapshot pointer version currently reflected in RAM, or
+    /// `None` if no published snapshot has been observed yet.
+    pub fn loaded_version(&self) -> Option<u64> {
+        match self.loaded_version.load(Ordering::SeqCst) {
+            NO_VERSION => None,
+            v => Some(v),
+        }
+    }
+
+    /// Whether this catalog is a read-only replica — a follower, or an ex-owner
+    /// superseded by a newer-generation pod (Phase 6b).
+    pub fn is_read_only(&self) -> bool {
+        self.read_only.load(Ordering::SeqCst)
     }
 
     /// Load a table's current schema or fail (the catalog's "table not found").
@@ -272,7 +593,7 @@ impl SystemCatalog {
         ns.namespace_id = Some(format!("ns_{}", uuid::Uuid::new_v4()));
         ns.tenant_id = tenant_id;
         self.commit(CatalogDelta::UpsertNamespace {
-            namespace: ns.clone(),
+            namespace: Box::new(ns.clone()),
         })
         .await?;
         Ok(ns)
@@ -370,8 +691,10 @@ impl Catalog for SystemCatalog {
             ns.properties.remove(&k);
         }
         ns.updated_at_ms = now_millis();
-        self.commit(CatalogDelta::UpsertNamespace { namespace: ns })
-            .await
+        self.commit(CatalogDelta::UpsertNamespace {
+            namespace: Box::new(ns),
+        })
+        .await
     }
 
     // ── Table operations ──────────────────────────────────────────────────
@@ -865,6 +1188,78 @@ mod tests {
         Ok(())
     }
 
+    /// Phase 5c — the catalog snapshot persists to **object storage** while the
+    /// per-DDL WAL stays local. A reopen over the same object store restores the
+    /// in-RAM authority from the object-store snapshot + the local WAL tail. This
+    /// is the same bounded-restart guarantee as the local case, proving the
+    /// `ObjectStoreSnapshotStore` path end-to-end (over `memory://`).
+    #[tokio::test]
+    async fn snapshot_to_object_store_survives_reopen() -> Result<()> {
+        use crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore;
+        use proximadb_object_store::ProximaObjectStore;
+
+        let dir = tempfile::tempdir()?;
+        let wal = dir.path().join("catalog.wal");
+        // One backing in-memory object store shared across both opens (a fresh
+        // `from_url("memory://")` would be empty — we need the same instance).
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        // Phase 6a: the object-store snapshot is a generation-fenced manifest log.
+        let key = "_operator/catalog/_manifests/";
+
+        {
+            let store = Arc::new(ObjectStoreSnapshotStore::new(
+                ProximaObjectStore::new(backing.clone()),
+                "memory:///",
+                key,
+            ));
+            let cat = SystemCatalog::open_with_snapshot_store("default", &wal, store).await?;
+            cat.create_namespace(&nslevels(&["s"]), HashMap::new())
+                .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t1"),
+                vec_schema("t1"),
+            )
+            .await?;
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t2"),
+                vec_schema("t2"),
+            )
+            .await?;
+
+            // Checkpoint pushes the snapshot to the object store and compacts the
+            // local WAL to empty.
+            cat.checkpoint().await?;
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
+
+            // A post-snapshot DDL lands only on the local WAL tail.
+            cat.create_table(
+                &TableIdentifier::new(nslevels(&["s"]), "t3"),
+                vec_schema("t3"),
+            )
+            .await?;
+            assert_eq!(wal_entry_count(dir.path()).await, 1);
+        }
+
+        // Reopen with a new store handle over the SAME backing object store and
+        // the same local WAL → restore = object-store snapshot + WAL tail.
+        let store2 = Arc::new(ObjectStoreSnapshotStore::new(
+            ProximaObjectStore::new(backing.clone()),
+            "memory:///",
+            key,
+        ));
+        let reopened = SystemCatalog::open_with_snapshot_store("default", &wal, store2).await?;
+        for t in ["t1", "t2", "t3"] {
+            assert!(
+                reopened
+                    .table_exists(&TableIdentifier::new(nslevels(&["s"]), t))
+                    .await?,
+                "table {t} must survive object-store snapshot + WAL tail + reopen"
+            );
+        }
+        Ok(())
+    }
+
     /// Crash injection — crashed *after* the snapshot rename but *before* (or
     /// during) WAL compaction. We reproduce that exact on-disk state: take a
     /// checkpoint, then restore the pre-compaction WAL underneath the new
@@ -981,6 +1376,269 @@ mod tests {
         let reopened = catalog(dir.path()).await;
         let tables = reopened.list_tables(&nslevels(&["s"])).await?;
         assert_eq!(tables.len(), 15); // 20 created - 5 dropped
+        Ok(())
+    }
+
+    // ── Phase 6b: cross-pod cache coherence (sinval) — multi-instance harness ──
+    //
+    // Two (or more) in-process `SystemCatalog`s over ONE shared backing object
+    // store stand in for two pods. Each has its OWN local WAL; the object-store
+    // snapshot is the only shared artifact, so cross-pod visibility flows through
+    // it exactly as in a real deployment.
+
+    /// Open an owner catalog whose snapshot lives in the shared `backing` store.
+    async fn open_owner(
+        wal: &std::path::Path,
+        backing: &Arc<dyn object_store::ObjectStore>,
+    ) -> Result<SystemCatalog> {
+        let store = Arc::new(
+            crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore::new(
+                proximadb_object_store::ProximaObjectStore::new(backing.clone()),
+                "memory:///",
+                "_operator/catalog/_manifests/",
+            ),
+        );
+        SystemCatalog::open_with_snapshot_store("default", wal, store).await
+    }
+
+    /// Open a read-only follower catalog over the shared `backing` store.
+    async fn open_follower(
+        wal: &std::path::Path,
+        backing: &Arc<dyn object_store::ObjectStore>,
+    ) -> Result<SystemCatalog> {
+        let store = Arc::new(
+            crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore::new(
+                proximadb_object_store::ProximaObjectStore::new(backing.clone()),
+                "memory:///",
+                "_operator/catalog/_manifests/",
+            ),
+        );
+        SystemCatalog::open_follower("default", wal, store).await
+    }
+
+    fn tid(name: &str) -> TableIdentifier {
+        TableIdentifier::new(nslevels(&["s"]), name)
+    }
+
+    /// A read-only **follower** tails the owner's published snapshot: it sees the
+    /// owner's committed DDL after a `reload_if_stale`, within the staleness
+    /// bound, and rejects any DDL of its own (route writes to the owner).
+    #[tokio::test]
+    async fn follower_tails_owner_and_rejects_writes() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+
+        // Owner publishes a first snapshot (ns + t1).
+        let owner = open_owner(&dir.path().join("owner.wal"), &backing).await?;
+        owner
+            .create_namespace(&nslevels(&["s"]), HashMap::new())
+            .await?;
+        owner.create_table(&tid("t1"), vec_schema("t1")).await?;
+        owner.checkpoint().await?;
+
+        // Follower boots from that snapshot — read-only, already sees t1.
+        let follower = open_follower(&dir.path().join("follower.wal"), &backing).await?;
+        assert!(follower.is_read_only());
+        assert!(follower.table_exists(&tid("t1")).await?);
+        assert!(!follower.table_exists(&tid("t2")).await?);
+
+        // A follower must reject DDL — it has no write authority.
+        assert!(
+            follower
+                .create_table(&tid("nope"), vec_schema("nope"))
+                .await
+                .is_err(),
+            "follower must reject DDL"
+        );
+
+        // Owner commits more DDL and republishes. The follower is stale until it
+        // polls; a no-publish probe is cheap and a no-op.
+        owner.create_table(&tid("t2"), vec_schema("t2")).await?;
+        owner.checkpoint().await?;
+
+        // Sinval: the follower observes the newer pointer version and reloads.
+        match follower.reload_if_stale().await? {
+            ReloadOutcome::Reloaded { superseded, .. } => assert!(
+                !superseded,
+                "a same-generation owner republish is not a takeover"
+            ),
+            other => panic!("expected a reload, got {other:?}"),
+        }
+        assert!(follower.table_exists(&tid("t2")).await?);
+        // Polling again with nothing new is a no-op.
+        assert_eq!(follower.reload_if_stale().await?, ReloadOutcome::UpToDate);
+        Ok(())
+    }
+
+    /// **Read-your-writes** on the owner: an owner's own published snapshot must
+    /// not look "stale" to itself, and post-checkpoint writes that live only in
+    /// RAM + the local WAL survive a sinval poll (they are never reloaded away in
+    /// the absence of a newer pod).
+    #[tokio::test]
+    async fn owner_read_your_writes_survives_poll() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+
+        let owner = open_owner(&dir.path().join("owner.wal"), &backing).await?;
+        owner
+            .create_namespace(&nslevels(&["s"]), HashMap::new())
+            .await?;
+        owner.create_table(&tid("t1"), vec_schema("t1")).await?;
+        owner.checkpoint().await?; // publishes; loaded_version tracks our own write
+
+        // A post-checkpoint write lives only in RAM + the local WAL (unpublished).
+        owner.create_table(&tid("t2"), vec_schema("t2")).await?;
+
+        // Polling sees our own published version — no spurious reload.
+        assert_eq!(owner.reload_if_stale().await?, ReloadOutcome::UpToDate);
+        assert!(!owner.is_read_only());
+        // Read-your-writes: the unpublished t2 is still visible.
+        assert!(owner.table_exists(&tid("t2")).await?);
+        Ok(())
+    }
+
+    /// A **superseded** owner steps down: when a newer-generation pod has taken
+    /// the catalog over, a sinval poll on the old owner reloads the newer
+    /// snapshot, **discards** its own now-doomed unpublished writes, and flips to
+    /// read-only (no lost update — the fence + step-down converge to one writer).
+    #[tokio::test]
+    async fn superseded_owner_steps_down_via_poll() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+
+        // Pod A: first owner (generation 1), publishes ns + t1.
+        let pod_a = open_owner(&dir.path().join("a.wal"), &backing).await?;
+        pod_a
+            .create_namespace(&nslevels(&["s"]), HashMap::new())
+            .await?;
+        pod_a.create_table(&tid("t1"), vec_schema("t1")).await?;
+        pod_a.checkpoint().await?;
+        assert_eq!(pod_a.generation(), 1);
+
+        // Pod B: takes over (reads gen 1 → claims gen 2), publishes t2.
+        let pod_b = open_owner(&dir.path().join("b.wal"), &backing).await?;
+        assert_eq!(pod_b.generation(), 2);
+        pod_b.create_table(&tid("t2"), vec_schema("t2")).await?;
+        pod_b.checkpoint().await?;
+
+        // Pod A writes t3 locally — unaware it has been superseded; it is visible
+        // on A until the next poll.
+        pod_a.create_table(&tid("t3"), vec_schema("t3")).await?;
+        assert!(pod_a.table_exists(&tid("t3")).await?);
+
+        // Sinval poll on A: a higher generation owns the catalog → step down.
+        match pod_a.reload_if_stale().await? {
+            ReloadOutcome::Reloaded {
+                generation,
+                superseded,
+                ..
+            } => {
+                assert_eq!(generation, 2);
+                assert!(superseded, "a higher-generation snapshot is a takeover");
+            }
+            other => panic!("expected a superseding reload, got {other:?}"),
+        }
+        assert!(
+            pod_a.is_read_only(),
+            "superseded owner must step down to read-only"
+        );
+        // A converges to B's snapshot: sees t1 + t2, and its doomed t3 is gone.
+        assert!(pod_a.table_exists(&tid("t1")).await?);
+        assert!(pod_a.table_exists(&tid("t2")).await?);
+        assert!(
+            !pod_a.table_exists(&tid("t3")).await?,
+            "the superseded pod's unpublished write must be discarded (no lost update)"
+        );
+        // A can no longer write.
+        assert!(
+            pod_a
+                .create_table(&tid("t4"), vec_schema("t4"))
+                .await
+                .is_err()
+        );
+        Ok(())
+    }
+
+    /// The fenced-checkpoint **self-heal** path: even without an explicit poll, an
+    /// owner that discovers it has been fenced *at checkpoint time* steps down and
+    /// reloads the newer snapshot in place (it does not silently keep serving its
+    /// doomed local state, and does not compact its WAL).
+    #[tokio::test]
+    async fn fenced_checkpoint_steps_down_and_reloads() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+
+        let pod_a = open_owner(&dir.path().join("a.wal"), &backing).await?;
+        pod_a
+            .create_namespace(&nslevels(&["s"]), HashMap::new())
+            .await?;
+        pod_a.create_table(&tid("t1"), vec_schema("t1")).await?;
+        pod_a.checkpoint().await?;
+
+        let pod_b = open_owner(&dir.path().join("b.wal"), &backing).await?;
+        pod_b.create_table(&tid("t2"), vec_schema("t2")).await?;
+        pod_b.checkpoint().await?;
+
+        // Pod A, still believing it owns the catalog, writes t3 then checkpoints —
+        // the publish is FENCED (gen 1 < 2), triggering the in-place step-down.
+        pod_a.create_table(&tid("t3"), vec_schema("t3")).await?;
+        pod_a.checkpoint().await?;
+
+        assert!(
+            pod_a.is_read_only(),
+            "a fenced owner steps down to read-only"
+        );
+        assert!(
+            pod_a.table_exists(&tid("t2")).await?,
+            "adopted B's snapshot"
+        );
+        assert!(
+            !pod_a.table_exists(&tid("t3")).await?,
+            "doomed unpublished write discarded on step-down"
+        );
+        Ok(())
+    }
+
+    /// Coherence is inert where it should be: an injected-appender catalog (no
+    /// snapshot store) reports `Disabled`, and a local single-pod owner — whose
+    /// store exposes no version — never spuriously reloads or steps down.
+    #[tokio::test]
+    async fn coherence_is_inert_for_local_and_injected() -> Result<()> {
+        // Injected-appender catalog: no snapshot store at all → Disabled.
+        let injected = SystemCatalog::new(
+            "x",
+            SystemCatalogState::new(),
+            Arc::new(crate::services::canonical_wal::MemoryTableWalAppender::new()),
+        );
+        assert_eq!(injected.reload_if_stale().await?, ReloadOutcome::Disabled);
+
+        // Local single-pod owner: the store has no version concept → the cheap
+        // probe returns None and the poll is always UpToDate, never read-only.
+        let dir = tempfile::tempdir()?;
+        {
+            let local = catalog(dir.path()).await;
+            local
+                .create_namespace(&nslevels(&["s"]), HashMap::new())
+                .await?;
+            local.create_table(&tid("t1"), vec_schema("t1")).await?;
+            local.checkpoint().await?; // snapshot watermark advances; WAL → empty
+            assert_eq!(wal_entry_count(dir.path()).await, 0);
+        }
+        // Reopen onto the empty (compacted) WAL + the snapshot: the appender's
+        // file-derived sequence floor is 0, below the snapshot watermark. Seeding
+        // the floor from the watermark means a fresh write still lands above it.
+        let local = catalog(dir.path()).await;
+        assert_eq!(local.reload_if_stale().await?, ReloadOutcome::UpToDate);
+        assert!(!local.is_read_only());
+        local.create_table(&tid("t2"), vec_schema("t2")).await?;
+        assert!(
+            local.table_exists(&tid("t2")).await?,
+            "a write after a compact-to-empty reopen must apply (sequence-floor seeded)"
+        );
         Ok(())
     }
 }

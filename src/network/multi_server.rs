@@ -102,7 +102,7 @@ pub use proximadb_runtime::bootstrap_config::{
 
 // SharedServices extracted to src/network/shared_services.rs
 // All existing call sites using `crate::network::multi_server::SharedServices` continue to work.
-pub use crate::network::shared_services::SharedServices;
+pub use crate::network::shared_services::{ServiceProfile, SharedServices};
 
 /// Apply 64 MB message limits and optional gzip compression to a tonic service.
 ///
@@ -173,6 +173,17 @@ impl MultiServer {
         crate::network::grpc::v2::ProximaGraphServiceImpl,
     > {
         crate::network::grpc::v2::ProximaGraphServiceImpl::new(services.request_handlers.clone())
+            .into_server()
+    }
+
+    /// Build the canonical v2 document gRPC service. Mirrors
+    /// [`Self::canonical_graph_grpc_service`].
+    fn canonical_document_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_document_service_server::ProximaDocumentServiceServer<
+        crate::network::grpc::v2::ProximaDocumentServiceImpl,
+    >{
+        crate::network::grpc::v2::ProximaDocumentServiceImpl::new(services.request_handlers.clone())
             .into_server()
     }
 
@@ -584,6 +595,7 @@ impl MultiServer {
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -1088,6 +1100,7 @@ impl MultiServer {
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1466,6 +1479,7 @@ impl MultiServer {
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind

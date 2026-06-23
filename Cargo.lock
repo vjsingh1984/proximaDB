@@ -6539,14 +6539,17 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-hardware-caps",
  "proximadb-iceberg-engine",
+ "proximadb-index-traits",
  "proximadb-index-types",
  "proximadb-kernel",
  "proximadb-multimodel-plan",
  "proximadb-multimodel-query",
+ "proximadb-object-store",
  "proximadb-observability",
  "proximadb-observability-query",
  "proximadb-pipeline-operator",
  "proximadb-proto",
+ "proximadb-quantization-kernel",
  "proximadb-quantization-types",
  "proximadb-query",
  "proximadb-query-capability",
@@ -6801,9 +6804,8 @@ dependencies = [
  "dashmap",
  "proximadb-hardware",
  "proximadb-hardware-caps",
+ "proximadb-memory-pool",
  "proximadb-proto",
- "proximadb-runtime-common",
- "proximadb-vector",
  "serde",
  "tokio",
  "tracing",
@@ -6976,6 +6978,7 @@ dependencies = [
  "num_cpus",
  "proximadb-config",
  "proximadb-hardware",
+ "raw-cpuid",
  "serde",
  "tracing",
 ]
@@ -7004,6 +7007,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-index-traits"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "proximadb-records",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "proximadb-index-types"
 version = "0.2.0"
 dependencies = [
@@ -7022,6 +7037,14 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-memory-pool"
+version = "0.2.0"
+dependencies = [
+ "parking_lot",
  "tracing",
 ]
 
@@ -7136,6 +7159,25 @@ dependencies = [
  "async-trait",
  "serde",
  "tokio",
+]
+
+[[package]]
+name = "proximadb-quantization-kernel"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dashmap",
+ "proximadb-distance-kernel",
+ "proximadb-hardware",
+ "proximadb-quantization-types",
+ "proximadb-vector",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -7450,6 +7492,7 @@ dependencies = [
  "bincode",
  "dashmap",
  "parking_lot",
+ "proximadb-memory-pool",
  "serde",
  "tokio",
  "tracing",

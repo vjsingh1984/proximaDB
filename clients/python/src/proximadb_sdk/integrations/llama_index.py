@@ -64,6 +64,7 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
     _client: Any = PrivateAttr()
     _collection_name: str = PrivateAttr()
     _text_key: str = PrivateAttr()
+    _async_client: Any = PrivateAttr(default=None)
 
     def __init__(
         self,
@@ -71,11 +72,17 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
         collection_name: str,
         *,
         text_key: str = "text",
+        async_client: Any | None = None,
     ) -> None:
         super().__init__()
         self._client = client
         self._collection_name = collection_name
         self._text_key = text_key
+        # Optional native-async client (ProximaDBAsyncUnified). When provided +
+        # started, aquery awaits real async I/O over the generated REST
+        # transport instead of thread-offloading the sync client. Sync
+        # construction/methods are unaffected when omitted.
+        self._async_client = async_client
 
     @property
     def client(self) -> Any:
@@ -162,10 +169,20 @@ class ProximaDBVectorStore(BasePydanticVectorStore):
     ) -> VectorStoreQueryResult:
         """Asynchronously query ProximaDB for similar nodes.
 
-        The ProximaDB SDK exposes a synchronous ``search`` only, so this awaits
-        the blocking call on a worker thread to keep the event loop responsive
-        and satisfy LlamaIndex's async query contract.
+        When a native-async client was supplied at construction, this awaits
+        real async I/O over the generated REST transport; otherwise it offloads
+        the synchronous ``search`` onto a worker thread to keep the event loop
+        responsive and satisfy LlamaIndex's async query contract.
         """
+        if self._async_client is not None:
+            search_results = await self._async_client.search(
+                self._collection_name,
+                vector=self._query_vector(query),
+                top_k=query.similarity_top_k,
+                metadata_filter=self._query_filter(query),
+            )
+            return self._results_to_query_result(search_results)
+
         import asyncio
 
         search_results = await asyncio.to_thread(

@@ -44,8 +44,9 @@ use proximadb_storage_common::{CanonicalOperation, CanonicalWalEntry};
 /// implement it (it absorbs storage-plane fields that are not comparable).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum CatalogDelta {
-    /// Create or replace a namespace.
-    UpsertNamespace { namespace: CatalogNamespace },
+    /// Create or replace a namespace. Boxed to keep the enum small (the
+    /// namespace carries the account/tenant/DR authority fields).
+    UpsertNamespace { namespace: Box<CatalogNamespace> },
     /// Drop a namespace and all of its tables.
     DropNamespace { levels: Vec<String> },
     /// Create or replace a table/collection.
@@ -129,7 +130,7 @@ impl CatalogInner {
             CatalogDelta::UpsertNamespace { namespace } => {
                 let key = namespace.levels.clone();
                 self.ns_children.entry(key.clone()).or_default();
-                self.namespaces.insert(key, namespace);
+                self.namespaces.insert(key, *namespace);
             }
             CatalogDelta::DropNamespace { levels } => {
                 self.namespaces.remove(&levels);
@@ -301,6 +302,30 @@ impl SystemCatalogState {
     /// Reconstruct state from a snapshot blob, rebuilding the `ns_children`
     /// secondary index.
     pub fn from_snapshot_bytes(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            inner: RwLock::new(Self::inner_from_snapshot_bytes(bytes)?),
+        })
+    }
+
+    /// **Replace** the entire in-RAM authority with the image decoded from a
+    /// snapshot blob, in place (the `Arc<SystemCatalogState>` identity is
+    /// preserved so all holders observe the swap). This is the Phase 6b
+    /// cross-pod **invalidation/reload** primitive: when a follower (or a
+    /// superseded ex-owner) observes a newer object-store snapshot, it adopts
+    /// that snapshot wholesale. The swap is atomic with respect to catalog reads
+    /// — a concurrent reader sees the entire old image or the entire new one,
+    /// never a partial blend — because it happens under the single write lock the
+    /// reads take in shared mode.
+    pub fn load_from_snapshot_bytes(&self, bytes: &[u8]) -> Result<()> {
+        let rebuilt = Self::inner_from_snapshot_bytes(bytes)?;
+        *self.inner.write() = rebuilt;
+        Ok(())
+    }
+
+    /// Decode a snapshot blob into a fully-indexed [`CatalogInner`], rebuilding
+    /// the `ns_children` secondary index (which the snapshot omits as a pure
+    /// derivation of `tables`).
+    fn inner_from_snapshot_bytes(bytes: &[u8]) -> Result<CatalogInner> {
         let snapshot: CatalogSnapshot =
             rmp_serde::from_slice(bytes).context("decoding catalog snapshot")?;
         let mut ns_children: HashMap<Vec<String>, HashSet<String>> = HashMap::new();
@@ -317,14 +342,12 @@ impl SystemCatalogState {
                 .insert(id.name.clone());
             tables.insert(id, Arc::new(schema));
         }
-        Ok(Self {
-            inner: RwLock::new(CatalogInner {
-                namespaces: snapshot.namespaces,
-                tables,
-                ns_children,
-                statistics: snapshot.statistics,
-                applied_seq: snapshot.applied_seq,
-            }),
+        Ok(CatalogInner {
+            namespaces: snapshot.namespaces,
+            tables,
+            ns_children,
+            statistics: snapshot.statistics,
+            applied_seq: snapshot.applied_seq,
         })
     }
 }
@@ -367,7 +390,7 @@ mod tests {
                 .append_operations(
                     vec![
                         CatalogDelta::UpsertNamespace {
-                            namespace: ns(&["sales"]),
+                            namespace: Box::new(ns(&["sales"])),
                         }
                         .to_operation()?,
                         upsert_table_op(&["sales"], "orders"),
@@ -413,7 +436,7 @@ mod tests {
         state.apply_committed(
             1,
             CatalogDelta::UpsertNamespace {
-                namespace: ns(&["app"]),
+                namespace: Box::new(ns(&["app"])),
             },
         );
         state.apply_committed(
@@ -485,7 +508,7 @@ mod tests {
         state.apply_committed(
             1,
             CatalogDelta::UpsertNamespace {
-                namespace: ns(&["db", "public"]),
+                namespace: Box::new(ns(&["db", "public"])),
             },
         );
         state.apply_committed(
@@ -536,7 +559,7 @@ mod tests {
             .append_operations(
                 vec![
                     CatalogDelta::UpsertNamespace {
-                        namespace: ns(&["s"]),
+                        namespace: Box::new(ns(&["s"])),
                     }
                     .to_operation()?,
                     upsert_table_op(&["s"], "committed"),

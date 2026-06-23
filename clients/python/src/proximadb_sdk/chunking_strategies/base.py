@@ -16,7 +16,8 @@ class ChunkingStrategy(Enum):
     SLIDING_WINDOW = "sliding_window"
     SENTENCE = "sentence"
     PARAGRAPH = "paragraph"
-    SEMANTIC = "semantic"
+    SEMANTIC = "semantic"  # structural/regex semantic boundaries (no embeddings)
+    SEMANTIC_EMBEDDING = "semantic_embedding"  # embedding-breakpoint semantic chunking (injected provider)
     RECURSIVE = "recursive"
     FIXED_SIZE = "fixed_size"
     CODE = "code"  # AST-aware code chunking using tree-sitter
@@ -99,6 +100,18 @@ class ChunkingConfig:
     # Semantic settings (no embeddings)
     section_patterns: list[str] = field(default_factory=list)
     topic_indicators: list[str] = field(default_factory=list)
+
+    # Embedding-based semantic chunking (SEMANTIC_EMBEDDING strategy only).
+    # The provider is INJECTED — a core.BaseEmbeddingProvider-style object with
+    # a batch embed/encode method, OR a Callable[[list[str]], list[list[float]]].
+    # Typed as Any so the base module pulls NO heavy embedding deps (the lazy
+    # boundary that keeps `import proximadb_sdk` light stays intact).
+    embedding_provider: Any | None = None
+    # Window of context sentences blended into each side of a breakpoint test.
+    buffer_size: int = 1
+    # Percentile of the consecutive-group distance distribution above which a
+    # breakpoint is placed (LlamaIndex default: 95th percentile).
+    breakpoint_percentile_threshold: float = 95.0
 
 
 class ChunkingStrategyInterface(ABC):

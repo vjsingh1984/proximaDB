@@ -70,6 +70,9 @@ pub struct RecordOpsService {
     /// DML service for schema validation + row-count stats. Settable
     /// post-construction (thread-safe), mirroring ROOT's prior behaviour.
     dml_service: std::sync::RwLock<Option<Arc<DmlService>>>,
+    /// DDL service for relational CREATE/ALTER/DROP submitted over the gRPC
+    /// `ExecuteQuery` RPC (TD-135). Settable post-construction (thread-safe).
+    ddl_service: std::sync::RwLock<Option<Arc<crate::services::DdlService>>>,
     /// Set-once canonical-precision resolver — wired at server bootstrap so the
     /// record path coerces embeddings to each collection's canonical precision
     /// before WAL append (TD-080/TD-082).
@@ -89,6 +92,7 @@ impl RecordOpsService {
             vector_operations_service,
             collection_id_cache: CollectionIdCache::new(),
             dml_service: std::sync::RwLock::new(None),
+            ddl_service: std::sync::RwLock::new(None),
             precision_resolver: std::sync::OnceLock::new(),
         }
     }
@@ -103,6 +107,18 @@ impl RecordOpsService {
 
     pub(crate) fn get_dml_service(&self) -> Option<Arc<DmlService>> {
         self.dml_service.read().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Wire a `DdlService` so gRPC `ExecuteQuery` can run relational DDL (TD-135).
+    /// Callable post-initialization; thread-safe.
+    pub fn set_ddl_service(&self, svc: Arc<crate::services::DdlService>) {
+        if let Ok(mut guard) = self.ddl_service.write() {
+            *guard = Some(svc);
+        }
+    }
+
+    pub(crate) fn get_ddl_service(&self) -> Option<Arc<crate::services::DdlService>> {
+        self.ddl_service.read().ok().and_then(|guard| guard.clone())
     }
 
     /// Post-construction setter for the canonical-precision resolver.

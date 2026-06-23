@@ -33,11 +33,13 @@ members = [
     "crates/foundation/proximadb-hardware",
     "crates/foundation/proximadb-hardware-caps",
     "crates/foundation/proximadb-distance-kernel",
+    "crates/foundation/proximadb-memory-pool",
     "crates/foundation/proximadb-kernel",
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-quantization-types",
     "crates/foundation/proximadb-index-types",
+    "crates/foundation/proximadb-index-traits",
     "crates/foundation/proximadb-records",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
@@ -53,6 +55,7 @@ members = [
     "crates/platform/proximadb-runtime",
     "crates/modalities/proximadb-graph",
     "crates/modalities/proximadb-vector",
+    "crates/modalities/proximadb-quantization-kernel",
     "crates/modalities/proximadb-document",
     "crates/modalities/proximadb-observability",
     "crates/modalities/proximadb-embedding",
@@ -146,6 +149,7 @@ proximadb-compression-types = { path = "crates/foundation/proximadb-compression-
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
 proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
 proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
+proximadb-memory-pool = { path = "crates/foundation/proximadb-memory-pool" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
@@ -153,6 +157,7 @@ proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types"
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
+proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
@@ -185,6 +190,7 @@ toml = "0.8"
 tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
@@ -285,6 +291,7 @@ proximadb-relational-executor = { path = "crates/query/proximadb-relational-exec
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
 proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
+proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
@@ -297,6 +304,7 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
 proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
@@ -316,6 +324,7 @@ proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
 proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
 proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
 proximadb-graph-subset = { path = "crates/query/proximadb-graph-subset" }
@@ -574,6 +583,7 @@ experimental-turboquant = [
     "proximadb-quantization-types/experimental-turboquant",
     "proximadb-vector/experimental-turboquant",
     "proximadb-distance-kernel/experimental-turboquant",
+    "proximadb-quantization-kernel/experimental-turboquant",
 ]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
 avx512 = []

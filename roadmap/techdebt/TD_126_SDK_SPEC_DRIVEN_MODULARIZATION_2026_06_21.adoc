@@ -11,7 +11,17 @@ TypeScript (REST transport generated via `openapi-typescript` + `openapi-fetch`)
 Phase 3 done (Python `chunking`, `embeddings`, and `integrations`/`adapters` concerns all made
 opt-in + lazy behind extras — `import proximadb_sdk` pulls zero heavy deps; core =
 transport+facade+models); remaining-ops re-base done (2026-06-22 — graph/health/observability/meta
-ops routed through the generated client across Go/TS/Rust/Python, contract tests kept); Phase 5 +
+ops routed through the generated client across Go/TS/Rust/Python, contract tests kept);
+Python native-async client done (2026-06-22 — `ProximaDBAsyncUnified` covers BOTH transports:
+the generated `asyncio_detailed` REST path for collections CRUD + records insert/upsert/get/delete
++ search behind a shared `httpx.AsyncClient`, AND a *genuine* `grpc.aio` client
+(`protocols/grpc_async.ProximaDBAsyncGrpcClient`) for the record core ops — the prior
+sync-subclass fake is gone. The async gRPC client reuses the EXISTING generated v2
+`ProximaRecordServiceStub` on a `grpc.aio` channel (channel-agnostic stubs → awaitable RPCs;
+no proto/stub regen) and the transport-agnostic proto codec now shared with the sync client
+(`protocols/_grpc_v2_codec`). The facade prefers gRPC-async for core ops when a gRPC endpoint is
+configured (mirroring the sync `unified_client`), else REST-async; `astart`/`aclose` manage both
+the httpx AsyncClient and the aio channel; lazy gRPC import boundary intact); Phase 5 +
 remaining Phase-4 languages (jvm) + generating the facades themselves open +
 Date: 2026-06-21 (updated 2026-06-22) +
 Owner: SDK / API surface
@@ -456,6 +466,35 @@ promoting any concern to a genuinely separate distribution (`proximadb-chunking`
 ====
 
 [NOTE]
+.Embedding-based semantic chunking shipped (2026-06-22) — `SemanticEmbeddingStrategy` (DONE)
+====
+The previously-deferred *true embedding-based* semantic chunking mode is now implemented as a new
+`SemanticEmbeddingStrategy` (`ChunkingStrategy.SEMANTIC_EMBEDDING`, value `"semantic_embedding"`),
+added *alongside* the existing structural/regex `SemanticStrategy` (both kept — different value).
+Algorithm follows LlamaIndex's `SemanticSplitterNodeParser`: split into sentences (reusing
+`SentenceStrategy._split_into_sentences` — no new dep), embed sentences in a single *batched* call,
+compute cosine distance between consecutive `buffer_size`-windowed sentence groups, and place a
+breakpoint wherever the distance exceeds the `breakpoint_percentile_threshold` (default 95th
+percentile); groups become `TextChunk`s under the existing `min_chunk_size`/`max_chunk_size`
+guardrails.
+
+*Provider-injection seam.* The embedding provider is *injected* via new `ChunkingConfig` fields
+(`embedding_provider`, `buffer_size`, `breakpoint_percentile_threshold`). It accepts either a
+`core.BaseEmbeddingProvider`-style object (batch `embed`/`encode`) or a plain
+`Callable[[list[str]], list[list[float]]]`. *Lazy boundary intact:* `proximadb_sdk.embedding_providers`
+is NOT imported at module top — the new strategy module pulls only `numpy` (core dep) + the
+sentence splitter, so `import proximadb_sdk` / `import proximadb_sdk.chunking_strategies` stay
+free of sentence-transformers. Selecting the strategy without a provider raises an actionable
+`ValueError` naming the `embedding_provider` field and the `proximadb[embeddings]` extra — no
+silent fallback. Registered in `ChunkingStrategyFactory`, the enum, `chunking_strategies.__init__`,
+and threaded through `TextChunker._initialize_strategy`. Deterministic unit tests
+(`tests/unit/test_semantic_embedding_chunking.py`) use a stub provider (no model download): clean
+topic-shift split, single-topic no-spurious-break, empty/1-sentence, missing-provider error,
+batched-embedding assertion, plain-callable acceptance, max-size guardrail, and a subprocess
+lazy-boundary check.
+====
+
+[NOTE]
 .Remaining-ops re-base + transport-gen-coverage closeout (2026-06-22) — Go / TS / Rust / Python
 ====
 The Phase-2/4 PRs re-based each SDK's *core* ops (collection / record / search / query) onto the
@@ -589,18 +628,53 @@ chunking / integration concerns were untouched.
 * Capacity-bounded LRU model cache (`PROXIMADB_MODEL_CACHE_CAPACITY`, default 4; best-effort
   release on eviction; key includes device + backend + prompts).
 
-*Deferred (follow-up).*
+*System-B base-overlay collapse — DONE (2026-06-22).* The orphaned legacy overlay inside
+`embedding_providers/` was collapsed onto `core.BaseEmbeddingProvider` in a 2-PR sequence
+(branch `refine/embeddings-base-collapse`):
 
-* *System-B base-overlay collapse.* The orphaned legacy overlay — the `embedding_providers/base.py`
-  shim plus the root-level duplicate providers (`bge`, `e5`, `sfr`, `sentence_transformer`,
-  `finbert_provider`, `multi_bert_provider`, `instructor`) and the `embedding_interface`
-  `EmbeddingProvider`/`EmbeddingConfig` duplicate-provider stack (~2500 LOC, only exercised by
-  `*_cov` tests, no live importers in `src` except the chunking concern's use of
-  `embedding_interface`) — should be deleted/collapsed onto `core.BaseEmbeddingProvider`. Deferred
-  as its own PR because `instructor`/`finbert`/`multi_bert` still ride the legacy base and
-  `embedding_interface` is referenced by the chunking concern; bundling it risked an oversized,
-  cross-concern PR.
-* *Embedding-provider DI seam for semantic chunking* — see the chunking "Deferred" item above.
+* *PR 1 — port + register the domain providers (was the blocker for deletion).* The three domain
+  providers that still rode the legacy `EmbeddingProvider` base were re-based onto
+  `core.BaseEmbeddingProvider` and made first-class registered providers (previously DEAD —
+  unregistered, imported only by `*_cov` tests):
++
+[cols="1,2",options="header"]
+|===
+| Canonical name | Class (aliases)
+| `instructor` | `InstructorProvider` (`hkunlp`, `instructor-embedding`)
+| `finbert` | `FinBERTProvider` (`financial-bert`, `prosus-finbert`)
+| `sec-bert` | `SECBERTProvider` (`secbert`, `legal-bert`)
+| `multi-bert` | `MultiBERTProvider` (`bert`, `multibert`)
+| `adaptive-bert` | `AdaptiveBERTProvider` (`adaptive`)
+|===
++
+The heavy `torch` / `transformers` / `sentence_transformers` / `InstructorEmbedding` imports were
+moved out of module scope into the model-load + encoding paths, so the lazy boundary holds even
+after the registry is consulted. `MultiBERTProvider` keeps its ergonomic
+`(model_name=…, size=…)` constructor while also accepting a standard `ProviderConfig`. The two
+dead-provider `*_cov` tests were converted to real registered-provider tests and a
+`finbert`/`sec-bert` cov test was added (66 offline tests, deps stubbed). `get_provider(…)` now
+resolves all 15 providers (the #197 cloud set + the core local set + the 5 newly-activated above).
+
+* *PR 2 — delete the dead overlay (~1187 LOC).* `embedding_providers/base.py` (the 15-line legacy
+  re-export shim) and the four pure-duplicate root-level providers (`bge`, `e5`, `sfr`,
+  `sentence_transformer`) — functional dups of the canonical, registered `providers/local/*` —
+  were removed. They subclassed the legacy base, were never registered, and had no live importers.
+
+*Legacy `embedding_interface` removed — DONE (2026-06-22, branch
+`refine/embedding-interface-removal`).* The standalone `proximadb_sdk.embedding_interface` root
+module (424 LOC: its own `EmbeddingProvider`/`EmbeddingConfig` ABC, the `BERT`/`Simulated`/`Cohere`
+providers, `EmbeddingProviderFactory`, `create_embedding_provider`, `get_default_embedding_provider`)
+was fully redundant with the `core` provider system after the System-B base-overlay collapse above,
+and has now been deleted. Production (`src/`) had ZERO references (re-confirmed before delete). The
+two dedicated `*_cov` tests OF the dead module (`test_embedding_interface.py` +
+`test_embedding_interface_cov.py`, 861 LOC) were deleted — `core` carries its own provider tests.
+The two cross-concern chunking tests that used it as a convenient embedding source
+(`test_chunking_refactored.py` via `get_default_embedding_provider`, `test_semantic_chunking.py` via
+the legacy factory) were *ported* onto the `core` registry's offline deterministic
+`get_provider("simulated")` provider, preserving their assertions and keeping them download-free; the
+`update_tests_real_server.py` template was repointed likewise. `git grep embedding_interface
+clients/python` is now empty, the lazy import boundary holds, and `get_provider(…)` still resolves
+all 15 registered providers. Total ~1285 LOC removed. **System-B collapse is now fully complete.**
 
 *Test isolation.* Same pre-existing hazard noted above: `test_emb_providers_local_cov` stubs
 `sentence_transformers` in `sys.modules`, which leaks to the real-model `requires_models`
@@ -723,10 +797,35 @@ DSPy adapters.
   retrieval window (`max_filter_window`, default 10000) using a constant probe
   vector. A true unbounded metadata-only scan needs a server-side scan API
   (out of scope for an integration cleanup).
-* *Native async SDK client* — these async paths thread-offload a synchronous
-  client. A genuinely async transport (`unified_client_async` currently only
-  covers graph ops) would let the integrations await real async I/O instead of a
-  worker thread; tracked as a transport-layer follow-up.
+* *Native async SDK client (REST core ops)* — SHIPPED (2026-06-22). The
+  spec-driven mandate now applies to async as well as sync (CLAUDE.md Core
+  Directive #15 / GEMINI.md #29). `ProximaDBAsyncUnified` (`unified_client_async.py`)
+  gained native-async core ops — `create_collection`, `get_collection`,
+  `list_collections`, `delete_collection`, `insert_records`, `upsert_records`,
+  `get_vector`, `delete_vector`/`delete_vectors`, and `search` — that wire the
+  GENERATED `asyncio_detailed` endpoint functions over a single shared
+  `httpx.AsyncClient` (injected into the generated `Client` via
+  `set_async_httpx_client`). The wiring lives in `protocols/_rest_codegen_async.py`,
+  the async analog of `protocols/_rest_codegen.py`: it calls the generated
+  modules' `asyncio_detailed` (`collections.{create,get,list,delete}_collection`,
+  `records.{insert_records,get_record,delete_record}`, `search.search_records`)
+  exactly as the sync path uses the generated `sync`/`_get_kwargs`, so the async
+  client stays spec-conformant and covered by the `python-sdk-codegen-drift` gate
+  (no `_generated/` edits). Method signatures + Pydantic return types mirror the
+  sync facade. `astart` creates the shared transport, `aclose` tears it down, and
+  the client is an async context manager. LangChain
+  `asimilarity_search_by_vector_with_score` and LlamaIndex `aquery` accept an
+  optional `async_client=` and await it natively when supplied, falling back to
+  the `asyncio.to_thread` path otherwise (sync construction/methods unchanged).
+* *Native async gRPC client* — DEFERRED. `protocols/grpc_async.py` is currently a
+  thin (sync) subclass; genuine async gRPC needs a `grpc.aio` channel + async
+  stub generation (a separate codegen effort), so the async facade's graph ops
+  still use the hand-written async REST path (and the sync gRPC client where
+  available). Tracked as a follow-up.
+* *Pure async record/collection coercion sharing with sync* — the async facade
+  re-derives its (small) request-body shaping and response coercion rather than
+  importing the sync facade's private helpers; a future refactor could lift the
+  pure (non-HTTP) body/coercion helpers into a shared module used by both.
 
 == Related
 

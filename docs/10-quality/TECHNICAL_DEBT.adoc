@@ -425,6 +425,87 @@ a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete Op
 | Multi-tenant code-graph service needs a KEU meter variant for code embeddings and per-repo RBAC entitlement (tenant is atomic today). Mostly anvaiops-side; ProximaDB exposes the meter hook + field/row governance seam.
 | 2 weeks
 | KEU variant in the meter spine; per-repo `permitted_principals` scoping. See `../anvaiops` ADR.
+
+| TD-136
+| Fusion — neutral `Fuser` core + PIT calibration
+| P1
+| HIGH
+| *In progress*
+| One calibrated fuse-by-`oid` core for all modalities: PIT/percentile-rank calibration (cosine≈Gaussian vs graph/PPR≈power-law are incommensurable; naive weighted-sum + min-max both fail) + calibrated-linear + consensus boost + RRF fallback + skip-gates. Phase 1 of `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc`.
+| 1 week
+| `src/core/search/fusion/`. Calibration is the load-bearing step; the operator is secondary (Calibrated-Fusion).
+| TD-137
+| Fusion — `GraphExpander` + REST v2 `fusion-search`
+| P1
+| HIGH
+| *In progress*
+| Graph modality as the first expander on the seam (oid-keyed percentile-rank graph candidates, bounded k-hop, retiring `1/(dist+1)`) + vector seed; `POST /api/v2/graphs/{graph_id}/fusion-search`, tenant-scoped. Subsumes the old TD-131 graph-on-REST-v2 goal.
+| 1 week
+| Reuse `HybridQueryEngine` internals + `VectorOperationsService`. Honor the request graph_id (not "default").
+| TD-138
+| Fusion — converge `DocumentExpander`
+| P2
+| MED
+| *Open*
+| Fold the 12-strategy `HybridFusionEngine` (vector+BM25, `doc_id`) onto the seam as the `DocumentExpander`, keyed by `oid`.
+| 1-2 weeks
+| Collapse the 12 strategies to D4 (calibrated-linear default, RRF fallback); keep exotics behind a flag.
+| TD-139
+| Fusion — `RelationalExpander` prefilter (semimask)
+| P2
+| MED
+| *Open*
+| Relational predicate as an `oid`-keyed membership mask (roaring bitset) passed by SIP into the seed — prefilter, not postfilter (NaviX: prefilter wins below 50% selectivity). Reuse TD-127/128.
+| 2 weeks
+| The mask is the universal expander→seed interface.
+| TD-140
+| Fusion — edge-grain fusion
+| P3
+| LOW
+| *Open*
+| Optional edge/relationship-grain fusion unit (HELIOS: edge-level carries 6–12% more signal than node-level) in addition to node/`oid`-keyed merge.
+| 2 weeks
+| Differentiator; gate behind query class.
+| TD-141
+| Fusion — `ComputeScheduler` cost-routed fusion
+| P2
+| MED
+| *Open*
+| Route the fused query from a measured per-query trace: invoke fusion only when multi-modal; cardinality-driven filter strategy (UNIFY); per-modality weight+selectivity-aware candidate budget + cheap local pre-probe (BoomHQ). Measured threshold router, not learned.
+| 3-4 weeks
+| Keep plan-construction cheap (Samyama: parse+plan was 98% of latency).
+| TD-142
+| Fusion — `oid` / entity alias resolution
+| P2
+| MED
+| *Open*
+| Cross-source consensus requires `oid`/entity alias resolution (synonym linking); else fusion silently loses the consensus boost (Calibrated-Fusion).
+| 2 weeks
+| Precondition for *true* cross-modal fusion across collections; within one collection `oid` is canonical.
+| TD-143
+| Fusion — retire weak proto path
+| P3
+| LOW
+| *Open*
+| Retire `request_handlers.rs` `execute_hybrid_query` (hardcoded graph, no tenant) once the seam covers gRPC; collapse the 12-strategy engine to D4.
+| 1 week
+| Cleanup after F-A..F-C land.
+| TD-144
+| Embedded — relocate composition root out of `network::*` (co-design Pillar A)
+| P2
+| MED
+| *Open*
+| The service composition root `SharedServices` lives in `src/network/shared_services.rs` and constructs network-layer types inline (`network::grpc::{ObservabilityServiceImpl,GraphServiceImpl}`, `network::rest::v1::rank::RankServices`, `network::hybrid_search::HybridFullTextIndexMap`), so the fused embedded core depends *up* on the network module. A clean relocation to a transport-neutral home first requires decoupling those in-process handler-impl/index types out of `network::` (they are handler logic, not listeners). Then `network::multi_server` and `embedded` both depend *down* onto the neutral root. Co-design tenet 4 (vertical inside / standard outside).
+| 1-2 weeks
+| Blocked discovery from the embedded co-design plan; mechanical but wide. ServiceProfile (Pillar B) already shipped #236.
+| TD-145
+| Embedded — Arrow-native ingestion (co-design Pillar C, redirected by measurement)
+| P2
+| MED
+| *Open*
+| MEASURED FINDING (`EMBEDDED_ARROW_ZEROCOPY_BENCH_2026_06_22`): swapping the pyarrow-IPC insert path for the zero-copy Arrow C Data Interface (`arrow::pyarrow` FFI, `insert_arrow_batches`) is **perf-neutral** — the FFI boundary serialize was never the dominant cost term. The ~95 ms (5000x128) insert is dominated by `ArrowProtoCodec::batches_to_proxima_records` (Arrow→ProximaRecord materialization) + `insert_batch` (WAL/storage). The zero-copy `insert_arrow_batches` seam is landed (correct, cross-language substrate, lighter memory) but NOT as a latency win. Remaining Pillar-C work, redirected to the real dominant term: make ingestion **Arrow-native** so the record-materialization + insert copy shrinks (columnar straight into the engine), and apply the same to the search-result return path (currently row-by-row Python objects).
+| 2-3 weeks
+| Co-design tenets 1 & 2 (trace before you tune): the boundary was not the bottleneck. Seam + measurement landed in the embedded-arrow-zerocopy PR.
 |===
 
 == Debt by Category
@@ -1634,4 +1715,13 @@ Scope spans the specialized engines (SST today; HELIX/NOVA), real object storage
 | `proximadb.v2.ProximaGraphService` (TD-122 graph slice) ships the core graph operations the SDK needs: node/edge CRUD, `QueryNodes`/`QueryEdges`, `GetNeighbors`, `TraverseGraph`, `ShortestPath`, `GetGraphStats`. The following v1 `GraphService` RPCs were intentionally deferred from the first v2 surface and remain reachable only via the deprecated v1 compat adapter (off by default): `StreamTraverse` (server-streaming), `GetConnectedComponents`, `HasCycle`, `AddUniqueConstraint`/`RemoveUniqueConstraint` (graph DDL), `BatchCreateNodes`/`BatchCreateEdges`, `ExecuteQuery` (Cypher/Gremlin declarative), `ExecuteHybridQuery` (vector+graph), and the retired PULSAR/QUASAR RPCs (not to be ported — use ORION). Graph creation/DDL is also not on the v2 gRPC surface yet (provision via the `/api/v2/graphs` REST route).
 | 1-2 sprints
 | Deliverables: (1) add the deferred analytic + batch RPCs (`GetConnectedComponents`, `HasCycle`, `BatchCreateNodes`/`Edges`) to `proto/proximadb/v2/graph.proto` + `src/network/grpc/v2/graph_service.rs`, delegating to the existing `GraphOperationsService` methods; (2) add `StreamTraverse` server-streaming once a streaming pattern for v2 graph is chosen; (3) decide whether unique-constraint DDL belongs on the graph gRPC surface or a DDL surface, then implement; (4) assess `ExecuteQuery` (Cypher/Gremlin) — a distinct graph query language (not SQL → not pgwire), so it belongs on the graph surface, but is gated on the declarative engine landing (see SUPPORTED_SURFACE "Declarative graph query execution is still incomplete"); keep `ExecuteHybridQuery` deferred until the hybrid path drops its hardcoded `default` graph. Do NOT port PULSAR/QUASAR. *Acceptance:* SDK can reach the analytic/batch RPCs on v2 without `PROXIMADB_GRPC_V1_COMPAT`. *Relates to:* TD-122 (parent), TD-121 (v1 removal must not strand any still-needed RPC).
+
+| TD-135
+| gRPC SQL relational writes (DDL/DML) — Phase 2 of SSO relational SQL
+| P7
+| MEDIUM
+| *DONE 2026-06-22* — gRPC ExecuteQuery routes DDL (CREATE/ALTER/DROP) + DML (INSERT/UPDATE/DELETE) through the tenant-scoped `DdlService::execute_scoped`/`DmlService::execute_scoped` seams with the `x-tenant-id` tenant; DdlService wired onto `UnifiedHandlers`; cross-tenant write-isolation e2e green (`grpc_td135_relational_write_tenant_isolation_e2e`). Transactions (BEGIN/COMMIT) remain pgwire-only as scoped.
+| Phase 1 made `proximadb.v2.ProximaRecordService.ExecuteQuery` execute *tenant-scoped relational SELECT reads* by routing them through the same pipeline pgwire uses (`relational_pipeline::try_run_select(.., require_engagement=false)`), with the `x-tenant-id` tenant threaded into `request_handlers::execute_sql_v1(.., tenant_id)`. *Writes* (`CREATE TABLE`/`ALTER`/`DROP`, `INSERT`/`UPDATE`/`DELETE`) over gRPC SQL are still unsupported: `try_run_select` only handles `Statement::Query`, so DDL/DML fall through to the legacy unified engine, which does not execute them. This leaves SSO/bearer-authenticated programmatic clients unable to do relational writes over gRPC (pgwire can write but cannot carry a bearer/JWT — the original TD-121 SSO gap, now closed only for reads). *Good news:* the write execution is already extracted into tenant-scoped service seams used by pgwire — `DdlService::execute_scoped(statement, Option<&str> tenant)` and `DmlService::execute_scoped(statement, Option<&TenantContext> tenant)` (see `src/network/postgres/protocol.rs` DDL branch ~1255 and `execute_insert/update/delete_via_dml_service` ~3588) — so this is a routing + result-mapping task, not a deep refactor of the mutation paths.
+| 1-2 sprints
+| Deliverables: (1) in `execute_sql_v1` (before the legacy fallback) detect DDL (`CREATE`/`ALTER`/`DROP`) via `SqlFrontendParser::parse_ddl` and route to `ddl_service.execute_scoped(stmt, tenant_id)`; detect DML (`INSERT`/`UPDATE`/`DELETE`) via `parse_dml` and route to `dml_service.execute_scoped(stmt, TenantContext::for_tenant_id(tenant))`; (2) ensure `DdlService`/`DmlService` are reachable from `UnifiedHandlers` (a `get_dml_service()` getter exists; add `get_ddl_service()` if absent); (3) map `DdlResult`/`DmlResult` → `ExecuteQueryResponse` (affected-row count, command tag), mirroring pgwire's response shaping; (4) **fail-closed tenancy**: decide and enforce whether a write with no `x-tenant-id` is rejected vs scoped to a default — writes MUST NOT silently land in the wrong partition (the discarded-tenant class of bug); first write under a new tenant must create the tenant-prefixed schema/partition exactly as the pgwire path does; (5) cross-tenant **write-isolation e2e** (`grpc_td135_relational_write_tenant_isolation_e2e`): two tenants `CREATE` the same table + `INSERT` the same PK over gRPC, then read back (gRPC or pgwire) asserting each tenant sees only its own rows and writes never bleed across tenants — mirror `pgwire_td064_write_tenant_isolation_e2e` but drive all statements over gRPC. *Out of scope:* transactions — gRPC `ExecuteQuery` is single-statement/stateless; multi-statement `BEGIN; … ; COMMIT;` stays pgwire-only (note it explicitly; do not silently accept a `BEGIN` that has no effect). *Acceptance:* `grpcurl … ExecuteQuery` with `x-tenant-id` can `CREATE TABLE` + `INSERT` + `SELECT` + `DELETE` end-to-end, tenant-isolated; vector/graph SQL and relational SELECT reads (Phase 1) unaffected. *Builds on:* Phase 1 gRPC relational SELECT (this is its write half). *Relates to:* TD-064 (structural tenant isolation), the SQL-surface taxonomy in `docs/SUPPORTED_SURFACE.adoc`.
 |===

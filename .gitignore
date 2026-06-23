@@ -413,6 +413,11 @@ COPILOT.md
 *prompt*.txt
 *snapshot*
 !src/**/snapshot.rs
+# Rust SOURCE files whose name contains "snapshot" are code, not snapshot data
+# artifacts — never ignore them (the broad `*snapshot*` above silently swallowed
+# src/services/catalog_snapshot_store.rs once, landing a non-compiling develop).
+!src/**/*snapshot*.rs
+!crates/**/*snapshot*.rs
 # Phase 8 snapshot-publish coordinator module (source, not a snapshot artifact)
 !src/services/snapshot/
 !src/services/snapshot/**

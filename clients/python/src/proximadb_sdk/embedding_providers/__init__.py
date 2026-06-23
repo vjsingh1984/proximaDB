@@ -50,6 +50,12 @@ _PROVIDER_EXPORTS = {
         ".openai_compatible",
         "OpenAICompatibleProvider",
     ),
+    # Domain providers (ported onto core.BaseEmbeddingProvider in TD-126).
+    "InstructorProvider": (".instructor", "InstructorProvider"),
+    "FinBERTProvider": (".finbert_provider", "FinBERTProvider"),
+    "SECBERTProvider": (".finbert_provider", "SECBERTProvider"),
+    "MultiBERTProvider": (".multi_bert_provider", "MultiBERTProvider"),
+    "AdaptiveBERTProvider": (".multi_bert_provider", "AdaptiveBERTProvider"),
 }
 
 _providers_registered = False
@@ -219,4 +225,10 @@ __all__ = [
     "CohereProvider",
     "FastEmbedProvider",
     "OpenAICompatibleProvider",
+    # Domain providers (ported onto core in TD-126)
+    "InstructorProvider",
+    "FinBERTProvider",
+    "SECBERTProvider",
+    "MultiBERTProvider",
+    "AdaptiveBERTProvider",
 ]

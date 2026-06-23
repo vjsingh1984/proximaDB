@@ -298,6 +298,12 @@ impl super::GraphOperationsService {
             }
         }
 
+        // Stable total order by node id before paging. The candidate set is
+        // gathered from hash maps (non-deterministic iteration), so without this
+        // sort `offset`/`limit` would shift between calls and paginated reads
+        // (e.g. the Flight columnar export) would duplicate or skip rows.
+        results.sort_by(|a, b| a.id.cmp(&b.id));
+
         // Apply offset/limit for pagination
         let offset = query.offset.unwrap_or(0) as usize;
         let limit = query.limit.unwrap_or(results.len() as u32) as usize;

@@ -46,7 +46,7 @@
 
 use anyhow::Result;
 use async_trait::async_trait;
-use proximadb_runtime_common::pool::{PooledItem, VectorMemoryPool};
+use proximadb_memory_pool::{PooledItem, VectorMemoryPool};
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};

@@ -343,6 +343,7 @@ impl NativeCatalog {
             // tenant scope; together they make the namespace DR-addressable.
             namespace_id: Some(Self::new_namespace_id()),
             tenant_id,
+            account_id: None,
             region_home: None,
             default_dr_region_pair_id: None,
             storage_pool_class: Default::default(),

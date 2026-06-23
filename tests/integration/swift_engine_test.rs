@@ -25,19 +25,9 @@ use vector_generator::sequential;
 async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempDir) {
     let temp_dir = TempDir::new().unwrap();
     let filesystem_config = FilesystemConfig::default();
-    let filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
+    let _filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
-    // Create metadata store with tempdir-based path
     let metadata_path = temp_dir.path().join("metadata");
-    let metadata_config = proximadb::storage::metadata::MetadataStoreConfig {
-        metadata_storage_urls: vec![format!("file://{}", metadata_path.display())],
-        ..Default::default()
-    };
-    let metadata_backend = Arc::new(
-        proximadb::storage::metadata::MetadataStore::new(metadata_config)
-            .await
-            .unwrap(),
-    ) as Arc<dyn proximadb::storage::traits::InternalCollectionProvider>;
 
     // Create storage config with tempdir-based path
     let mut storage_config = proximadb::core::config::StorageConfig::default();
@@ -48,18 +38,7 @@ async fn create_test_setup() -> (Arc<SwiftEngine>, Arc<CollectionService>, TempD
     }];
     storage_config.metadata_url = format!("file://{}", metadata_path.display());
 
-    let collection_service = Arc::new(
-        CollectionService::new(metadata_backend, storage_config)
-            .await
-            .unwrap(),
-    );
-
-    // Create unified distance compute engine
-    let distance_engine = Arc::new(
-        proximadb::compute::distance_computation::engine::UnifiedDistanceCompute::new(
-            proximadb::compute::distance_computation::DistanceMetric::Cosine,
-        ),
-    );
+    let collection_service = Arc::new(CollectionService::new(storage_config).await.unwrap());
 
     let swift_engine = Arc::new(SwiftEngine::new().await.unwrap());
 

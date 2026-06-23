@@ -35,6 +35,31 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 use proximadb_kernel::uuid::Uuid;
 
+/// Which consumer is constructing the shared service core.
+///
+/// The core (catalog, collection, vector/doc/graph compute, storage/WAL,
+/// governance) is identical for every consumer. `ServiceProfile` only gates the
+/// *network-dimension* machinery that has no consumer in-process: a fused
+/// embedded library (`Embedded`) deletes Dimension 2 (network), so it must NOT
+/// pay for the periodic Prometheus chargeback emitter or the metrics-persistence
+/// / billing publisher that only feed a scrape/network surface. The networked
+/// server (`Server`) keeps them. Co-design tenet 1 ("don't pay for a dimension
+/// you deleted") + tenet 5 ("egress/KOU is inert in embedded").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceProfile {
+    /// In-process / fused (PyO3, FFI, tests). No network-only background work.
+    Embedded,
+    /// Networked server. Constructs the observability/billing surfaces.
+    Server,
+}
+
+impl ServiceProfile {
+    /// True when constructing for the networked server.
+    pub fn is_server(self) -> bool {
+        matches!(self, ServiceProfile::Server)
+    }
+}
+
 /// Shared services for thin protocol handlers
 /// Responsibilities: business logic, metadata configuration, service coordination
 #[derive(Clone)]
@@ -351,6 +376,9 @@ impl SharedServices {
         orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
         // Optional full runtime config for hybrid/graph overrides
         opt_config: Option<&crate::core::config::Config>,
+        // Which consumer is building the core; gates network-only background work
+        // (see `ServiceProfile`). `Embedded` builds no Prometheus/billing surfaces.
+        profile: ServiceProfile,
     ) -> Result<(Self, Arc<CollectionService>)> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
         debug!(
@@ -395,18 +423,22 @@ impl SharedServices {
 
         // Publish per-tenant cache stats for observability/chargeback (the
         // multitenant fairness + noisy-neighbor signal) on the consumption gauge.
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-            loop {
-                tick.tick().await;
-                let stats = crate::services::record_store::segment_cache_tenant_stats();
-                if !stats.is_empty() {
-                    crate::metrics::consumption_metrics::record_cache_tenant_stats(
-                        "footer", &stats,
-                    );
+        // Server-only: this 30s emitter feeds a Prometheus/network scrape surface
+        // that no in-process embedded consumer reads (co-design tenets 1 & 5).
+        if profile.is_server() {
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    tick.tick().await;
+                    let stats = crate::services::record_store::segment_cache_tenant_stats();
+                    if !stats.is_empty() {
+                        crate::metrics::consumption_metrics::record_cache_tenant_stats(
+                            "footer", &stats,
+                        );
+                    }
                 }
-            }
-        });
+            });
+        }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 
@@ -416,18 +448,48 @@ impl SharedServices {
             storage_config.metadata_url
         );
         if catalog_manager.list_catalogs().await.is_empty() {
-            // System-catalog redesign (Phase 2): the default catalog is the
-            // read-heavy, WAL-backed `SystemCatalog` (in-RAM authority + canonical
-            // WAL) rather than the file-per-object `NativeCatalog`. It serves
-            // catalog reads from RAM and persists each DDL as one fsync'd WAL
-            // append. Scoped to `file://` for now (object-store paths land in
-            // Phase 5); `PROXIMADB_DISABLE_SYSTEM_CATALOG` is a kill-switch back
-            // to `NativeCatalog` for the duration of the cutover.
-            let use_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_err()
-                && storage_config.metadata_url.starts_with("file://");
-            if use_system_catalog {
-                let base = storage_config.metadata_url.trim_start_matches("file://");
-                let wal_path = std::path::Path::new(base).join("system-catalog.wal");
+            // System-catalog redesign: the default catalog is the read-heavy,
+            // WAL-backed `SystemCatalog` (in-RAM authority + canonical WAL)
+            // rather than the file-per-object `NativeCatalog`. It serves catalog
+            // reads from RAM and persists each DDL as one fsync'd WAL append.
+            // `PROXIMADB_DISABLE_SYSTEM_CATALOG` is a kill-switch back to
+            // `NativeCatalog` for the duration of the cutover.
+            let disable_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_ok();
+            let metadata_url = storage_config.metadata_url.clone();
+            let is_objstore = metadata_url.starts_with("s3://")
+                || metadata_url.starts_with("gs://")
+                || metadata_url.starts_with("az://")
+                || metadata_url.starts_with("memory://");
+            // Phase 5d: object-store deployments use the SystemCatalog too — its
+            // snapshot blob persists to the object store under
+            // `_operator/catalog/…` (real durability, replacing NativeCatalog's
+            // temp-cache fake) while the per-DDL WAL stays on the local working
+            // volume (object-store-native WAL is Phase 6). Needs `opt_config`
+            // for the local `data_dir`; without it (some test/embedded paths) we
+            // fall back to `NativeCatalog`.
+            let objstore_data_dir = if is_objstore && !disable_system_catalog {
+                opt_config.map(|c| c.server.data_dir.clone())
+            } else {
+                None
+            };
+
+            if !disable_system_catalog && metadata_url.starts_with("file://") {
+                let base = metadata_url.trim_start_matches("file://");
+                // Phase 5 (two-tier operator/account): route the system
+                // catalog's own WAL + snapshot under the DrPathBuilder-validated
+                // operator control-plane prefix (`_operator/catalog/…`) so
+                // catalog I/O honours the structural-isolation mandate instead
+                // of a raw `{base}/system-catalog.wal`. Flag-gated + inert by
+                // default (mirrors `PROXIMADB_WAREHOUSE_DRPATH`): the local path
+                // is unchanged until a deployment opts in, keeping existing
+                // on-disk catalog state in place. The catalog is `Operator`-roled.
+                let wal_path = if std::env::var("PROXIMADB_CATALOG_DRPATH").is_ok() {
+                    std::path::Path::new(base).join(
+                        crate::storage::trait_components::path_resolver::DrPathBuilder::system_catalog_wal_relpath(),
+                    )
+                } else {
+                    std::path::Path::new(base).join("system-catalog.wal")
+                };
                 if let Some(parent) = wal_path.parent() {
                     tokio::fs::create_dir_all(parent).await.with_context(|| {
                         format!("creating system-catalog dir {}", parent.display())
@@ -447,9 +509,73 @@ impl SharedServices {
                     "✅ SharedServices: registered WAL-backed SystemCatalog (default) at {}",
                     wal_path.display()
                 );
+            } else if let Some(data_dir) = objstore_data_dir {
+                use crate::storage::trait_components::path_resolver::DrPathBuilder;
+                // Per-DDL WAL on the local working volume under the operator
+                // control-plane prefix; snapshot blob in the object store.
+                let wal_path = data_dir.join(DrPathBuilder::system_catalog_wal_relpath());
+                if let Some(parent) = wal_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.with_context(|| {
+                        format!("creating system-catalog dir {}", parent.display())
+                    })?;
+                }
+                let snapshot_store = Arc::new(
+                    crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore::from_url(
+                        &metadata_url,
+                        DrPathBuilder::system_catalog_manifests_subprefix(),
+                    )
+                    .with_context(|| {
+                        format!("opening object-store catalog snapshot at {metadata_url}")
+                    })?,
+                );
+                let system_catalog = Arc::new(
+                    crate::services::system_catalog::SystemCatalog::open_with_snapshot_store(
+                        "default",
+                        &wal_path,
+                        snapshot_store,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "opening object-store SystemCatalog (WAL {})",
+                            wal_path.display()
+                        )
+                    })?,
+                );
+                // Phase 6b: in a multi-pod deployment, tail the object-store
+                // snapshot so this pod's relcache stays coherent with DDL another
+                // pod commits (sinval-style lazy reload), and so a superseded
+                // owner steps down to read-only promptly. Inert by default
+                // (single-pod): gated behind `PROXIMADB_CATALOG_FOLLOWER_POLL_SECS`
+                // (> 0 to enable). The handle is detached — the loop is a
+                // cooperative tokio task that does no work when nothing changed.
+                if let Some(secs) = std::env::var("PROXIMADB_CATALOG_FOLLOWER_POLL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|n| *n > 0)
+                {
+                    system_catalog
+                        .clone()
+                        .spawn_follower_poll(std::time::Duration::from_secs(secs));
+                    info!(
+                        "✅ SharedServices: catalog follower poll enabled (every {}s) — \
+                         tailing object-store snapshot for cross-pod coherence",
+                        secs
+                    );
+                }
+                catalog_manager
+                    .register(system_catalog)
+                    .await
+                    .context("Failed to register object-store SystemCatalog backend")?;
+                info!(
+                    "✅ SharedServices: registered object-store-backed SystemCatalog (default); \
+                     local WAL at {}, snapshot in {}",
+                    wal_path.display(),
+                    metadata_url
+                );
             } else {
                 catalog_manager
-                    .create_native_catalog("default", &storage_config.metadata_url)
+                    .create_native_catalog("default", &metadata_url)
                     .await
                     .context("Failed to initialize default xCatalog backend")?;
             }
@@ -1337,18 +1463,28 @@ impl SharedServices {
             max_memory_mb: 512,
             snapshot_interval_seconds: 300, // 5 minutes
         };
-        let metrics_store = Arc::new(
-            crate::metrics::store::MetricsPersistenceLayer::new(
-                filesystem_factory.clone(),
-                metrics_config,
-            )
-            .await?,
-        );
-        let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
-            crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
-        );
-        graph_service_inst.set_metrics_updater(metrics_updater.clone());
-        debug!("📈 GraphOperationsService metrics updater wired");
+        // Server-only: the metrics persistence layer + billing/telemetry publisher
+        // back a chargeback/scrape surface with no in-process consumer. The fused
+        // embedded core skips them and leaves the graph engine's updater unset
+        // (co-design tenets 1 & 5; the `metrics_updater` field is already optional).
+        let metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> =
+            if profile.is_server() {
+                let metrics_store = Arc::new(
+                    crate::metrics::store::MetricsPersistenceLayer::new(
+                        filesystem_factory.clone(),
+                        metrics_config,
+                    )
+                    .await?,
+                );
+                let updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
+                    crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
+                );
+                graph_service_inst.set_metrics_updater(updater.clone());
+                debug!("📈 GraphOperationsService metrics updater wired");
+                Some(updater)
+            } else {
+                None
+            };
         let graph_service = Arc::new(graph_service_inst);
         debug!(
             "✅ SharedServices::new - GraphOperationsService created with shared collection service"
@@ -1677,6 +1813,17 @@ impl SharedServices {
         request_handlers.set_dml_service(dml_service_for_grpc);
         debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
 
+        // TD-135: wire a DdlService built from the SAME catalog_manager pgwire uses
+        // (DdlService is a thin wrapper over the shared catalog), so relational
+        // CREATE/ALTER/DROP submitted over the gRPC ExecuteQuery RPC addresses the
+        // same catalog state and executes tenant-scoped.
+        request_handlers.set_ddl_service(std::sync::Arc::new(crate::services::DdlService::new(
+            catalog_manager.clone(),
+        )));
+        debug!(
+            "✅ SharedServices::new - DdlService wired to UnifiedHandlers for relational DDL routing"
+        );
+
         // Build a port-backed runtime handler for collection/vector REST routes.
         // Uses trait objects so API routes are decoupled from root-crate concrete services.
         let runtime_api_handlers: Arc<dyn proximadb_runtime::ApiHandlersPort> =
@@ -1882,7 +2029,7 @@ impl SharedServices {
                 observability_service: observability_service.clone(),
                 request_handlers: request_handlers.clone(),
                 metrics_collector,
-                metrics_updater: Some(metrics_updater.clone()),
+                metrics_updater: metrics_updater.clone(),
                 query_facade,
                 query_adapter: query_adapter.clone(),
                 api_handlers: runtime_api_handlers,

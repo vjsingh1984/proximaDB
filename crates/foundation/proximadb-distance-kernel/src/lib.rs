@@ -15,9 +15,7 @@
 //! Provides unified distance calculation APIs across all storage engines and hardware backends.
 //! All SIMD implementations are now integrated directly into UnifiedDistanceCompute.
 
-pub mod conversion;
 pub mod engine; // Consolidated engine with all SIMD implementations
-pub mod int8_simd;
 pub mod platform;
 pub mod quantized; // Unified quantized distance computation for all engines
 pub mod sparse; // Sparse vector optimizations

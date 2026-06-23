@@ -3611,6 +3611,41 @@ impl PyProximaDB {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to upsert Arrow batch: {}", e)))
     }
 
+    /// Zero-copy Arrow insert via the **Arrow C Data Interface**. Accepts a list of
+    /// pyarrow `RecordBatch`es whose buffers are shared (not serialized) across the
+    /// FFI boundary, and routes them straight into the embedded vector service —
+    /// the zero-copy replacement for the pyarrow-IPC serialize/deserialize
+    /// round-trip of `insert_arrow_ipc`. Co-design Pillar C: this is the dominant
+    /// cost term of the boundary that replaced the deleted network dimension.
+    #[pyo3(signature = (collection, batches, mode="insert", tenant_id=None))]
+    fn insert_arrow_batches(
+        &self,
+        py: Python<'_>,
+        collection: &str,
+        batches: Vec<arrow::pyarrow::PyArrowType<arrow::record_batch::RecordBatch>>,
+        mode: &str,
+        tenant_id: Option<&str>,
+    ) -> PyResult<u64> {
+        let insert_only = match mode.to_ascii_lowercase().as_str() {
+            "insert" | "bulk_insert" | "batch_insert" => true,
+            "upsert" | "bulk_upsert" | "batch_upsert" => false,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid Arrow write mode '{}'. Use 'insert' or 'upsert'",
+                    other
+                )));
+            }
+        };
+        // The Arrow C Data Interface import happens during argument extraction
+        // (GIL held); the batches are then owned Rust RecordBatches, so the GIL is
+        // released for the actual ingest.
+        let batches: Vec<arrow::record_batch::RecordBatch> =
+            batches.into_iter().map(|b| b.0).collect();
+        let inner = self.db()?;
+        py.detach(move || inner.insert_arrow_batches(collection, batches, insert_only, tenant_id))
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed to insert Arrow batch: {}", e)))
+    }
+
     /// Execute a unified multi-model query
     ///
     /// This executes a SQL-like query that can span multiple data models
