@@ -2,19 +2,25 @@ import pytest
 
 
 class FakeGrpcAsync:
+    """Fake native-async gRPC client (records core-op + lifecycle calls).
+
+    Mirrors the post-TD-126 ``ProximaDBAsyncGrpcClient`` surface: it has
+    ``connect``/``close`` and the record core ops, but NO graph methods (graph
+    always goes REST in the new design).
+    """
+
     def __init__(self, endpoint: str, timeout: float = 60.0):
         self.endpoint = endpoint
         self.timeout = timeout
         self.calls = []
+        self.closed = False
 
-    def shortest_path(self, *args, **kwargs):
-        self.calls.append(("shortest_path", args, kwargs))
+    async def connect(self):
+        self.calls.append(("connect",))
+        return self
 
-        class R:
-            node_ids = ["n1", "n8"]
-            total_weight = 1.0
-
-        return R()
+    async def close(self):
+        self.closed = True
 
 
 class FakeRestAsync:
@@ -37,44 +43,54 @@ class FakeRestAsync:
 
 @pytest.mark.asyncio
 async def test_unified_async_uses_grpc_when_available(monkeypatch):
+    """auto + grpc available: native-async gRPC connected for core ops; graph=REST."""
+    import proximadb_sdk.protocols.grpc_async as ga
     import proximadb_sdk.unified_client_async as m
     from proximadb_sdk.unified_client_async import ProximaDBAsyncUnified
 
-    monkeypatch.setattr(m, "GRPC_OK", True)
-    monkeypatch.setattr(m, "GrpcAsyncClient", FakeGrpcAsync)
+    monkeypatch.setattr(m, "_grpc_available", lambda: True)
+    monkeypatch.setattr(ga, "ProximaDBAsyncGrpcClient", FakeGrpcAsync)
     monkeypatch.setattr(m, "RestAsyncClient", FakeRestAsync)
 
     client = ProximaDBAsyncUnified(url="http://localhost:5678", protocol="auto")
     await client.astart()
+    # Native-async gRPC connected and selected for core ops.
+    assert client._use_grpc is True
+    assert isinstance(client._grpc, FakeGrpcAsync)
+    assert ("connect",) in client._grpc.calls
+    # Graph ops always go over the async REST client (no graph on the new
+    # native-async gRPC client).
     resp_sp = await client.graph_shortest_path(
         "n1", "n8", enable_prefetch=True, prefetch_budget=3
     )
-    assert getattr(resp_sp, "node_ids", None) == ["n1", "n8"]
-    # Traversal goes REST; ensure _rest is available (inject if gRPC path selected)
-    if client._rest is None:
-        client._rest = FakeRestAsync(url="http://localhost:5678")
+    assert resp_sp["ok"] is True
     resp_tr = await client.graph_traverse(
         "n1", max_depth=2, enable_prefetch=True, prefetch_budget=3
     )
     assert resp_tr["ok"] is True
     await client.aclose()
+    assert client._grpc is None  # aclose awaited grpc.close()
 
 
 @pytest.mark.asyncio
 async def test_unified_async_fallback_to_rest_on_failure(monkeypatch):
+    """gRPC connect failure: facade falls back to REST core ops (no _use_grpc)."""
+    import proximadb_sdk.protocols.grpc_async as ga
     import proximadb_sdk.unified_client_async as m
     from proximadb_sdk.unified_client_async import ProximaDBAsyncUnified
 
     class FailingGrpc(FakeGrpcAsync):
-        def __init__(self, *a, **k):
-            raise RuntimeError("init failed")
+        async def connect(self):
+            raise RuntimeError("connect failed")
 
-    monkeypatch.setattr(m, "GRPC_OK", True)
-    monkeypatch.setattr(m, "GrpcAsyncClient", FailingGrpc)
+    monkeypatch.setattr(m, "_grpc_available", lambda: True)
+    monkeypatch.setattr(ga, "ProximaDBAsyncGrpcClient", FailingGrpc)
     monkeypatch.setattr(m, "RestAsyncClient", FakeRestAsync)
 
     client = ProximaDBAsyncUnified(url="http://localhost:5678", protocol="auto")
     await client.astart()
+    assert client._use_grpc is False  # fell back to REST
+    assert client._grpc is None
     resp_sp = await client.graph_shortest_path("n1", "n8")
     assert resp_sp["ok"] is True
     await client.aclose()

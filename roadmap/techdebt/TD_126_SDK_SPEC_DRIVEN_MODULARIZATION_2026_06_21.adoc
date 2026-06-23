@@ -12,9 +12,16 @@ Phase 3 done (Python `chunking`, `embeddings`, and `integrations`/`adapters` con
 opt-in + lazy behind extras — `import proximadb_sdk` pulls zero heavy deps; core =
 transport+facade+models); remaining-ops re-base done (2026-06-22 — graph/health/observability/meta
 ops routed through the generated client across Go/TS/Rust/Python, contract tests kept);
-Python native-async core ops done (2026-06-22 — `ProximaDBAsyncUnified` wires the generated
-`asyncio_detailed` for collections CRUD + records insert/upsert/get/delete + search behind a
-shared `httpx.AsyncClient`, drift-gated; async gRPC deferred); Phase 5 +
+Python native-async client done (2026-06-22 — `ProximaDBAsyncUnified` covers BOTH transports:
+the generated `asyncio_detailed` REST path for collections CRUD + records insert/upsert/get/delete
++ search behind a shared `httpx.AsyncClient`, AND a *genuine* `grpc.aio` client
+(`protocols/grpc_async.ProximaDBAsyncGrpcClient`) for the record core ops — the prior
+sync-subclass fake is gone. The async gRPC client reuses the EXISTING generated v2
+`ProximaRecordServiceStub` on a `grpc.aio` channel (channel-agnostic stubs → awaitable RPCs;
+no proto/stub regen) and the transport-agnostic proto codec now shared with the sync client
+(`protocols/_grpc_v2_codec`). The facade prefers gRPC-async for core ops when a gRPC endpoint is
+configured (mirroring the sync `unified_client`), else REST-async; `astart`/`aclose` manage both
+the httpx AsyncClient and the aio channel; lazy gRPC import boundary intact); Phase 5 +
 remaining Phase-4 languages (jvm) + generating the facades themselves open +
 Date: 2026-06-21 (updated 2026-06-22) +
 Owner: SDK / API surface

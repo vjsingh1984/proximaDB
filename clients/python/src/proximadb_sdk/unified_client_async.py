@@ -11,6 +11,14 @@ The async ops mirror the sync facade (``unified_client.py`` /
 ``protocols/_rest_codegen``), which calls the generated ``asyncio_detailed``
 functions exactly as the sync path uses the generated ``sync``/``_get_kwargs``.
 
+When a gRPC endpoint is configured (``protocol=grpc`` or ``auto`` with grpc
+available), the record core ops (insert/upsert/delete/search/get_vector) are
+routed to the **native-async** ``grpc.aio`` client
+(``protocols/grpc_async.ProximaDBAsyncGrpcClient``) — mirroring how the sync
+``unified_client.py`` prefers gRPC over REST for these ops — otherwise they use
+the generated async-REST transport. Collection CRUD always uses the
+generated async-REST transport.
+
 Graph operations are NOT in the generated OpenAPI client; they stay on the
 hand-written ``rest_async.py`` httpx path (and async gRPC when available).
 """
@@ -39,13 +47,24 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 logger = logging.getLogger(__name__)
 
-try:
-    from .protocols.grpc_async import ProximaDBClient as GrpcAsyncClient  # type: ignore
-
-    GRPC_OK = True
-except Exception:
-    GRPC_OK = False
 from .protocols.rest_async import ProximaDBAsyncClient as RestAsyncClient
+
+
+def _grpc_available() -> bool:
+    """Lazily probe whether grpc.aio + generated v2 stubs are importable.
+
+    Kept out of module scope so ``import proximadb_sdk`` stays grpc-free (the
+    lazy gRPC boundary): the import only happens when the facade actually
+    considers the gRPC transport in ``astart``.
+    """
+    try:
+        import grpc.aio  # noqa: F401, PLC0415
+
+        from proximadb.v2 import record_pb2_grpc  # noqa: F401, PLC0415
+
+        return True
+    except Exception:
+        return False
 
 
 def _coalesce_name(raw_name: Any, collection_id: str) -> str:
@@ -89,6 +108,9 @@ class ProximaDBAsyncUnified:
 
         self._grpc = None
         self._rest = None
+        # True once the native-async gRPC channel is connected and core ops
+        # should route to it (set in astart).
+        self._use_grpc = False
         # Shared async transport for the generated REST client.
         self._async_http = None
         self._gen_client = None
@@ -109,26 +131,42 @@ class ProximaDBAsyncUnified:
             self._async_http
         )
 
-        # Graph ops: prefer async gRPC when available/selected, else async REST.
-        if self.protocol == Protocol.GRPC or (
-            self.protocol == Protocol.AUTO and GRPC_OK
-        ):
+        # Prefer the native-async gRPC channel for core record ops when grpc is
+        # selected (or auto + available) — mirrors the sync unified client's
+        # gRPC-over-REST preference. Falls back to async REST on failure.
+        want_grpc = self.protocol == Protocol.GRPC or (
+            self.protocol == Protocol.AUTO and _grpc_available()
+        )
+        if want_grpc:
             try:
-                self._grpc = GrpcAsyncClient(
+                from .protocols.grpc_async import ProximaDBAsyncGrpcClient
+
+                self._grpc = ProximaDBAsyncGrpcClient(
                     endpoint=self.grpc_endpoint, timeout=self.timeout
                 )
-                logger.info("Using async gRPC client for graph ops")
+                await self._grpc.connect()
+                self._use_grpc = True
+                logger.info("Using native-async gRPC client for core record ops")
             except Exception as e:
                 logger.warning(f"gRPC async init failed: {e}; falling back to REST")
-                self._rest = RestAsyncClient(url=self.rest_url, timeout=self.timeout)
-        else:
-            self._rest = RestAsyncClient(url=self.rest_url, timeout=self.timeout)
-            logger.info("Using async REST client for graph ops")
+                self._grpc = None
+                self._use_grpc = False
+
+        # Always stand up an async REST client too: it backs graph ops and is
+        # the fallback for core ops when gRPC is unavailable.
+        self._rest = RestAsyncClient(url=self.rest_url, timeout=self.timeout)
+        if not self._use_grpc:
+            logger.info("Using async REST client for core record ops")
         return self
 
     async def aclose(self):
+        if self._grpc is not None:
+            await self._grpc.close()
+            self._grpc = None
+            self._use_grpc = False
         if self._rest:
             await self._rest.aclose()
+            self._rest = None
         if self._async_http is not None:
             await self._async_http.aclose()
             self._async_http = None
@@ -334,7 +372,15 @@ class ProximaDBAsyncUnified:
         upsert: bool = False,
         validate_schema: bool = True,
     ) -> BatchResult:
-        """Insert records via the generated ``insert_records`` async op."""
+        """Insert records via gRPC-async when configured, else REST-async."""
+        if self._use_grpc and self._grpc is not None:
+            return await self._grpc.insert_records(
+                collection_id,
+                records,
+                upsert=upsert,
+                validate_schema=validate_schema,
+            )
+
         from .protocols import _rest_codegen_async as _gen_async
 
         body = {
@@ -386,7 +432,15 @@ class ProximaDBAsyncUnified:
         include_vector: bool = True,
         include_metadata: bool = True,
     ) -> dict[str, Any] | None:
-        """Get a single record via the generated ``get_record`` async op."""
+        """Get a single record via gRPC-async when configured, else REST-async."""
+        if self._use_grpc and self._grpc is not None:
+            return await self._grpc.get_vector(
+                collection_id,
+                vector_id,
+                include_vector=include_vector,
+                include_metadata=include_metadata,
+            )
+
         from .protocols import _rest_codegen_async as _gen_async
 
         resp = await _gen_async.get_record(
@@ -405,7 +459,16 @@ class ProximaDBAsyncUnified:
         return data
 
     async def delete_vector(self, collection_id: str, vector_id: str) -> DeleteResult:
-        """Delete a single record via the generated ``delete_record`` async op."""
+        """Delete a single record via gRPC-async when configured, else REST."""
+        if self._use_grpc and self._grpc is not None:
+            res = await self._grpc.delete_vector(collection_id, vector_id)
+            success = bool(res.get("success", False))
+            return DeleteResult(
+                success=success,
+                deleted_count=1 if success else 0,
+                errors=[],
+            )
+
         from .protocols import _rest_codegen_async as _gen_async
 
         resp = await _gen_async.delete_record(
@@ -422,7 +485,17 @@ class ProximaDBAsyncUnified:
     async def delete_vectors(
         self, collection_id: str, vector_ids: list[str]
     ) -> DeleteResult:
-        """Delete multiple records via the generated ``delete_record`` async op."""
+        """Delete multiple records: batched gRPC-async when configured, else REST."""
+        if self._use_grpc and self._grpc is not None:
+            res = await self._grpc.delete_vectors(collection_id, vector_ids)
+            deleted_count = int(res.get("deleted_count", 0))
+            failed_count = int(res.get("failed_count", 0))
+            return DeleteResult(
+                success=failed_count == 0,
+                deleted_count=deleted_count,
+                errors=([f"{failed_count} deletes failed"] if failed_count else []),
+            )
+
         deleted = 0
         errors: list[str] = []
         for vid in vector_ids:
@@ -452,9 +525,7 @@ class ProximaDBAsyncUnified:
         include_vectors: bool = False,
         include_metadata: bool = True,
     ) -> list[SearchResult]:
-        """Search via the generated ``search_records`` async op."""
-        from .protocols import _rest_codegen_async as _gen_async
-
+        """Search via gRPC-async when configured, else the REST-async op."""
         try:
             import numpy as _np
 
@@ -462,6 +533,18 @@ class ProximaDBAsyncUnified:
                 vector = vector.astype(_np.float32, copy=False).tolist()
         except Exception:
             pass
+
+        if self._use_grpc and self._grpc is not None:
+            return await self._grpc.search(
+                collection_id,
+                query_vector=list(vector),
+                top_k=top_k,
+                metadata_filters=metadata_filter,
+                include_vectors=include_vectors,
+                include_metadata=include_metadata,
+            )
+
+        from .protocols import _rest_codegen_async as _gen_async
 
         body: dict[str, Any] = {
             "vector": list(vector),
