@@ -23,6 +23,35 @@ use tokio::io::AsyncWriteExt;
 use proximadb_iceberg_engine::manifest::{CommitOutcome, ManifestCommitter};
 use proximadb_object_store::ProximaObjectStore;
 
+/// A snapshot blob read back from the durable store, with the pointer metadata
+/// the Phase 6b cross-pod coherence protocol compares against.
+#[derive(Debug, Clone)]
+pub struct SnapshotRead {
+    /// Monotonic commit **version** of the snapshot pointer — it advances on
+    /// *every* publish, including same-owner re-checkpoints. This is the cheap
+    /// sinval staleness key a follower tails: a strictly higher version means
+    /// the published snapshot changed and the in-RAM cache must reload. `0` for
+    /// the unversioned local single-pod store.
+    pub version: u64,
+    /// Fencing **generation** the snapshot was committed under — it changes only
+    /// when a newer pod *takes the catalog over* (Phase 6a). A generation above
+    /// this pod's own write generation means it has been superseded. `0` for the
+    /// unfenced local store.
+    pub generation: u64,
+    /// The snapshot payload.
+    pub bytes: Vec<u8>,
+}
+
+/// Outcome of publishing a snapshot blob.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotWrite {
+    /// The blob landed at this monotonic pointer `version`.
+    Published { version: u64 },
+    /// **Fenced** — a newer writer (higher generation) already owns the pointer,
+    /// so this stale writer must step down rather than overwrite it.
+    Fenced,
+}
+
 /// Durable, atomically-replaceable home for the catalog snapshot blob.
 ///
 /// `write_atomic` must guarantee a reader concurrent with the write observes
@@ -37,17 +66,25 @@ use proximadb_object_store::ProximaObjectStore;
 /// rejected instead of clobbering the newer pod's snapshot.
 #[async_trait]
 pub trait CatalogSnapshotStore: Send + Sync {
-    /// Read the current snapshot blob with its fencing generation, or `None` if
-    /// none has been written yet. Local (unfenced) stores report generation `0`.
-    async fn read(&self) -> Result<Option<(u64, Vec<u8>)>>;
+    /// Read the current snapshot blob with its pointer version + fencing
+    /// generation, or `None` if none has been written yet.
+    async fn read(&self) -> Result<Option<SnapshotRead>>;
 
-    /// Durably + atomically publish the snapshot blob stamped with `generation`.
-    ///
-    /// Returns `Ok(true)` when the write landed, `Ok(false)` when it was
-    /// **fenced** — a newer writer (higher generation) already owns the blob, so
-    /// this (stale) writer must step down rather than overwrite it. Local stores
-    /// never fence and always return `Ok(true)`.
-    async fn write_atomic(&self, generation: u64, bytes: &[u8]) -> Result<bool>;
+    /// Durably + atomically publish the snapshot blob stamped with `generation`,
+    /// returning the [`SnapshotWrite`] outcome (the new pointer version, or
+    /// `Fenced` when a newer generation already owns the pointer). Local stores
+    /// never fence and always [`Published`](SnapshotWrite::Published).
+    async fn write_atomic(&self, generation: u64, bytes: &[u8]) -> Result<SnapshotWrite>;
+
+    /// Cheap probe of the latest published pointer version **without** fetching
+    /// the (potentially large) snapshot payload — the Phase 6b sinval staleness
+    /// check polls this, and only fetches via [`read`](Self::read) on a version
+    /// advance. `None` when nothing has been published yet, or when the store
+    /// has no version concept (the local single-pod store, which followers never
+    /// tail). Default: `None`.
+    async fn latest_version(&self) -> Result<Option<u64>> {
+        Ok(None)
+    }
 
     /// Human-readable location, for logs and error context.
     fn describe(&self) -> String;
@@ -75,19 +112,23 @@ impl LocalSnapshotStore {
 
 #[async_trait]
 impl CatalogSnapshotStore for LocalSnapshotStore {
-    async fn read(&self) -> Result<Option<(u64, Vec<u8>)>> {
+    async fn read(&self) -> Result<Option<SnapshotRead>> {
         if tokio::fs::try_exists(&self.path).await.unwrap_or(false) {
             let bytes = tokio::fs::read(&self.path)
                 .await
                 .with_context(|| format!("reading catalog snapshot {}", self.path.display()))?;
-            // Local single-pod store is unfenced — generation is always 0.
-            Ok(Some((0, bytes)))
+            // Local single-pod store is unversioned + unfenced — (0, 0).
+            Ok(Some(SnapshotRead {
+                version: 0,
+                generation: 0,
+                bytes,
+            }))
         } else {
             Ok(None)
         }
     }
 
-    async fn write_atomic(&self, _generation: u64, bytes: &[u8]) -> Result<bool> {
+    async fn write_atomic(&self, _generation: u64, bytes: &[u8]) -> Result<SnapshotWrite> {
         let path = &self.path;
         let tmp = path.with_extension("snapshot-tmp");
         {
@@ -114,7 +155,8 @@ impl CatalogSnapshotStore for LocalSnapshotStore {
         {
             let _ = handle.sync_all();
         }
-        Ok(true)
+        // The local store is unversioned (single-pod, last-writer-wins).
+        Ok(SnapshotWrite::Published { version: 0 })
     }
 
     fn describe(&self) -> String {
@@ -169,7 +211,7 @@ impl ObjectStoreSnapshotStore {
 
 #[async_trait]
 impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
-    async fn read(&self) -> Result<Option<(u64, Vec<u8>)>> {
+    async fn read(&self) -> Result<Option<SnapshotRead>> {
         match self
             .committer
             .latest_version()
@@ -181,14 +223,18 @@ impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
                     self.committer.read_fenced(version).await.with_context(|| {
                         format!("reading catalog snapshot {}@{version}", self.label)
                     })?;
-                Ok(Some((generation, payload.to_vec())))
+                Ok(Some(SnapshotRead {
+                    version,
+                    generation,
+                    bytes: payload.to_vec(),
+                }))
             }
             // No manifest yet → empty-catalog boot; the caller replays the WAL.
             None => Ok(None),
         }
     }
 
-    async fn write_atomic(&self, generation: u64, bytes: &[u8]) -> Result<bool> {
+    async fn write_atomic(&self, generation: u64, bytes: &[u8]) -> Result<SnapshotWrite> {
         let parent = self
             .committer
             .latest_version()
@@ -200,11 +246,18 @@ impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
             .await
             .with_context(|| format!("committing catalog snapshot {}", self.label))?
         {
-            CommitOutcome::Committed(_) => Ok(true),
+            CommitOutcome::Committed(version) => Ok(SnapshotWrite::Published { version }),
             // Fenced (stale generation) or lost the version CAS race — either way
             // this writer did not publish; it must re-read and step down/retry.
-            CommitOutcome::Conflict { .. } => Ok(false),
+            CommitOutcome::Conflict { .. } => Ok(SnapshotWrite::Fenced),
         }
+    }
+
+    async fn latest_version(&self) -> Result<Option<u64>> {
+        self.committer
+            .latest_version()
+            .await
+            .with_context(|| format!("probing catalog snapshot version {}", self.label))
     }
 
     fn describe(&self) -> String {
@@ -216,8 +269,12 @@ impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
 mod tests {
     use super::*;
 
-    fn body(opt: Option<(u64, Vec<u8>)>) -> Option<Vec<u8>> {
-        opt.map(|(_gen, bytes)| bytes)
+    fn body(opt: Option<SnapshotRead>) -> Option<Vec<u8>> {
+        opt.map(|r| r.bytes)
+    }
+
+    fn published(w: SnapshotWrite) -> bool {
+        matches!(w, SnapshotWrite::Published { .. })
     }
 
     #[tokio::test]
@@ -226,17 +283,21 @@ mod tests {
         let path = dir.path().join("cat.snapshot");
         let store = LocalSnapshotStore::new(&path);
 
-        // Absent before any write.
+        // Absent before any write; local store exposes no version concept.
         assert!(store.read().await.unwrap().is_none());
+        assert!(store.latest_version().await.unwrap().is_none());
 
         // Local store is unfenced: it ignores the generation and never fences.
-        assert!(store.write_atomic(0, b"hello-catalog").await.unwrap());
-        let (generation, bytes) = store.read().await.unwrap().unwrap();
-        assert_eq!(generation, 0);
-        assert_eq!(bytes, b"hello-catalog");
+        assert!(published(
+            store.write_atomic(0, b"hello-catalog").await.unwrap()
+        ));
+        let read = store.read().await.unwrap().unwrap();
+        assert_eq!(read.version, 0);
+        assert_eq!(read.generation, 0);
+        assert_eq!(read.bytes, b"hello-catalog");
 
         // Atomic replace — even an "older" generation still writes locally.
-        assert!(store.write_atomic(0, b"v2").await.unwrap());
+        assert!(published(store.write_atomic(0, b"v2").await.unwrap()));
         assert_eq!(
             body(store.read().await.unwrap()).as_deref(),
             Some(&b"v2"[..])
@@ -252,18 +313,28 @@ mod tests {
                 .expect("memory store");
 
         assert!(store.read().await.unwrap().is_none());
+        assert!(store.latest_version().await.unwrap().is_none());
 
-        assert!(store.write_atomic(1, b"snap-bytes").await.unwrap());
-        let (generation, bytes) = store.read().await.unwrap().unwrap();
-        assert_eq!(generation, 1);
-        assert_eq!(bytes, b"snap-bytes");
+        assert_eq!(
+            store.write_atomic(1, b"snap-bytes").await.unwrap(),
+            SnapshotWrite::Published { version: 0 }
+        );
+        let read = store.read().await.unwrap().unwrap();
+        assert_eq!(read.version, 0);
+        assert_eq!(read.generation, 1);
+        assert_eq!(read.bytes, b"snap-bytes");
+        assert_eq!(store.latest_version().await.unwrap(), Some(0));
 
-        // A same-or-higher generation succeeds and supersedes.
-        assert!(store.write_atomic(1, b"snap-bytes-2").await.unwrap());
+        // A same-or-higher generation succeeds, advances the version, and supersedes.
+        assert_eq!(
+            store.write_atomic(1, b"snap-bytes-2").await.unwrap(),
+            SnapshotWrite::Published { version: 1 }
+        );
         assert_eq!(
             body(store.read().await.unwrap()).as_deref(),
             Some(&b"snap-bytes-2"[..])
         );
+        assert_eq!(store.latest_version().await.unwrap(), Some(1));
     }
 
     /// Phase 6a multi-instance fence: two stores over ONE shared backing object
@@ -291,23 +362,24 @@ mod tests {
         );
 
         // Pod A owns generation 1 and commits.
-        assert!(pod_a.write_atomic(1, b"from-A").await.unwrap());
+        assert!(published(pod_a.write_atomic(1, b"from-A").await.unwrap()));
 
         // Pod B takes over: it reads the current generation (1) and claims the
         // next one (2), then commits successfully (2 >= 1).
-        let (seen, _) = pod_b.read().await.unwrap().unwrap();
-        assert_eq!(seen, 1);
-        assert!(pod_b.write_atomic(2, b"from-B").await.unwrap());
+        let read = pod_b.read().await.unwrap().unwrap();
+        assert_eq!(read.generation, 1);
+        assert!(published(pod_b.write_atomic(2, b"from-B").await.unwrap()));
 
         // Pod A is now stale (generation 1 < 2). Its next commit is FENCED.
-        assert!(
-            !pod_a.write_atomic(1, b"from-A-again").await.unwrap(),
+        assert_eq!(
+            pod_a.write_atomic(1, b"from-A-again").await.unwrap(),
+            SnapshotWrite::Fenced,
             "stale generation-1 writer must be fenced once generation 2 owns the log"
         );
 
         // The newer pod's snapshot is intact — A did not clobber it.
-        let (generation, bytes) = pod_b.read().await.unwrap().unwrap();
-        assert_eq!(generation, 2);
-        assert_eq!(bytes, b"from-B");
+        let read = pod_b.read().await.unwrap().unwrap();
+        assert_eq!(read.generation, 2);
+        assert_eq!(read.bytes, b"from-B");
     }
 }

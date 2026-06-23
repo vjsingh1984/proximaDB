@@ -528,7 +528,7 @@ impl SharedServices {
                         format!("opening object-store catalog snapshot at {metadata_url}")
                     })?,
                 );
-                let system_catalog =
+                let system_catalog = Arc::new(
                     crate::services::system_catalog::SystemCatalog::open_with_snapshot_store(
                         "default",
                         &wal_path,
@@ -540,9 +540,31 @@ impl SharedServices {
                             "opening object-store SystemCatalog (WAL {})",
                             wal_path.display()
                         )
-                    })?;
+                    })?,
+                );
+                // Phase 6b: in a multi-pod deployment, tail the object-store
+                // snapshot so this pod's relcache stays coherent with DDL another
+                // pod commits (sinval-style lazy reload), and so a superseded
+                // owner steps down to read-only promptly. Inert by default
+                // (single-pod): gated behind `PROXIMADB_CATALOG_FOLLOWER_POLL_SECS`
+                // (> 0 to enable). The handle is detached — the loop is a
+                // cooperative tokio task that does no work when nothing changed.
+                if let Some(secs) = std::env::var("PROXIMADB_CATALOG_FOLLOWER_POLL_SECS")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .filter(|n| *n > 0)
+                {
+                    system_catalog
+                        .clone()
+                        .spawn_follower_poll(std::time::Duration::from_secs(secs));
+                    info!(
+                        "✅ SharedServices: catalog follower poll enabled (every {}s) — \
+                         tailing object-store snapshot for cross-pod coherence",
+                        secs
+                    );
+                }
                 catalog_manager
-                    .register(Arc::new(system_catalog))
+                    .register(system_catalog)
                     .await
                     .context("Failed to register object-store SystemCatalog backend")?;
                 info!(
