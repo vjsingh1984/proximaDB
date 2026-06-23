@@ -253,6 +253,32 @@ impl super::GraphOperationsService {
         Ok(results)
     }
 
+    /// Enumerate every edge in a graph.
+    ///
+    /// The engine has no full edge scan — edges live in per-source adjacency, so
+    /// [`query_edges`](Self::query_edges) deliberately returns empty without an
+    /// endpoint. But every edge has exactly one source node, so iterating each
+    /// node's *outgoing* edges yields every edge exactly once (no dedup). Used by
+    /// the columnar Flight export to dump a whole graph's edges (a whole-graph
+    /// Arrow dump needs all edges, not just one node's adjacency).
+    ///
+    /// Materializes the node set and walks adjacency — an O(N+E) scan intended
+    /// for export/ETL, not the hot traversal path.
+    pub async fn all_edges(&self, graph_id: &str) -> Result<Vec<Arc<Edge>>> {
+        if !self.graph_enabled() {
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let nodes = engine.get_all_nodes()?;
+        let mut edges = Vec::new();
+        for node in nodes {
+            edges.extend(engine.get_outgoing_edges(&node.id, None)?);
+        }
+        Ok(edges)
+    }
+
     fn query_edges_from_fresh_csr(
         &self,
         engine: &crate::graph::engines::GraphEngineImpl,
