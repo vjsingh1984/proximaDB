@@ -59,10 +59,42 @@ message DeleteDocumentResponse {
   bool deleted = 1;
 }
 
+enum DocumentSortOrder {
+  DOCUMENT_SORT_ORDER_UNSPECIFIED = 0;
+  DOCUMENT_SORT_ASC = 1;
+  DOCUMENT_SORT_DESC = 2;
+}
+
+message DocumentSortField {
+  string path = 1; // dotted field path into the document
+  DocumentSortOrder order = 2;
+}
+
+// Paginated/sorted/projected scan of a collection. Value-bearing predicate
+// filters are deferred: they require a ProximaValue-native filter so query values
+// stay off the lossy v1 `SqlValue` path (tracked follow-up), so this first slice
+// carries no filter — only projection, sort, and pagination, which are value-free.
+message QueryDocumentsRequest {
+  string collection_id = 1;
+  repeated string projection = 2; // empty = all fields
+  repeated DocumentSortField sort = 3;
+  uint32 limit = 4;
+  uint32 offset = 5;
+  bool include_count = 6; // total match count (slower)
+}
+
+message QueryDocumentsResponse {
+  repeated Document documents = 1;
+  optional uint64 total_count = 2;
+  uint64 query_time_ms = 3;
+}
+
 service ProximaDocumentService {
-  // Document CRUD (first slice). Query/update/aggregate are deferred follow-ups,
-  // mirroring how the graph service staged its advanced RPCs (TD-124).
+  // Document CRUD + scan. Value-bearing query filters, update, and aggregate are
+  // deferred follow-ups, mirroring how the graph service staged its advanced RPCs
+  // (TD-124).
   rpc CreateDocument(CreateDocumentRequest) returns (DocumentResponse);
   rpc GetDocument(GetDocumentRequest) returns (DocumentResponse);
   rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+  rpc QueryDocuments(QueryDocumentsRequest) returns (QueryDocumentsResponse);
 }

@@ -43,7 +43,7 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_document_service_server::{
     ProximaDocumentService, ProximaDocumentServiceServer,
 };
-use crate::storage::document::{DocumentRecord, DocumentService};
+use crate::storage::document::{DocumentQueryParams, DocumentRecord, DocumentService};
 
 /// gRPC V2 native document service.
 pub struct ProximaDocumentServiceImpl {
@@ -92,7 +92,19 @@ mod conv {
     use proximadb_records::{ProximaTree, ProximaTreeNode};
 
     use crate::core::search::sql_value_filter::proxima_tree_to_value_map;
+    use crate::proto::proximadb_v1 as pv1;
     use crate::storage::document::DocumentRecord;
+
+    /// v2 sort fields -> v1 proto `SortField`. Value-free (path + order only), so
+    /// no `SqlValue` is involved; the enum discriminants line up 1:1.
+    pub fn sort_to_v1(sort: &[pv2::DocumentSortField]) -> Vec<pv1::SortField> {
+        sort.iter()
+            .map(|s| pv1::SortField {
+                path: s.path.clone(),
+                order: s.order,
+            })
+            .collect()
+    }
 
     /// v2 wire props (`TypedValue` map) -> neutral [`ProximaTree`]. Each field
     /// becomes a `Value` node; nested objects ride inside the `ProximaValue`
@@ -233,11 +245,48 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
             }
         }
     }
+
+    async fn query_documents(
+        &self,
+        request: Request<pv2::QueryDocumentsRequest>,
+    ) -> Result<Response<pv2::QueryDocumentsResponse>, Status> {
+        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC QueryDocuments collection={collection} limit={} offset={}",
+            req.limit, req.offset
+        );
+
+        // First slice: a value-free scan (projection + sort + pagination). A
+        // predicate filter is deferred until it can be ProximaValue-native, so
+        // none is set here.
+        let params = DocumentQueryParams {
+            filter: None,
+            projection: req.projection,
+            sort: conv::sort_to_v1(&req.sort),
+            limit: req.limit,
+            offset: req.offset,
+            include_count: req.include_count,
+        };
+
+        match self.documents.query_documents(&collection, params).await {
+            Ok(result) => Ok(Response::new(pv2::QueryDocumentsResponse {
+                documents: result.documents.iter().map(conv::record_to_v2).collect(),
+                total_count: result.total_count,
+                query_time_ms: result.query_time_ms,
+            })),
+            Err(e) => {
+                error!("v2 gRPC QueryDocuments failed: {e}");
+                Err(doc_status("query documents", e))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{conv, pv2};
+    use crate::proto::proximadb_v1 as pv1;
     use proximadb_records::ProximaTreeNode;
     use std::collections::HashMap;
 
@@ -280,5 +329,26 @@ mod tests {
             matches!(tree1.get("uid"), Some(ProximaTreeNode::Value(_))),
             "native UUID round-trips as a value node"
         );
+    }
+
+    /// Sort fields are value-free; the v2 `DocumentSortOrder` discriminants line
+    /// up 1:1 with the v1 `SortOrder` used by the backing query params.
+    #[test]
+    fn sort_fields_map_to_v1_order() {
+        let sort = vec![
+            pv2::DocumentSortField {
+                path: "name".to_string(),
+                order: pv2::DocumentSortOrder::DocumentSortAsc as i32,
+            },
+            pv2::DocumentSortField {
+                path: "ts".to_string(),
+                order: pv2::DocumentSortOrder::DocumentSortDesc as i32,
+            },
+        ];
+        let v1 = conv::sort_to_v1(&sort);
+        assert_eq!(v1.len(), 2);
+        assert_eq!(v1[0].path, "name");
+        assert_eq!(v1[0].order, pv1::SortOrder::Asc as i32);
+        assert_eq!(v1[1].order, pv1::SortOrder::Desc as i32);
     }
 }

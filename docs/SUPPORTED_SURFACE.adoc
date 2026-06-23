@@ -103,6 +103,13 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | Programmatic graph access from the SDK.
 | Supported
 
+| *gRPC `proximadb.v2.ProximaDocumentService`*
+| Document CRUD plus `QueryDocuments` projection/sort/pagination scans. Value-bearing filters,
+  update, and aggregate are deferred until the v2 surface has a ProximaValue-native document
+  predicate shape.
+| Programmatic document access from generated gRPC clients without enabling v1 compat.
+| Supported (CRUD + scan/query subset)
+
 | *Graph `ExecuteQuery`* (Cypher)
 | Declarative graph query — supported openCypher subset (single-node patterns
   and linear traversal chains with equality property constraints) on v2 (TD-124).
