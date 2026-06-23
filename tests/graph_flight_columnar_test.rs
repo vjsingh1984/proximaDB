@@ -274,3 +274,61 @@ async fn columnar_node_export_paginates_with_fixed_schema() {
         "pagination reconstructs every node exactly once"
     );
 }
+
+/// `all_edges` (the full-graph edge scan backing the endpoint-less `graph_edges`
+/// Flight export) returns every edge exactly once — even those whose source node
+/// differs — and the columnar codec round-trips the whole set. Without this, a
+/// whole-graph Arrow dump can export all nodes but not all edges.
+#[tokio::test]
+async fn all_edges_full_scan_returns_every_edge() {
+    use proximadb::graph::model::Edge;
+    let graph = Arc::new(GraphOperationsService::new());
+    let graph_id = "g_all_edges";
+    create_graph(&graph, graph_id).await;
+
+    let nodes = vec![node("a", 0), node("b", 0), node("c", 0)];
+    let nb = graph_codec::nodes_to_batch(&nodes).expect("encode nodes");
+    graph
+        .batch_create_nodes_with_strategy(
+            graph_id,
+            graph_codec::batch_to_nodes(&nb).unwrap(),
+            "update",
+        )
+        .await
+        .expect("create nodes");
+
+    // Edges spread across two distinct source nodes (a, b) — a per-source
+    // adjacency query for any single node would miss the others.
+    let mk = |id: &str, from: &str, to: &str| Edge {
+        id: id.to_string(),
+        from_node_id: from.to_string(),
+        to_node_id: to.to_string(),
+        edge_type: "KNOWS".to_string(),
+        properties: HashMap::new(),
+        weight: None,
+        created_at_ms: 0,
+        updated_at_ms: 0,
+    };
+    graph
+        .batch_create_edges(
+            graph_id,
+            vec![mk("e1", "a", "b"), mk("e2", "b", "c"), mk("e3", "a", "c")],
+        )
+        .await
+        .expect("create edges");
+
+    let all = graph.all_edges(graph_id).await.expect("all_edges");
+    let mut ids: Vec<String> = all.iter().map(|e| e.id.clone()).collect();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec!["e1", "e2", "e3"],
+        "full scan returns every edge exactly once (no dups, no misses)"
+    );
+
+    // The whole edge set survives the columnar codec round-trip.
+    let owned: Vec<Edge> = all.iter().map(|e| (**e).clone()).collect();
+    let batch = graph_codec::edges_to_batch(&owned).expect("encode all edges");
+    let back = graph_codec::batch_to_edges(&batch).expect("decode all edges");
+    assert_eq!(back.len(), 3);
+}

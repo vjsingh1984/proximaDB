@@ -2839,28 +2839,34 @@ impl ProximaFlightService {
             });
             (schema, Box::pin(stream))
         } else {
-            // Edge export is endpoint-scoped (no full edge scan); require an
-            // endpoint rather than silently returning an empty stream.
-            if ticket.from_node_id.is_none() && ticket.to_node_id.is_none() {
-                return Err(TonicStatus::invalid_argument(
-                    "graph_edges export requires `from_node_id` or `to_node_id` \
-                     (the engine has no full edge scan)",
-                ));
-            }
-            let query = crate::graph::EdgeQuery {
-                graph_id: gid.clone(),
-                from_node_id: ticket.from_node_id.clone(),
-                to_node_id: ticket.to_node_id.clone(),
-                edge_types: ticket.edge_type.clone().into_iter().collect(),
-                filters: Vec::new(),
-                limit: None,
-                offset: None,
-                continuation_token: None,
+            // Edges live in per-source adjacency. With an endpoint, use the
+            // adjacency-scoped query; without one, do a full graph edge scan
+            // (export/ETL — dump every edge), filtering by type if requested.
+            let edges = if ticket.from_node_id.is_none() && ticket.to_node_id.is_none() {
+                let mut all = graph
+                    .all_edges(&gid)
+                    .await
+                    .map_err(|e| TonicStatus::internal(format!("scan edges: {e}")))?;
+                if let Some(et) = &ticket.edge_type {
+                    all.retain(|e| e.edge_type == *et);
+                }
+                all
+            } else {
+                let query = crate::graph::EdgeQuery {
+                    graph_id: gid.clone(),
+                    from_node_id: ticket.from_node_id.clone(),
+                    to_node_id: ticket.to_node_id.clone(),
+                    edge_types: ticket.edge_type.clone().into_iter().collect(),
+                    filters: Vec::new(),
+                    limit: None,
+                    offset: None,
+                    continuation_token: None,
+                };
+                graph
+                    .query_edges(&gid, query)
+                    .await
+                    .map_err(|e| TonicStatus::internal(format!("query edges: {e}")))?
             };
-            let edges = graph
-                .query_edges(&gid, query)
-                .await
-                .map_err(|e| TonicStatus::internal(format!("query edges: {e}")))?;
             let edges: Vec<crate::graph::Edge> = edges.iter().map(|e| (**e).clone()).collect();
             let batches: Vec<GraphBatchResult> = edges
                 .chunks(page)
