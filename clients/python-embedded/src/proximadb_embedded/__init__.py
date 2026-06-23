@@ -198,6 +198,35 @@ def _arrow_source_to_ipc_bytes(source) -> bytes:
     return sink.getvalue().to_pybytes()
 
 
+def _arrow_source_to_batches(source):
+    """Convert a pyarrow Table/RecordBatch or pandas DataFrame to a list of pyarrow
+    RecordBatches for the **zero-copy** Arrow C Data Interface hand-off. Returns
+    ``None`` for already-serialized inputs (raw IPC bytes), which must take the IPC
+    path because their buffers are not live Arrow arrays."""
+    if isinstance(source, (bytes, bytearray, memoryview)):
+        return None
+
+    try:
+        import pyarrow as pa
+    except ImportError as exc:
+        raise ImportError(
+            "insert_arrow/insert_pandas require pyarrow. Install with "
+            "`pip install proximadb_embedded[arrow]` or pass Arrow IPC bytes."
+        ) from exc
+
+    if isinstance(source, pa.RecordBatch):
+        return [source]
+    if isinstance(source, pa.Table):
+        return source.to_batches()
+    try:
+        return pa.Table.from_pandas(source, preserve_index=False).to_batches()
+    except Exception as exc:
+        raise TypeError(
+            "Expected pyarrow.Table, pyarrow.RecordBatch, pandas.DataFrame, "
+            "or Arrow IPC bytes"
+        ) from exc
+
+
 def insert_arrow(
     db: ProximaDB,
     collection: str,
@@ -206,13 +235,20 @@ def insert_arrow(
     mode: str = "insert",
     tenant_id=None,
 ) -> int:
-    """Insert/upsert a pyarrow Table/RecordBatch, pandas DataFrame, or IPC bytes."""
-    return db.insert_arrow_ipc(
-        collection,
-        _arrow_source_to_ipc_bytes(source),
-        mode,
-        tenant_id,
-    )
+    """Insert/upsert a pyarrow Table/RecordBatch, pandas DataFrame, or IPC bytes.
+
+    Live Arrow inputs cross the FFI boundary zero-copy via the Arrow C Data
+    Interface (``insert_arrow_batches``); only pre-serialized IPC bytes take the
+    legacy IPC path (``insert_arrow_ipc``)."""
+    batches = _arrow_source_to_batches(source)
+    if batches is None:
+        return db.insert_arrow_ipc(
+            collection,
+            _arrow_source_to_ipc_bytes(source),
+            mode,
+            tenant_id,
+        )
+    return db.insert_arrow_batches(collection, batches, mode, tenant_id)
 
 
 def upsert_arrow(
@@ -222,12 +258,16 @@ def upsert_arrow(
     *,
     tenant_id=None,
 ) -> int:
-    """Upsert a pyarrow Table/RecordBatch, pandas DataFrame, or IPC bytes."""
-    return db.upsert_arrow_ipc(
-        collection,
-        _arrow_source_to_ipc_bytes(source),
-        tenant_id,
-    )
+    """Upsert a pyarrow Table/RecordBatch, pandas DataFrame, or IPC bytes (zero-copy
+    Arrow C Data Interface for live Arrow inputs)."""
+    batches = _arrow_source_to_batches(source)
+    if batches is None:
+        return db.upsert_arrow_ipc(
+            collection,
+            _arrow_source_to_ipc_bytes(source),
+            tenant_id,
+        )
+    return db.insert_arrow_batches(collection, batches, "upsert", tenant_id)
 
 
 def insert_pandas(

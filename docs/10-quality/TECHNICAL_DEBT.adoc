@@ -499,13 +499,13 @@ a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete Op
 | 1-2 weeks
 | Blocked discovery from the embedded co-design plan; mechanical but wide. ServiceProfile (Pillar B) already shipped #236.
 | TD-145
-| Embedded — zero-copy Arrow C Data Interface boundary (co-design Pillar C)
+| Embedded — Arrow-native ingestion (co-design Pillar C, redirected by measurement)
 | P2
 | MED
 | *Open*
-| The Python↔Rust embedded boundary copies on the hot path: numpy is read zero-copy then `.to_vec()`-d into `Vec<Vec<f32>>` on insert, the Arrow path serializes via pyarrow IPC (`_arrow_source_to_ipc_bytes`), and results are rebuilt row-by-row into Python objects. Replace with the Arrow C Data Interface (`arrow::pyarrow` FFI) so columnar batches cross zero-copy — the dominant cost term of the boundary that *replaces* the deleted network dimension. Same seam serves Node.js. Baseline (FFI copy bytes, insert/search p50) recorded in `BENCHMARK_EVIDENCE.toml` (`embedded_ffi_boundary_zero_copy`), ratcheted on landing.
+| MEASURED FINDING (`EMBEDDED_ARROW_ZEROCOPY_BENCH_2026_06_22`): swapping the pyarrow-IPC insert path for the zero-copy Arrow C Data Interface (`arrow::pyarrow` FFI, `insert_arrow_batches`) is **perf-neutral** — the FFI boundary serialize was never the dominant cost term. The ~95 ms (5000x128) insert is dominated by `ArrowProtoCodec::batches_to_proxima_records` (Arrow→ProximaRecord materialization) + `insert_batch` (WAL/storage). The zero-copy `insert_arrow_batches` seam is landed (correct, cross-language substrate, lighter memory) but NOT as a latency win. Remaining Pillar-C work, redirected to the real dominant term: make ingestion **Arrow-native** so the record-materialization + insert copy shrinks (columnar straight into the engine), and apply the same to the search-result return path (currently row-by-row Python objects).
 | 2-3 weeks
-| Co-design tenets 1 & 4; gate on the recorded baseline. Port-free verification (Pillar F) shipped alongside #236.
+| Co-design tenets 1 & 2 (trace before you tune): the boundary was not the bottleneck. Seam + measurement landed in the embedded-arrow-zerocopy PR.
 |===
 
 == Debt by Category

@@ -235,14 +235,14 @@ notes = "Design is literature-grounded (Calibrated-Fusion: post-PIT the operator
 
 [[claims]]
 id = "embedded_ffi_boundary_zero_copy"
-claim = "Embedded Python<->Rust boundary is zero-copy on the insert/search hot path (Arrow C Data Interface), eliminating the numpy->Vec<Vec<f32>> copy and the pyarrow-IPC serialize"
-metric = "ffi_copy_bytes_and_p50_ms"
-status = "aspirational"
-asserted_in = ["docs/10-quality/TECHNICAL_DEBT.adoc:501"]
-bench_source = ""
-bench_command = ""
-artifact = ""
-hardware = ""
-date = ""
-version = ""
-notes = "Co-design Pillar C / TD-145. BASELINE (pre-change, current develop): insert reads numpy zero-copy then `.to_vec()` into Vec<Vec<f32>> (one full copy of every vector), the Arrow path serializes via pyarrow IPC (`_arrow_source_to_ipc_bytes`), and search results are rebuilt row-by-row into Python objects. The fused path is already PORT-FREE (verified: tests/embedded_port_free.rs). To promote: add a maturin-built Python microbench (numpy insert + search p50, bytes copied at the boundary), record the baseline number, switch to `arrow::pyarrow` C Data Interface, and ratchet copy_bytes->~0 + p50 improvement in a dated artifact. The same seam serves a future Node.js (napi) binding."
+claim = "Embedded Arrow insert: the FFI boundary serialize is NOT the dominant cost term — swapping pyarrow-IPC for the zero-copy Arrow C Data Interface is perf-neutral; the dominant term is the Arrow->ProximaRecord conversion + insert_batch"
+metric = "insert_p50_ms"
+status = "measured"
+asserted_in = ["docs/_internal/status/EMBEDDED_ARROW_ZEROCOPY_BENCH_2026_06_22.adoc:1"]
+bench_source = "clients/python-embedded/benches/bench_arrow_zerocopy.py"
+bench_command = "python clients/python-embedded/benches/bench_arrow_zerocopy.py"
+artifact = "docs/_internal/status/EMBEDDED_ARROW_ZEROCOPY_BENCH_2026_06_22.adoc"
+hardware = "Local macOS arm64 (Apple Silicon), no other workload"
+date = "2026-06-22"
+version = "v0.2"
+notes = "Co-design Pillar C / TD-145. MEASURED (5000x128 f32, 2 warmup + 9 timed, median): insert_arrow_ipc 96.8/95.0 ms vs zero-copy insert_arrow_batches 95.8/107.3 ms = PARITY within run-to-run noise, despite eliminating a 2,669,512-byte IPC serialize/deserialize. The plan's hypothesis (boundary copy = dominant embedded cost term) is REFUTED at the insert path: the ~95 ms is dominated by ArrowProtoCodec::batches_to_proxima_records + insert_batch (WAL/storage), not the serialize. The insert_arrow_batches seam is kept (correct, cross-language, lighter memory) but NOT as a latency win; the real Pillar-C lever is redirected to Arrow-native ingestion (TD-145). Trace before you tune."
