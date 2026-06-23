@@ -232,3 +232,17 @@ hardware = ""
 date = ""
 version = ""
 notes = "Design is literature-grounded (Calibrated-Fusion: post-PIT the operator is empirically indistinguishable; NaviX prefilter<50% selectivity; Samyama late-materialization 4-4.7x; HELIOS edge-grain +6-12%) but NOT yet measured in ProximaDB. To promote to measured: build a fixture corpus with correlated vector+graph signal, compare (a) vector-only, (b) graph-only, (c) uncalibrated weighted-sum, (d) PIT-calibrated linear, (e) RRF on recall@k and latency; check in a dated artifact. Tracked with TD-136..TD-143."
+
+[[claims]]
+id = "embedded_ffi_boundary_zero_copy"
+claim = "Embedded Python<->Rust boundary is zero-copy on the insert/search hot path (Arrow C Data Interface), eliminating the numpy->Vec<Vec<f32>> copy and the pyarrow-IPC serialize"
+metric = "ffi_copy_bytes_and_p50_ms"
+status = "aspirational"
+asserted_in = ["docs/10-quality/TECHNICAL_DEBT.adoc:501"]
+bench_source = ""
+bench_command = ""
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Co-design Pillar C / TD-145. BASELINE (pre-change, current develop): insert reads numpy zero-copy then `.to_vec()` into Vec<Vec<f32>> (one full copy of every vector), the Arrow path serializes via pyarrow IPC (`_arrow_source_to_ipc_bytes`), and search results are rebuilt row-by-row into Python objects. The fused path is already PORT-FREE (verified: tests/embedded_port_free.rs). To promote: add a maturin-built Python microbench (numpy insert + search p50, bytes copied at the boundary), record the baseline number, switch to `arrow::pyarrow` C Data Interface, and ratchet copy_bytes->~0 + p50 improvement in a dated artifact. The same seam serves a future Node.js (napi) binding."
