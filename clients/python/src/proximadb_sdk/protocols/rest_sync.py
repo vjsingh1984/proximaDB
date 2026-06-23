@@ -83,6 +83,22 @@ from . import _rest_codegen as _gen
 logger = logging.getLogger(__name__)
 
 
+def _unwrap_v2_list(data: Any) -> tuple[list[dict[str, Any]], bool]:
+    """Unwrap a v2 list-endpoint ``data`` payload into ``(items, has_more)``.
+
+    The xCatalog v2 graph query endpoints (``/query/nodes``, ``/query/edges``)
+    return paginated results as ``{"items": [...], "has_more": bool}`` nested
+    under ``data``. Older builds returned ``data`` as a bare list. This tolerates
+    both so callers always get a plain list of records.
+    """
+    if isinstance(data, dict):
+        items = data.get("items", [])
+        return (list(items) if items else []), bool(data.get("has_more", False))
+    if isinstance(data, list):
+        return data, False
+    return [], False
+
+
 def _convert_quantization_config_to_proto(quant_config) -> dict[str, Any]:
     """Convert SDK's flat QuantizationConfig to proto's nested structure
 
@@ -2906,13 +2922,16 @@ class ProximaDBClient:
         response.raise_for_status()
         result = response.json()
 
-        # Transform REST response to match gRPC format
-        # REST returns: {"success": true, "data": [...], "next_token": "..."}
-        # gRPC returns: {"success": true, "nodes": [...], "total_count": N}
+        # Transform REST response to match gRPC format.
+        # v2 list endpoints wrap results in a paginated envelope:
+        #   {"success": true, "data": {"items": [...], "has_more": bool}}
+        # (older builds returned data as a bare list; tolerate both).
+        nodes, has_more = _unwrap_v2_list(result.get("data"))
         return {
             "success": result.get("success", True),
-            "nodes": result.get("data", []),
-            "total_count": len(result.get("data", [])),
+            "nodes": nodes,
+            "total_count": len(nodes),
+            "has_more": has_more,
             "next_token": result.get("next_token"),
         }
 
@@ -2945,10 +2964,13 @@ class ProximaDBClient:
         )
         response.raise_for_status()
         result = response.json()
+        # v2 wraps results in {"data": {"items": [...], "has_more": bool}}.
+        edges, has_more = _unwrap_v2_list(result.get("data"))
         return {
             "success": result.get("success", True),
-            "edges": result.get("data", []),
-            "total_count": len(result.get("data", [])),
+            "edges": edges,
+            "total_count": len(edges),
+            "has_more": has_more,
             "next_token": result.get("next_token"),
         }
 
