@@ -64,6 +64,22 @@ impl FramedTableWalAppender {
         &self.path
     }
 
+    /// Raise the next-assigned sequence floor so future appends never reuse a
+    /// sequence at or below `floor` (monotonic — a lower floor is ignored).
+    ///
+    /// `next_sequence` is otherwise derived from the on-disk WAL's highest frame.
+    /// That is correct only while the WAL still carries the full history; once a
+    /// snapshot watermark advances *past* the on-disk frames — the WAL was
+    /// compacted to empty (Phase 3), or this pod adopted a *peer's* snapshot
+    /// whose watermark lives in a different local sequence space (Phase 6b) — the
+    /// file-derived floor sits below the snapshot's `applied_seq`. A fresh append
+    /// would then land at a sequence the in-RAM authority has already applied and
+    /// be idempotently dropped on fold. Seeding the floor from the snapshot
+    /// watermark at open closes that gap.
+    pub fn advance_sequence_floor(&self, floor: u64) {
+        self.next_sequence.fetch_max(floor, Ordering::SeqCst);
+    }
+
     /// Read all complete entries currently present in the WAL.
     pub async fn read_entries(&self) -> Result<Vec<CanonicalWalEntry>> {
         read_entries_from_path(&self.path).await

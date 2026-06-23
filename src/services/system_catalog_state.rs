@@ -302,6 +302,30 @@ impl SystemCatalogState {
     /// Reconstruct state from a snapshot blob, rebuilding the `ns_children`
     /// secondary index.
     pub fn from_snapshot_bytes(bytes: &[u8]) -> Result<Self> {
+        Ok(Self {
+            inner: RwLock::new(Self::inner_from_snapshot_bytes(bytes)?),
+        })
+    }
+
+    /// **Replace** the entire in-RAM authority with the image decoded from a
+    /// snapshot blob, in place (the `Arc<SystemCatalogState>` identity is
+    /// preserved so all holders observe the swap). This is the Phase 6b
+    /// cross-pod **invalidation/reload** primitive: when a follower (or a
+    /// superseded ex-owner) observes a newer object-store snapshot, it adopts
+    /// that snapshot wholesale. The swap is atomic with respect to catalog reads
+    /// — a concurrent reader sees the entire old image or the entire new one,
+    /// never a partial blend — because it happens under the single write lock the
+    /// reads take in shared mode.
+    pub fn load_from_snapshot_bytes(&self, bytes: &[u8]) -> Result<()> {
+        let rebuilt = Self::inner_from_snapshot_bytes(bytes)?;
+        *self.inner.write() = rebuilt;
+        Ok(())
+    }
+
+    /// Decode a snapshot blob into a fully-indexed [`CatalogInner`], rebuilding
+    /// the `ns_children` secondary index (which the snapshot omits as a pure
+    /// derivation of `tables`).
+    fn inner_from_snapshot_bytes(bytes: &[u8]) -> Result<CatalogInner> {
         let snapshot: CatalogSnapshot =
             rmp_serde::from_slice(bytes).context("decoding catalog snapshot")?;
         let mut ns_children: HashMap<Vec<String>, HashSet<String>> = HashMap::new();
@@ -318,14 +342,12 @@ impl SystemCatalogState {
                 .insert(id.name.clone());
             tables.insert(id, Arc::new(schema));
         }
-        Ok(Self {
-            inner: RwLock::new(CatalogInner {
-                namespaces: snapshot.namespaces,
-                tables,
-                ns_children,
-                statistics: snapshot.statistics,
-                applied_seq: snapshot.applied_seq,
-            }),
+        Ok(CatalogInner {
+            namespaces: snapshot.namespaces,
+            tables,
+            ns_children,
+            statistics: snapshot.statistics,
+            applied_seq: snapshot.applied_seq,
         })
     }
 }
