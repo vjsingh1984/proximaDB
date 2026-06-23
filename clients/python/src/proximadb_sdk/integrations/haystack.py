@@ -61,6 +61,134 @@ _HAYSTACK_OP_TO_PROXIMA = {
     "not in": "$nin",
 }
 
+# Mapping from Haystack 2.x comparison operators to the typed ops accepted by the
+# ProximaDB ``/records/scan`` filter surface (the ``[{field,op,value}]`` form).
+# Note the scan surface combines a flat list as a logical AND only and does not
+# offer a "not in" op — operators absent here (and any OR/NOT logical nesting)
+# cannot be pushed down and are evaluated client-side instead.
+_HAYSTACK_OP_TO_SCAN = {
+    None: "eq",
+    "==": "eq",
+    "eq": "eq",
+    "!=": "neq",
+    ">": "gt",
+    ">=": "gte",
+    "<": "lt",
+    "<=": "lte",
+    "in": "in",
+}
+
+
+def _strip_meta_prefix(field: str) -> str:
+    """Drop Haystack's ``meta.`` prefix from a metadata field name."""
+    return field[len("meta.") :] if field.startswith("meta.") else field
+
+
+def _haystack_filters_to_scan_filter(
+    filters: dict[str, Any] | None,
+) -> list[dict[str, Any]] | None:
+    """Flatten a Haystack 2.x filter tree into the scan endpoint's typed form.
+
+    Returns a ``[{"field","op","value"}]`` list suitable for the
+    ``/records/scan`` ``filter`` (an implicit logical AND that ProximaDB pushes
+    into the scan predicate server-side), or ``None`` when nothing can be pushed
+    down. Only the AND-combinable comparison subset is lowered: ``OR``/``NOT``
+    logical nodes and operators the scan surface lacks (e.g. ``not in``) are
+    skipped here and enforced client-side by :func:`_haystack_filter_matches`,
+    so the pushed-down predicate is always a *sound* over-approximation (it never
+    drops a matching document — it can only return a superset that the
+    client-side check then narrows).
+    """
+    if not filters:
+        return None
+    conditions: list[dict[str, Any]] = []
+    _collect_and_conditions(filters, conditions)
+    return conditions or None
+
+
+def _collect_and_conditions(node: dict[str, Any], out: list[dict[str, Any]]) -> None:
+    """Recurse only through AND nodes, collecting pushdown-safe comparisons.
+
+    Anything under an OR/NOT (or an unsupported operator) is intentionally not
+    collected: dropping it from the *pushdown* set keeps the server-side result a
+    superset of the true match set, which the client-side matcher then filters.
+    """
+    operator = node.get("operator")
+    if "conditions" in node:
+        if str(operator).upper() == "AND":
+            for child in node["conditions"]:
+                if isinstance(child, dict):
+                    _collect_and_conditions(child, out)
+        # OR / NOT cannot be expressed in the flat scan filter — skip (the
+        # client-side matcher enforces them).
+        return
+    scan_op = _HAYSTACK_OP_TO_SCAN.get(
+        operator if operator in _HAYSTACK_OP_TO_SCAN else str(operator)
+    )
+    if scan_op is None:
+        return
+    field = _strip_meta_prefix(node.get("field", ""))
+    if not field:
+        return
+    out.append({"field": field, "op": scan_op, "value": node.get("value")})
+
+
+def _haystack_filter_matches(
+    meta: dict[str, Any], filters: dict[str, Any] | None
+) -> bool:
+    """Evaluate a full Haystack 2.x filter tree against a document's metadata.
+
+    This is the authoritative correctness check applied client-side to every
+    scanned record. It supports the full logical tree (``AND``/``OR``/``NOT``)
+    and every comparison operator — including the ones the scan endpoint cannot
+    push down (``not in``) — so the returned set is exactly the documents the
+    caller's filter selects, regardless of what was pushed down server-side.
+    """
+    if not filters:
+        return True
+    operator = filters.get("operator")
+    if "conditions" in filters:
+        children = [c for c in filters["conditions"] if isinstance(c, dict)]
+        op = str(operator).upper()
+        if op == "OR":
+            return any(_haystack_filter_matches(meta, c) for c in children)
+        if op == "NOT":
+            return not all(_haystack_filter_matches(meta, c) for c in children)
+        # Default / AND.
+        return all(_haystack_filter_matches(meta, c) for c in children)
+
+    field = _strip_meta_prefix(filters.get("field", ""))
+    expected = filters.get("value")
+    actual = meta.get(field)
+    return _compare(actual, operator, expected)
+
+
+def _compare(actual: Any, operator: Any, expected: Any) -> bool:
+    """Apply a single Haystack comparison operator to a metadata value."""
+    if operator in (None, "==", "eq"):
+        return actual == expected
+    if operator == "!=":
+        return actual != expected
+    if operator == "in":
+        return expected is not None and actual in expected
+    if operator == "not in":
+        return expected is None or actual not in expected
+    if actual is None or expected is None:
+        return False
+    try:
+        if operator == ">":
+            return actual > expected
+        if operator == ">=":
+            return actual >= expected
+        if operator == "<":
+            return actual < expected
+        if operator == "<=":
+            return actual <= expected
+    except TypeError:
+        return False
+    # Unknown operator: fall back to equality (mirrors the lenient conversion).
+    return actual == expected
+
 
 def _convert_haystack_filters(filters: dict[str, Any] | None) -> dict[str, Any] | None:
     """Convert a Haystack 2.x filter tree into ProximaDB's filter dict format.
@@ -117,6 +245,12 @@ class ProximaDBDocumentStore:
         text_key: Metadata key used to store the original document text.
             Defaults to ``"content"``.
         namespace: Optional namespace prefix for document IDs.
+        max_filter_window: Safety cap on the total number of rows
+            :meth:`filter_documents` will accumulate across scan pages before
+            stopping. This is a guardrail against unbounded client memory use on
+            a huge collection, not an ANN window — ``filter_documents`` performs
+            a real cursor-paginated metadata scan, so within this cap it returns
+            every matching document.
     """
 
     def __init__(
@@ -154,32 +288,40 @@ class ProximaDBDocumentStore:
         self,
         filters: dict[str, Any] | None = None,
     ) -> list[Document]:
-        """Return documents whose metadata matches ``filters``.
+        """Return ALL documents whose metadata matches ``filters``.
 
         ``filters`` accepts the Haystack 2.x filter syntax (logical ``AND``/
-        ``OR``/``NOT`` over comparison nodes); it is converted to ProximaDB's
-        metadata-filter format and pushed down as a server-side predicate, so the
-        result is a true metadata filter rather than a similarity ranking.
+        ``OR``/``NOT`` over comparison nodes). The AND-combinable comparison
+        subset is converted to the SDK's vector-free metadata-scan filter and
+        pushed down as a server-side predicate; the scan is then paginated via
+        cursor until exhausted, so the result is the *complete* matching set —
+        not a similarity ranking and not a bounded ANN window.
 
-        Note: the SDK does not expose a pure metadata scan, so the predicate is
-        evaluated over a bounded retrieval window (``max_filter_window``). For an
-        unfiltered call (``filters is None``) every stored document up to that
-        window is returned. This is a deliberate cap, not an ANN ordering — the
-        ordering of the returned set is unspecified.
+        The scan endpoint's flat filter cannot express ``OR``/``NOT`` (or a
+        ``not in`` comparison), so the full Haystack tree is additionally
+        evaluated client-side over every scanned record. That keeps results
+        exactly correct while still using server-side pushdown to reduce the
+        scanned/egressed set whenever possible. For an unfiltered call
+        (``filters is None``) every stored document is returned (up to the
+        configurable ``max_filter_window`` total-row safety cap).
         """
-        metadata_filter = _convert_haystack_filters(filters)
+        scan_filter = _haystack_filters_to_scan_filter(filters)
 
-        # No similarity intent here: a constant probe vector is only the
-        # mechanism to enumerate the collection; the metadata predicate does the
-        # actual filtering server-side.
-        probe_vector = [0.0] * self._embedding_dim
-        search_results = self._client.search(
+        # Real vector-free metadata scan + cursor pagination over the whole
+        # matching set (no dummy probe vector, no ANN ordering, no top_k cap):
+        # the AND-combinable predicate is pushed down server-side, and the full
+        # Haystack tree is enforced client-side for OR/NOT/not-in correctness.
+        records = self._client.scan(
             self._collection_name,
-            vector=probe_vector,
-            top_k=self._max_filter_window,
-            metadata_filter=metadata_filter,
+            filter=scan_filter,
+            max_rows=self._max_filter_window,
+            include_vectors=True,
         )
-        return [self._result_to_document(r) for r in search_results]
+        return [
+            self._result_to_document(r)
+            for r in records
+            if _haystack_filter_matches(dict(r.metadata or {}), filters)
+        ]
 
     def write_documents(
         self,

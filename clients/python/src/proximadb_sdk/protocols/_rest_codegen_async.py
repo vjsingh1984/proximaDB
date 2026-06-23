@@ -38,12 +38,14 @@ from .._generated.rest.api.collections import list_collections as _gen_list_coll
 from .._generated.rest.api.records import delete_record as _gen_delete_record
 from .._generated.rest.api.records import get_record as _gen_get_record
 from .._generated.rest.api.records import insert_records as _gen_insert_records
+from .._generated.rest.api.records import scan_records as _gen_scan_records
 from .._generated.rest.api.search import search_records as _gen_search_records
 from .._generated.rest.client import AuthenticatedClient, Client
 from .._generated.rest.models.create_collection_v2_request import (
     CreateCollectionV2Request,
 )
 from .._generated.rest.models.insert_records_request import InsertRecordsRequest
+from .._generated.rest.models.scan_records_request import ScanRecordsRequest
 from .._generated.rest.models.typed_search_request import TypedSearchRequest
 from .._generated.rest.types import UNSET, Response
 from ._rest_codegen import _from_dict
@@ -120,6 +122,21 @@ async def delete_record(
 ) -> Response[Any]:
     return await _gen_delete_record.asyncio_detailed(
         collection_id=collection_id, record_id=record_id, client=client
+    )
+
+
+async def scan_records(
+    client: GenClient, collection_id: str, body: dict[str, Any]
+) -> Response[Any]:
+    """Vector-free, metadata-filtered, cursor-paginated record scan (async).
+
+    Mirrors the sync :func:`_rest_codegen.scan_records`: the body is the OpenAPI
+    ``ScanRecordsRequest`` (``filter`` / ``limit`` / ``cursor`` / ``include_*``);
+    the metadata ``filter`` is pushed into the scan predicate server-side.
+    """
+    model = _from_dict(ScanRecordsRequest, body)
+    return await _gen_scan_records.asyncio_detailed(
+        collection_id=collection_id, client=client, body=model
     )
 
 

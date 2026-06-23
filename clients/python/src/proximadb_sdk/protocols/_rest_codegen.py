@@ -56,6 +56,7 @@ from .._generated.rest.api.query import execute_query as _gen_execute_query
 from .._generated.rest.api.query import explain_query as _gen_explain_query
 from .._generated.rest.api.records import get_record as _gen_get_record
 from .._generated.rest.api.records import insert_records as _gen_insert_records
+from .._generated.rest.api.records import scan_records as _gen_scan_records
 from .._generated.rest.api.search import search_records as _gen_search_records
 from .._generated.rest.models.create_collection_v2_request import (
     CreateCollectionV2Request,
@@ -66,6 +67,7 @@ from .._generated.rest.models.create_node_request import CreateNodeRequest
 from .._generated.rest.models.explain_query_request import ExplainQueryRequest
 from .._generated.rest.models.insert_records_request import InsertRecordsRequest
 from .._generated.rest.models.query_request import QueryRequest
+from .._generated.rest.models.scan_records_request import ScanRecordsRequest
 from .._generated.rest.models.traverse_request import TraverseRequest
 from .._generated.rest.models.typed_search_request import TypedSearchRequest
 from .._generated.rest.types import UNSET
@@ -161,6 +163,20 @@ def get_record(
             include_vector=UNSET if include_vector is None else include_vector,
             include_text=UNSET if include_text is None else include_text,
         )
+    )
+
+
+def scan_records(collection_id: str, body: dict[str, Any]) -> RestCall:
+    """Vector-free, metadata-filtered, cursor-paginated record scan.
+
+    The body mirrors the OpenAPI ``ScanRecordsRequest`` (``filter`` / ``limit`` /
+    ``cursor`` / ``include_text`` / ``include_vector``); all fields are optional,
+    so ``{}`` returns the first page. The metadata ``filter`` is pushed into the
+    scan predicate server-side (applied before the limit).
+    """
+    model = _from_dict(ScanRecordsRequest, body)
+    return _normalize(
+        _gen_scan_records._get_kwargs(collection_id=collection_id, body=model)
     )
 
 
