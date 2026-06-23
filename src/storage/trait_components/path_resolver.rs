@@ -783,6 +783,16 @@ impl DrPathBuilder {
             Self::SYSTEM_CATALOG_SNAPSHOT_FILE
         )
     }
+
+    /// Relative prefix of the system catalog's **generation-fenced snapshot
+    /// manifest log** under [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/_manifests/`. For object-store deployments the catalog
+    /// snapshot is published as a fenced versioned manifest under this prefix
+    /// (Phase 6a), so a stale pod cannot clobber a newer pod's snapshot. The
+    /// leading underscore keeps it lexically separate from data subprefixes.
+    pub fn system_catalog_manifests_subprefix() -> String {
+        format!("{}_manifests/", Self::system_catalog_subprefix())
+    }
 }
 
 #[cfg(test)]

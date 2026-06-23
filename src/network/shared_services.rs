@@ -490,7 +490,7 @@ impl SharedServices {
                 let snapshot_store = Arc::new(
                     crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore::from_url(
                         &metadata_url,
-                        DrPathBuilder::system_catalog_snapshot_relpath(),
+                        DrPathBuilder::system_catalog_manifests_subprefix(),
                     )
                     .with_context(|| {
                         format!("opening object-store catalog snapshot at {metadata_url}")

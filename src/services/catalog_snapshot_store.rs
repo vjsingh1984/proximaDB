@@ -20,8 +20,7 @@ use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 use tokio::io::AsyncWriteExt;
 
-use object_store::path::Path as ObjectPath;
-use proximadb_kernel::error::StorageError;
+use proximadb_iceberg_engine::manifest::{CommitOutcome, ManifestCommitter};
 use proximadb_object_store::ProximaObjectStore;
 
 /// Durable, atomically-replaceable home for the catalog snapshot blob.
@@ -30,13 +29,25 @@ use proximadb_object_store::ProximaObjectStore;
 /// either the previous blob or the complete new one — never a torn write. This
 /// is the load-bearing property the Phase-3 crash-consistency ordering relies
 /// on (snapshot made durable *before* the WAL is compacted).
+///
+/// Writes carry a monotonic **fencing generation** (Phase 6a). A local store
+/// ignores it (single-pod, no contention). An object-store store routes the
+/// write through a generation-fenced commit so a *stale* writer — one whose
+/// generation is lower than a newer pod that has taken the catalog over — is
+/// rejected instead of clobbering the newer pod's snapshot.
 #[async_trait]
 pub trait CatalogSnapshotStore: Send + Sync {
-    /// Read the current snapshot blob, or `None` if none has been written yet.
-    async fn read(&self) -> Result<Option<Vec<u8>>>;
+    /// Read the current snapshot blob with its fencing generation, or `None` if
+    /// none has been written yet. Local (unfenced) stores report generation `0`.
+    async fn read(&self) -> Result<Option<(u64, Vec<u8>)>>;
 
-    /// Durably + atomically replace the snapshot blob.
-    async fn write_atomic(&self, bytes: &[u8]) -> Result<()>;
+    /// Durably + atomically publish the snapshot blob stamped with `generation`.
+    ///
+    /// Returns `Ok(true)` when the write landed, `Ok(false)` when it was
+    /// **fenced** — a newer writer (higher generation) already owns the blob, so
+    /// this (stale) writer must step down rather than overwrite it. Local stores
+    /// never fence and always return `Ok(true)`.
+    async fn write_atomic(&self, generation: u64, bytes: &[u8]) -> Result<bool>;
 
     /// Human-readable location, for logs and error context.
     fn describe(&self) -> String;
@@ -64,18 +75,19 @@ impl LocalSnapshotStore {
 
 #[async_trait]
 impl CatalogSnapshotStore for LocalSnapshotStore {
-    async fn read(&self) -> Result<Option<Vec<u8>>> {
+    async fn read(&self) -> Result<Option<(u64, Vec<u8>)>> {
         if tokio::fs::try_exists(&self.path).await.unwrap_or(false) {
             let bytes = tokio::fs::read(&self.path)
                 .await
                 .with_context(|| format!("reading catalog snapshot {}", self.path.display()))?;
-            Ok(Some(bytes))
+            // Local single-pod store is unfenced — generation is always 0.
+            Ok(Some((0, bytes)))
         } else {
             Ok(None)
         }
     }
 
-    async fn write_atomic(&self, bytes: &[u8]) -> Result<()> {
+    async fn write_atomic(&self, _generation: u64, bytes: &[u8]) -> Result<bool> {
         let path = &self.path;
         let tmp = path.with_extension("snapshot-tmp");
         {
@@ -102,7 +114,7 @@ impl CatalogSnapshotStore for LocalSnapshotStore {
         {
             let _ = handle.sync_all();
         }
-        Ok(())
+        Ok(true)
     }
 
     fn describe(&self) -> String {
@@ -110,37 +122,46 @@ impl CatalogSnapshotStore for LocalSnapshotStore {
     }
 }
 
-/// Object-store snapshot store: a single whole-object PUT/GET under `key`.
+/// Object-store snapshot store with **generation-fencing** (Phase 6a).
 ///
-/// Object stores give atomic whole-object PUT semantics, so no temp/rename
-/// dance is needed — a reader sees either the old object or the new one, never
-/// a partial write. Works for `memory://` (deterministic tests) and, behind the
+/// Persists the catalog snapshot as a generation-fenced versioned manifest via
+/// [`ManifestCommitter`] (the same `commit_fenced` primitive the warehouse
+/// manifest log uses). A write carries the writer's monotonic generation; a
+/// *stale* writer — one whose generation is below the generation a newer pod
+/// already committed — is rejected (`Conflict`) instead of clobbering the newer
+/// pod's snapshot. This is the multi-pod single-writer guarantee (the Neon
+/// `index_part.json` + generation model). The per-DDL WAL stays local; only the
+/// snapshot pointer is fenced here.
+///
+/// Works for `memory://` (deterministic tests) and, behind the
 /// `proximadb-object-store` crate's cloud features, `s3://`/`gs://`/`az://`.
 pub struct ObjectStoreSnapshotStore {
-    store: ProximaObjectStore,
-    key: ObjectPath,
+    committer: ManifestCommitter,
     label: String,
 }
 
 impl ObjectStoreSnapshotStore {
     /// Build from an object-store base URL (e.g. `s3://bucket/prefix`,
-    /// `memory:///`) and the snapshot object's relative key under it (e.g.
-    /// `_operator/catalog/system-catalog.snapshot`).
-    pub fn from_url(base_url: &str, key: impl Into<String>) -> Result<Self> {
+    /// `memory:///`) and the relative prefix that holds the catalog snapshot's
+    /// fenced manifest log (e.g. `_operator/catalog/_manifests/`).
+    pub fn from_url(base_url: &str, manifests_prefix: impl Into<String>) -> Result<Self> {
         let store = ProximaObjectStore::from_url(base_url)
             .with_context(|| format!("opening object store at {base_url}"))?;
-        Ok(Self::new(store, base_url, key))
+        Ok(Self::new(store, base_url, manifests_prefix))
     }
 
     /// Build from an already-open store, its base URL (for labelling), and the
-    /// snapshot object's relative key. Used by tests and by callers that share
-    /// one store across catalog opens.
-    pub fn new(store: ProximaObjectStore, base_url: &str, key: impl Into<String>) -> Self {
-        let key = key.into();
-        let label = format!("{base_url}::{key}");
+    /// fenced-manifest-log prefix. Used by tests and by callers that share one
+    /// backing store across catalog opens.
+    pub fn new(
+        store: ProximaObjectStore,
+        base_url: &str,
+        manifests_prefix: impl Into<String>,
+    ) -> Self {
+        let manifests_prefix = manifests_prefix.into();
+        let label = format!("{base_url}::{manifests_prefix}");
         Self {
-            store,
-            key: ObjectPath::from(key),
+            committer: ManifestCommitter::new(store, manifests_prefix),
             label,
         }
     }
@@ -148,22 +169,42 @@ impl ObjectStoreSnapshotStore {
 
 #[async_trait]
 impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
-    async fn read(&self) -> Result<Option<Vec<u8>>> {
-        match self.store.get(&self.key).await {
-            Ok(bytes) => Ok(Some(bytes.to_vec())),
-            // A not-yet-written snapshot is the empty-catalog boot case, not an
-            // error — the caller then replays the WAL from empty.
-            Err(StorageError::NotFound(_)) => Ok(None),
-            Err(e) => Err(e).with_context(|| format!("reading catalog snapshot {}", self.label)),
+    async fn read(&self) -> Result<Option<(u64, Vec<u8>)>> {
+        match self
+            .committer
+            .latest_version()
+            .await
+            .with_context(|| format!("reading catalog snapshot log {}", self.label))?
+        {
+            Some(version) => {
+                let (generation, payload) =
+                    self.committer.read_fenced(version).await.with_context(|| {
+                        format!("reading catalog snapshot {}@{version}", self.label)
+                    })?;
+                Ok(Some((generation, payload.to_vec())))
+            }
+            // No manifest yet → empty-catalog boot; the caller replays the WAL.
+            None => Ok(None),
         }
     }
 
-    async fn write_atomic(&self, bytes: &[u8]) -> Result<()> {
-        self.store
-            .put(&self.key, bytes::Bytes::copy_from_slice(bytes))
+    async fn write_atomic(&self, generation: u64, bytes: &[u8]) -> Result<bool> {
+        let parent = self
+            .committer
+            .latest_version()
             .await
-            .with_context(|| format!("writing catalog snapshot {}", self.label))?;
-        Ok(())
+            .with_context(|| format!("reading catalog snapshot head {}", self.label))?;
+        match self
+            .committer
+            .commit_fenced(parent, generation, bytes::Bytes::copy_from_slice(bytes))
+            .await
+            .with_context(|| format!("committing catalog snapshot {}", self.label))?
+        {
+            CommitOutcome::Committed(_) => Ok(true),
+            // Fenced (stale generation) or lost the version CAS race — either way
+            // this writer did not publish; it must re-read and step down/retry.
+            CommitOutcome::Conflict { .. } => Ok(false),
+        }
     }
 
     fn describe(&self) -> String {
@@ -175,6 +216,10 @@ impl CatalogSnapshotStore for ObjectStoreSnapshotStore {
 mod tests {
     use super::*;
 
+    fn body(opt: Option<(u64, Vec<u8>)>) -> Option<Vec<u8>> {
+        opt.map(|(_gen, bytes)| bytes)
+    }
+
     #[tokio::test]
     async fn local_store_round_trips_and_reports_absence() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -184,39 +229,85 @@ mod tests {
         // Absent before any write.
         assert!(store.read().await.unwrap().is_none());
 
-        store.write_atomic(b"hello-catalog").await.unwrap();
-        assert_eq!(
-            store.read().await.unwrap().as_deref(),
-            Some(&b"hello-catalog"[..])
-        );
+        // Local store is unfenced: it ignores the generation and never fences.
+        assert!(store.write_atomic(0, b"hello-catalog").await.unwrap());
+        let (generation, bytes) = store.read().await.unwrap().unwrap();
+        assert_eq!(generation, 0);
+        assert_eq!(bytes, b"hello-catalog");
 
-        // Atomic replace.
-        store.write_atomic(b"v2").await.unwrap();
-        assert_eq!(store.read().await.unwrap().as_deref(), Some(&b"v2"[..]));
+        // Atomic replace — even an "older" generation still writes locally.
+        assert!(store.write_atomic(0, b"v2").await.unwrap());
+        assert_eq!(
+            body(store.read().await.unwrap()).as_deref(),
+            Some(&b"v2"[..])
+        );
     }
 
     #[tokio::test]
     async fn object_store_round_trips_and_reports_absence() {
-        // `memory://` exercises the real ProximaObjectStore PUT/GET path
+        // `memory://` exercises the real ManifestCommitter commit/read path
         // deterministically (no cloud creds).
-        let store = ObjectStoreSnapshotStore::from_url(
-            "memory:///",
-            "_operator/catalog/system-catalog.snapshot",
-        )
-        .expect("memory store");
+        let store =
+            ObjectStoreSnapshotStore::from_url("memory:///", "_operator/catalog/_manifests/")
+                .expect("memory store");
 
         assert!(store.read().await.unwrap().is_none());
 
-        store.write_atomic(b"snap-bytes").await.unwrap();
-        assert_eq!(
-            store.read().await.unwrap().as_deref(),
-            Some(&b"snap-bytes"[..])
-        );
+        assert!(store.write_atomic(1, b"snap-bytes").await.unwrap());
+        let (generation, bytes) = store.read().await.unwrap().unwrap();
+        assert_eq!(generation, 1);
+        assert_eq!(bytes, b"snap-bytes");
 
-        store.write_atomic(b"snap-bytes-2").await.unwrap();
+        // A same-or-higher generation succeeds and supersedes.
+        assert!(store.write_atomic(1, b"snap-bytes-2").await.unwrap());
         assert_eq!(
-            store.read().await.unwrap().as_deref(),
+            body(store.read().await.unwrap()).as_deref(),
             Some(&b"snap-bytes-2"[..])
         );
+    }
+
+    /// Phase 6a multi-instance fence: two stores over ONE shared backing object
+    /// store (two pods). After a newer-generation writer takes over, the older
+    /// (stale) writer's commit is fenced — it cannot clobber the newer snapshot.
+    #[tokio::test]
+    async fn fenced_commit_rejects_stale_writer() {
+        use object_store::memory::InMemory;
+        use std::sync::Arc;
+
+        // One backing store shared by both "pods" (a fresh `from_url("memory://")`
+        // would be a different, empty store — we need the same instance).
+        let backing: Arc<dyn object_store::ObjectStore> = Arc::new(InMemory::new());
+        let prefix = "_operator/catalog/_manifests/";
+
+        let pod_a = ObjectStoreSnapshotStore::new(
+            ProximaObjectStore::new(backing.clone()),
+            "memory:///",
+            prefix,
+        );
+        let pod_b = ObjectStoreSnapshotStore::new(
+            ProximaObjectStore::new(backing.clone()),
+            "memory:///",
+            prefix,
+        );
+
+        // Pod A owns generation 1 and commits.
+        assert!(pod_a.write_atomic(1, b"from-A").await.unwrap());
+
+        // Pod B takes over: it reads the current generation (1) and claims the
+        // next one (2), then commits successfully (2 >= 1).
+        let (seen, _) = pod_b.read().await.unwrap().unwrap();
+        assert_eq!(seen, 1);
+        assert!(pod_b.write_atomic(2, b"from-B").await.unwrap());
+
+        // Pod A is now stale (generation 1 < 2). Its next commit is FENCED.
+        assert!(
+            !pod_a.write_atomic(1, b"from-A-again").await.unwrap(),
+            "stale generation-1 writer must be fenced once generation 2 owns the log"
+        );
+
+        // The newer pod's snapshot is intact — A did not clobber it.
+        let (generation, bytes) = pod_b.read().await.unwrap().unwrap();
+        assert_eq!(generation, 2);
+        assert_eq!(bytes, b"from-B");
     }
 }
