@@ -921,28 +921,25 @@ prefetch_budget = 4
 
         import httpx
 
-        # Map distance metric to enum
-        metric_map = {"cosine": 1, "euclidean": 2, "dot": 3}
-        metric_value = metric_map.get(distance_metric.lower(), 1)
-
+        # The canonical v2 endpoint takes a flat body with a STRING distance
+        # metric and returns the created collection record (no {success} envelope).
+        # An already-existing collection responds 409/CONFLICT, which is benign.
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/collections",
                 json={
-                    "operation": 1,  # CREATE
-                    "collection_id": name,
-                    "collection_config": {
-                        "name": name,
-                        "dimension": dimension,
-                        "distance_metric": metric_value,
-                    },
+                    "name": name,
+                    "dimension": dimension,
+                    "distance_metric": distance_metric.lower(),
                 },
                 timeout=30.0,
             )
 
-            result = response.json()
-            if not result.get("success") and "already exists" not in str(result):
-                raise RuntimeError(f"Failed to create collection: {result}")
+            if response.status_code not in (200, 201, 409):
+                raise RuntimeError(
+                    f"Failed to create collection: HTTP {response.status_code} "
+                    f"{response.text[:300]}"
+                )
 
         collection = EmbeddedCollection(
             name, dimension, self, embedding_model=model_instance
@@ -1144,6 +1141,10 @@ prefetch_budget = 4
                 },
                 timeout=60.0,
             )
+            # Surface insert failures (404 unknown collection, 422 bad payload)
+            # rather than returning an error body the caller would ignore — a
+            # silently-dropped vector would later look like a recall miss.
+            response.raise_for_status()
             return response.json()
 
     async def _insert_vectors(
@@ -1161,43 +1162,83 @@ prefetch_budget = 4
         top_k: int = 10,
         filters: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Search for similar vectors."""
+        """Search for similar vectors.
+
+        Posts the canonical v2 ``TypedSearchRequest`` (a flat
+        ``{vector, top_k, filters}`` body — NOT a ``{queries:[...]}`` wrapper)
+        to ``/api/v2/collections/{name}/search`` and returns the flat
+        ``results`` list (each item a dict with ``id``/``score``/``props``).
+        """
         import httpx
 
-        query = {"vector": query_vector}
+        body: dict[str, Any] = {
+            "vector": [float(v) for v in query_vector],
+            "top_k": top_k,
+        }
         if filters:
-            query["filters"] = self._convert_metadata(filters)
+            body["filters"] = self._to_typed_filters(filters)
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/collections/{collection_name}/search",
-                json={
-                    "queries": [query],
-                    "top_k": top_k,
-                },
+                json=body,
                 timeout=30.0,
             )
-
+            response.raise_for_status()
             data = response.json()
 
-            # Handle nested results structure
-            if data.get("success") and data.get("results"):
-                inner = data["results"]
-                if isinstance(inner, dict) and "results" in inner:
-                    return inner["results"] or []
-                elif isinstance(inner, list):
-                    return inner
+        # v2 TypedSearchResponse: {"results": [...], "total_matches", "latency_ms"}.
+        return data.get("results") or []
 
-            return []
+    @staticmethod
+    def _to_typed_filters(
+        filters: dict[str, Any] | list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Map a simple ``{field: value}`` dict to v2 typed filters.
+
+        The v2 search endpoint takes ``[{field, op, value}]`` (TypedFilter), not
+        a flat metadata map. Equality is assumed for scalar values; callers that
+        need range/in operators should pass already-typed filters (a list), which
+        are forwarded unchanged.
+        """
+        if isinstance(filters, list):
+            return filters
+        return [
+            {"field": str(field), "op": "eq", "value": value}
+            for field, value in filters.items()
+        ]
 
     async def _delete_vectors(
         self,
         collection_name: str,
         ids: list[str],
     ) -> int:
-        """Delete vectors by ID."""
-        # TODO: Implement delete endpoint in ProximaDB
-        return 0
+        """Delete records by id via the canonical v2 per-record endpoint.
+
+        Issues ``DELETE /api/v2/collections/{name}/records/{id}`` for each id and
+        returns the count actually deleted (a 404 for an absent id is treated as
+        "nothing to delete", not an error — delete is idempotent).
+        """
+        import httpx
+
+        if not ids:
+            return 0
+
+        deleted = 0
+        async with httpx.AsyncClient() as client:
+            for record_id in ids:
+                response = await client.delete(
+                    f"{self.rest_url}/api/v2/collections/{collection_name}"
+                    f"/records/{record_id}",
+                    timeout=30.0,
+                )
+                if response.status_code in (200, 204):
+                    deleted += 1
+                elif response.status_code == 404:
+                    continue
+                else:
+                    response.raise_for_status()
+        return deleted
 
     async def _get_collection_stats(
         self,
