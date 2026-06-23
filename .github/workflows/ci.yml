@@ -986,6 +986,12 @@ jobs:
   rust-compile:
     name: Rust Compile (${{ matrix.shape }})
     runs-on: ubuntu-latest
+    # CARGO_BUILD_JOBS=1: serial compilation keeps peak memory bounded. The
+    # `test` shape compiles every crate's test targets at once and OOM-killed the
+    # runner (exit 143) under default parallelism; serial is the repo's standard
+    # fix for the root-crate test compile (mirrors the rust-test job).
+    env:
+      CARGO_BUILD_JOBS: 1
     strategy:
       fail-fast: false
       matrix:
