@@ -18,14 +18,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use proximadb_graph::record::GraphNodeKey;
+use proximadb_graph::record::{GraphEdgeKey, GraphNodeKey};
 
 use crate::core::search::cross_modal_fusion::{
     FusedItem, Fuser, FusionPolicy, FusionStats, SourceCandidates, SourceId,
 };
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::graph::GraphOperationsService;
-use crate::graph::model::Node;
+use crate::graph::model::{Edge, Node};
 use crate::network::hybrid_search::HybridFullTextIndexMap;
 use crate::services::VectorOperationsService;
 use crate::storage::engines::core::formats::columnar::fulltext_index::FulltextSearchResult;
@@ -53,6 +53,32 @@ pub(crate) fn traversal_nodes_to_source(
     let mut scores: HashMap<String, f32> = HashMap::new();
     for (rank, node) in nodes.iter().enumerate() {
         let oid = GraphNodeKey::new(graph_id, node.id.clone()).canonical_oid();
+        let score = 1.0 / (rank as f32 + 1.0);
+        scores
+            .entry(oid)
+            .and_modify(|existing| {
+                if score > *existing {
+                    *existing = score;
+                }
+            })
+            .or_insert(score);
+    }
+    SourceCandidates::new(SourceId::Graph, weight, scores)
+}
+
+/// Graph traversal **edges** → an `oid`-keyed graph source at *edge grain* (the relationship is the
+/// fusion unit). `oid` is the canonical `graph/{graph_id}/edge/{edge_id}` — distinct from node `oid`s,
+/// so edges rank as their own items. Score = `1/(rank+1)` from traversal order; an edge seen more than
+/// once keeps its best score. HELIOS: edge-grain fusion carries **6–12% more signal** than node-grain
+/// (D8) — offered as an opt-in grain, with node-grain the default sweet spot.
+pub(crate) fn traversal_edges_to_source(
+    graph_id: &str,
+    edges: &[Edge],
+    weight: f32,
+) -> SourceCandidates {
+    let mut scores: HashMap<String, f32> = HashMap::new();
+    for (rank, edge) in edges.iter().enumerate() {
+        let oid = GraphEdgeKey::new(graph_id, edge.id.clone()).canonical_oid();
         let score = 1.0 / (rank as f32 + 1.0);
         scores
             .entry(oid)
@@ -134,6 +160,17 @@ pub(crate) fn seed_node_ids(
         .collect()
 }
 
+/// Whether graph expansion contributes node candidates, edge (relationship) candidates, or both.
+/// Edge-grain carries more relational signal (HELIOS: +6–12% over node-grain); node-grain is the
+/// default sweet spot (D8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum GraphGrain {
+    #[default]
+    Nodes,
+    Edges,
+    Both,
+}
+
 /// Parameters for one graph-modality fusion query.
 #[derive(Debug, Clone)]
 pub struct GraphFusionParams {
@@ -147,6 +184,8 @@ pub struct GraphFusionParams {
     pub limit: usize,
     pub vector_weight: f32,
     pub graph_weight: f32,
+    /// Node / edge / both grain for the graph contribution (D8).
+    pub grain: GraphGrain,
     pub policy: FusionPolicy,
 }
 
@@ -184,6 +223,7 @@ impl FusionService {
         //    contributes nothing (its traverse errors are skipped) rather than failing the query.
         let seeds = seed_node_ids(&params.graph_id, &hits, params.max_seeds);
         let mut nodes: Vec<Node> = Vec::new();
+        let mut edges: Vec<Edge> = Vec::new();
         for seed in seeds {
             let request = crate::graph::model::TraversalRequest {
                 graph_id: params.graph_id.clone(),
@@ -199,13 +239,32 @@ impl FusionService {
             };
             if let Ok(response) = self.graph.traverse(&params.graph_id, request).await {
                 nodes.extend(response.nodes);
+                edges.extend(response.edges);
             }
         }
-        let graph_source = traversal_nodes_to_source(&params.graph_id, &nodes, params.graph_weight);
 
-        // 3. Calibrate + fuse-by-oid + rank.
+        // 3. Build the graph contribution at the requested grain (D8: edge-grain carries more
+        //    relational signal; node-grain is the default). Node and edge `oid`s are disjoint, so
+        //    `Both` simply adds two graph sources.
+        let mut sources = vec![vector_source];
+        if matches!(params.grain, GraphGrain::Nodes | GraphGrain::Both) {
+            sources.push(traversal_nodes_to_source(
+                &params.graph_id,
+                &nodes,
+                params.graph_weight,
+            ));
+        }
+        if matches!(params.grain, GraphGrain::Edges | GraphGrain::Both) {
+            sources.push(traversal_edges_to_source(
+                &params.graph_id,
+                &edges,
+                params.graph_weight,
+            ));
+        }
+
+        // 4. Calibrate + fuse-by-oid + rank.
         let fuser = Fuser::new(params.policy);
-        Ok(fuser.fuse(vec![vector_source, graph_source], params.limit))
+        Ok(fuser.fuse(sources, params.limit))
     }
 }
 
@@ -348,5 +407,36 @@ mod tests {
             .find(|i| i.oid == oid)
             .expect("shared oid fused");
         assert_eq!(fused.source_count, 2, "vector + document merge by oid");
+    }
+
+    fn edge(id: &str) -> Edge {
+        Edge {
+            id: id.to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn traversal_edges_use_canonical_edge_oid_and_best_rank() {
+        let edges = [edge("e1"), edge("e2"), edge("e1")];
+        let source = traversal_edges_to_source("g1", &edges, 1.0);
+        assert_eq!(source.source, SourceId::Graph);
+        // Canonical edge oid form (distinct from node oids); e1 keeps its best (rank 0) score.
+        assert_eq!(source.scores.get("graph/g1/edge/e1"), Some(&1.0));
+        assert_eq!(source.scores.get("graph/g1/edge/e2"), Some(&0.5));
+        assert_eq!(source.scores.len(), 2, "e1 deduped to its best score");
+    }
+
+    /// Node-grain and edge-grain contributions occupy disjoint `oid` spaces, so under `GraphGrain::Both`
+    /// a node and an edge coexist as distinct fused items (HELIOS edge-grain alongside node-grain).
+    #[test]
+    fn node_and_edge_oids_are_disjoint_and_coexist() {
+        let node_src = traversal_nodes_to_source("g1", &[node("n1")], 1.0);
+        let edge_src = traversal_edges_to_source("g1", &[edge("e1")], 1.0);
+        let (items, _) = Fuser::new(FusionPolicy::default()).fuse(vec![node_src, edge_src], 10);
+        let oids: std::collections::HashSet<&str> = items.iter().map(|i| i.oid.as_str()).collect();
+        assert!(oids.contains("graph/g1/node/n1"));
+        assert!(oids.contains("graph/g1/edge/e1"));
+        assert_eq!(items.len(), 2, "node and edge are distinct fused items");
     }
 }

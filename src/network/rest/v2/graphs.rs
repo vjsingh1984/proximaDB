@@ -14,7 +14,7 @@ use crate::core::search::cross_modal_fusion::{FusionPolicy, FusionStats};
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
-use crate::services::fusion_service::{FusionService, GraphFusionParams};
+use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
 
 fn default_limit() -> usize {
     10
@@ -49,6 +49,8 @@ pub struct FusionSearchRequest {
     pub rrf: bool,
     /// Consensus boost added to any `oid` present in ≥2 sources.
     pub consensus_beta: Option<f32>,
+    /// Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
+    pub grain: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -129,6 +131,11 @@ pub async fn fusion_search_v2(
         limit: request.limit,
         vector_weight: request.vector_weight.unwrap_or(1.0),
         graph_weight: request.graph_weight.unwrap_or(1.0),
+        grain: match request.grain.as_deref() {
+            Some("edges") => GraphGrain::Edges,
+            Some("both") => GraphGrain::Both,
+            _ => GraphGrain::Nodes,
+        },
         policy,
     };
 
