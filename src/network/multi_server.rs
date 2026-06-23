@@ -102,7 +102,7 @@ pub use proximadb_runtime::bootstrap_config::{
 
 // SharedServices extracted to src/network/shared_services.rs
 // All existing call sites using `crate::network::multi_server::SharedServices` continue to work.
-pub use crate::network::shared_services::SharedServices;
+pub use crate::network::shared_services::{ServiceProfile, SharedServices};
 
 /// Apply 64 MB message limits and optional gzip compression to a tonic service.
 ///

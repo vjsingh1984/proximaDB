@@ -35,6 +35,31 @@ use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactor
 use proximadb_graph_query::service::{GraphExecutionService, GraphQueryService};
 use proximadb_kernel::uuid::Uuid;
 
+/// Which consumer is constructing the shared service core.
+///
+/// The core (catalog, collection, vector/doc/graph compute, storage/WAL,
+/// governance) is identical for every consumer. `ServiceProfile` only gates the
+/// *network-dimension* machinery that has no consumer in-process: a fused
+/// embedded library (`Embedded`) deletes Dimension 2 (network), so it must NOT
+/// pay for the periodic Prometheus chargeback emitter or the metrics-persistence
+/// / billing publisher that only feed a scrape/network surface. The networked
+/// server (`Server`) keeps them. Co-design tenet 1 ("don't pay for a dimension
+/// you deleted") + tenet 5 ("egress/KOU is inert in embedded").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceProfile {
+    /// In-process / fused (PyO3, FFI, tests). No network-only background work.
+    Embedded,
+    /// Networked server. Constructs the observability/billing surfaces.
+    Server,
+}
+
+impl ServiceProfile {
+    /// True when constructing for the networked server.
+    pub fn is_server(self) -> bool {
+        matches!(self, ServiceProfile::Server)
+    }
+}
+
 /// Shared services for thin protocol handlers
 /// Responsibilities: business logic, metadata configuration, service coordination
 #[derive(Clone)]
@@ -351,6 +376,9 @@ impl SharedServices {
         orchestrator: Option<Arc<crate::storage::cache::orchestrator::CrossCacheOrchestrator>>,
         // Optional full runtime config for hybrid/graph overrides
         opt_config: Option<&crate::core::config::Config>,
+        // Which consumer is building the core; gates network-only background work
+        // (see `ServiceProfile`). `Embedded` builds no Prometheus/billing surfaces.
+        profile: ServiceProfile,
     ) -> Result<(Self, Arc<CollectionService>)> {
         info!("🔧 SharedServices: Initializing business logic hub for ALL protocols");
         debug!(
@@ -395,18 +423,22 @@ impl SharedServices {
 
         // Publish per-tenant cache stats for observability/chargeback (the
         // multitenant fairness + noisy-neighbor signal) on the consumption gauge.
-        tokio::spawn(async move {
-            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
-            loop {
-                tick.tick().await;
-                let stats = crate::services::record_store::segment_cache_tenant_stats();
-                if !stats.is_empty() {
-                    crate::metrics::consumption_metrics::record_cache_tenant_stats(
-                        "footer", &stats,
-                    );
+        // Server-only: this 30s emitter feeds a Prometheus/network scrape surface
+        // that no in-process embedded consumer reads (co-design tenets 1 & 5).
+        if profile.is_server() {
+            tokio::spawn(async move {
+                let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+                loop {
+                    tick.tick().await;
+                    let stats = crate::services::record_store::segment_cache_tenant_stats();
+                    if !stats.is_empty() {
+                        crate::metrics::consumption_metrics::record_cache_tenant_stats(
+                            "footer", &stats,
+                        );
+                    }
                 }
-            }
-        });
+            });
+        }
 
         let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
 
@@ -1409,18 +1441,28 @@ impl SharedServices {
             max_memory_mb: 512,
             snapshot_interval_seconds: 300, // 5 minutes
         };
-        let metrics_store = Arc::new(
-            crate::metrics::store::MetricsPersistenceLayer::new(
-                filesystem_factory.clone(),
-                metrics_config,
-            )
-            .await?,
-        );
-        let metrics_updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
-            crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
-        );
-        graph_service_inst.set_metrics_updater(metrics_updater.clone());
-        debug!("📈 GraphOperationsService metrics updater wired");
+        // Server-only: the metrics persistence layer + billing/telemetry publisher
+        // back a chargeback/scrape surface with no in-process consumer. The fused
+        // embedded core skips them and leaves the graph engine's updater unset
+        // (co-design tenets 1 & 5; the `metrics_updater` field is already optional).
+        let metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater + 'static>> =
+            if profile.is_server() {
+                let metrics_store = Arc::new(
+                    crate::metrics::store::MetricsPersistenceLayer::new(
+                        filesystem_factory.clone(),
+                        metrics_config,
+                    )
+                    .await?,
+                );
+                let updater: Arc<dyn crate::metrics::InternalMetricsUpdater + 'static> = Arc::new(
+                    crate::metrics::updater::MetricsUpdateService::new(metrics_store.clone()),
+                );
+                graph_service_inst.set_metrics_updater(updater.clone());
+                debug!("📈 GraphOperationsService metrics updater wired");
+                Some(updater)
+            } else {
+                None
+            };
         let graph_service = Arc::new(graph_service_inst);
         debug!(
             "✅ SharedServices::new - GraphOperationsService created with shared collection service"
@@ -1965,7 +2007,7 @@ impl SharedServices {
                 observability_service: observability_service.clone(),
                 request_handlers: request_handlers.clone(),
                 metrics_collector,
-                metrics_updater: Some(metrics_updater.clone()),
+                metrics_updater: metrics_updater.clone(),
                 query_facade,
                 query_adapter: query_adapter.clone(),
                 api_handlers: runtime_api_handlers,

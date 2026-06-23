@@ -1088,6 +1088,8 @@ impl EmbeddedProximaDB {
                 &storage_config,
                 Some(orchestrator),
                 None, // No full config needed
+                // Fused in-process: no Prometheus/billing/scrape background work.
+                crate::network::multi_server::ServiceProfile::Embedded,
             )
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
