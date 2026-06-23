@@ -446,8 +446,8 @@ a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete Op
 | Fusion — converge `DocumentExpander`
 | P2
 | MED
-| *Open*
-| Fold the 12-strategy `HybridFusionEngine` (vector+BM25, `doc_id`) onto the seam as the `DocumentExpander`, keyed by `oid`.
+| *Partial — implementation branch ready 2026-06-23*
+| `DocumentExpander` is on the neutral seam and `feat/fusion-document-live` wires live BM25 document candidates into REST v2 `fusion-search` via `text_query` / `document_weight` when `AppState.fulltext_indexes` is present, fused by `oid` alongside vector + graph. Remaining non-MVP cleanup: retire/collapse the legacy 12-strategy `HybridFusionEngine` surface to D4/fallback-only once callers have moved.
 | 1-2 weeks
 | Collapse the 12 strategies to D4 (calibrated-linear default, RRF fallback); keep exotics behind a flag.
 | TD-139

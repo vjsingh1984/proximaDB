@@ -129,7 +129,7 @@ Each stage moves the dominant cost term, not CPU:
 
 | F-A | Neutral `Fuser` core + PIT calibration + calibrated-linear/RRF + consensus + skip-gates (Phase 1) | TD-136
 | F-B | `GraphExpander` (oid-keyed percentile-rank, bounded k-hop) + vector seed + REST v2 `fusion-search` endpoint (Phase 1) | TD-137
-| F-C | Converge `DocumentExpander` (fold `HybridFusionEngine` onto the seam) | TD-138
+| F-C | Converge `DocumentExpander` (live BM25 document source on REST v2 `fusion-search`; legacy strategy-engine retirement remains follow-on) | TD-138
 | F-D | `RelationalExpander` prefilter (reuse TD-127/128; NaviX semimask) | TD-139
 | F-E | Edge-grain fusion (HELIOS) | TD-140
 | F-F | `ComputeScheduler` fusion routing (UNIFY cardinality + BoomHQ local pre-probe; measured threshold router) | TD-141
@@ -138,7 +138,8 @@ Each stage moves the dominant cost term, not CPU:
 |===
 
 Phase 1 (F-A, F-B) is the reference implementation: the graph modality as the first instance on the seam,
-exposed on REST v2. The rest are follow-on.
+exposed on REST v2. F-C has a live wiring branch (`feat/fusion-document-live`) that adds BM25 document
+candidates to the same endpoint when a full-text index is present. F-D and later items remain follow-on.
 
 == Open questions / risks
 

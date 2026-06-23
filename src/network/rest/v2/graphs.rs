@@ -51,6 +51,10 @@ pub struct FusionSearchRequest {
     pub consensus_beta: Option<f32>,
     /// Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
     pub grain: Option<String>,
+    /// Optional BM25 query — adds the document modality, making this a live cross-modal
+    /// vector + graph + document fusion (requires a full-text index on the collection).
+    pub text_query: Option<String>,
+    pub document_weight: Option<f32>,
 }
 
 #[derive(Debug, Serialize)]
@@ -117,10 +121,15 @@ pub async fn fusion_search_v2(
         policy.consensus_beta = beta;
     }
 
-    let service = FusionService::new(
+    let mut service = FusionService::new(
         state.vector_operations_service.clone(),
         state.request_handlers.graph_operations_service.clone(),
     );
+    // Wire the document modality from the live BM25 index map (TD-138 live wiring); when absent or the
+    // collection has no full-text index, the document source is simply empty.
+    if let Some(indexes) = state.fulltext_indexes.clone() {
+        service = service.with_documents(indexes);
+    }
     let params = GraphFusionParams {
         graph_id,
         vector_collection: request.vector_collection,
@@ -136,6 +145,8 @@ pub async fn fusion_search_v2(
             Some("both") => GraphGrain::Both,
             _ => GraphGrain::Nodes,
         },
+        text_query: request.text_query,
+        document_weight: request.document_weight.unwrap_or(1.0),
         policy,
     };
 

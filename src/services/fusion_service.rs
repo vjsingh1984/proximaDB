@@ -186,18 +186,54 @@ pub struct GraphFusionParams {
     pub graph_weight: f32,
     /// Node / edge / both grain for the graph contribution (D8).
     pub grain: GraphGrain,
+    /// Optional BM25 query for the document modality (requires the service to be `with_documents`).
+    pub text_query: Option<String>,
+    pub document_weight: f32,
     pub policy: FusionPolicy,
 }
 
-/// Orchestrates the graph instance of the fusion seam over the live vector + graph engines.
+/// Build the document modality source for a cross-modal query: BM25-search `collection` for
+/// `text_query` when both a full-text index map and a non-empty query are present; otherwise `None`
+/// (the document modality simply doesn't contribute — graceful, like a collection without a text index).
+fn document_source(
+    indexes: &Option<HybridFullTextIndexMap>,
+    collection: &str,
+    text_query: &Option<String>,
+    k: usize,
+    weight: f32,
+) -> Option<SourceCandidates> {
+    match (indexes, text_query) {
+        (Some(indexes), Some(query)) if !query.trim().is_empty() => {
+            Some(DocumentExpander::new(indexes.clone()).expand(collection, query, k, weight))
+        }
+        _ => None,
+    }
+}
+
+/// Orchestrates the fusion seam over the live vector + graph engines, with the document modality wired
+/// in when a full-text index map is supplied.
 pub struct FusionService {
     vector: Arc<VectorOperationsService>,
     graph: Arc<GraphOperationsService>,
+    /// Optional BM25 full-text index map for the document modality (wired from
+    /// `AppState.fulltext_indexes`). Absent → no document contribution.
+    indexes: Option<HybridFullTextIndexMap>,
 }
 
 impl FusionService {
     pub fn new(vector: Arc<VectorOperationsService>, graph: Arc<GraphOperationsService>) -> Self {
-        Self { vector, graph }
+        Self {
+            vector,
+            graph,
+            indexes: None,
+        }
+    }
+
+    /// Wire the document modality (BM25 full-text indexes) into the seam so a `text_query` produces a
+    /// document source fused alongside vector + graph.
+    pub fn with_documents(mut self, indexes: HybridFullTextIndexMap) -> Self {
+        self.indexes = Some(indexes);
+        self
     }
 
     /// Vector-seed → graph-expand → fuse-by-`oid`. Tenant isolation is structural (the collection and
@@ -260,6 +296,18 @@ impl FusionService {
                 &edges,
                 params.graph_weight,
             ));
+        }
+
+        // 3b. Document modality (BM25) over the same collection, when a text query + full-text index are
+        //     present — making this a live cross-modal vector + graph + document query.
+        if let Some(document) = document_source(
+            &self.indexes,
+            &params.vector_collection,
+            &params.text_query,
+            params.limit,
+            params.document_weight,
+        ) {
+            sources.push(document);
         }
 
         // 4. Calibrate + fuse-by-oid + rank.
@@ -438,5 +486,38 @@ mod tests {
         assert!(oids.contains("graph/g1/node/n1"));
         assert!(oids.contains("graph/g1/edge/e1"));
         assert_eq!(items.len(), 2, "node and edge are distinct fused items");
+    }
+
+    /// The live document wiring: a document source is produced only when both a full-text index map and
+    /// a non-empty `text_query` are present; otherwise the modality is absent (no-op).
+    #[test]
+    fn document_source_present_only_with_index_and_query() {
+        use crate::storage::engines::core::formats::columnar::fulltext_index::{
+            FullTextIndex, TokenizerConfig,
+        };
+        use std::sync::RwLock;
+
+        let mut index = FullTextIndex::new(TokenizerConfig::for_keyword_search());
+        index
+            .add_document("d1", "machine learning")
+            .expect("add d1");
+        let indexes: HybridFullTextIndexMap =
+            Arc::new(RwLock::new(HashMap::from([("col".to_string(), index)])));
+
+        // Both present → a document source with the matching oid.
+        let src = document_source(
+            &Some(indexes.clone()),
+            "col",
+            &Some("machine".into()),
+            10,
+            1.0,
+        );
+        assert!(src.is_some_and(|s| s.scores.contains_key("d1")));
+
+        // No index map → None.
+        assert!(document_source(&None, "col", &Some("machine".into()), 10, 1.0).is_none());
+        // No / blank query → None.
+        assert!(document_source(&Some(indexes.clone()), "col", &None, 10, 1.0).is_none());
+        assert!(document_source(&Some(indexes), "col", &Some("  ".into()), 10, 1.0).is_none());
     }
 }
