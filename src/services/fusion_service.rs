@@ -26,7 +26,9 @@ use crate::core::search::cross_modal_fusion::{
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::graph::GraphOperationsService;
 use crate::graph::model::Node;
+use crate::network::hybrid_search::HybridFullTextIndexMap;
 use crate::services::VectorOperationsService;
+use crate::storage::engines::core::formats::columnar::fulltext_index::FulltextSearchResult;
 
 /// `TraversalAlgorithm::Bfs` proto tag.
 const ALGORITHM_BFS: i32 = 1;
@@ -62,6 +64,53 @@ pub(crate) fn traversal_nodes_to_source(
             .or_insert(score);
     }
     SourceCandidates::new(SourceId::Graph, weight, scores)
+}
+
+/// BM25 / full-text hits → an `oid`-keyed document source. The hit `doc_id` is the record `oid`, so it
+/// merges with the vector and graph sources by shared `oid`. The BM25 score is `f64`, narrowed to `f32`
+/// for the blend — harmless because PIT calibration is rank-relative within the source.
+pub(crate) fn bm25_hits_to_source(hits: &[FulltextSearchResult], weight: f32) -> SourceCandidates {
+    let scores = hits
+        .iter()
+        .map(|hit| (hit.doc_id.clone(), hit.score as f32))
+        .collect();
+    SourceCandidates::new(SourceId::Document, weight, scores)
+}
+
+/// The document modality expander: runs BM25/full-text search over a collection's index and emits an
+/// `oid`-keyed [`SourceId::Document`] source. A collection without a materialized full-text index (or a
+/// poisoned lock) **fails closed** — it returns an empty source so fusion proceeds on the other
+/// modalities rather than erroring (D5/D6). This converges the document half of the legacy 12-strategy
+/// `HybridFusionEngine` onto the neutral seam (TD-138).
+pub struct DocumentExpander {
+    indexes: HybridFullTextIndexMap,
+}
+
+impl DocumentExpander {
+    pub fn new(indexes: HybridFullTextIndexMap) -> Self {
+        Self { indexes }
+    }
+
+    /// BM25-search `collection` for `text_query` (top `k`) → an `oid`-keyed document source.
+    pub fn expand(
+        &self,
+        collection: &str,
+        text_query: &str,
+        k: usize,
+        weight: f32,
+    ) -> SourceCandidates {
+        let hits = self
+            .indexes
+            .read()
+            .ok()
+            .and_then(|guard| {
+                guard
+                    .get(collection)
+                    .map(|index| index.search(text_query, k))
+            })
+            .unwrap_or_default();
+        bm25_hits_to_source(&hits, weight)
+    }
 }
 
 /// Recover the graph `node_id` to seed traversal from each vector hit. When the vector collection is
@@ -234,5 +283,70 @@ mod tests {
             fused.source_count, 2,
             "vector + graph hit on the same oid merge"
         );
+    }
+
+    fn doc_hit(doc_id: &str, score: f64) -> FulltextSearchResult {
+        FulltextSearchResult {
+            doc_id: doc_id.to_string(),
+            score,
+            matched_terms: Vec::new(),
+            term_frequencies: HashMap::new(),
+            highlight_positions: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn bm25_hits_become_oid_keyed_document_source() {
+        use crate::storage::engines::core::formats::columnar::fulltext_index::{
+            FullTextIndex, TokenizerConfig,
+        };
+        use std::sync::RwLock;
+
+        let mut index = FullTextIndex::new(TokenizerConfig::for_keyword_search());
+        index
+            .add_document("d1", "machine learning model")
+            .expect("add d1");
+        index
+            .add_document("d2", "deep neural network")
+            .expect("add d2");
+        index
+            .add_document("d3", "machine learning algorithm")
+            .expect("add d3");
+
+        let indexes: HybridFullTextIndexMap =
+            Arc::new(RwLock::new(HashMap::from([("col".to_string(), index)])));
+        let source = DocumentExpander::new(indexes).expand("col", "machine learning", 10, 1.0);
+
+        assert_eq!(source.source, SourceId::Document);
+        assert!(source.scores.contains_key("d1"), "d1 matches");
+        assert!(source.scores.contains_key("d3"), "d3 matches");
+        assert!(!source.scores.contains_key("d2"), "d2 does not match");
+    }
+
+    #[test]
+    fn document_expander_fails_closed_on_missing_index() {
+        use std::sync::RwLock;
+        let indexes: HybridFullTextIndexMap = Arc::new(RwLock::new(HashMap::new()));
+        let source = DocumentExpander::new(indexes).expand("absent", "anything", 10, 1.0);
+        assert!(
+            source.scores.is_empty(),
+            "missing index → empty document source (fail-closed)"
+        );
+    }
+
+    /// A vector hit and a BM25 document hit on the SAME `oid` fuse into one item (`source_count == 2`):
+    /// the document modality converges onto the seam by shared `oid`, calibrated by the Fuser.
+    #[test]
+    fn vector_and_document_fuse_by_shared_oid() {
+        let oid = "rec1";
+        let vector = vector_hits_to_source(&[hit(oid, 0.9)], 1.0);
+        let document = bm25_hits_to_source(&[doc_hit(oid, 3.2)], 1.0);
+        let (items, stats) = Fuser::new(FusionPolicy::default()).fuse(vec![vector, document], 10);
+        assert_eq!(stats.sources_fused, 2);
+        let fused = items
+            .iter()
+            .find(|i| i.oid == oid)
+            .expect("shared oid fused");
+        assert_eq!(fused.source_count, 2, "vector + document merge by oid");
     }
 }
