@@ -735,6 +735,12 @@ impl DrPathBuilder {
     /// [`system_catalog_subprefix`](Self::system_catalog_subprefix).
     pub const SYSTEM_CATALOG_WAL_FILE: &'static str = "system-catalog.wal";
 
+    /// File name of the system catalog's snapshot blob within
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix). For
+    /// object-store deployments this is the relative object key the snapshot is
+    /// PUT under (the per-DDL WAL stays local — Phase 6).
+    pub const SYSTEM_CATALOG_SNAPSHOT_FILE: &'static str = "system-catalog.snapshot";
+
     /// Build a validated control-plane (operator) subprefix
     /// `_operator/<subpath>/`. `subpath` runs through the same
     /// [`validate_id`](Self::validate_id) guard as a path segment (e.g.
@@ -762,6 +768,19 @@ impl DrPathBuilder {
             "{}{}",
             Self::system_catalog_subprefix(),
             Self::SYSTEM_CATALOG_WAL_FILE
+        )
+    }
+
+    /// Relative object key of the system catalog **snapshot** under
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/system-catalog.snapshot`. For object-store
+    /// deployments this is the key the snapshot blob is PUT under (relative to
+    /// the object-store base prefix).
+    pub fn system_catalog_snapshot_relpath() -> String {
+        format!(
+            "{}{}",
+            Self::system_catalog_subprefix(),
+            Self::SYSTEM_CATALOG_SNAPSHOT_FILE
         )
     }
 }
@@ -1137,6 +1156,10 @@ mod tests {
         assert_eq!(
             DrPathBuilder::system_catalog_wal_relpath(),
             "_operator/catalog/system-catalog.wal"
+        );
+        assert_eq!(
+            DrPathBuilder::system_catalog_snapshot_relpath(),
+            "_operator/catalog/system-catalog.snapshot"
         );
         // It is exactly the validated operator subprefix for "catalog".
         assert_eq!(

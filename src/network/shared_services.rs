@@ -416,17 +416,33 @@ impl SharedServices {
             storage_config.metadata_url
         );
         if catalog_manager.list_catalogs().await.is_empty() {
-            // System-catalog redesign (Phase 2): the default catalog is the
-            // read-heavy, WAL-backed `SystemCatalog` (in-RAM authority + canonical
-            // WAL) rather than the file-per-object `NativeCatalog`. It serves
-            // catalog reads from RAM and persists each DDL as one fsync'd WAL
-            // append. Scoped to `file://` for now (object-store paths land in
-            // Phase 5); `PROXIMADB_DISABLE_SYSTEM_CATALOG` is a kill-switch back
-            // to `NativeCatalog` for the duration of the cutover.
-            let use_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_err()
-                && storage_config.metadata_url.starts_with("file://");
-            if use_system_catalog {
-                let base = storage_config.metadata_url.trim_start_matches("file://");
+            // System-catalog redesign: the default catalog is the read-heavy,
+            // WAL-backed `SystemCatalog` (in-RAM authority + canonical WAL)
+            // rather than the file-per-object `NativeCatalog`. It serves catalog
+            // reads from RAM and persists each DDL as one fsync'd WAL append.
+            // `PROXIMADB_DISABLE_SYSTEM_CATALOG` is a kill-switch back to
+            // `NativeCatalog` for the duration of the cutover.
+            let disable_system_catalog = std::env::var("PROXIMADB_DISABLE_SYSTEM_CATALOG").is_ok();
+            let metadata_url = storage_config.metadata_url.clone();
+            let is_objstore = metadata_url.starts_with("s3://")
+                || metadata_url.starts_with("gs://")
+                || metadata_url.starts_with("az://")
+                || metadata_url.starts_with("memory://");
+            // Phase 5d: object-store deployments use the SystemCatalog too — its
+            // snapshot blob persists to the object store under
+            // `_operator/catalog/…` (real durability, replacing NativeCatalog's
+            // temp-cache fake) while the per-DDL WAL stays on the local working
+            // volume (object-store-native WAL is Phase 6). Needs `opt_config`
+            // for the local `data_dir`; without it (some test/embedded paths) we
+            // fall back to `NativeCatalog`.
+            let objstore_data_dir = if is_objstore && !disable_system_catalog {
+                opt_config.map(|c| c.server.data_dir.clone())
+            } else {
+                None
+            };
+
+            if !disable_system_catalog && metadata_url.starts_with("file://") {
+                let base = metadata_url.trim_start_matches("file://");
                 // Phase 5 (two-tier operator/account): route the system
                 // catalog's own WAL + snapshot under the DrPathBuilder-validated
                 // operator control-plane prefix (`_operator/catalog/…`) so
@@ -461,9 +477,51 @@ impl SharedServices {
                     "✅ SharedServices: registered WAL-backed SystemCatalog (default) at {}",
                     wal_path.display()
                 );
+            } else if let Some(data_dir) = objstore_data_dir {
+                use crate::storage::trait_components::path_resolver::DrPathBuilder;
+                // Per-DDL WAL on the local working volume under the operator
+                // control-plane prefix; snapshot blob in the object store.
+                let wal_path = data_dir.join(DrPathBuilder::system_catalog_wal_relpath());
+                if let Some(parent) = wal_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.with_context(|| {
+                        format!("creating system-catalog dir {}", parent.display())
+                    })?;
+                }
+                let snapshot_store = Arc::new(
+                    crate::services::catalog_snapshot_store::ObjectStoreSnapshotStore::from_url(
+                        &metadata_url,
+                        DrPathBuilder::system_catalog_snapshot_relpath(),
+                    )
+                    .with_context(|| {
+                        format!("opening object-store catalog snapshot at {metadata_url}")
+                    })?,
+                );
+                let system_catalog =
+                    crate::services::system_catalog::SystemCatalog::open_with_snapshot_store(
+                        "default",
+                        &wal_path,
+                        snapshot_store,
+                    )
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "opening object-store SystemCatalog (WAL {})",
+                            wal_path.display()
+                        )
+                    })?;
+                catalog_manager
+                    .register(Arc::new(system_catalog))
+                    .await
+                    .context("Failed to register object-store SystemCatalog backend")?;
+                info!(
+                    "✅ SharedServices: registered object-store-backed SystemCatalog (default); \
+                     local WAL at {}, snapshot in {}",
+                    wal_path.display(),
+                    metadata_url
+                );
             } else {
                 catalog_manager
-                    .create_native_catalog("default", &storage_config.metadata_url)
+                    .create_native_catalog("default", &metadata_url)
                     .await
                     .context("Failed to initialize default xCatalog backend")?;
             }
