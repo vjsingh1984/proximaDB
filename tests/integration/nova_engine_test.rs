@@ -30,19 +30,8 @@ async fn create_test_setup() -> (Arc<NovaEngine>, Arc<CollectionService>, TempDi
     let filesystem_config = FilesystemConfig::default();
     let _filesystem = Arc::new(FilesystemFactory::create(filesystem_config).await.unwrap());
 
-    let metadata_backend = Arc::new(
-        proximadb::storage::metadata::MetadataStore::new(
-            proximadb::storage::metadata::MetadataStoreConfig::default(),
-        )
-        .await
-        .unwrap(),
-    ) as Arc<dyn proximadb::storage::traits::InternalCollectionProvider>;
     let storage_config = proximadb::core::config::StorageConfig::default();
-    let collection_service = Arc::new(
-        CollectionService::new(metadata_backend, storage_config)
-            .await
-            .unwrap(),
-    );
+    let collection_service = Arc::new(CollectionService::new(storage_config).await.unwrap());
 
     let nova_engine = Arc::new(NovaEngine::new().await.unwrap());
 
