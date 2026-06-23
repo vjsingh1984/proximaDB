@@ -77,6 +77,12 @@ pub struct SystemCatalog {
     write_lock: tokio::sync::Mutex<()>,
     snapshot: Option<SnapshotConfig>,
     commits_since_snapshot: AtomicU64,
+    /// Monotonic fencing generation this pod writes snapshots under (Phase 6a).
+    /// Claimed at boot as `prior_committed_generation + 1`, so a pod that takes
+    /// the catalog over outranks the one it replaced; the object-store snapshot
+    /// commit is fenced on it. Single-pod / local: effectively inert (the local
+    /// store never fences and each restart simply bumps it monotonically).
+    generation: AtomicU64,
 }
 
 impl SystemCatalog {
@@ -96,6 +102,7 @@ impl SystemCatalog {
             write_lock: tokio::sync::Mutex::new(()),
             snapshot: None,
             commits_since_snapshot: AtomicU64::new(0),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -144,16 +151,23 @@ impl SystemCatalog {
         // A snapshot that exists but fails to decode is **fatal**: after a
         // compaction the WAL alone no longer carries the pre-watermark history,
         // so silently falling back to a WAL-only replay would lose committed DDL.
-        let state = match snapshot_store.read().await? {
-            Some(bytes) => {
+        // `read` also yields the snapshot's fencing generation (Phase 6a).
+        let (state, prior_generation) = match snapshot_store.read().await? {
+            Some((generation, bytes)) => {
                 let state = SystemCatalogState::from_snapshot_bytes(&bytes).with_context(|| {
                     format!("decoding catalog snapshot {}", snapshot_store.describe())
                 })?;
                 state.replay(&entries)?;
-                state
+                (state, generation)
             }
-            None => SystemCatalogState::from_wal_entries(&entries)?,
+            None => (SystemCatalogState::from_wal_entries(&entries)?, 0),
         };
+
+        // Claim the next generation — a pod taking the catalog over outranks the
+        // one it replaced, so its first fenced commit fences any stale writer.
+        // For the local (unfenced) store this is inert: it monotonically bumps
+        // on each restart but the local store never rejects a write.
+        let generation = prior_generation + 1;
 
         let threshold = std::env::var("PROXIMADB_CATALOG_SNAPSHOT_THRESHOLD")
             .ok()
@@ -173,6 +187,7 @@ impl SystemCatalog {
                 threshold,
             }),
             commits_since_snapshot: AtomicU64::new(0),
+            generation: AtomicU64::new(generation),
         })
     }
 
@@ -235,10 +250,26 @@ impl SystemCatalog {
         let watermark = self.state.applied_seq();
 
         // 1. Durable snapshot. The store guarantees an atomic replace (local:
-        //    temp → fsync → rename; object store: atomic whole-object PUT), so a
-        //    reader sees the old or new blob, never a torn one.
+        //    temp → fsync → rename; object store: a generation-fenced commit), so
+        //    a reader sees the old or new blob, never a torn one.
+        let generation = self.generation.load(Ordering::SeqCst);
         let bytes = self.state.to_snapshot_bytes()?;
-        cfg.store.write_atomic(&bytes).await?;
+        let published = cfg.store.write_atomic(generation, &bytes).await?;
+        if !published {
+            // Fenced (Phase 6a): a newer pod (higher generation) has taken the
+            // catalog over. We are now a stale writer — the snapshot we tried to
+            // publish did NOT land, so we MUST NOT compact our local WAL (doing so
+            // would drop history that is no longer covered by any durable
+            // snapshot we own). Surface it and leave the WAL intact; cross-pod
+            // reload / step-down is Phase 6b.
+            tracing::warn!(
+                catalog = %self.name,
+                generation,
+                store = %cfg.store.describe(),
+                "catalog snapshot checkpoint was fenced by a newer pod; skipping WAL compaction"
+            );
+            return Ok(());
+        }
 
         // 2. Compact the WAL: keep only entries the snapshot does not cover.
         let entries = self.appender.read_all_entries().await?;
@@ -891,7 +922,8 @@ mod tests {
         // `from_url("memory://")` would be empty — we need the same instance).
         let backing: Arc<dyn object_store::ObjectStore> =
             Arc::new(object_store::memory::InMemory::new());
-        let key = "_operator/catalog/system-catalog.snapshot";
+        // Phase 6a: the object-store snapshot is a generation-fenced manifest log.
+        let key = "_operator/catalog/_manifests/";
 
         {
             let store = Arc::new(ObjectStoreSnapshotStore::new(
