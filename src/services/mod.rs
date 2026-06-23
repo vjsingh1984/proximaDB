@@ -182,6 +182,7 @@ pub mod embedding_drainer;
 pub mod events;
 pub mod external_collection;
 pub mod function_store;
+pub mod fusion_service;
 pub mod graph_collection;
 pub mod operations;
 pub mod queue_fs_adapter;
