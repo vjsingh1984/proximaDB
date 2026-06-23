@@ -5,6 +5,7 @@ Chunks text at paragraph boundaries while respecting size constraints.
 """
 
 import re
+from collections.abc import Iterable, Iterator
 from typing import Any
 
 from .base import ChunkingConfig, ChunkingStrategyInterface, TextChunk
@@ -16,6 +17,10 @@ class ParagraphStrategy(ChunkingStrategyInterface):
 
     Keeps paragraphs together when possible, splits large paragraphs if needed
     """
+
+    #: Paragraph boundaries (blank lines) are local; a buffer holding the
+    #: current paragraph group plus the in-progress paragraph is enough.
+    supports_streaming = True
 
     def __init__(self, config: ChunkingConfig):
         super().__init__(config)
@@ -97,26 +102,20 @@ class ParagraphStrategy(ChunkingStrategyInterface):
 
         return chunks
 
-    def chunk(
-        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
-    ) -> list[TextChunk]:
-        """Create chunks at paragraph boundaries"""
-        self.validate_config()
+    def _group_paragraphs(
+        self,
+        paragraphs: Iterable[tuple[str, int]],
+        source_id: str,
+        base_metadata: dict[str, Any],
+    ) -> Iterator[TextChunk]:
+        """Group a stream of (paragraph, abs_start) into chunks.
 
-        if not text:
-            return []
-
-        base_metadata = base_metadata or {}
-        chunks = []
-
-        # Split into paragraphs
-        paragraphs = self._split_into_paragraphs(text)
-        if not paragraphs:
-            return []
-
-        # Process paragraphs
+        Shared by batch :meth:`chunk` and streaming :meth:`chunk_stream`. Yields
+        chunks with ``total_chunks`` left as ``-1``; the batch path back-fills
+        the count, the streaming path cannot know it.
+        """
         chunk_index = 0
-        current_chunk_paras = []
+        current_chunk_paras: list[str] = []
         current_chunk_length = 0
         current_chunk_start = 0
 
@@ -130,15 +129,13 @@ class ParagraphStrategy(ChunkingStrategyInterface):
                 if current_chunk_paras:
                     chunk_text = "\n\n".join(current_chunk_paras)
                     if len(chunk_text) >= self.config.min_chunk_size:
-                        chunks.append(
-                            self._create_chunk(
-                                chunk_text,
-                                current_chunk_start,
-                                chunk_index,
-                                source_id,
-                                base_metadata,
-                                len(current_chunk_paras),
-                            )
+                        yield self._create_chunk(
+                            chunk_text,
+                            current_chunk_start,
+                            chunk_index,
+                            source_id,
+                            base_metadata,
+                            len(current_chunk_paras),
                         )
                         chunk_index += 1
                     current_chunk_paras = []
@@ -149,16 +146,14 @@ class ParagraphStrategy(ChunkingStrategyInterface):
                     para_text, self.config.chunk_size
                 )
                 for sub_chunk in sub_chunks:
-                    chunks.append(
-                        self._create_chunk(
-                            sub_chunk,
-                            para_start,
-                            chunk_index,
-                            source_id,
-                            base_metadata,
-                            1,
-                            is_list,
-                        )
+                    yield self._create_chunk(
+                        sub_chunk,
+                        para_start,
+                        chunk_index,
+                        source_id,
+                        base_metadata,
+                        1,
+                        is_list,
                     )
                     chunk_index += 1
                     para_start += len(sub_chunk) + 1
@@ -176,15 +171,13 @@ class ParagraphStrategy(ChunkingStrategyInterface):
                 # Create chunk from accumulated paragraphs
                 chunk_text = "\n\n".join(current_chunk_paras)
                 if len(chunk_text) >= self.config.min_chunk_size:
-                    chunks.append(
-                        self._create_chunk(
-                            chunk_text,
-                            current_chunk_start,
-                            chunk_index,
-                            source_id,
-                            base_metadata,
-                            len(current_chunk_paras),
-                        )
+                    yield self._create_chunk(
+                        chunk_text,
+                        current_chunk_start,
+                        chunk_index,
+                        source_id,
+                        base_metadata,
+                        len(current_chunk_paras),
                     )
                     chunk_index += 1
 
@@ -200,23 +193,120 @@ class ParagraphStrategy(ChunkingStrategyInterface):
         # Handle remaining paragraphs
         if current_chunk_paras:
             chunk_text = "\n\n".join(current_chunk_paras)
-            if len(chunk_text) >= self.config.min_chunk_size or not chunks:
-                chunks.append(
-                    self._create_chunk(
-                        chunk_text,
-                        current_chunk_start,
-                        chunk_index,
-                        source_id,
-                        base_metadata,
-                        len(current_chunk_paras),
-                    )
+            if len(chunk_text) >= self.config.min_chunk_size or chunk_index == 0:
+                yield self._create_chunk(
+                    chunk_text,
+                    current_chunk_start,
+                    chunk_index,
+                    source_id,
+                    base_metadata,
+                    len(current_chunk_paras),
                 )
+
+    def chunk(
+        self, text: str, source_id: str, base_metadata: dict[str, Any] | None = None
+    ) -> list[TextChunk]:
+        """Create chunks at paragraph boundaries"""
+        self.validate_config()
+
+        if not text:
+            return []
+
+        base_metadata = base_metadata or {}
+
+        # Split into paragraphs
+        paragraphs = self._split_into_paragraphs(text)
+        if not paragraphs:
+            return []
+
+        chunks = list(self._group_paragraphs(paragraphs, source_id, base_metadata))
 
         # Update total chunks count
         for chunk in chunks:
             chunk.metadata["total_chunks"] = len(chunks)
 
         return chunks
+
+    def chunk_stream(
+        self,
+        text_source: "str | Iterable[str]",
+        source_id: str,
+        base_metadata: dict[str, Any] | None = None,
+    ) -> Iterator[TextChunk]:
+        """Incrementally yield paragraph chunks with a bounded buffer.
+
+        Equivalent to :meth:`chunk` for every chunk's text/offsets/id, except
+        ``total_chunks`` is left as ``-1`` (an inherently global count).
+
+        Paragraph boundaries (blank lines) are detected in a growing buffer;
+        each completed paragraph (with its absolute start offset in the
+        concatenated input) is committed to the grouping engine, and the
+        trailing partial paragraph is carried over. Memory is bounded by the
+        current paragraph group plus the in-progress paragraph.
+        """
+        self.validate_config()
+
+        base_metadata = base_metadata or {}
+        yield from self._group_paragraphs(
+            self._paragraph_stream(text_source), source_id, base_metadata
+        )
+
+    def _paragraph_stream(
+        self, text_source: "str | Iterable[str]"
+    ) -> Iterator[tuple[str, int]]:
+        """Yield (stripped_paragraph, absolute_start) incrementally.
+
+        Mirrors :meth:`_split_into_paragraphs` exactly (same strip + ``find``
+        offset semantics) but emits paragraphs as soon as a paragraph break is
+        confirmed, holding back only the trailing (possibly incomplete) one.
+        """
+        pieces: Iterable[str]
+        if isinstance(text_source, str):
+            pieces = (text_source,) if text_source else ()
+        else:
+            pieces = text_source
+
+        buffer = ""
+        # Absolute index in the concatenated input of buffer[0].
+        buffer_origin = 0
+        # Where the next `find` search starts, RELATIVE to buffer[0]
+        # (matches batch's `current_pos` which advances past emitted paragraphs).
+        search_rel = 0
+
+        def emit_from_buffer(hold_last: bool) -> Iterator[tuple[str, int]]:
+            nonlocal buffer, buffer_origin, search_rel
+            parts = self.paragraph_pattern.split(buffer)
+            # When holding the last (more input may come), the final part might
+            # still grow; only commit complete parts before it.
+            committable = parts[:-1] if (hold_last and parts) else parts
+            consumed_rel = search_rel
+            for part in committable:
+                stripped = part.strip()
+                if stripped:
+                    start_rel = buffer.find(stripped, consumed_rel)
+                    yield (stripped, buffer_origin + start_rel)
+                    consumed_rel = start_rel + len(stripped)
+            if hold_last:
+                # Drop everything we've consumed; keep the unsplit tail so the
+                # next piece can extend the final (held) paragraph and any
+                # boundary that follows it.
+                if committable:
+                    # Recompute a safe carry point: keep from the start of the
+                    # held (last) part. Find where the tail begins.
+                    drop = consumed_rel
+                    if drop > 0:
+                        buffer = buffer[drop:]
+                        buffer_origin += drop
+                        search_rel = 0
+
+        for piece in pieces:
+            if not piece:
+                continue
+            buffer += piece
+            yield from emit_from_buffer(hold_last=True)
+
+        # Flush remaining paragraphs at EOF.
+        yield from emit_from_buffer(hold_last=False)
 
     def _create_chunk(
         self,
