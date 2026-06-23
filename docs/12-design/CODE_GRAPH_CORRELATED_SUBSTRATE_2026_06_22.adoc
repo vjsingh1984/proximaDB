@@ -217,8 +217,8 @@ incremental re-index: point upserts + small predicate scans (symbols-in-file, fi
 are by _name/file_, not PK oid; today only PK lookup exists → else full scan. *(TD-127, HIGH)*
 . *IN-list/range pushdown* (`WHERE file IN (...)`, `BETWEEN`) → multi-key point-batch; re-index touches
 a batch of files per debounce. Today: full scan + memory filter. *(TD-128, HIGH)*
-. *`ON CONFLICT DO UPDATE`* (upsert-by-PK) in pgwire for idempotent re-index. Mutation kind exists; the
-SQL surface does not. *(TD-129, MED)*
+. *`ON CONFLICT DO UPDATE`* (upsert-by-PK) in pgwire for idempotent re-index. Implementation branch
+`feat/td-129-pgwire-upsert` wires PK-targeted `DO UPDATE` / `DO NOTHING` and e2e coverage. *(TD-129, MED)*
 . MVCC/row-lock — *not needed* (single-writer-per-repo, last-write-wins fine). No TD.
 
 == Deployment
@@ -252,7 +252,7 @@ See `docs/10-quality/TECHNICAL_DEBT.adoc`:
 | TD | Item | Priority
 | TD-127 | OLTP secondary indexes (name/file) on native tables | HIGH
 | TD-128 | Volcano IN-list/range pushdown → multi-key point-batch | HIGH
-| TD-129 | pgwire `ON CONFLICT DO UPDATE` upsert | MED
+| TD-129 | pgwire `ON CONFLICT DO UPDATE` upsert — implementation branch ready | MED
 | TD-130 | Graph edge bulk-load (sorted LSM merge; kills per-edge uniqueness serialization) | MED
 | TD-131 | Graph on REST v2 + first-class co-planned hybrid endpoint (seed→expand→filter) | MED
 | TD-132 | Tier-B CPG-fragment PAX storage contract + per-query I/O trace emission | MED

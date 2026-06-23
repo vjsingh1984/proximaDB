@@ -376,10 +376,10 @@ a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete Op
 | pgwire — `ON CONFLICT DO UPDATE`
 | P2
 | MED
-| *Open*
-| `TableRecordMutationKind::Upsert` exists at the DML boundary but pgwire has no `INSERT ... ON CONFLICT DO UPDATE` surface; idempotent re-index must read-then-write. Wire the upsert mutation through the pgwire parser/planner.
-| 1 week
-| `src/network/postgres/` parser + `src/services/dml/`. Map conflict target (PK) to `Upsert`.
+| *Partial — implementation branch ready 2026-06-23*
+| `TableRecordMutationKind::Upsert` exists at the DML boundary; `feat/td-129-pgwire-upsert` wires `INSERT ... ON CONFLICT (pk) DO UPDATE / DO NOTHING` through `src/services/dml/mod.rs` and adds `tests/pgwire_upsert_on_conflict_e2e.rs`.
+| MVP merge gate
+| Rebase/merge the branch after `cargo test --test pgwire_upsert_on_conflict_e2e` passes on current `origin/develop`. Remaining post-MVP: non-PK/multi-column conflict targets and prior-version closure semantics in the table-record writer.
 
 | TD-130
 | Graph — edge bulk-load
