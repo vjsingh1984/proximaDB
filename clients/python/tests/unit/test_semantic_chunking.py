@@ -23,10 +23,19 @@ from proximadb_sdk.chunking import (
 
 # Note: EnhancedSemanticChunker functionality has been consolidated into chunking strategies
 # This test needs to be updated for the new architecture
-from proximadb_sdk.embedding_interface import (
-    create_embedding_provider,
-    get_default_embedding_provider,
-)
+from proximadb_sdk.embedding_providers import get_provider
+
+
+def get_default_embedding_provider():
+    """Deterministic, offline embedding provider (core "simulated" registry
+    entry) replacing the removed legacy embedding helper."""
+    return get_provider("simulated")
+
+
+def create_embedding_provider(provider_type: str = "simulated", **kwargs):
+    """Drop-in for the removed legacy embedding factory: resolves a provider
+    by name from the `core` registry (offline "simulated" by default)."""
+    return get_provider(provider_type, **kwargs)
 
 
 @pytest.mark.skip(

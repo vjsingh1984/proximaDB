@@ -660,16 +660,21 @@ resolves all 15 providers (the #197 cloud set + the core local set + the 5 newly
   `sentence_transformer`) — functional dups of the canonical, registered `providers/local/*` —
   were removed. They subclassed the legacy base, were never registered, and had no live importers.
 
-*Retained (intentional scope boundary).* The standalone `proximadb_sdk.embedding_interface` root
-module (its own `EmbeddingProvider`/`EmbeddingConfig` + `create_embedding_provider` factory) is
-NOT deleted: it is a separate public module still consumed by the chunking concern and its tests,
-outside the `embedding_providers` overlay. Collapsing it would require rewriting working
-cross-concern (chunking) tests and is tracked with the chunking DI-seam item below.
-
-*Deferred (follow-up).*
-
-* *Embedding-provider DI seam for semantic chunking* — see the chunking "Deferred" item above;
-  folding `embedding_interface` into `core` belongs with that seam.
+*Legacy `embedding_interface` removed — DONE (2026-06-22, branch
+`refine/embedding-interface-removal`).* The standalone `proximadb_sdk.embedding_interface` root
+module (424 LOC: its own `EmbeddingProvider`/`EmbeddingConfig` ABC, the `BERT`/`Simulated`/`Cohere`
+providers, `EmbeddingProviderFactory`, `create_embedding_provider`, `get_default_embedding_provider`)
+was fully redundant with the `core` provider system after the System-B base-overlay collapse above,
+and has now been deleted. Production (`src/`) had ZERO references (re-confirmed before delete). The
+two dedicated `*_cov` tests OF the dead module (`test_embedding_interface.py` +
+`test_embedding_interface_cov.py`, 861 LOC) were deleted — `core` carries its own provider tests.
+The two cross-concern chunking tests that used it as a convenient embedding source
+(`test_chunking_refactored.py` via `get_default_embedding_provider`, `test_semantic_chunking.py` via
+the legacy factory) were *ported* onto the `core` registry's offline deterministic
+`get_provider("simulated")` provider, preserving their assertions and keeping them download-free; the
+`update_tests_real_server.py` template was repointed likewise. `git grep embedding_interface
+clients/python` is now empty, the lazy import boundary holds, and `get_provider(…)` still resolves
+all 15 registered providers. Total ~1285 LOC removed. **System-B collapse is now fully complete.**
 
 *Test isolation.* Same pre-existing hazard noted above: `test_emb_providers_local_cov` stubs
 `sentence_transformers` in `sys.modules`, which leaks to the real-model `requires_models`
