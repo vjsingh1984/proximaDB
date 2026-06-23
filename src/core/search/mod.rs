@@ -5,6 +5,7 @@ pub mod cross_modal_fusion;
 pub mod engine_benchmarks;
 pub mod filter_contract; // Filter contracts for hybrid search (Issue #38, SB-08)
 pub mod filter_pushdown_engine;
+pub mod fusion_route;
 pub mod hybrid;
 pub mod index_based_filter;
 pub mod integrated_search_optimization;
