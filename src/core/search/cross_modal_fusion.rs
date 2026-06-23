@@ -253,6 +253,29 @@ impl Fuser {
     }
 }
 
+/// Apply a relational **prefilter** (D2 — the NaviX semimask): the set of `oid`s satisfying a relational
+/// predicate is known *a priori*, so every source is restricted to those `oid`s **before** calibration
+/// and fusion — never by filtering the fused result afterward (postfilter). Prefiltering wins below
+/// ~50% selectivity (the common case) and keeps predicate/isolation semantics structural rather than a
+/// post-hoc predicate (D6).
+///
+/// `allowed` is `None` when there is no relational predicate (a no-op). `Some(set)` restricts every
+/// source to `set`; `Some(empty)` — the predicate matched nothing — correctly drops every candidate.
+/// The membership set comes from the OLTP secondary index (TD-127 `lookup_secondary`) or a range probe
+/// (TD-128). For dense integer id spaces a roaring bitset would replace the `HashSet<String>`; code
+/// `oid`s are strings, so a hash set is the natural representation.
+pub fn apply_prefilter(
+    sources: &mut [SourceCandidates],
+    allowed: Option<&std::collections::HashSet<String>>,
+) {
+    let Some(allowed) = allowed else {
+        return; // no relational constraint
+    };
+    for source in sources.iter_mut() {
+        source.scores.retain(|oid, _| allowed.contains(oid));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -398,5 +421,46 @@ mod tests {
         assert_eq!(items.len(), 2);
         let oids: Vec<&str> = items.iter().map(|i| i.oid.as_str()).collect();
         assert!(oids.contains(&"c") && oids.contains(&"d"));
+    }
+
+    /// Relational prefilter (D2): the predicate's `oid` set restricts every source BEFORE fusion, so the
+    /// fused result contains only predicate-satisfying `oid`s — not a postfilter on the fused list.
+    #[test]
+    fn prefilter_restricts_sources_then_fuses_only_survivors() {
+        use std::collections::HashSet;
+        let mut sources = vec![
+            src(SourceId::Vector, 1.0, &[("a", 0.9), ("b", 0.8), ("c", 0.1)]),
+            src(SourceId::Graph, 1.0, &[("b", 0.5), ("c", 0.4), ("d", 0.3)]),
+        ];
+        // Relational predicate matched {b, d} only.
+        let allowed: HashSet<String> = ["b", "d"].iter().map(|s| s.to_string()).collect();
+        apply_prefilter(&mut sources, Some(&allowed));
+
+        let (items, _) = Fuser::new(FusionPolicy::default()).fuse(sources, 10);
+        let oids: HashSet<&str> = items.iter().map(|i| i.oid.as_str()).collect();
+        assert_eq!(oids, ["b", "d"].into_iter().collect::<HashSet<&str>>());
+        // a and c (not in the predicate set) were dropped from BOTH sources before fusion.
+        assert!(!oids.contains("a") && !oids.contains("c"));
+    }
+
+    /// `None` mask = no relational predicate (no-op); `Some(empty)` = predicate matched nothing (drop all).
+    #[test]
+    fn prefilter_none_is_noop_and_empty_drops_all() {
+        use std::collections::HashSet;
+        let make = || vec![src(SourceId::Vector, 1.0, &[("a", 0.9), ("b", 0.8)])];
+
+        let mut none_sources = make();
+        apply_prefilter(&mut none_sources, None);
+        let (kept, _) = Fuser::new(FusionPolicy::default()).fuse(none_sources, 10);
+        assert_eq!(kept.len(), 2, "None = no predicate = no-op");
+
+        let mut empty_sources = make();
+        let empty: HashSet<String> = HashSet::new();
+        apply_prefilter(&mut empty_sources, Some(&empty));
+        let (dropped, _) = Fuser::new(FusionPolicy::default()).fuse(empty_sources, 10);
+        assert!(
+            dropped.is_empty(),
+            "empty mask = matched nothing = drop all"
+        );
     }
 }
