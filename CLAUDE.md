@@ -11,7 +11,7 @@ ProximaDB is a high-performance, cloud-native vector and graph database built in
 ProximaDB has shifted from a monolithic custom WAL/PAX architecture to an **Intelligent Multi-Engine Routing** system running over decoupled **Object Storage**.
 
 When modifying architecture or execution paths, you MUST adhere to the dual-path mandate:
-1. **Data Warehouse/Relational Workloads:** Driven by DataFusion/Polars executing over standard Parquet files managed by Iceberg manifests.
+1. **Data Warehouse/Relational Workloads:** Driven by DataFusion/Polars executing over standard Parquet files managed by Iceberg manifests. *(DataFusion is the **interim** OLAP engine; a native, push-based, morsel-driven vectorized OLAP engine is the build target, landing behind the same `ComputeBackend` seam — never assume DataFusion is the terminal OLAP backend. See `docs/12-design/NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc`.)*
 2. **Vector Search/ANN Workloads:** Driven by specialized high-performance engines (SST, HELIX, NOVA) utilizing the custom PAX block format.
 
 You must also strictly enforce SaaS Operational constraints:
