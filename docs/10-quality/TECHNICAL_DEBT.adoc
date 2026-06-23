@@ -490,6 +490,22 @@ a| *RESOLVED Mar 2026*: **Cypher query language fully implemented**. Complete Op
 | Retire `request_handlers.rs` `execute_hybrid_query` (hardcoded graph, no tenant) once the seam covers gRPC; collapse the 12-strategy engine to D4.
 | 1 week
 | Cleanup after F-A..F-C land.
+| TD-144
+| Embedded — relocate composition root out of `network::*` (co-design Pillar A)
+| P2
+| MED
+| *Open*
+| The service composition root `SharedServices` lives in `src/network/shared_services.rs` and constructs network-layer types inline (`network::grpc::{ObservabilityServiceImpl,GraphServiceImpl}`, `network::rest::v1::rank::RankServices`, `network::hybrid_search::HybridFullTextIndexMap`), so the fused embedded core depends *up* on the network module. A clean relocation to a transport-neutral home first requires decoupling those in-process handler-impl/index types out of `network::` (they are handler logic, not listeners). Then `network::multi_server` and `embedded` both depend *down* onto the neutral root. Co-design tenet 4 (vertical inside / standard outside).
+| 1-2 weeks
+| Blocked discovery from the embedded co-design plan; mechanical but wide. ServiceProfile (Pillar B) already shipped #236.
+| TD-145
+| Embedded — zero-copy Arrow C Data Interface boundary (co-design Pillar C)
+| P2
+| MED
+| *Open*
+| The Python↔Rust embedded boundary copies on the hot path: numpy is read zero-copy then `.to_vec()`-d into `Vec<Vec<f32>>` on insert, the Arrow path serializes via pyarrow IPC (`_arrow_source_to_ipc_bytes`), and results are rebuilt row-by-row into Python objects. Replace with the Arrow C Data Interface (`arrow::pyarrow` FFI) so columnar batches cross zero-copy — the dominant cost term of the boundary that *replaces* the deleted network dimension. Same seam serves Node.js. Baseline (FFI copy bytes, insert/search p50) recorded in `BENCHMARK_EVIDENCE.toml` (`embedded_ffi_boundary_zero_copy`), ratcheted on landing.
+| 2-3 weeks
+| Co-design tenets 1 & 4; gate on the recorded baseline. Port-free verification (Pillar F) shipped alongside #236.
 |===
 
 == Debt by Category

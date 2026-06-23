@@ -2259,6 +2259,7 @@ mod tests {
             &config.storage,
             None,
             Some(&config),
+            crate::network::multi_server::ServiceProfile::Embedded,
         )
         .await
         .expect("failed to initialize shared services for test app state");
