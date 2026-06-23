@@ -6539,6 +6539,7 @@ dependencies = [
  "proximadb-hardware",
  "proximadb-hardware-caps",
  "proximadb-iceberg-engine",
+ "proximadb-index-traits",
  "proximadb-index-types",
  "proximadb-kernel",
  "proximadb-multimodel-plan",
@@ -7003,6 +7004,18 @@ dependencies = [
  "serde_json",
  "tokio",
  "uuid",
+]
+
+[[package]]
+name = "proximadb-index-traits"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "proximadb-records",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -82,6 +82,10 @@ pub mod storage; // Storage and serialization // Integration with other systems
 // TD-064: Filterable metadata for predicate-aware HNSW
 pub mod filterable_metadata;
 
+// Storage↔index decoupling contract (DIP/ISP): boundary impl of the
+// `proximadb-index-traits` role traits for `AxisManager`.
+pub mod contract;
+
 // Shared utilities and types
 pub mod avro_analysis;
 /// Cluster manager for IVF-based index partitioning.
