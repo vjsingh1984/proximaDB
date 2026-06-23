@@ -176,6 +176,17 @@ impl MultiServer {
             .into_server()
     }
 
+    /// Build the canonical v2 document gRPC service. Mirrors
+    /// [`Self::canonical_graph_grpc_service`].
+    fn canonical_document_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_document_service_server::ProximaDocumentServiceServer<
+        crate::network::grpc::v2::ProximaDocumentServiceImpl,
+    >{
+        crate::network::grpc::v2::ProximaDocumentServiceImpl::new(services.request_handlers.clone())
+            .into_server()
+    }
+
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
     pub fn new(
@@ -584,6 +595,7 @@ impl MultiServer {
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -1088,6 +1100,7 @@ impl MultiServer {
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1466,6 +1479,7 @@ impl MultiServer {
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind

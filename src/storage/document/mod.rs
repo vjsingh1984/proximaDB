@@ -148,6 +148,27 @@ impl DocumentRecord {
         }
     }
 
+    /// Build a record directly from a neutral [`ProximaTree`] body — the v2
+    /// (ProximaValue-native) path, with no v1 `SqlObject` detour. Mirrors
+    /// [`Self::new`]'s version/timestamp convention.
+    pub fn from_tree(
+        id: String,
+        props: ProximaTree,
+        collection_id: String,
+        schema_id: Option<String>,
+        document_type: Option<String>,
+    ) -> Self {
+        Self {
+            id,
+            props,
+            version: 1,
+            collection_id,
+            updated_at_ns: chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0),
+            schema_id,
+            document_type,
+        }
+    }
+
     /// Create from proto DocumentContent
     pub fn from_proto(id: String, content: DocumentContent, collection_id: String) -> Result<Self> {
         let props = sql_object_to_proxima_tree(&content.document.unwrap_or_default());
