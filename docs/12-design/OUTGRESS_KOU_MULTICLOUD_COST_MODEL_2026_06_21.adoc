@@ -85,14 +85,17 @@ free) validates this exactly.
 
 Staged, solo-operator-optimized (lowest ops first):
 
-[cols="1,3,1",options="header"]
+[cols="1,4",options="header"]
 |===
-| Stage | Move | Tier
-| 1 | Region-affinity metered multi-tenant SaaS + KOU pass-through; same-region free; cloud+region-encoded endpoints | Free/Team/Pro (default)
-| 2 | Egress-free object storage (Cloudflare R2 / Tigris, $0 egress) *under* the data plane → read-egress structurally $0; recover via storage+ops | all tiers (architectural)
-| 3 | PrivateLink / Private Link / PSC as a paid connectivity add-on (kills the internet hop; break-even ~80–95 GB/mo on Azure) | Business
-| 4 | BYOC — data plane in the customer's own account (customer bears storage+egress directly; pull-based outbound-only control, no inbound); strongest compliance, heaviest per-customer ops | Enterprise (on demand)
+| Stage | Move
+| 1 | Region-affinity metered multi-tenant SaaS + KOU pass-through; same-region free; cloud+region-encoded endpoints
+| 2 | Egress-free object storage (Cloudflare R2 / Tigris, $0 egress) *under* the data plane → read-egress structurally $0; recover via storage+ops
+| 3 | PrivateLink / Private Link / PSC as a paid connectivity add-on (kills the internet hop; break-even ~80–95 GB/mo on Azure)
+| 4 | BYOC — data plane in the customer's own account (customer bears storage+egress directly; pull-based outbound-only control, no inbound); strongest compliance, heaviest per-customer ops
 |===
+
+Stage→tier packaging and pricing are commercial/GTM specifics tracked privately
+(see `OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`).
 
 Operator-mistake guardrails (evidence-backed): bill from *measured* (cloud,
 src-region, dst-region) tuples not flat rates; isolation structural not per-query;
@@ -136,7 +139,8 @@ is the per-GB NST axis `{premium, standard}` (`kou_rate_per_gb(..., network_tier
 default conservative Premium). Exact Standard volume ladder still to re-pin before
 quoting deep discounts.
 * Qualitative: customer acceptance of egress as a visible pass-through line vs
-bundled; realistic BYOC per-customer ops cost + minimum ACV for a solo operator.
+bundled; realistic BYOC per-customer operational cost. (Commercial viability
+thresholds are tracked privately — see `OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`.)
 
 Provenance: two adversarially-verified deep-research passes (AWS, then Azure/GCP;
 25 + 23 claims confirmed 3-0, 2 refuted/excluded) + in-session primary-source

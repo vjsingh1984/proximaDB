@@ -17,6 +17,7 @@ ProximaDB is undergoing a massive architectural shift to support a robust SaaS M
 2.  **SaaS Mandates:**
     *   **Isolation:** Multi-tenant path isolation via `DrPathBuilder` is mandatory. Do not write to root directories or raw schema locations.
     *   **Billing:** Code boundaries crossing into I/O or heavy compute must accept `TenantContext` to emit Prometheus metrics for billing.
+    *   **OSS/Enterprise boundary:** This is a **public OSS** repo (Apache-2.0). Product/GTM/TAM/pricing/revenue/sales/competitive-*business* strategy is private — it lives in the **`anvaiops`** repo, never here. OSS ships *capability + mechanism* only; competitive *architecture* analysis is fine, business/pricing is not. See `docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc` + `scripts/check_oss_boundary.py`.
 
 ## Domain-Specific Agent Guides
 For specific agentic workflows, refer to the documents in `docs/11-usecases/`:

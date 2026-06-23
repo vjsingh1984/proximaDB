@@ -630,7 +630,7 @@ flowchart LR
 | Time-series and event-sourcing are not fully surfaced in public APIs. Distributed consensus not productized in runtime path. High unwrap/expect footprint. Experimental and production surfaces are insufficiently separated in docs/API behavior.
 
 | *Opportunities*
-| Market consolidation favors integrated platforms. FaunaDB shutdown validates self-hosted. "Context Database" category creation. ibkrtrading as reference implementation. Financial services is premium market. Agentic AI needs multi-model + low-latency.
+| Market consolidation favors integrated platforms. FaunaDB shutdown validates self-hosted. "Context Database" category creation. ibkrtrading as reference implementation. Agentic AI needs multi-model + low-latency.
 
 | *Threats*
 | PostgreSQL absorbing vectors (pgvectorscale: 471 QPS @ 99% recall). Major cloud vendors (AWS OpenSearch, Google AlloyDB) adding vector. SurrealDB targeting same multi-model space. Qdrant/Milvus adding graph and full-text.
@@ -1189,31 +1189,19 @@ WHERE ts.current_drawdown > 0.05;
 | Top 5
 |===
 
-=== 12.2 Business Metrics (Track Quarterly)
+=== 12.2 Adoption & Ecosystem Milestones (Track Quarterly)
+
+The technical/ecosystem milestones below are tracked here; commercial growth targets
+(GTM, adoption numbers) are tracked privately (see
+link:../12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc[OSS_ENTERPRISE_BOUNDARY]).
 
 [cols="1,2,2", options="header"]
 |===
-| Metric | Current | Target (12 months)
-
-| GitHub stars
-| N/A
-| 5,000+
-
-| Monthly active developers
-| N/A
-| 500+
+| Milestone | Current | Target
 
 | ibkrtrading databases replaced
 | 0 of 3
 | 3 of 3 (PostgreSQL, SQLite, JSONL)
-
-| Production deployments
-| 0
-| 10+
-
-| Conference talks
-| 0
-| 3+
 
 | Published benchmarks
 | 0
@@ -1296,7 +1284,6 @@ WHERE ts.current_drawdown > 0.05;
 * SurrealDB 2.x -- multi-model, ACID, 508K reads/sec
 * QuestDB -- sub-ms time-series queries, ASOF joins, used by trading firms
 * LanceDB -- embedded-first, Rust, Lance columnar format
-* Market size: $2.65B (2025) -> $8.95B (2030), CAGR 27.5%
 
 == Appendix B: ibkrtrading Technical Profile
 

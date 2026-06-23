@@ -300,6 +300,11 @@ docs/data/
 docs/metadata/
 docs/log/
 
+# OSS/enterprise boundary (OSS_ENTERPRISE_BOUNDARY_2026_06_17): commercial/business
+# & enterprise GTM/sales content is private — it lives in the anvaiops repo, never here.
+docs/_internal/business/
+docs/_internal/enterprise/
+
 # Generated test and benchmark data
 *.json
 !package.json

@@ -232,7 +232,7 @@ _Scale: External catalog integration, compute adapters, and deployment flexibili
 
 === SaaS MVP Operational Readiness [📅 Phase 3 -- CRITICAL]
 
-_Added June 04, 2026 to support the commercial revenue wedge._
+_Added June 04, 2026 to support the SaaS operational wedge._
 
 |===
 | Feature | Status | Priority | Notes

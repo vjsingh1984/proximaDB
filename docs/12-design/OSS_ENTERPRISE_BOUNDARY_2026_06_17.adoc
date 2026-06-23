@@ -75,6 +75,44 @@ leaks in non-gated OSS code.
 
 **No action (correctly generic):** `Tier1..Tier5` enum (already neutralized, commercial names only as serde aliases); `pooled`/`dedicated` infra terms; `EnterpriseAuthManager`/`SecurityMode::Enterprise` (architectural posture, not pricing); `*_cost_per_vector` (latency, not money); "control plane" (distributed-systems term); `DataFreshnessTier` (storage freshness). The commercial *surfaces* (revenue/sales/licensing/executive) are already `#[cfg(feature)]` OFF by default — good.
 
+=== 3.1 Remediation 2026-06-22 (docs/prose sweep + new code leaks)
+
+A second audit (prose + code) found commercial content that the §3 code-focused inventory missed.
+Forward-fix applied on branch `chore/oss-boundary-remediation`:
+
+* **Relocated to the private `anvaiops` repo** (removed from this public tree; commercial GTM/business,
+  not capability): `docs/_internal/business/competitive_advantages.adoc` (TAM/ARR/win-rates/market-
+  dominance playbook — was banner-marked "DO NOT PUBLISH" yet public), `docs/_internal/enterprise/README.adoc`
+  (support-tier/SLA packaging + sales motion), `docs/00-product/marketing/CONFERENCE_PRESENCE_STRATEGY.adoc`
+  ($901K GTM budget), `docs/04-operations/compliance/SOC2_COMPLIANCE_PLAN.adoc` (program budgets +
+  vendor commercial terms → replaced by a neutral `docs/04-operations/compliance/README.adoc` posture page).
+  A product-strategy GTM/TAM doc authored this session was also kept in `anvaiops`, never landed here.
+* **Gitignored** `docs/_internal/business/` and `docs/_internal/enterprise/` (the misnamed `docs/_internal/`
+  tree is otherwise git-tracked and ships publicly — surgical scope chosen).
+* **Genericized in place** (stripped $ market-sizing/TAM/ARR/win-rates/budgets/funding-asks, kept the
+  technical/mechanism content): `COMPETITIVE_LANDSCAPE.adoc`, `CODESIGN_DIMENSIONAL_ARCHITECTURE` §6 + the
+  per-dimension TAM paragraphs (reframed to the neutral KSU/KRU/KIU/KEU *meters*), `DATA_WAREHOUSE…
+  COURSE_CORRECTION` §9, `proximadb-strategic-analysis.adoc`, `OUTGRESS_KOU…` staging ladder,
+  `_internal/EXECUTIVE_SUMMARY.adoc`, `MARKETPLACE_READINESS_CHECKLIST.adoc`, `STRATEGIC_ROADMAP.adoc`,
+  `VISION.adoc`.
+* **NEW P0 code leak — FIXED:** `crates/modalities/proximadb-embedding` `enum Tier { …Business,
+  Enterprise,Premium }` ("Mirrors the AnvaiOps commercial tier ladder") → neutralized to `Tier0..Tier6`
+  with `#[serde(alias)]` back-compat (same pattern as §3 item 1); `dr_metrics.rs` test fixture
+  `"business"` → `"standard"`.
+* **Guard hardened:** `scripts/check_oss_boundary.py` now flags bare commercial SKU enum variants
+  (`Business`/`Enterprise`/`Premium`/`Pro` in enum-decl/ref contexts, string-literal- and
+  compound-identifier-safe, with a `SecurityMode::`/`StoragePoolClass::` allowlist).
+
+**Remaining (follow-up TD):** `src/ai/**` (~280 KB) is an **un-gated** enterprise-BI/exec surface
+(`executive_dashboard`, `business_intelligence`, revenue insights) — should be `#[cfg(feature)]`-gated
+like `src/{revenue,sales,licensing,executive}`. Its commercial terms are string copy (no real $/secrets),
+so it is P1, deferred to a focused gating PR.
+
+**History scrub:** the relocated files + old genericized content remain in *git history* on `develop`
+**and `main`**. A scrub (filter-repo path-removal + `--replace-text`) + force-push is prepared (runbook)
+and pending; `main` branch protection was lifted (backup saved) for it. No real secrets were found — this
+is a confidentiality scrub, not a credential-compromise response.
+
 == 4. Architecture: the sanctioned seams (ports)
 
 ----

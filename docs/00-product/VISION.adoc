@@ -502,7 +502,8 @@ organization-wide adoption.
 
 **Channels**: enterprise documentation, reference architectures, ROI calculators, partner program.
 
-**Exit criteria**: 2+ enterprise contracts, SOC 2 certification, published TCO comparison.
+**Exit criteria**: enterprise-grade governance capabilities (multi-tenancy, RBAC, audit logging,
+SLA tooling) validated in production deployments, SOC 2 certification, published TCO comparison.
 
 == Related Documents
 

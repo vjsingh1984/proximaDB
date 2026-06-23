@@ -165,15 +165,10 @@ This document tracks ProximaDB's readiness for cloud marketplace offerings acros
 | CloudWatch metrics integration
 | PENDING
 
-| 8
-| Pricing model (hourly, annual)
-| PENDING
-
-| 9
-| AWS SaaS Contract integration
-| PENDING
-
 |===
+
+Marketplace pricing/billing/contract integration is a commercial concern tracked
+privately (see `../../../12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`).
 
 === Azure Marketplace
 
@@ -203,10 +198,6 @@ This document tracks ProximaDB's readiness for cloud marketplace offerings acros
 
 | 6
 | Azure Monitor integration
-| PENDING
-
-| 7
-| Azure SaaS offer setup
 | PENDING
 
 |===
@@ -590,47 +581,34 @@ flowchart TB
 | PENDING
 
 | 2
-| Pricing documentation
-| PENDING
-
-| 3
-| Terms of service
-| PENDING
-
-| 4
-| EULA
-| PENDING
-
-| 5
 | Support policy
 | PENDING
 
 |===
 
+Pricing documentation, Terms of Service, and EULA are commercial/legal artifacts
+tracked privately (see `../../../12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`).
+
 == Launch Timeline
 
-=== Phase 1: AWS Marketplace (Target: Q1 2025)
+The technical packaging milestones below are the OSS-relevant deliverables;
+marketplace listing, metering, and billing integration are commercial steps tracked
+privately (see `../../../12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`).
+
+=== Phase 1: AWS (Target: Q1 2025)
 
 1. Complete Docker optimization
 2. Create Helm chart
 3. Build CloudFormation templates
-4. Set up AWS Marketplace listing
-5. Configure metering/billing
-6. Launch private preview
+4. Launch private preview
 
-=== Phase 2: Azure Marketplace (Target: Q2 2025)
+=== Phase 2: Azure (Target: Q2 2025)
 
 1. Create ARM templates
-2. Set up Azure Marketplace offer
-3. Configure Azure billing integration
-4. Launch on Azure Marketplace
 
-=== Phase 3: GCP Marketplace (Target: Q2 2025)
+=== Phase 3: GCP (Target: Q2 2025)
 
 1. Create Deployment Manager templates
-2. Set up GCP Marketplace listing
-3. Configure Cloud Billing integration
-4. Launch on GCP Marketplace
 
 == Success Metrics
 

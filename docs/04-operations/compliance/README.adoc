@@ -1,0 +1,12 @@
+= Security & Compliance Posture
+:toc:
+
+ProximaDB OSS ships the *technical* security mechanisms — encryption at rest/in transit, RBAC,
+row-level security, audit logging, SSO/SAML hooks, and tenant isolation (`TenantContext`,
+`DrPathBuilder`). See `docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc` for what is in the
+open-source engine versus the enterprise layer.
+
+Formal compliance *programs* (e.g. SOC 2 audit planning, certifications, vendor/commercial terms)
+are operated as part of the commercial offering and are tracked privately, not in this public OSS
+repository. For enterprise security, compliance, or deployment inquiries, contact the maintainers
+through the private support channel referenced in `SECURITY.md`.

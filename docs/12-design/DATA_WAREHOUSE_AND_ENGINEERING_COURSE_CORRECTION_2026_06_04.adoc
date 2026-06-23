@@ -241,7 +241,7 @@ yet; WIRE = code exists but unwired; LIVE = extend an existing live path).
 pseudo-distributed execution, object-store persistence, **Volcano + DataFusion** +
 Specialized vector over pgwire/REST/gRPC, multi-tenant RLS, billing/quota. P2 (Polars)
 is optional/benchmark-gated and NOT on the MVP path; P4/P6/P7 harden + extend post-MVP;
-full distribution (Raft/sharding) is §9.2 Phase 6, funded by MVP revenue.
+full distribution (Raft/sharding) is a post-MVP phase.
 
 Secondary track (vector-era cleanup, not on the warehouse critical path):
 **TD-104 ROOT deletion** — the `UnifiedHandlers` monolith is vector-DB-era; the
@@ -283,9 +283,12 @@ ProximaDB’s foundational "moat" is providing zero-ETL multimodal capabilities 
 
 This architecture ensures that a single pgwire or REST request can join a Graph traversal result with a relational aggregation, filtered by a Vector similarity score—all without ever moving data outside the cluster.
 
-== 9. SaaS MVP Rollout and Commercial Strategy
+== 9. SaaS MVP Rollout (Operational Scope)
 
-To sustain development and fund the complex, fully distributed MPP roadmap, ProximaDB will be brought to market quickly via a focused **SaaS MVP offering**. This establishes a revenue generation loop and real-world operational feedback.
+ProximaDB is brought up quickly via a focused **SaaS MVP** to gather real-world
+operational feedback and prove the single-node pseudo-distributed path. Commercial/GTM
+specifics are tracked privately (see
+link:OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc[OSS_ENTERPRISE_BOUNDARY]).
 
 ### 9.1. The SaaS MVP Scope
 * **Deployment:** Single-node robust execution (pseudo-distributed worker seam) running in a managed Kubernetes or ECS environment.
@@ -295,10 +298,6 @@ To sustain development and fund the complex, fully distributed MPP roadmap, Prox
   2. **Analytical (DataFusion):** Core aggregation, filtering, and projection via Postgres wire over Parquet/Iceberg.
 * **Multi-Tenancy:** Hardened tenant isolation via `xCatalog` policy boundaries, RLS (Row-Level Security), and tenant-aware metrics.
 * **Billing/Quota:** Built-in budget guards, rate limiting, and exact request/byte-level metering.
-
-### 9.2. Commercial Go-to-Market
-* **Primary Wedge:** Position ProximaDB as a **Postgres-compatible AI Database**. It functions as a drop-in replacement for standard analytics and vector search, eliminating the need to sync data between Postgres and a standalone Vector DB like Pinecone or Qdrant.
-* **Revenue Engine:** The MVP provides the core capabilities needed for Agentic Intelligence (RAG, memory) and data warehousing on a consumption-based pricing model. The revenue generated will fund Phase 6 (Active Memory & Collective Reasoning) and the fully distributed cluster consensus mechanisms (Raft, distributed sharding) required for petabyte-scale MPP.
 
 == 10. Operational SaaS Mandates (The Non-Negotiables)
 

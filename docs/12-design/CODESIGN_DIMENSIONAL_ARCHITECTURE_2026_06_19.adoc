@@ -12,8 +12,10 @@ software-defined cloud database. It treats ProximaDB's five physical dimensions 
 network, local disk/cache, compute-per-modality, and governance/security) not as independently
 optimized layers behind clean APIs, but as one system co-optimized against the measured *trace
 distribution* of each workload, toward the dimension's *dominant cost term*, while keeping the seams
-clean enough to enforce isolation/billing and to evolve. Each dimension is also a *Total Addressable
-Market* surface: the meter that prices it is the business.
+clean enough to enforce isolation/billing and to evolve. Each dimension is also a metered *TAM
+surface*: the per-dimension meter (KSU/KRU/KIU/KOU/cache/tier) is the unit a commercial layer prices.
+(Market-size figures and GTM specifics are commercial concerns tracked privately — see
+link:OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc[OSS_ENTERPRISE_BOUNDARY].)
 
 [IMPORTANT]
 ====
@@ -106,7 +108,7 @@ bytes/requests/latency actually paid. Every other lever in this document is tune
 
 For each dimension: the *physical cost/latency curve* (what the universe charges), the *co-design
 lever* ProximaDB owns, the *serverless decoupling boundary* (what scales independently and where the
-cold/warm cliff is), the *billing meter* (how it becomes revenue), and the *TAM*.
+cold/warm cliff is), and the *billing meter* (the per-dimension metering unit).
 
 === 2.1. Dimension 1 — Object Storage (durable base)
 
@@ -143,9 +145,8 @@ best-pruned* GETs and the warm path hit cache.
 fetch_pax_ranged) + `proximadb_storage_bytes_seconds`. → pricing units *KSU* (storage) and the read
 share of *KRU*.
 
-*TAM:* object storage is the substrate of the *data lakehouse market* — $3.5B–$14B (2025, scope
-dependent), ~20–25% CAGR — and underlies the *cloud-database/DBaaS* market at ~$24B (2025) → ~$70B
-(2031), 19.6% CAGR (Mordor).
+*Metered surface:* object storage is the durable-base meter (KSU + the read share of KRU); it is the
+substrate of the lakehouse / cloud-database surface this dimension addresses.
 
 === 2.2. Dimension 2 — Networking (data movement)
 
@@ -199,9 +200,9 @@ lossless byte-minimization (ZSTD on Flight, gzip at the gateway) for far clients
 previously-unmetered networking dimension — full multi-cloud model in
 link:OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc[OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21].
 
-*TAM:* networking is captured indirectly as the cost floor of every serverless DB; the
-disaggregation/RDMA research wave (GaussDB, PolarDB-MP, PVLDB 2024–2025) signals where the
-AI-infra-scale (~$160B, 2025) money flows.
+*Metered surface:* networking is the outgress meter (KOU) and the cost floor of every serverless DB;
+the disaggregation/RDMA research wave (GaussDB, PolarDB-MP, PVLDB 2024–2025) signals where the
+AI-infra investment is heading.
 
 === 2.3. Dimension 3 — Local Disk / Cache Tier (the latency bridge)
 
@@ -232,8 +233,8 @@ Snowflake/Databricks ~2–6 s, Neon ~500 ms cold resume vs Aurora ~15 s). Branch
 *Billing meter:* `proximadb_cache_tenant` (bytes/hits/misses/evictions/hit_ratio per tenant per
 cache) — already wired; drives both tenant-fair policy *and* a cache-tier upsell.
 
-*TAM:* the cache tier is the margin lever — it converts the same object-storage TAM into a
-higher-performance, higher-priced serverless tier (the warm-pool / provisioned-cache SKU).
+*Metered surface:* the cache tier is the performance lever — it converts the same object-storage
+surface into a higher-performance serverless tier (the warm-pool / provisioned-cache meter).
 
 === 2.4. Dimension 4 — Compute per Modality (specialized engines under one router)
 
@@ -273,20 +274,18 @@ provisionable; the router is the placement brain. Cold-start is masked by warm p
 bytes-scanned (from the I/O trace) for a per-TiB-scanned SKU. → pricing units *KRU* (read/compute)
 and *KIU* (ingest/index compute).
 
-*TAM:* the compute router is what lets ProximaDB address the *whole* cloud-database (~$24B) and
-serverless-database ($5.3B 2024 → $38.7B 2033, 21.7% CAGR) markets rather than only the narrow
-*vector-DB* segment (~$2.6–3B 2025 → ~$9B 2030, 27.5% CAGR — MarketsandMarkets). *This TAM gap is the
-core strategic argument for the multi-engine pivot:* the pure vector box is a rounding error against
-AI-infra (~$160B+); co-designing compute to serve relational + vector + graph + document over one
-lakehouse captures the larger, faster container.
+*Metered surface:* the compute router (KRU + KIU meters) is what lets ProximaDB address the *whole*
+cloud-database / serverless-database surface rather than only the narrow *vector-DB* segment. *This
+breadth is the core engineering argument for the multi-engine pivot:* co-designing compute to serve
+relational + vector + graph + document over one lakehouse spans a far larger workload surface than a
+single-modality vector box.
 
 === 2.5. Dimension 5 — Governance & Security (the enterprise margin surface)
 
-*Physical "curve":* governance has no byte cost — its cost is *trust and compliance*, and the market
-prices it steeply. The "SSO tax" is +87–500%+ over base (GitHub +425%, Airtable +500%, Figma +275%);
-BYOK/CMK, audit logs, and advanced RBAC are *edition-gated* across Snowflake (Business Critical),
-Databricks (Enterprise), MongoDB Atlas (+10% per cluster for auditing), Confluent (Dedicated-only).
-Compliance certs (SOC 2 $7.5K→$80K+, HIPAA BAA, FedRAMP) are hard *sales gates*.
+*Physical "curve":* governance has no byte cost — its cost is *trust and compliance*. Industry
+practice edition-gates BYOK/CMK, audit logs, and advanced RBAC, and treats compliance certs (SOC 2,
+HIPAA BAA, FedRAMP) as hard gates. (Specific vendor commercial terms are GTM intelligence tracked
+privately — see link:OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc[OSS_ENTERPRISE_BOUNDARY].)
 
 *Co-design lever — isolation enforced at the I/O boundary, not per-query predicate (P10):* the seam
 is the contract.
@@ -308,10 +307,9 @@ residency = deployment stamps per region, assigned by `TenantContext`.
 *Billing meter:* governance is metered as *tier entitlement* (`TenantContext.tier` claim + feature
 gates), not bytes — the highest-margin meter.
 
-*TAM:* data governance $3.35B (2023) → $12.66B (2030, 21.7% CAGR); data security platform $2.46B
-(2024) → $9.02B (2030, 23.2% CAGR); privacy management $5.07B (2025) → $17.63B (2031, 23% CAGR).
-Smaller than DBaaS but faster-growing and far higher margin — which is *why* it is the enterprise
-tier on top of a commoditizing compute/storage base.
+*Metered surface:* governance is the tier-entitlement meter — a smaller but higher-value surface than
+the compute/storage base, which is *why* it sits as the enterprise tier on top of a commoditizing
+compute/storage base.
 
 == 3. The Unified Cost Objective
 
@@ -405,23 +403,27 @@ one policy plane (TLS/authn/ABAC/tenant/rate-limit/trace) across pgwire+REST+gRP
 live pgwire-bypasses-middleware consistency gap. | network/multiplex+middleware, proximadb-security, io_trace; see link:IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc[edge HLD]
 |===
 
-== 6. TAM Summary (per dimension)
+== 6. Metered-Surface Summary (per dimension)
 
-[cols="1,2,2,2", options="header"]
+Each dimension carries its own metering unit — the per-dimension meter a commercial layer prices.
+(Market-size figures and CAGRs are commercial concerns tracked privately — see
+link:OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc[OSS_ENTERPRISE_BOUNDARY].)
+
+[cols="1,2,2", options="header"]
 |===
-| Dimension | Billing unit | Market anchor (2025→) | CAGR
-| Object storage | KSU + read-KRU | Data lakehouse $3.5–14B; DBaaS $24B→$70B (2031) | ~20–25% / 19.6%
-| Networking | KOU (shipped) | Cost floor of serverless DB; AI-infra ~$160B+ | ~25% (AI-infra)
-| Local disk / cache | cache-tier SKU | Margin lever on storage TAM (warm-pool SKU) | —
-| Compute / modality | KRU + KIU | Serverless DB $5.3B→$38.7B (2033); vector-DB $2.6B→$9B (2030) | 21.7% / 27.5%
-| Governance / security | tier entitlement | Governance $3.35B→$12.66B; data-security $2.46B→$9.02B | 21.7% / 23.2%
+| Dimension | Billing unit (meter) | Surface addressed
+| Object storage | KSU + read-KRU | Data lakehouse / DBaaS durable base
+| Networking | KOU | Outgress floor of serverless DB; AI-infra data movement
+| Local disk / cache | cache-tier meter | Performance tier on the storage surface (warm-pool)
+| Compute / modality | KRU + KIU | Cloud-database / serverless-database compute surface
+| Governance / security | tier entitlement | Governance / data-security / privacy surface
 |===
 
-*Strategic read:* the narrow vector-DB box (~$2.6–3B) is where the brand was born but is a rounding
-error against the cloud-database (~$24B), lakehouse, serverless, and AI-infra (~$160B+) containers.
-Co-design across the five dimensions — one engine, one router, one trace-driven cost model, open
-seams — is precisely the move that lets ProximaDB price *each dimension as its own surface* and
-address the larger, faster-growing markets rather than competing only inside the vector segment.
+*Engineering read:* the narrow single-modality vector box is where the brand was born but is a small
+slice of the cloud-database, lakehouse, serverless, and AI-infra surfaces. Co-design across the five
+dimensions — one engine, one router, one trace-driven cost model, open seams — is precisely the move
+that lets ProximaDB meter *each dimension as its own surface* and address the broader workload
+container rather than competing only inside the vector segment.
 
 == 7. Mandate Deltas
 

@@ -50,8 +50,11 @@ governance, and faster AI delivery.
 * **Risk**: Performance variance by workload. +
   **Mitigation**: explicit engine selection and benchmark-driven guidance.
 
-== Decision Requests
+== Next Steps
 
-* Approve a builder-first adoption plan with milestone-driven executive check-ins.
-* Fund the catalog and storage-format contract as the platform foundation.
-* Agree on 2-3 lighthouse use cases to validate ROI within one quarter.
+* Pursue a builder-first adoption path, validated incrementally against top use cases.
+* Treat the catalog and storage-format contract as the platform foundation.
+* Identify 2-3 lighthouse use cases to validate the value model.
+
+Commercial/GTM and funding specifics are tracked privately (see
+`docs/12-design/OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc`).
