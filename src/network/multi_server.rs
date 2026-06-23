@@ -96,8 +96,8 @@ use crate::security::SecurityCoordinator;
 #[cfg(feature = "cluster")]
 pub use proximadb_runtime::bootstrap_config::ClusterServerConfig;
 pub use proximadb_runtime::bootstrap_config::{
-    ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServerConfig, PostgresServerConfig,
-    RestHttpServerConfig, ServerStatus, TLSConfig,
+    ArrowIpcServerConfig, BindTarget, GrpcHttpServerConfig, MultiServerConfig,
+    PostgresServerConfig, RestHttpServerConfig, ServerStatus, TLSConfig,
 };
 
 // SharedServices extracted to src/network/shared_services.rs
@@ -625,7 +625,7 @@ impl MultiServer {
                 server = server.add_service(reflection_service);
             }
 
-            let grpc_bind_addr = self.config.grpc_bind_address();
+            let grpc_bind_target = self.config.grpc_bind_target();
 
             // Determine the TLS mode for logging
             let mode = if mtls_enabled && cert_path.is_some() && ca_path.is_some() {
@@ -636,21 +636,38 @@ impl MultiServer {
                 "plaintext"
             };
 
-            // Start the gRPC server (TLS already configured at builder level if needed)
+            // Start the gRPC server (TLS already configured at builder level if needed).
+            // TCP in server mode; a Unix-domain socket in portless embedded mode.
+            let grpc_target_log = format!("{grpc_bind_target:?}");
             let grpc_handle = tokio::spawn(async move {
-                if let Err(e) = server.serve(grpc_bind_addr).await {
+                let result = match grpc_bind_target {
+                    BindTarget::Tcp(addr) => server.serve(addr).await,
+                    BindTarget::Uds(path) => match crate::network::uds::bind_unix_listener(&path) {
+                        Ok(listener) => {
+                            let incoming =
+                                tokio_stream::wrappers::UnixListenerStream::new(listener);
+                            server.serve_with_incoming(incoming).await
+                        }
+                        Err(e) => {
+                            tracing::error!("gRPC UDS bind failed at {}: {}", path.display(), e);
+                            return;
+                        }
+                    },
+                };
+                if let Err(e) = result {
                     tracing::error!("gRPC server error: {}", e);
                 }
             });
             handles.push(grpc_handle);
-            info!("gRPC Server started on {} ({})", grpc_bind_addr, mode);
+            info!("gRPC Server started on {} ({})", grpc_target_log, mode);
         }
 
         // Start Arrow IPC (Flight) server on port 5680 if configured
         if self.config.arrow_ipc_config.enable_arrow_ipc {
             info!("🔗 Starting Arrow IPC Server on port 5680");
 
-            let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
+            let arrow_bind_target = self.config.arrow_bind_target();
+            let arrow_target_log = format!("{arrow_bind_target:?}");
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
@@ -668,7 +685,7 @@ impl MultiServer {
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
 
-                match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
+                match ArrowFlightServer::new(arrow_bind_target, request_handlers)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
@@ -686,7 +703,7 @@ impl MultiServer {
             });
 
             handles.push(arrow_handle);
-            info!("✅ Arrow IPC Server started on {}", arrow_bind_addr);
+            info!("✅ Arrow IPC Server started on {}", arrow_target_log);
         }
 
         // Start REST server on port 5678 if configured
@@ -694,6 +711,16 @@ impl MultiServer {
             info!("📡 Starting REST Server on port 5678");
 
             let rest_bind_addr = self.config.http_bind_address();
+            // Portless mode: serve REST over a Unix-domain socket. `/health`
+            // stays reachable over it (the SDK readiness probe does an HTTP GET).
+            let rest_uds_path = match self.config.rest_bind_target() {
+                BindTarget::Uds(p) => Some(p),
+                BindTarget::Tcp(_) => None,
+            };
+            let rest_target_log = rest_uds_path
+                .as_ref()
+                .map(|p| format!("unix:{}", p.display()))
+                .unwrap_or_else(|| rest_bind_addr.to_string());
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let metrics_collector = services.metrics_collector.clone();
@@ -754,6 +781,7 @@ impl MultiServer {
                     Some(discovery_service_for_rest),
                     Some(external_collection_service_for_rest),
                 )
+                .with_uds_path(rest_uds_path)
                 .start()
                 .await
                 {
@@ -767,7 +795,7 @@ impl MultiServer {
             });
 
             handles.push(rest_handle);
-            info!("✅ REST Server started on {}", rest_bind_addr);
+            info!("✅ REST Server started on {}", rest_target_log);
         }
 
         // Start PostgreSQL wire protocol server on port 5433 if configured
@@ -1559,7 +1587,11 @@ impl MultiServer {
         if self.config.arrow_ipc_config.enable_arrow_ipc {
             info!("Starting Arrow IPC Server on port 5680");
 
-            let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
+            // Cluster mode is TCP-only; portless (UDS) is a single-node embedded
+            // path. Wrap the addr as a TCP bind target to match the generalized
+            // `ArrowFlightServer::new` signature.
+            let arrow_bind_target =
+                BindTarget::Tcp(self.config.arrow_ipc_config.active_bind_address());
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
@@ -1577,7 +1609,7 @@ impl MultiServer {
             let arrow_handle = tokio::spawn(async move {
                 use crate::network::arrow_ipc::ArrowFlightServer;
 
-                match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
+                match ArrowFlightServer::new(arrow_bind_target, request_handlers)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)

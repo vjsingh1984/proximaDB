@@ -198,6 +198,8 @@ pub mod server_builder;
 /// Shared business-logic service composition layer (SharedServices)
 pub mod shared_services;
 pub mod tls;
+/// Unix-domain socket binding helpers for portless ("embedded") transport mode.
+pub mod uds;
 
 pub use metrics_service::*;
 pub use middleware::*;

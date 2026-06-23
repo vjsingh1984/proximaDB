@@ -57,8 +57,10 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -69,6 +71,11 @@ from typing import (
     Protocol,
     runtime_checkable,
 )
+
+UDS_REST_SOCKET_NAME = "proximadb-embedded.rest.sock"
+UDS_GRPC_SOCKET_NAME = "proximadb-embedded.grpc.sock"
+UDS_FLIGHT_SOCKET_NAME = "proximadb-embedded.flight.sock"
+UDS_SOCKET_PATH_LIMIT = 100
 
 # =============================================================================
 # Embedding Model Abstraction
@@ -464,11 +471,20 @@ class EmbeddedConfig:
     """Configuration for embedded ProximaDB."""
 
     data_dir: str = field(default_factory=lambda: str(Path.home() / ".proximadb"))
-    rest_port: int = 15678  # Use non-standard port to avoid conflicts
-    grpc_port: int = 15679
+    rest_port: int = 15678  # Use non-standard port to avoid conflicts (TCP mode only)
+    grpc_port: int = 15679  # TCP mode only
+    arrow_flight_port: int = 15680  # TCP mode only
     log_level: str = "warn"
     memory_flush_size_mb: int = 16
     cache_size_mb: int = 128
+
+    # Transport for the embedded server's REST/gRPC/Arrow Flight surfaces:
+    #   "uds" (default) — PORTLESS: bind Unix-domain sockets, no TCP ports at all.
+    #   "tcp"           — legacy: bind the *_port fields on loopback.
+    # Portless is the embedded default precisely because the *_port values are a
+    # collision footgun for concurrent embedded instances.
+    transport: str = "uds"
+    socket_dir: str | None = None
 
     # Engine selection (opinionated defaults for code knowledge store)
     vector_engine: str = "SST"  # Best for real-time code indexing
@@ -676,16 +692,111 @@ class EmbeddedProximaDB:
 
         # Resolve data directory
         self._data_dir = Path(self.config.data_dir).expanduser()
+        self._socket_dir = self._resolve_socket_dir()
 
     @property
     def rest_url(self) -> str:
         """REST API URL."""
+        if self._is_uds_transport:
+            return "http://localhost"
         return f"http://localhost:{self.config.rest_port}"
 
     @property
     def grpc_url(self) -> str:
         """gRPC URL."""
+        if self._is_uds_transport:
+            return f"unix://{self.grpc_socket_path}"
         return f"localhost:{self.config.grpc_port}"
+
+    @property
+    def arrow_flight_url(self) -> str:
+        """Arrow Flight URL."""
+        if self._is_uds_transport:
+            return f"unix://{self.arrow_flight_socket_path}"
+        return f"grpc://localhost:{self.config.arrow_flight_port}"
+
+    @property
+    def _is_uds_transport(self) -> bool:
+        return self.config.transport.lower() == "uds"
+
+    @property
+    def socket_dir(self) -> Path | None:
+        return self._socket_dir
+
+    @property
+    def rest_socket_path(self) -> Path:
+        if self._socket_dir is None:
+            raise RuntimeError("REST socket path is only available in UDS transport mode")
+        return self._socket_dir / UDS_REST_SOCKET_NAME
+
+    @property
+    def grpc_socket_path(self) -> Path:
+        if self._socket_dir is None:
+            raise RuntimeError("gRPC socket path is only available in UDS transport mode")
+        return self._socket_dir / UDS_GRPC_SOCKET_NAME
+
+    @property
+    def arrow_flight_socket_path(self) -> Path:
+        if self._socket_dir is None:
+            raise RuntimeError("Arrow Flight socket path is only available in UDS transport mode")
+        return self._socket_dir / UDS_FLIGHT_SOCKET_NAME
+
+    @staticmethod
+    def _toml_string(value: str | Path) -> str:
+        return str(value).replace("\\", "\\\\").replace('"', '\\"')
+
+    @staticmethod
+    def _uds_paths_fit(socket_dir: Path) -> bool:
+        return all(
+            len(str(socket_dir / name).encode("utf-8")) < UDS_SOCKET_PATH_LIMIT
+            for name in (
+                UDS_REST_SOCKET_NAME,
+                UDS_GRPC_SOCKET_NAME,
+                UDS_FLIGHT_SOCKET_NAME,
+            )
+        )
+
+    def _fallback_socket_dir(self) -> Path:
+        for root in (Path(tempfile.gettempdir()), Path("/tmp")):
+            candidate = root / f"pxdb-{uuid.uuid4().hex[:12]}"
+            if self._uds_paths_fit(candidate):
+                return candidate
+        raise RuntimeError("Unable to derive a Unix-domain socket path under the OS path limit")
+
+    def _resolve_socket_dir(self) -> Path | None:
+        if not self._is_uds_transport:
+            return None
+        if os.name != "posix":
+            raise RuntimeError("Embedded UDS transport requires a POSIX platform")
+
+        if self.config.socket_dir:
+            socket_dir = Path(self.config.socket_dir).expanduser()
+        else:
+            socket_dir = self._data_dir / "sockets"
+
+        if self._uds_paths_fit(socket_dir):
+            return socket_dir
+        return self._fallback_socket_dir()
+
+    def _http_client(self, **kwargs):
+        import httpx
+
+        if self._is_uds_transport:
+            return httpx.AsyncClient(
+                transport=httpx.AsyncHTTPTransport(uds=str(self.rest_socket_path)),
+                **kwargs,
+            )
+        return httpx.AsyncClient(**kwargs)
+
+    def _sync_http_client(self, **kwargs):
+        import httpx
+
+        if self._is_uds_transport:
+            return httpx.Client(
+                transport=httpx.HTTPTransport(uds=str(self.rest_socket_path)),
+                **kwargs,
+            )
+        return httpx.Client(**kwargs)
 
     def _find_binary(self) -> str:
         """Find proximadb-server binary."""
@@ -747,14 +858,14 @@ class EmbeddedProximaDB:
 node_id = "embedded-node"
 bind_address = "127.0.0.1"
 port = {self.config.rest_port}
-data_dir = "{self._data_dir}"
+data_dir = "{self._toml_string(self._data_dir)}"
 
 [storage]
-metadata_url = "file://{self._data_dir}/metadata"
+metadata_url = "file://{self._toml_string(self._data_dir)}/metadata"
 mmap_enabled = true
 
 [[storage.storage_locations]]
-url = "file://{self._data_dir}/data"
+url = "file://{self._toml_string(self._data_dir)}/data"
 weight = 1
 tags = ["embedded"]
 
@@ -771,8 +882,15 @@ compression_level = 3
 [api]
 grpc_port = {self.config.grpc_port}
 rest_port = {self.config.rest_port}
+arrow_flight_port = {self.config.arrow_flight_port}
+transport = "{self.config.transport.lower()}"
 max_request_size_mb = 32
 timeout_seconds = 30
+"""
+        if self._socket_dir is not None:
+            config_content += f'socket_dir = "{self._toml_string(self._socket_dir)}"\n'
+
+        config_content += f"""
 
 [monitoring]
 metrics_enabled = false
@@ -817,9 +935,8 @@ prefetch_budget = 4
             start_time = time.time()
             while time.time() - start_time < timeout:
                 try:
-                    import httpx
-
-                    response = httpx.get(f"{self.rest_url}/health", timeout=1.0)
+                    with self._sync_http_client(timeout=1.0) as client:
+                        response = client.get(f"{self.rest_url}/health")
                     if response.status_code == 200:
                         self._started = True
                         return
@@ -919,12 +1036,10 @@ prefetch_budget = 4
                     "Either provide dimension or embedding_model."
                 )
 
-        import httpx
-
         # The canonical v2 endpoint takes a flat body with a STRING distance
         # metric and returns the created collection record (no {success} envelope).
         # An already-existing collection responds 409/CONFLICT, which is benign.
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/collections",
                 json={
@@ -962,9 +1077,7 @@ prefetch_budget = 4
         if name in self._collections:
             return self._collections[name]
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.get(
                 f"{self.rest_url}/api/v2/collections/{name}",
                 timeout=10.0,
@@ -992,9 +1105,7 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.delete(
                 f"{self.rest_url}/api/v2/collections/{name}",
                 timeout=30.0,
@@ -1014,9 +1125,7 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.get(
                 f"{self.rest_url}/api/v2/collections",
                 timeout=10.0,
@@ -1125,14 +1234,12 @@ prefetch_budget = 4
         records: list[dict[str, Any]],
     ) -> dict[str, Any]:
         """Insert ProximaRecord-shaped records into a collection."""
-        import httpx
-
         formatted = [
             self._normalize_record_payload(record, index)
             for index, record in enumerate(records)
         ]
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/collections/{collection_name}/records/batch",
                 json={
@@ -1169,8 +1276,6 @@ prefetch_budget = 4
         to ``/api/v2/collections/{name}/search`` and returns the flat
         ``results`` list (each item a dict with ``id``/``score``/``props``).
         """
-        import httpx
-
         body: dict[str, Any] = {
             "vector": [float(v) for v in query_vector],
             "top_k": top_k,
@@ -1178,7 +1283,7 @@ prefetch_budget = 4
         if filters:
             body["filters"] = self._to_typed_filters(filters)
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/collections/{collection_name}/search",
                 json=body,
@@ -1219,13 +1324,11 @@ prefetch_budget = 4
         returns the count actually deleted (a 404 for an absent id is treated as
         "nothing to delete", not an error — delete is idempotent).
         """
-        import httpx
-
         if not ids:
             return 0
 
         deleted = 0
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             for record_id in ids:
                 response = await client.delete(
                     f"{self.rest_url}/api/v2/collections/{collection_name}"
@@ -1245,9 +1348,7 @@ prefetch_budget = 4
         collection_name: str,
     ) -> dict[str, Any]:
         """Get collection statistics."""
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.get(
                 f"{self.rest_url}/api/v2/collections/{collection_name}",
                 timeout=10.0,
@@ -1270,9 +1371,7 @@ prefetch_budget = 4
             return False
 
         try:
-            import httpx
-
-            async with httpx.AsyncClient() as client:
+            async with self._http_client() as client:
                 response = await client.get(
                     f"{self.rest_url}/health",
                     timeout=5.0,
@@ -1306,8 +1405,6 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {
             "name": name,
             "indexes": indexes or [],
@@ -1316,7 +1413,7 @@ prefetch_budget = 4
         if fulltext_paths:
             payload["fulltext_paths"] = fulltext_paths
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/document-collections",
                 json=payload,
@@ -1343,13 +1440,11 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {"document": document}
         if id:
             payload["id"] = id
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents",
                 json=payload,
@@ -1374,9 +1469,7 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.get(
                 f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 timeout=10.0,
@@ -1409,8 +1502,6 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         params: dict[str, Any] = {"limit": limit}
         if offset:
             params["skip"] = offset
@@ -1419,7 +1510,7 @@ prefetch_budget = 4
         if projection:
             params["projection"] = ",".join(projection)
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.get(
                 f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents",
                 params=params,
@@ -1446,11 +1537,9 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {"updates": updates}
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.patch(
                 f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 json=payload,
@@ -1475,9 +1564,7 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.delete(
                 f"{self.rest_url}/api/v2/document-collections/{collection_name}/documents/{doc_id}",
                 timeout=30.0,
@@ -1499,9 +1586,7 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.delete(
                 f"{self.rest_url}/api/v2/document-collections/{collection_name}",
                 timeout=30.0,
@@ -1535,8 +1620,6 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {
             "name": name,
             "timestamp_column": timestamp_column,
@@ -1546,7 +1629,7 @@ prefetch_budget = 4
         if retention_ms:
             payload["retention_ms"] = retention_ms
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/timeseries/collections",
                 json=payload,
@@ -1571,14 +1654,12 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {
             "collection_id": collection_name,
             "points": points,
         }
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/timeseries/{collection_name}/ingest",
                 json=payload,
@@ -1613,8 +1694,6 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {
             "collection_id": collection_name,
             "start_time": start_time,
@@ -1628,7 +1707,7 @@ prefetch_budget = 4
         if tag_filters:
             payload["tag_filters"] = tag_filters
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/timeseries/{collection_name}/query",
                 json=payload,
@@ -1657,8 +1736,6 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {
             "collection_id": collection_name,
             "start_time": start_time,
@@ -1666,7 +1743,7 @@ prefetch_budget = 4
             "pipeline": pipeline,
         }
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/timeseries/{collection_name}/aggregate",
                 json=payload,
@@ -1689,9 +1766,7 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.delete(
                 f"{self.rest_url}/api/v2/timeseries/collections/{collection_name}",
                 timeout=30.0,
@@ -1729,8 +1804,6 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
         payload = {
             "vector_collection": vector_collection,
             "query_vector": query_vector,
@@ -1744,7 +1817,7 @@ prefetch_budget = 4
         if fusion_params:
             payload["fusion_params"] = fusion_params
 
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.post(
                 f"{self.rest_url}/api/v2/hybrid/search",
                 json=payload,
@@ -1761,9 +1834,7 @@ prefetch_budget = 4
         if not self._started:
             await self.start()
 
-        import httpx
-
-        async with httpx.AsyncClient() as client:
+        async with self._http_client() as client:
             response = await client.get(
                 f"{self.rest_url}/api/v2/hybrid/strategies",
                 timeout=10.0,
@@ -2037,8 +2108,6 @@ class EmbeddedMultiModalQueryExecutor:
         3. Filtering by edge types if specified
         """
         try:
-            import httpx
-
             graph_id = component.get("graph_id", "")
             start_nodes = component.get("start_nodes")
             start_label = component.get("start_label")
@@ -2054,7 +2123,7 @@ class EmbeddedMultiModalQueryExecutor:
                 node_ids = start_nodes
             elif start_label:
                 # Query nodes by label via REST API
-                async with httpx.AsyncClient() as client:
+                async with self._db._http_client() as client:
                     response = await client.post(
                         f"{self._db.rest_url}/api/v2/graphs/{graph_id}/nodes/query",
                         json={"labels": [start_label]},
@@ -2072,7 +2141,7 @@ class EmbeddedMultiModalQueryExecutor:
             visited = set()
             queue = [(nid, 0) for nid in node_ids[:limit]]  # (node_id, depth)
 
-            async with httpx.AsyncClient() as client:
+            async with self._db._http_client() as client:
                 while queue and len(results) < limit:
                     node_id, depth = queue.pop(0)
 
@@ -2125,8 +2194,6 @@ class EmbeddedMultiModalQueryExecutor:
     ) -> list[dict[str, Any]]:
         """Execute document query component against embedded database."""
         try:
-            import httpx
-
             collection = component.get("collection", "")
             filter_expr = component.get("filter")
             text_query = component.get("text_query")
@@ -2148,7 +2215,7 @@ class EmbeddedMultiModalQueryExecutor:
                     filter_str = str(filter_expr)
 
             # Query documents via REST API
-            async with httpx.AsyncClient() as client:
+            async with self._db._http_client() as client:
                 response = await client.post(
                     f"{self._db.rest_url}/api/v2/document-collections/{collection}/query",
                     json={

@@ -46,6 +46,11 @@ pub struct RestServer {
     router: Router,
     bind_addr: SocketAddr,
     tls_config: Option<NetworkTlsConfig>,
+    /// Portless ("embedded") mode: when set, the plaintext server binds this
+    /// Unix-domain socket path instead of `bind_addr`'s TCP port. `bind_addr`
+    /// is still carried for logging. TLS + UDS is not supported (embedded is
+    /// always plaintext over the local socket).
+    uds_path: Option<PathBuf>,
 }
 
 /// Port-based service objects for wiring proximadb-api REST handlers.
@@ -664,7 +669,16 @@ impl RestServer {
             router,
             bind_addr,
             tls_config,
+            uds_path: None,
         }
+    }
+
+    /// Portless ("embedded") mode: serve the plaintext REST surface over the
+    /// given Unix-domain socket path instead of a TCP port. `None` (default)
+    /// keeps TCP. The `/health` readiness probe stays reachable over the UDS.
+    pub fn with_uds_path(mut self, uds_path: Option<PathBuf>) -> Self {
+        self.uds_path = uds_path;
+        self
     }
 
     /// Build a REST router for unified mode without starting a server.
@@ -996,6 +1010,21 @@ impl RestServer {
 
     /// Start the REST server without TLS (plaintext)
     async fn start_plaintext(self) -> anyhow::Result<()> {
+        // Portless ("embedded") mode: serve over a Unix-domain socket.
+        if let Some(uds_path) = self.uds_path.clone() {
+            tracing::info!(
+                "Starting REST server (plaintext) on unix:{}",
+                uds_path.display()
+            );
+            Self::log_endpoints(&self.bind_addr, false);
+            // axum 0.8 serves any `Listener`; tokio's UnixListener qualifies.
+            let listener = crate::network::uds::bind_unix_listener(&uds_path).map_err(|e| {
+                anyhow::anyhow!("REST UDS bind failed at {}: {}", uds_path.display(), e)
+            })?;
+            axum::serve(listener, self.router.into_make_service()).await?;
+            return Ok(());
+        }
+
         tracing::info!("Starting REST server (plaintext) on {}", self.bind_addr);
 
         Self::log_endpoints(&self.bind_addr, false);

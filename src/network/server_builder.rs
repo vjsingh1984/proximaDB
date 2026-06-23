@@ -735,6 +735,9 @@ impl MultiServerBuilder {
             unified_mode: self.api_config.as_ref().is_some_and(|c| c.unified_mode),
             unified_port: self.api_config.as_ref().map_or(5678, |c| c.unified_port),
             unified_bind_address: "0.0.0.0".to_string(),
+            // Portless (UDS) transport is wired post-build in database.rs from
+            // `[api].transport`/`socket_dir`; the builder always starts in TCP mode.
+            uds_socket_dir: None,
             // Cluster mode defaults
             #[cfg(feature = "cluster")]
             cluster_config: None, // Cluster mode disabled by default

@@ -1,10 +1,9 @@
 """Offline unit tests for proximadb_sdk.embedded.
 
-All HTTP transport is mocked. The embedded module instantiates
-``httpx.AsyncClient()`` lazily inside each method (``async with
-httpx.AsyncClient() as client:``), so we patch ``httpx.AsyncClient`` with a
-fake async-context-manager whose verb methods return a ``FakeResp``. We never
-start a real subprocess server or touch the network.
+All HTTP transport is mocked. The embedded module creates its HTTP clients
+lazily, so we patch ``httpx.AsyncClient`` with a fake async-context-manager
+whose verb methods return a ``FakeResp``. We never start a real subprocess
+server or touch the network.
 """
 
 import asyncio
@@ -86,10 +85,11 @@ class FakeAsyncClient:
     """
 
     calls = []
+    init_kwargs = []
     responder = staticmethod(lambda verb, url, **kw: FakeResp({"success": True}))
 
     def __init__(self, *a, **kw):
-        pass
+        FakeAsyncClient.init_kwargs.append(kw)
 
     async def __aenter__(self):
         return self
@@ -121,6 +121,7 @@ class FakeAsyncClient:
 def patched_http(monkeypatch):
     """Patch httpx.AsyncClient and return the fake so tests set the responder."""
     FakeAsyncClient.calls = []
+    FakeAsyncClient.init_kwargs = []
     FakeAsyncClient.responder = staticmethod(
         lambda verb, url, **kw: FakeResp({"success": True})
     )
@@ -299,15 +300,21 @@ def test_create_embedding_model_factory():
 
 def test_config_defaults_and_urls():
     db = EmbeddedProximaDB(data_dir="/tmp/x")
-    assert db.rest_url == f"http://localhost:{db.config.rest_port}"
-    assert db.grpc_url == f"localhost:{db.config.grpc_port}"
+    assert db.config.transport == "uds"
+    assert db.rest_url == "http://localhost"
+    assert db.grpc_url.startswith("unix://")
+    assert db.socket_dir == E.Path("/tmp/x/sockets")
+    assert db.rest_socket_path.name == E.UDS_REST_SOCKET_NAME
     assert isinstance(db.config, EmbeddedConfig)
 
 
 def test_config_override():
-    cfg = EmbeddedConfig(data_dir="/tmp/y", rest_port=20001, grpc_port=20002)
+    cfg = EmbeddedConfig(
+        data_dir="/tmp/y", rest_port=20001, grpc_port=20002, transport="tcp"
+    )
     db = EmbeddedProximaDB(config=cfg)
     assert db.config.rest_port == 20001
+    assert db.rest_url == "http://localhost:20001"
     assert "20002" in db.grpc_url
 
 
@@ -333,6 +340,16 @@ def test_generate_config_writes_toml(tmp_path):
     text = E.Path(path).read_text()
     assert "[server]" in text
     assert "embedded-node" in text
+    assert 'transport = "uds"' in text
+    assert "socket_dir" in text
+    assert "arrow_flight_port" in text
+
+
+def test_uds_socket_dir_falls_back_when_path_is_too_long(tmp_path):
+    db = EmbeddedProximaDB(data_dir=str(tmp_path / ("x" * 120)))
+    assert db.socket_dir is not None
+    assert db.socket_dir != db._data_dir / "sockets"
+    assert db._uds_paths_fit(db.socket_dir)
 
 
 def test_find_binary_on_path(monkeypatch):
@@ -432,7 +449,18 @@ def test_start_full_flow_then_timeout(monkeypatch, tmp_path):
         return _FakeProcess()
 
     monkeypatch.setattr(E.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(httpx, "get", lambda *a, **kw: FakeResp({}, 200))
+
+    class HealthClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *a, **kw):
+            return FakeResp({}, 200)
+
+    monkeypatch.setattr(db, "_sync_http_client", lambda **kw: HealthClient())
 
     run(db.start(timeout=5.0))
     assert db._started is True
@@ -446,10 +474,17 @@ def test_start_timeout_kills(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "_generate_config", lambda: "/tmp/cfg2.toml")
     monkeypatch.setattr(E.subprocess, "Popen", lambda args, **kw: _FakeProcess())
 
-    def bad_get(*a, **kw):
-        raise RuntimeError("connection refused")
+    class BadHealthClient:
+        def __enter__(self):
+            return self
 
-    monkeypatch.setattr(httpx, "get", bad_get)
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *a, **kw):
+            raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(db, "_sync_http_client", lambda **kw: BadHealthClient())
 
     killed = {"v": False}
     monkeypatch.setattr(db, "_kill_process", lambda: killed.__setitem__("v", True))
@@ -595,6 +630,7 @@ def test_create_collection_success(patched_http):
         "dimension": 4,
         "distance_metric": "euclidean",
     }
+    assert "transport" in patched_http.init_kwargs[-1]
 
 
 def test_create_collection_with_model_autodim(patched_http):
@@ -803,6 +839,17 @@ def test_delete_vectors_and_count(patched_http):
     assert calls[0] == ("DELETE", f"{db.rest_url}/api/v2/collections/c/records/a")
     assert calls[1] == ("DELETE", f"{db.rest_url}/api/v2/collections/c/records/b")
     assert run(col.count()) == 7
+
+
+def test_delete_vectors_skips_404(patched_http):
+    def responder(v, u, **kw):
+        if u.endswith("/missing"):
+            return FakeResp({}, 404)
+        return FakeResp({}, 204)
+
+    patched_http.responder = staticmethod(responder)
+    db = make_started_db()
+    assert run(db._delete_vectors("c", ["ok", "missing"])) == 1
 
 
 def test_collection_stats_error_returns_empty(patched_http):
