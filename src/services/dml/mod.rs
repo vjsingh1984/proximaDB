@@ -2745,14 +2745,25 @@ impl DmlService {
         ))
     }
 
-    /// Execute UPSERT statement
+    /// Execute `INSERT ... ON CONFLICT` (TD-129).
+    ///
+    /// The conflict target must reference the table's PRIMARY KEY: the record `oid`
+    /// is PK-derived (`build_mutation_record` → `to_mutation_record`), so an
+    /// idempotent re-push of the same key resolves to the same `oid` and updates the
+    /// row in place rather than duplicating it. Each proposed row is probed by key
+    /// (point `get_by_key`, no scan) and routed:
+    ///   * conflict + `DO UPDATE` → apply the assignments onto the existing row,
+    ///     reusing the standalone UPDATE applier. `excluded.<col>` references are
+    ///     pre-resolved to the literal the INSERT proposed for `<col>`.
+    ///   * conflict + `DO NOTHING` (no assignments) → skip the row (no write).
+    ///   * no conflict → insert the proposed row.
     async fn execute_upsert(
         &self,
         table_name: &str,
         columns: &[String],
         values: Vec<Vec<SqlValueLiteral>>,
-        _conflict_columns: &[String],
-        _update_assignments: Vec<(String, SqlValueLiteral)>,
+        conflict_columns: &[String],
+        update_assignments: Vec<(String, SqlValueLiteral)>,
         tenant_context: Option<&TenantContext>,
     ) -> Result<DmlResult> {
         let (catalog, table_id) = self
@@ -2767,6 +2778,35 @@ impl DmlService {
 
         // Get table schema
         let table_schema = catalog.get_table(&table_id).await?;
+
+        // The OLTP fast-lane upsert key is the primary key — the `oid` is derived
+        // from it. Require a PK and, when an explicit conflict target is given,
+        // require it to name that PK column (single-column). Non-PK / multi-column
+        // conflict targets fail closed rather than silently upserting by the wrong key.
+        let pk_column = Self::primary_key_column(&table_schema).ok_or_else(|| {
+            anyhow!(
+                "INSERT ... ON CONFLICT requires a PRIMARY KEY on table '{}'",
+                table_schema.name
+            )
+        })?;
+        if !(conflict_columns.is_empty()
+            || (conflict_columns.len() == 1
+                && conflict_columns[0].eq_ignore_ascii_case(&pk_column)))
+        {
+            return Err(anyhow!(
+                "ON CONFLICT target ({}) must reference the primary key column '{}' of table '{}'",
+                conflict_columns.join(", "),
+                pk_column,
+                table_schema.name
+            ));
+        }
+
+        // `DO NOTHING` carries no assignments; `DO UPDATE` always has at least one.
+        let do_update = !update_assignments.is_empty();
+        if do_update {
+            Self::validate_update_assignments(&update_assignments, &table_schema)?;
+        }
+
         let (write_intent, write_lane_decision) = Self::route_row_dml_write_intent(
             &table_schema,
             WriteOperationKind::Upsert,
@@ -2774,53 +2814,170 @@ impl DmlService {
         );
         Self::trace_row_dml_write_lane(&write_intent, &write_lane_decision);
 
-        let mut records = Vec::new();
-        let mut inserted_ids = Vec::new();
+        let mut mutations = Vec::new();
+        let mut affected_ids = Vec::new();
+        let mut batch_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut inserted = 0usize;
+        let mut updated = 0usize;
+        let mut skipped = 0usize;
 
         for row in values {
-            let record = self.build_mutation_record(
+            // The proposed row carries the full INSERT values and the PK-derived oid.
+            let new_record = self.build_mutation_record(
                 columns,
                 &row,
                 &table_schema,
                 RelationalMutationKind::Upsert,
             )?;
-            inserted_ids.push(record.oid.clone());
-            records.push(record);
+            let key = new_record.oid.clone();
+
+            // A conflict key may affect at most one row per statement (Postgres:
+            // "ON CONFLICT ... cannot affect row a second time").
+            if !batch_keys.insert(key.clone()) {
+                return Err(anyhow!(
+                    "ON CONFLICT cannot affect row '{}' a second time on table '{}': the conflict key appears more than once in this statement",
+                    key,
+                    table_schema.name
+                ));
+            }
+
+            let existing = self
+                .record_store
+                .get_by_key(
+                    &table_schema,
+                    TableRecordGetRequest {
+                        table_id: table_id.name.clone(),
+                        key: key.clone(),
+                        include_vector: true,
+                        include_props: true,
+                    },
+                    tenant_context,
+                )
+                .await?;
+
+            match existing {
+                Some(existing) if do_update => {
+                    let resolved = self.resolve_conflict_assignments(
+                        &update_assignments,
+                        columns,
+                        &row,
+                        &table_schema,
+                    )?;
+                    let merged =
+                        self.build_updated_proxima_record(existing, &resolved, &table_schema)?;
+                    affected_ids.push(merged.oid.clone());
+                    mutations.push(TableRecordMutation::new(
+                        TableRecordMutationKind::Update,
+                        merged,
+                    ));
+                    updated += 1;
+                }
+                Some(_) => {
+                    // DO NOTHING on a conflicting row.
+                    skipped += 1;
+                }
+                None => {
+                    affected_ids.push(key);
+                    mutations.push(TableRecordMutation::new(
+                        TableRecordMutationKind::Upsert,
+                        new_record,
+                    ));
+                    inserted += 1;
+                }
+            }
         }
 
-        let num_records = records.len();
-        let mutations = records
-            .into_iter()
-            .map(|record| TableRecordMutation::new(TableRecordMutationKind::Upsert, record))
-            .collect::<Vec<_>>();
-        let batch_result = self
-            .record_store
-            .write_mutations(&table_schema, mutations, tenant_context)
-            .await?;
-        if !batch_result.success {
-            return Err(anyhow!(
-                "Upsert failed: {}",
-                batch_result
-                    .errors
-                    .first()
-                    .cloned()
-                    .unwrap_or_else(|| "unknown error".to_string())
-            ));
+        if !mutations.is_empty() {
+            let batch_result = self
+                .record_store
+                .write_mutations(&table_schema, mutations, tenant_context)
+                .await?;
+            if !batch_result.success {
+                return Err(anyhow!(
+                    "Upsert failed: {}",
+                    batch_result
+                        .errors
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "unknown error".to_string())
+                ));
+            }
         }
 
         info!(
             table = %table_name,
-            rows = num_records,
+            inserted,
+            updated,
+            skipped,
             "Upserted rows"
         );
 
-        self.bump_row_count_stats(table_name, num_records as i64)
-            .await;
+        // Only freshly inserted rows change the row count; updates and skipped
+        // (DO NOTHING) conflicts do not.
+        if inserted > 0 {
+            self.bump_row_count_stats(table_name, inserted as i64).await;
+        }
 
+        // Affected = inserted + updated (Postgres does not count DO NOTHING skips).
+        let affected = (inserted + updated) as u64;
         Ok(
-            DmlResult::success(num_records as u64, format!("Upserted {} rows", num_records))
-                .with_inserted_ids(inserted_ids),
+            DmlResult::success(affected, format!("Upserted {} rows", affected))
+                .with_inserted_ids(affected_ids),
         )
+    }
+
+    /// Resolve an `ON CONFLICT DO UPDATE` assignment list for one inserted row by
+    /// substituting `excluded.<col>` references with the literal the INSERT proposed
+    /// for `<col>`. Plain literals, `DEFAULT`, `NULL`, functions, and bare references
+    /// to the existing row pass through unchanged so the shared UPDATE applier
+    /// (`build_updated_proxima_record`) handles them identically to a standalone
+    /// UPDATE. An `excluded.<col>` whose column the INSERT omitted falls back to
+    /// `DEFAULT` (filled by `CatalogRow::validate`).
+    fn resolve_conflict_assignments(
+        &self,
+        assignments: &[(String, SqlValueLiteral)],
+        insert_columns: &[String],
+        insert_row: &[SqlValueLiteral],
+        table_schema: &CatalogTableSchema,
+    ) -> Result<Vec<(String, SqlValueLiteral)>> {
+        // Synthesize the column list when the INSERT omitted it, mirroring
+        // `build_mutation_record`, so positional values map to columns identically.
+        let synthesized: Vec<String>;
+        let insert_columns: &[String] = if insert_columns.is_empty() && !insert_row.is_empty() {
+            synthesized = table_schema
+                .columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect();
+            &synthesized
+        } else {
+            insert_columns
+        };
+
+        let lookup_proposed = |col: &str| -> SqlValueLiteral {
+            insert_columns
+                .iter()
+                .zip(insert_row.iter())
+                .find(|(name, _)| name.eq_ignore_ascii_case(col))
+                .map(|(_, literal)| literal.clone())
+                .unwrap_or(SqlValueLiteral::Default)
+        };
+
+        Ok(assignments
+            .iter()
+            .map(|(target, value)| {
+                let resolved = match value {
+                    SqlValueLiteral::Column(reference) => match reference.split_once('.') {
+                        Some((qualifier, col)) if qualifier.eq_ignore_ascii_case("excluded") => {
+                            lookup_proposed(col)
+                        }
+                        _ => value.clone(),
+                    },
+                    _ => value.clone(),
+                };
+                (target.clone(), resolved)
+            })
+            .collect())
     }
 
     // ========================
