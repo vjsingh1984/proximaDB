@@ -53,6 +53,11 @@ pub mod consensus;
 pub mod distributed_ops;
 pub mod metadata_service;
 pub mod node_registry;
+/// Generation-fenced per-partition write leases over object storage (Phase 7):
+/// a peer holds a durable, fenced lease over one (tenant, collection) for
+/// contention-free local writes. Backs [`primary_pod_registry`]'s in-memory
+/// routing with a split-brain-safe durable authority.
+pub mod partition_lease;
 /// Write-side affinity for (tenant_id, collection_id) → primary_pod
 /// bindings. Complementary to [`cache_affinity`]: durable, authoritative,
 /// drives write routing. See module doc for the read/write split.
