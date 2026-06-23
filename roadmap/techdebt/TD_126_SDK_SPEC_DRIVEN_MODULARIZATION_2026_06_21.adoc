@@ -792,11 +792,32 @@ DSPy adapters.
 
 *Deferred (follow-up):*
 
-* *Pure metadata scan for Haystack `filter_documents`* — the SDK has no
-  vector-free scan endpoint, so the filter predicate is evaluated over a bounded
-  retrieval window (`max_filter_window`, default 10000) using a constant probe
-  vector. A true unbounded metadata-only scan needs a server-side scan API
-  (out of scope for an integration cleanup).
+* *Pure metadata scan for Haystack `filter_documents`* — SHIPPED (2026-06-22).
+  The server-side vector-free scan (`POST /api/v2/collections/{id}/records/scan`,
+  metadata-filtered + cursor-paginated) was already published in the OpenAPI spec
+  and the generated client (`_generated/rest/api/records/scan_records.py`), so this
+  was SDK wiring only — no spec/`_generated`/Rust edits (codegen-drift gate stays
+  green). Added a spec-driven `scan` surface that wires the GENERATED
+  `scan_records` (`sync`/`asyncio_detailed`) through the existing facade plumbing
+  (`protocols/_rest_codegen.scan_records` for sync, `_rest_codegen_async.scan_records`
+  for async): `ProximaDBClient.scan_page`/`scan` (sync) and
+  `ProximaDBAsyncUnified.scan_page`/`scan` (async). `scan_page` returns one page
+  `(records, next_cursor)`; `scan` follows the cursor page-to-page until exhausted
+  with a configurable `page_size` (clamped to `SCAN_MAX_PAGE` = 10000) and total-row
+  safety bound (`max_rows`, default `SCAN_DEFAULT_MAX_ROWS`). `rest_sync.scan_records`
+  maps each `RecordV2Response` into the public `SearchResult` type. Haystack
+  `filter_documents` was repointed off the dummy zero-vector ANN window onto the
+  real `scan`: it flattens the AND-combinable comparison subset of the Haystack 2.x
+  filter tree into the scan endpoint's typed `[{field,op,value}]` pushdown filter
+  (`_haystack_filters_to_scan_filter`) — the scan filter is a flat AND and lacks
+  OR/NOT/`not in`, so the full tree is additionally enforced client-side
+  (`_haystack_filter_matches`) over every scanned record for exact correctness.
+  Result: ALL matching documents are returned via cursor pagination (no ANN
+  ordering, no `top_k` cap); `max_filter_window` is now a total-row safety cap, not
+  an ANN window. `_convert_haystack_filters` (the #204 search-path conversion) is
+  unchanged. Unit tests: `tests/unit/test_scan_records.py` (sync+async filter build,
+  multi-page pagination, empty, max-rows) and `tests/unit/test_haystack_integration.py`
+  (filter conversions + `filter_documents` scans/paginates/narrows, not ANN).
 * *Native async SDK client (REST core ops)* — SHIPPED (2026-06-22). The
   spec-driven mandate now applies to async as well as sync (CLAUDE.md Core
   Directive #15 / GEMINI.md #29). `ProximaDBAsyncUnified` (`unified_client_async.py`)

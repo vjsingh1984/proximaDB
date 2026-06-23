@@ -587,6 +587,127 @@ class ProximaDBAsyncUnified:
         return results
 
     # ------------------------------------------------------------------
+    # Metadata scan (generated-async transport, REST-only)
+    # ------------------------------------------------------------------
+    #: Server-enforced upper bound on a single scan page (SCAN_RECORDS_MAX_PAGE).
+    SCAN_MAX_PAGE = 10_000
+    #: Default safety bound on the total rows ``scan`` accumulates across pages.
+    SCAN_DEFAULT_MAX_ROWS = 1_000_000
+
+    async def scan_page(
+        self,
+        collection_id: str,
+        *,
+        filter: list[dict[str, Any]] | dict[str, Any] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        include_vectors: bool = False,
+        include_text: bool = False,
+    ) -> tuple[list[SearchResult], str | None]:
+        """Scan a single page of records via the vector-free metadata-scan op.
+
+        Wires the generated async ``scan_records`` op. Returns
+        ``(records, next_cursor)`` (``next_cursor`` is ``None`` at end-of-scan).
+        ``filter`` is the scan endpoint's metadata-filter shape (typed list
+        ``[{field,op,value}]`` or equality map ``{field: value}``), pushed into
+        the scan predicate server-side. This is a true metadata scan with no ANN
+        ordering. The scan endpoint is REST-only (no gRPC scan surface).
+        """
+        from .protocols import _rest_codegen_async as _gen_async
+
+        body: dict[str, Any] = {
+            "include_vector": include_vectors,
+            "include_text": include_text,
+        }
+        if filter:
+            body["filter"] = filter
+        if limit is not None:
+            body["limit"] = limit
+        if cursor:
+            body["cursor"] = cursor
+
+        resp = await _gen_async.scan_records(
+            self._require_gen_client(), collection_id, body
+        )
+        parsed = resp.parsed
+        if parsed is None:
+            return [], None
+        data = parsed.to_dict()
+        if data.get("error") or data.get("error_message"):
+            err = data.get("error") or data.get("error_message")
+            if isinstance(err, str) and "not found" in err.lower():
+                return [], None
+            raise ProximaDBError(f"Scan failed: {err}")
+
+        results: list[SearchResult] = []
+        for rank, record in enumerate(data.get("records", []) or [], start=1):
+            if not isinstance(record, dict):
+                continue
+            props = record.get("props") if isinstance(record.get("props"), dict) else {}
+            results.append(
+                SearchResult(
+                    id=str(record.get("id", "")),
+                    score=0.0,
+                    rank=rank,
+                    vector=record.get("vector") if include_vectors else None,
+                    metadata=props,
+                    version=record.get("version"),
+                    timestamp=record.get("timestamp"),
+                    source=record.get("source"),
+                )
+            )
+        next_cursor = data.get("next_cursor") or None
+        return results, next_cursor
+
+    async def scan(
+        self,
+        collection_id: str,
+        *,
+        filter: list[dict[str, Any]] | dict[str, Any] | None = None,
+        page_size: int | None = None,
+        max_rows: int | None = None,
+        include_vectors: bool = False,
+        include_text: bool = False,
+    ) -> list[SearchResult]:
+        """Scan ALL records matching ``filter`` via cursor pagination (async).
+
+        Follows ``next_cursor`` page-to-page until end-of-scan, returning the
+        full matching set (not a bounded ANN window). ``max_rows`` (default
+        :attr:`SCAN_DEFAULT_MAX_ROWS`) bounds total accumulated rows.
+        """
+        cap = self.SCAN_DEFAULT_MAX_ROWS if max_rows is None else max_rows
+        per_page = self.SCAN_MAX_PAGE if page_size is None else page_size
+        per_page = max(1, min(per_page, self.SCAN_MAX_PAGE))
+
+        out: list[SearchResult] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while len(out) < cap:
+            page_limit = min(per_page, cap - len(out))
+            records, cursor = await self.scan_page(
+                collection_id,
+                filter=filter,
+                limit=page_limit,
+                cursor=cursor,
+                include_vectors=include_vectors,
+                include_text=include_text,
+            )
+            out.extend(records)
+            if not cursor:
+                break
+            if cursor in seen_cursors:
+                logger.warning(
+                    "scan: repeated cursor %s for %s; stopping to avoid a loop",
+                    cursor,
+                    collection_id,
+                )
+                break
+            seen_cursors.add(cursor)
+            if not records:
+                break
+        return out[:cap]
+
+    # ------------------------------------------------------------------
     # Graph operations (hand-written async REST/gRPC — not in OpenAPI spec)
     # ------------------------------------------------------------------
     async def graph_shortest_path(

@@ -2142,6 +2142,79 @@ class ProximaDBClient:
 
         return data
 
+    def scan_records(
+        self,
+        collection_id: str,
+        *,
+        filter: list[dict[str, Any]] | dict[str, Any] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        include_vector: bool = False,
+        include_text: bool = False,
+    ) -> tuple[list[SearchResult], str | None]:
+        """Vector-free metadata scan of one page of records (TD-099/TD-126).
+
+        Wires the generated ``scan_records`` operation (method/URL/body shape
+        sourced from the OpenAPI spec) through ``_make_request``. Returns the
+        page of records mapped to :class:`SearchResult` plus the server's
+        ``next_cursor`` (``None`` at end-of-scan).
+
+        ``filter`` accepts the scan endpoint's metadata-filter shapes: the typed
+        list form ``[{"field", "op", "value"}]`` or a simple equality map
+        ``{field: value}``; it is pushed into the scan predicate (applied before
+        the limit). This is a true metadata scan, not an ANN ranking.
+        """
+        body: dict[str, Any] = {
+            "include_vector": include_vector,
+            "include_text": include_text,
+        }
+        if filter:
+            body["filter"] = filter
+        if limit is not None:
+            body["limit"] = limit
+        if cursor:
+            body["cursor"] = cursor
+
+        call = _gen.scan_records(collection_id, body)
+        response = self._make_request(call.method, call.endpoint, json=call.json)
+        response_data = response.json()
+
+        if isinstance(response_data, dict) and response_data.get("error_message"):
+            error_msg = response_data.get("error_message")
+            if isinstance(error_msg, str) and "not found" in error_msg.lower():
+                return [], None
+            raise ProximaDBError(f"Scan failed: {error_msg}")
+        if not isinstance(response_data, dict):
+            logger.warning(
+                f"Expected dict scan response, got {type(response_data)}: "
+                f"{response_data}"
+            )
+            return [], None
+
+        records_data = response_data.get("records") or []
+        results: list[SearchResult] = []
+        for rank, record in enumerate(records_data, start=1):
+            if not isinstance(record, dict):
+                continue
+            metadata = record.get("props", record.get("metadata", {})) or {}
+            results.append(
+                SearchResult(
+                    id=str(record.get("id", "")),
+                    score=0.0,
+                    rank=rank,
+                    vector=(record.get("vector") if include_vector else None),
+                    metadata=metadata,
+                    version=record.get("version"),
+                    timestamp=record.get("timestamp"),
+                    source=record.get("source"),
+                )
+            )
+
+        next_cursor = response_data.get("next_cursor")
+        if not next_cursor:
+            next_cursor = None
+        return results, next_cursor
+
     def upsert_vectors(
         self,
         collection_id: str,
