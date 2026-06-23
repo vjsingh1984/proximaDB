@@ -91,6 +91,7 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeCreate(
             default_engine: engine_str,
             enable_wal: true,
             wal_sync_mode: "batch".to_string(),
+            ..EmbeddedConfig::default()
         };
 
         let db = EmbeddedProximaDB::new(config)
@@ -171,6 +172,7 @@ pub extern "system" fn Java_com_proximadb_embedded_ProximaDB_nativeCreateMultiDi
             default_engine: engine_str,
             enable_wal: true,
             wal_sync_mode: "batch".to_string(),
+            ..EmbeddedConfig::default()
         };
 
         let db = EmbeddedProximaDB::new(config)

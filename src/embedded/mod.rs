@@ -144,6 +144,14 @@ pub struct EmbeddedConfig {
     /// Node ID for leader election (only used in LeaderFollower mode)
     /// If not set, a random UUID will be generated
     pub node_id: Option<String>,
+    /// Logical tenant for the boundary governance contract (co-design tenet 3).
+    /// `None` (default) keeps the legacy single-tenant behavior byte-identical —
+    /// records are written with an empty `tenant_id` and the vector on-disk layout
+    /// (collection-keyed) is unchanged. When set, inserts are routed through the
+    /// same tenant-scoped path the networked server uses, so the boundary contract
+    /// is uniform and multi-tenant embedding becomes opt-in (no migration: embedded
+    /// vector paths are not tenant-keyed).
+    pub tenant_id: Option<String>,
 }
 
 impl Default for EmbeddedConfig {
@@ -170,6 +178,7 @@ impl Default for EmbeddedConfig {
             // Multi-process coordination defaults
             access_mode: AccessMode::Exclusive, // Default to exclusive access
             node_id: None,                      // Auto-generate if needed
+            tenant_id: None,                    // Single-tenant default (legacy behavior)
         }
     }
 }
@@ -203,6 +212,7 @@ impl EmbeddedConfig {
             rl_policy_path: Some(format!("{}/rl_policy.json", path)),
             access_mode: AccessMode::Exclusive, // Benchmarks use exclusive access
             node_id: None,
+            tenant_id: None,
         }
     }
 
@@ -230,6 +240,7 @@ impl EmbeddedConfig {
             rl_policy_path: None,
             access_mode: AccessMode::Exclusive, // Default to exclusive access
             node_id: None,
+            tenant_id: None,
         }
     }
 
@@ -256,6 +267,22 @@ impl EmbeddedConfig {
     /// * `node_id` - Unique identifier for this node
     pub fn with_node_id(mut self, node_id: impl Into<String>) -> Self {
         self.node_id = Some(node_id.into());
+        self
+    }
+
+    /// Set the logical tenant for the boundary governance contract.
+    ///
+    /// `None` (the default) keeps legacy single-tenant behavior; setting a tenant
+    /// opts the embedded database into the same tenant-scoped write path the
+    /// networked server uses. Embedded vector storage is collection-keyed (not
+    /// tenant-keyed), so this is non-breaking — existing data resolves unchanged.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let config = EmbeddedConfig::default().with_tenant("acme");
+    /// ```
+    pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
+        self.tenant_id = Some(tenant_id.into());
         self
     }
 }
@@ -1466,6 +1493,20 @@ impl EmbeddedProximaDB {
         })
     }
 
+    /// Build the optional governance `TenantContext` from the configured tenant.
+    ///
+    /// `None` (the default) means legacy single-tenant behavior — inserts take the
+    /// plain path and records keep an empty `tenant_id`. When a tenant is configured
+    /// (`EmbeddedConfig::with_tenant`), inserts route through the same tenant-scoped
+    /// path the networked server uses, making the boundary contract uniform
+    /// (co-design tenet 3). Non-breaking: embedded vector storage is collection-keyed.
+    fn embedded_tenant_context(&self) -> Option<crate::storage::tenant::context::TenantContext> {
+        self.config
+            .tenant_id
+            .clone()
+            .map(crate::storage::tenant::context::TenantContext::for_tenant_id)
+    }
+
     /// Insert vectors into a collection
     ///
     /// Supports batched inserts for better performance. Internally, vectors are
@@ -1488,15 +1529,22 @@ impl EmbeddedProximaDB {
 
         let count = records.len();
 
+        // Governance contract (co-design tenet 3): when a tenant is configured,
+        // route through the tenant-scoped insert the networked path uses; otherwise
+        // keep the legacy plain path byte-identical (single-tenant default).
+        let tenant_ctx = self.embedded_tenant_context();
         let result = self.runtime.block_on(async {
-            let result = self
-                .shared_services
-                .vector_operations_service
-                .insert_batch(collection, records)
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(e.to_string()))
-                })?;
+            let vos = &self.shared_services.vector_operations_service;
+            let result = match tenant_ctx.as_ref() {
+                Some(ctx) => {
+                    vos.insert_batch_with_tenant_context(collection, records, Some(ctx))
+                        .await
+                }
+                None => vos.insert_batch(collection, records).await,
+            }
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(e.to_string()))
+            })?;
 
             if !result.success {
                 return Err(Box::new(std::io::Error::other(
@@ -1578,15 +1626,22 @@ impl EmbeddedProximaDB {
         let start = std::time::Instant::now();
         let count = records.len();
 
+        // Governance contract (co-design tenet 3): when a tenant is configured,
+        // route through the tenant-scoped insert the networked path uses; otherwise
+        // keep the legacy plain path byte-identical (single-tenant default).
+        let tenant_ctx = self.embedded_tenant_context();
         let result = self.runtime.block_on(async {
-            let result = self
-                .shared_services
-                .vector_operations_service
-                .insert_batch(collection, records)
-                .await
-                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                    Box::new(std::io::Error::other(e.to_string()))
-                })?;
+            let vos = &self.shared_services.vector_operations_service;
+            let result = match tenant_ctx.as_ref() {
+                Some(ctx) => {
+                    vos.insert_batch_with_tenant_context(collection, records, Some(ctx))
+                        .await
+                }
+                None => vos.insert_batch(collection, records).await,
+            }
+            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                Box::new(std::io::Error::other(e.to_string()))
+            })?;
 
             if !result.success {
                 return Err(Box::new(std::io::Error::other(

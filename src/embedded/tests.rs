@@ -840,6 +840,7 @@ mod tests {
             rl_policy_path: Some("/custom/rl_policy.json".to_string()),
             access_mode: AccessMode::SharedRead,
             node_id: Some("node-42".to_string()),
+            tenant_id: None,
         };
 
         assert_eq!(config.storage_locations.len(), 2);
@@ -871,13 +872,16 @@ mod tests {
         );
         assert_eq!(config.access_mode, AccessMode::SharedRead);
         assert_eq!(config.node_id, Some("node-42".to_string()));
+        assert!(config.tenant_id.is_none());
 
         // Test chained builder methods
         let config2 = EmbeddedConfig::default()
             .with_access_mode(AccessMode::LeaderFollower)
-            .with_node_id("leader-1");
+            .with_node_id("leader-1")
+            .with_tenant("tenant-a");
         assert_eq!(config2.access_mode, AccessMode::LeaderFollower);
         assert_eq!(config2.node_id, Some("leader-1".to_string()));
+        assert_eq!(config2.tenant_id, Some("tenant-a".to_string()));
     }
 
     // ========================================================================
