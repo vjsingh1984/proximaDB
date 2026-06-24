@@ -336,7 +336,6 @@ impl SstEngine {
                             IndexSearchEffort::Approximate { hint }
                         }
                     }),
-                ..Default::default()
             };
 
             // Execute AXIS query (HNSW or IVF based on index type).
