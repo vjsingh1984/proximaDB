@@ -207,7 +207,6 @@ class ArrowFlightClient:
     def _authenticate(self):
         """Authenticate with API key via handshake."""
         # Arrow Flight uses handshake for auth
-        auth_handler = flight.ClientAuthHandler()
         # For now, we pass API key as metadata on each call
         pass
 
@@ -756,7 +755,7 @@ class ArrowFlightClient:
         action = flight.Action(action_type, json.dumps(body).encode())
 
         try:
-            results = list(client.do_action(action, options=self._get_call_options()))
+            _ = list(client.do_action(action, options=self._get_call_options()))
             return True
         except Exception as e:
             print(f"Action {action_type} failed: {e}")
