@@ -970,10 +970,32 @@ impl SharedServices {
                     // filesystem factory with the engine so file://↔s3://
                     // moves use the same backend pool. Per-tier paths are
                     // pulled directly from the tiering config block.
-                    let executor = Arc::new(TierMigrationExecutor::from_tiering_config(
-                        filesystem_factory.clone(),
-                        &tiering_cfg,
-                    ));
+                    //
+                    // T2.2: Wire cache invalidation callback — migrations
+                    // invalidate stale cache entries when data moves between
+                    // tiers. Uses lazy global lookup since orchestrator
+                    // is registered later; migrations run in background so
+                    // the global is available when invoked.
+                    let cache_invalidator =
+                        std::sync::Arc::new(|collection: &str, item_id: &str| {
+                            if let Some(orch) =
+                                crate::storage::cache::orchestrator::CrossCacheOrchestrator::global(
+                                )
+                            {
+                                let key = format!("{collection}/{item_id}");
+                                // Fire-and-forget invalidation; errors logged by orchestrator
+                                drop(tokio::spawn(async move {
+                                    let _ = orch.orchestrate_cascade_invalidation(&key).await;
+                                }));
+                            }
+                        });
+                    let executor = Arc::new(
+                        TierMigrationExecutor::from_tiering_config(
+                            filesystem_factory.clone(),
+                            &tiering_cfg,
+                        )
+                        .with_cache_invalidator(cache_invalidator),
+                    );
 
                     match SstTieringIntegration::new(tiering_cfg) {
                         Ok(integration) => {

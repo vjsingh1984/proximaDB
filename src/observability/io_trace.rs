@@ -425,6 +425,31 @@ fn notify_route_observer(snap: &IoTraceSnapshot, shape_class: &str, backend_labe
     }
 }
 
+/// Observer invoked at trace flush with `snapshot` for cache sizing feedback (T2.2).
+/// The cache orchestrator registers to receive footer hit-rate and avg_get_bytes signals.
+/// This is the dependency-inversion seam: io_trace feeds cache sizing *without depending on it*.
+type CacheObserver = dyn Fn(&IoTraceSnapshot) + Send + Sync;
+
+static CACHE_OBSERVER: Mutex<Option<Box<CacheObserver>>> = Mutex::new(None);
+
+/// Install (or clear with `None`) the cache-trace observer. Called once at startup
+/// by the cache orchestrator; replaceable in tests.
+pub fn set_cache_observer(observer: Option<Box<CacheObserver>>) {
+    *CACHE_OBSERVER.lock().unwrap_or_else(|p| p.into_inner()) = observer;
+}
+
+/// Feed the registered cache observer, if any, with a completed query's trace.
+/// Called after route observer; both observers can be active simultaneously.
+fn notify_cache_observer(snap: &IoTraceSnapshot) {
+    if let Some(obs) = CACHE_OBSERVER
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+    {
+        obs(snap);
+    }
+}
+
 /// Bind a fresh [`IoTrace`] to `future` and await it. Lower-level than
 /// [`instrument`]; use when the caller wants to read the snapshot itself before
 /// the scope ends.
@@ -457,6 +482,11 @@ where
                     && let Some((shape_class, backend_label)) = stamped_route
                 {
                     notify_route_observer(&snap, &shape_class, &backend_label);
+                }
+                // T2.2 ingestion: feed the cache orchestrator for trace-driven sizing.
+                // Skip empty traces to avoid wasteful cache budget updates.
+                if !snap.is_empty() {
+                    notify_cache_observer(&snap);
                 }
             }
             out

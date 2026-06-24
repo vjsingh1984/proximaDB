@@ -223,15 +223,15 @@ notes = "Sizing is PROJECTED from a measured SOURCE dataset (one real repo's SQL
 id = "cross_modal_fusion_calibrated_seam"
 claim = "A single PIT-calibrated fuse-by-oid seam (seed->expand->calibrate->fuse->rank) matches or beats per-modality retrieval and the legacy 12-strategy engine, because calibration (not the operator) is the load-bearing step"
 metric = "recall@k, fusion_latency_ms, score_commensurability"
-status = "aspirational"
+status = "unverified"
 asserted_in = ["docs/12-design/CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc"]
-bench_source = ""
-bench_command = ""
+bench_source = "benches/bench_cross_modal_fusion_e2e.rs"
+bench_command = "BENCH_VECTORS=10000 BENCH_GRAPH_NODES=5000 BENCH_DOCS=1000 BENCH_WARM_RUNS=100 cargo bench --bench bench_cross_modal_fusion_e2e"
 artifact = ""
 hardware = ""
 date = ""
 version = ""
-notes = "Design is literature-grounded (Calibrated-Fusion: post-PIT the operator is empirically indistinguishable; NaviX prefilter<50% selectivity; Samyama late-materialization 4-4.7x; HELIOS edge-grain +6-12%) but NOT yet measured in ProximaDB. To promote to measured: build a fixture corpus with correlated vector+graph signal, compare (a) vector-only, (b) graph-only, (c) uncalibrated weighted-sum, (d) PIT-calibrated linear, (e) RRF on recall@k and latency; check in a dated artifact. Tracked with TD-136..TD-143."
+notes = "Design is literature-grounded (Calibrated-Fusion: post-PIT the operator is empirically indistinguishable; NaviX prefilter<50% selectivity; Samyama late-materialization 4-4.7x; HELIOS edge-grain +6-12%). E2E bench now exists at benches/bench_cross_modal_fusion_e2e.rs measuring vector seed -> graph expand -> PIT calibration -> fuse-by-oid pipeline over realistic scale (10K vectors, 5K graph nodes, 1K docs). Bench measures cold/warm latency, per-source participation, multi-source fusion boost, and calibration overhead. To promote to measured: run on recorded hardware and check in a dated artifact with recall@k validation against ground truth. Tracked with TD-136..TD-143."
 
 [[claims]]
 id = "embedded_ffi_boundary_zero_copy"

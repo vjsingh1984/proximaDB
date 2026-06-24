@@ -62,6 +62,7 @@ impl HybridFusionEngine {
     ///
     /// # Errors
     /// Returns error if fusion strategy is not implemented
+    #[allow(deprecated)]
     pub fn fuse(
         &self,
         bm25_results: Vec<BM25Result>,
@@ -1123,6 +1124,7 @@ impl HybridFusionEngine {
     /// - Result set overlap (Jaccard similarity)
     /// - Score variance
     /// - Rank correlation
+    #[allow(deprecated)]
     fn adaptive_fusion(
         &self,
         bm25_results: Vec<BM25Result>,

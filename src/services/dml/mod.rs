@@ -734,6 +734,15 @@ impl DmlService {
         }
     }
 
+    /// T4.1: Get the canonical table-record store.
+    ///
+    /// Provides access to the record store for components that need direct
+    /// read/write access to table records, such as the `RelationalExpander`
+    /// in the cross-modal fusion seam (F-D).
+    pub fn record_store(&self) -> Arc<dyn TableRecordStore> {
+        self.record_store.clone()
+    }
+
     /// Execute a DML statement (single-tenant / unscoped).
     pub async fn execute(&self, statement: DmlStatement) -> Result<DmlResult> {
         self.execute_scoped(statement, None).await

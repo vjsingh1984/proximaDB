@@ -538,6 +538,129 @@ pub enum PathResolverError {
 /// trait wraps it once the rest of the storage layer is consolidated.
 pub struct DrPathBuilder;
 
+/// T2.3: Version-aware cache for `DrPathBuilder` results.
+///
+/// Caches `DrResolvedPath` by `(tenant_id, namespace_id, collection_id, pool_class)`
+/// with corpus version tracking for automatic invalidation on catalog changes.
+/// When the corpus version bumps, cached entries are considered stale and
+/// re-resolved on next access.
+pub struct DrPathCache {
+    /// Cache entries: key → (version, path)
+    cache: DashMap<CacheKey, (u64, DrResolvedPath)>,
+}
+
+/// Cache key for path resolution results.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CacheKey {
+    tenant_id: String,
+    namespace_id: String,
+    collection_id: String,
+    pool_class: String,
+}
+
+impl DrPathCache {
+    /// Create a new empty path cache.
+    pub fn new() -> Self {
+        Self {
+            cache: DashMap::new(),
+        }
+    }
+
+    /// Get or resolve a path, checking corpus version for staleness.
+    ///
+    /// Returns the cached path if valid (version matches current corpus version),
+    /// or resolves a new path via `resolve_fn` and caches it.
+    pub async fn get_or_resolve<F, R, Fut>(
+        &self,
+        tenant_id: &str,
+        namespace_id: &str,
+        collection_id: &str,
+        pool_class: StoragePoolClass,
+        resolve_fn: F,
+    ) -> Result<DrResolvedPath, PathResolverError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<R, PathResolverError>>,
+        R: std::borrow::Borrow<DrResolvedPath>,
+    {
+        let key = CacheKey {
+            tenant_id: tenant_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            collection_id: collection_id.to_string(),
+            pool_class: format!("{:?}", pool_class),
+        };
+
+        // Get current corpus version for this (tenant, collection)
+        let current_version = crate::catalog::CorpusVersionRegistry::global()
+            .current(tenant_id, collection_id)
+            .await;
+
+        // Check cache with version validation
+        if let Some(entry) = self.cache.get(&key) {
+            let (cached_version, path) = entry.value();
+            if *cached_version == current_version {
+                // Cache hit with valid version
+                return Ok(path.clone());
+            }
+            // Stale entry — remove and fall through to resolve
+            self.cache.remove(&key);
+        }
+
+        // Cache miss or stale — resolve and cache
+        let resolved = resolve_fn().await?.borrow().clone();
+        self.cache.insert(key, (current_version, resolved.clone()));
+        Ok(resolved)
+    }
+
+    /// Invalidate a specific cache entry.
+    ///
+    /// Called when a collection's schema or metadata changes outside of
+    /// corpus version bumps (e.g., direct catalog updates).
+    pub fn invalidate(&self, tenant_id: &str, collection_id: &str) {
+        self.cache.retain(|key, _| {
+            // Keep entries that don't match the tenant/collection
+            key.tenant_id != tenant_id || key.collection_id != collection_id
+        });
+    }
+
+    /// Clear all cached entries.
+    ///
+    /// Called on major catalog changes or configuration reloads.
+    pub fn clear(&self) {
+        self.cache.clear();
+    }
+
+    /// Get cache statistics for observability.
+    pub fn stats(&self) -> (usize, usize) {
+        let total = self.cache.len();
+        // Count unique (tenant, collection) pairs
+        let unique_pairs = self
+            .cache
+            .iter()
+            .map(|entry| {
+                let key = entry.key();
+                (key.tenant_id.clone(), key.collection_id.clone())
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        (total, unique_pairs)
+    }
+}
+
+impl Default for DrPathCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Global path cache singleton.
+static GLOBAL_PATH_CACHE: std::sync::OnceLock<DrPathCache> = std::sync::OnceLock::new();
+
+/// Get the global path cache.
+pub fn global_path_cache() -> &'static DrPathCache {
+    GLOBAL_PATH_CACHE.get_or_init(DrPathCache::new)
+}
+
 impl DrPathBuilder {
     /// Build the authoritative DR path for `collection_id` under
     /// `namespace`. Returns an error if either ID is missing or invalid,

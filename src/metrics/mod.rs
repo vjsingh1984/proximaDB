@@ -194,6 +194,10 @@ pub mod consumption_metrics;
 /// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.
 pub mod dr_metrics;
 pub mod exporters;
+/// Cross-modal fusion metrics — T1.1 (fusion_latency_seconds, sources_count,
+/// calibrated_sources). Tracks vector→graph→document fusion operations for
+/// observability and cost model calibration.
+pub mod fusion;
 /// Primary-pod write-router observability — counters for the
 /// gateway gate's allow/misroute decisions per tenant.
 pub mod primary_pod_metrics;

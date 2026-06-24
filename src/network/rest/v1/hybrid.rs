@@ -439,6 +439,7 @@ async fn list_strategies(
 }
 
 /// Parse fusion strategy from string
+#[allow(deprecated)]
 fn parse_fusion_strategy(strategy_str: &str) -> Result<FusionStrategy, ApiError> {
     match strategy_str.to_lowercase().as_str() {
         "rrf" | "reciprocal_rank" => Ok(FusionStrategy::ReciprocalRank { k: 60 }),
