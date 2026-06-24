@@ -200,6 +200,17 @@ pub trait IndexIngest: Send + Sync {
 pub trait IndexMetrics: Send + Sync {
     /// Number of vectors currently registered in the index for `collection_id`.
     async fn registered_vector_count(&self, collection_id: &str) -> usize;
+
+    /// Whether the collection has an in-memory IVF index (for health diagnostics).
+    async fn has_ivf_index(&self, collection_id: &str) -> bool;
+
+    /// Whether the collection has a persisted IVF index on disk (for health diagnostics).
+    async fn has_persisted_ivf_index(&self, collection_id: &str) -> bool;
+
+    /// Cold-serving status for IVF collections: returns Some((state, loaded, total))
+    /// where `state` is the serving phase, `loaded` is segments warm-loaded, and
+    /// `total` is total segments. Returns None for non-IVF collections.
+    async fn ivf_cold_serving_status(&self, collection_id: &str) -> Option<(String, usize, usize)>;
 }
 
 /// Maintenance hooks invoked by compaction / background optimization.
@@ -216,6 +227,22 @@ pub trait IndexMaintenance: Send + Sync {
 
     /// Analyze the collection and apply adaptive index optimizations.
     async fn analyze_and_optimize(&self, collection_id: &str) -> anyhow::Result<()>;
+
+    /// Apply a live HNSW ef_search hot-swap for `collection_id`. Returns
+    /// the outcome as JSON for admin surface consumption.
+    async fn apply_hnsw_ef_hot_swap(
+        &self,
+        collection_id: &str,
+        new_ef_search: u32,
+    ) -> anyhow::Result<serde_json::Value>;
+
+    /// Apply a live IVF nprobe hot-swap for `collection_id`. Returns
+    /// the outcome as JSON for admin surface consumption.
+    async fn apply_ivf_nprobe_hot_swap(
+        &self,
+        collection_id: &str,
+        new_nprobe: u32,
+    ) -> anyhow::Result<serde_json::Value>;
 }
 
 /// Collection lifecycle on the index side. Defined for completeness; storage
@@ -236,6 +263,11 @@ pub trait IndexLifecycle: Send + Sync {
 }
 
 /// Combined index-engine role traits for storage backends that need multiple roles
-/// (e.g., SST needs query + ingest + metrics). Implemented by `AxisManager`.
-pub trait IndexEngine: IndexQuery + IndexIngest + IndexMetrics {}
-
+/// (e.g., SST needs query + ingest + metrics + lifecycle + maintenance). Implemented by `AxisManager`.
+pub trait IndexEngine:
+    IndexQuery + IndexIngest + IndexMetrics + IndexLifecycle + IndexMaintenance
+{
+    /// Downcast to `Any` for concrete-type access (e.g., AXIS-specific recall-target advisor methods).
+    /// Callers can use `.downcast_ref::<AxisManager>()` to recover the concrete type.
+    fn as_any(&self) -> &dyn std::any::Any;
+}

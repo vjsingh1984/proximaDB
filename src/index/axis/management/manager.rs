@@ -4194,7 +4194,7 @@ pub enum FilterOperator {
 /// the requested value (`Applied`), or there was nothing to do
 /// (`NotApplicable` — either no strategy, no HNSW indexes, or the
 /// requested ef was already in place).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum HotSwapOutcome {
     /// One or more HNSW specs were updated. `changes` carries the
     /// per-spec before/after for observability.
@@ -4207,7 +4207,7 @@ pub enum HotSwapOutcome {
 /// Per-spec record of an `ef_search` change, for structured event
 /// emission. `index_name` is `None` when the spec wasn't given a
 /// name in [`crate::index::axis::types::IndexSpecification::name`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HotSwapEfChange {
     pub index_name: Option<String>,
     pub previous_ef_search: u32,
