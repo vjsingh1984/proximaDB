@@ -10,8 +10,6 @@
 use proximadb::governance::{CollectionRbacExt, check_collection_access};
 use proximadb::metrics::consumption_metrics;
 use proximadb_proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
-use std::sync::Arc;
-use tokio::time::{Duration, timeout};
 
 #[tokio::test]
 async fn test_rbac_permitted_principals_enforcement() {
