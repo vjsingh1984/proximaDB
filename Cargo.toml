@@ -173,7 +173,7 @@ moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.12"
 tracing = "0.1"
 serde_json = "1.0"
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "json", "chrono", "uuid"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "tls-native-tls", "json", "chrono", "uuid"] }
 prost = "0.14"
 prost-types = "0.14"
 futures = "0.3"
@@ -375,10 +375,10 @@ lettre = "0.11"  # Email sending for alert notifications
 
 # Storage & Memory Management
 memmap2 = "0.9"
-lru = "0.12"  # LRU cache for disk-backed graph storage
+lru = "0.18"  # LRU cache for disk-backed graph storage
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tokio-postgres = { version = "0.7", optional = true }  # PostgreSQL client for CDC (experimental-cdc-connectors)
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "json", "chrono", "uuid"], optional = true }  # OLTP catalog backends (oltp-catalog)
+sqlx = { version = "0.9", features = ["runtime-tokio", "tls-native-tls", "json", "chrono", "uuid"], optional = true }  # OLTP catalog backends (oltp-catalog)
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
@@ -476,7 +476,7 @@ proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
-jsonwebtoken = "9.2"  # JWT token creation and validation
+jsonwebtoken = "10"  # JWT token creation and validation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
 chrono-tz = "0.10"  # Timezone support for log parsing
 hex = "0.4"  # Hex encoding for bytea types
