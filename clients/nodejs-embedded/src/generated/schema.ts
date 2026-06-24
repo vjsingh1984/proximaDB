@@ -24,6 +24,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/api/v2/graphs/{graph_id}/fusion-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid. */
+        post: operations["fusion_search_v2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/collections": {
         parameters: {
             query?: never;
@@ -1050,6 +1067,50 @@ export interface components {
             language: components["schemas"]["QueryLanguage"];
             query: string;
         };
+        FusionHit: {
+            oid: string;
+            /** Format: float */
+            score: number;
+            source_count: number;
+        };
+        FusionSearchRequest: {
+            /**
+             * Format: float
+             * @description Consensus boost added to any `oid` present in ≥2 sources.
+             */
+            consensus_beta?: number | null;
+            edge_types?: string[];
+            /** @description Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`. */
+            grain?: string | null;
+            /** Format: float */
+            graph_weight?: number | null;
+            limit?: number;
+            /**
+             * Format: int32
+             * @description k-hop expansion depth (bounded; default 1 — the validated sweet spot).
+             */
+            max_depth?: number;
+            /** @description How many of the top vector seeds to expand from (bounded expansion). */
+            max_seeds?: number;
+            /** @description Query embedding for the ANN seed. */
+            query_vector: number[];
+            /** @description Use the rank-based RRF fallback instead of PIT-calibrated linear. */
+            rrf?: boolean;
+            /** @description Vector collection to seed from (its records co-indexed with this graph by `oid`). */
+            vector_collection: string;
+            /** Format: float */
+            vector_weight?: number | null;
+        };
+        FusionSearchResponse: {
+            results: components["schemas"]["FusionHit"][];
+            stats: components["schemas"]["FusionStatsDto"];
+        };
+        FusionStatsDto: {
+            candidates_in: number;
+            items_out: number;
+            sources_fused: number;
+            sources_skipped: number;
+        };
         /**
          * @description Server returns a `GraphResponse<T>` envelope around graph
          *     collection metadata. The fields below are the common subset
@@ -1774,6 +1835,51 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CapabilitiesResponse"];
+                };
+            };
+        };
+    };
+    fusion_search_v2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Graph ID for traversal expansion */
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FusionSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Fusion results with calibrated scores */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FusionSearchResponse"];
+                };
+            };
+            /** @description Invalid request (empty query_vector, etc.) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Fusion execution failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
         };
