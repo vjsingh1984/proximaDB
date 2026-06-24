@@ -199,6 +199,7 @@ pub mod system_catalog;
 pub mod system_catalog_state;
 #[cfg(feature = "tenant_access")]
 pub mod tenant_access;
+pub mod transaction;
 pub mod write_intent;
 
 // Re-export main service types with cleaner names
@@ -234,6 +235,7 @@ pub use record_store::{
     TableRecordWriteResult, TableWalAppender, VectorOpsTableRecordStore,
 };
 pub use search::StreamingSearch;
+pub use transaction::{CrossModelTransactionCoordinator, CrossModelTxResult, TransactionOutcome};
 pub use write_intent::{
     DEFAULT_BULK_BYTES_THRESHOLD, DEFAULT_BULK_ROW_THRESHOLD, ProjectionFreshnessRequirement,
     RejectedWriteLane, WriteDurabilityRequirement, WriteGuard, WriteIntent,
