@@ -1622,6 +1622,7 @@ impl FlightService for ProximaFlightService {
                     text_storage_configs: vec![],
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision,
+                    permitted_principals: vec![],
                 };
 
                 // Create collection via service

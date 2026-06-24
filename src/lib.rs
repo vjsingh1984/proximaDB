@@ -283,6 +283,10 @@ pub mod cluster;
 #[allow(missing_docs)]
 pub mod catalog;
 
+/// Governance and security modules (RBAC, access control)
+#[allow(missing_docs)]
+pub mod governance;
+
 // NOTE: Compiled Avro schemas disabled - using hardcoded schema_types.rs instead
 // pub mod compiled_schemas {
 //     include!(concat!(env!("OUT_DIR"), "/compiled_schemas.rs"));

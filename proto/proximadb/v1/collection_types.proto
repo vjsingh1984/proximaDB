@@ -49,6 +49,15 @@ message CollectionConfig {
   // is used unchanged.
   optional EmbeddingPrecision canonical_embedding_precision = 26;
 
+  // Per-repo RBAC: List of principals (user IDs, service accounts, or role IDs)
+  // permitted to access this collection. When empty, access is unrestricted
+  // (default). When set, only principals in this list can perform data-plane
+  // operations (read/write/search) on the collection. This is enforced at the
+  // data-plane handler layer (REST/gRPC/pgwire) as a fail-closed check.
+  // Governance/admin-plane operations (e.g., collection metadata updates) are
+  // not subject to this check — they use separate admin permissions.
+  repeated string permitted_principals = 27;
+
   // NOTE on recall_target: stored as a tag on this collection via
   // `tags`, with the convention "recall_target:<float in [0,1]>".
   // The create-collection flow parses that tag and runs

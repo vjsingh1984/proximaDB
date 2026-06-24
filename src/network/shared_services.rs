@@ -1267,6 +1267,7 @@ impl SharedServices {
                     text_storage_configs: vec![],
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision: None,
+                    permitted_principals: vec![],
                 };
 
                 let proto_collection = crate::proto::proximadb_v1::Collection {
