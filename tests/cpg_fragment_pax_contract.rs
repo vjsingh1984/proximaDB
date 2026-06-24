@@ -101,15 +101,15 @@ fn build_cpg_fragment_record(function_oid: &str, file_path: &str) -> ProximaReco
         oid,
         tenant_id,
         props,
-        refs: Vec::new(),              // No refs in this test (inverse TypedRef lives on the symbol node).
+        refs: Vec::new(), // No refs in this test (inverse TypedRef lives on the symbol node).
         labels,
-        embeddings: Vec::new(),        // Fragments carry no vectors (vectors live on the symbol node).
-        edge: None,                   // Not a graph edge record.
+        embeddings: Vec::new(), // Fragments carry no vectors (vectors live on the symbol node).
+        edge: None,             // Not a graph edge record.
         record_version: 1,
         valid_from_ns: Some(0),
         valid_to_ns: Some(i64::MAX),
         branch_id: None,
-        ..Default::default()          // Remaining fields (schema_version, local_id, tid, etc.)
+        ..Default::default() // Remaining fields (schema_version, local_id, tid, etc.)
     }
 }
 
@@ -129,21 +129,15 @@ fn assert_cpg_fragment_round_trip(original: &ProximaRecord, read_back: &ProximaR
     );
 
     // Verify key props round-tripped.
-    let fn_id = original
-        .props
-        .get("function_id")
-        .and_then(|v| match v {
+    let fn_id = original.props.get("function_id").and_then(|v| match v {
+        ProximaTreeNode::Value(ProximaValue::String(s)) => Some(s.as_str()),
+        _ => None,
+    });
+    assert_eq!(
+        read_back.props.get("function_id").and_then(|v| match v {
             ProximaTreeNode::Value(ProximaValue::String(s)) => Some(s.as_str()),
             _ => None,
-        });
-    assert_eq!(
-        read_back
-            .props
-            .get("function_id")
-            .and_then(|v| match v {
-                ProximaTreeNode::Value(ProximaValue::String(s)) => Some(s.as_str()),
-                _ => None,
-            }),
+        }),
         fn_id,
         "function_id prop must round-trip"
     );
@@ -163,21 +157,15 @@ fn assert_cpg_fragment_round_trip(original: &ProximaRecord, read_back: &ProximaR
     );
 
     // Verify start_line/end_line numeric props.
-    let start_line = original
-        .props
-        .get("start_line")
-        .and_then(|v| match v {
+    let start_line = original.props.get("start_line").and_then(|v| match v {
+        ProximaTreeNode::Value(ProximaValue::Int32(i)) => Some(*i),
+        _ => None,
+    });
+    assert_eq!(
+        read_back.props.get("start_line").and_then(|v| match v {
             ProximaTreeNode::Value(ProximaValue::Int32(i)) => Some(*i),
             _ => None,
-        });
-    assert_eq!(
-        read_back
-            .props
-            .get("start_line")
-            .and_then(|v| match v {
-                ProximaTreeNode::Value(ProximaValue::Int32(i)) => Some(*i),
-                _ => None,
-            }),
+        }),
         start_line,
         "start_line must round-trip"
     );
@@ -214,20 +202,16 @@ async fn cpg_fragment_pax_contract_and_io_trace_emission() {
     // Note: io_trace::instrument returns the future's output, not a tuple.
     // For testing purposes, we capture the trace snapshot manually via IO_TRACE.try_with.
     let segment_path_for_async = segment_path.clone();
-    let read_back = io_trace::instrument(
-        tenant_id.clone(),
-        route,
-        async move {
-            let pax_bytes = std::fs::read(&segment_path_for_async).expect("read PAX file");
-            proximadb::storage::engines::sst::segment_format::read_segment_records(
-                &pax_bytes,
-                &[], // embedding_model_ids — none needed.
-                &[], // user_column_keys — read all props.
-                None, // tenant_ctx — unused in this single-tenant test.
-            )
-            .expect("read_segment_records must succeed")
-        },
-    )
+    let read_back = io_trace::instrument(tenant_id.clone(), route, async move {
+        let pax_bytes = std::fs::read(&segment_path_for_async).expect("read PAX file");
+        proximadb::storage::engines::sst::segment_format::read_segment_records(
+            &pax_bytes,
+            &[],  // embedding_model_ids — none needed.
+            &[],  // user_column_keys — read all props.
+            None, // tenant_ctx — unused in this single-tenant test.
+        )
+        .expect("read_segment_records must succeed")
+    })
     .await;
 
     // Verify the round-trip preserved the cpg_fragment shape.
