@@ -491,13 +491,13 @@ impl EnvironmentDetector {
         debug!("🔍 Checking Kubernetes availability...");
 
         // Check for kubectl command
-        match run_command_with_timeout("kubectl", ["cluster-info"], 5).await {
+        match run_command_with_timeout("kubectl", &["cluster-info"], 5).await {
             Ok(output) => {
                 if output.status.success() {
                     debug!("✅ kubectl cluster-info successful");
 
                     // Additional check: verify we can list nodes
-                    match run_command_with_timeout("kubectl", ["get", "nodes"], 5).await {
+                    match run_command_with_timeout("kubectl", &["get", "nodes"], 5).await {
                         Ok(nodes_output) => {
                             let success = nodes_output.status.success();
                             debug!(
@@ -626,7 +626,7 @@ impl EnvironmentDetector {
     async fn is_docker_available(&self) -> Result<bool> {
         debug!("🔍 Checking Docker availability...");
 
-        match run_command_with_timeout("docker", ["version"], 5).await {
+        match run_command_with_timeout("docker", &["version"], 5).await {
             Ok(output) => {
                 let available = output.status.success();
                 debug!(
@@ -691,7 +691,7 @@ impl EnvironmentDetector {
     /// Detect number of CPU cores
     async fn detect_cpu_cores(&self) -> Result<u32> {
         // Try multiple methods to detect CPU cores
-        if let Ok(output) = run_command_with_timeout("nproc", [], 2).await
+        if let Ok(output) = run_command_with_timeout("nproc", &[], 2).await
             && let Ok(cores_str) = String::from_utf8(output.stdout)
             && let Ok(cores) = cores_str.trim().parse::<u32>()
         {
@@ -724,7 +724,7 @@ impl EnvironmentDetector {
     /// Detect available storage in GB
     async fn detect_storage_gb(&self) -> Result<u64> {
         // Try using df command to check available disk space
-        match run_command_with_timeout("df", ["-BG", "/"], 2).await {
+        match run_command_with_timeout("df", &["-BG", "/"], 2).await {
             Ok(output) => {
                 if let Ok(df_output) = String::from_utf8(output.stdout) {
                     // Parse df output for available space
@@ -985,7 +985,7 @@ impl PlatformAnalyzer for KubernetesAnalyzer {
         ];
 
         // Check for additional Kubernetes features
-        if let Ok(output) = run_command_with_timeout("kubectl", ["get", "storageclass"], 5).await {
+        if let Ok(output) = run_command_with_timeout("kubectl", &["get", "storageclass"], 5).await {
             if output.status.success() {
                 capabilities.push("Dynamic volume provisioning".to_string());
             } else {
@@ -1145,12 +1145,21 @@ async fn run_command_with_timeout(
     args: &[&str],
     timeout_secs: u64,
 ) -> Result<std::process::Output> {
-    use tokio::time::{timeout, Duration};
+    use tokio::time::{Duration, timeout};
 
     let duration = Duration::from_secs(timeout_secs);
-    let output = timeout(duration, tokio::process::Command::new(program).args(args).output())
-        .await
-        .map_err(|_| anyhow!("Command '{}' timed out after {} seconds", program, timeout_secs))??;
+    let output = timeout(
+        duration,
+        tokio::process::Command::new(program).args(args).output(),
+    )
+    .await
+    .map_err(|_| {
+        anyhow!(
+            "Command '{}' timed out after {} seconds",
+            program,
+            timeout_secs
+        )
+    })??;
 
     Ok(output)
 }
