@@ -2129,8 +2129,19 @@ pub async fn get_collection_route_health_v2(
     // ADR-023 R3 (c): patch the cold-serving block with live AXIS state — the
     // cold→warm window + per-cluster warm-fill progress for a loaded IVF index.
     health.cold_serving = match crate::storage::engines::sst::core::get_sst_axis_manager() {
-        Some(axis) => match axis.cold_serving_status(&collection_id_for_discovery).await {
-            Some((state, fetched, total)) => ColdServingHealth::from_status(state, fetched, total),
+        Some(axis) => match axis
+            .ivf_cold_serving_status(&collection_id_for_discovery)
+            .await
+        {
+            Some((state_str, fetched, total)) => {
+                use crate::index::axis::IvfServingState;
+                let state = match state_str.as_str() {
+                    "full_two_stage" => IvfServingState::FullTwoStage,
+                    "cold_binary_only" => IvfServingState::ColdBinaryOnly,
+                    _ => IvfServingState::ColdBinaryOnly, // Default fallback
+                };
+                ColdServingHealth::from_status(state, fetched, total)
+            }
             None => ColdServingHealth::unobservable(),
         },
         None => ColdServingHealth::unobservable(),
@@ -2605,27 +2616,26 @@ pub async fn post_collection_recall_tune_v2(
             .map_err(|e| ApiError::Internal(format!("HNSW hot-swap failed: {}", e)))?,
     };
 
-    let (action, applied_changes) = match outcome {
-        crate::index::axis::management::HotSwapOutcome::Applied { changes } => {
-            crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
-                &collection_id,
-                crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_OPERATOR,
-            );
-            (
-                "applied_hot_swap",
-                changes
-                    .into_iter()
-                    .map(|c| RecallTuneEfChange {
-                        index_name: c.index_name,
-                        previous_ef_search: c.previous_ef_search,
-                        new_ef_search: c.new_ef_search,
-                    })
-                    .collect(),
-            )
-        }
-        crate::index::axis::management::HotSwapOutcome::NotApplicable { .. } => {
-            ("not_wired", Vec::new())
-        }
+    let (action, applied_changes) = if let Some(applied) = outcome.get("Applied") {
+        crate::metrics::recall_drift_metrics::record_recall_drift_hot_swap_applied(
+            &collection_id,
+            crate::metrics::recall_drift_metrics::HOT_SWAP_TRIGGER_OPERATOR,
+        );
+        let changes: Vec<crate::index::axis::management::HotSwapEfChange> =
+            serde_json::from_value(applied["changes"].clone()).unwrap_or_default();
+        (
+            "applied_hot_swap",
+            changes
+                .into_iter()
+                .map(|c| RecallTuneEfChange {
+                    index_name: c.index_name,
+                    previous_ef_search: c.previous_ef_search,
+                    new_ef_search: c.new_ef_search,
+                })
+                .collect(),
+        )
+    } else {
+        ("not_wired", Vec::new())
     };
 
     Ok(Json(RecallTuneResponse {
@@ -2932,7 +2942,12 @@ pub async fn post_collection_recluster_v2(
     let active_algo = active_algorithm_for(&config);
     let sized: Option<RecallReclusterSized> = match active_algo {
         "ivf" => {
-            let advised = axis_manager
+            // Downcast to concrete AxisManager for recall-target advisor methods
+            let axis_mgr = axis_manager
+                .as_any()
+                .downcast_ref::<crate::index::axis::management::AxisManager>()
+                .ok_or_else(|| ApiError::Internal("AXIS manager downcast failed".to_string()))?;
+            let advised = axis_mgr
                 .rebuild_and_swap_ivf_index_for_recall_target(
                     internal_id.as_str(),
                     &records,
@@ -2977,7 +2992,12 @@ pub async fn post_collection_recluster_v2(
             })
         }
         _ => {
-            let advised = axis_manager
+            // Downcast to concrete AxisManager for recall-target advisor methods
+            let axis_mgr = axis_manager
+                .as_any()
+                .downcast_ref::<crate::index::axis::management::AxisManager>()
+                .ok_or_else(|| ApiError::Internal("AXIS manager downcast failed".to_string()))?;
+            let advised = axis_mgr
                 .rebuild_and_swap_hnsw_index_for_recall_target(
                     internal_id.as_str(),
                     &records,

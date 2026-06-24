@@ -166,6 +166,24 @@ impl IndexMetrics for AxisManager {
     async fn registered_vector_count(&self, collection_id: &str) -> usize {
         AxisManager::registered_vector_count(self, collection_id).await
     }
+
+    async fn has_ivf_index(&self, collection_id: &str) -> bool {
+        AxisManager::has_ivf_index(self, collection_id).await
+    }
+
+    async fn has_persisted_ivf_index(&self, collection_id: &str) -> bool {
+        AxisManager::has_persisted_ivf_index(self, collection_id).await
+    }
+
+    async fn ivf_cold_serving_status(&self, collection_id: &str) -> Option<(String, usize, usize)> {
+        use crate::index::axis::IvfServingState;
+        let (state, loaded, total) = AxisManager::cold_serving_status(self, collection_id).await?;
+        let state_str = match state {
+            IvfServingState::FullTwoStage => "full_two_stage",
+            IvfServingState::ColdBinaryOnly => "cold_binary_only",
+        };
+        Some((state_str.to_string(), loaded, total))
+    }
 }
 
 #[async_trait]
@@ -176,6 +194,26 @@ impl IndexMaintenance for AxisManager {
 
     async fn analyze_and_optimize(&self, collection_id: &str) -> anyhow::Result<()> {
         AxisManager::analyze_and_optimize(self, collection_id).await
+    }
+
+    async fn apply_hnsw_ef_hot_swap(
+        &self,
+        collection_id: &str,
+        new_ef_search: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        let outcome =
+            AxisManager::apply_hnsw_ef_hot_swap(self, collection_id, new_ef_search).await?;
+        serde_json::to_value(outcome).map_err(Into::into)
+    }
+
+    async fn apply_ivf_nprobe_hot_swap(
+        &self,
+        collection_id: &str,
+        new_nprobe: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        let outcome =
+            AxisManager::apply_ivf_nprobe_hot_swap(self, collection_id, new_nprobe).await?;
+        serde_json::to_value(outcome).map_err(Into::into)
     }
 }
 
@@ -195,5 +233,11 @@ impl IndexLifecycle for AxisManager {
 
     async fn is_suspended(&self, collection_id: &str) -> bool {
         AxisManager::is_suspended(self, collection_id).await
+    }
+}
+
+impl proximadb_index_traits::IndexEngine for AxisManager {
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
