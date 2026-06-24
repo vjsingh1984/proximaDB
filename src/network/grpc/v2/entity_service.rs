@@ -25,6 +25,7 @@ use tonic::{Request, Response, Status};
 use tracing::{debug, error, warn};
 
 use crate::api_handlers::UnifiedHandlers;
+use crate::core::search::cross_modal_fusion::FusionPolicy;
 use crate::graph::{
     Edge, GraphOperationsService, Node, NodeId, NodeQuery, PropertyFilter, PropertyValue,
     property_value::Value as GraphValue,
@@ -34,6 +35,7 @@ use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_entity_service_server::{
     ProximaEntityService, ProximaEntityServiceServer,
 };
+use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
 use crate::services::operations::vectors::VectorOperationsService;
 use crate::storage::document::{DocumentRecord, DocumentService};
 use proximadb_records::{
@@ -47,6 +49,10 @@ pub struct ProximaEntityServiceImpl {
     graph_service: Arc<GraphOperationsService>,
     /// Vector service for embeddings
     vector_service: Arc<VectorOperationsService>,
+    /// Cross-modal fusion port — the single retrieval engine
+    /// (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`). SearchEntities delegates its
+    /// vector (`similar`) mode here rather than reimplementing retrieval.
+    fusion_service: Arc<FusionService>,
     /// Document service for provenance/evidence chunks
     document_service: Arc<DocumentService>,
 }
@@ -54,9 +60,14 @@ pub struct ProximaEntityServiceImpl {
 impl ProximaEntityServiceImpl {
     /// Create a new service from the shared unified request handlers.
     pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+        let graph = request_handlers.graph_operations_service.clone();
+        let vector = request_handlers.vector_operations_service.clone();
         Self {
-            graph_service: request_handlers.graph_operations_service.clone(),
-            vector_service: request_handlers.vector_operations_service.clone(),
+            graph_service: graph.clone(),
+            vector_service: vector.clone(),
+            // The fusion port is built once at boot from the vector + graph
+            // services (mirrors the REST AppState pattern, PR #282).
+            fusion_service: Arc::new(FusionService::new(vector, graph)),
             document_service: request_handlers.document_service.clone(),
         }
     }
@@ -81,9 +92,24 @@ impl ProximaEntityServiceImpl {
         format!("entity:{collection_id}:{entity_id}")
     }
 
-    /// Generate a unique vector ID for an embedding / provenance document.
+    /// Generate a unique auxiliary ID (embedding vector / provenance document)
+    /// for an entity. The entity **node id** is the recoverable prefix (split on
+    /// the last `/`), so fusion results — which carry only the vector `oid` —
+    /// project back to their entity node without a re-fetch. The `/` delimiter
+    /// matches the codebase's canonical-oid convention (`graph/{id}/node/{id}`).
     fn auxiliary_id(collection_id: &str, entity_id: &str, model_id: &str) -> String {
-        format!("entity:{collection_id}:{entity_id}:{model_id}")
+        format!(
+            "{}/{model_id}",
+            Self::entity_node_id(collection_id, entity_id)
+        )
+    }
+
+    /// Recover the entity node id from an auxiliary (vector/provenance) oid.
+    /// Inverse of [`Self::auxiliary_id`].
+    fn node_id_from_auxiliary_oid(oid: &str) -> &str {
+        oid.rsplit_once('/')
+            .map(|(node_id, _)| node_id)
+            .unwrap_or(oid)
     }
 }
 
@@ -356,7 +382,7 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
 
         // NOTE: associated embedding vectors and provenance documents are not
         // automatically cascaded. They can be removed separately by the caller
-        // using the auxiliary-id convention (`entity:{collection}:{entity_id}:*`).
+        // using the auxiliary-id convention (`entity:{collection}:{entity_id}/{model}`).
         Ok(Response::new(pv2::DeleteEntityResponse {
             success: deleted,
             message: if deleted {
@@ -381,14 +407,73 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
             req.filters.is_some()
         );
 
-        // Case 1: vector ANN search. Fusion requires the vector index to support
-        // metadata predicates so we can resolve candidate records back to entity
-        // nodes — not yet wired. Reject explicitly rather than silently no-op.
-        if req.similar.is_some() {
-            return Err(Status::unimplemented(
-                "Vector ANN entity search is not yet implemented. \
-                 Use metadata-only search (filters without `similar`) for now.",
-            ));
+        // Case 1: vector (`similar`) search — delegate to the fusion seam
+        // (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`, TD-146). The seam runs the
+        // vector seed and (gracefully) no-ops graph expansion here — entity node
+        // ids are not yet in the canonical graph-oid space, so graph-augmented
+        // fusion is deferred (TD-146 scope B). Only `similar.vector` is supported;
+        // text/raw_data need a server-side embedding hop (not yet wired).
+        if let Some(similar) = req.similar.as_ref() {
+            let query_vector = match similar.query.as_ref() {
+                Some(pv2::similar_query::Query::Vector(v)) => v.values.clone(),
+                _ => {
+                    return Err(Status::unimplemented(
+                        "Only `similar.vector` is supported; text/raw_data embedding is not yet wired.",
+                    ));
+                }
+            };
+            if query_vector.is_empty() {
+                return Err(Status::invalid_argument(
+                    "similar.vector.values must not be empty",
+                ));
+            }
+            // NOTE: combining `similar` with `filters` is not yet supported (needs
+            // the index metadata-predicate mask, TD-139). Vector mode takes precedence.
+            let limit = if req.top_k == 0 {
+                10
+            } else {
+                req.top_k as usize
+            };
+            let params = GraphFusionParams {
+                graph_id: collection.clone(),
+                vector_collection: collection.clone(),
+                query_vector,
+                max_depth: 0, // pure vector entity search; graph expand is a no-op
+                edge_types: Vec::new(),
+                max_seeds: limit,
+                limit,
+                vector_weight: 1.0,
+                graph_weight: 0.0,
+                grain: GraphGrain::Nodes,
+                policy: FusionPolicy::default(),
+            };
+
+            let (items, _stats) = self
+                .fusion_service
+                .graph_fusion_search(params)
+                .await
+                .map_err(|e| entity_status("search entities (fusion)", e))?;
+
+            // Project fused vector oids → entity nodes. The seam late-materializes
+            // (oid + score only), so fetch each node for its metadata.
+            let mut results = Vec::with_capacity(items.len());
+            for item in items {
+                let node_id = Self::node_id_from_auxiliary_oid(&item.oid).to_owned();
+                if let Ok(Some(node)) = self.graph_service.get_node(&collection, &node_id).await {
+                    results.push(pv2::EntityResult {
+                        entity: Some(node_to_entity(&node, &collection)),
+                        score: item.score,
+                        debug_info: HashMap::new(),
+                    });
+                }
+            }
+            let total = results.len() as u32;
+            return Ok(Response::new(pv2::SearchEntitiesResponse {
+                results,
+                total,
+                page_info: None,
+                progress: None,
+            }));
         }
 
         // Cases 2 & 3: metadata-filtered or unfiltered node scan.

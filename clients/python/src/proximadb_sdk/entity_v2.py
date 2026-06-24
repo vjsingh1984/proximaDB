@@ -337,37 +337,43 @@ class EntityServiceClient:
         query_vector: Optional[List[float]] = None,
     ) -> SearchEntitiesResponse:
         """
-        Search for entities by metadata filter.
+        Search for entities.
 
-        Vector ANN search (``query_vector``) is not yet implemented server-side;
-        it raises ``NotImplementedError`` until the vector-index metadata-filter
-        fusion lands. Use ``filters`` (a ``{field: value}`` dict, combined with
-        logical AND, equality) for now.
+        With ``query_vector``: vector similarity search — the request is routed
+        through the server's fusion seam (calibrated retrieval) and results are
+        ranked by score. Without it: metadata-only search via ``filters`` (a
+        ``{field: value}`` dict, combined with logical AND, equality).
+
+        Combining ``query_vector`` with ``filters`` is not yet supported
+        server-side (needs the index metadata-predicate mask); vector mode takes
+        precedence and ``filters`` is ignored when both are given.
 
         Args:
             collection_id: Collection ID
             top_k: Maximum number of results
             filters: Equality metadata filters as a ``{field: value}`` dict
-            query_vector: Reserved for future ANN search (not yet supported)
+            query_vector: Query embedding for vector similarity search
 
         Returns:
             SearchEntitiesResponse with matching entities
         """
         from proximadb.v2 import entity_pb2 as v2_entity_pb2  # type: ignore
 
-        if query_vector:
-            raise NotImplementedError(
-                "Vector ANN entity search is not yet supported by the server. "
-                "Use metadata filters instead."
-            )
-
         request = v2_entity_pb2.SearchEntitiesRequest(
             collection_id=collection_id,
             top_k=top_k,
         )
 
-        # Build a MetadataFilter from the simple {field: value} dict using EQ clauses.
-        if filters:
+        # Vector (`similar`) mode: seed the fusion seam with the query vector.
+        if query_vector:
+            request.similar.CopyFrom(
+                v2_entity_pb2.SimilarQuery(
+                    vector=v2_entity_pb2.VectorData(values=query_vector),
+                )
+            )
+        elif filters:
+            # Metadata-only mode: build a MetadataFilter from the {field: value}
+            # dict using EQ clauses.
             clauses = [
                 _value_to_filter_clause(v2_entity_pb2, field, value)
                 for field, value in filters.items()
