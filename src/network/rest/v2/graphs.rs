@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::core::search::cross_modal_fusion::{FusionPolicy, FusionStats};
+use crate::core::search::fusion_route::RoutePolicy;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::openapi::ErrorResponse;
@@ -54,6 +55,10 @@ pub struct FusionSearchRequest {
     pub consensus_beta: Option<f32>,
     /// Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
     pub grain: Option<String>,
+    /// Cost-routing policy inputs (TD-141): drop negligible modalities (weight fraction) and budget each.
+    /// When absent, fusion is unbounded.
+    pub min_weight_fraction: Option<f32>,
+    pub total_budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize, ToSchema)]
@@ -162,6 +167,21 @@ pub async fn fusion_search_v2(
             _ => GraphGrain::Nodes,
         },
         principal: user_context.as_ref().map(|ctx| ctx.user_id.clone()),
+        route_policy: match (request.min_weight_fraction, request.total_budget) {
+            (Some(frac), Some(budget)) => Some(RoutePolicy {
+                min_weight_fraction: frac,
+                total_budget: budget,
+            }),
+            (Some(frac), None) => Some(RoutePolicy {
+                min_weight_fraction: frac,
+                total_budget: usize::MAX,
+            }),
+            (None, Some(budget)) => Some(RoutePolicy {
+                min_weight_fraction: 0.0,
+                total_budget: budget,
+            }),
+            (None, None) => None,
+        },
         policy,
         oid_key: FusionOidKey::Canonical,
     };

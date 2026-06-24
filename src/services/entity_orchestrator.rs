@@ -329,6 +329,7 @@ impl EntityOrchestrator {
             // Vector mode → fusion seam (one retrieval engine; no ranking here).
             let limit = if top_k == 0 { 10 } else { top_k };
             let params = GraphFusionParams {
+                route_policy: None,
                 graph_id: collection.to_string(),
                 vector_collection: collection.to_string(),
                 query_vector,
