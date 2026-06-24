@@ -602,16 +602,12 @@ pub async fn consult_for_write_leased(
     }
 
     // Fall back to in-memory lookup (single-pod or lease manager unavailable)
-<<<<<<< HEAD
     Ok(consult_for_write(
         registry,
         self_pod_id,
         tenant_id,
         collection_id,
     ))
-=======
-    Ok(consult_for_write(registry, self_pod_id, tenant_id, collection_id))
->>>>>>> 574ce1a18 (feat(catalog): consult_for_write_leased integration)
 }
 
 /// Resolve the current pod's identity. Order of precedence:

@@ -472,6 +472,15 @@ impl DrResolvedPath {
     pub fn trace_subprefix(&self) -> String {
         format!("{}_trace/", self.tenant_root())
     }
+
+    /// Partition lease manifest subprefix `<root>_catalog/leases/`. Holds the
+    /// generation-fenced partition lease manifests for Phase 7c (per-collection
+    /// write authority). Each `(tenant, collection)` gets its own manifest log
+    /// under `<tenant>/<collection>/_manifests/`. The leading underscore keeps
+    /// lease metadata lexically separate from data subprefixes.
+    pub fn partition_lease_prefix(&self) -> String {
+        format!("{}_catalog/leases/", self.root_prefix())
+    }
 }
 
 /// Resolve the catalog-addressed index locations for a collection's vector-ANN
