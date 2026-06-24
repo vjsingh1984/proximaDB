@@ -167,6 +167,12 @@ class ArrowFlightClient:
             return flight.Location.for_grpc_tls(
                 url[11:].split(":")[0], int(url.split(":")[-1])
             )
+        elif url.startswith("grpc+unix://"):
+            # Unix-domain socket for gRPC (portless embedded mode)
+            return flight.Location.for_grpc_unix(url[len("grpc+unix://") :])
+        elif url.startswith("unix://"):
+            # Legacy unix:// syntax (non-standard but sometimes used)
+            return flight.Location.for_grpc_unix(url[len("unix://") :])
         elif url.startswith("http://"):
             url = url[7:]
         elif url.startswith("https://"):

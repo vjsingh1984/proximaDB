@@ -36,11 +36,11 @@ pub enum BindTarget {
 // Socket file names under `MultiServerConfig::uds_socket_dir`. The Python SDK
 // must use identical names when deriving its UDS HTTP/gRPC/Flight clients.
 /// Socket file name for the REST surface.
-pub const UDS_REST_SOCKET_NAME: &str = "proximadb-embedded.rest.sock";
+pub const UDS_REST_SOCKET_NAME: &str = "rest.sock";
 /// Socket file name for the gRPC surface.
-pub const UDS_GRPC_SOCKET_NAME: &str = "proximadb-embedded.grpc.sock";
+pub const UDS_GRPC_SOCKET_NAME: &str = "grpc.sock";
 /// Socket file name for the Arrow Flight surface.
-pub const UDS_FLIGHT_SOCKET_NAME: &str = "proximadb-embedded.flight.sock";
+pub const UDS_FLIGHT_SOCKET_NAME: &str = "flight.sock";
 
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///

@@ -72,9 +72,11 @@ from typing import (
     runtime_checkable,
 )
 
-UDS_REST_SOCKET_NAME = "proximadb-embedded.rest.sock"
-UDS_GRPC_SOCKET_NAME = "proximadb-embedded.grpc.sock"
-UDS_FLIGHT_SOCKET_NAME = "proximadb-embedded.flight.sock"
+# Socket file names MUST match the Rust constants in
+# crates/platform/proximadb-runtime/src/bootstrap_config.rs.
+UDS_REST_SOCKET_NAME = "rest.sock"
+UDS_GRPC_SOCKET_NAME = "grpc.sock"
+UDS_FLIGHT_SOCKET_NAME = "flight.sock"
 UDS_SOCKET_PATH_LIMIT = 100
 
 # =============================================================================
@@ -710,9 +712,10 @@ class EmbeddedProximaDB:
 
     @property
     def arrow_flight_url(self) -> str:
-        """Arrow Flight URL."""
+        """Arrow Flight URL. Uses grpc+unix:// for UDS (pyarrow), grpc:// for TCP."""
         if self._is_uds_transport:
-            return f"unix://{self.arrow_flight_socket_path}"
+            # pyarrow flight.Location.for_grpc_unix() parses grpc+unix://PATH
+            return f"grpc+unix://{self.arrow_flight_socket_path}"
         return f"grpc://localhost:{self.config.arrow_flight_port}"
 
     @property
@@ -966,6 +969,18 @@ prefetch_budget = 4
                 else:
                     self._process.kill()
             self._process = None
+
+        # Cleanup: remove the fallback tmpdir (pxdb-*) when we created one.
+        # The data_dir/sockets/ path is left behind for reuse/restart.
+        if self._socket_dir is not None and self._socket_dir.parent.name.startswith(
+            "pxdb-"
+        ):
+            import shutil
+
+            try:
+                shutil.rmtree(self._socket_dir.parent)
+            except Exception:
+                pass  # Best-effort
 
     async def stop(self) -> None:
         """Stop the embedded database gracefully."""
