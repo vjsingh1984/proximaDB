@@ -25,11 +25,19 @@
 use std::env;
 use std::sync::Arc;
 
+use anyhow::Result;
 use chrono::Utc;
+use proximadb::catalog::{CatalogTableSchema, CatalogTableStatistics};
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::model::{Edge, Node, PropertyValue, property_value::Value};
+use proximadb::services::record_store::{
+    RecordScanPredicate, TableRecordGetRequest, TableRecordGetResponse, TableRecordMutation,
+    TableRecordMutationKind, TableRecordScanRequest, TableRecordScanResponse, TableRecordStore,
+    TableRecordWriteResult,
+};
 use proximadb::services::transaction::{CrossModelTransactionCoordinator, TransactionOutcome};
-use proximadb_storage_tenant::StorageTenantContext;
+use proximadb::storage::tenant::context::StorageTenantContext;
+use proximadb_records::{ProximaRecord, ProximaTree};
 
 /// Helper: Create a test node with basic properties.
 fn create_test_node(id: &str, label: &str) -> Node {
@@ -75,15 +83,90 @@ fn create_test_tenant() -> StorageTenantContext {
     StorageTenantContext::for_tenant_id("test_tenant_e2e")
 }
 
+/// Simple mock record store for e2e testing.
+struct MockTableRecordStore {
+    _inner: std::sync::RwLock<Vec<ProximaRecord>>,
+}
+
+impl MockTableRecordStore {
+    fn new() -> Self {
+        Self {
+            _inner: std::sync::RwLock::new(vec![]),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl TableRecordStore for MockTableRecordStore {
+    async fn write_mutations(
+        &self,
+        _table_schema: &CatalogTableSchema,
+        _mutations: Vec<TableRecordMutation>,
+        _tenant_context: Option<&StorageTenantContext>,
+    ) -> Result<TableRecordWriteResult> {
+        Ok(TableRecordWriteResult {
+            success: true,
+            errors: vec![],
+            written_count: 1,
+        })
+    }
+
+    async fn get_by_key(
+        &self,
+        _table_schema: &CatalogTableSchema,
+        _request: TableRecordGetRequest,
+        _tenant_context: Option<&StorageTenantContext>,
+    ) -> Result<TableRecordGetResponse> {
+        Ok(TableRecordGetResponse {
+            record: None,
+            found: false,
+        })
+    }
+
+    async fn scan_records(
+        &self,
+        _table_schema: &CatalogTableSchema,
+        _request: TableRecordScanRequest,
+        _tenant_context: Option<&StorageTenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        Ok(TableRecordScanResponse {
+            records: vec![],
+            next_offset: None,
+            total_count: 0,
+        })
+    }
+
+    async fn scan_records_filtered(
+        &self,
+        _table_schema: &CatalogTableSchema,
+        _request: TableRecordScanRequest,
+        _predicate: Option<&RecordScanPredicate<'_>>,
+        _tenant_context: Option<&StorageTenantContext>,
+    ) -> Result<TableRecordScanResponse> {
+        Ok(TableRecordScanResponse {
+            records: vec![],
+            next_offset: None,
+            total_count: 0,
+        })
+    }
+}
+
+/// Helper: Create a test coordinator with mock record store.
+fn create_test_coordinator(graph_id: &str) -> CrossModelTransactionCoordinator {
+    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
+    let record_store = Arc::new(MockTableRecordStore::new());
+    CrossModelTransactionCoordinator::new(
+        Arc::new(engine),
+        record_store,
+        "test_embeddings".to_string(),
+    )
+}
+
 /// Test: Coordinator is disabled by default.
 #[test]
 fn test_coordinator_disabled_by_default() {
-    // Ensure flag is not set
     env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
-
-    let engine = OrionGraphEngine::new("test_graph_disabled".to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
-
+    let coordinator = create_test_coordinator("test_graph_disabled");
     assert!(!coordinator.is_enabled());
 }
 
@@ -91,12 +174,8 @@ fn test_coordinator_disabled_by_default() {
 #[test]
 fn test_coordinator_enabled_with_flag() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
-
-    let engine = OrionGraphEngine::new("test_graph_enabled".to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
-
+    let coordinator = create_test_coordinator("test_graph_enabled");
     assert!(coordinator.is_enabled());
-
     env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
 }
 
@@ -105,8 +184,7 @@ fn test_coordinator_enabled_with_flag() {
 async fn test_write_symbol_returns_disabled_when_flag_off() {
     env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
 
-    let engine = OrionGraphEngine::new("test_graph_return_disabled".to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator("test_graph_return_disabled");
     let tenant_ctx = create_test_tenant();
 
     let node = create_test_node("node1", "Person");
@@ -127,8 +205,7 @@ async fn test_successful_atomic_commit() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
     let graph_id = "test_graph_commit";
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator(graph_id);
     let tenant_ctx = create_test_tenant();
 
     // Create test data
@@ -177,9 +254,7 @@ async fn test_successful_atomic_commit() {
 async fn test_rollback_on_embedding_validation_failure() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
-    let graph_id = "test_graph_rollback_embedding";
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator("test_graph_rollback_embedding");
     let tenant_ctx = create_test_tenant();
 
     // Create node with invalid embedding (contains NaN)
@@ -220,9 +295,7 @@ async fn test_rollback_on_embedding_validation_failure() {
 async fn test_rollback_on_edge_write_failure() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
-    let graph_id = "test_graph_rollback_edge";
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator("test_graph_rollback_edge");
     let tenant_ctx = create_test_tenant();
 
     // Create valid node and embedding
@@ -266,9 +339,7 @@ async fn test_rollback_on_edge_write_failure() {
 async fn test_idempotent_retry_upsert() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
-    let graph_id = "test_graph_idempotent";
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator("test_graph_idempotent");
     let tenant_ctx = create_test_tenant();
 
     // Create test data
@@ -310,9 +381,7 @@ async fn test_idempotent_retry_upsert() {
 async fn test_handles_empty_edges() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
-    let graph_id = "test_graph_no_edges";
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator("test_graph_no_edges");
     let tenant_ctx = create_test_tenant();
 
     let node = create_test_node("symbol_no_edges", "Symbol");
@@ -344,8 +413,7 @@ async fn test_concurrent_transactions() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
     let graph_id = "test_graph_concurrent";
-    let engine = Arc::new(OrionGraphEngine::new(graph_id.to_string()).unwrap());
-    let coordinator = Arc::new(CrossModelTransactionCoordinator::new(engine.clone()));
+    let coordinator = Arc::new(create_test_coordinator(graph_id));
 
     let mut handles = vec![];
 
@@ -381,9 +449,10 @@ async fn test_concurrent_transactions() {
     }
 
     // Verify all nodes exist
+    let graph_engine = coordinator.graph_engine();
     for i in 0..10 {
         let node_id = format!("symbol_concurrent_{}", i);
-        assert!(engine.get_node(&node_id).unwrap().is_some());
+        assert!(graph_engine.get_node(&node_id).unwrap().is_some());
     }
 
     env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
@@ -394,9 +463,7 @@ async fn test_concurrent_transactions() {
 async fn test_embedding_validation_rejects_inf() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
-    let graph_id = "test_graph_inf_validation";
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator("test_graph_inf_validation");
     let tenant_ctx = create_test_tenant();
 
     let node = create_test_node("symbol_inf", "Symbol");
@@ -427,9 +494,7 @@ async fn test_embedding_validation_rejects_inf() {
 async fn test_large_embedding_vector() {
     env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
 
-    let graph_id = "test_graph_large_embedding";
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
-    let coordinator = CrossModelTransactionCoordinator::new(Arc::new(engine));
+    let coordinator = create_test_coordinator("test_graph_large_embedding");
     let tenant_ctx = create_test_tenant();
 
     let node = create_test_node("symbol_large", "Symbol");

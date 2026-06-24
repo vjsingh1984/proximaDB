@@ -43,11 +43,20 @@ use std::env;
 use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
+use chrono::Utc;
 use tracing::{debug, info, warn};
 
+use crate::catalog::CatalogTableSchema;
 use crate::graph::engines::GraphEngine;
 use crate::graph::model::{Edge, Node};
+use crate::services::record_store::{
+    TableRecordMutation, TableRecordMutationKind, TableRecordStore,
+};
 use crate::storage::tenant::context::TenantContext;
+use proximadb_data_model::MemoryType;
+use proximadb_records::{
+    EmbeddingCell, EmbeddingScalarType, EmbeddingValues, ProximaRecord, ProximaTree,
+};
 
 /// Environment variable flag for cross-model transaction support.
 /// When unset or set to "false", the coordinator is disabled.
@@ -74,8 +83,8 @@ struct TransactionLog {
     node_id: Option<String>,
     /// Edge IDs that were written
     edge_ids: Vec<String>,
-    /// Whether the embedding was written
-    embedding_written: bool,
+    /// Embedding record OID if embedding was written to record storage
+    embedding_record_oid: Option<String>,
 }
 
 impl TransactionLog {
@@ -90,14 +99,14 @@ impl TransactionLog {
     }
 
     /// Record that an embedding was written.
-    fn mark_embedding_written(&mut self) {
-        self.embedding_written = true;
+    fn mark_embedding_written(&mut self, record_oid: String) {
+        self.embedding_record_oid = Some(record_oid);
     }
 
     /// Check if any writes were performed (requires rollback on failure).
     #[allow(dead_code)]
     fn has_writes(&self) -> bool {
-        self.node_id.is_some() || !self.edge_ids.is_empty() || self.embedding_written
+        self.node_id.is_some() || !self.edge_ids.is_empty() || self.embedding_record_oid.is_some()
     }
 }
 
@@ -113,6 +122,10 @@ impl TransactionLog {
 pub struct CrossModelTransactionCoordinator {
     /// Graph engine for node/edge operations
     graph_engine: Arc<dyn GraphEngine>,
+    /// Record store for embedding persistence
+    record_store: Arc<dyn TableRecordStore>,
+    /// Collection ID where embeddings are stored (e.g., "embeddings" or a dedicated table)
+    embedding_collection_id: String,
     /// Flag indicating whether the coordinator is enabled
     enabled: bool,
 }
@@ -123,7 +136,17 @@ impl CrossModelTransactionCoordinator {
     /// The coordinator checks the `PROXIMADB_CROSS_MODEL_TX_ENABLED` flag
     /// on construction. If the flag is not set or is "false", the coordinator
     /// will be disabled and all operations will return `TransactionOutcome::Disabled`.
-    pub fn new(graph_engine: Arc<dyn GraphEngine>) -> Self {
+    ///
+    /// # Arguments
+    ///
+    /// * `graph_engine` - Graph engine for node/edge operations
+    /// * `record_store` - Record store for embedding persistence
+    /// * `embedding_collection_id` - Collection/table ID where embeddings are stored
+    pub fn new(
+        graph_engine: Arc<dyn GraphEngine>,
+        record_store: Arc<dyn TableRecordStore>,
+        embedding_collection_id: String,
+    ) -> Self {
         let enabled = env::var(CROSS_MODEL_TX_FLAG)
             .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
             .unwrap_or(false);
@@ -139,6 +162,8 @@ impl CrossModelTransactionCoordinator {
 
         Self {
             graph_engine,
+            record_store,
+            embedding_collection_id,
             enabled,
         }
     }
@@ -208,7 +233,7 @@ impl CrossModelTransactionCoordinator {
         node: Node,
         embedding: Vec<f32>,
         edges: Vec<Edge>,
-        _tenant_ctx: &TenantContext,
+        tenant_ctx: &TenantContext,
     ) -> CrossModelTxResult {
         // Check flag gate
         if !self.enabled {
@@ -238,18 +263,17 @@ impl CrossModelTransactionCoordinator {
             }
         }
 
-        // Phase 2: Write the embedding
-        // Note: For this initial implementation, we track the embedding write
-        // but don't persist it to a separate vector store. The embedding is
-        // already included in the Node structure. Future work will integrate
-        // with the record storage layer for persistence.
+        // Phase 2: Write the embedding to record storage
         match self
-            .write_embedding_phase(&node_id, embedding.clone())
+            .write_embedding_phase(&node_id, embedding.clone(), tenant_ctx)
             .await
         {
-            Ok(()) => {
-                tx_log.mark_embedding_written();
-                debug!("Embedding write phase succeeded: {}", node_id);
+            Ok(record_oid) => {
+                tx_log.mark_embedding_written(record_oid.clone());
+                debug!(
+                    "Embedding write phase succeeded: {} (record OID: {})",
+                    node_id, record_oid
+                );
             }
             Err(e) => {
                 warn!("Embedding write phase failed: {}", e);
@@ -274,8 +298,13 @@ impl CrossModelTransactionCoordinator {
             }
             Err(e) => {
                 warn!("Edge write phase failed: {}", e);
-                // Rollback: delete node and its embedding reference
-                self.rollback_full(&node_id, &tx_log.edge_ids).await?;
+                // Rollback: delete node, embedding, and edges
+                self.rollback_full(
+                    &node_id,
+                    &tx_log.edge_ids,
+                    tx_log.embedding_record_oid.as_deref(),
+                )
+                .await?;
                 return Ok(TransactionOutcome::RolledBack {
                     reason: format!("Edge write failed, rolled back all: {}", e),
                 });
@@ -300,15 +329,17 @@ impl CrossModelTransactionCoordinator {
         Ok(())
     }
 
-    /// Phase 2: Write the embedding vector.
+    /// Phase 2: Write the embedding vector to record storage.
     ///
-    /// For this initial implementation, we validate the embedding and track
-    /// that it was written. The embedding is already included in the Node
-    /// structure and will be indexed by the graph engine.
-    ///
-    /// Future iterations will persist the embedding to record storage for
-    /// ANN indexing via the vector engine.
-    async fn write_embedding_phase(&self, node_id: &str, embedding: Vec<f32>) -> Result<()> {
+    /// Persists the embedding to the record store as a ProximaRecord with
+    /// the embedding in the embeddings field. Returns the record OID
+    /// for tracking and potential rollback.
+    async fn write_embedding_phase(
+        &self,
+        node_id: &str,
+        embedding: Vec<f32>,
+        tenant_ctx: &TenantContext,
+    ) -> Result<String> {
         // Validate embedding
         if embedding.is_empty() {
             return Err(anyhow!("Embedding vector is empty"));
@@ -320,16 +351,76 @@ impl CrossModelTransactionCoordinator {
         }
 
         debug!(
-            "Embedding validated for node {}: {} dimensions",
+            "Persisting embedding for node {}: {} dimensions",
             node_id,
             embedding.len()
         );
 
-        // TODO (TD-133 Part 2): Persist embedding to record storage
-        // This will involve creating a ProximaRecord with the embedding
-        // and writing it via the record store's write_mutations method.
+        // Create a ProximaRecord with the embedding
+        let record_oid = format!("embed_{}", node_id);
+        let now_ns = Utc::now().timestamp_nanos_opt().unwrap_or(0);
 
-        Ok(())
+        let record = ProximaRecord {
+            schema_version: 1,
+            oid: record_oid.clone(),
+            local_id: Some(node_id.to_string()),
+            tid: None,
+            variation_id: None,
+            record_version: 1,
+            spec_version: 1,
+            tenant_id: tenant_ctx.tenant_id.clone(),
+            permitted_principals: vec![],
+            rls_policy_id: None,
+            branch_id: None,
+            created_at_ns: now_ns,
+            updated_at_ns: now_ns,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: Some("cross_model_tx".to_string()),
+            actor: None,
+            method: Some("transactional".to_string()),
+            memory_type: Some(MemoryType::Fact),
+            props: ProximaTree::default(),
+            refs: vec![],
+            edge: None,
+            embeddings: vec![EmbeddingCell {
+                model_id: "default".to_string(),
+                modality: "generic".to_string(),
+                values: EmbeddingValues::Fp32(embedding.clone()),
+                dim: embedding.len() as u32,
+                precision: EmbeddingScalarType::Fp32,
+                precision_epoch: None,
+            }],
+            sequence: None,
+            labels: Default::default(),
+        };
+
+        // Create a minimal table schema for the embedding collection
+        // In production, this should be fetched from the catalog
+        let mut table_schema = CatalogTableSchema::default();
+        table_schema.name = self.embedding_collection_id.clone();
+
+        // Write the embedding record via TableRecordStore
+        let mutation = TableRecordMutation::new(TableRecordMutationKind::Insert, record);
+        let result = self
+            .record_store
+            .write_mutations(&table_schema, vec![mutation], Some(tenant_ctx))
+            .await
+            .map_err(|e| anyhow!("Failed to write embedding record: {}", e))?;
+
+        if !result.success {
+            return Err(anyhow!(
+                "Embedding write failed: {}",
+                result
+                    .errors
+                    .first()
+                    .cloned()
+                    .unwrap_or_else(|| "unknown error".to_string())
+            ));
+        }
+
+        debug!("Embedding persisted with record OID: {}", record_oid);
+        Ok(record_oid)
     }
 
     /// Phase 3: Write edges to the graph engine.
@@ -360,12 +451,23 @@ impl CrossModelTransactionCoordinator {
     }
 
     /// Rollback: Delete node and edges.
-    async fn rollback_full(&self, node_id: &str, edge_ids: &[String]) -> Result<()> {
+    async fn rollback_full(
+        &self,
+        node_id: &str,
+        edge_ids: &[String],
+        embedding_record_oid: Option<&str>,
+    ) -> Result<()> {
         debug!(
-            "Rolling back full transaction: node {} and {} edges",
+            "Rolling back full transaction: node {}, {} edges, embedding: {:?}",
             node_id,
-            edge_ids.len()
+            edge_ids.len(),
+            embedding_record_oid
         );
+
+        // Delete embedding record if it was written
+        if let Some(oid) = embedding_record_oid {
+            self.rollback_embedding(oid).await?;
+        }
 
         // Delete edges (in reverse order - LIFO rollback)
         for edge_id in edge_ids.iter().rev() {
@@ -379,6 +481,58 @@ impl CrossModelTransactionCoordinator {
 
         Ok(())
     }
+
+    /// Rollback: Delete an embedding record.
+    async fn rollback_embedding(&self, record_oid: &str) -> Result<()> {
+        debug!("Rolling back embedding record: {}", record_oid);
+
+        // Create a minimal table schema for the embedding collection
+        let mut table_schema = CatalogTableSchema::default();
+        table_schema.name = self.embedding_collection_id.clone();
+
+        // Create a delete mutation for the embedding record
+        // Note: For rollback, we create a ProximaRecord with just the OID
+        let record = ProximaRecord {
+            schema_version: 1,
+            oid: record_oid.to_string(),
+            local_id: None,
+            tid: None,
+            variation_id: None,
+            record_version: 1,
+            spec_version: 1,
+            tenant_id: "".to_string(),
+            permitted_principals: vec![],
+            rls_policy_id: None,
+            branch_id: None,
+            created_at_ns: 0,
+            updated_at_ns: 0,
+            valid_from_ns: None,
+            valid_to_ns: None,
+            origin: None,
+            actor: None,
+            method: None,
+            memory_type: None,
+            props: ProximaTree::default(),
+            refs: vec![],
+            edge: None,
+            embeddings: vec![],
+            sequence: None,
+            labels: Default::default(),
+        };
+
+        let mutation = TableRecordMutation::new(TableRecordMutationKind::Delete, record);
+
+        // Execute the delete (ignore errors for rollback - best effort)
+        if let Err(e) = self
+            .record_store
+            .write_mutations(&table_schema, vec![mutation], None)
+            .await
+        {
+            warn!("Failed to rollback embedding record {}: {}", record_oid, e);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -386,17 +540,92 @@ mod tests {
     use super::*;
     use crate::graph::engines::orion::OrionGraphEngine;
     use crate::graph::model::{PropertyValue, property_value::Value};
+    use crate::services::record_store::{
+        RecordScanPredicate, TableRecordGetRequest, TableRecordGetResponse, TableRecordScanRequest,
+        TableRecordScanResponse, TableRecordWriteResult,
+    };
     use crate::storage::tenant::context::StorageTenantContext;
+
+    /// Simple mock record store for testing.
+    struct MockTableRecordStore {
+        _inner: std::sync::RwLock<Vec<ProximaRecord>>,
+    }
+
+    impl MockTableRecordStore {
+        fn new() -> Self {
+            Self {
+                _inner: std::sync::RwLock::new(vec![]),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl TableRecordStore for MockTableRecordStore {
+        async fn write_mutations(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            _mutations: Vec<TableRecordMutation>,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordWriteResult> {
+            Ok(TableRecordWriteResult {
+                success: true,
+                errors: vec![],
+                written_count: 1,
+            })
+        }
+
+        async fn get_by_key(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            _request: TableRecordGetRequest,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordGetResponse> {
+            Ok(TableRecordGetResponse {
+                record: None,
+                found: false,
+            })
+        }
+
+        async fn scan_records(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            _request: TableRecordScanRequest,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordScanResponse> {
+            Ok(TableRecordScanResponse {
+                records: vec![],
+                next_offset: None,
+                total_count: 0,
+            })
+        }
+
+        async fn scan_records_filtered(
+            &self,
+            _table_schema: &CatalogTableSchema,
+            _request: TableRecordScanRequest,
+            _predicate: Option<&RecordScanPredicate<'_>>,
+            _tenant_context: Option<&TenantContext>,
+        ) -> Result<TableRecordScanResponse> {
+            Ok(TableRecordScanResponse {
+                records: vec![],
+                next_offset: None,
+                total_count: 0,
+            })
+        }
+    }
+
+    /// Helper: Create a test coordinator.
+    fn create_test_coordinator() -> CrossModelTransactionCoordinator {
+        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
+        let record_store = Arc::new(MockTableRecordStore::new());
+        CrossModelTransactionCoordinator::new(engine, record_store, "test_embeddings".to_string())
+    }
 
     /// Test that coordinator is disabled by default.
     #[test]
     fn test_coordinator_disabled_by_default() {
-        // Ensure flag is not set
         env::remove_var(CROSS_MODEL_TX_FLAG);
-
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let coordinator = CrossModelTransactionCoordinator::new(engine);
-
+        let coordinator = create_test_coordinator();
         assert!(!coordinator.is_enabled());
     }
 
@@ -404,12 +633,8 @@ mod tests {
     #[test]
     fn test_coordinator_enabled_with_flag() {
         env::set_var(CROSS_MODEL_TX_FLAG, "true");
-
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let coordinator = CrossModelTransactionCoordinator::new(engine);
-
+        let coordinator = create_test_coordinator();
         assert!(coordinator.is_enabled());
-
         env::remove_var(CROSS_MODEL_TX_FLAG);
     }
 
@@ -417,9 +642,7 @@ mod tests {
     #[tokio::test]
     async fn test_write_symbol_atomically_returns_disabled() {
         env::remove_var(CROSS_MODEL_TX_FLAG);
-
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let coordinator = CrossModelTransactionCoordinator::new(engine);
+        let coordinator = create_test_coordinator();
         let tenant_ctx = StorageTenantContext::for_tenant_id("test_tenant");
 
         let result = coordinator
@@ -428,83 +651,6 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, TransactionOutcome::Disabled);
-    }
-
-    /// Test embedding validation rejects empty vectors.
-    #[test]
-    fn test_embedding_validation_rejects_empty() {
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let coordinator = CrossModelTransactionCoordinator::new(engine);
-
-        env::set_var(CROSS_MODEL_TX_FLAG, "true");
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result =
-            rt.block_on(async { coordinator.write_embedding_phase("test_node", vec![]).await });
-
-        assert!(result.is_err());
-
-        env::remove_var(CROSS_MODEL_TX_FLAG);
-    }
-
-    /// Test embedding validation rejects NaN values.
-    #[test]
-    fn test_embedding_validation_rejects_nan() {
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let coordinator = CrossModelTransactionCoordinator::new(engine);
-
-        env::set_var(CROSS_MODEL_TX_FLAG, "true");
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(async {
-            coordinator
-                .write_embedding_phase("test_node", vec![0.1, f32::NAN, 0.3])
-                .await
-        });
-
-        assert!(result.is_err());
-
-        env::remove_var(CROSS_MODEL_TX_FLAG);
-    }
-
-    /// Test embedding validation rejects Inf values.
-    #[test]
-    fn test_embedding_validation_rejects_inf() {
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let coordinator = CrossModelTransactionCoordinator::new(engine);
-
-        env::set_var(CROSS_MODEL_TX_FLAG, "true");
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(async {
-            coordinator
-                .write_embedding_phase("test_node", vec![0.1, f32::INFINITY, 0.3])
-                .await
-        });
-
-        assert!(result.is_err());
-
-        env::remove_var(CROSS_MODEL_TX_FLAG);
-    }
-
-    /// Test embedding validation accepts valid vectors.
-    #[test]
-    fn test_embedding_validation_accepts_valid() {
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let coordinator = CrossModelTransactionCoordinator::new(engine);
-
-        env::set_var(CROSS_MODEL_TX_FLAG, "true");
-
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        let result = rt.block_on(async {
-            coordinator
-                .write_embedding_phase("test_node", vec![0.1, 0.2, 0.3])
-                .await
-        });
-
-        assert!(result.is_ok());
-
-        env::remove_var(CROSS_MODEL_TX_FLAG);
     }
 
     /// Test transaction log tracks writes correctly.
@@ -522,7 +668,7 @@ mod tests {
         log.mark_edge_written("edge2".to_string());
         assert_eq!(log.edge_ids, vec!["edge1", "edge2"]);
 
-        log.mark_embedding_written();
-        assert!(log.embedding_written);
+        log.mark_embedding_written("embed_1".to_string());
+        assert_eq!(log.embedding_record_oid, Some("embed_1".to_string()));
     }
 }
