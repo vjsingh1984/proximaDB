@@ -19,8 +19,8 @@ async fn test_rbac_permitted_principals_enforcement() {
     let mut collection = CollectionConfig {
         name: "secure_collection".to_string(),
         dimension: 384,
-        distance_metric: Some(DistanceMetric::Cos),
-        storage_engine: Some(StorageEngine::Sst),
+        distance_metric: Some(DistanceMetric::Cosine as i32),
+        storage_engine: Some(StorageEngine::Sst as i32),
         ..Default::default()
     };
 
@@ -47,8 +47,6 @@ async fn test_rbac_permitted_principals_enforcement() {
 #[tokio::test]
 async fn test_keu_metering_records_embeddings() {
     // Test that KEU metering records embedding operations
-    use proximadb::observability::io_trace;
-
     // Simulate an embedding operation within a trace scope
     let snap = proximadb::observability::io_trace::scope(async {
         // Record KEU units for a tenant
@@ -77,8 +75,6 @@ async fn test_keu_metering_records_embeddings() {
 #[tokio::test]
 async fn test_keu_multiple_operations_aggregate() {
     // Test that multiple embedding operations aggregate correctly
-    use proximadb::observability::io_trace;
-
     let snap = proximadb::observability::io_trace::scope(async {
         // Record multiple embedding operations
         consumption_metrics::record_keu_units(
@@ -121,8 +117,6 @@ async fn test_keu_multiple_operations_aggregate() {
 #[tokio::test]
 async fn test_keu_zero_tokens_ignored() {
     // Test that zero-token embeddings are ignored
-    use proximadb::observability::io_trace;
-
     let snap = proximadb::observability::io_trace::scope(async {
         consumption_metrics::record_keu_units(
             Some("tenant-test"),
@@ -157,8 +151,8 @@ fn test_rbac_error_messages() {
     let mut collection = CollectionConfig {
         name: "test_collection".to_string(),
         dimension: 384,
-        distance_metric: Some(DistanceMetric::Cos),
-        storage_engine: Some(StorageEngine::Sst),
+        distance_metric: Some(DistanceMetric::Cosine as i32),
+        storage_engine: Some(StorageEngine::Sst as i32),
         ..Default::default()
     };
 
