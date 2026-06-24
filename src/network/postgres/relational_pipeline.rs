@@ -232,11 +232,28 @@ pub async fn try_run_select(
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
 
+    // C4 Phase-2b: refine the shape-class with real fan-out / cardinality for
+    // hot Parquet-backed tables, peeked from the in-memory stat cache warmed by
+    // table opens (zero route-time I/O — a cold/never-scanned table stays
+    // `Unknown`, backward-compatible). Finer classes let the cost model
+    // discriminate within the OLAP-over-Parquet band where a Native↔DataFusion
+    // override is freshness-safe.
+    #[cfg(feature = "datafusion-integration")]
+    let (partition_fanout, cardinality) = if parquet_backed {
+        let locations: Vec<String> = parquet_loc_by_key.values().cloned().collect();
+        crate::query::route_cost_model::classify_table_shapes(&locations)
+    } else {
+        (Default::default(), Default::default())
+    };
+    #[cfg(not(feature = "datafusion-integration"))]
+    let (partition_fanout, cardinality) = (Default::default(), Default::default());
+
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
             parquet_backed,
-            ..Default::default()
+            partition_fanout,
+            cardinality,
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -1023,8 +1040,10 @@ async fn parquet_split_summary(
     let (mut any_rows, mut any_bytes) = (false, false);
     for location in locations {
         let table = ObjectStoreParquetTable::open(location).await.ok()?;
-        partitions += table.split_count();
-        if let Some(r) = table.estimated_rows() {
+        let splits = table.split_count();
+        let est_rows = table.estimated_rows();
+        partitions += splits;
+        if let Some(r) = est_rows {
             rows = rows.saturating_add(r);
             any_rows = true;
         }
@@ -1032,6 +1051,10 @@ async fn parquet_split_summary(
             bytes = bytes.saturating_add(b);
             any_bytes = true;
         }
+        // EXPLAIN opens the footer anyway — warm the route-time shape cache so
+        // the next SELECT's route decision can classify this location's fan-out
+        // / cardinality without a cold read (co-design: zero extra I/O).
+        crate::query::route_cost_model::record_table_shape_stat(location, splits as u32, est_rows);
     }
     Some(crate::query::read_route::ReadSplitSummary::row_groups(
         partitions,

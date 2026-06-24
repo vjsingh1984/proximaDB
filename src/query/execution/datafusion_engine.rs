@@ -87,13 +87,23 @@ impl DataFusionLocalEngine {
         .map_err(|e| ExecutionError::Context(format!("session: {e}")))?;
 
         for (name, location) in &context.parquet_tables {
-            crate::datafusion::register_object_store_parquet_location(&ctx, name, location)
-                .await
-                .map_err(|e| {
-                    ExecutionError::Context(format!(
-                        "register object-store parquet table {name}: {e}"
-                    ))
-                })?;
+            let table =
+                crate::datafusion::register_object_store_parquet_location(&ctx, name, location)
+                    .await
+                    .map_err(|e| {
+                        ExecutionError::Context(format!(
+                            "register object-store parquet table {name}: {e}"
+                        ))
+                    })?;
+            // Warm the route-time shape cache for free — the footer is already
+            // read, so the next route decision can classify this location's
+            // fan-out / cardinality without a cold read (co-design: zero extra
+            // I/O on the route path).
+            crate::query::route_cost_model::record_table_shape_stat(
+                location,
+                table.split_count() as u32,
+                table.estimated_rows(),
+            );
         }
 
         context.controls.check_cancelled()?;
