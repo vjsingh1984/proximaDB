@@ -5899,6 +5899,152 @@ pub struct DeleteDocumentResponse {
     #[prost(bool, tag = "1")]
     pub deleted: bool,
 }
+/// A single field update operation. The value is a `TypedValue` (full ProximaValue
+/// coverage) so the update stays ProximaValue-native; the handler converts to the
+/// neutral `ProximaValue` at the boundary.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct DocumentFieldUpdate {
+    #[prost(enumeration = "DocumentUpdateOperation", tag = "1")]
+    pub operation: i32,
+    /// JSON path to update (e.g. "address.city" or "tags.0")
+    #[prost(string, tag = "2")]
+    pub path: ::prost::alloc::string::String,
+    /// Value for SET/INC/PUSH/PULL operations
+    #[prost(message, optional, tag = "3")]
+    pub value: ::core::option::Option<TypedValue>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpdateDocumentRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "3")]
+    pub updates: ::prost::alloc::vec::Vec<DocumentFieldUpdate>,
+    /// Optimistic lock; omit to skip check
+    #[prost(uint64, optional, tag = "4")]
+    pub expected_version: ::core::option::Option<u64>,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DocumentSortField {
+    /// dotted field path into the document
+    #[prost(string, tag = "1")]
+    pub path: ::prost::alloc::string::String,
+    #[prost(enumeration = "DocumentSortOrder", tag = "2")]
+    pub order: i32,
+}
+/// Paginated/sorted/projected scan of a collection. Value-bearing predicate
+/// filters are deferred: they require a ProximaValue-native filter so query values
+/// stay off the lossy v1 `SqlValue` path (tracked follow-up), so this first slice
+/// carries no filter — only projection, sort, and pagination, which are value-free.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDocumentsRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    /// empty = all fields
+    #[prost(string, repeated, tag = "2")]
+    pub projection: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+    #[prost(message, repeated, tag = "3")]
+    pub sort: ::prost::alloc::vec::Vec<DocumentSortField>,
+    #[prost(uint32, tag = "4")]
+    pub limit: u32,
+    #[prost(uint32, tag = "5")]
+    pub offset: u32,
+    /// total match count (slower)
+    #[prost(bool, tag = "6")]
+    pub include_count: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct QueryDocumentsResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub documents: ::prost::alloc::vec::Vec<Document>,
+    #[prost(uint64, optional, tag = "2")]
+    pub total_count: ::core::option::Option<u64>,
+    #[prost(uint64, tag = "3")]
+    pub query_time_ms: u64,
+}
+/// Document update operations. Mirrors v1 UpdateOperation discriminants 1:1 so the
+/// handler can map directly to the backing service's apply_update logic.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DocumentUpdateOperation {
+    Unspecified = 0,
+    /// Set field value
+    Set = 1,
+    /// Remove field
+    Unset = 2,
+    /// Increment numeric field
+    Inc = 3,
+    /// Push to array
+    Push = 4,
+    /// Remove from array
+    Pull = 5,
+    /// Add unique to array
+    AddToSet = 6,
+    /// Rename field
+    Rename = 7,
+}
+impl DocumentUpdateOperation {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DOCUMENT_UPDATE_OPERATION_UNSPECIFIED",
+            Self::Set => "DOCUMENT_UPDATE_OPERATION_SET",
+            Self::Unset => "DOCUMENT_UPDATE_OPERATION_UNSET",
+            Self::Inc => "DOCUMENT_UPDATE_OPERATION_INC",
+            Self::Push => "DOCUMENT_UPDATE_OPERATION_PUSH",
+            Self::Pull => "DOCUMENT_UPDATE_OPERATION_PULL",
+            Self::AddToSet => "DOCUMENT_UPDATE_OPERATION_ADD_TO_SET",
+            Self::Rename => "DOCUMENT_UPDATE_OPERATION_RENAME",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DOCUMENT_UPDATE_OPERATION_UNSPECIFIED" => Some(Self::Unspecified),
+            "DOCUMENT_UPDATE_OPERATION_SET" => Some(Self::Set),
+            "DOCUMENT_UPDATE_OPERATION_UNSET" => Some(Self::Unset),
+            "DOCUMENT_UPDATE_OPERATION_INC" => Some(Self::Inc),
+            "DOCUMENT_UPDATE_OPERATION_PUSH" => Some(Self::Push),
+            "DOCUMENT_UPDATE_OPERATION_PULL" => Some(Self::Pull),
+            "DOCUMENT_UPDATE_OPERATION_ADD_TO_SET" => Some(Self::AddToSet),
+            "DOCUMENT_UPDATE_OPERATION_RENAME" => Some(Self::Rename),
+            _ => None,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum DocumentSortOrder {
+    Unspecified = 0,
+    DocumentSortAsc = 1,
+    DocumentSortDesc = 2,
+}
+impl DocumentSortOrder {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "DOCUMENT_SORT_ORDER_UNSPECIFIED",
+            Self::DocumentSortAsc => "DOCUMENT_SORT_ASC",
+            Self::DocumentSortDesc => "DOCUMENT_SORT_DESC",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "DOCUMENT_SORT_ORDER_UNSPECIFIED" => Some(Self::Unspecified),
+            "DOCUMENT_SORT_ASC" => Some(Self::DocumentSortAsc),
+            "DOCUMENT_SORT_DESC" => Some(Self::DocumentSortDesc),
+            _ => None,
+        }
+    }
+}
 /// Generated client implementations.
 pub mod proxima_document_service_client {
     #![allow(
@@ -5992,8 +6138,9 @@ pub mod proxima_document_service_client {
             self.inner = self.inner.max_encoding_message_size(limit);
             self
         }
-        /// Document CRUD (first slice). Query/update/aggregate are deferred follow-ups,
-        /// mirroring how the graph service staged its advanced RPCs (TD-124).
+        /// Document CRUD + query (value-free scan). Update with value-bearing filter and
+        /// aggregate are deferred follow-ups, mirroring how the graph service staged its
+        /// advanced RPCs (TD-124).
         pub async fn create_document(
             &mut self,
             request: impl tonic::IntoRequest<super::CreateDocumentRequest>,
@@ -6078,6 +6225,64 @@ pub mod proxima_document_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        pub async fn query_documents(
+            &mut self,
+            request: impl tonic::IntoRequest<super::QueryDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryDocumentsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaDocumentService/QueryDocuments",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaDocumentService",
+                        "QueryDocuments",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn update_document(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpdateDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DocumentResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaDocumentService/UpdateDocument",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaDocumentService",
+                        "UpdateDocument",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -6093,8 +6298,9 @@ pub mod proxima_document_service_server {
     /// Generated trait containing gRPC methods that should be implemented for use with ProximaDocumentServiceServer.
     #[async_trait]
     pub trait ProximaDocumentService: std::marker::Send + std::marker::Sync + 'static {
-        /// Document CRUD (first slice). Query/update/aggregate are deferred follow-ups,
-        /// mirroring how the graph service staged its advanced RPCs (TD-124).
+        /// Document CRUD + query (value-free scan). Update with value-bearing filter and
+        /// aggregate are deferred follow-ups, mirroring how the graph service staged its
+        /// advanced RPCs (TD-124).
         async fn create_document(
             &self,
             request: tonic::Request<super::CreateDocumentRequest>,
@@ -6114,6 +6320,20 @@ pub mod proxima_document_service_server {
             request: tonic::Request<super::DeleteDocumentRequest>,
         ) -> std::result::Result<
             tonic::Response<super::DeleteDocumentResponse>,
+            tonic::Status,
+        >;
+        async fn query_documents(
+            &self,
+            request: tonic::Request<super::QueryDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::QueryDocumentsResponse>,
+            tonic::Status,
+        >;
+        async fn update_document(
+            &self,
+            request: tonic::Request<super::UpdateDocumentRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DocumentResponse>,
             tonic::Status,
         >;
     }
@@ -6323,6 +6543,104 @@ pub mod proxima_document_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = DeleteDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaDocumentService/QueryDocuments" => {
+                    #[allow(non_camel_case_types)]
+                    struct QueryDocumentsSvc<T: ProximaDocumentService>(pub Arc<T>);
+                    impl<
+                        T: ProximaDocumentService,
+                    > tonic::server::UnaryService<super::QueryDocumentsRequest>
+                    for QueryDocumentsSvc<T> {
+                        type Response = super::QueryDocumentsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::QueryDocumentsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaDocumentService>::query_documents(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = QueryDocumentsSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaDocumentService/UpdateDocument" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpdateDocumentSvc<T: ProximaDocumentService>(pub Arc<T>);
+                    impl<
+                        T: ProximaDocumentService,
+                    > tonic::server::UnaryService<super::UpdateDocumentRequest>
+                    for UpdateDocumentSvc<T> {
+                        type Response = super::DocumentResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpdateDocumentRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaDocumentService>::update_document(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpdateDocumentSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(

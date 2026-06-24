@@ -59,10 +59,72 @@ message DeleteDocumentResponse {
   bool deleted = 1;
 }
 
+// Document update operations. Mirrors v1 UpdateOperation discriminants 1:1 so the
+// handler can map directly to the backing service's apply_update logic.
+enum DocumentUpdateOperation {
+  DOCUMENT_UPDATE_OPERATION_UNSPECIFIED = 0;
+  DOCUMENT_UPDATE_OPERATION_SET = 1;       // Set field value
+  DOCUMENT_UPDATE_OPERATION_UNSET = 2;     // Remove field
+  DOCUMENT_UPDATE_OPERATION_INC = 3;       // Increment numeric field
+  DOCUMENT_UPDATE_OPERATION_PUSH = 4;      // Push to array
+  DOCUMENT_UPDATE_OPERATION_PULL = 5;      // Remove from array
+  DOCUMENT_UPDATE_OPERATION_ADD_TO_SET = 6; // Add unique to array
+  DOCUMENT_UPDATE_OPERATION_RENAME = 7;    // Rename field
+}
+
+// A single field update operation. The value is a `TypedValue` (full ProximaValue
+// coverage) so the update stays ProximaValue-native; the handler converts to the
+// neutral `ProximaValue` at the boundary.
+message DocumentFieldUpdate {
+  DocumentUpdateOperation operation = 1;
+  string path = 2; // JSON path to update (e.g. "address.city" or "tags.0")
+  optional TypedValue value = 3; // Value for SET/INC/PUSH/PULL operations
+}
+
+message UpdateDocumentRequest {
+  string collection_id = 1;
+  string id = 2;
+  repeated DocumentFieldUpdate updates = 3;
+  optional uint64 expected_version = 4; // Optimistic lock; omit to skip check
+}
+
+enum DocumentSortOrder {
+  DOCUMENT_SORT_ORDER_UNSPECIFIED = 0;
+  DOCUMENT_SORT_ASC = 1;
+  DOCUMENT_SORT_DESC = 2;
+}
+
+message DocumentSortField {
+  string path = 1; // dotted field path into the document
+  DocumentSortOrder order = 2;
+}
+
+// Paginated/sorted/projected scan of a collection. Value-bearing predicate
+// filters are deferred: they require a ProximaValue-native filter so query values
+// stay off the lossy v1 `SqlValue` path (tracked follow-up), so this first slice
+// carries no filter — only projection, sort, and pagination, which are value-free.
+message QueryDocumentsRequest {
+  string collection_id = 1;
+  repeated string projection = 2; // empty = all fields
+  repeated DocumentSortField sort = 3;
+  uint32 limit = 4;
+  uint32 offset = 5;
+  bool include_count = 6; // total match count (slower)
+}
+
+message QueryDocumentsResponse {
+  repeated Document documents = 1;
+  optional uint64 total_count = 2;
+  uint64 query_time_ms = 3;
+}
+
 service ProximaDocumentService {
-  // Document CRUD (first slice). Query/update/aggregate are deferred follow-ups,
-  // mirroring how the graph service staged its advanced RPCs (TD-124).
+  // Document CRUD + query (value-free scan). Update with value-bearing filter and
+  // aggregate are deferred follow-ups, mirroring how the graph service staged its
+  // advanced RPCs (TD-124).
   rpc CreateDocument(CreateDocumentRequest) returns (DocumentResponse);
   rpc GetDocument(GetDocumentRequest) returns (DocumentResponse);
   rpc DeleteDocument(DeleteDocumentRequest) returns (DeleteDocumentResponse);
+  rpc QueryDocuments(QueryDocumentsRequest) returns (QueryDocumentsResponse);
+  rpc UpdateDocument(UpdateDocumentRequest) returns (DocumentResponse);
 }
