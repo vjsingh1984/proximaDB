@@ -310,9 +310,6 @@ pub struct SwiftEngine {
     /// - Triggers index updates after compaction
     /// - Coordinates clustering operations
     /// - Manages graph index lifecycle
-    ///
-    /// None if AXIS disabled, Some for indexed collections
-    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 
     /// **Distance Computation Engine**
     ///
@@ -376,7 +373,6 @@ impl SwiftEngine {
     /// Create SWIFT engine with specific config (internal use)
     pub async fn new_with_config(
         distance_engine: Arc<crate::compute::distance_computation::engine::UnifiedDistanceCompute>,
-        axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
     ) -> Result<Self> {
         let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
         let optimized_ops = Arc::new(OptimizedSwiftOperations::new()?);
@@ -471,8 +467,6 @@ impl SwiftEngine {
             fallback_quantization_engine,
             filesystem,
             universal_optimizer,
-            // Service dependencies
-            axis_manager,
             distance_engine,
             // PCA model cache for Z-Order spatial encoding
             pca_model_cache: Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new())),
@@ -822,16 +816,6 @@ impl SwiftEngine {
     // =========================================================================
 
     /// Get the AXIS manager for HNSW/IVF index operations
-    ///
-    /// Returns the AXIS manager if available, enabling:
-    /// - HNSW-based approximate nearest neighbor search
-    /// - IVF partition pruning
-    /// - Hybrid vector + metadata queries
-    pub fn axis_manager(
-        &self,
-    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
-        self.axis_manager.as_ref()
-    }
 
     /// Convert FilterExpression to AXIS MetadataFilter format
     ///
@@ -1567,91 +1551,12 @@ impl UnifiedStorageFormat for SwiftEngine {
         // Current blocker: Service infrastructure for AXIS and cost estimation
         //
         // Determine search strategy based on context
-        // Use orchestration if:
-        // 1. AXIS indexes are explicitly configured, OR
-        // 2. Quantization is enabled, OR
-        // 3. AXIS manager is available (for collections built after AXIS became available)
-        let has_axis_manager = self.axis_manager().is_some();
-        let use_orchestration =
-            ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization || has_axis_manager;
-
-        if has_axis_manager {
-            debug!("🔍 SWIFT: AXIS manager is available for HNSW/IVF search");
-        }
+        // Use orchestration if AXIS indexes or quantization are configured
+        let use_orchestration = ctx.metadata.use_axis_indexes || ctx.metadata.has_quantization;
 
         if use_orchestration {
             // ========================================================================
-            // PHASE 1A: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF)
-            // ========================================================================
-            if let Some(axis_manager) = self.axis_manager() {
-                info!(
-                    "🔗 SWIFT: AXIS manager available, attempting HNSW index search for collection {}",
-                    collection_id
-                );
-
-                // Convert filter expression to AXIS metadata filters
-                let axis_filters = Self::convert_filter_to_axis(filter_expression);
-
-                // Build hybrid query for AXIS
-                let hybrid_query = HybridQuery {
-                    collection_id: collection_id.to_string(),
-                    vector_query: Some(VectorQuery::Dense {
-                        vector: query_vector.to_vec(),
-                        similarity_threshold: 0.0, // Return all results up to k
-                    }),
-                    metadata_filters: axis_filters,
-                    id_filters: Vec::new(),
-                    top_k,
-                    include_expired: false,
-                    ..Default::default()
-                };
-
-                // Execute AXIS query (HNSW or IVF based on index type)
-                let axis_start = std::time::Instant::now();
-                match axis_manager.query(hybrid_query).await {
-                    Ok(axis_results) => {
-                        let axis_duration = axis_start.elapsed();
-                        info!(
-                            "✅ SWIFT: AXIS HNSW search completed in {:?} - found {} candidates",
-                            axis_duration,
-                            axis_results.results.len()
-                        );
-
-                        // Convert AXIS results to OptimizedSearchRecord
-                        let results: Vec<OptimizedSearchRecord> = axis_results
-                            .results
-                            .into_iter()
-                            .take(top_k)
-                            .map(|scored| OptimizedSearchRecord {
-                                id: scored.vector_id.to_string(),
-                                vector_id: Some(scored.vector_id.to_string()),
-                                score: scored.similarity,
-                                similarity: Some(scored.similarity),
-                                vector: None, // AXIS doesn't return vectors by default
-                                ..Default::default()
-                            })
-                            .collect();
-
-                        // If we got results, return them
-                        if !results.is_empty() {
-                            return Ok(results);
-                        }
-
-                        info!(
-                            "⚠️ SWIFT: AXIS returned no results, falling back to block-pruned search"
-                        );
-                    }
-                    Err(e) => {
-                        warn!(
-                            "⚠️ SWIFT: AXIS query failed ({}), falling back to block-pruned search",
-                            e
-                        );
-                    }
-                }
-            }
-
-            // ========================================================================
-            // PHASE 1B: BLOCK-PRUNED SEARCH (FALLBACK)
+            // PHASE 1: BLOCK-PRUNED SEARCH WITH QUANTIZATION
             // ========================================================================
             info!("🎯 SWIFT: Using progressive search with block pruning (quantization available)");
 

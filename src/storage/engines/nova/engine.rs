@@ -227,11 +227,6 @@ pub struct NovaEngine {
     /// Index management for O(log N) approximate nearest neighbor search:
     /// - HNSW (Hierarchical Navigable Small World) graphs
     /// - IVF (Inverted File Index) with product quantization
-    /// - Automatic index updates on vector inserts/deletes
-    /// - Query-time index selection based on collection size
-    ///
-    /// None by default, set externally when AXIS indexes are enabled for collection
-    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
 }
 #[allow(dead_code)]
 impl NovaEngine {
@@ -346,7 +341,6 @@ impl NovaEngine {
             fallback_quantization_engine,
             _distance_engine: distance_compute,
             universal_optimizer,
-            axis_manager: None, // AXIS manager will be set externally if available
         })
     }
     /// Set metrics collector for monitoring
@@ -1608,91 +1602,7 @@ impl UnifiedStorageFormat for NovaEngine {
         let query_vector = ctx
             .query_vector()
             .ok_or_else(|| anyhow!("Query vector required for search"))?;
-        let k = ctx.top_k();
-        let filter_expression = ctx.search_params.filter_expression.as_ref();
 
-        // ========================================================================
-        // PHASE 0: TRY AXIS-BASED SEARCH FIRST (HNSW/IVF) - FASTEST PATH
-        // ========================================================================
-        // Use AXIS manager if available for O(log N) approximate search
-        let has_axis_manager = self.axis_manager().is_some();
-        if has_axis_manager {
-            tracing::debug!("🔍 NOVA: AXIS manager is available for HNSW/IVF search");
-        }
-
-        if let Some(axis_manager) = self.axis_manager() {
-            tracing::debug!(
-                "🔍 NOVA: Attempting AXIS search for collection='{}', top_k={}, dimension={}",
-                collection_id,
-                k,
-                query_vector.len()
-            );
-
-            // Convert filter expression to AXIS format
-            let axis_filters = Self::convert_filter_to_axis(filter_expression);
-
-            // Build hybrid query for AXIS
-            use crate::index::axis::management::manager::{HybridQuery, VectorQuery};
-            let hybrid_query = HybridQuery {
-                collection_id: collection_id.to_string(),
-                vector_query: Some(VectorQuery::Dense {
-                    vector: query_vector.to_vec(),
-                    similarity_threshold: 0.0, // Return all results up to k
-                }),
-                metadata_filters: axis_filters,
-                id_filters: Vec::new(),
-                top_k: k,
-                include_expired: false,
-                ..Default::default()
-            };
-
-            // Execute AXIS query (HNSW or IVF based on index type)
-            let axis_start = std::time::Instant::now();
-            match axis_manager.query(hybrid_query).await {
-                Ok(axis_results) => {
-                    let axis_duration = axis_start.elapsed();
-                    tracing::info!(
-                        "✅ NOVA: AXIS search completed in {:?} - found {} candidates",
-                        axis_duration,
-                        axis_results.results.len()
-                    );
-
-                    // Convert AXIS results to OptimizedSearchRecord
-                    let results: Vec<OptimizedSearchRecord> = axis_results
-                        .results
-                        .into_iter()
-                        .take(k)
-                        .map(|scored| OptimizedSearchRecord {
-                            id: scored.vector_id.to_string(),
-                            vector_id: Some(scored.vector_id.to_string()),
-                            score: scored.similarity,
-                            similarity: Some(scored.similarity),
-                            vector: None, // AXIS doesn't return vectors by default
-                            ..Default::default()
-                        })
-                        .collect();
-
-                    // If we got results, return them
-                    if !results.is_empty() {
-                        return Ok(results);
-                    }
-
-                    tracing::debug!(
-                        "⚠️ NOVA: AXIS returned no results, falling back to progressive columnar search"
-                    );
-                }
-                Err(e) => {
-                    tracing::debug!(
-                        "⚠️ NOVA: AXIS search failed: {}, falling back to progressive columnar search",
-                        e
-                    );
-                }
-            }
-        }
-
-        // ========================================================================
-        // PHASE 1: PROGRESSIVE COLUMNAR SEARCH (Fallback)
-        // ========================================================================
         // Delegate to modularized search operations for progressive columnar search
         self.search_ops.search_vectors_unified(ctx).await
     }
@@ -1888,79 +1798,6 @@ impl UniversallyOptimized for NovaEngine {
 
 // Helper methods for NovaEngine
 impl NovaEngine {
-    /// Get the AXIS manager if configured
-    ///
-    /// Returns the optional AXIS manager for HNSW/IVF-based search.
-    /// When available, AXIS provides O(log N) approximate nearest neighbor search
-    /// that is significantly faster than progressive columnar search.
-    pub fn axis_manager(
-        &self,
-    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
-        self.axis_manager.as_ref()
-    }
-
-    /// Convert FilterExpression to AXIS MetadataFilter format
-    ///
-    /// This helper converts our internal FilterExpression type to AXIS's
-    /// MetadataFilter format for hybrid vector + metadata queries.
-    fn convert_filter_to_axis(
-        filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
-        use crate::core::search::{ComparisonOperator, FilterExpression};
-        use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
-
-        let Some(filter) = filter_expression else {
-            return Vec::new();
-        };
-
-        // Convert filter expressions to AXIS metadata filters
-        let mut axis_filters = Vec::new();
-
-        match filter {
-            FilterExpression::Comparison {
-                field,
-                operator,
-                value,
-            } => {
-                // Convert ComparisonOperator to AXIS FilterOperator
-                let axis_operator = match operator {
-                    ComparisonOperator::Equals => FilterOperator::Equals,
-                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
-                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
-                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
-                    ComparisonOperator::LessThan => FilterOperator::LessThan,
-                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
-                    ComparisonOperator::In => FilterOperator::In,
-                    ComparisonOperator::NotIn => FilterOperator::NotIn,
-                    _ => {
-                        tracing::debug!(
-                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
-                            operator
-                        );
-                        return axis_filters;
-                    }
-                };
-
-                axis_filters.push(MetadataFilter {
-                    field: field.clone(),
-                    operator: axis_operator,
-                    value: value.clone(),
-                });
-            }
-            FilterExpression::And(filters) => {
-                for f in filters {
-                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
-                }
-            }
-            FilterExpression::Or(_) | FilterExpression::Not(_) => {
-                // OR and NOT are not directly supported by AXIS, will use post-filtering
-                tracing::debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
-            }
-        }
-
-        axis_filters
-    }
-
     // Removed unnecessary helper methods - engines receive all params directly
     // No need for CollectionService, distance/quantization engines are already in the struct
 }
