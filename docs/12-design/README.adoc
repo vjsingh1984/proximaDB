@@ -141,6 +141,13 @@ Read these in order for future-shaping architecture work:
    the blend; late-materialization + quantized in-place distance (Samyama/NaviX). Modalities are pluggable
    `ModalityExpander`s; calibrate+fuse+rank is written once. Phase 1 = graph instance on REST v2.
    Engine asks: TD-136..TD-143.
+23. `UNIFIED_RESOURCE_LEASE_LOCKING_REVIEW_2026_06_24.adoc` +
+   Approved correction plan for the `feat/unified-resource-key` branch. Retains the unified
+   `ResourceKey` and strategy direction, but gates DML/protocol lock exposure on foundational fixes:
+   mixed-read-safe legacy lease paths, canonical path-safe resource identity, full-key renewal,
+   real `TenantContext` for DML locks, enforced hierarchy, guard-owned renewal/release, and
+   storage-visible fencing. Read before changing `src/cluster/partition_lease.rs` or wiring locks
+   into `DmlService`/protocol handlers.
 
 == Stable Reference Docs
 

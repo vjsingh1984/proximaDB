@@ -22,6 +22,7 @@ use proximadb_records::{EmbeddingCell, ProximaRecord, ProximaTreeNode};
 use tracing::{debug, info, warn};
 
 use crate::catalog::CatalogManager;
+use crate::cluster::partition_lease::{DmlLockGuard, DmlLockScope, DmlLockService, LockIntent};
 use crate::query::table_write_executor::{
     DataFusionTableWriteExecutor, NativeTableWriteExecutor, ParentTableResolver,
     PlannedOnlyTableWriteExecutor, ResolvedParentTable, TableRecordStoreSourceReader,
@@ -46,6 +47,7 @@ use crate::services::{
 };
 use crate::storage::tenant::context::TenantContext;
 use crate::storage::trait_components::path_resolver::DrPathBuilder;
+use proximadb_catalog::TableIdentifier;
 use proximadb_storage_common::object_store_bridge::ObjectStoreBridge;
 
 /// Placeholder tenant used by warehouse materialization when no `TenantContext`
@@ -625,6 +627,9 @@ pub struct DmlService {
     record_store: Arc<dyn TableRecordStore>,
     /// Routed table-write executor for INSERT SELECT / OVERWRITE / CTAS / MERGE.
     table_write_executor: Arc<dyn TableWriteExecutor>,
+    /// Optional tenant-scoped DML lock service. When absent, DML executes with
+    /// the legacy local behavior.
+    dml_lock_service: Option<Arc<DmlLockService>>,
 }
 
 impl DmlService {
@@ -731,6 +736,7 @@ impl DmlService {
             catalog_manager,
             record_store,
             table_write_executor,
+            dml_lock_service: None,
         }
     }
 
@@ -741,6 +747,12 @@ impl DmlService {
     /// in the cross-modal fusion seam (F-D).
     pub fn record_store(&self) -> Arc<dyn TableRecordStore> {
         self.record_store.clone()
+    }
+
+    /// Attach the tenant-scoped DML lock service.
+    pub fn with_dml_lock_service(mut self, dml_lock_service: Arc<DmlLockService>) -> Self {
+        self.dml_lock_service = Some(dml_lock_service);
+        self
     }
 
     /// Execute a DML statement (single-tenant / unscoped).
@@ -827,6 +839,63 @@ impl DmlService {
             .resolve_table_scoped(table_name, tenant)
             .await?;
         catalog.table_exists(&table_id).await
+    }
+
+    async fn acquire_table_dml_lock(
+        &self,
+        table_id: &TableIdentifier,
+        tenant_context: Option<&TenantContext>,
+        intent: LockIntent,
+    ) -> Result<Option<DmlLockGuard>> {
+        let Some(lock_service) = &self.dml_lock_service else {
+            return Ok(None);
+        };
+
+        let tenant_id = tenant_context
+            .map(|tc| tc.tenant_id.as_str())
+            .unwrap_or(DEFAULT_TENANT_PLACEHOLDER);
+        let namespace_id = Self::dml_lock_namespace_id(table_id, tenant_context);
+        let scope = DmlLockScope::Table {
+            schema_name: namespace_id.clone(),
+            table_name: table_id.name.clone(),
+        };
+
+        let guard = lock_service
+            .acquire_dml_lock_guard(
+                tenant_id,
+                Some(namespace_id.as_str()),
+                scope,
+                intent,
+                Self::now_unix_ms(),
+            )
+            .await
+            .with_context(|| {
+                format!(
+                    "acquiring DML lock for tenant '{tenant_id}', namespace '{namespace_id}', table '{}'",
+                    table_id.name
+                )
+            })?;
+        Ok(Some(guard))
+    }
+
+    fn dml_lock_namespace_id(
+        table_id: &TableIdentifier,
+        tenant_context: Option<&TenantContext>,
+    ) -> String {
+        let namespace = if let Some(tenant) = tenant_context {
+            table_id
+                .namespace
+                .strip_prefix(std::slice::from_ref(&tenant.tenant_id))
+                .unwrap_or(table_id.namespace.as_slice())
+        } else {
+            table_id.namespace.as_slice()
+        };
+
+        if namespace.is_empty() {
+            DEFAULT_NAMESPACE_ID.to_string()
+        } else {
+            namespace.join(".")
+        }
     }
 
     /// Scan current visible records for a cataloged table through the shared
@@ -1660,6 +1729,16 @@ impl DmlService {
                 tenant_context.map(|tc| tc.tenant_id.as_str()),
             )
             .await?;
+        let (_catalog, target_table_id) = self
+            .catalog_manager
+            .resolve_table_scoped(
+                &plan.target.qualified_name(),
+                tenant_context.map(|tc| tc.tenant_id.as_str()),
+            )
+            .await?;
+        let dml_lock_guard = self
+            .acquire_table_dml_lock(&target_table_id, tenant_context, LockIntent::Write)
+            .await?;
         let source_metadata = self
             .resolve_table_write_source_metadata(
                 plan,
@@ -1710,10 +1789,15 @@ impl DmlService {
             .await?;
 
         match execution.status {
-            TableWriteExecutionStatus::Completed => Ok(DmlResult::success(
-                execution.rows_written,
-                format!("Table write completed through {}", execution.route_summary),
-            )),
+            TableWriteExecutionStatus::Completed => {
+                if let Some(guard) = dml_lock_guard {
+                    guard.release().await;
+                }
+                Ok(DmlResult::success(
+                    execution.rows_written,
+                    format!("Table write completed through {}", execution.route_summary),
+                ))
+            }
             TableWriteExecutionStatus::PlannedOnly => Err(anyhow!(
                 "INSERT ... SELECT and INSERT OVERWRITE execution is not implemented yet; planned route: {}, guards={:?}",
                 execution.route_summary,
@@ -2375,6 +2459,9 @@ impl DmlService {
 
         // Get table schema for column mapping
         let table_schema = catalog.get_table(&table_id).await?;
+        let dml_lock_guard = self
+            .acquire_table_dml_lock(&table_id, tenant_context, LockIntent::Write)
+            .await?;
         let (write_intent, write_lane_decision) = Self::route_row_dml_write_intent(
             &table_schema,
             WriteOperationKind::Insert,
@@ -2523,10 +2610,13 @@ impl DmlService {
         self.bump_column_minmax(table_name, column_minmax).await;
         self.bump_column_ndv(table_name, column_ndv).await;
 
-        Ok(
+        let result =
             DmlResult::success(num_records as u64, format!("Inserted {} rows", num_records))
-                .with_inserted_ids(inserted_ids),
-        )
+                .with_inserted_ids(inserted_ids);
+        if let Some(guard) = dml_lock_guard {
+            guard.release().await;
+        }
+        Ok(result)
     }
 
     /// Execute UPDATE statement
@@ -2551,6 +2641,9 @@ impl DmlService {
         }
 
         let table_schema = catalog.get_table(&table_id).await?;
+        let dml_lock_guard = self
+            .acquire_table_dml_lock(&table_id, tenant_context, LockIntent::Write)
+            .await?;
         let ids_to_update = if let Some(ref wc) = where_clause {
             self.resolve_matching_ids(&table_schema, &table_id.name, wc, tenant_context)
                 .await?
@@ -2670,6 +2763,9 @@ impl DmlService {
             format!("Updated {} rows", updated_count),
         );
         result.warnings = warnings;
+        if let Some(guard) = dml_lock_guard {
+            guard.release().await;
+        }
         Ok(result)
     }
 
@@ -2693,6 +2789,9 @@ impl DmlService {
         }
 
         let table_schema = catalog.get_table(&table_id).await?;
+        let dml_lock_guard = self
+            .acquire_table_dml_lock(&table_id, tenant_context, LockIntent::Write)
+            .await?;
 
         // Get IDs to delete based on WHERE clause
         let ids_to_delete = if let Some(ref wc) = where_clause {
@@ -2761,10 +2860,14 @@ impl DmlService {
         self.bump_row_count_stats(table_name, -(deleted_count as i64))
             .await;
 
-        Ok(DmlResult::success(
+        let result = DmlResult::success(
             deleted_count as u64,
             format!("Deleted {} rows", deleted_count),
-        ))
+        );
+        if let Some(guard) = dml_lock_guard {
+            guard.release().await;
+        }
+        Ok(result)
     }
 
     /// Execute UPSERT statement
@@ -2789,6 +2892,9 @@ impl DmlService {
 
         // Get table schema
         let table_schema = catalog.get_table(&table_id).await?;
+        let dml_lock_guard = self
+            .acquire_table_dml_lock(&table_id, tenant_context, LockIntent::Write)
+            .await?;
         let (write_intent, write_lane_decision) = Self::route_row_dml_write_intent(
             &table_schema,
             WriteOperationKind::Upsert,
@@ -2839,10 +2945,13 @@ impl DmlService {
         self.bump_row_count_stats(table_name, num_records as i64)
             .await;
 
-        Ok(
+        let result =
             DmlResult::success(num_records as u64, format!("Upserted {} rows", num_records))
-                .with_inserted_ids(inserted_ids),
-        )
+                .with_inserted_ids(inserted_ids);
+        if let Some(guard) = dml_lock_guard {
+            guard.release().await;
+        }
+        Ok(result)
     }
 
     // ========================
@@ -4712,6 +4821,10 @@ mod tests {
         assert!(resolve_materialize_prefix("..", "ns_1", None, pc, "orders").is_err());
     }
 
+    use crate::cluster::partition_lease::{
+        DmlLockScope, DmlLockService, LockOutcome, PartitionLeaseManager, PartitionLeaseStore,
+    };
+    use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
     use crate::query::table_write_executor::PlannedOnlyTableWriteExecutor;
     use crate::services::operations::batch_result::OperationMetrics;
     use crate::services::record_store::{
@@ -4724,6 +4837,7 @@ mod tests {
         CatalogWorkloadProfile,
     };
     use proximadb_iceberg_engine::IcebergObjectStoreBridge;
+    use proximadb_object_store::ProximaObjectStore;
 
     struct ExplainOnlyRecordStore;
 
@@ -4775,6 +4889,67 @@ mod tests {
             )
             .with_column(CatalogColumn::new(4, "notes", ProximaType::String))
             .with_primary_key(vec!["record_id".to_string()])
+    }
+
+    #[tokio::test]
+    async fn dml_service_table_lock_uses_resolved_tenant_namespace() -> Result<()> {
+        let backing: Arc<dyn object_store::ObjectStore> =
+            Arc::new(object_store::memory::InMemory::new());
+        let lease_store = Arc::new(PartitionLeaseStore::new(
+            ProximaObjectStore::new(backing),
+            "_operator/leases",
+        ));
+        let lease_manager = Arc::new(PartitionLeaseManager::new(
+            lease_store,
+            Arc::new(PrimaryPodRegistry::new()),
+            "pod-1",
+            10_000,
+        ));
+        let lock_service = Arc::new(DmlLockService::new(lease_manager, "pod-1"));
+
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            Arc::new(CatalogManager::new()),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        )
+        .with_dml_lock_service(lock_service.clone());
+
+        let tenant = TenantContext::for_tenant_id("tenant_a");
+        let table_id =
+            TableIdentifier::new(vec!["tenant_a".to_string(), "default".to_string()], "users");
+        let guard = dml
+            .acquire_table_dml_lock(&table_id, Some(&tenant), LockIntent::Write)
+            .await?
+            .expect("lock guard");
+        assert_eq!(guard.lease_generation(), 1);
+
+        let schema_scope = DmlLockScope::Schema {
+            schema_name: "default".to_string(),
+        };
+        let conflict = lock_service
+            .acquire_dml_lock(
+                "tenant_a",
+                Some("default"),
+                &schema_scope,
+                LockIntent::Write,
+                1,
+            )
+            .await?;
+        assert!(matches!(conflict, LockOutcome::Conflict));
+
+        guard.release().await;
+        let after_release = lock_service
+            .acquire_dml_lock(
+                "tenant_a",
+                Some("default"),
+                &schema_scope,
+                LockIntent::Write,
+                2,
+            )
+            .await?;
+        assert!(matches!(after_release, LockOutcome::Acquired { .. }));
+
+        Ok(())
     }
 
     #[test]

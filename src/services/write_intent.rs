@@ -130,6 +130,12 @@ pub struct WriteIntent {
     pub estimated_bytes: Option<u64>,
     pub requires_row_level_semantics: bool,
     pub batch_local_constraints_sufficient: bool,
+
+    /// Fencing generation from the DML lock guard that authorizes this
+    /// write (A6 boundary seam). `None` for non-DML/legacy writes. The
+    /// storage writer validates this against the current durable lease
+    /// generation before committing.
+    pub fencing_generation: Option<u64>,
 }
 
 impl WriteIntent {
@@ -150,6 +156,7 @@ impl WriteIntent {
             estimated_bytes: None,
             requires_row_level_semantics,
             batch_local_constraints_sufficient: false,
+            fencing_generation: None,
         }
     }
 
@@ -205,6 +212,14 @@ impl WriteIntent {
 
     pub fn with_batch_local_constraints_sufficient(mut self, sufficient: bool) -> Self {
         self.batch_local_constraints_sufficient = sufficient;
+        self
+    }
+
+    /// Attach the fencing generation from a DML lock guard (A6 seam).
+    /// The storage writer validates this against the current durable
+    /// lease generation before committing the mutation.
+    pub fn with_fencing_generation(mut self, generation: u64) -> Self {
+        self.fencing_generation = Some(generation);
         self
     }
 
