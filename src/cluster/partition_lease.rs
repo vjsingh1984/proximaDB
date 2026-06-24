@@ -1693,15 +1693,14 @@ impl PartitionLease {
             return Cow::Borrowed(self);
         }
 
-        // Migrate from legacy format
-        let tenant_id = self
-            .tenant_id
-            .as_deref()
-            .expect("legacy lease must have tenant_id");
-        let collection_id = self
-            .collection_id
-            .as_deref()
-            .expect("legacy lease must have collection_id");
+        // Migrate from legacy format — only when the legacy identity is
+        // present. A malformed legacy lease (no identity) is left as-is
+        // rather than panicking.
+        let (Some(tenant_id), Some(collection_id)) =
+            (self.tenant_id.as_deref(), self.collection_id.as_deref())
+        else {
+            return Cow::Borrowed(self);
+        };
 
         let migrated = Self {
             resource_key: Some(ResourceKey::legacy_collection(tenant_id, collection_id)),
@@ -1722,19 +1721,23 @@ impl PartitionLease {
     pub fn key(&self) -> Cow<'_, ResourceKey> {
         let migrated = self.ensure_migrated();
         match &migrated {
-            Cow::Borrowed(lease) => Cow::Borrowed(
-                lease
-                    .resource_key
-                    .as_ref()
-                    .expect("migrated lease must have resource_key"),
-            ),
-            Cow::Owned(lease) => Cow::Owned(
-                lease
-                    .resource_key
-                    .as_ref()
-                    .expect("migrated lease must have resource_key")
-                    .clone(),
-            ),
+            Cow::Borrowed(lease) => match lease.resource_key.as_ref() {
+                // Normal path: the lease carries its key.
+                Some(k) => Cow::Borrowed(k),
+                // Malformed lease with no key and no migratable identity:
+                // synthesize an empty legacy key rather than panic.
+                None => Cow::Owned(ResourceKey::legacy_collection(
+                    lease.tenant_id.as_deref().unwrap_or(""),
+                    lease.collection_id.as_deref().unwrap_or(""),
+                )),
+            },
+            Cow::Owned(lease) => match lease.resource_key.as_ref() {
+                Some(k) => Cow::Owned(k.clone()),
+                None => Cow::Owned(ResourceKey::legacy_collection(
+                    lease.tenant_id.as_deref().unwrap_or(""),
+                    lease.collection_id.as_deref().unwrap_or(""),
+                )),
+            },
         }
     }
 
