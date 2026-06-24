@@ -82,14 +82,14 @@ impl CollectionRbacExt for CollectionConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proximadb_proto::v1::collection_types::{CollectionConfig, DistanceMetric, StorageEngine};
+    use proximadb_proto::proximadb_v1::{CollectionConfig, DistanceMetric, StorageEngine};
 
     fn test_collection() -> CollectionConfig {
         CollectionConfig {
             name: "test_collection".to_string(),
             dimension: 384,
-            distance_metric: Some(DistanceMetric::Cos),
-            storage_engine: Some(StorageEngine::Sst),
+            distance_metric: Some(DistanceMetric::Cosine as i32),
+            storage_engine: Some(StorageEngine::Sst as i32),
             ..Default::default()
         }
     }
