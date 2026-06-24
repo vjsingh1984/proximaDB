@@ -6160,6 +6160,16 @@ pub struct CollectionConfig {
     /// Arrow Float16Array column, compaction precision_hint).
     #[prost(enumeration = "EmbeddingPrecision", optional, tag = "26")]
     pub canonical_embedding_precision: ::core::option::Option<i32>,
+    /// Per-repo RBAC: List of principals (user IDs, service accounts, or role IDs)
+    /// permitted to access this collection. When empty, access is unrestricted
+    /// (default). When set, only principals in this list can perform data-plane
+    /// operations (read/write/search) on the collection. This is enforced at the
+    /// data-plane handler layer (REST/gRPC/pgwire) as a fail-closed check.
+    /// Governance/admin-plane operations (e.g., collection metadata updates) are
+    /// not subject to this check — they use separate admin permissions.
+    #[prost(message, repeated, tag = "27")]
+    #[serde(default)]
+    pub permitted_principals: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
 /// Canonical scalar type for a collection's embedding column. Mirrors
 /// `proximadb_records::EmbeddingScalarType`.

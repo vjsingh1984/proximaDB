@@ -79,6 +79,7 @@ async fn test_create_collection() -> Result<()> {
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     let response = service.create_collection(&config).await?;
@@ -115,6 +116,7 @@ async fn test_get_collection() -> Result<()> {
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -159,6 +161,7 @@ async fn test_list_collections() -> Result<()> {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
 
         let response = service.create_collection(&config).await?;
@@ -198,6 +201,7 @@ async fn test_delete_collection() -> Result<()> {
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     let create_response = service.create_collection(&config).await?;
@@ -242,6 +246,7 @@ async fn test_tenant_scoped_collection_access_and_delete() -> Result<()> {
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     let create_response = service
@@ -320,6 +325,7 @@ async fn test_collection_port_get_collection_is_tenant_scoped() -> Result<()> {
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     service
@@ -386,6 +392,7 @@ async fn test_tenant_collection_limit_enforced() -> Result<()> {
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     let config_two = CollectionConfig {
@@ -439,6 +446,7 @@ async fn test_tenant_scoped_collection_listing() -> Result<()> {
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     let config_b = CollectionConfig {

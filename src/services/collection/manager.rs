@@ -2705,6 +2705,7 @@ mod tests {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
 
         // Test create with valid config
@@ -2826,6 +2827,7 @@ mod tests {
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
+                permitted_principals: vec![],
             };
 
             let result = service
@@ -2902,6 +2904,7 @@ mod tests {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
         let created = service.create_collection(&config).await.context("create")?;
         assert!(
@@ -2967,6 +2970,7 @@ mod tests {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
 
         let result = service.create_collection(&config).await?;
