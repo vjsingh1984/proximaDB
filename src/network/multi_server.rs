@@ -190,6 +190,18 @@ impl MultiServer {
             .into_server()
     }
 
+    /// Build the canonical v2 fusion gRPC service — the cross-modal retrieval
+    /// surface over gRPC (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`). A thin
+    /// facade over the shared `FusionService` port; owns no ranking logic.
+    fn canonical_fusion_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_fusion_service_server::ProximaFusionServiceServer<
+        crate::network::grpc::v2::ProximaFusionServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaFusionServiceImpl::new(services.request_handlers.clone())
+            .into_server()
+    }
+
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
     pub fn new(
@@ -599,6 +611,7 @@ impl MultiServer {
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -1133,6 +1146,7 @@ impl MultiServer {
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1512,6 +1526,7 @@ impl MultiServer {
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind

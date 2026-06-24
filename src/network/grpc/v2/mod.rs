@@ -30,9 +30,11 @@
 //! - `EvolveSchema` - Evolve schema with compatibility checks
 
 pub mod document_service;
+pub mod fusion_service;
 pub mod graph_service;
 pub mod record_service;
 
 pub use document_service::ProximaDocumentServiceImpl;
+pub use fusion_service::ProximaFusionServiceImpl;
 pub use graph_service::ProximaGraphServiceImpl;
 pub use record_service::ProximaRecordServiceImpl;
