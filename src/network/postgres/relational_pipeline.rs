@@ -25,8 +25,7 @@
 //!   the new path end-to-end via psql.
 
 use crate::query::execution::{
-    ExecutionControls, ExecutionPipelineResult, NativeVolcanoEngine, QueryExecutionContext,
-    execute_sql_with_backend, normalize_table_key,
+    ExecutionControls, ExecutionPipelineResult, NativeVolcanoEngine, normalize_table_key,
 };
 use async_trait::async_trait;
 use once_cell::sync::Lazy;

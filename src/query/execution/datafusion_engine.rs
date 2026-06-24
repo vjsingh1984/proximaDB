@@ -2,7 +2,7 @@
 use crate::query::execution::engine::normalize_table_key;
 use crate::query::execution::engine::{
     ExecutionEngine, ExecutionError, ExecutionPipelineResult, ExecutionStreamResult,
-    QueryExecutionContext, RowLimitMode,
+    QueryExecutionContext,
 };
 use async_trait::async_trait;
 #[cfg(feature = "datafusion-integration")]
