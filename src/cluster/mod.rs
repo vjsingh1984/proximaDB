@@ -95,6 +95,7 @@ pub use primary_pod_registry::{
     AssignmentReason, PrimaryPod, PrimaryPodRegistry, WriteRoutingDecision, consult_for_write,
     consult_for_write_leased, resolve_self_pod_id,
 };
+pub use partition_lease::{LeaseOutcome, PartitionLease, PartitionLeaseManager, PartitionLeaseStore};
 pub use replication::{
     EngineReplication, ReplicaState, ReplicationAck, ReplicationConfig, ReplicationEntry,
     ReplicationHealth, ReplicationOperation, ReplicationRetryConfig, ReplicationStatsSummary,
