@@ -660,10 +660,10 @@ pub async fn create_collection_v2(
             // Previously this arm fell through and returned 200 with the echoed
             // request — masking a half-registered collection (GET dimension:0,
             // absent from LIST). Honor the failure: surface a real HTTP error.
-            return Err(collection_create_failure_error(
+            Err(collection_create_failure_error(
                 &request.name,
                 resp.error_code.as_deref(),
-            ));
+            ))
         }
         Ok(resp) => {
             // #176 follow-up: `collection_id` is the collection's canonical UUID
