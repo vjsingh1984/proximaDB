@@ -231,7 +231,7 @@ pub struct NovaEngine {
     /// - Query-time index selection based on collection size
     ///
     /// None by default, set externally when AXIS indexes are enabled for collection
-    axis_manager: Option<Arc<crate::index::axis::management::manager::AxisManager>>,
+    axis_manager: Option<Arc<dyn proximadb_index_traits::IndexEngine>>,
 }
 #[allow(dead_code)]
 impl NovaEngine {
@@ -1628,22 +1628,22 @@ impl UnifiedStorageFormat for NovaEngine {
                 query_vector.len()
             );
 
-            // Convert filter expression to AXIS format
-            let axis_filters = Self::convert_filter_to_axis(filter_expression);
+            // Convert filter expression to index format
+            let index_filters = Self::convert_filter_to_index(filter_expression);
 
             // Build hybrid query for AXIS
-            use crate::index::axis::management::manager::{HybridQuery, VectorQuery};
-            let hybrid_query = HybridQuery {
+            use proximadb_index_traits::{IndexHybridQuery, IndexVectorQuery};
+            let hybrid_query = IndexHybridQuery {
                 collection_id: collection_id.to_string(),
-                vector_query: Some(VectorQuery::Dense {
+                vector_query: Some(IndexVectorQuery::Dense {
                     vector: query_vector.to_vec(),
                     similarity_threshold: 0.0, // Return all results up to k
                 }),
-                metadata_filters: axis_filters,
+                metadata_filters: index_filters,
                 id_filters: Vec::new(),
                 top_k: k,
                 include_expired: false,
-                ..Default::default()
+                search_effort: None,
             };
 
             // Execute AXIS query (HNSW or IVF based on index type)
@@ -1663,8 +1663,8 @@ impl UnifiedStorageFormat for NovaEngine {
                         .into_iter()
                         .take(k)
                         .map(|scored| OptimizedSearchRecord {
-                            id: scored.vector_id.to_string(),
-                            vector_id: Some(scored.vector_id.to_string()),
+                            id: scored.vector_id.clone(),
+                            vector_id: Some(scored.vector_id),
                             score: scored.similarity,
                             similarity: Some(scored.similarity),
                             vector: None, // AXIS doesn't return vectors by default
@@ -1893,28 +1893,26 @@ impl NovaEngine {
     /// Returns the optional AXIS manager for HNSW/IVF-based search.
     /// When available, AXIS provides O(log N) approximate nearest neighbor search
     /// that is significantly faster than progressive columnar search.
-    pub fn axis_manager(
-        &self,
-    ) -> Option<&Arc<crate::index::axis::management::manager::AxisManager>> {
+    pub fn axis_manager(&self) -> Option<&Arc<dyn proximadb_index_traits::IndexEngine>> {
         self.axis_manager.as_ref()
     }
 
-    /// Convert FilterExpression to AXIS MetadataFilter format
+    /// Convert FilterExpression to Index MetadataFilter format (DTO)
     ///
-    /// This helper converts our internal FilterExpression type to AXIS's
-    /// MetadataFilter format for hybrid vector + metadata queries.
-    fn convert_filter_to_axis(
+    /// This helper converts our internal FilterExpression type to the
+    /// IndexMetadataFilter DTO format for hybrid vector + metadata queries.
+    fn convert_filter_to_index(
         filter_expression: Option<&crate::core::search::FilterExpression>,
-    ) -> Vec<crate::index::axis::management::manager::MetadataFilter> {
+    ) -> Vec<proximadb_index_traits::IndexMetadataFilter> {
         use crate::core::search::{ComparisonOperator, FilterExpression};
-        use crate::index::axis::management::manager::{FilterOperator, MetadataFilter};
+        use proximadb_index_traits::{IndexFilterOperator, IndexMetadataFilter};
 
         let Some(filter) = filter_expression else {
             return Vec::new();
         };
 
-        // Convert filter expressions to AXIS metadata filters
-        let mut axis_filters = Vec::new();
+        // Convert filter expressions to index metadata filters
+        let mut index_filters = Vec::new();
 
         match filter {
             FilterExpression::Comparison {
@@ -1922,43 +1920,45 @@ impl NovaEngine {
                 operator,
                 value,
             } => {
-                // Convert ComparisonOperator to AXIS FilterOperator
-                let axis_operator = match operator {
-                    ComparisonOperator::Equals => FilterOperator::Equals,
-                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
-                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
-                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
-                    ComparisonOperator::LessThan => FilterOperator::LessThan,
-                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
-                    ComparisonOperator::In => FilterOperator::In,
-                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                // Convert ComparisonOperator to IndexFilterOperator
+                let index_operator = match operator {
+                    ComparisonOperator::Equals => IndexFilterOperator::Equals,
+                    ComparisonOperator::NotEquals => IndexFilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => IndexFilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => {
+                        IndexFilterOperator::GreaterThanOrEqual
+                    }
+                    ComparisonOperator::LessThan => IndexFilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => IndexFilterOperator::LessThanOrEqual,
+                    ComparisonOperator::In => IndexFilterOperator::In,
+                    ComparisonOperator::NotIn => IndexFilterOperator::NotIn,
                     _ => {
                         tracing::debug!(
-                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
+                            "Operator {:?} not directly supported by index, will use post-filtering",
                             operator
                         );
-                        return axis_filters;
+                        return index_filters;
                     }
                 };
 
-                axis_filters.push(MetadataFilter {
+                index_filters.push(IndexMetadataFilter {
                     field: field.clone(),
-                    operator: axis_operator,
+                    operator: index_operator,
                     value: value.clone(),
                 });
             }
             FilterExpression::And(filters) => {
                 for f in filters {
-                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
+                    index_filters.extend(Self::convert_filter_to_index(Some(f)));
                 }
             }
             FilterExpression::Or(_) | FilterExpression::Not(_) => {
-                // OR and NOT are not directly supported by AXIS, will use post-filtering
-                tracing::debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
+                // OR and NOT are not directly supported by index, will use post-filtering
+                tracing::debug!("OR/NOT filters not supported by index, will use post-filtering");
             }
         }
 
-        axis_filters
+        index_filters
     }
 
     // Removed unnecessary helper methods - engines receive all params directly
