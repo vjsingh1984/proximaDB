@@ -234,3 +234,8 @@ pub trait IndexLifecycle: Send + Sync {
     /// Whether `collection_id` is currently suspended.
     async fn is_suspended(&self, collection_id: &str) -> bool;
 }
+
+/// Combined index-engine role traits for storage backends that need multiple roles
+/// (e.g., SST needs query + ingest + metrics). Implemented by `AxisManager`.
+pub trait IndexEngine: IndexQuery + IndexIngest + IndexMetrics {}
+
