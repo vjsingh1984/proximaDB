@@ -23,6 +23,7 @@ use proximadb_graph::record::{GraphEdgeKey, GraphNodeKey};
 use crate::core::search::cross_modal_fusion::{
     FusedItem, Fuser, FusionPolicy, FusionStats, SourceCandidates, SourceId,
 };
+use crate::core::search::fusion_route::{plan_route, FusionRoute, RoutePolicy};
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::graph::GraphOperationsService;
 use crate::graph::model::{Edge, Node};
@@ -189,6 +190,9 @@ pub struct GraphFusionParams {
     /// Optional BM25 query for the document modality (requires the service to be `with_documents`).
     pub text_query: Option<String>,
     pub document_weight: f32,
+    /// Optional cost-routing policy (TD-141): budget each modality by weight and drop negligible ones.
+    /// When absent, fusion is unbounded (each source keeps its full candidate pool).
+    pub route_policy: Option<RoutePolicy>,
     pub policy: FusionPolicy,
 }
 
@@ -310,9 +314,38 @@ impl FusionService {
             sources.push(document);
         }
 
+        // 3c. Optional cost routing (TD-141): budget each modality by weight and drop negligible ones.
+        //     When a route policy is present, call `plan_route` and truncate each source to its allocated
+        //     budget (top-k by score). This is applied pre-fusion so the calibrated blend works on the
+        //     routed pool.
+        if let Some(ref policy) = params.route_policy {
+            let route = plan_route(&sources, policy);
+            // Apply budget caps: for each surviving source, truncate to its allocated budget.
+            for (source_id, budget) in route.budgets {
+                if let Some(source) = sources.iter_mut().find(|s| s.source == source_id) {
+                    truncate_source_to_budget(source, *budget);
+                }
+            }
+            // Dropped sources are already empty (or were never added), so no-op.
+        }
+
         // 4. Calibrate + fuse-by-oid + rank.
         let fuser = Fuser::new(params.policy);
         Ok(fuser.fuse(sources, params.limit))
+    }
+}
+
+/// Truncate a source's candidate pool to the top `budget` entries by score (D9 per-modality budget).
+/// Scores are kept as-is; the fuser's PIT calibration will normalize them. In-place.
+fn truncate_source_to_budget(source: &mut SourceCandidates, budget: usize) {
+    if source.scores.len() <= budget {
+        return; // already within budget
+    }
+    // Collect into (oid, score) pairs, sort by score descending, keep top budget, rebuild.
+    let mut pairs: Vec<(String, f32)> = source.scores.drain().collect();
+    pairs.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    for (oid, score) in pairs.into_iter().take(budget) {
+        source.scores.insert(oid, score);
     }
 }
 
@@ -519,5 +552,43 @@ mod tests {
         // No / blank query → None.
         assert!(document_source(&Some(indexes.clone()), "col", &None, 10, 1.0).is_none());
         assert!(document_source(&Some(indexes), "col", &Some("  ".into()), 10, 1.0).is_none());
+    }
+
+    /// Cost routing truncates each source to its allocated budget (top-k by score), preserving the
+    /// highest-scoring candidates.
+    #[test]
+    fn truncate_source_to_budget_keeps_top_k_by_score() {
+        use crate::core::search::cross_modal_fusion::SourceId;
+
+        let mut source = SourceCandidates::new(
+            SourceId::Vector,
+            1.0,
+            HashMap::from([
+                ("a".to_string(), 0.9),
+                ("b".to_string(), 0.5),
+                ("c".to_string(), 0.7),
+                ("d".to_string(), 0.3),
+            ]),
+        );
+        truncate_source_to_budget(&mut source, 2);
+        assert_eq!(source.scores.len(), 2);
+        assert!(source.scores.contains_key("a"));
+        assert!(source.scores.contains_key("c"));
+        assert!(!source.scores.contains_key("d"));
+    }
+
+    /// When budget >= source size, truncation is a no-op.
+    #[test]
+    fn truncate_source_within_budget_is_noop() {
+        use crate::core::search::cross_modal_fusion::SourceId;
+
+        let mut source = SourceCandidates::new(
+            SourceId::Vector,
+            1.0,
+            HashMap::from([("a".to_string(), 0.9), ("b".to_string(), 0.5)]),
+        );
+        let original = source.scores.clone();
+        truncate_source_to_budget(&mut source, 10);
+        assert_eq!(source.scores, original, "no change when budget exceeds size");
     }
 }

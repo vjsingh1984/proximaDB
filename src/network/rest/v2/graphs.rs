@@ -11,6 +11,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::core::search::cross_modal_fusion::{FusionPolicy, FusionStats};
+use crate::core::search::fusion_route::RoutePolicy;
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::v1::handlers::AppState;
@@ -55,6 +56,10 @@ pub struct FusionSearchRequest {
     /// vector + graph + document fusion (requires a full-text index on the collection).
     pub text_query: Option<String>,
     pub document_weight: Option<f32>,
+    /// Cost-routing policy (TD-141): drop negligible modalities (weight fraction) and budget each.
+    /// When absent, fusion is unbounded.
+    pub min_weight_fraction: Option<f32>,
+    pub total_budget: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -147,6 +152,21 @@ pub async fn fusion_search_v2(
         },
         text_query: request.text_query,
         document_weight: request.document_weight.unwrap_or(1.0),
+        route_policy: match (request.min_weight_fraction, request.total_budget) {
+            (Some(frac), Some(budget)) => Some(RoutePolicy {
+                min_weight_fraction: frac,
+                total_budget: budget,
+            }),
+            (Some(frac), None) => Some(RoutePolicy {
+                min_weight_fraction: frac,
+                total_budget: usize::MAX,
+            }),
+            (None, Some(budget)) => Some(RoutePolicy {
+                min_weight_fraction: 0.0,
+                total_budget: budget,
+            }),
+            (None, None) => None,
+        },
         policy,
     };
 
