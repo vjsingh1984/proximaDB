@@ -66,6 +66,23 @@ fn non_negative_stat(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
+fn collection_create_failure_error(collection_name: &str, error_code: Option<&str>) -> ApiError {
+    let code = error_code.unwrap_or_default();
+    let lower_code = code.to_ascii_lowercase();
+    if code.contains("COLLECTION_EXISTS") || lower_code.contains("already exists") {
+        return ApiError::AlreadyExists(format!("Collection '{}' already exists", collection_name));
+    }
+    ApiError::Internal(format!(
+        "Failed to create collection '{}': {}",
+        collection_name,
+        if code.is_empty() {
+            "unknown error"
+        } else {
+            code
+        }
+    ))
+}
+
 /// Map a proto `EmbeddingPrecision` discriminant (carried on
 /// `CollectionConfig.canonical_embedding_precision`) to its stable string
 /// label. Reuses the proto enum's `as_str_name()` so the REST surface emits
@@ -637,6 +654,17 @@ pub async fn create_collection_v2(
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
     {
+        Ok(resp) if !resp.success => {
+            // The unified handler returns Ok(CollectionResponse) even when the
+            // create FAILED (success=false carries the reason in error_code).
+            // Previously this arm fell through and returned 200 with the echoed
+            // request — masking a half-registered collection (GET dimension:0,
+            // absent from LIST). Honor the failure: surface a real HTTP error.
+            Err(collection_create_failure_error(
+                &request.name,
+                resp.error_code.as_deref(),
+            ))
+        }
         Ok(resp) => {
             // #176 follow-up: `collection_id` is the collection's canonical UUID
             // (`Collection.id`), NOT the request echo. Both the UUID and the user
@@ -3062,6 +3090,41 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(active_algorithm_for(&cfg), "hnsw");
+    }
+
+    #[test]
+    fn create_collection_failure_maps_collection_exists_to_conflict() {
+        match collection_create_failure_error("symbols", Some("COLLECTION_EXISTS")) {
+            ApiError::AlreadyExists(message) => {
+                assert!(message.contains("symbols"));
+            }
+            other => panic!("expected AlreadyExists, got {other:?}"),
+        }
+
+        match collection_create_failure_error("symbols", Some("collection already exists")) {
+            ApiError::AlreadyExists(message) => {
+                assert!(message.contains("symbols"));
+            }
+            other => panic!("expected AlreadyExists, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn create_collection_failure_maps_other_errors_to_internal() {
+        match collection_create_failure_error("symbols", Some("catalog write failed")) {
+            ApiError::Internal(message) => {
+                assert!(message.contains("symbols"));
+                assert!(message.contains("catalog write failed"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
+
+        match collection_create_failure_error("symbols", None) {
+            ApiError::Internal(message) => {
+                assert!(message.contains("unknown error"));
+            }
+            other => panic!("expected Internal, got {other:?}"),
+        }
     }
 
     #[test]

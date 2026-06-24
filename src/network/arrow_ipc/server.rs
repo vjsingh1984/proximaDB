@@ -9,7 +9,6 @@
 
 use anyhow::Result;
 use arrow_flight::flight_service_server::FlightServiceServer;
-use std::net::SocketAddr;
 use std::sync::Arc;
 use tonic::transport::Server;
 use tracing::info;
@@ -17,12 +16,13 @@ use tracing::info;
 use crate::api_handlers::request_handlers::UnifiedHandlers;
 use crate::catalog::CatalogManager;
 use crate::security::SecurityCoordinator;
+use proximadb_runtime::bootstrap_config::BindTarget;
 
 use super::service::ProximaFlightService;
 
 /// Arrow Flight server for ProximaDB
 pub struct ArrowFlightServer {
-    bind_addr: SocketAddr,
+    bind_target: BindTarget,
     request_handlers: Arc<UnifiedHandlers>,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     catalog_manager: Option<Arc<CatalogManager>>,
@@ -36,10 +36,13 @@ pub struct ArrowFlightServer {
 }
 
 impl ArrowFlightServer {
-    /// Create new Arrow Flight server
-    pub fn new(bind_addr: SocketAddr, request_handlers: Arc<UnifiedHandlers>) -> Self {
+    /// Create new Arrow Flight server.
+    ///
+    /// `bind_target` is either a TCP [`SocketAddr`](std::net::SocketAddr)
+    /// (server mode) or a Unix-domain socket path (portless embedded mode).
+    pub fn new(bind_target: BindTarget, request_handlers: Arc<UnifiedHandlers>) -> Self {
         Self {
-            bind_addr,
+            bind_target,
             request_handlers,
             security_coordinator: None,
             catalog_manager: None,
@@ -91,7 +94,7 @@ impl ArrowFlightServer {
     /// The server runs until an error occurs or the task is cancelled.
     pub async fn start(self) -> Result<()> {
         info!(
-            bind_addr = %self.bind_addr,
+            bind_target = ?self.bind_target,
             max_message_size = self.max_message_size,
             "Starting Arrow Flight server"
         );
@@ -117,11 +120,26 @@ impl ArrowFlightServer {
             .max_encoding_message_size(self.max_message_size)
             .max_decoding_message_size(self.max_message_size);
 
-        // Start Tonic server
-        Server::builder()
-            .add_service(flight_server)
-            .serve(self.bind_addr)
-            .await?;
+        // Start Tonic server over TCP (server mode) or a Unix-domain socket
+        // (portless embedded mode). Both run until error/cancellation.
+        match self.bind_target {
+            BindTarget::Tcp(addr) => {
+                Server::builder()
+                    .add_service(flight_server)
+                    .serve(addr)
+                    .await?;
+            }
+            BindTarget::Uds(path) => {
+                let listener = crate::network::uds::bind_unix_listener(&path).map_err(|e| {
+                    anyhow::anyhow!("Arrow Flight UDS bind failed at {}: {}", path.display(), e)
+                })?;
+                let incoming = tokio_stream::wrappers::UnixListenerStream::new(listener);
+                Server::builder()
+                    .add_service(flight_server)
+                    .serve_with_incoming(incoming)
+                    .await?;
+            }
+        }
 
         info!("Arrow Flight server stopped");
 
@@ -132,6 +150,7 @@ impl ArrowFlightServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::net::SocketAddr;
 
     /// Test ArrowFlightServer configuration without requiring UnifiedHandlers
     /// We test the struct fields and builder methods directly

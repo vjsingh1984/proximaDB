@@ -313,6 +313,33 @@ impl ProximaDB {
         )
         .parse()
         .map_err(|e| anyhow::anyhow!("Failed to parse arrow flight bind address: {}", e))?;
+
+        // Portless ("embedded") transport: when `[api].transport = "uds"`, bind
+        // the REST / gRPC / Arrow Flight surfaces to Unix-domain sockets under
+        // `[api].socket_dir` instead of TCP ports, and disable the pgwire
+        // listener (a standard PG TCP driver) so the process opens *no* TCP
+        // listener at all. Mixed-read-safe: the default ("tcp") leaves every
+        // existing deployment unchanged.
+        if config.api.transport.eq_ignore_ascii_case("uds") {
+            let socket_dir = config.api.socket_dir.clone().ok_or_else(|| {
+                anyhow::anyhow!("[api].transport = \"uds\" requires [api].socket_dir to be set")
+            })?;
+            let socket_dir = std::path::PathBuf::from(socket_dir);
+            std::fs::create_dir_all(&socket_dir).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to create UDS socket dir {}: {}",
+                    socket_dir.display(),
+                    e
+                )
+            })?;
+            tracing::info!(
+                socket_dir = %socket_dir.display(),
+                "🔌 Portless mode: binding REST/gRPC/Arrow Flight to Unix-domain sockets (no TCP ports); pgwire disabled"
+            );
+            multi_config.uds_socket_dir = Some(socket_dir);
+            // pgwire has no UDS surface here; embedded clients use REST/gRPC/Flight.
+            multi_config.postgres_config.enable_postgres = false;
+        }
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
