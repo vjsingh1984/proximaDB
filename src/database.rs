@@ -111,6 +111,18 @@ impl ProximaDB {
         }
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
+        // Co-design T2.2: wire the io_trace flush to feed the trace-driven cache
+        // sizing loop, so footer miss rate and GET fragmentation drive cache budget.
+        // High footer miss rate → grow footer cache; fragmented GETs → coalesce tuning.
+        crate::storage::cache::orchestrator::CrossCacheOrchestrator::install_trace_driven_sizing(
+            orchestrator.clone(),
+        );
+
+        // T1.1: initialize global fusion metrics for cross-modal fusion observability.
+        // Metrics are emitted to Prometheus for production monitoring and cost model
+        // calibration (fusion_latency_seconds, sources_fused, sources_skipped).
+        crate::metrics::fusion::init_global_fusion_metrics();
+
         // Co-design C4: wire the io_trace flush to feed the trace-driven route
         // cost model, so completed routed queries teach the ComputeScheduler the
         // measured cost of each (shape-class, backend). Observe-mode today —

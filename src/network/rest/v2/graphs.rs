@@ -9,10 +9,12 @@ use axum::{
     extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 use crate::core::search::cross_modal_fusion::{FusionPolicy, FusionStats};
 use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
+use crate::network::rest::openapi::ErrorResponse;
 use crate::network::rest::v1::handlers::AppState;
 use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
 
@@ -26,7 +28,7 @@ fn default_max_seeds() -> usize {
     5
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct FusionSearchRequest {
     /// Vector collection to seed from (its records co-indexed with this graph by `oid`).
     pub vector_collection: String,
@@ -53,14 +55,14 @@ pub struct FusionSearchRequest {
     pub grain: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct FusionHit {
     pub oid: String,
     pub score: f32,
     pub source_count: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct FusionStatsDto {
     pub sources_fused: usize,
     pub sources_skipped: usize,
@@ -79,13 +81,28 @@ impl From<FusionStats> for FusionStatsDto {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct FusionSearchResponse {
     pub results: Vec<FusionHit>,
     pub stats: FusionStatsDto,
 }
 
 /// `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.
+#[utoipa::path(
+    post,
+    path = "/api/v2/graphs/{graph_id}/fusion-search",
+    context_path = "/api/v2",
+    params(
+        ("graph_id" = String, Path, description = "Graph ID for traversal expansion"),
+    ),
+    request_body = FusionSearchRequest,
+    responses(
+        (status = StatusCode::OK, description = "Fusion results with calibrated scores", body = FusionSearchResponse),
+        (status = StatusCode::BAD_REQUEST, description = "Invalid request (empty query_vector, etc.)", body = ErrorResponse),
+        (status = StatusCode::INTERNAL_SERVER_ERROR, description = "Fusion execution failed", body = ErrorResponse),
+    ),
+    tag = "graphs",
+)]
 pub async fn fusion_search_v2(
     Path(graph_id): Path<String>,
     State(state): State<AppState>,
@@ -100,6 +117,11 @@ pub async fn fusion_search_v2(
     if request.vector_collection.trim().is_empty() {
         return Err(ApiError::InvalidArgument(
             "vector_collection is required".to_string(),
+        ));
+    }
+    if graph_id.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "graph_id is required".to_string(),
         ));
     }
     tracing::debug!(

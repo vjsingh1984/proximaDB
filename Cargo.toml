@@ -966,6 +966,11 @@ harness = false
 path = "benches/bench_22_multimodal_queries.rs"
 
 [[bench]]
+name = "bench_cross_modal_fusion_e2e"
+harness = false
+path = "benches/bench_cross_modal_fusion_e2e.rs"
+
+[[bench]]
 name = "bench_23_codec_vector_base_xor"
 harness = false
 path = "benches/bench_23_codec_vector_base_xor.rs"

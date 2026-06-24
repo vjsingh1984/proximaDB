@@ -16,8 +16,9 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use proximadb_graph::record::{GraphEdgeKey, GraphNodeKey};
 
 use crate::core::search::cross_modal_fusion::{
@@ -28,6 +29,53 @@ use crate::graph::GraphOperationsService;
 use crate::graph::model::{Edge, Node};
 use crate::network::hybrid_search::HybridFullTextIndexMap;
 use crate::services::VectorOperationsService;
+
+/// T1.2: Retry with exponential backoff for transient vector search failures.
+async fn retry_vector_search<F, Fut>(
+    collection: &str,
+    mut attempt_fn: F,
+    max_retries: u32,
+) -> Result<Vec<OptimizedSearchRecord>>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<Vec<OptimizedSearchRecord>, anyhow::Error>>,
+{
+    let mut last_error_msg = String::new();
+    for attempt in 0..=max_retries {
+        match attempt_fn().await {
+            Ok(result) => {
+                if attempt > 0 {
+                    tracing::info!(
+                        collection,
+                        attempts = attempt + 1,
+                        "Vector search succeeded after retry"
+                    );
+                }
+                return Ok(result);
+            }
+            Err(e) => {
+                last_error_msg = e.to_string();
+                if attempt < max_retries {
+                    let delay = Duration::from_millis(100 * (2_u64.pow(attempt)));
+                    tracing::warn!(
+                        collection,
+                        attempt,
+                        delay_ms = delay.as_millis(),
+                        error = %last_error_msg,
+                        "Vector search failed, retrying with exponential backoff"
+                    );
+                    tokio::time::sleep(delay).await;
+                }
+            }
+        }
+    }
+    bail!(
+        "Vector search failed after {} attempts for collection '{}': {}",
+        max_retries + 1,
+        collection,
+        last_error_msg
+    )
+}
 use crate::storage::engines::core::formats::columnar::fulltext_index::FulltextSearchResult;
 
 /// `TraversalAlgorithm::Bfs` proto tag.
@@ -202,32 +250,51 @@ impl FusionService {
 
     /// Vector-seed → graph-expand → fuse-by-`oid`. Tenant isolation is structural (the collection and
     /// graph carry the tenant boundary), per the co-design mandate — never a post-fusion predicate.
+    ///
+    /// T1.2: Implements graceful degradation — if graph traversal fails for a seed, the search
+    /// continues with the remaining seeds and the vector source alone. Only total failure (vector
+    /// search exhausts retries) returns an error.
     pub async fn graph_fusion_search(
         &self,
         params: GraphFusionParams,
     ) -> Result<(Vec<FusedItem>, FusionStats)> {
-        // 1. Vector ANN seed.
-        let hits = self
-            .vector
-            .unified_search_native(
-                &params.vector_collection,
-                params.query_vector.clone(),
-                params.limit,
-                None,
-                None,
+        use std::time::Instant;
+
+        let started = Instant::now();
+
+        // 1. Vector ANN seed with T1.2 retry logic (max 2 retries, exponential backoff).
+        let vector = self.vector.clone();
+        let collection = params.vector_collection.clone();
+        let query_vector = params.query_vector.clone();
+        let limit = params.limit;
+
+        let hits = retry_vector_search(
+            &collection,
+            || vector.unified_search_native(&collection, query_vector.clone(), limit, None, None),
+            2,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "vector search failed for fusion (collection='{}', graph_id='{}')",
+                collection, params.graph_id
             )
-            .await?;
+        })?;
+
         let vector_source = vector_hits_to_source(&hits, params.vector_weight);
 
         // 2. Graph expand from the top seeds (bounded). A seed that is not a node in this graph simply
         //    contributes nothing (its traverse errors are skipped) rather than failing the query.
+        // T1.2: Graceful degradation — individual seed failures are logged but don't abort fusion.
         let seeds = seed_node_ids(&params.graph_id, &hits, params.max_seeds);
         let mut nodes: Vec<Node> = Vec::new();
         let mut edges: Vec<Edge> = Vec::new();
-        for seed in seeds {
+        let mut failed_seeds = 0;
+
+        for seed in &seeds {
             let request = crate::graph::model::TraversalRequest {
                 graph_id: params.graph_id.clone(),
-                start_node_id: seed,
+                start_node_id: seed.clone(),
                 max_depth: params.max_depth,
                 edge_types: params.edge_types.clone(),
                 node_labels: Vec::new(),
@@ -237,10 +304,30 @@ impl FusionService {
                 timeout_ms: None,
                 max_frontier: None,
             };
-            if let Ok(response) = self.graph.traverse(&params.graph_id, request).await {
-                nodes.extend(response.nodes);
-                edges.extend(response.edges);
+            match self.graph.traverse(&params.graph_id, request).await {
+                Ok(response) => {
+                    nodes.extend(response.nodes);
+                    edges.extend(response.edges);
+                }
+                Err(e) => {
+                    failed_seeds += 1;
+                    tracing::warn!(
+                        graph_id = %params.graph_id,
+                        seed,
+                        error = %e,
+                        "Graph traversal failed for seed in fusion, gracefully continuing"
+                    );
+                }
             }
+        }
+
+        if failed_seeds > 0 {
+            tracing::info!(
+                graph_id = %params.graph_id,
+                failed_seeds,
+                total_seeds = seeds.len(),
+                "Partial graph traversal failure in fusion; continuing with vector source"
+            );
         }
 
         // 3. Build the graph contribution at the requested grain (D8: edge-grain carries more
@@ -264,7 +351,19 @@ impl FusionService {
 
         // 4. Calibrate + fuse-by-oid + rank.
         let fuser = Fuser::new(params.policy);
-        Ok(fuser.fuse(sources, params.limit))
+        let result = fuser.fuse(sources, params.limit);
+
+        // T1.1: Record fusion metrics for observability.
+        let stats = &result.1;
+        crate::metrics::fusion::record_fusion(
+            stats.sources_fused,
+            stats.sources_skipped,
+            stats.candidates_in,
+            stats.items_out,
+            started.elapsed(),
+        );
+
+        Ok(result)
     }
 }
 
