@@ -877,6 +877,15 @@ name = "bench_10_query_progressive"
 harness = false
 path = "benches/bench_10_query_progressive.rs"
 
+[[bench]]
+name = "bench_object_store_latency"
+harness = false
+path = "benches/bench_object_store_latency.rs"
+# Co-design T3.2: measures the object-store round-trip latency floor (GET /
+# ranged-GET / LIST). Defaults to in-process `memory://` (no network RTT — a
+# harness smoke check); point BENCH_OBJECT_STORE_URL at s3:// (with --features
+# aws) or file:// for real cloud-latency evidence.
+
 # 4. UNIFIED & CROSS-ENGINE BENCHMARKS
 # Note: Cross-engine comparisons now included in bench_storage_engines
 

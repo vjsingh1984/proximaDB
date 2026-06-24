@@ -246,3 +246,17 @@ hardware = "Local macOS arm64 (Apple Silicon), no other workload"
 date = "2026-06-22"
 version = "v0.2"
 notes = "Co-design Pillar C / TD-145. MEASURED (5000x128 f32, 2 warmup + 9 timed, median): insert_arrow_ipc 96.8/95.0 ms vs zero-copy insert_arrow_batches 95.8/107.3 ms = PARITY within run-to-run noise, despite eliminating a 2,669,512-byte IPC serialize/deserialize. The plan's hypothesis (boundary copy = dominant embedded cost term) is REFUTED at the insert path: the ~95 ms is dominated by ArrowProtoCodec::batches_to_proxima_records + insert_batch (WAL/storage), not the serialize. The insert_arrow_batches seam is kept (correct, cross-language, lighter memory) but NOT as a latency win; the real Pillar-C lever is redirected to Arrow-native ingestion (TD-145). Trace before you tune."
+
+[[claims]]
+id = "object_store_latency_floor"
+claim = "Object-store round-trip latency floor (GET / ranged-GET / LIST) — the dominant I/O cost term for a cloud DB (co-design P5)"
+metric = "object_store_rtt_ms"
+status = "unverified"
+asserted_in = ["docs/12-design/CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc"]
+bench_source = "benches/bench_object_store_latency.rs"
+bench_command = "BENCH_OBJECT_STORE_URL=s3://<bucket>/path cargo bench --bench bench_object_store_latency --features aws"
+artifact = ""
+hardware = ""
+date = ""
+version = ""
+notes = "Co-design T3.2. The bench measures the raw object-store round-trip floor in isolation (full GET, last-4KiB ranged GET, prefix LIST) at 4KiB/64KiB/1MiB sizes, p50/p95/p99/mean. It ALWAYS runs (defaults to in-process memory://) so CI proves the harness compiles, but memory:// latencies carry NO network RTT and are a smoke check only. Real cloud-latency evidence requires an operator run against s3:// (with --features aws; creds via the standard chain) or a minio endpoint — promote to `measured` with that dated artifact. This is the floor the route cost model and footer/ranged-read decisions must beat."
