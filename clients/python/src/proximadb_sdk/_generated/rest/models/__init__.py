@@ -37,6 +37,10 @@ from .error_body import ErrorBody
 from .error_body_details_type_0 import ErrorBodyDetailsType0
 from .error_response import ErrorResponse
 from .explain_query_request import ExplainQueryRequest
+from .fusion_hit import FusionHit
+from .fusion_search_request import FusionSearchRequest
+from .fusion_search_response import FusionSearchResponse
+from .fusion_stats_dto import FusionStatsDto
 from .graph_collection_response import GraphCollectionResponse
 from .graph_stats_response import GraphStatsResponse
 from .health_response import HealthResponse
@@ -130,6 +134,10 @@ __all__ = (
     "ErrorBodyDetailsType0",
     "ErrorResponse",
     "ExplainQueryRequest",
+    "FusionHit",
+    "FusionSearchRequest",
+    "FusionSearchResponse",
+    "FusionStatsDto",
     "GraphCollectionResponse",
     "GraphStatsResponse",
     "HealthResponse",

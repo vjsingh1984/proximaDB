@@ -2186,6 +2186,243 @@ pub mod types {
                 })
         }
     }
+    ///`FusionHit`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "oid",
+    ///    "score",
+    ///    "source_count"
+    ///  ],
+    ///  "properties": {
+    ///    "oid": {
+    ///      "type": "string"
+    ///    },
+    ///    "score": {
+    ///      "type": "number",
+    ///      "format": "float"
+    ///    },
+    ///    "source_count": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct FusionHit {
+        pub oid: ::std::string::String,
+        pub score: f32,
+        pub source_count: u64,
+    }
+    impl FusionHit {
+        pub fn builder() -> builder::FusionHit {
+            Default::default()
+        }
+    }
+    ///`FusionSearchRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "query_vector",
+    ///    "vector_collection"
+    ///  ],
+    ///  "properties": {
+    ///    "consensus_beta": {
+    ///      "description": "Consensus boost added to any `oid` present in ≥2 sources.",
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    },
+    ///    "edge_types": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "grain": {
+    ///      "description": "Graph contribution grain: `\"nodes\"` (default), `\"edges\"`, or `\"both\"`.",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "graph_weight": {
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    },
+    ///    "limit": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "max_depth": {
+    ///      "description": "k-hop expansion depth (bounded; default 1 — the validated sweet spot).",
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "max_seeds": {
+    ///      "description": "How many of the top vector seeds to expand from (bounded expansion).",
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "query_vector": {
+    ///      "description": "Query embedding for the ANN seed.",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "number",
+    ///        "format": "float"
+    ///      }
+    ///    },
+    ///    "rrf": {
+    ///      "description": "Use the rank-based RRF fallback instead of PIT-calibrated linear.",
+    ///      "type": "boolean"
+    ///    },
+    ///    "vector_collection": {
+    ///      "description": "Vector collection to seed from (its records co-indexed with this graph by `oid`).",
+    ///      "type": "string"
+    ///    },
+    ///    "vector_weight": {
+    ///      "type": [
+    ///        "number",
+    ///        "null"
+    ///      ],
+    ///      "format": "float"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct FusionSearchRequest {
+        ///Consensus boost added to any `oid` present in ≥2 sources.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub consensus_beta: ::std::option::Option<f32>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub edge_types: ::std::vec::Vec<::std::string::String>,
+        ///Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub grain: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub graph_weight: ::std::option::Option<f32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub limit: ::std::option::Option<u64>,
+        ///k-hop expansion depth (bounded; default 1 — the validated sweet spot).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub max_depth: ::std::option::Option<i32>,
+        ///How many of the top vector seeds to expand from (bounded expansion).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub max_seeds: ::std::option::Option<u64>,
+        ///Query embedding for the ANN seed.
+        pub query_vector: ::std::vec::Vec<f32>,
+        ///Use the rank-based RRF fallback instead of PIT-calibrated linear.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub rrf: ::std::option::Option<bool>,
+        ///Vector collection to seed from (its records co-indexed with this graph by `oid`).
+        pub vector_collection: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub vector_weight: ::std::option::Option<f32>,
+    }
+    impl FusionSearchRequest {
+        pub fn builder() -> builder::FusionSearchRequest {
+            Default::default()
+        }
+    }
+    ///`FusionSearchResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "results",
+    ///    "stats"
+    ///  ],
+    ///  "properties": {
+    ///    "results": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/FusionHit"
+    ///      }
+    ///    },
+    ///    "stats": {
+    ///      "$ref": "#/components/schemas/FusionStatsDto"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct FusionSearchResponse {
+        pub results: ::std::vec::Vec<FusionHit>,
+        pub stats: FusionStatsDto,
+    }
+    impl FusionSearchResponse {
+        pub fn builder() -> builder::FusionSearchResponse {
+            Default::default()
+        }
+    }
+    ///`FusionStatsDto`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "candidates_in",
+    ///    "items_out",
+    ///    "sources_fused",
+    ///    "sources_skipped"
+    ///  ],
+    ///  "properties": {
+    ///    "candidates_in": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "items_out": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "sources_fused": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "sources_skipped": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct FusionStatsDto {
+        pub candidates_in: u64,
+        pub items_out: u64,
+        pub sources_fused: u64,
+        pub sources_skipped: u64,
+    }
+    impl FusionStatsDto {
+        pub fn builder() -> builder::FusionStatsDto {
+            Default::default()
+        }
+    }
     ///`GetGraphGraphId`
     ///
     /// <details><summary>JSON schema</summary>
@@ -7357,6 +7594,398 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct FusionHit {
+            oid: ::std::result::Result<::std::string::String, ::std::string::String>,
+            score: ::std::result::Result<f32, ::std::string::String>,
+            source_count: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for FusionHit {
+            fn default() -> Self {
+                Self {
+                    oid: Err("no value supplied for oid".to_string()),
+                    score: Err("no value supplied for score".to_string()),
+                    source_count: Err("no value supplied for source_count".to_string()),
+                }
+            }
+        }
+        impl FusionHit {
+            pub fn oid<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.oid = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for oid: {e}"));
+                self
+            }
+            pub fn score<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.score = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for score: {e}"));
+                self
+            }
+            pub fn source_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_count: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<FusionHit> for super::FusionHit {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: FusionHit,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    oid: value.oid?,
+                    score: value.score?,
+                    source_count: value.source_count?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::FusionHit> for FusionHit {
+            fn from(value: super::FusionHit) -> Self {
+                Self {
+                    oid: Ok(value.oid),
+                    score: Ok(value.score),
+                    source_count: Ok(value.source_count),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct FusionSearchRequest {
+            consensus_beta:
+                ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
+            edge_types: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            grain: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            graph_weight: ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
+            limit: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            max_depth: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            max_seeds: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            query_vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
+            rrf: ::std::result::Result<::std::option::Option<bool>, ::std::string::String>,
+            vector_collection: ::std::result::Result<::std::string::String, ::std::string::String>,
+            vector_weight: ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for FusionSearchRequest {
+            fn default() -> Self {
+                Self {
+                    consensus_beta: Ok(Default::default()),
+                    edge_types: Ok(Default::default()),
+                    grain: Ok(Default::default()),
+                    graph_weight: Ok(Default::default()),
+                    limit: Ok(Default::default()),
+                    max_depth: Ok(Default::default()),
+                    max_seeds: Ok(Default::default()),
+                    query_vector: Err("no value supplied for query_vector".to_string()),
+                    rrf: Ok(Default::default()),
+                    vector_collection: Err("no value supplied for vector_collection".to_string()),
+                    vector_weight: Ok(Default::default()),
+                }
+            }
+        }
+        impl FusionSearchRequest {
+            pub fn consensus_beta<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.consensus_beta = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for consensus_beta: {e}")
+                });
+                self
+            }
+            pub fn edge_types<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_types = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edge_types: {e}"));
+                self
+            }
+            pub fn grain<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.grain = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for grain: {e}"));
+                self
+            }
+            pub fn graph_weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.graph_weight = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for graph_weight: {e}"));
+                self
+            }
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn max_depth<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_depth = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for max_depth: {e}"));
+                self
+            }
+            pub fn max_seeds<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_seeds = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for max_seeds: {e}"));
+                self
+            }
+            pub fn query_vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_vector: {e}"));
+                self
+            }
+            pub fn rrf<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<bool>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.rrf = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for rrf: {e}"));
+                self
+            }
+            pub fn vector_collection<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.vector_collection = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for vector_collection: {e}")
+                });
+                self
+            }
+            pub fn vector_weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.vector_weight = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for vector_weight: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<FusionSearchRequest> for super::FusionSearchRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: FusionSearchRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    consensus_beta: value.consensus_beta?,
+                    edge_types: value.edge_types?,
+                    grain: value.grain?,
+                    graph_weight: value.graph_weight?,
+                    limit: value.limit?,
+                    max_depth: value.max_depth?,
+                    max_seeds: value.max_seeds?,
+                    query_vector: value.query_vector?,
+                    rrf: value.rrf?,
+                    vector_collection: value.vector_collection?,
+                    vector_weight: value.vector_weight?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::FusionSearchRequest> for FusionSearchRequest {
+            fn from(value: super::FusionSearchRequest) -> Self {
+                Self {
+                    consensus_beta: Ok(value.consensus_beta),
+                    edge_types: Ok(value.edge_types),
+                    grain: Ok(value.grain),
+                    graph_weight: Ok(value.graph_weight),
+                    limit: Ok(value.limit),
+                    max_depth: Ok(value.max_depth),
+                    max_seeds: Ok(value.max_seeds),
+                    query_vector: Ok(value.query_vector),
+                    rrf: Ok(value.rrf),
+                    vector_collection: Ok(value.vector_collection),
+                    vector_weight: Ok(value.vector_weight),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct FusionSearchResponse {
+            results:
+                ::std::result::Result<::std::vec::Vec<super::FusionHit>, ::std::string::String>,
+            stats: ::std::result::Result<super::FusionStatsDto, ::std::string::String>,
+        }
+        impl ::std::default::Default for FusionSearchResponse {
+            fn default() -> Self {
+                Self {
+                    results: Err("no value supplied for results".to_string()),
+                    stats: Err("no value supplied for stats".to_string()),
+                }
+            }
+        }
+        impl FusionSearchResponse {
+            pub fn results<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::FusionHit>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.results = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for results: {e}"));
+                self
+            }
+            pub fn stats<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::FusionStatsDto>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.stats = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for stats: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<FusionSearchResponse> for super::FusionSearchResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: FusionSearchResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    results: value.results?,
+                    stats: value.stats?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::FusionSearchResponse> for FusionSearchResponse {
+            fn from(value: super::FusionSearchResponse) -> Self {
+                Self {
+                    results: Ok(value.results),
+                    stats: Ok(value.stats),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct FusionStatsDto {
+            candidates_in: ::std::result::Result<u64, ::std::string::String>,
+            items_out: ::std::result::Result<u64, ::std::string::String>,
+            sources_fused: ::std::result::Result<u64, ::std::string::String>,
+            sources_skipped: ::std::result::Result<u64, ::std::string::String>,
+        }
+        impl ::std::default::Default for FusionStatsDto {
+            fn default() -> Self {
+                Self {
+                    candidates_in: Err("no value supplied for candidates_in".to_string()),
+                    items_out: Err("no value supplied for items_out".to_string()),
+                    sources_fused: Err("no value supplied for sources_fused".to_string()),
+                    sources_skipped: Err("no value supplied for sources_skipped".to_string()),
+                }
+            }
+        }
+        impl FusionStatsDto {
+            pub fn candidates_in<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.candidates_in = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for candidates_in: {e}"));
+                self
+            }
+            pub fn items_out<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.items_out = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for items_out: {e}"));
+                self
+            }
+            pub fn sources_fused<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.sources_fused = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for sources_fused: {e}"));
+                self
+            }
+            pub fn sources_skipped<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.sources_skipped = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for sources_skipped: {e}")
+                });
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<FusionStatsDto> for super::FusionStatsDto {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: FusionStatsDto,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    candidates_in: value.candidates_in?,
+                    items_out: value.items_out?,
+                    sources_fused: value.sources_fused?,
+                    sources_skipped: value.sources_skipped?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::FusionStatsDto> for FusionStatsDto {
+            fn from(value: super::FusionStatsDto) -> Self {
+                Self {
+                    candidates_in: Ok(value.candidates_in),
+                    items_out: Ok(value.items_out),
+                    sources_fused: Ok(value.sources_fused),
+                    sources_skipped: Ok(value.sources_skipped),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct GraphCollectionResponse {
             description: ::std::result::Result<
                 ::std::option::Option<::std::string::String>,
@@ -10931,6 +11560,23 @@ impl Client {
     pub fn get_capabilities(&self) -> builder::GetCapabilities<'_> {
         builder::GetCapabilities::new(self)
     }
+    /// `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid
+    ///
+    /// Sends a `POST` request to `/api/v2/api/v2/graphs/{graph_id}/fusion-search`
+    ///
+    /// Arguments:
+    /// - `graph_id`: Graph ID for traversal expansion
+    /// - `body`
+    /// ```text
+    /// let response = client.fusion_search_v2()
+    /// .graph_id(graph_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn fusion_search_v2(&self) -> builder::FusionSearchV2<'_> {
+        builder::FusionSearchV2::new(self)
+    }
     /// List collections
     ///
     /// List all collections with pagination.
@@ -11661,6 +12307,106 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::fusion_search_v2`]
+    ///
+    /// [`Client::fusion_search_v2`]: super::Client::fusion_search_v2
+    #[derive(Debug, Clone)]
+    pub struct FusionSearchV2<'a> {
+        client: &'a super::Client,
+        graph_id: Result<::std::string::String, String>,
+        body: Result<types::builder::FusionSearchRequest, String>,
+    }
+    impl<'a> FusionSearchV2<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::FusionSearchRequest>,
+            <V as std::convert::TryInto<types::FusionSearchRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `FusionSearchRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::FusionSearchRequest,
+                ) -> types::builder::FusionSearchRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/api/v2/graphs/{graph_id}/fusion-search`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::FusionSearchResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                graph_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::FusionSearchRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/api/v2/graphs/{}/fusion-search",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "fusion_search_v2",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }

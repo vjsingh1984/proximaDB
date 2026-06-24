@@ -392,6 +392,55 @@ type ExplainQueryRequest struct {
 	Query      string        `json:"query"`
 }
 
+// FusionHit defines model for FusionHit.
+type FusionHit struct {
+	Oid         string  `json:"oid"`
+	Score       float32 `json:"score"`
+	SourceCount int     `json:"source_count"`
+}
+
+// FusionSearchRequest defines model for FusionSearchRequest.
+type FusionSearchRequest struct {
+	// ConsensusBeta Consensus boost added to any `oid` present in ≥2 sources.
+	ConsensusBeta *float32  `json:"consensus_beta"`
+	EdgeTypes     *[]string `json:"edge_types,omitempty"`
+
+	// Grain Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.
+	Grain       *string  `json:"grain"`
+	GraphWeight *float32 `json:"graph_weight"`
+	Limit       *int     `json:"limit,omitempty"`
+
+	// MaxDepth k-hop expansion depth (bounded; default 1 — the validated sweet spot).
+	MaxDepth *int32 `json:"max_depth,omitempty"`
+
+	// MaxSeeds How many of the top vector seeds to expand from (bounded expansion).
+	MaxSeeds *int `json:"max_seeds,omitempty"`
+
+	// QueryVector Query embedding for the ANN seed.
+	QueryVector []float32 `json:"query_vector"`
+
+	// Rrf Use the rank-based RRF fallback instead of PIT-calibrated linear.
+	Rrf *bool `json:"rrf,omitempty"`
+
+	// VectorCollection Vector collection to seed from (its records co-indexed with this graph by `oid`).
+	VectorCollection string   `json:"vector_collection"`
+	VectorWeight     *float32 `json:"vector_weight"`
+}
+
+// FusionSearchResponse defines model for FusionSearchResponse.
+type FusionSearchResponse struct {
+	Results []FusionHit    `json:"results"`
+	Stats   FusionStatsDto `json:"stats"`
+}
+
+// FusionStatsDto defines model for FusionStatsDto.
+type FusionStatsDto struct {
+	CandidatesIn   int `json:"candidates_in"`
+	ItemsOut       int `json:"items_out"`
+	SourcesFused   int `json:"sources_fused"`
+	SourcesSkipped int `json:"sources_skipped"`
+}
+
 // GraphCollectionResponse Server returns a `GraphResponse<T>` envelope around graph
 // collection metadata. The fields below are the common subset
 // SDKs rely on; extra server-side fields are passed through.
@@ -1121,6 +1170,9 @@ type IngestLogJSONBody map[string]interface{}
 
 // QueryLogsJSONBody defines parameters for QueryLogs.
 type QueryLogsJSONBody map[string]interface{}
+
+// FusionSearchV2JSONRequestBody defines body for FusionSearchV2 for application/json ContentType.
+type FusionSearchV2JSONRequestBody = FusionSearchRequest
 
 // CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
 type CreateCollectionJSONRequestBody = CreateCollectionV2Request
@@ -2734,6 +2786,11 @@ type ClientInterface interface {
 	// GetCapabilities request
 	GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// FusionSearchV2WithBody request with any body
+	FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListCollections request
 	ListCollections(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2883,6 +2940,30 @@ type ClientInterface interface {
 
 func (c *Client) GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCapabilitiesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFusionSearchV2RequestWithBody(c.Server, graphId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFusionSearchV2Request(c.Server, graphId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3576,6 +3657,53 @@ func NewGetCapabilitiesRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewFusionSearchV2Request calls the generic FusionSearchV2 builder with application/json body
+func NewFusionSearchV2Request(server string, graphId string, body FusionSearchV2JSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewFusionSearchV2RequestWithBody(server, graphId, "application/json", bodyReader)
+}
+
+// NewFusionSearchV2RequestWithBody generates requests for FusionSearchV2 with any type of body
+func NewFusionSearchV2RequestWithBody(server string, graphId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "graph_id", runtime.ParamLocationPath, graphId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/api/v2/graphs/%s/fusion-search", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -5126,6 +5254,11 @@ type ClientWithResponsesInterface interface {
 	// GetCapabilitiesWithResponse request
 	GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error)
 
+	// FusionSearchV2WithBodyWithResponse request with any body
+	FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
+
+	FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
+
 	// ListCollectionsWithResponse request
 	ListCollectionsWithResponse(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*ListCollectionsHTTPResp, error)
 
@@ -5289,6 +5422,30 @@ func (r GetCapabilitiesHTTPResp) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCapabilitiesHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type FusionSearchV2HTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *FusionSearchResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r FusionSearchV2HTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r FusionSearchV2HTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6124,6 +6281,23 @@ func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, r
 	return ParseGetCapabilitiesHTTPResp(rsp)
 }
 
+// FusionSearchV2WithBodyWithResponse request with arbitrary body returning *FusionSearchV2HTTPResp
+func (c *ClientWithResponses) FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
+	rsp, err := c.FusionSearchV2WithBody(ctx, graphId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFusionSearchV2HTTPResp(rsp)
+}
+
+func (c *ClientWithResponses) FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
+	rsp, err := c.FusionSearchV2(ctx, graphId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFusionSearchV2HTTPResp(rsp)
+}
+
 // ListCollectionsWithResponse request returning *ListCollectionsHTTPResp
 func (c *ClientWithResponses) ListCollectionsWithResponse(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*ListCollectionsHTTPResp, error) {
 	rsp, err := c.ListCollections(ctx, params, reqEditors...)
@@ -6620,6 +6794,46 @@ func ParseGetCapabilitiesHTTPResp(rsp *http.Response) (*GetCapabilitiesHTTPResp,
 			return nil, err
 		}
 		response.JSON200 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseFusionSearchV2HTTPResp parses an HTTP response from a FusionSearchV2WithResponse call
+func ParseFusionSearchV2HTTPResp(rsp *http.Response) (*FusionSearchV2HTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &FusionSearchV2HTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FusionSearchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

@@ -608,6 +608,108 @@ components:
       - language
       - query
       type: object
+    FusionHit:
+      properties:
+        oid:
+          type: string
+        score:
+          format: float
+          type: number
+        source_count:
+          minimum: 0
+          type: integer
+      required:
+      - oid
+      - score
+      - source_count
+      type: object
+    FusionSearchRequest:
+      properties:
+        consensus_beta:
+          description: Consensus boost added to any `oid` present in ≥2 sources.
+          format: float
+          type:
+          - number
+          - 'null'
+        edge_types:
+          items:
+            type: string
+          type: array
+        grain:
+          description: 'Graph contribution grain: `"nodes"` (default), `"edges"`, or `"both"`.'
+          type:
+          - string
+          - 'null'
+        graph_weight:
+          format: float
+          type:
+          - number
+          - 'null'
+        limit:
+          minimum: 0
+          type: integer
+        max_depth:
+          description: k-hop expansion depth (bounded; default 1 — the validated sweet spot).
+          format: int32
+          minimum: 0
+          type: integer
+        max_seeds:
+          description: How many of the top vector seeds to expand from (bounded expansion).
+          minimum: 0
+          type: integer
+        query_vector:
+          description: Query embedding for the ANN seed.
+          items:
+            format: float
+            type: number
+          type: array
+        rrf:
+          description: Use the rank-based RRF fallback instead of PIT-calibrated linear.
+          type: boolean
+        vector_collection:
+          description: Vector collection to seed from (its records co-indexed with this graph by `oid`).
+          type: string
+        vector_weight:
+          format: float
+          type:
+          - number
+          - 'null'
+      required:
+      - vector_collection
+      - query_vector
+      type: object
+    FusionSearchResponse:
+      properties:
+        results:
+          items:
+            $ref: '#/components/schemas/FusionHit'
+          type: array
+        stats:
+          $ref: '#/components/schemas/FusionStatsDto'
+      required:
+      - results
+      - stats
+      type: object
+    FusionStatsDto:
+      properties:
+        candidates_in:
+          minimum: 0
+          type: integer
+        items_out:
+          minimum: 0
+          type: integer
+        sources_fused:
+          minimum: 0
+          type: integer
+        sources_skipped:
+          minimum: 0
+          type: integer
+      required:
+      - sources_fused
+      - sources_skipped
+      - candidates_in
+      - items_out
+      type: object
     GraphCollectionResponse:
       additionalProperties: true
       description: |
@@ -1745,6 +1847,44 @@ paths:
       summary: Negotiate server capabilities.
       tags:
       - Meta
+  /api/v2/api/v2/graphs/{graph_id}/fusion-search:
+    post:
+      operationId: fusion_search_v2
+      parameters:
+      - description: Graph ID for traversal expansion
+        in: path
+        name: graph_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FusionSearchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FusionSearchResponse'
+          description: Fusion results with calibrated scores
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request (empty query_vector, etc.)
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Fusion execution failed
+      summary: '`POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.'
+      tags:
+      - graphs
   /api/v2/collections:
     get:
       description: |-
