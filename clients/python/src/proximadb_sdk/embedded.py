@@ -729,19 +729,25 @@ class EmbeddedProximaDB:
     @property
     def rest_socket_path(self) -> Path:
         if self._socket_dir is None:
-            raise RuntimeError("REST socket path is only available in UDS transport mode")
+            raise RuntimeError(
+                "REST socket path is only available in UDS transport mode"
+            )
         return self._socket_dir / UDS_REST_SOCKET_NAME
 
     @property
     def grpc_socket_path(self) -> Path:
         if self._socket_dir is None:
-            raise RuntimeError("gRPC socket path is only available in UDS transport mode")
+            raise RuntimeError(
+                "gRPC socket path is only available in UDS transport mode"
+            )
         return self._socket_dir / UDS_GRPC_SOCKET_NAME
 
     @property
     def arrow_flight_socket_path(self) -> Path:
         if self._socket_dir is None:
-            raise RuntimeError("Arrow Flight socket path is only available in UDS transport mode")
+            raise RuntimeError(
+                "Arrow Flight socket path is only available in UDS transport mode"
+            )
         return self._socket_dir / UDS_FLIGHT_SOCKET_NAME
 
     @staticmethod
@@ -764,7 +770,9 @@ class EmbeddedProximaDB:
             candidate = root / f"pxdb-{uuid.uuid4().hex[:12]}"
             if self._uds_paths_fit(candidate):
                 return candidate
-        raise RuntimeError("Unable to derive a Unix-domain socket path under the OS path limit")
+        raise RuntimeError(
+            "Unable to derive a Unix-domain socket path under the OS path limit"
+        )
 
     def _resolve_socket_dir(self) -> Path | None:
         if not self._is_uds_transport:
