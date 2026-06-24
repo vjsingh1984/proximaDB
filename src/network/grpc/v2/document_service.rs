@@ -172,6 +172,73 @@ mod conv {
             })
             .collect()
     }
+
+    /// v2 `AggregationStage` -> v1 `AggregationStage`. Both carry a `stage` oneof
+    /// with parallel variants (Group/Project/Sort/Limit/Skip); v2's discriminants
+    /// and field shapes mirror v1, so this is a structural 1:1 copy. v1 also has
+    /// Match/Unwind/Lookup which v2 defers — they are not produced here.
+    pub fn aggregation_stage_to_v1(stage: &pv2::AggregationStage) -> pv1::AggregationStage {
+        use pv1::aggregation_stage::Stage as V1Stage;
+        use pv2::aggregation_stage::Stage as V2Stage;
+
+        match &stage.stage {
+            None => pv1::AggregationStage::default(),
+            Some(V2Stage::Group(group)) => {
+                let aggregations = group
+                    .aggregations
+                    .iter()
+                    .map(|a| pv1::Aggregation {
+                        output_field: a.output_field.clone(),
+                        r#type: a.r#type,
+                        input_path: a.input_path.clone(),
+                    })
+                    .collect();
+                pv1::AggregationStage {
+                    stage: Some(V1Stage::Group(pv1::GroupStage {
+                        key: group.key.clone(),
+                        aggregations,
+                    })),
+                }
+            }
+            Some(V2Stage::Project(project)) => pv1::AggregationStage {
+                stage: Some(V1Stage::Project(pv1::ProjectStage {
+                    fields: project.fields.clone(),
+                    computed: project.computed.clone(),
+                })),
+            },
+            Some(V2Stage::Sort(sort)) => {
+                let fields = sort
+                    .sort
+                    .iter()
+                    .map(|s| pv1::SortField {
+                        path: s.path.clone(),
+                        order: s.order,
+                    })
+                    .collect();
+                pv1::AggregationStage {
+                    stage: Some(V1Stage::Sort(pv1::SortStage { fields })),
+                }
+            }
+            Some(V2Stage::Limit(limit)) => pv1::AggregationStage {
+                stage: Some(V1Stage::Limit(pv1::LimitStage { limit: limit.limit })),
+            },
+            Some(V2Stage::Skip(skip)) => pv1::AggregationStage {
+                stage: Some(V1Stage::Skip(pv1::SkipStage { skip: skip.skip })),
+            },
+        }
+    }
+
+    /// v1 `SqlObject` result -> v2 `AggregationResult` (ProximaValue-native). The
+    /// aggregation executor returns SqlObject (v1 legacy surface); we convert to
+    /// ProximaTree via sql_object_to_proxima_tree, then to TypedValue map.
+    pub fn sql_object_to_aggregation_result(
+        obj: &crate::proto::proximadb_v1::SqlObject,
+    ) -> pv2::AggregationResult {
+        let tree = crate::storage::document::canonical_adapter::sql_object_to_proxima_tree(obj);
+        pv2::AggregationResult {
+            fields: tree_to_props(&tree),
+        }
+    }
 }
 
 /// Map a backing-service error onto a gRPC status, inferring the code from the
@@ -336,6 +403,48 @@ impl ProximaDocumentService for ProximaDocumentServiceImpl {
             Err(e) => {
                 error!("v2 gRPC QueryDocuments failed: {e}");
                 Err(doc_status("query documents", e))
+            }
+        }
+    }
+
+    async fn aggregate_documents(
+        &self,
+        request: Request<pv2::AggregateDocumentsRequest>,
+    ) -> Result<Response<pv2::AggregateDocumentsResponse>, Status> {
+        let collection = Self::effective_collection_id(&request, &request.get_ref().collection_id);
+        let req = request.into_inner();
+        debug!(
+            "v2 gRPC AggregateDocuments collection={} pipeline_len={}",
+            collection,
+            req.pipeline.len()
+        );
+
+        // Convert v2 pipeline to v1 (discriminants line up 1:1)
+        let v1_pipeline: Vec<crate::proto::proximadb_v1::AggregationStage> = req
+            .pipeline
+            .iter()
+            .map(conv::aggregation_stage_to_v1)
+            .collect();
+
+        match self
+            .documents
+            .aggregate_documents(&collection, None, v1_pipeline)
+            .await
+        {
+            Ok(result) => {
+                let results = result
+                    .results
+                    .iter()
+                    .map(conv::sql_object_to_aggregation_result)
+                    .collect();
+                Ok(Response::new(pv2::AggregateDocumentsResponse {
+                    results,
+                    query_time_ms: result.query_time_ms,
+                }))
+            }
+            Err(e) => {
+                error!("v2 gRPC AggregateDocuments failed: {e}");
+                Err(doc_status("aggregate documents", e))
             }
         }
     }

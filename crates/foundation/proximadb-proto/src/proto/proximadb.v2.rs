@@ -5963,6 +5963,120 @@ pub struct QueryDocumentsResponse {
     #[prost(uint64, tag = "3")]
     pub query_time_ms: u64,
 }
+/// A single aggregation computation (field to compute, type, and input path).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct Aggregation {
+    /// Result field name (e.g., "total", "avg_score")
+    #[prost(string, tag = "1")]
+    pub output_field: ::prost::alloc::string::String,
+    #[prost(enumeration = "AggregationType", tag = "2")]
+    pub r#type: i32,
+    /// JSON path to the input field (e.g., "price", "tags")
+    #[prost(string, tag = "3")]
+    pub input_path: ::prost::alloc::string::String,
+}
+/// Group aggregation stage: group documents by a key and compute aggregations.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GroupStage {
+    /// Group key: "\_id" groups all documents together, otherwise a JSON path
+    /// (e.g., "category", "address.city").
+    #[prost(string, tag = "1")]
+    pub key: ::prost::alloc::string::String,
+    /// Aggregations to compute for each group.
+    #[prost(message, repeated, tag = "2")]
+    pub aggregations: ::prost::alloc::vec::Vec<Aggregation>,
+}
+/// Project aggregation stage: include/exclude fields from the result.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct ProjectStage {
+    /// Fields to include (true) or exclude (false). Empty = all fields.
+    #[prost(map = "string, bool", tag = "1")]
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, bool>,
+    /// Computed fields (alias -> expression path).
+    #[prost(map = "string, string", tag = "2")]
+    pub computed: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Sort aggregation stage.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SortStage {
+    #[prost(message, repeated, tag = "1")]
+    pub sort: ::prost::alloc::vec::Vec<sort_stage::SortField>,
+}
+/// Nested message and enum types in `SortStage`.
+pub mod sort_stage {
+    #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+    pub struct SortField {
+        #[prost(string, tag = "1")]
+        pub path: ::prost::alloc::string::String,
+        /// 1 = ascending, -1 = descending (mirrors v1 convention).
+        #[prost(int32, tag = "2")]
+        pub order: i32,
+    }
+}
+/// Limit aggregation stage.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct LimitStage {
+    #[prost(uint32, tag = "1")]
+    pub limit: u32,
+}
+/// Skip aggregation stage.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct SkipStage {
+    #[prost(uint32, tag = "1")]
+    pub skip: u32,
+}
+/// Aggregation pipeline stage. One of the supported stage types.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregationStage {
+    #[prost(oneof = "aggregation_stage::Stage", tags = "1, 2, 3, 4, 5")]
+    pub stage: ::core::option::Option<aggregation_stage::Stage>,
+}
+/// Nested message and enum types in `AggregationStage`.
+pub mod aggregation_stage {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Stage {
+        #[prost(message, tag = "1")]
+        Group(super::GroupStage),
+        #[prost(message, tag = "2")]
+        Project(super::ProjectStage),
+        #[prost(message, tag = "3")]
+        Sort(super::SortStage),
+        #[prost(message, tag = "4")]
+        Limit(super::LimitStage),
+        /// UnwindStage and LookupStage deferred to follow-up.
+        /// MatchStage (filter-based aggregation) deferred until ProximaValue-native
+        /// filter is available.
+        #[prost(message, tag = "5")]
+        Skip(super::SkipStage),
+    }
+}
+/// Aggregation pipeline request.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregateDocumentsRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub pipeline: ::prost::alloc::vec::Vec<AggregationStage>,
+}
+/// A single aggregation result document (key-value pairs with TypedValue values).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregationResult {
+    #[prost(map = "string, message", tag = "1")]
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, TypedValue>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct AggregateDocumentsResponse {
+    /// Aggregated results as a list of result documents. Each result has typed
+    /// fields so rich types (decimals, timestamps, UUIDs) survive. For $group,
+    /// each result has an "\_id" field with the group key.
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<AggregationResult>,
+    #[prost(uint64, tag = "2")]
+    pub query_time_ms: u64,
+}
 /// Document update operations. Mirrors v1 UpdateOperation discriminants 1:1 so the
 /// handler can map directly to the backing service's apply_update logic.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
@@ -6041,6 +6155,60 @@ impl DocumentSortOrder {
             "DOCUMENT_SORT_ORDER_UNSPECIFIED" => Some(Self::Unspecified),
             "DOCUMENT_SORT_ASC" => Some(Self::DocumentSortAsc),
             "DOCUMENT_SORT_DESC" => Some(Self::DocumentSortDesc),
+            _ => None,
+        }
+    }
+}
+/// Aggregation operation types. Mirrors v1 AggregationType discriminants 1:1
+/// so the handler can map directly to the backing service's aggregation executor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum AggregationType {
+    Unspecified = 0,
+    Count = 1,
+    Sum = 2,
+    Avg = 3,
+    Min = 4,
+    Max = 5,
+    First = 6,
+    Last = 7,
+    /// Collect into array
+    Push = 8,
+    /// Collect unique
+    AddToSet = 9,
+}
+impl AggregationType {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "AGGREGATION_TYPE_UNSPECIFIED",
+            Self::Count => "AGGREGATION_TYPE_COUNT",
+            Self::Sum => "AGGREGATION_TYPE_SUM",
+            Self::Avg => "AGGREGATION_TYPE_AVG",
+            Self::Min => "AGGREGATION_TYPE_MIN",
+            Self::Max => "AGGREGATION_TYPE_MAX",
+            Self::First => "AGGREGATION_TYPE_FIRST",
+            Self::Last => "AGGREGATION_TYPE_LAST",
+            Self::Push => "AGGREGATION_TYPE_PUSH",
+            Self::AddToSet => "AGGREGATION_TYPE_ADD_TO_SET",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "AGGREGATION_TYPE_UNSPECIFIED" => Some(Self::Unspecified),
+            "AGGREGATION_TYPE_COUNT" => Some(Self::Count),
+            "AGGREGATION_TYPE_SUM" => Some(Self::Sum),
+            "AGGREGATION_TYPE_AVG" => Some(Self::Avg),
+            "AGGREGATION_TYPE_MIN" => Some(Self::Min),
+            "AGGREGATION_TYPE_MAX" => Some(Self::Max),
+            "AGGREGATION_TYPE_FIRST" => Some(Self::First),
+            "AGGREGATION_TYPE_LAST" => Some(Self::Last),
+            "AGGREGATION_TYPE_PUSH" => Some(Self::Push),
+            "AGGREGATION_TYPE_ADD_TO_SET" => Some(Self::AddToSet),
             _ => None,
         }
     }
@@ -6283,6 +6451,35 @@ pub mod proxima_document_service_client {
                 );
             self.inner.unary(req, path, codec).await
         }
+        pub async fn aggregate_documents(
+            &mut self,
+            request: impl tonic::IntoRequest<super::AggregateDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AggregateDocumentsResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaDocumentService/AggregateDocuments",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaDocumentService",
+                        "AggregateDocuments",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
     }
 }
 /// Generated server implementations.
@@ -6334,6 +6531,13 @@ pub mod proxima_document_service_server {
             request: tonic::Request<super::UpdateDocumentRequest>,
         ) -> std::result::Result<
             tonic::Response<super::DocumentResponse>,
+            tonic::Status,
+        >;
+        async fn aggregate_documents(
+            &self,
+            request: tonic::Request<super::AggregateDocumentsRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::AggregateDocumentsResponse>,
             tonic::Status,
         >;
     }
@@ -6641,6 +6845,55 @@ pub mod proxima_document_service_server {
                     let inner = self.inner.clone();
                     let fut = async move {
                         let method = UpdateDocumentSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaDocumentService/AggregateDocuments" => {
+                    #[allow(non_camel_case_types)]
+                    struct AggregateDocumentsSvc<T: ProximaDocumentService>(pub Arc<T>);
+                    impl<
+                        T: ProximaDocumentService,
+                    > tonic::server::UnaryService<super::AggregateDocumentsRequest>
+                    for AggregateDocumentsSvc<T> {
+                        type Response = super::AggregateDocumentsResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::AggregateDocumentsRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaDocumentService>::aggregate_documents(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = AggregateDocumentsSvc(inner);
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec)
                             .apply_compression_config(
