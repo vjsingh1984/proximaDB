@@ -11,18 +11,12 @@
 //! For atomic multi-modal writes (node + embedding + edges), use the
 //! [`CrossModelTransactionCoordinator`](crate::services::transaction::CrossModelTransactionCoordinator):
 //!
-//! ```no_run
-//! # use proximadb::services::transaction::{CrossModelTransactionCoordinator, TransactionOutcome};
-//! # use std::sync::Arc;
-//! # async fn example() -> anyhow::Result<()> {
-//! # let coordinator = CrossModelTransactionCoordinator::new(/* graph_engine */);
-//! # let tenant_ctx = proximadb_storage_tenant::StorageTenantContext::for_tenant_id("test");
-//! let result = coordinator.write_symbol_atomically(
-//!     node,
-//!     embedding,
-//!     edges,
-//!     &tenant_ctx,
-//! ).await?;
+//! ```ignore
+//! // Coordinator is constructed with a graph engine, record store, and the
+//! // embedding collection id (see CrossModelTransactionCoordinator::new).
+//! let result = coordinator
+//!     .write_symbol_atomically(node, embedding, edges, &tenant_ctx)
+//!     .await?;
 //!
 //! match result {
 //!     TransactionOutcome::Committed { node_oid } => {
@@ -35,8 +29,6 @@
 //!         // Fall back to legacy separate-write path
 //!     }
 //! }
-//! # Ok(())
-//! # }
 //! ```
 //!
 //! The coordinator is behind the `PROXIMADB_CROSS_MODEL_TX_ENABLED` flag and

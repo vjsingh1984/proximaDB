@@ -397,8 +397,10 @@ impl CrossModelTransactionCoordinator {
 
         // Create a minimal table schema for the embedding collection
         // In production, this should be fetched from the catalog
-        let mut table_schema = CatalogTableSchema::default();
-        table_schema.name = self.embedding_collection_id.clone();
+        let table_schema = CatalogTableSchema {
+            name: self.embedding_collection_id.clone(),
+            ..Default::default()
+        };
 
         // Write the embedding record via TableRecordStore
         let mutation = TableRecordMutation::new(TableRecordMutationKind::Insert, record);
@@ -487,8 +489,10 @@ impl CrossModelTransactionCoordinator {
         debug!("Rolling back embedding record: {}", record_oid);
 
         // Create a minimal table schema for the embedding collection
-        let mut table_schema = CatalogTableSchema::default();
-        table_schema.name = self.embedding_collection_id.clone();
+        let table_schema = CatalogTableSchema {
+            name: self.embedding_collection_id.clone(),
+            ..Default::default()
+        };
 
         // Create a delete mutation for the embedding record
         // Note: For rollback, we create a ProximaRecord with just the OID
@@ -539,25 +543,14 @@ impl CrossModelTransactionCoordinator {
 mod tests {
     use super::*;
     use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::graph::model::{PropertyValue, property_value::Value};
     use crate::services::record_store::{
-        RecordScanPredicate, TableRecordGetRequest, TableRecordGetResponse, TableRecordScanRequest,
-        TableRecordScanResponse, TableRecordWriteResult,
+        TableRecordGetRequest, TableRecordGetResponse, TableRecordWriteResult,
     };
     use crate::storage::tenant::context::StorageTenantContext;
 
-    /// Simple mock record store for testing.
-    struct MockTableRecordStore {
-        _inner: std::sync::RwLock<Vec<ProximaRecord>>,
-    }
-
-    impl MockTableRecordStore {
-        fn new() -> Self {
-            Self {
-                _inner: std::sync::RwLock::new(vec![]),
-            }
-        }
-    }
+    /// Minimal mock record store: records only the two required trait methods.
+    /// (`scan_records`, `scan_records_filtered`, etc. use the trait defaults.)
+    struct MockTableRecordStore;
 
     #[async_trait::async_trait]
     impl TableRecordStore for MockTableRecordStore {
@@ -569,8 +562,10 @@ mod tests {
         ) -> Result<TableRecordWriteResult> {
             Ok(TableRecordWriteResult {
                 success: true,
-                errors: vec![],
-                written_count: 1,
+                record_ids: Vec::new(),
+                metrics: Default::default(),
+                errors: Vec::new(),
+                error_code: None,
             })
         }
 
@@ -580,51 +575,21 @@ mod tests {
             _request: TableRecordGetRequest,
             _tenant_context: Option<&TenantContext>,
         ) -> Result<TableRecordGetResponse> {
-            Ok(TableRecordGetResponse {
-                record: None,
-                found: false,
-            })
-        }
-
-        async fn scan_records(
-            &self,
-            _table_schema: &CatalogTableSchema,
-            _request: TableRecordScanRequest,
-            _tenant_context: Option<&TenantContext>,
-        ) -> Result<TableRecordScanResponse> {
-            Ok(TableRecordScanResponse {
-                records: vec![],
-                next_offset: None,
-                total_count: 0,
-            })
-        }
-
-        async fn scan_records_filtered(
-            &self,
-            _table_schema: &CatalogTableSchema,
-            _request: TableRecordScanRequest,
-            _predicate: Option<&RecordScanPredicate<'_>>,
-            _tenant_context: Option<&TenantContext>,
-        ) -> Result<TableRecordScanResponse> {
-            Ok(TableRecordScanResponse {
-                records: vec![],
-                next_offset: None,
-                total_count: 0,
-            })
+            Ok(None)
         }
     }
 
     /// Helper: Create a test coordinator.
     fn create_test_coordinator() -> CrossModelTransactionCoordinator {
-        let engine = Arc::new(OrionGraphEngine::new("test_graph".to_string()).unwrap());
-        let record_store = Arc::new(MockTableRecordStore::new());
+        let engine = Arc::new(OrionGraphEngine::new());
+        let record_store = Arc::new(MockTableRecordStore);
         CrossModelTransactionCoordinator::new(engine, record_store, "test_embeddings".to_string())
     }
 
     /// Test that coordinator is disabled by default.
     #[test]
     fn test_coordinator_disabled_by_default() {
-        env::remove_var(CROSS_MODEL_TX_FLAG);
+        unsafe { env::remove_var(CROSS_MODEL_TX_FLAG) };
         let coordinator = create_test_coordinator();
         assert!(!coordinator.is_enabled());
     }
@@ -632,16 +597,16 @@ mod tests {
     /// Test that coordinator can be enabled via flag.
     #[test]
     fn test_coordinator_enabled_with_flag() {
-        env::set_var(CROSS_MODEL_TX_FLAG, "true");
+        unsafe { env::set_var(CROSS_MODEL_TX_FLAG, "true") };
         let coordinator = create_test_coordinator();
         assert!(coordinator.is_enabled());
-        env::remove_var(CROSS_MODEL_TX_FLAG);
+        unsafe { env::remove_var(CROSS_MODEL_TX_FLAG) };
     }
 
     /// Test that coordinator returns Disabled when flag is off.
     #[tokio::test]
     async fn test_write_symbol_atomically_returns_disabled() {
-        env::remove_var(CROSS_MODEL_TX_FLAG);
+        unsafe { env::remove_var(CROSS_MODEL_TX_FLAG) };
         let coordinator = create_test_coordinator();
         let tenant_ctx = StorageTenantContext::for_tenant_id("test_tenant");
 

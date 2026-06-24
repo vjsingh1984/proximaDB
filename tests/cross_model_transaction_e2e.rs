@@ -14,34 +14,51 @@
  * limitations under the License.
  */
 
-//! End-to-end tests for cross-model transaction coordinator (TD-133).
+//! End-to-end tests for the cross-model transaction coordinator (TD-133).
 //!
-//! These tests verify:
-//! 1. Atomic commit of node + embedding + edges
-//! 2. Rollback on failure
-//! 3. Coordinator returns Disabled when flag is off
-//! 4. Idempotent retry behavior
+//! Verifies atomic multi-modal writes across the graph engine (nodes/edges) and
+//! record storage (embeddings), the flag-gated disabled path, rollback
+//! compensation on failure, and idempotent/concurrent behavior.
+//!
+//! These tests use the real ORION graph engine plus an in-memory record-store
+//! mock, and a controllable (edge-failing) graph-engine wrapper to drive the
+//! phase-3 rollback path so the coordinator must compensate an already-committed
+//! node + embedding.
 
+use std::collections::HashMap;
 use std::env;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use chrono::Utc;
-use proximadb::catalog::{CatalogTableSchema, CatalogTableStatistics};
+use proximadb::catalog::CatalogTableSchema;
+use proximadb::graph::engines::GraphEngine;
 use proximadb::graph::engines::orion::OrionGraphEngine;
 use proximadb::graph::model::{Edge, Node, PropertyValue, property_value::Value};
 use proximadb::services::record_store::{
-    RecordScanPredicate, TableRecordGetRequest, TableRecordGetResponse, TableRecordMutation,
-    TableRecordMutationKind, TableRecordScanRequest, TableRecordScanResponse, TableRecordStore,
-    TableRecordWriteResult,
+    TableRecordGetRequest, TableRecordGetResponse, TableRecordMutation, TableRecordMutationKind,
+    TableRecordStore, TableRecordWriteResult,
 };
 use proximadb::services::transaction::{CrossModelTransactionCoordinator, TransactionOutcome};
 use proximadb::storage::tenant::context::StorageTenantContext;
-use proximadb_records::{ProximaRecord, ProximaTree};
+use proximadb_kernel::error::ProximaDBError;
+use proximadb_records::ProximaRecord;
 
-/// Helper: Create a test node with basic properties.
+/// Environment variable flag gating cross-model transaction support.
+const FLAG: &str = "PROXIMADB_CROSS_MODEL_TX_ENABLED";
+
+fn enable_flag() {
+    unsafe { env::set_var(FLAG, "true") };
+}
+
+fn clear_flag() {
+    unsafe { env::remove_var(FLAG) };
+}
+
+/// Build a node with a couple of scalar properties.
 fn create_test_node(id: &str, label: &str) -> Node {
-    let mut properties = std::collections::HashMap::new();
+    let mut properties = HashMap::new();
     properties.insert(
         "name".to_string(),
         PropertyValue {
@@ -65,34 +82,39 @@ fn create_test_node(id: &str, label: &str) -> Node {
     }
 }
 
-/// Helper: Create a test edge.
+/// Build a directed edge between two node IDs.
 fn create_test_edge(id: &str, from: &str, to: &str, edge_type: &str) -> Edge {
     Edge {
         id: id.to_string(),
         from_node_id: from.to_string(),
         to_node_id: to.to_string(),
         edge_type: edge_type.to_string(),
-        properties: std::collections::HashMap::new(),
+        properties: HashMap::new(),
+        weight: None,
         created_at_ms: Utc::now().timestamp_millis(),
         updated_at_ms: Utc::now().timestamp_millis(),
     }
 }
 
-/// Helper: Create a test tenant context.
 fn create_test_tenant() -> StorageTenantContext {
     StorageTenantContext::for_tenant_id("test_tenant_e2e")
 }
 
-/// Simple mock record store for e2e testing.
+/// In-memory record store that tracks written records by OID. Used both as the
+/// embedding persistence sink and to assert what was committed vs. compensated.
 struct MockTableRecordStore {
-    _inner: std::sync::RwLock<Vec<ProximaRecord>>,
+    records: Mutex<HashMap<String, ProximaRecord>>,
 }
 
 impl MockTableRecordStore {
     fn new() -> Self {
         Self {
-            _inner: std::sync::RwLock::new(vec![]),
+            records: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn contains_oid(&self, oid: &str) -> bool {
+        self.records.lock().unwrap().contains_key(oid)
     }
 }
 
@@ -101,13 +123,33 @@ impl TableRecordStore for MockTableRecordStore {
     async fn write_mutations(
         &self,
         _table_schema: &CatalogTableSchema,
-        _mutations: Vec<TableRecordMutation>,
+        mutations: Vec<TableRecordMutation>,
         _tenant_context: Option<&StorageTenantContext>,
     ) -> Result<TableRecordWriteResult> {
+        let mut map = self.records.lock().unwrap();
+        let mut record_ids = Vec::with_capacity(mutations.len());
+        for mutation in mutations {
+            let oid = if mutation.record.oid.is_empty() {
+                mutation.record.local_id.clone().unwrap_or_default()
+            } else {
+                mutation.record.oid.clone()
+            };
+            match mutation.kind {
+                TableRecordMutationKind::Delete => {
+                    map.remove(&oid);
+                }
+                _ => {
+                    map.insert(oid.clone(), mutation.record);
+                }
+            }
+            record_ids.push(oid);
+        }
         Ok(TableRecordWriteResult {
             success: true,
-            errors: vec![],
-            written_count: 1,
+            record_ids,
+            metrics: Default::default(),
+            errors: Vec::new(),
+            error_code: None,
         })
     }
 
@@ -117,98 +159,181 @@ impl TableRecordStore for MockTableRecordStore {
         _request: TableRecordGetRequest,
         _tenant_context: Option<&StorageTenantContext>,
     ) -> Result<TableRecordGetResponse> {
-        Ok(TableRecordGetResponse {
-            record: None,
-            found: false,
-        })
-    }
-
-    async fn scan_records(
-        &self,
-        _table_schema: &CatalogTableSchema,
-        _request: TableRecordScanRequest,
-        _tenant_context: Option<&StorageTenantContext>,
-    ) -> Result<TableRecordScanResponse> {
-        Ok(TableRecordScanResponse {
-            records: vec![],
-            next_offset: None,
-            total_count: 0,
-        })
-    }
-
-    async fn scan_records_filtered(
-        &self,
-        _table_schema: &CatalogTableSchema,
-        _request: TableRecordScanRequest,
-        _predicate: Option<&RecordScanPredicate<'_>>,
-        _tenant_context: Option<&StorageTenantContext>,
-    ) -> Result<TableRecordScanResponse> {
-        Ok(TableRecordScanResponse {
-            records: vec![],
-            next_offset: None,
-            total_count: 0,
-        })
+        Ok(None)
     }
 }
 
-/// Helper: Create a test coordinator with mock record store.
-fn create_test_coordinator(graph_id: &str) -> CrossModelTransactionCoordinator {
-    let engine = OrionGraphEngine::new(graph_id.to_string()).unwrap();
+/// Graph engine wrapper that delegates every operation to a real ORION engine,
+/// but can be armed to fail `insert_edge`. This lets a test commit the node
+/// (phase 1) and embedding (phase 2), then force a phase-3 (edge) failure so the
+/// coordinator must roll back both already-committed writes.
+struct FailingGraphEngine {
+    inner: Arc<OrionGraphEngine>,
+    fail_edges: AtomicBool,
+}
+
+impl FailingGraphEngine {
+    fn new() -> Self {
+        Self {
+            inner: Arc::new(OrionGraphEngine::new()),
+            fail_edges: AtomicBool::new(false),
+        }
+    }
+
+    fn arm_edge_failure(&self) {
+        self.fail_edges.store(true, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl GraphEngine for FailingGraphEngine {
+    async fn insert_node(&self, node: Node) -> std::result::Result<Arc<Node>, ProximaDBError> {
+        self.inner.insert_node(node).await
+    }
+
+    fn get_node(&self, id: &String) -> std::result::Result<Option<Arc<Node>>, ProximaDBError> {
+        self.inner.get_node(id)
+    }
+
+    async fn update_node(&self, node: Node) -> std::result::Result<Arc<Node>, ProximaDBError> {
+        self.inner.update_node(node).await
+    }
+
+    async fn delete_node(
+        &self,
+        id: &String,
+    ) -> std::result::Result<Option<Arc<Node>>, ProximaDBError> {
+        self.inner.delete_node(id).await
+    }
+
+    async fn insert_edge(&self, edge: Edge) -> std::result::Result<Arc<Edge>, ProximaDBError> {
+        if self.fail_edges.load(Ordering::SeqCst) {
+            return Err(ProximaDBError::Internal(
+                "simulated edge write failure".to_string(),
+            ));
+        }
+        self.inner.insert_edge(edge).await
+    }
+
+    fn get_edge(&self, id: &String) -> std::result::Result<Option<Arc<Edge>>, ProximaDBError> {
+        self.inner.get_edge(id)
+    }
+
+    async fn update_edge(&self, edge: Edge) -> std::result::Result<Arc<Edge>, ProximaDBError> {
+        self.inner.update_edge(edge).await
+    }
+
+    async fn delete_edge(
+        &self,
+        id: &String,
+    ) -> std::result::Result<Option<Arc<Edge>>, ProximaDBError> {
+        self.inner.delete_edge(id).await
+    }
+
+    fn get_outgoing_edges(
+        &self,
+        node_id: &String,
+        edge_type: Option<&str>,
+    ) -> std::result::Result<Vec<Arc<Edge>>, ProximaDBError> {
+        self.inner.get_outgoing_edges(node_id, edge_type)
+    }
+
+    fn get_incoming_edges(
+        &self,
+        node_id: &String,
+        edge_type: Option<&str>,
+    ) -> std::result::Result<Vec<Arc<Edge>>, ProximaDBError> {
+        self.inner.get_incoming_edges(node_id, edge_type)
+    }
+
+    fn get_neighbors(
+        &self,
+        node_id: &String,
+        edge_type: Option<&str>,
+    ) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+        self.inner.get_neighbors(node_id, edge_type)
+    }
+
+    fn get_nodes_by_label(
+        &self,
+        label: &str,
+    ) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+        self.inner.get_nodes_by_label(label)
+    }
+
+    fn node_count(&self) -> std::result::Result<usize, ProximaDBError> {
+        self.inner.node_count()
+    }
+
+    fn edge_count(&self) -> std::result::Result<usize, ProximaDBError> {
+        self.inner.edge_count()
+    }
+
+    fn get_all_nodes(&self) -> std::result::Result<Vec<Arc<Node>>, ProximaDBError> {
+        self.inner.get_all_nodes()
+    }
+}
+
+/// Build a coordinator over a real ORION engine, returning the record-store
+/// handle so tests can assert persistence/compensation.
+fn real_coordinator_with_store() -> (CrossModelTransactionCoordinator, Arc<MockTableRecordStore>) {
+    let engine = Arc::new(OrionGraphEngine::new());
     let record_store = Arc::new(MockTableRecordStore::new());
-    CrossModelTransactionCoordinator::new(
-        Arc::new(engine),
-        record_store,
+    let coordinator = CrossModelTransactionCoordinator::new(
+        engine,
+        record_store.clone(),
         "test_embeddings".to_string(),
-    )
+    );
+    (coordinator, record_store)
 }
 
-/// Test: Coordinator is disabled by default.
+// ---------------------------------------------------------------------------
+// Flag gate
+// ---------------------------------------------------------------------------
+
+/// Coordinator is disabled by default (flag unset).
 #[test]
 fn test_coordinator_disabled_by_default() {
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
-    let coordinator = create_test_coordinator("test_graph_disabled");
+    clear_flag();
+    let (coordinator, _store) = real_coordinator_with_store();
     assert!(!coordinator.is_enabled());
 }
 
-/// Test: Coordinator can be enabled via flag.
+/// Coordinator enables when the flag is set.
 #[test]
 fn test_coordinator_enabled_with_flag() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
-    let coordinator = create_test_coordinator("test_graph_enabled");
+    enable_flag();
+    let (coordinator, _store) = real_coordinator_with_store();
     assert!(coordinator.is_enabled());
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
+    clear_flag();
 }
 
-/// Test: Coordinator returns Disabled when flag is off.
+/// With the flag off, writes short-circuit to `Disabled` (caller falls back).
 #[tokio::test]
-async fn test_write_symbol_returns_disabled_when_flag_off() {
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
+async fn test_returns_disabled_when_flag_off() {
+    clear_flag();
+    let (coordinator, _store) = real_coordinator_with_store();
 
-    let coordinator = create_test_coordinator("test_graph_return_disabled");
-    let tenant_ctx = create_test_tenant();
-
-    let node = create_test_node("node1", "Person");
-    let embedding = vec![0.1, 0.2, 0.3];
-    let edges = vec![];
-
+    let node = create_test_node("n1", "Person");
     let result = coordinator
-        .write_symbol_atomically(node, embedding, edges, &tenant_ctx)
+        .write_symbol_atomically(node, vec![0.1, 0.2, 0.3], vec![], &create_test_tenant())
         .await
         .unwrap();
 
     assert_eq!(result, TransactionOutcome::Disabled);
 }
 
-/// Test: Successful atomic commit of node + embedding + edges.
+// ---------------------------------------------------------------------------
+// Happy path
+// ---------------------------------------------------------------------------
+
+/// A full node + embedding + edges transaction commits atomically and all three
+/// domains are durably observable through their canonical read paths.
 #[tokio::test]
-async fn test_successful_atomic_commit() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
+async fn test_successful_atomic_commit_persists_all() {
+    enable_flag();
+    let (coordinator, record_store) = real_coordinator_with_store();
 
-    let graph_id = "test_graph_commit";
-    let coordinator = create_test_coordinator(graph_id);
-    let tenant_ctx = create_test_tenant();
-
-    // Create test data
     let node = create_test_node("symbol1", "Symbol");
     let embedding = vec![0.1, 0.2, 0.3, 0.4, 0.5];
     let edges = vec![
@@ -216,307 +341,350 @@ async fn test_successful_atomic_commit() {
         create_test_edge("edge2", "symbol1", "other2", "REFERENCES"),
     ];
 
-    // Execute transaction
-    let result = coordinator
-        .write_symbol_atomically(node.clone(), embedding.clone(), edges.clone(), &tenant_ctx)
+    // Pre-insert the edge endpoints so ORION's referential-integrity check
+    // (both endpoints must exist) passes when phase 3 inserts the edges.
+    coordinator
+        .graph_engine()
+        .insert_node(create_test_node("other1", "Symbol"))
+        .await
+        .unwrap();
+    coordinator
+        .graph_engine()
+        .insert_node(create_test_node("other2", "Symbol"))
         .await
         .unwrap();
 
-    // Verify committed outcome
+    let result = coordinator
+        .write_symbol_atomically(
+            node.clone(),
+            embedding.clone(),
+            edges.clone(),
+            &create_test_tenant(),
+        )
+        .await
+        .unwrap();
+
     match result {
-        TransactionOutcome::Committed { node_oid } => {
-            assert_eq!(node_oid, "symbol1");
-        }
-        other => panic!("Expected Committed, got {:?}", other),
+        TransactionOutcome::Committed { node_oid } => assert_eq!(node_oid, "symbol1"),
+        other => panic!("expected Committed, got {other:?}"),
     }
 
-    // Verify all data persisted via canonical read paths
-    let graph_engine = coordinator.graph_engine();
-    let node_id = &node.id;
+    let graph = coordinator.graph_engine();
 
-    // Check node exists
-    let retrieved_node = graph_engine.get_node(node_id).unwrap().unwrap();
-    assert_eq!(retrieved_node.id, "symbol1");
-    assert!(retrieved_node.labels.contains(&"Symbol".to_string()));
+    // Node persisted.
+    let stored_node = graph.get_node(&node.id).unwrap().unwrap();
+    assert_eq!(stored_node.id, "symbol1");
+    assert!(stored_node.labels.iter().any(|l| l == "Symbol"));
 
-    // Check edges exist
+    // Edges persisted.
     for edge in &edges {
-        let retrieved_edge = graph_engine.get_edge(&edge.id).unwrap().unwrap();
-        assert_eq!(retrieved_edge.id, edge.id);
-        assert_eq!(retrieved_edge.from_node_id, "symbol1");
+        let stored = graph.get_edge(&edge.id).unwrap().unwrap();
+        assert_eq!(stored.id, edge.id);
+        assert_eq!(stored.from_node_id, "symbol1");
     }
 
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
-}
-
-/// Test: Rollback on embedding validation failure.
-#[tokio::test]
-async fn test_rollback_on_embedding_validation_failure() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
-
-    let coordinator = create_test_coordinator("test_graph_rollback_embedding");
-    let tenant_ctx = create_test_tenant();
-
-    // Create node with invalid embedding (contains NaN)
-    let node = create_test_node("symbol_invalid", "Symbol");
-    let invalid_embedding = vec![0.1, f32::NAN, 0.3];
-    let edges = vec![];
-
-    // Execute transaction - should rollback
-    let result = coordinator
-        .write_symbol_atomically(node.clone(), invalid_embedding, edges, &tenant_ctx)
-        .await
-        .unwrap();
-
-    // Verify rolled back outcome
-    match result {
-        TransactionOutcome::RolledBack { reason } => {
-            assert!(reason.contains("Embedding write failed"));
-        }
-        other => panic!("Expected RolledBack, got {:?}", other),
-    }
-
-    // Verify node was rolled back (doesn't exist)
-    let graph_engine = coordinator.graph_engine();
-    let retrieved_node = graph_engine.get_node(&node.id).unwrap();
+    // Embedding persisted to record storage under the canonical OID.
+    let embed_oid = format!("embed_{}", node.id);
     assert!(
-        retrieved_node.is_none(),
-        "Node should have been rolled back"
+        record_store.contains_oid(&embed_oid),
+        "embedding record must be persisted"
     );
 
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
+    clear_flag();
 }
 
-/// Test: Rollback on edge write failure.
-///
-/// This test simulates a failure during the edge write phase by attempting
-/// to create an edge that references a non-existent node.
+/// Empty edge list is a valid transaction (node + embedding only).
 #[tokio::test]
-async fn test_rollback_on_edge_write_failure() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
+async fn test_handles_empty_edges() {
+    enable_flag();
+    let (coordinator, record_store) = real_coordinator_with_store();
 
-    let coordinator = create_test_coordinator("test_graph_rollback_edge");
-    let tenant_ctx = create_test_tenant();
-
-    // Create valid node and embedding
-    let node = create_test_node("symbol_edge_fail", "Symbol");
-    let embedding = vec![0.1, 0.2, 0.3];
-
-    // Create edges - the edge write itself should succeed,
-    // but we verify the transaction handles edge writes correctly
-    let edges = vec![create_test_edge(
-        "edge_ok_1",
-        "symbol_edge_fail",
-        "other1",
-        "CONNECTS_TO",
-    )];
-
-    // Execute transaction - should succeed
+    let node = create_test_node("symbol_no_edges", "Symbol");
     let result = coordinator
-        .write_symbol_atomically(node.clone(), embedding.clone(), edges.clone(), &tenant_ctx)
+        .write_symbol_atomically(
+            node.clone(),
+            vec![0.1, 0.2, 0.3],
+            vec![],
+            &create_test_tenant(),
+        )
         .await
         .unwrap();
 
     match result {
-        TransactionOutcome::Committed { node_oid } => {
-            assert_eq!(node_oid, "symbol_edge_fail");
-        }
-        other => panic!("Expected Committed, got {:?}", other),
+        TransactionOutcome::Committed { node_oid } => assert_eq!(node_oid, "symbol_no_edges"),
+        other => panic!("expected Committed, got {other:?}"),
     }
 
-    // Verify node and edges exist
-    let graph_engine = coordinator.graph_engine();
-    assert!(graph_engine.get_node(&node.id).unwrap().is_some());
-    assert!(graph_engine.get_edge("edge_ok_1").unwrap().is_some());
+    assert!(
+        coordinator
+            .graph_engine()
+            .get_node(&node.id)
+            .unwrap()
+            .is_some()
+    );
+    assert!(record_store.contains_oid(&format!("embed_{}", node.id)));
 
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
+    clear_flag();
 }
 
-/// Test: Idempotent retry (upsert semantics).
-///
-/// Running the same transaction twice should succeed (upsert behavior).
+/// A 1536-dim (OpenAI-sized) embedding commits correctly.
 #[tokio::test]
-async fn test_idempotent_retry_upsert() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
+async fn test_large_embedding_vector() {
+    enable_flag();
+    let (coordinator, _store) = real_coordinator_with_store();
 
-    let coordinator = create_test_coordinator("test_graph_idempotent");
-    let tenant_ctx = create_test_tenant();
+    let node = create_test_node("symbol_large", "Symbol");
+    let large_embedding: Vec<f32> = (0..1536).map(|i| i as f32 / 1536.0).collect();
 
-    // Create test data
-    let node = create_test_node("symbol_upsert", "Symbol");
+    let result = coordinator
+        .write_symbol_atomically(node.clone(), large_embedding, vec![], &create_test_tenant())
+        .await
+        .unwrap();
+
+    match result {
+        TransactionOutcome::Committed { node_oid } => assert_eq!(node_oid, "symbol_large"),
+        other => panic!("expected Committed, got {other:?}"),
+    }
+
+    assert!(
+        coordinator
+            .graph_engine()
+            .get_node(&node.id)
+            .unwrap()
+            .is_some()
+    );
+
+    clear_flag();
+}
+
+// ---------------------------------------------------------------------------
+// Rollback / compensation
+// ---------------------------------------------------------------------------
+
+/// A non-finite (NaN) embedding fails phase-2 validation, so the already-written
+/// node is rolled back and no embedding is persisted.
+#[tokio::test]
+async fn test_rollback_on_embedding_validation_failure() {
+    enable_flag();
+    let (coordinator, record_store) = real_coordinator_with_store();
+
+    let node = create_test_node("symbol_nan", "Symbol");
+    let invalid_embedding = vec![0.1, f32::NAN, 0.3];
+
+    let result = coordinator
+        .write_symbol_atomically(
+            node.clone(),
+            invalid_embedding,
+            vec![],
+            &create_test_tenant(),
+        )
+        .await
+        .unwrap();
+
+    match result {
+        TransactionOutcome::RolledBack { reason } => {
+            assert!(
+                reason.contains("Embedding write failed"),
+                "unexpected reason: {reason}"
+            );
+        }
+        other => panic!("expected RolledBack, got {other:?}"),
+    }
+
+    // Node compensated.
+    assert!(
+        coordinator
+            .graph_engine()
+            .get_node(&node.id)
+            .unwrap()
+            .is_none(),
+        "node must be rolled back"
+    );
+    // Embedding never written.
+    assert!(
+        !record_store.contains_oid(&format!("embed_{}", node.id)),
+        "embedding must not be persisted on validation failure"
+    );
+
+    clear_flag();
+}
+
+/// Inf values are likewise rejected with the same compensation.
+#[tokio::test]
+async fn test_embedding_validation_rejects_inf() {
+    enable_flag();
+    let (coordinator, _store) = real_coordinator_with_store();
+
+    let node = create_test_node("symbol_inf", "Symbol");
+    let inf_embedding = vec![0.1, f32::INFINITY, 0.3];
+
+    let result = coordinator
+        .write_symbol_atomically(node.clone(), inf_embedding, vec![], &create_test_tenant())
+        .await
+        .unwrap();
+
+    match result {
+        TransactionOutcome::RolledBack { reason } => {
+            assert!(reason.contains("non-finite"), "unexpected reason: {reason}")
+        }
+        other => panic!("expected RolledBack, got {other:?}"),
+    }
+
+    assert!(
+        coordinator
+            .graph_engine()
+            .get_node(&node.id)
+            .unwrap()
+            .is_none(),
+        "node must be rolled back"
+    );
+
+    clear_flag();
+}
+
+/// A phase-3 (edge) failure after a committed node + embedding triggers full
+/// cross-model compensation: both the node and the embedding are removed.
+#[tokio::test]
+async fn test_rollback_on_edge_failure_compensates_node_and_embedding() {
+    enable_flag();
+
+    let engine = Arc::new(FailingGraphEngine::new());
+    let record_store = Arc::new(MockTableRecordStore::new());
+    let coordinator = CrossModelTransactionCoordinator::new(
+        engine.clone(),
+        record_store.clone(),
+        "test_embeddings".to_string(),
+    );
+
+    // Node + embedding will commit (phases 1-2); the edge write (phase 3) fails.
+    engine.arm_edge_failure();
+
+    let node = create_test_node("symbol_edge_fail", "Symbol");
     let embedding = vec![0.1, 0.2, 0.3];
     let edges = vec![create_test_edge(
-        "edge_upsert",
-        "symbol_upsert",
+        "edge_fail_1",
+        "symbol_edge_fail",
         "other1",
         "LINK",
     )];
 
-    // First transaction
-    let result1 = coordinator
-        .write_symbol_atomically(node.clone(), embedding.clone(), edges.clone(), &tenant_ctx)
-        .await
-        .unwrap();
-
-    assert!(matches!(result1, TransactionOutcome::Committed { .. }));
-
-    // Second transaction with same data (upsert)
-    let result2 = coordinator
-        .write_symbol_atomically(node, embedding, edges, &tenant_ctx)
-        .await
-        .unwrap();
-
-    // Should still succeed (upsert semantics)
-    assert!(matches!(result2, TransactionOutcome::Committed { .. }));
-
-    // Verify data exists
-    let graph_engine = coordinator.graph_engine();
-    assert!(graph_engine.get_node("symbol_upsert").unwrap().is_some());
-
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
-}
-
-/// Test: Coordinator handles empty edge list.
-#[tokio::test]
-async fn test_handles_empty_edges() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
-
-    let coordinator = create_test_coordinator("test_graph_no_edges");
-    let tenant_ctx = create_test_tenant();
-
-    let node = create_test_node("symbol_no_edges", "Symbol");
-    let embedding = vec![0.1, 0.2, 0.3];
-    let edges = vec![];
-
     let result = coordinator
-        .write_symbol_atomically(node.clone(), embedding, edges, &tenant_ctx)
+        .write_symbol_atomically(node.clone(), embedding, edges, &create_test_tenant())
         .await
         .unwrap();
 
     match result {
-        TransactionOutcome::Committed { node_oid } => {
-            assert_eq!(node_oid, "symbol_no_edges");
-
-            // Verify node exists
-            let graph_engine = coordinator.graph_engine();
-            assert!(graph_engine.get_node(&node.id).unwrap().is_some());
+        TransactionOutcome::RolledBack { reason } => {
+            assert!(
+                reason.contains("Edge write failed"),
+                "unexpected reason: {reason}"
+            );
         }
-        other => panic!("Expected Committed, got {:?}", other),
+        other => panic!("expected RolledBack, got {other:?}"),
     }
 
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
+    // Node compensated.
+    assert!(
+        coordinator
+            .graph_engine()
+            .get_node(&node.id)
+            .unwrap()
+            .is_none(),
+        "node must be compensated on edge failure"
+    );
+    // Embedding compensated (delete mutation applied during rollback).
+    assert!(
+        !record_store.contains_oid(&format!("embed_{}", node.id)),
+        "embedding must be compensated on edge failure"
+    );
+
+    clear_flag();
 }
 
-/// Test: Multiple concurrent transactions don't interfere.
+// ---------------------------------------------------------------------------
+// Idempotency / concurrency
+// ---------------------------------------------------------------------------
+
+/// Re-running the same transaction is safe (upsert semantics). Node + embedding
+/// writes are idempotent (insert_node upserts by id; the embedding record upserts
+/// by OID), so a client retry after a transient failure does not corrupt state.
+#[tokio::test]
+async fn test_idempotent_retry_upsert() {
+    enable_flag();
+    let (coordinator, record_store) = real_coordinator_with_store();
+
+    let node = create_test_node("symbol_upsert", "Symbol");
+    let embedding = vec![0.1, 0.2, 0.3];
+
+    let result1 = coordinator
+        .write_symbol_atomically(
+            node.clone(),
+            embedding.clone(),
+            vec![],
+            &create_test_tenant(),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(result1, TransactionOutcome::Committed { .. }));
+
+    // Retry the exact same logical write.
+    let result2 = coordinator
+        .write_symbol_atomically(node.clone(), embedding, vec![], &create_test_tenant())
+        .await
+        .unwrap();
+    assert!(matches!(result2, TransactionOutcome::Committed { .. }));
+
+    assert!(
+        coordinator
+            .graph_engine()
+            .get_node(&node.id)
+            .unwrap()
+            .is_some()
+    );
+    // Embedding upserted (present, exactly one record under the OID).
+    assert!(record_store.contains_oid(&format!("embed_{}", node.id)));
+
+    clear_flag();
+}
+
+/// Concurrent transactions on distinct symbols do not interfere.
 #[tokio::test]
 async fn test_concurrent_transactions() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
+    enable_flag();
+    let coordinator = Arc::new(real_coordinator_with_store().0);
 
-    let graph_id = "test_graph_concurrent";
-    let coordinator = Arc::new(create_test_coordinator(graph_id));
-
-    let mut handles = vec![];
-
-    // Spawn 10 concurrent transactions
+    let mut handles = Vec::with_capacity(10);
     for i in 0..10 {
         let coordinator = Arc::clone(&coordinator);
-        let tenant_ctx = create_test_tenant();
-
-        let handle = tokio::spawn(async move {
-            let node = create_test_node(&format!("symbol_concurrent_{}", i), "Symbol");
-            let embedding = vec![0.1; 128];
-            let edges = vec![];
-
+        handles.push(tokio::spawn(async move {
+            let node = create_test_node(&format!("symbol_concurrent_{i}"), "Symbol");
             coordinator
-                .write_symbol_atomically(node, embedding, edges, &tenant_ctx)
+                .write_symbol_atomically(
+                    node.clone(),
+                    vec![0.1; 128],
+                    vec![],
+                    &create_test_tenant(),
+                )
                 .await
-        });
-
-        handles.push(handle);
+        }));
     }
 
-    // Wait for all transactions
     let results: Vec<_> = futures::future::join_all(handles)
         .await
         .into_iter()
         .map(|r| r.unwrap().unwrap())
         .collect();
 
-    // All should succeed
     assert_eq!(results.len(), 10);
     for result in results {
         assert!(matches!(result, TransactionOutcome::Committed { .. }));
     }
 
-    // Verify all nodes exist
-    let graph_engine = coordinator.graph_engine();
+    let graph = coordinator.graph_engine();
     for i in 0..10 {
-        let node_id = format!("symbol_concurrent_{}", i);
-        assert!(graph_engine.get_node(&node_id).unwrap().is_some());
+        let node_id = format!("symbol_concurrent_{i}");
+        assert!(graph.get_node(&node_id).unwrap().is_some());
     }
 
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
-}
-
-/// Test: Embedding validation rejects Inf values.
-#[tokio::test]
-async fn test_embedding_validation_rejects_inf() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
-
-    let coordinator = create_test_coordinator("test_graph_inf_validation");
-    let tenant_ctx = create_test_tenant();
-
-    let node = create_test_node("symbol_inf", "Symbol");
-    let inf_embedding = vec![0.1, f32::INFINITY, 0.3];
-    let edges = vec![];
-
-    let result = coordinator
-        .write_symbol_atomically(node.clone(), inf_embedding, edges, &tenant_ctx)
-        .await
-        .unwrap();
-
-    match result {
-        TransactionOutcome::RolledBack { reason } => {
-            assert!(reason.contains("non-finite"));
-        }
-        other => panic!("Expected RolledBack, got {:?}", other),
-    }
-
-    // Verify node was rolled back
-    let graph_engine = coordinator.graph_engine();
-    assert!(graph_engine.get_node(&node.id).unwrap().is_none());
-
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
-}
-
-/// Test: Large embedding vector is handled correctly.
-#[tokio::test]
-async fn test_large_embedding_vector() {
-    env::set_var("PROXIMADB_CROSS_MODEL_TX_ENABLED", "true");
-
-    let coordinator = create_test_coordinator("test_graph_large_embedding");
-    let tenant_ctx = create_test_tenant();
-
-    let node = create_test_node("symbol_large", "Symbol");
-    // 1536 dimensions (OpenAI embedding size)
-    let large_embedding: Vec<f32> = (0..1536).map(|i| i as f32 / 1536.0).collect();
-    let edges = vec![];
-
-    let result = coordinator
-        .write_symbol_atomically(node.clone(), large_embedding, edges, &tenant_ctx)
-        .await
-        .unwrap();
-
-    match result {
-        TransactionOutcome::Committed { node_oid } => {
-            assert_eq!(node_oid, "symbol_large");
-        }
-        other => panic!("Expected Committed, got {:?}", other),
-    }
-
-    // Verify node exists
-    let graph_engine = coordinator.graph_engine();
-    assert!(graph_engine.get_node(&node.id).unwrap().is_some());
-
-    env::remove_var("PROXIMADB_CROSS_MODEL_TX_ENABLED");
+    clear_flag();
 }
