@@ -12,6 +12,13 @@
   generation-fenced partition lease primitive over object-store manifests.
   It is covered by focused unit tests for contention, renewal, expiry takeover,
   and split-brain-safe registry step-down.
+* 2026-06-24: The unified multi-resource lease/DML-lock expansion was reviewed
+  and approved as a correction plan in
+  `UNIFIED_RESOURCE_LEASE_LOCKING_REVIEW_2026_06_24.adoc`. That review is now
+  the gate before DML/protocol lock exposure: fix legacy path compatibility,
+  canonical `ResourceKey` encoding, full-key renewal, real `TenantContext`
+  lock keys, enforced hierarchy, guard-owned renewal/release, and
+  storage-visible fencing first.
 * Still open for MVP wiring: bootstrap a `PartitionLeaseManager` from the
   operator control-plane prefix, run its renewal task, and call `acquire`
   before accepting writes for a `(tenant_id, collection_id)`.

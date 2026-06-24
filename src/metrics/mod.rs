@@ -191,6 +191,9 @@ pub mod collection_pin_metrics;
 pub mod collectors;
 pub mod compression;
 pub mod consumption_metrics;
+/// DML lock-manager observability — acquisition outcome counter + duration
+/// histogram + held-current gauge + renewal-failure counter.
+pub mod dml_lock_metrics;
 /// Prometheus bridge for `proximadb_catalog::dr_reconciler::DrMetrics`.
 pub mod dr_metrics;
 pub mod exporters;
