@@ -48,7 +48,13 @@ fn main() {
         .build_client(true)
         .out_dir(&out_dir)
         .compile_protos(
-            &[record_proto, graph_proto, document_proto, fusion_proto, entity_proto],
+            &[
+                record_proto,
+                graph_proto,
+                document_proto,
+                fusion_proto,
+                entity_proto,
+            ],
             &[include],
         )
         .expect("v2 proto codegen failed");
