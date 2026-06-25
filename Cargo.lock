@@ -6620,18 +6620,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-admin-ui"
+version = "0.2.0"
+dependencies = [
+ "axum",
+]
+
+[[package]]
 name = "proximadb-ann-bench"
 version = "0.2.0"
 dependencies = [
  "anyhow",
  "proximadb",
-]
-
-[[package]]
-name = "proximadb-admin-ui"
-version = "0.2.0"
-dependencies = [
- "axum",
 ]
 
 [[package]]
