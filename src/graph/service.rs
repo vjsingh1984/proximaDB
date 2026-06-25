@@ -1004,12 +1004,10 @@ impl GraphOperationsService {
                     // `CanonicalEmission(checkpoint_lsn)` marker before the
                     // engine WAL flush, so every subsequent frame is known to
                     // post-date this canonical checkpoint.
-                    if scoped {
-                        if let Some(persistence) = orion.persistence() {
-                            persistence
-                                .append_canonical_emission_marker(checkpoint_lsn)
-                                .await?;
-                        }
+                    if scoped && let Some(persistence) = orion.persistence() {
+                        persistence
+                            .append_canonical_emission_marker(checkpoint_lsn)
+                            .await?;
                     }
                     // Flush the engine WAL so the marker is durable BEFORE the
                     // snapshot is written. This guarantees the recovery
@@ -1021,10 +1019,8 @@ impl GraphOperationsService {
                     // canonical checkpoint is backed by real data — the marker
                     // alone is only a watermark. Crash-safe: ordered after the
                     // marker flush (see invariant above).
-                    if scoped {
-                        if let Some(persistence) = orion.persistence() {
-                            persistence.save_snapshot(orion, checkpoint_lsn).await?;
-                        }
+                    if scoped && let Some(persistence) = orion.persistence() {
+                        persistence.save_snapshot(orion, checkpoint_lsn).await?;
                     }
                 }
             }
