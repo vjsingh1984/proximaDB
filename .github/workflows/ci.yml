@@ -106,11 +106,21 @@ jobs:
           filters: |
             rust:
               - 'src/**'
+              # Workspace members that `cargo` compiles, lints, and tests but that
+              # the filter previously omitted — a crate-only or app-only change
+              # therefore skipped rust-clippy/rust-test/rust-format/feature-matrix
+              # etc. and was caught only by the always-required rust-compile gate.
+              - 'crates/**'
+              - 'apps/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'build.rs'
               - 'tests/**'
               - 'benches/**'
+              # Toolchain pin + cargo config (rustflags) change lint/test outcomes
+              # workspace-wide, so a bump must re-run the Rust suite.
+              - 'rust-toolchain*'
+              - '.cargo/**'
             # `compile` gates the rust-compile hard gate. It is a deliberate
             # SUPERSET of every path that can affect `cargo check --workspace`:
             # the root `src/**`, every workspace member under `crates/**` and
