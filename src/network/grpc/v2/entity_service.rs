@@ -536,10 +536,10 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
 fn node_to_entity(node: &Node, collection: &str) -> pv2::Entity {
     let mut flexible_metadata = HashMap::new();
     for (k, v) in &node.properties {
-        if !k.starts_with('_') {
-            if let Some(tv) = property_value_to_typed_value(v) {
-                flexible_metadata.insert(k.clone(), tv);
-            }
+        if !k.starts_with('_')
+            && let Some(tv) = property_value_to_typed_value(v)
+        {
+            flexible_metadata.insert(k.clone(), tv);
         }
     }
 

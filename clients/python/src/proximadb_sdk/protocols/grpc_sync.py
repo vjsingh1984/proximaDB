@@ -536,7 +536,9 @@ class ProximaDBSyncGrpcClient:
     def _execute_entity_with_pool(self, operation_name: str, operation_func):
         """Execute entity operation using the v2 ProximaEntityService."""
         try:
-            from proximadb.v2 import entity_pb2_grpc as v2_entity_pb2_grpc  # type: ignore
+            from proximadb.v2 import (
+                entity_pb2_grpc as v2_entity_pb2_grpc,  # type: ignore
+            )
         except ImportError:
             raise ProximaDBError(
                 "v2 entity gRPC stubs not available. Regenerate Python protobuf stubs with: "

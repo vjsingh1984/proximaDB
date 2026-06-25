@@ -8,8 +8,8 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
-from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 
 
 @dataclass
@@ -37,8 +37,8 @@ class Entity:
 
         # Convert flexible_metadata (map<string, TypedValue>)
         for key, typed_value in pb_entity.flexible_metadata.items():
-            entity.flexible_metadata[key] = ProximaDBSyncGrpcClient._v2_typed_value_to_python(
-                None, typed_value
+            entity.flexible_metadata[key] = (
+                ProximaDBSyncGrpcClient._v2_typed_value_to_python(None, typed_value)
             )
 
         # Convert embeddings
@@ -214,8 +214,8 @@ class EntityServiceClient:
 
         # Add flexible metadata
         for key, value in entity.flexible_metadata.items():
-            pb_entity.flexible_metadata[key] = self._grpc_client._python_to_v2_typed_value(
-                value
+            pb_entity.flexible_metadata[key] = (
+                self._grpc_client._python_to_v2_typed_value(value)
             )
 
         # Add embeddings. `modality` is the EntityModality enum — map the
@@ -261,7 +261,8 @@ class EntityServiceClient:
         )
 
         response = self._grpc_client._execute_entity_with_pool(
-            "upsert_entity", lambda stub: stub.UpsertEntity(request, timeout=self._grpc_client.timeout)
+            "upsert_entity",
+            lambda stub: stub.UpsertEntity(request, timeout=self._grpc_client.timeout),
         )
 
         return UpsertEntityResponse(
@@ -290,7 +291,8 @@ class EntityServiceClient:
 
         try:
             response = self._grpc_client._execute_entity_with_pool(
-                "get_entity", lambda stub: stub.GetEntity(request, timeout=self._grpc_client.timeout)
+                "get_entity",
+                lambda stub: stub.GetEntity(request, timeout=self._grpc_client.timeout),
             )
 
             if response.entity:
@@ -321,7 +323,10 @@ class EntityServiceClient:
 
         try:
             response = self._grpc_client._execute_entity_with_pool(
-                "delete_entity", lambda stub: stub.DeleteEntity(request, timeout=self._grpc_client.timeout)
+                "delete_entity",
+                lambda stub: stub.DeleteEntity(
+                    request, timeout=self._grpc_client.timeout
+                ),
             )
             return response.success
         except Exception as e:
@@ -387,10 +392,14 @@ class EntityServiceClient:
 
         response = self._grpc_client._execute_entity_with_pool(
             "search_entities",
-            lambda stub: stub.SearchEntities(request, timeout=self._grpc_client.timeout),
+            lambda stub: stub.SearchEntities(
+                request, timeout=self._grpc_client.timeout
+            ),
         )
 
-        entities = [Entity.from_pb(res.entity) for res in response.results if res.entity]
+        entities = [
+            Entity.from_pb(res.entity) for res in response.results if res.entity
+        ]
 
         return SearchEntitiesResponse(
             entities=entities,
