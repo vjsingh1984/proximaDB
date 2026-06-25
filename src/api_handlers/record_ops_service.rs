@@ -84,6 +84,13 @@ pub struct RecordOpsService {
     precision_resolver: std::sync::OnceLock<
         Arc<proximadb_catalog::canonical_precision::CanonicalPrecisionResolver>,
     >,
+    /// Durable partition-lease manager for lease-on-write (Scenario-1 routing
+    /// truth). When present, the record write path acquires/confirms this pod's
+    /// collection lease before writing, so the shared primary-pod registry that
+    /// the network gates consult is durably backed (not empty-after-restart).
+    /// Settable post-construction (thread-safe); absent in embedded/test builds.
+    lease_manager:
+        std::sync::RwLock<Option<Arc<crate::cluster::partition_lease::PartitionLeaseManager>>>,
 }
 
 impl RecordOpsService {
@@ -99,6 +106,7 @@ impl RecordOpsService {
             dml_service: std::sync::RwLock::new(None),
             ddl_service: std::sync::RwLock::new(None),
             precision_resolver: std::sync::OnceLock::new(),
+            lease_manager: std::sync::RwLock::new(None),
         }
     }
 
@@ -112,6 +120,53 @@ impl RecordOpsService {
 
     pub(crate) fn get_dml_service(&self) -> Option<Arc<DmlService>> {
         self.dml_service.read().ok().and_then(|guard| guard.clone())
+    }
+
+    /// Wire the durable partition-lease manager for lease-on-write.
+    /// Callable post-initialization; thread-safe.
+    pub fn set_lease_manager(
+        &self,
+        manager: Arc<crate::cluster::partition_lease::PartitionLeaseManager>,
+    ) {
+        if let Ok(mut guard) = self.lease_manager.write() {
+            *guard = Some(manager);
+        }
+    }
+
+    /// Lease-on-write: make the shared primary-pod registry truthful for
+    /// `(tenant, collection)` by acquiring/confirming this pod's durable
+    /// collection lease before the write proceeds. Keyed by the collection NAME
+    /// (`request.collection_id`) and the transport tenant id — the exact pair the
+    /// network gates' `consult_for_write` uses — so the binding this populates is
+    /// the one the gates read. Idempotent + cheap after the first write (registry
+    /// fast-path; the renew loop keeps the lease warm). Fail-open: a missing
+    /// manager (embedded/tests) or a transient acquire error never blocks the
+    /// write — the network gate + the A6 storage fence are the enforcement points.
+    async fn ensure_collection_lease(&self, tenant_id: &str, collection_name: &str) {
+        let Some(manager) = self.lease_manager.read().ok().and_then(|g| g.clone()) else {
+            return;
+        };
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        match manager
+            .ensure_owned(tenant_id, collection_name, now_ms)
+            .await
+        {
+            Ok(true) => {}
+            Ok(false) => tracing::warn!(
+                target = "proximadb.primary_pod.lease_on_write",
+                tenant_id = %tenant_id,
+                collection_id = %collection_name,
+                "lease-on-write: this pod is not the primary for the collection; \
+                 shared registry repointed to the owner (gate should now 421 subsequent writes)"
+            ),
+            Err(e) => tracing::warn!(
+                target = "proximadb.primary_pod.lease_on_write",
+                error = %e,
+                tenant_id = %tenant_id,
+                collection_id = %collection_name,
+                "lease-on-write acquire failed; proceeding fail-open"
+            ),
+        }
     }
 
     /// Wire a `DdlService` so gRPC `ExecuteQuery` can run relational DDL (TD-135).
@@ -289,6 +344,8 @@ impl RecordOpsService {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
+        self.ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .await;
         let result = self
             .vector_operations_service
             .delete_records_with_tenant_context(
@@ -350,6 +407,8 @@ impl RecordOpsService {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
+        self.ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .await;
 
         let mut records = request.records;
         self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
@@ -422,6 +481,8 @@ impl RecordOpsService {
                 "WAL_LANE_REJECTED".to_string(),
             ));
         }
+        self.ensure_collection_lease(tenant_id.unwrap_or(""), &collection_name)
+            .await;
         let mut records = request.records;
         self.coerce_records_to_canonical_precision(&mut records, &request.collection_id)
             .await;

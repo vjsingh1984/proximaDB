@@ -2526,6 +2526,17 @@ impl ProximaFlightService {
         let mut insert_seen_ids = HashSet::new();
         Self::validate_flight_write_capability(capability.as_ref(), &collection_id, operation, 0)?;
 
+        // Primary-pod write-router gate. The DoExchange bulk write path
+        // (bulk_insert/upsert/delete) must gate symmetrically with do_put — a
+        // displaced pod streaming a bulk batch would otherwise land it in a
+        // memtable the new primary's reader never sees. Gate once for the whole
+        // exchange, after capability validation, before any storage work.
+        check_flight_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &collection_id,
+        )?;
+
         // Resolve write lane once for the full exchange stream: DoExchange always
         // uses WAL durability because streaming batches require per-row ordering.
         let op_kind = crate::services::WriteOperationKind::from(operation);
