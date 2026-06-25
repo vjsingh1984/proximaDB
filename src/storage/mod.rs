@@ -229,7 +229,9 @@ pub use proximadb_storage_tenant as tenant;
 pub mod tiering;
 
 // Multi-model transaction coordinator for ACID transactions across stores
-pub mod transaction;
+// Extracted to the `proximadb-storage-transaction` crate; re-exported here for
+// source compatibility (root-crate decomposition).
+pub use proximadb_storage_transaction as transaction;
 
 // Semantic Knowledge Store (SKS) modules
 pub mod entity_store;

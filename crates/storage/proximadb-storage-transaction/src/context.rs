@@ -511,7 +511,7 @@ pub struct ContextTransactionStats {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::transaction::operations::VectorOperation;
+    use crate::operations::VectorOperation;
     use std::collections::HashMap;
 
     #[test]
