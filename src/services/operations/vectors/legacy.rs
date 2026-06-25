@@ -2194,14 +2194,13 @@ impl VectorOperationsService {
         if !matches!(
             freshness_mode,
             crate::core::search::VectorFreshnessMode::Strong
-        ) {
-            if let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
-                // Phase 7.2: a process-local cache hit is the strongest
-                // possible signal that this node owns the warm path for
-                // the collection — record affinity here too.
-                self.record_search_affinity(collection_id);
-                return Ok((cached_v1, None));
-            }
+        ) && let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await
+        {
+            // Phase 7.2: a process-local cache hit is the strongest
+            // possible signal that this node owns the warm path for
+            // the collection — record affinity here too.
+            self.record_search_affinity(collection_id);
+            return Ok((cached_v1, None));
         }
 
         let progressive_enabled = config.as_ref().is_some_and(|c| c.progressive_search);
