@@ -172,8 +172,11 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_graph_service_server::ProximaGraphServiceServer<
         crate::network::grpc::v2::ProximaGraphServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaGraphServiceImpl::new(services.request_handlers.clone())
-            .into_server()
+        crate::network::grpc::v2::ProximaGraphServiceImpl::new(
+            services.request_handlers.graph_operations_service.clone(),
+            Some(services.query_adapter.clone()),
+        )
+        .into_server()
     }
 
     /// Build the canonical v2 document gRPC service. Mirrors
@@ -183,7 +186,7 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_document_service_server::ProximaDocumentServiceServer<
         crate::network::grpc::v2::ProximaDocumentServiceImpl,
     >{
-        crate::network::grpc::v2::ProximaDocumentServiceImpl::new(services.request_handlers.clone())
+        crate::network::grpc::v2::ProximaDocumentServiceImpl::new(services.document_service.clone())
             .into_server()
     }
 
