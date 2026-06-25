@@ -115,6 +115,54 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/collections/{collection_id}/entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["upsert_entity_v2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/collections/{collection_id}/entities/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["search_entities_v2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/collections/{collection_id}/entities/{entity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_entity_v2"];
+        put?: never;
+        post?: never;
+        delete: operations["delete_entity_v2"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/collections/{collection_id}/records/batch": {
         parameters: {
             query?: never;
@@ -1054,6 +1102,45 @@ export interface components {
             model_id?: string | null;
             vector: number[];
         };
+        EntityDto: {
+            collection_id: string;
+            flexible_metadata: {
+                [key: string]: unknown;
+            };
+            id: string;
+        };
+        EntityEmbeddingInput: {
+            /** Format: int32 */
+            dimension?: number;
+            modality?: string | null;
+            model_id: string;
+            vector: number[];
+        };
+        EntityProvenanceInput: {
+            chunk_id?: string;
+            /** Format: int32 */
+            chunk_position?: number;
+            extraction_method?: string;
+            metadata?: {
+                [key: string]: string;
+            };
+            source_id?: string;
+        };
+        EntityRelationInput: {
+            properties?: {
+                [key: string]: string;
+            };
+            relation_type: string;
+            source_entity_id: string;
+            target_entity_id: string;
+            /** Format: float */
+            weight?: number;
+        };
+        EntitySearchResult: {
+            entity: components["schemas"]["EntityDto"];
+            /** Format: float */
+            score: number;
+        };
         /** @description Inner body of [`ErrorResponse`]. */
         ErrorBody: {
             /**
@@ -1587,6 +1674,21 @@ export interface components {
             /** @description Last update timestamp */
             updated_at?: string | null;
         };
+        SearchEntitiesRequest: {
+            /** @description Equality metadata filters as a `{field: value}` JSON object. */
+            filters?: {
+                [key: string]: unknown;
+            };
+            /** @description Query embedding for vector similarity search. Omit for metadata-only search. */
+            query_vector?: number[];
+            /** Format: int32 */
+            top_k?: number;
+        };
+        SearchEntitiesResponse: {
+            results: components["schemas"]["EntitySearchResult"][];
+            /** Format: int32 */
+            total: number;
+        };
         /**
          * @description Input format for TEXT fields
          *
@@ -1816,6 +1918,21 @@ export interface components {
             /** @description Warnings about the update */
             warnings: string[];
         };
+        UpsertEntityRequest: {
+            embeddings?: components["schemas"]["EntityEmbeddingInput"][];
+            flexible_metadata?: {
+                [key: string]: unknown;
+            };
+            /** @description Empty ⇒ the server generates a UUID. */
+            id?: string;
+            provenance?: null | components["schemas"]["EntityProvenanceInput"];
+            relations?: components["schemas"]["EntityRelationInput"][];
+        };
+        UpsertEntityResponse: {
+            entity_id: string;
+            message: string;
+            success: boolean;
+        };
     };
     responses: {
         /** @description Invalid request. */
@@ -1991,6 +2108,182 @@ export interface operations {
             };
             /** @description Resource not found. */
             404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    upsert_entity_v2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Collection backing the entities */
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpsertEntityRequest"];
+            };
+        };
+        responses: {
+            /** @description Entity upserted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpsertEntityResponse"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Upsert failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    search_entities_v2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Collection backing the entities */
+                collection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SearchEntitiesRequest"];
+            };
+        };
+        responses: {
+            /** @description Search results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SearchEntitiesResponse"];
+                };
+            };
+            /** @description Invalid request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Search failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    get_entity_v2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Collection backing the entities */
+                collection_id: string;
+                /** @description Entity ID */
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entity found */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EntityDto"];
+                };
+            };
+            /** @description Entity not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Fetch failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_entity_v2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Collection backing the entities */
+                collection_id: string;
+                /** @description Entity ID */
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entity deleted */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpsertEntityResponse"];
+                };
+            };
+            /** @description Entity not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Delete failed */
+            500: {
                 headers: {
                     [name: string]: unknown;
                 };

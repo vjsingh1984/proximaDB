@@ -33,6 +33,14 @@ from .edge_input_properties import EdgeInputProperties
 from .edge_response import EdgeResponse
 from .edge_response_properties_type_0 import EdgeResponsePropertiesType0
 from .embedding_input import EmbeddingInput
+from .entity_dto import EntityDto
+from .entity_dto_flexible_metadata import EntityDtoFlexibleMetadata
+from .entity_embedding_input import EntityEmbeddingInput
+from .entity_provenance_input import EntityProvenanceInput
+from .entity_provenance_input_metadata import EntityProvenanceInputMetadata
+from .entity_relation_input import EntityRelationInput
+from .entity_relation_input_properties import EntityRelationInputProperties
+from .entity_search_result import EntitySearchResult
 from .error_body import ErrorBody
 from .error_body_details_type_0 import ErrorBodyDetailsType0
 from .error_response import ErrorResponse
@@ -91,6 +99,9 @@ from .scan_records_response import ScanRecordsResponse
 from .schema_change import SchemaChange
 from .schema_definition import SchemaDefinition
 from .schema_response import SchemaResponse
+from .search_entities_request import SearchEntitiesRequest
+from .search_entities_request_filters import SearchEntitiesRequestFilters
+from .search_entities_response import SearchEntitiesResponse
 from .text_field_input import TextFieldInput
 from .text_field_output import TextFieldOutput
 from .traverse_request import TraverseRequest
@@ -102,6 +113,9 @@ from .typed_search_result import TypedSearchResult
 from .typed_search_result_props import TypedSearchResultProps
 from .update_schema_request import UpdateSchemaRequest
 from .update_schema_response import UpdateSchemaResponse
+from .upsert_entity_request import UpsertEntityRequest
+from .upsert_entity_request_flexible_metadata import UpsertEntityRequestFlexibleMetadata
+from .upsert_entity_response import UpsertEntityResponse
 
 __all__ = (
     "BatchCreateEdgesRequest",
@@ -132,6 +146,14 @@ __all__ = (
     "EdgeResponse",
     "EdgeResponsePropertiesType0",
     "EmbeddingInput",
+    "EntityDto",
+    "EntityDtoFlexibleMetadata",
+    "EntityEmbeddingInput",
+    "EntityProvenanceInput",
+    "EntityProvenanceInputMetadata",
+    "EntityRelationInput",
+    "EntityRelationInputProperties",
+    "EntitySearchResult",
     "ErrorBody",
     "ErrorBodyDetailsType0",
     "ErrorResponse",
@@ -190,6 +212,9 @@ __all__ = (
     "SchemaChange",
     "SchemaDefinition",
     "SchemaResponse",
+    "SearchEntitiesRequest",
+    "SearchEntitiesRequestFilters",
+    "SearchEntitiesResponse",
     "TextFieldInput",
     "TextFieldOutput",
     "TraverseRequest",
@@ -201,4 +226,7 @@ __all__ = (
     "TypedSearchResultProps",
     "UpdateSchemaRequest",
     "UpdateSchemaResponse",
+    "UpsertEntityRequest",
+    "UpsertEntityRequestFlexibleMetadata",
+    "UpsertEntityResponse",
 )
