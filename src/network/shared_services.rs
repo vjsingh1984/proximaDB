@@ -1833,7 +1833,20 @@ impl SharedServices {
                         pod_id.clone(),
                         10_000,
                     ));
-                    Some(Arc::new(DmlLockService::new(manager, pod_id)))
+                    // P1a: keep held leases warm. Without this the renew loop
+                    // never runs in production (it was only spawned in tests),
+                    // so held leases lapse after the 10s TTL and the
+                    // leaseholder model the write-gate (421) + DML locks rely
+                    // on silently degrades. Fire-and-forget for the process
+                    // lifetime (matches SharedServices' existing background-task
+                    // pattern); interval ≤ lease_ms/2 so a lease never lapses
+                    // between renewals.
+                    let _ = manager
+                        .clone()
+                        .spawn_renew_loop(std::time::Duration::from_millis(5_000));
+                    let lock_service = Arc::new(DmlLockService::new(manager, pod_id));
+                    let _ = lock_service.spawn_reconciliation_loop(5_000);
+                    Some(lock_service)
                 }
                 Err(e) => {
                     tracing::warn!(
