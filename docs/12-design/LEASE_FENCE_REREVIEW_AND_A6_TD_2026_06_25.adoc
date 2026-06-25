@@ -1,0 +1,77 @@
+= Lease/Fence Plane — Post-PR1 Re-Review + A6-Enforcement TD Scoping (2026-06-25)
+:toc: macro
+:icons: font
+
+[abstract]
+Re-review of the generation-fenced lease/manifest/catalog plane against
+`origin/develop` *after* the foundation fixes landed (PR #328), plus the precise
+scoping of the remaining A6 storage-write fence as its own deliberate TD. Companion
+to `UNIFIED_RESOURCE_LEASE_LOCKING_REVIEW_2026_06_24.adoc` (the tracking doc).
+
+toc::[]
+
+== Status summary
+
+[cols="2,1,3",options="header"]
+|===
+| Work | State | Notes
+| Foundation fixes (registry/pod-id unification, `committer_for_key` totality, renew-loop wiring, REST v1 409, no-panic) | ✅ Merged | PR #328 ("PR1 of 2")
+| Lease-on-write + Arrow `DoExchange` gate (Scenario-1 routing truth) | ⏳ PR #337 (automerge) | branch `fix/vector-record-fence`
+| A6 storage-write fence (the boundary backstop) | 🔴 TD (this doc) | deep change — *not* a bounded follow-up; see §4
+|===
+
+== Invariant re-verdicts on current develop (Δ vs the original pre-PR1 review)
+
+[cols="2,1,2",options="header"]
+|===
+| Invariant | Verdict | Δ
+| 1 Single-owner CAS / 2 Generation monotonicity / 2-F7 tombstone-not-delete / 6 Manifest fence | HOLDS | unchanged (core algorithm correct)
+| 3 `committer_for_key` totality | HOLDS | *was AT-RISK* → #328 loud-rejects namespaced/composite collection keys
+| 4a Registry/pod-id unification | HOLDS | *was BROKEN* → #328 shared registry + unified `self_pod_id`
+| 5a Renew-loop wiring | HOLDS | *was AT-RISK (no-op)* → #328 `track_held_key`
+| Scenario 4 REST v1 409 | HOLDS | *was BUG (500)* → #328 chain-walk → 409
+| 4b TenantContext at lease boundary | BROKEN | still open (no `TenantContext` in `partition_lease.rs`)
+| 4c DrPathBuilder for lease path | AT-RISK | still raw `"_operator/leases"` literal
+| 5e Renew/reconcile task shutdown | AT-RISK | loops spawned in prod, but `JoinHandle` dropped → no graceful `abort()`
+|===
+
+== Scenario 1 (vector-record split-brain) — status
+
+* *Routing-layer half: CLOSED by PR #337.* Lease-on-write (`RecordOpsService::ensure_collection_lease` → `PartitionLeaseManager::ensure_owned`) makes the shared primary-pod registry the gates consult durably lease-backed, so a restarted/partitioned pod CAS-discovers the true owner instead of seeing an empty registry → `Allow`. The Arrow `DoExchange` bulk path (previously the one ungated vector-write path) now gates symmetrically with `do_put`.
+* *Boundary half: OPEN.* A pod that passes admission, then stalls and loses the lease, can still flush stale data later — only a storage-write fence (A6) catches that. That fence is dormant (`validate_fencing` has zero production callers).
+
+== Directive-16 + ADR-025 implications (priority elevation)
+
+* *Directive 16 (#312)* mandates correctness be *enforced, not asserted*, via ratchet tests. The unwired A6 fence is exactly an asserted-not-enforced correctness contract; an unfenced stale writer can durably *resurrect a deleted/tombstoned record* on shared storage — a Directive-16(a)/(d) failure on the cold path.
+* *ADR-025 N1* (deletion vectors) plans to flush tombstones → per-file DV bits committed via Iceberg snapshot manifests at the flush boundary — the exact seam A6 must fence. A6 enforcement should be a *prerequisite* for ADR-025 N1.
+
+== A6-enforcement TD — scoping (why it is NOT a bounded follow-up)
+
+Three independent investigations established that the storage-flush layer is, by deep
+design, *tenant-agnostic and lease-unaware*:
+
+. The record-write path and flush are *decoupled by the WAL* — the synchronous write ends at a WAL append; flush happens later/async.
+. `BackgroundFlushContext` carries *no tenant*, and `to_collection_proto()` does not populate `config.tags`/`owner` (where tenant lives), so tenant cannot be recovered downstream.
+. *`execute_coordinated_flush` is not on the live write/flush path.* Its only production caller is the graceful-shutdown `flush_all_collections` (passes `None, None`). The real per-collection flush calls `engine.do_flush` *directly* in the serialization strategies (`avro_serialization_strategy.rs:383`, `bincode_serialization_strategy.rs:462`, `proto_serialization_strategy.rs:354`), bypassing the coordinator, with no tenant and no context. The WAL/write-buffer is keyed by `collection_id` only.
+
+=== What a correct A6 fence requires (the actual work)
+
+. *Make the flush path tenant-aware.* Add `tenant_id: Option<String>` to `BackgroundFlushContext` (struct + `from_collection_service` at `background_flush_context.rs:229`, deriving via `CollectionService::collection_tenant_id` — currently private at `manager.rs:254`), OR give the strategy flush sites a `CollectionService` to resolve `(collection_id → tenant)` per flush. The WAL/write-buffer keying by `collection_id` alone is the root obstacle.
+. *Give the flushing component a lease handle.* Add `Option<Arc<PartitionLeaseManager>>` + setter to the component that performs the live flush (the serialization strategies and/or the coordinator instance that actually runs it — note the live shutdown coordinator at `engine.rs:241` is a throwaway with neither `collection_service` nor a lease handle). Source: `lease_manager_for_writes` in `shared_services.rs` (clone the `Arc` before it is moved into `record_ops().set_lease_manager`).
+. *Add a durable-read accessor* on `PartitionLeaseManager` (e.g. `current_holder(tenant, collection) -> Option<(version, PartitionLease)>` delegating to the private `store.read`), since none is exposed.
+. *The check* (default-OFF, `PROXIMADB_WRITE_FENCING=1` + lease handle present), placed at the *strategy `do_flush` sites* (the live write), before the write: `read(tenant, collection)`; if `Some((_, lease))` and `!lease.released` and `!lease.is_expired(now)` and `lease.holder_pod != self_pod_id` ⇒ reject (fenced). Absent/released/expired ⇒ allow (fail-open).
+. *Mixed-read-safe + gated* per CLAUDE.md mandate #8: default-OFF until baked; `None`/flag-off ⇒ unfenced ⇒ byte-identical ingest (protects recall@k).
+. *Co-design*: emit `io_trace` for the lease read; carry `TenantContext`; reuse `dml_lock_metrics` for fence outcomes; amortize the read (one per flush, not per row).
+
+=== Explicitly rejected shortcuts
+
+* *Fence only at `execute_coordinated_flush`* — correct as written but enforces solely on the shutdown flush-all path and is inert there today (no lease handle, no tenant). Misleading as "the fence."
+* *Admission-only fence* (at `RecordOpsService`) — advisory; does not catch stall-after-admission (Kleppmann/CockroachDB: validate at write/commit time, not admission). PR #337's lease-on-write is the routing layer, not the boundary fence.
+* *Fence at the iceberg `ManifestCommitter`* — vector engines persist via `SstManifest`, not the fenced committer; no call site.
+
+== Deferred gaps (re-adjudicated)
+
+* *A6 fence*: URGENT (elevated by Directive 16 + ADR-025), but a deliberate multi-layer TD per §4 — not to be rushed.
+* *P1b reads-ignore-lease*: ACCEPTABLE-AS-IS (MVCC/WAL snapshot, not a per-SELECT read lease).
+* *C0 cloud-cold unmeasured*: ACCEPTABLE-AS-IS, honestly tracked (`BENCHMARK_EVIDENCE.toml` = `unverified`).
+* *Serverless elasticity*: ACCEPTABLE-AS-IS (substrate-only; lease is the prerequisite primitive).
