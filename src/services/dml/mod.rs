@@ -4891,6 +4891,40 @@ mod tests {
             .with_primary_key(vec!["record_id".to_string()])
     }
 
+    /// A7: the production wiring (SharedServices) builds the lease stack from an
+    /// object-store URL via `PartitionLeaseStore::from_url` — the same path used
+    /// with `storage_config.metadata_url`. Verify that construction path yields a
+    /// working DmlLockService wired into DmlService (cross-pod coordination on).
+    #[tokio::test]
+    async fn dml_lock_service_buildable_from_url_like_production() -> Result<()> {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let url = format!("file://{}", dir.path().display());
+        let store = PartitionLeaseStore::from_url(&url, "_operator/leases")?;
+        let lease_manager = Arc::new(PartitionLeaseManager::new(
+            Arc::new(store),
+            Arc::new(PrimaryPodRegistry::new()),
+            "pod-prod",
+            10_000,
+        ));
+        let lock_service = Arc::new(DmlLockService::new(lease_manager, "pod-prod"));
+        let dml = DmlService::with_record_store_and_table_write_executor(
+            Arc::new(CatalogManager::new()),
+            Arc::new(ExplainOnlyRecordStore),
+            Arc::new(PlannedOnlyTableWriteExecutor::new()),
+        )
+        .with_dml_lock_service(lock_service);
+        let tenant = TenantContext::for_tenant_id("tenant_a");
+        let table_id =
+            TableIdentifier::new(vec!["tenant_a".to_string(), "default".to_string()], "users");
+        let guard = dml
+            .acquire_table_dml_lock(&table_id, Some(&tenant), LockIntent::Write)
+            .await?
+            .expect("wired DmlService should acquire the table lock");
+        assert_eq!(guard.lease_generation(), 1);
+        guard.release().await;
+        Ok(())
+    }
+
     #[tokio::test]
     async fn dml_service_table_lock_uses_resolved_tenant_namespace() -> Result<()> {
         let backing: Arc<dyn object_store::ObjectStore> =

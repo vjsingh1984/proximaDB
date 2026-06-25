@@ -1812,13 +1812,51 @@ impl SharedServices {
         // Use the SHARED canonical store so REST/gRPC relational DML/reads/EXPLAIN and the
         // CDC change-feed operate on the SAME state pgwire writes to. Fall back to the
         // vector-compatibility store only when no canonical store exists (test paths).
-        let dml_service_for_grpc = Arc::new(match canonical_record_store.clone() {
+        // A7: activate cross-pod DML locking. The durable lease lives on the
+        // SAME object store as the catalog (`storage_config.metadata_url`), so
+        // table-level DML contention is real across pods (only one pod's
+        // `DmlLockService` can hold the CAS-backed lease). Fail-open — no locks
+        // — if the store can't be opened (test/embedded paths); never block
+        // bootstrap. The pod id is process-unique; a stable deployment-level
+        // pod id is a follow-up (matters only for multi-pod restart affinity).
+        let dml_lock_service = {
+            use crate::cluster::partition_lease::{
+                DmlLockService, PartitionLeaseManager, PartitionLeaseStore,
+            };
+            use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
+            match PartitionLeaseStore::from_url(&storage_config.metadata_url, "_operator/leases") {
+                Ok(store) => {
+                    let pod_id = format!("pod-{}", std::process::id());
+                    let manager = Arc::new(PartitionLeaseManager::new(
+                        Arc::new(store),
+                        Arc::new(PrimaryPodRegistry::new()),
+                        pod_id.clone(),
+                        10_000,
+                    ));
+                    Some(Arc::new(DmlLockService::new(manager, pod_id)))
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        url = %storage_config.metadata_url,
+                        "DML lock service disabled (lease store unavailable); \
+                         DML writes run lock-free (fail-open)"
+                    );
+                    None
+                }
+            }
+        };
+        let base_dml = match canonical_record_store.clone() {
             Some(store) => DmlService::with_direct_record_storage(
                 catalog_manager.clone(),
                 vector_operations_service.clone(),
                 store,
             ),
             None => DmlService::new(catalog_manager.clone(), vector_operations_service.clone()),
+        };
+        let dml_service_for_grpc = Arc::new(match dml_lock_service {
+            Some(lock_service) => base_dml.with_dml_lock_service(lock_service),
+            None => base_dml,
         });
 
         // Wire QueryFacadeAdapter to UnifiedHandlers for unified SQL routing.
