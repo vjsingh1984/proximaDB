@@ -3870,6 +3870,7 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
         query: String,
         parameters: Option<Vec<proximadb_data_model::ProximaValue>>,
         collection: Option<String>,
+        tenant_id: Option<&str>,
     ) -> anyhow::Result<crate::proto::proximadb_v1::ExecuteQueryResponse> {
         let legacy_parameters = parameters.map(|values| {
             values
@@ -3877,10 +3878,10 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
                 .map(proximadb_records::conversions::proxima_to_sql_value)
                 .collect()
         });
-        // ApiHandlersPort::execute_sql_v1 carries no tenant; relational SQL stays
-        // unscoped on this trait path (callers that need TD-064 scoping use the
-        // inherent method with a tenant — e.g. the gRPC ExecuteQuery handler).
-        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection, None).await
+        // TD-064: thread the caller's tenant into the inherent tenant-scoped SQL
+        // path. `None` preserves the legacy unscoped behavior (callers that
+        // haven't been wired yet).
+        UnifiedHandlers::execute_sql_v1(self, query, legacy_parameters, collection, tenant_id).await
     }
 }
 
