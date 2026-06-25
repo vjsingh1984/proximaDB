@@ -16,9 +16,9 @@ is the heavier *full operator console* counterpart to the lightweight, read-only
 dashboard the server now serves at `GET /admin` (see
 `docs/04-operations/admin-dashboard.adoc` / `crates/platform/proximadb-admin-ui`).
 
-*Known gap:* `public/index.html` (and `public/manifest.json`) are absent, so a
-`react-scripts build` will fail until they are restored. Treat this as a work-in-progress
-operator UI, not a shipping artifact.
+The CRA `public/` entry assets (`index.html`, `manifest.json`) are present, so the app
+builds with `npm install && npm run build`. It remains a developer/operator app that is
+not gated by CI, so verify a build before relying on it.
 ====
 
 == Stack
@@ -33,7 +33,7 @@ operator UI, not a shipping artifact.
 $ cd ui
 $ npm install
 $ npm start      # dev server on :3000, proxies API calls to :5678
-$ npm run build  # production bundle (requires public/index.html — see Status note)
+$ npm run build  # production bundle into build/
 ----
 
 == Layout
