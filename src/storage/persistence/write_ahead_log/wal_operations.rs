@@ -70,6 +70,36 @@ pub enum UnifiedWALOperation {
         document_collections: Vec<String>,
         observability_namespaces: Vec<String>,
     },
+
+    /// TD-066 (c) Part 2: a non-data *marker* frame correlating the engine WAL
+    /// with the canonical WAL's checkpoint LSN. Written once by `flush_wal`
+    /// right after the canonical `Checkpoint` is emitted. Replay uses the
+    /// latest marker whose LSN ≤ the recovered canonical checkpoint LSN as the
+    /// truncation point (frames at/before it are already covered by the durable
+    /// canonical snapshot). Appended LAST so existing variants keep their
+    /// bincode discriminants — old segments decode unchanged (mixed-read-safe);
+    /// emission is feature-gated default-OFF, so old binaries never read these
+    /// frames until the fleet is upgraded.
+    GraphMarker(MarkerKind),
+}
+
+/// Non-data marker kinds carried in [`UnifiedWALOperation::GraphMarker`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MarkerKind {
+    /// "Every engine-WAL frame after this marker was emitted after the canonical
+    /// layer durably checkpointed at `lsn`." Recovery skips frames at/before the
+    /// latest such marker whose `lsn` ≤ the recovered canonical checkpoint LSN.
+    CanonicalEmission(u64),
+}
+
+/// TD-066 (c) Part 2 feature gate (default OFF per the storage-format-migration
+/// mandate). When enabled, `flush_wal` emits `CanonicalEmission` marker frames
+/// and `replay_wal` truncates engine-WAL replay at the recovered canonical
+/// checkpoint LSN. When disabled (default), recovery behavior is unchanged
+/// (full replay) and no marker frames are written — old binaries/fleets are
+/// unaffected. Flip fleet-wide after baking.
+pub fn canonical_replay_scope_enabled() -> bool {
+    std::env::var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE").as_deref() == Ok("1")
 }
 
 /// Time-series operations for WAL

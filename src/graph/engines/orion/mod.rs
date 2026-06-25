@@ -513,12 +513,54 @@ impl OrionGraphEngine {
                 checkpoint_ts_ms,
             );
 
-            // Step 1: Load latest snapshot (if available)
-            // Deferred: Implement snapshot discovery and loading
-            // For now, we'll just replay WAL from the beginning
+            // Step 1: Load latest snapshot (if available). TD-066 (c) Part 2:
+            // when the feature is enabled, discover + load the newest engine
+            // snapshot (tagged with its checkpoint LSN) so WAL replay can be
+            // scoped to frames after the snapshot's marker. With the feature off
+            // (or no snapshot), `snapshot_lsn` stays `None` → full replay (the
+            // prior behavior).
+            let snapshot_lsn = if crate::storage::persistence::write_ahead_log::wal_operations::canonical_replay_scope_enabled() {
+                match persistence.latest_snapshot_path().await {
+                    Ok(Some(path)) => match persistence.load_snapshot(self, &path).await {
+                        Ok(lsn) => {
+                            tracing::info!(
+                                graph_id = persistence.graph_id(),
+                                snapshot_checkpoint_lsn = lsn,
+                                "loaded engine snapshot for scoped WAL replay"
+                            );
+                            Some(lsn)
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                graph_id = persistence.graph_id(),
+                                error = %e,
+                                "failed to load latest snapshot; falling back to full WAL replay"
+                            );
+                            None
+                        }
+                    },
+                    Ok(None) => {
+                        tracing::debug!(
+                            graph_id = persistence.graph_id(),
+                            "no engine snapshot found; full WAL replay"
+                        );
+                        None
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            graph_id = persistence.graph_id(),
+                            error = %e,
+                            "snapshot discovery failed; full WAL replay"
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
-            // Step 2: Replay WAL operations
-            persistence.replay_wal(self).await?;
+            // Step 2: Replay WAL operations (scoped to the snapshot if loaded).
+            persistence.replay_wal(self, snapshot_lsn).await?;
 
             tracing::info!(
                 "✅ ORION graph recovery complete: {} nodes, {} edges",
@@ -1398,5 +1440,132 @@ mod tests {
             .expect("get_neighbors should succeed");
         assert_eq!(neighbors.len(), 1);
         assert_eq!(neighbors[0].id, "node2");
+    }
+}
+
+#[cfg(test)]
+mod td066_replay_scope_tests {
+    //! TD-066 (c) Part 2: recovery loads the canonical-checkpoint snapshot and
+    //! replays ONLY engine-WAL frames after the matching `CanonicalEmission`
+    //! marker. Frames at/before the marker are in the snapshot, so they are NOT
+    //! re-applied — proven via `stats.nodes_created`: snapshot-load resets it to
+    //! the snapshot's node count, then only post-marker CreateNodes bump it.
+    use super::*;
+    use std::collections::HashMap;
+
+    fn node(id: &str) -> Node {
+        Node {
+            id: id.to_string(),
+            labels: vec!["T".to_string()],
+            properties: HashMap::new(),
+            embedding: None,
+            created_at_ms: 0,
+            updated_at_ms: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn recovery_scopes_engine_wal_replay_to_post_checkpoint_frames() {
+        // SAFETY: env mutation is process-local; this test asserts the
+        // TD-066 Part 2 behavior under the feature flag. nextest isolates
+        // processes, and no other in-process graph recovery test writes
+        // snapshots, so the global flip is observationally isolated.
+        unsafe {
+            std::env::set_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE", "1");
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let base_url = format!("file://{}", tmp.path().display());
+        let canonical_wal = tmp.path().join("canonical.wal");
+        let gid = "td066_scope".to_string();
+        const CHECKPOINT_LSN: u64 = 100;
+
+        // Phase 1 — 3 pre-checkpoint nodes, then marker+snapshot, then 2 more.
+        {
+            let engine = OrionGraphEngine::with_persistence_for_graph_and_canonical_wal(
+                gid.clone(),
+                base_url.clone(),
+                true,
+                Some(canonical_wal.clone()),
+            )
+            .await
+            .expect("engine");
+            for i in 0..3u32 {
+                engine
+                    .create_node(node(&format!("pre_{i}")))
+                    .await
+                    .expect("create pre");
+            }
+            let persistence = engine
+                .persistence()
+                .expect("persistence configured")
+                .clone();
+            // Mirror GraphOperationsService::flush_wal Step 2 ordering: marker
+            // BEFORE engine flush BEFORE snapshot — guarantees "snapshot exists
+            // ⟹ marker durable" so recovery can correlate them.
+            persistence
+                .append_canonical_emission_marker(CHECKPOINT_LSN)
+                .await
+                .expect("marker");
+            engine.flush_wal().await.expect("flush engine wal");
+            persistence
+                .save_snapshot(&engine, CHECKPOINT_LSN)
+                .await
+                .expect("snapshot");
+            for i in 0..2u32 {
+                engine
+                    .create_node(node(&format!("post_{i}")))
+                    .await
+                    .expect("create post");
+            }
+            engine.flush_wal().await.expect("flush post frames");
+        }
+
+        // Phase 2 — recover into a fresh engine on the same paths.
+        let engine = OrionGraphEngine::with_persistence_for_graph_and_canonical_wal(
+            gid.clone(),
+            base_url.clone(),
+            true,
+            Some(canonical_wal.clone()),
+        )
+        .await
+        .expect("recovery engine");
+        engine.recover().await.expect("recover");
+
+        // Correctness — no data loss: all 5 nodes present.
+        assert_eq!(
+            engine.memory_pool.nodes.len(),
+            5,
+            "all 5 nodes (3 pre-checkpoint + 2 post) must survive recovery"
+        );
+        for i in 0..3u32 {
+            assert!(
+                engine.memory_pool.nodes.contains_key(&format!("pre_{i}")),
+                "pre-checkpoint node pre_{i} missing (snapshot not loaded)"
+            );
+        }
+        for i in 0..2u32 {
+            assert!(
+                engine.memory_pool.nodes.contains_key(&format!("post_{i}")),
+                "post-checkpoint node post_{i} missing (replay didn't cover it)"
+            );
+        }
+
+        // Scoping proof — recovery loaded the snapshot (3 pre-checkpoint
+        // nodes) and replayed ONLY the 2 post-checkpoint frames. Full
+        // (unscoped) replay would have applied all 5 graph-op frames.
+        let replayed = engine
+            .persistence()
+            .expect("persistence configured")
+            .last_replay_applied();
+        assert_eq!(
+            replayed, 2,
+            "scoped replay must apply exactly the 2 post-checkpoint frames; \
+             got {replayed} (5 would mean unscoped full replay of pre-checkpoint frames)"
+        );
+
+        // SAFETY: see the matching `set_var` above (test-local feature flag).
+        unsafe {
+            std::env::remove_var("PROXIMADB_GRAPH_CANONICAL_REPLAY_SCOPE");
+        }
     }
 }
