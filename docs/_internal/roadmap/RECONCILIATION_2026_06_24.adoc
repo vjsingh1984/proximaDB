@@ -119,6 +119,10 @@ merges on develop, except TD-133 which is still genuinely Open) and can be prune
   Phase 2.5 sprint timeline into a per-item status table; PULSAR/QUASAR →Retired; Phase 3
   connector/SDK/SaaS statuses; added the Phase 5/6 agent-memory + fusion-seam build and the Phase 7
   lakehouse-pgwire + gRPC v1→v2 workstreams; added the missing Phase 6 to Vision Alignment.
+. *BEST_IN_CLASS_EXECUTION_TRACKER* reconciled — WS-0..WS-7 + M1/M2/M3 gates re-scored vs current
+  reality (WS-2 Done; WS-0 substantially complete; WS-3/4/5 In Progress), a 2026-06-24 session-log
+  block appended (March-2026 history retained per the doc's own instruction), and the priority queue
+  refreshed.
 
 == Drift deliberately NOT closed here (follow-ups)
 
@@ -130,8 +134,6 @@ deferred:
   001–143 rows remain a demarcated historical inventory).
 . *Full re-merge of the DESIGN_DOC_STATUS_INDEX two tables* (the 2026-05-26 table + the 2026-06-24
   addendum) into one, with per-doc WIRED/PARTIAL grep verification.
-. *BEST_IN_CLASS_EXECUTION_TRACKER* workstream log is stale since 2026-03-14; WS-0..WS-7 + M1/M2/M3
-  gates should be re-scored.
 . *Renaming dated filenames* (`SYSTEM_MAP_2026_05_30`, `DESIGN_DOC_STATUS_INDEX_2026_05_26`) to current
   dates — deferred to avoid breaking inbound links in this PR; the internal dates are corrected.
 
