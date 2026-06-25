@@ -447,6 +447,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/graphs/{graph_id}/impact-analysis": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /api/v2/graphs/{graph_id}/impact-analysis` — forward/backward blast radius (TD-131). The
+         *     server-side baseline for the embedded-parity gate; mirrors `GraphOperationsService::impact_analysis`.
+         */
+        post: operations["impact_analysis_v2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/graphs/{graph_id}/nodes": {
         parameters: {
             query?: never;
@@ -1157,6 +1177,23 @@ export interface components {
             ef_search?: number | null;
             /** Format: int32 */
             m?: number | null;
+        };
+        ImpactAnalysisRequest: {
+            /** @description `"forward"` (default — what X impacts) or `"backward"` (what impacts X). */
+            direction?: string | null;
+            edge_types?: string[];
+            limit?: number;
+            /** Format: int32 */
+            max_depth?: number;
+            /** @description Start symbol node id. */
+            node_id: string;
+        };
+        ImpactAnalysisResponse: {
+            edge_count: number;
+            /** Format: int32 */
+            max_depth_reached: number;
+            /** @description Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`). */
+            node_ids: string[];
         };
         /** @description REST input for a single index config (mirrors proto `IndexConfig`). */
         IndexConfigInput: {
@@ -2499,6 +2536,51 @@ export interface operations {
                 };
             };
             /** @description Fusion execution failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    impact_analysis_v2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Graph ID */
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImpactAnalysisRequest"];
+            };
+        };
+        responses: {
+            /** @description Impacted node ids */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImpactAnalysisResponse"];
+                };
+            };
+            /** @description Missing graph_id/node_id */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Impact analysis failed */
             500: {
                 headers: {
                     [name: string]: unknown;

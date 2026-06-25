@@ -341,6 +341,13 @@ impl GraphOperationsService {
         self
     }
 
+    /// Read-only access to the canonical record store, when wired. Used by the fusion RBAC seam
+    /// (TD-131/134) to resolve a node/seed `oid` → its backing `ProximaRecord` for `permitted_principals`
+    /// filtering. `None` for single-tenant/embedded builds without a wired store ⇒ the gate fails open.
+    pub fn canonical_record_store(&self) -> Option<&Arc<dyn RecordStore>> {
+        self.canonical_record_store.as_ref()
+    }
+
     /// Inject the canonical WAL appender that `flush_wal` uses to persist
     /// `CanonicalOperation::Checkpoint(SnapshotManifest)` entries.
     ///

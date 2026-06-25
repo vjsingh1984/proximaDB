@@ -483,6 +483,27 @@ type HnswConfigOutput struct {
 	M              *int32 `json:"m"`
 }
 
+// ImpactAnalysisRequest defines model for ImpactAnalysisRequest.
+type ImpactAnalysisRequest struct {
+	// Direction `"forward"` (default — what X impacts) or `"backward"` (what impacts X).
+	Direction *string   `json:"direction"`
+	EdgeTypes *[]string `json:"edge_types,omitempty"`
+	Limit     *int      `json:"limit,omitempty"`
+	MaxDepth  *int32    `json:"max_depth,omitempty"`
+
+	// NodeId Start symbol node id.
+	NodeId string `json:"node_id"`
+}
+
+// ImpactAnalysisResponse defines model for ImpactAnalysisResponse.
+type ImpactAnalysisResponse struct {
+	EdgeCount       int   `json:"edge_count"`
+	MaxDepthReached int32 `json:"max_depth_reached"`
+
+	// NodeIds Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`).
+	NodeIds []string `json:"node_ids"`
+}
+
 // IndexConfigInput REST input for a single index config (mirrors proto `IndexConfig`).
 type IndexConfigInput struct {
 	// Algorithm Algorithm: "hnsw", "ivf", "pq", "flat", "annoy", "lsh".
@@ -1203,6 +1224,9 @@ type BatchCreateEdgesJSONRequestBody = BatchCreateEdgesRequest
 
 // FusionSearchV2JSONRequestBody defines body for FusionSearchV2 for application/json ContentType.
 type FusionSearchV2JSONRequestBody = FusionSearchRequest
+
+// ImpactAnalysisV2JSONRequestBody defines body for ImpactAnalysisV2 for application/json ContentType.
+type ImpactAnalysisV2JSONRequestBody = ImpactAnalysisRequest
 
 // CreateNodeJSONRequestBody defines body for CreateNode for application/json ContentType.
 type CreateNodeJSONRequestBody = CreateNodeRequest
@@ -2874,6 +2898,11 @@ type ClientInterface interface {
 
 	FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ImpactAnalysisV2WithBody request with any body
+	ImpactAnalysisV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ImpactAnalysisV2(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateNodeWithBody request with any body
 	CreateNodeWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3336,6 +3365,30 @@ func (c *Client) FusionSearchV2WithBody(ctx context.Context, graphId string, con
 
 func (c *Client) FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewFusionSearchV2Request(c.Server, graphId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ImpactAnalysisV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImpactAnalysisV2RequestWithBody(c.Server, graphId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ImpactAnalysisV2(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImpactAnalysisV2Request(c.Server, graphId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -4616,6 +4669,53 @@ func NewFusionSearchV2RequestWithBody(server string, graphId string, contentType
 	return req, nil
 }
 
+// NewImpactAnalysisV2Request calls the generic ImpactAnalysisV2 builder with application/json body
+func NewImpactAnalysisV2Request(server string, graphId string, body ImpactAnalysisV2JSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewImpactAnalysisV2RequestWithBody(server, graphId, "application/json", bodyReader)
+}
+
+// NewImpactAnalysisV2RequestWithBody generates requests for ImpactAnalysisV2 with any type of body
+func NewImpactAnalysisV2RequestWithBody(server string, graphId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "graph_id", runtime.ParamLocationPath, graphId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/impact-analysis", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreateNodeRequest calls the generic CreateNode builder with application/json body
 func NewCreateNodeRequest(server string, graphId GraphId, body CreateNodeJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -5342,6 +5442,11 @@ type ClientWithResponsesInterface interface {
 
 	FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
 
+	// ImpactAnalysisV2WithBodyWithResponse request with any body
+	ImpactAnalysisV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error)
+
+	ImpactAnalysisV2WithResponse(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error)
+
 	// CreateNodeWithBodyWithResponse request with any body
 	CreateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error)
 
@@ -5926,6 +6031,30 @@ func (r FusionSearchV2HTTPResp) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r FusionSearchV2HTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ImpactAnalysisV2HTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *ImpactAnalysisResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r ImpactAnalysisV2HTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ImpactAnalysisV2HTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6565,6 +6694,23 @@ func (c *ClientWithResponses) FusionSearchV2WithResponse(ctx context.Context, gr
 		return nil, err
 	}
 	return ParseFusionSearchV2HTTPResp(rsp)
+}
+
+// ImpactAnalysisV2WithBodyWithResponse request with arbitrary body returning *ImpactAnalysisV2HTTPResp
+func (c *ClientWithResponses) ImpactAnalysisV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error) {
+	rsp, err := c.ImpactAnalysisV2WithBody(ctx, graphId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseImpactAnalysisV2HTTPResp(rsp)
+}
+
+func (c *ClientWithResponses) ImpactAnalysisV2WithResponse(ctx context.Context, graphId string, body ImpactAnalysisV2JSONRequestBody, reqEditors ...RequestEditorFn) (*ImpactAnalysisV2HTTPResp, error) {
+	rsp, err := c.ImpactAnalysisV2(ctx, graphId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseImpactAnalysisV2HTTPResp(rsp)
 }
 
 // CreateNodeWithBodyWithResponse request with arbitrary body returning *CreateNodeHTTPResp
@@ -7488,6 +7634,46 @@ func ParseFusionSearchV2HTTPResp(rsp *http.Response) (*FusionSearchV2HTTPResp, e
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest FusionSearchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseImpactAnalysisV2HTTPResp parses an HTTP response from a ImpactAnalysisV2WithResponse call
+func ParseImpactAnalysisV2HTTPResp(rsp *http.Response) (*ImpactAnalysisV2HTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ImpactAnalysisV2HTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ImpactAnalysisResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

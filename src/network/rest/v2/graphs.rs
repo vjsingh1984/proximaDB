@@ -16,6 +16,7 @@ use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::openapi::ErrorResponse;
 use crate::network::rest::v1::handlers::AppState;
+use crate::security::rbac_service::UnifiedUserContext;
 use crate::services::fusion_service::{GraphFusionParams, GraphGrain};
 
 fn default_limit() -> usize {
@@ -106,6 +107,10 @@ pub async fn fusion_search_v2(
     Path(graph_id): Path<String>,
     State(state): State<AppState>,
     Extension(tenant): Extension<TenantContext>,
+    // Acting principal (TD-134). When present, both fusion legs filter candidates whose backing
+    // record is not `permitted_principals`-accessible by this principal. Absent ⇒ structural
+    // isolation only (no within-tenant row filtering) — the default for unauthenticated paths.
+    user_context: Option<Extension<UnifiedUserContext>>,
     Json(request): Json<FusionSearchRequest>,
 ) -> ApiResult<Json<FusionSearchResponse>> {
     if request.query_vector.is_empty() {
@@ -156,6 +161,7 @@ pub async fn fusion_search_v2(
             Some("both") => GraphGrain::Both,
             _ => GraphGrain::Nodes,
         },
+        principal: user_context.as_ref().map(|ctx| ctx.user_id.clone()),
         policy,
     };
 
@@ -174,5 +180,88 @@ pub async fn fusion_search_v2(
             })
             .collect(),
         stats: stats.into(),
+    }))
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+pub struct ImpactAnalysisRequest {
+    /// Start symbol node id.
+    pub node_id: String,
+    /// `"forward"` (default — what X impacts) or `"backward"` (what impacts X).
+    pub direction: Option<String>,
+    #[serde(default)]
+    pub edge_types: Vec<String>,
+    #[serde(default = "default_depth")]
+    pub max_depth: u32,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct ImpactAnalysisResponse {
+    /// Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`).
+    pub node_ids: Vec<String>,
+    pub edge_count: usize,
+    pub max_depth_reached: u32,
+}
+
+/// `POST /api/v2/graphs/{graph_id}/impact-analysis` — forward/backward blast radius (TD-131). The
+/// server-side baseline for the embedded-parity gate; mirrors `GraphOperationsService::impact_analysis`.
+#[utoipa::path(
+    post,
+    path = "/api/v2/graphs/{graph_id}/impact-analysis",
+    params(
+        ("graph_id" = String, Path, description = "Graph ID"),
+    ),
+    request_body = ImpactAnalysisRequest,
+    responses(
+        (status = StatusCode::OK, description = "Impacted node ids", body = ImpactAnalysisResponse),
+        (status = StatusCode::BAD_REQUEST, description = "Missing graph_id/node_id", body = ErrorResponse),
+        (status = StatusCode::INTERNAL_SERVER_ERROR, description = "Impact analysis failed", body = ErrorResponse),
+    ),
+    tag = "graphs",
+)]
+pub async fn impact_analysis_v2(
+    Path(graph_id): Path<String>,
+    State(state): State<AppState>,
+    Extension(tenant): Extension<TenantContext>,
+    Json(request): Json<ImpactAnalysisRequest>,
+) -> ApiResult<Json<ImpactAnalysisResponse>> {
+    if graph_id.trim().is_empty() || request.node_id.trim().is_empty() {
+        return Err(ApiError::InvalidArgument(
+            "graph_id and node_id are required".to_string(),
+        ));
+    }
+    let direction = match request.direction.as_deref() {
+        Some("backward") => crate::graph::model::ImpactDirection::Backward,
+        _ => crate::graph::model::ImpactDirection::Forward,
+    };
+    tracing::debug!(
+        tenant_id = %tenant.tenant_id,
+        graph_id = %graph_id,
+        "v2 graph impact-analysis"
+    );
+
+    let response = state
+        .request_handlers
+        .graph_operations_service
+        .impact_analysis(
+            &graph_id,
+            &request.node_id,
+            direction,
+            request.edge_types,
+            request.max_depth,
+            request.limit,
+        )
+        .await
+        .map_err(|error| ApiError::Internal(format!("impact analysis failed: {error}")))?;
+
+    Ok(Json(ImpactAnalysisResponse {
+        node_ids: response.nodes.into_iter().map(|n| n.id).collect(),
+        edge_count: response.edges.len(),
+        max_depth_reached: response
+            .stats
+            .map(|stats| stats.max_depth_reached)
+            .unwrap_or(0),
     }))
 }

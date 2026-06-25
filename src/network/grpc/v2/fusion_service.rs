@@ -123,6 +123,10 @@ impl ProximaFusionService for ProximaFusionServiceImpl {
             vector_weight: req.vector_weight.unwrap_or(1.0),
             graph_weight: req.graph_weight.unwrap_or(1.0),
             grain,
+            // gRPC fusion relies on structural tenant isolation today; the within-tenant
+            // `permitted_principals` RBAC principal is not yet threaded over gRPC (REST-only in
+            // this TD-131 cut). `None` ⇒ the gate fails open (structural isolation preserved).
+            principal: None,
             policy,
         };
 

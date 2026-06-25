@@ -798,6 +798,49 @@ components:
           - integer
           - 'null'
       type: object
+    ImpactAnalysisRequest:
+      properties:
+        direction:
+          description: '`"forward"` (default — what X impacts) or `"backward"` (what impacts X).'
+          type:
+          - string
+          - 'null'
+        edge_types:
+          items:
+            type: string
+          type: array
+        limit:
+          minimum: 0
+          type: integer
+        max_depth:
+          format: int32
+          minimum: 0
+          type: integer
+        node_id:
+          description: Start symbol node id.
+          type: string
+      required:
+      - node_id
+      type: object
+    ImpactAnalysisResponse:
+      properties:
+        edge_count:
+          minimum: 0
+          type: integer
+        max_depth_reached:
+          format: int32
+          minimum: 0
+          type: integer
+        node_ids:
+          description: Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`).
+          items:
+            type: string
+          type: array
+      required:
+      - node_ids
+      - edge_count
+      - max_depth_reached
+      type: object
     IndexConfigInput:
       description: REST input for a single index config (mirrors proto `IndexConfig`).
       properties:
@@ -2568,6 +2611,46 @@ paths:
                 $ref: '#/components/schemas/ErrorResponse'
           description: Fusion execution failed
       summary: '`POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.'
+      tags:
+      - graphs
+  /api/v2/graphs/{graph_id}/impact-analysis:
+    post:
+      operationId: impact_analysis_v2
+      parameters:
+      - description: Graph ID
+        in: path
+        name: graph_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImpactAnalysisRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImpactAnalysisResponse'
+          description: Impacted node ids
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Missing graph_id/node_id
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Impact analysis failed
+      summary: |-
+        `POST /api/v2/graphs/{graph_id}/impact-analysis` — forward/backward blast radius (TD-131). The
+        server-side baseline for the embedded-parity gate; mirrors `GraphOperationsService::impact_analysis`.
       tags:
       - graphs
   /api/v2/graphs/{graph_id}/nodes:

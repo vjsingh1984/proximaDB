@@ -119,6 +119,7 @@ part of this publishable SDK surface.",
         query::execute_query,
         query::explain_query,
         graphs::fusion_search_v2,
+        graphs::impact_analysis_v2,
     ),
     components(
         schemas(

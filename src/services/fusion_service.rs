@@ -20,6 +20,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use proximadb_graph::record::{GraphEdgeKey, GraphNodeKey};
+use proximadb_records::{ProximaRecord, RecordKey};
 
 use crate::core::search::cross_modal_fusion::{
     FusedItem, Fuser, FusionPolicy, FusionStats, SourceCandidates, SourceId,
@@ -80,6 +81,70 @@ use crate::storage::engines::core::formats::columnar::fulltext_index::FulltextSe
 
 /// `TraversalAlgorithm::Bfs` proto tag.
 const ALGORITHM_BFS: i32 = 1;
+
+/// Kill-switch env var (TD-131 parity fallback). When set, [`FusionService::graph_fusion_search`]
+/// skips PIT calibration and returns the raw union of seed + expand OIDs via [`raw_union`] — the OID
+/// set is byte-identical to the calibrated `Fuser` output when `limit ≥ candidate count`; only scores
+/// differ by design. Mirrors the repo `PROXIMADB_DISABLE_*` convention (e.g. `PROXIMADB_DISABLE_WAL`).
+const DISABLE_CALIBRATION_ENV: &str = "PROXIMADB_DISABLE_GRAPH_FUSION_CALIBRATION";
+
+fn fusion_calibration_disabled() -> bool {
+    std::env::var_os(DISABLE_CALIBRATION_ENV).is_some()
+}
+
+/// RBAC predicate over a resolved backing record (TD-134). `None` ⇒ the record is not in the canonical
+/// store (or the store is unwired), so within-tenant row RBAC cannot bite ⇒ **allow** (the tenant
+/// boundary stays structural). The predicate is pure so the gate is unit-testable without engines.
+pub(crate) fn record_is_accessible(record: Option<&ProximaRecord>, principal: &str) -> bool {
+    match record {
+        Some(rec) => rec.is_accessible_by(principal),
+        None => true,
+    }
+}
+
+/// Raw-union fallback for the kill-switch path (TD-131). Every `oid` from every source becomes a
+/// [`FusedItem`] with a nominal score (the best raw score seen) and `source_count` = number of sources
+/// that contained it. **The OID set is identical to the calibrated `Fuser` output when `limit ≥
+/// candidate count** — calibration only re-ranks, it never invents or suppresses an `oid`. Ordering is
+/// deterministic (descending score, then `oid`) so the fallback is stable.
+pub(crate) fn raw_union(
+    sources: Vec<SourceCandidates>,
+    limit: usize,
+) -> (Vec<FusedItem>, FusionStats) {
+    let candidates_in: usize = sources.iter().map(|s| s.scores.len()).sum();
+    let mut per_oid: HashMap<String, (f32, usize)> = HashMap::new();
+    for source in &sources {
+        for (oid, &score) in &source.scores {
+            per_oid
+                .entry(oid.clone())
+                .and_modify(|(best, count)| {
+                    if score > *best {
+                        *best = score;
+                    }
+                    *count += 1;
+                })
+                .or_insert((score, 1));
+        }
+    }
+    let mut items: Vec<FusedItem> = per_oid
+        .into_iter()
+        .map(|(oid, (score, count))| FusedItem {
+            oid,
+            score,
+            per_source: HashMap::new(),
+            source_count: count,
+        })
+        .collect();
+    items.sort_by(|a, b| b.score.total_cmp(&a.score).then_with(|| a.oid.cmp(&b.oid)));
+    items.truncate(limit);
+    let stats = FusionStats {
+        sources_fused: sources.len(),
+        sources_skipped: 0,
+        candidates_in,
+        items_out: items.len(),
+    };
+    (items, stats)
+}
 
 /// Vector ANN hits → an `oid`-keyed vector source. The record `id` is the canonical `oid`.
 pub(crate) fn vector_hits_to_source(
@@ -234,6 +299,13 @@ pub struct GraphFusionParams {
     pub graph_weight: f32,
     /// Node / edge / both grain for the graph contribution (D8).
     pub grain: GraphGrain,
+    /// Acting principal for within-tenant row-level RBAC (`permitted_principals`, TD-134). `None` ⇒
+    /// structural isolation only (no per-record filtering) — the default for unauthenticated/embedded
+    /// paths. When `Some`, BOTH the vector-seed and graph-expand legs drop any candidate whose backing
+    /// record is not [`ProximaRecord::is_accessible_by`] the principal. The gate fails open when the
+    /// canonical record store is unwired or a record cannot be resolved (within-tenant RBAC only bites
+    /// on records carrying explicit `permitted_principals`); the tenant boundary stays structural.
+    pub principal: Option<String>,
     pub policy: FusionPolicy,
 }
 
@@ -250,6 +322,13 @@ impl FusionService {
 
     /// Vector-seed → graph-expand → fuse-by-`oid`. Tenant isolation is structural (the collection and
     /// graph carry the tenant boundary), per the co-design mandate — never a post-fusion predicate.
+    ///
+    /// TD-131 hardening:
+    /// - **RBAC** (TD-134 seam): when `params.principal` is `Some`, both legs drop candidates whose
+    ///   backing record is not `is_accessible_by(principal)`. Fails open when the canonical record
+    ///   store is unwired or a record cannot be resolved.
+    /// - **Kill-switch**: `PROXIMADB_DISABLE_GRAPH_FUSION_CALIBRATION` skips PIT calibration and
+    ///   returns the raw union of OIDs (byte-identical OID set; scores differ by design).
     ///
     /// T1.2: Implements graceful degradation — if graph traversal fails for a seed, the search
     /// continues with the remaining seeds and the vector source alone. Only total failure (vector
@@ -268,7 +347,7 @@ impl FusionService {
         let query_vector = params.query_vector.clone();
         let limit = params.limit;
 
-        let hits = retry_vector_search(
+        let mut hits = retry_vector_search(
             &collection,
             || vector.unified_search_native(&collection, query_vector.clone(), limit, None, None),
             2,
@@ -280,6 +359,18 @@ impl FusionService {
                 collection, params.graph_id
             )
         })?;
+
+        // 1b. RBAC (leg 1): drop seed hits whose backing record the principal cannot access. The seed
+        //     `id` is the canonical co-indexed `oid`, resolved via the graph service's canonical store.
+        if let Some(principal) = params.principal.as_deref() {
+            let mut accessible = Vec::with_capacity(hits.len());
+            for hit in hits.drain(..) {
+                if self.oid_accessible(&hit.id, principal).await {
+                    accessible.push(hit);
+                }
+            }
+            hits = accessible;
+        }
 
         let vector_source = vector_hits_to_source(&hits, params.vector_weight);
 
@@ -330,6 +421,33 @@ impl FusionService {
             );
         }
 
+        // 2b. RBAC (leg 2): drop expanded nodes the principal cannot access, and any edge touching an
+        //     inaccessible node (never leak a link to a hidden node). Node `oid` = canonical
+        //     `graph/{graph_id}/node/{node_id}`, resolved via the graph service's canonical store.
+        if let Some(principal) = params.principal.as_deref() {
+            let gid = &params.graph_id;
+            let mut kept_nodes = Vec::with_capacity(nodes.len());
+            for n in nodes.drain(..) {
+                let oid = GraphNodeKey::new(gid, n.id.clone()).canonical_oid();
+                if self.oid_accessible(&oid, principal).await {
+                    kept_nodes.push(n);
+                }
+            }
+            nodes = kept_nodes;
+
+            let mut kept_edges = Vec::with_capacity(edges.len());
+            for e in edges.drain(..) {
+                let from_oid = GraphNodeKey::new(gid, e.from_node_id.clone()).canonical_oid();
+                let to_oid = GraphNodeKey::new(gid, e.to_node_id.clone()).canonical_oid();
+                if self.oid_accessible(&from_oid, principal).await
+                    && self.oid_accessible(&to_oid, principal).await
+                {
+                    kept_edges.push(e);
+                }
+            }
+            edges = kept_edges;
+        }
+
         // 3. Build the graph contribution at the requested grain (D8: edge-grain carries more
         //    relational signal; node-grain is the default). Node and edge `oid`s are disjoint, so
         //    `Both` simply adds two graph sources.
@@ -349,9 +467,17 @@ impl FusionService {
             ));
         }
 
-        // 4. Calibrate + fuse-by-oid + rank.
-        let fuser = Fuser::new(params.policy);
-        let result = fuser.fuse(sources, params.limit);
+        // 4. Calibrate + fuse-by-oid + rank, OR the raw-union kill-switch fallback (TD-131). The OID
+        //    set is identical between the two when `limit ≥ candidate count` — calibration only re-ranks.
+        let result = if fusion_calibration_disabled() {
+            tracing::debug!(
+                graph_id = %params.graph_id,
+                "graph fusion calibration disabled (kill-switch) — raw-union fallback"
+            );
+            raw_union(sources, params.limit)
+        } else {
+            Fuser::new(params.policy).fuse(sources, params.limit)
+        };
 
         // T1.1: Record fusion metrics for observability.
         let stats = &result.1;
@@ -364,6 +490,23 @@ impl FusionService {
         );
 
         Ok(result)
+    }
+
+    /// Resolve `oid` → backing `ProximaRecord` via the graph service's canonical store and apply the
+    /// TD-134 `permitted_principals` predicate. Fails open when the store is unwired or the record
+    /// cannot be resolved: within-tenant row RBAC only bites on records carrying explicit principals,
+    /// so absence is open access (the tenant boundary stays structural).
+    async fn oid_accessible(&self, oid: &str, principal: &str) -> bool {
+        let Some(store) = self.graph.canonical_record_store() else {
+            return true;
+        };
+        match store.get_record(&RecordKey::new(oid)).await {
+            Ok(record) => record_is_accessible(record.as_ref(), principal),
+            Err(error) => {
+                tracing::warn!(oid, %error, "RBAC record resolve failed; failing open");
+                true
+            }
+        }
     }
 }
 
@@ -537,5 +680,83 @@ mod tests {
         assert!(oids.contains("graph/g1/node/n1"));
         assert!(oids.contains("graph/g1/edge/e1"));
         assert_eq!(items.len(), 2, "node and edge are distinct fused items");
+    }
+
+    // ---- TD-131 RBAC predicate (pure — no engines required) ----
+
+    fn record(principals: &[&str]) -> ProximaRecord {
+        ProximaRecord {
+            permitted_principals: principals.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn rbac_predicate_allows_open_record_and_denies_restricted() {
+        let open = record(&[]);
+        let restricted = record(&["alice"]);
+
+        // Open record (empty permitted_principals) is accessible by anyone.
+        assert!(record_is_accessible(Some(&open), "bob"));
+        assert!(record_is_accessible(Some(&open), "alice"));
+
+        // Restricted record: only a listed principal is admitted.
+        assert!(record_is_accessible(Some(&restricted), "alice"));
+        assert!(!record_is_accessible(Some(&restricted), "bob"));
+
+        // Unresolved record (None) ⇒ allow — within-tenant RBAC can't bite, structural isolation
+        // remains the tenant boundary.
+        assert!(record_is_accessible(None, "bob"));
+    }
+
+    // ---- TD-131 kill-switch raw-union (pure — no engines required) ----
+
+    #[test]
+    fn raw_union_oid_set_matches_calibrated_fuser() {
+        // The vector seed and a graph node share oid "graph/g/node/n1" (source_count 2); each source
+        // also carries a unique oid. The fused and raw-union OID sets must be identical when `limit`
+        // does not truncate.
+        let shared = "graph/g/node/n1";
+        let vector = vector_hits_to_source(&[hit(shared, 0.9), hit("graph/g/node/n2", 0.5)], 1.0);
+        let graph = traversal_nodes_to_source("g", &[node("n1"), node("n3")], 1.0);
+        let sources = vec![vector, graph];
+
+        let (fused, _) = Fuser::new(FusionPolicy::default()).fuse(sources.clone(), 100);
+        let (unioned, _) = raw_union(sources, 100);
+
+        let fused_oids: std::collections::HashSet<&str> =
+            fused.iter().map(|i| i.oid.as_str()).collect();
+        let union_oids: std::collections::HashSet<&str> =
+            unioned.iter().map(|i| i.oid.as_str()).collect();
+        assert_eq!(
+            fused_oids, union_oids,
+            "kill-switch OID set must match the fused set"
+        );
+        for expected in ["graph/g/node/n1", "graph/g/node/n2", "graph/g/node/n3"] {
+            assert!(union_oids.contains(expected), "missing {expected}");
+        }
+    }
+
+    #[test]
+    fn raw_union_counts_sources_and_truncates_to_limit() {
+        let shared = "graph/g/node/n1";
+        let vector = vector_hits_to_source(&[hit(shared, 0.9)], 1.0);
+        let graph = traversal_nodes_to_source("g", &[node("n1")], 1.0);
+        let (items, _) = raw_union(vec![vector, graph], 100);
+        let fused = items
+            .iter()
+            .find(|i| i.oid == shared)
+            .expect("shared oid present in raw union");
+        assert_eq!(fused.source_count, 2, "oid in two sources ⇒ source_count 2");
+
+        // Truncation honors `limit`.
+        let (truncated, _) = raw_union(
+            vec![vector_hits_to_source(
+                &[hit("graph/g/node/a", 1.0), hit("graph/g/node/b", 0.5)],
+                1.0,
+            )],
+            1,
+        );
+        assert_eq!(truncated.len(), 1, "limit truncates the raw union");
     }
 }
