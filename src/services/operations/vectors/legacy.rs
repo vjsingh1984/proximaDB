@@ -603,7 +603,17 @@ impl VectorOperationsService {
             request.include_props,
         )
         .await
-        .map(|record| record.map(vector_record_to_rich_result))
+        .map(|record| {
+            // Defense-in-depth: never return a dead (tombstone / TTL-expired)
+            // record from get-by-id, regardless of which backing store (WAL
+            // or SST point-lookup) produced it. The WAL memtable filters on
+            // its own, but the SST point-lookup path does not. Use the
+            // canonical is_visible_at(now_ns) on valid_to_ns.
+            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0);
+            record
+                .filter(|r| r.is_visible_at(now_ns))
+                .map(vector_record_to_rich_result)
+        })
     }
 
     /// Scan current visible canonical records from the VectorOps-backed WAL/memtable path.

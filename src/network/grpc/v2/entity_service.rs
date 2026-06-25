@@ -449,6 +449,10 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 // `permitted_principals` RBAC is not threaded here. `None` ⇒ structural isolation.
                 principal: None,
                 policy: FusionPolicy::default(),
+                // Entity fusion search is vector-only (graph_weight 0), so no
+                // graph RBAC principal applies yet. Threading the caller
+                // principal here is a follow-up for entity RBAC.
+                principal: None,
             };
 
             let (items, _stats) = self
