@@ -55,6 +55,7 @@ members = [
     "crates/horizontal/proximadb-telemetry",
     "crates/platform/proximadb-api",
     "crates/platform/proximadb-runtime",
+    "crates/platform/proximadb-admin-ui",
     "crates/modalities/proximadb-graph",
     "crates/modalities/proximadb-vector",
     "crates/modalities/proximadb-quantization-kernel",
@@ -202,6 +203,7 @@ proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
 proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
 proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
+proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
@@ -286,6 +288,7 @@ proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
+proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
