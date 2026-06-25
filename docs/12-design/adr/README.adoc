@@ -76,6 +76,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | Deletion Vectors for Cold-Path Deletes (Layered over MVCC)
 | Proposed
 | Cold-path delete mechanism (DV bitmap + immutable files + Iceberg snapshots); rejects redo/undo; retains MVCC for the hot delta
+
+| link:ADR-026-pax-canonical-vector-path.adoc[ADR-026]
+| PAX Stacked Quantization as the Canonical Vector Path (Retire Legacy Progressive Search)
+| Proposed
+| AXIS graph + PAX stacked quant (RaBitQ->SQ8->f32) is the one vector path; retire legacy progressive engines, fold their designs into PAX; PAX is the cross-modality internal columnar substrate (Parquet at the interop seam); configurable geometry + user/adaptive/learned tuning hierarchy. Tracked: TD-150..157
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
