@@ -3057,6 +3057,111 @@ pub mod types {
             Default::default()
         }
     }
+    ///`ImpactAnalysisRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "node_id"
+    ///  ],
+    ///  "properties": {
+    ///    "direction": {
+    ///      "description": "`\"forward\"` (default — what X impacts) or `\"backward\"` (what impacts X).",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "edge_types": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "limit": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "max_depth": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "node_id": {
+    ///      "description": "Start symbol node id.",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ImpactAnalysisRequest {
+        ///`"forward"` (default — what X impacts) or `"backward"` (what impacts X).
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub direction: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub edge_types: ::std::vec::Vec<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub limit: ::std::option::Option<u64>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub max_depth: ::std::option::Option<i32>,
+        ///Start symbol node id.
+        pub node_id: ::std::string::String,
+    }
+    impl ImpactAnalysisRequest {
+        pub fn builder() -> builder::ImpactAnalysisRequest {
+            Default::default()
+        }
+    }
+    ///`ImpactAnalysisResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "edge_count",
+    ///    "max_depth_reached",
+    ///    "node_ids"
+    ///  ],
+    ///  "properties": {
+    ///    "edge_count": {
+    ///      "type": "integer",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "max_depth_reached": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "node_ids": {
+    ///      "description": "Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`).",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct ImpactAnalysisResponse {
+        pub edge_count: u64,
+        pub max_depth_reached: i32,
+        ///Reached node ids (canonical `oid` = `graph/{graph_id}/node/{id}`).
+        pub node_ids: ::std::vec::Vec<::std::string::String>,
+    }
+    impl ImpactAnalysisResponse {
+        pub fn builder() -> builder::ImpactAnalysisResponse {
+            Default::default()
+        }
+    }
     ///REST input for a single index config (mirrors proto `IndexConfig`).
     ///
     /// <details><summary>JSON schema</summary>
@@ -8528,6 +8633,179 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct ImpactAnalysisRequest {
+            direction: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            edge_types: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+            limit: ::std::result::Result<::std::option::Option<u64>, ::std::string::String>,
+            max_depth: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            node_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for ImpactAnalysisRequest {
+            fn default() -> Self {
+                Self {
+                    direction: Ok(Default::default()),
+                    edge_types: Ok(Default::default()),
+                    limit: Ok(Default::default()),
+                    max_depth: Ok(Default::default()),
+                    node_id: Err("no value supplied for node_id".to_string()),
+                }
+            }
+        }
+        impl ImpactAnalysisRequest {
+            pub fn direction<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.direction = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for direction: {e}"));
+                self
+            }
+            pub fn edge_types<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_types = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edge_types: {e}"));
+                self
+            }
+            pub fn limit<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<u64>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.limit = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for limit: {e}"));
+                self
+            }
+            pub fn max_depth<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_depth = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for max_depth: {e}"));
+                self
+            }
+            pub fn node_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.node_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for node_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ImpactAnalysisRequest> for super::ImpactAnalysisRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ImpactAnalysisRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    direction: value.direction?,
+                    edge_types: value.edge_types?,
+                    limit: value.limit?,
+                    max_depth: value.max_depth?,
+                    node_id: value.node_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ImpactAnalysisRequest> for ImpactAnalysisRequest {
+            fn from(value: super::ImpactAnalysisRequest) -> Self {
+                Self {
+                    direction: Ok(value.direction),
+                    edge_types: Ok(value.edge_types),
+                    limit: Ok(value.limit),
+                    max_depth: Ok(value.max_depth),
+                    node_id: Ok(value.node_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct ImpactAnalysisResponse {
+            edge_count: ::std::result::Result<u64, ::std::string::String>,
+            max_depth_reached: ::std::result::Result<i32, ::std::string::String>,
+            node_ids: ::std::result::Result<
+                ::std::vec::Vec<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for ImpactAnalysisResponse {
+            fn default() -> Self {
+                Self {
+                    edge_count: Err("no value supplied for edge_count".to_string()),
+                    max_depth_reached: Err("no value supplied for max_depth_reached".to_string()),
+                    node_ids: Err("no value supplied for node_ids".to_string()),
+                }
+            }
+        }
+        impl ImpactAnalysisResponse {
+            pub fn edge_count<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<u64>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.edge_count = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for edge_count: {e}"));
+                self
+            }
+            pub fn max_depth_reached<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.max_depth_reached = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for max_depth_reached: {e}")
+                });
+                self
+            }
+            pub fn node_ids<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.node_ids = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for node_ids: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<ImpactAnalysisResponse> for super::ImpactAnalysisResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: ImpactAnalysisResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    edge_count: value.edge_count?,
+                    max_depth_reached: value.max_depth_reached?,
+                    node_ids: value.node_ids?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::ImpactAnalysisResponse> for ImpactAnalysisResponse {
+            fn from(value: super::ImpactAnalysisResponse) -> Self {
+                Self {
+                    edge_count: Ok(value.edge_count),
+                    max_depth_reached: Ok(value.max_depth_reached),
+                    node_ids: Ok(value.node_ids),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct IndexConfigInput {
             algorithm: ::std::result::Result<::std::string::String, ::std::string::String>,
             hnsw_config: ::std::result::Result<
@@ -12049,6 +12327,24 @@ impl Client {
     pub fn fusion_search_v2(&self) -> builder::FusionSearchV2<'_> {
         builder::FusionSearchV2::new(self)
     }
+    /// `POST /api/v2/graphs/{graph_id}/impact-analysis` — forward/backward blast radius (TD-131). The
+    /// server-side baseline for the embedded-parity gate; mirrors `GraphOperationsService::impact_analysis`
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/impact-analysis`
+    ///
+    /// Arguments:
+    /// - `graph_id`: Graph ID
+    /// - `body`
+    /// ```text
+    /// let response = client.impact_analysis_v2()
+    /// .graph_id(graph_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn impact_analysis_v2(&self) -> builder::ImpactAnalysisV2<'_> {
+        builder::ImpactAnalysisV2::new(self)
+    }
     /// Create a node in a graph
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes`
@@ -14097,6 +14393,108 @@ pub mod builder {
                 .build()?;
             let info = OperationInfo {
                 operation_id: "fusion_search_v2",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::impact_analysis_v2`]
+    ///
+    /// [`Client::impact_analysis_v2`]: super::Client::impact_analysis_v2
+    #[derive(Debug, Clone)]
+    pub struct ImpactAnalysisV2<'a> {
+        client: &'a super::Client,
+        graph_id: Result<::std::string::String, String>,
+        body: Result<types::builder::ImpactAnalysisRequest, String>,
+    }
+    impl<'a> ImpactAnalysisV2<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::ImpactAnalysisRequest>,
+            <V as std::convert::TryInto<types::ImpactAnalysisRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `ImpactAnalysisRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::ImpactAnalysisRequest,
+                ) -> types::builder::ImpactAnalysisRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/impact-analysis`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::ImpactAnalysisResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                graph_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::ImpactAnalysisRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/impact-analysis",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "impact_analysis_v2",
             };
             client.pre(&mut request, &info).await?;
             let result = client.exec(request, &info).await;

@@ -50,6 +50,8 @@ from .hybrid_index_body import HybridIndexBody
 from .hybrid_index_response_200 import HybridIndexResponse200
 from .hybrid_search_body import HybridSearchBody
 from .hybrid_search_response_200 import HybridSearchResponse200
+from .impact_analysis_request import ImpactAnalysisRequest
+from .impact_analysis_response import ImpactAnalysisResponse
 from .index_config_input import IndexConfigInput
 from .index_config_input_parameters import IndexConfigInputParameters
 from .index_spec_output import IndexSpecOutput
@@ -147,6 +149,8 @@ __all__ = (
     "HybridIndexResponse200",
     "HybridSearchBody",
     "HybridSearchResponse200",
+    "ImpactAnalysisRequest",
+    "ImpactAnalysisResponse",
     "IndexConfigInput",
     "IndexConfigInputParameters",
     "IndexSpecOutput",

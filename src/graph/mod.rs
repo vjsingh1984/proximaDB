@@ -107,10 +107,10 @@ pub use canonical::{
 // Neutral, transport-agnostic graph domain types (TD-123 Step 1). The engine and
 // services speak these; wire adapters convert proto <-> these at the boundary.
 pub use model::{
-    Edge, EdgeQuery, EdgeTypeStats, EmbeddingVersion, GraphPath, GraphStats, LabelStats, Node,
-    NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator, PropertyObject,
-    PropertyValue, TraversalAlgorithm, TraversalRequest, TraversalResponse, TraversalStats,
-    property_value, property_value::Value,
+    Edge, EdgeQuery, EdgeTypeStats, EmbeddingVersion, GraphPath, GraphStats, ImpactDirection,
+    LabelStats, Node, NodeQuery, PropertyArray, PropertyFilter, PropertyFilterOperator,
+    PropertyObject, PropertyValue, TraversalAlgorithm, TraversalRequest, TraversalResponse,
+    TraversalStats, property_value, property_value::Value,
 };
 
 use dashmap::DashMap;

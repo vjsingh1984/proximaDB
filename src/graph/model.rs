@@ -219,6 +219,16 @@ pub struct TraversalResponse {
     pub stats: Option<TraversalStats>,
 }
 
+/// Direction for impact analysis (TD-131). `Forward` follows OUTGOING edges from the start node
+/// ("what does X impact"); `Backward` follows INCOMING edges ("what impacts X"). Distinct from
+/// traversal so the API reads as blast-radius, not a graph walk.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImpactDirection {
+    #[default]
+    Forward,
+    Backward,
+}
+
 /// Traversal statistics.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct TraversalStats {

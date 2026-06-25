@@ -145,6 +145,11 @@ pub fn create_v2_router() -> Router<AppState> {
             "/graphs/{graph_id}/fusion-search",
             post(graphs::fusion_search_v2),
         )
+        // TD-131 — graph impact analysis (forward/backward blast radius).
+        .route(
+            "/graphs/{graph_id}/impact-analysis",
+            post(graphs::impact_analysis_v2),
+        )
         // Phase 8 (F1) — Continuous Discovery jobs (experimental).
         .route(
             "/collections/{collection_id}/discovery-jobs",
