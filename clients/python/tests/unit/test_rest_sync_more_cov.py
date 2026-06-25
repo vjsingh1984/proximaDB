@@ -251,7 +251,10 @@ def test_list_collections_with_params(monkeypatch):
     method, path, kw = _last(c)
     assert path == "/api/v2/collections"
     assert kw["params"]["limit"] == 10
-    assert kw["params"]["include_stats"] == "true"
+    # The generated REST transport (openapi-python-client) emits the boolean
+    # query param as a native Python bool in the params dict; httpx serializes
+    # it to "true" at the wire layer. Assert the real in-memory value.
+    assert kw["params"]["include_stats"] is True
 
 
 def test_list_collections_no_params(monkeypatch):
