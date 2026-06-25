@@ -111,6 +111,18 @@ impl ProximaDB {
         }
         CrossCacheOrchestrator::register_global(orchestrator.clone());
 
+        // Co-design T2.2: wire the io_trace flush to feed the trace-driven cache
+        // sizing loop, so footer miss rate and GET fragmentation drive cache budget.
+        // High footer miss rate → grow footer cache; fragmented GETs → coalesce tuning.
+        crate::storage::cache::orchestrator::CrossCacheOrchestrator::install_trace_driven_sizing(
+            orchestrator.clone(),
+        );
+
+        // T1.1: initialize global fusion metrics for cross-modal fusion observability.
+        // Metrics are emitted to Prometheus for production monitoring and cost model
+        // calibration (fusion_latency_seconds, sources_fused, sources_skipped).
+        crate::metrics::fusion::init_global_fusion_metrics();
+
         // Co-design C4: wire the io_trace flush to feed the trace-driven route
         // cost model, so completed routed queries teach the ComputeScheduler the
         // measured cost of each (shape-class, backend). Observe-mode today —
@@ -156,6 +168,7 @@ impl ProximaDB {
             &config.storage,
             Some(orchestrator.clone()),
             Some(&config),
+            network::multi_server::ServiceProfile::Server,
         )
         .await?;
         tracing::info!("✅ ProximaDB::new - SharedServices created with unified CollectionService");
@@ -172,16 +185,13 @@ impl ProximaDB {
             .map_err(|e| anyhow::anyhow!("Failed to init WAL manifest: {}", e))?;
         tracing::info!("✅ ProximaDB::new - Global WAL manifest initialized");
 
-        // Step 4: Set global metadata provider BEFORE creating StorageEngine
-        // This ensures WAL pool instances can resolve collection paths correctly
-        tracing::debug!(
-            "🔧 ProximaDB::new - Setting global metadata provider for WAL path resolution..."
-        );
-        storage::persistence::write_ahead_log::set_global_metadata_provider(
-            collection_service.metadata_backend().clone(),
-        )
-        .await;
-        tracing::info!("✅ ProximaDB::new - Global metadata provider set for WAL");
+        // Step 4: Set global catalog BEFORE creating StorageEngine.
+        // The catalog is the sole authority for WAL/recovery collection
+        // resolution, so WAL pool instances resolve collection paths through it.
+        if let Some(catalog_manager) = collection_service.catalog_manager() {
+            storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
+            tracing::info!("✅ ProximaDB::new - Global catalog set for WAL/recovery");
+        }
 
         // Step 5: Initialize the storage engine (SST/VIPER/etc)
         tracing::info!("🌐 ProximaDB::new - Creating StorageEngine...");
@@ -189,10 +199,6 @@ impl ProximaDB {
             storage::StorageEngine::new_without_collection_service(config.storage.clone())
                 .await
                 .map_err(|e| anyhow::anyhow!("Failed to create storage engine: {}", e))?;
-
-        storage_engine
-            .set_metadata_provider(collection_service.metadata_backend().clone())
-            .await;
 
         // Wire CanonicalPrecisionResolver into Compaction. The catalog
         // already exists (constructed inside SharedServices::new above)
@@ -266,7 +272,8 @@ impl ProximaDB {
             .http(|h| h.bind_address(rest_addr))
             .grpc(|g| g.bind_address(grpc_addr))
             .with_api_config(config.api.clone())
-            .with_data_dir(config.server.data_dir.clone());
+            .with_data_dir(config.server.data_dir.clone())
+            .with_admin_ui_enabled(config.server.admin_ui.enabled);
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) {
@@ -307,6 +314,33 @@ impl ProximaDB {
         )
         .parse()
         .map_err(|e| anyhow::anyhow!("Failed to parse arrow flight bind address: {}", e))?;
+
+        // Portless ("embedded") transport: when `[api].transport = "uds"`, bind
+        // the REST / gRPC / Arrow Flight surfaces to Unix-domain sockets under
+        // `[api].socket_dir` instead of TCP ports, and disable the pgwire
+        // listener (a standard PG TCP driver) so the process opens *no* TCP
+        // listener at all. Mixed-read-safe: the default ("tcp") leaves every
+        // existing deployment unchanged.
+        if config.api.transport.eq_ignore_ascii_case("uds") {
+            let socket_dir = config.api.socket_dir.clone().ok_or_else(|| {
+                anyhow::anyhow!("[api].transport = \"uds\" requires [api].socket_dir to be set")
+            })?;
+            let socket_dir = std::path::PathBuf::from(socket_dir);
+            std::fs::create_dir_all(&socket_dir).map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to create UDS socket dir {}: {}",
+                    socket_dir.display(),
+                    e
+                )
+            })?;
+            tracing::info!(
+                socket_dir = %socket_dir.display(),
+                "🔌 Portless mode: binding REST/gRPC/Arrow Flight to Unix-domain sockets (no TCP ports); pgwire disabled"
+            );
+            multi_config.uds_socket_dir = Some(socket_dir);
+            // pgwire has no UDS surface here; embedded clients use REST/gRPC/Flight.
+            multi_config.postgres_config.enable_postgres = false;
+        }
         tracing::debug!("✅ ProximaDB::new - Multi-server config created successfully");
 
         // Initialize security coordinator if configured
@@ -984,7 +1018,7 @@ impl ProximaDB {
     pub async fn get_graph_stats(
         &self,
         graph_id: &str,
-    ) -> anyhow::Result<proto::proximadb_v1::GraphStats> {
+    ) -> anyhow::Result<crate::graph::GraphStats> {
         if let Some(ref multi_server) = self.multi_server {
             multi_server
                 .shared_services

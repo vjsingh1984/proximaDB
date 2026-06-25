@@ -48,6 +48,17 @@ pub struct AppState {
     /// Document service, extracted at boot (TD-104 S5). Feeds the document AQL
     /// source; same `Arc` as the root handler.
     pub document_service: Arc<crate::storage::document::DocumentService>,
+    /// Collection service, extracted at boot (TD-104 S5). Feeds the health
+    /// endpoint's collection-count probe; same `Arc` as the root handler.
+    pub collection_service: Arc<crate::services::CollectionService>,
+    /// Record write-path service (TD-104 S5). Owns record-batch insert/delete
+    /// orchestration; same `Arc` the root handler's `record_ops()` returns.
+    pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
+    /// Cross-modal fusion service — the single retrieval port every search
+    /// surface delegates to (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`).
+    /// Constructed once at boot from the vector + graph services (mirrors the
+    /// TD-104 S5 extraction pattern) instead of per-request in each handler.
+    pub fusion_service: Arc<crate::services::fusion_service::FusionService>,
     /// Observability service, extracted at boot (TD-104 S5). Feeds the
     /// observability AQL source; same `Arc` as the root handler.
     pub observability_service: Arc<crate::observability::ObservabilityService>,
@@ -181,8 +192,17 @@ impl AppState {
         // Mirrors how `graph_execution_service` is already threaded.
         let vector_operations_service = request_handlers.vector_operations_service.clone();
         let document_service = request_handlers.document_service.clone();
+        let collection_service = request_handlers.collection_service.clone();
+        let record_ops = request_handlers.record_ops();
         let observability_service = request_handlers.observability_service.clone();
         let event_log = request_handlers.event_log.clone();
+        // Cross-modal fusion port — built once at boot from the vector + graph
+        // services (search-surface contract: one retrieval engine, shared port).
+        let fusion_service =
+            std::sync::Arc::new(crate::services::fusion_service::FusionService::new(
+                request_handlers.vector_operations_service.clone(),
+                request_handlers.graph_operations_service.clone(),
+            ));
         // TD-104 2(b): default `api_handlers` to the root handler cast to its
         // `ApiHandlersPort` impl. Production overrides via `with_api_handlers`
         // with the runtime port-based handler; legacy/dev/test paths that never
@@ -195,6 +215,9 @@ impl AppState {
             graph_execution_service,
             vector_operations_service,
             document_service,
+            collection_service,
+            record_ops,
+            fusion_service,
             observability_service,
             event_log,
             security_coordinator,
@@ -408,7 +431,7 @@ impl AppState {
     pub fn health_state(&self) -> health::HealthState {
         health::HealthState::new(
             self.vector_operations_service.clone(),
-            self.request_handlers.collection_service.clone(),
+            self.collection_service.clone(),
             self.graph_execution_service.clone(),
         )
     }
@@ -589,7 +612,8 @@ fn filter_canonical_wal_for_collection(
                 collection_id, ..
             } => collection_id == collection,
             proximadb_storage_common::CanonicalOperation::Checkpoint(_)
-            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. } => false,
+            | proximadb_storage_common::CanonicalOperation::CdcBarrier { .. }
+            | proximadb_storage_common::CanonicalOperation::CatalogMutation { .. } => false,
         })
         .collect()
 }
@@ -1245,10 +1269,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
         };
 
-        let engine = state
-            .request_handlers
-            .vector_operations_service
-            .unified_engine();
+        let engine = state.vector_operations_service.unified_engine();
         let legacy_store = ProximaEntityStore::with_vector_service(
             engine,
             Arc::new(CsrRelationsStore::new()),
@@ -2258,6 +2279,7 @@ mod tests {
             &config.storage,
             None,
             Some(&config),
+            crate::network::multi_server::ServiceProfile::Embedded,
         )
         .await
         .expect("failed to initialize shared services for test app state");

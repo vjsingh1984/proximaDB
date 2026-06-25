@@ -587,6 +587,7 @@ pub fn build_collection_config(
         text_storage_configs: vec![],
         enable_dual_use_embeddings: None,
         canonical_embedding_precision: None,
+        permitted_principals: vec![],
     };
 
     // Apply smart defaults from proto comments

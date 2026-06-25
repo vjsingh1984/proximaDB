@@ -1891,7 +1891,7 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         &self,
         request: Request<V2QueryRequest>,
     ) -> Result<Response<V2QueryResponse>, Status> {
-        let _tenant_id = Self::extract_tenant_id(&request);
+        let tenant_id = Self::extract_tenant_id(&request);
         let q = request.into_inner();
         let collection = if q.collection_id.is_empty() {
             None
@@ -1900,9 +1900,20 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
         };
         let resp = self
             .request_handlers
-            .execute_sql_v1(q.query, None, collection)
+            .execute_sql_v1(q.query, None, collection, tenant_id.as_deref())
             .await
-            .map_err(|e| Status::internal(format!("ExecuteQuery failed: {e}")))?;
+            .map_err(|e| {
+                // A DML lock conflict → ABORTED (retryable); other errors → INTERNAL.
+                if let Some((resource, holder)) = crate::errors::extract_dml_lock_conflict(&e) {
+                    let msg = match holder {
+                        Some(h) => format!("DML lock conflict on {resource} held by {h}"),
+                        None => format!("DML lock conflict on {resource}"),
+                    };
+                    Status::aborted(msg)
+                } else {
+                    Status::internal(format!("ExecuteQuery failed: {e}"))
+                }
+            })?;
         let rows = resp
             .rows
             .into_iter()

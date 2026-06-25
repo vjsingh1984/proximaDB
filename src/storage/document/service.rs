@@ -868,8 +868,31 @@ impl DocumentService {
         id: Option<&str>,
         document: SqlObject,
     ) -> Result<DocumentRecord> {
+        // The legacy v1 `SqlObject` is converted into the neutral, ProximaTree-
+        // native `DocumentRecord` here at the wire edge; all durability flows
+        // through the `DocumentRecord`-native path below.
+        let doc_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), |s| s.to_string());
+        let record = DocumentRecord::new(doc_id, document, collection.to_string());
+        self.insert_document_record(collection, record).await
+    }
+
+    /// Insert a pre-built [`DocumentRecord`] — the ProximaTree-native (v2) write
+    /// path that never touches the legacy v1 `SqlObject`. Same durability
+    /// (WAL → canonical record store → indexes → hot cache → stats) as
+    /// [`insert_document`], which now converts `SqlObject` → `DocumentRecord` at
+    /// the wire edge and delegates here. The record's `id` is used verbatim
+    /// (callers generate/normalize it).
+    pub async fn insert_document_record(
+        &self,
+        collection: &str,
+        record: DocumentRecord,
+    ) -> Result<DocumentRecord> {
         let start = std::time::Instant::now();
-        debug!("Inserting document into collection: {}", collection);
+        let doc_id = record.id.clone();
+        debug!(
+            "Inserting document {} into collection: {}",
+            doc_id, collection
+        );
 
         // Verify collection exists
         let _collection_meta = match self
@@ -883,12 +906,6 @@ impl DocumentService {
                 return Err(e);
             }
         };
-
-        // Generate ID if not provided
-        let doc_id = id.map_or_else(|| uuid::Uuid::new_v4().to_string(), |s| s.to_string());
-
-        // Create document record
-        let record = DocumentRecord::new(doc_id.clone(), document, collection.to_string());
 
         // Write to WAL first (durability before in-memory update)
         if let Err(e) = self.write_document_upsert_to_wal(collection, &record).await {

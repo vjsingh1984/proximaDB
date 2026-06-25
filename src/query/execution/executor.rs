@@ -2296,47 +2296,24 @@ mod executor_tests {
                 .expect("Failed to create Axis manager"),
         );
 
-        // Create collection service with universal metadata backend
+        // Create collection service backed by the system catalog (sole store).
+        use crate::catalog::CatalogManager;
         use crate::core::config::StorageConfig;
-        use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
-        use crate::storage::traits::InternalCollectionProvider;
 
-        let fs_config = FilesystemConfig::default();
-        let filesystem2 = Arc::new(
-            FilesystemFactory::create(fs_config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
-
-        use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
-        let metadata_config = UniversalMetadataConfig {
-            storage_url: storage_url.clone(),
-            compression: true,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: Some(
-                temp_dir
-                    .path()
-                    .to_str()
-                    .expect("temp_dir path should be valid UTF-8")
-                    .to_string(),
-            ),
-        };
-        let metadata_backend = Arc::new(
-            UniversalMetadataBackend::new(metadata_config, filesystem2)
-                .await
-                .expect("Failed to create metadata backend"),
-        ) as Arc<dyn InternalCollectionProvider>;
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &storage_url)
+            .await
+            .expect("Failed to create test xCatalog");
         let storage_config = StorageConfig {
             metadata_url: storage_url.clone(),
             ..Default::default()
         };
         let collection_service = Arc::new(
-            CollectionService::new(metadata_backend, storage_config)
+            CollectionService::new(storage_config)
                 .await
-                .expect("Failed to create collection service"),
+                .expect("Failed to create collection service")
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         // Create vector operations service with all dependencies
@@ -2402,47 +2379,24 @@ mod executor_tests {
                 .expect("Failed to create Axis manager"),
         );
 
-        // Create collection service with universal metadata backend
+        // Create collection service backed by the system catalog (sole store).
+        use crate::catalog::CatalogManager;
         use crate::core::config::StorageConfig;
-        use crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend;
-        use crate::storage::traits::InternalCollectionProvider;
 
-        let fs_config = FilesystemConfig::default();
-        let filesystem2 = Arc::new(
-            FilesystemFactory::create(fs_config)
-                .await
-                .expect("Failed to create filesystem"),
-        );
-
-        use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
-        let metadata_config = UniversalMetadataConfig {
-            storage_url: storage_url.clone(),
-            compression: true,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: Some(
-                temp_dir
-                    .path()
-                    .to_str()
-                    .expect("temp_dir path should be valid UTF-8")
-                    .to_string(),
-            ),
-        };
-        let metadata_backend = Arc::new(
-            UniversalMetadataBackend::new(metadata_config, filesystem2)
-                .await
-                .expect("Failed to create metadata backend"),
-        ) as Arc<dyn InternalCollectionProvider>;
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &storage_url)
+            .await
+            .expect("Failed to create test xCatalog");
         let storage_config = StorageConfig {
             metadata_url: storage_url.clone(),
             ..Default::default()
         };
         let collection_service = Arc::new(
-            CollectionService::new(metadata_backend, storage_config)
+            CollectionService::new(storage_config)
                 .await
-                .expect("Failed to create collection service"),
+                .expect("Failed to create collection service")
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         // Create the test collection before creating the vector service
@@ -2468,6 +2422,7 @@ mod executor_tests {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
         let _ = collection_service.create_collection(&config).await;
 

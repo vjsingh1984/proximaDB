@@ -79,33 +79,15 @@ from .factory import ChunkingStrategyFactory, get_chunking_strategy
 from .paragraph import ParagraphStrategy
 
 # Parser utilities (enhanced design patterns)
-from .parser_utils import (  # Errors; Fallback strategies; Metrics; Cache; Decorators; Parser base classes; Plugin system; Validation; Utilities
+from .parser_utils import (  # Errors; Metrics; Parser base class; Validation
     BaseLanguageParser,
-    CFamilyParser,
     ConfigValidator,
-    DynamicLanguageParser,
-    FallbackConfig,
-    FallbackStrategy,
-    FunctionalLanguageParser,
-    JVMFamilyParser,
-    MarkupParser,
     MetricsCollector,
     ParseError,
-    ParserCache,
     ParserError,
-    ParserInitializationError,
     ParserMetrics,
-    ParserPlugin,
-    ParserPluginRegistry,
-    UnsupportedLanguageError,
     ValidationResult,
-    cached_parser,
-    detect_language_from_content,
     get_metrics_collector,
-    get_parser_cache,
-    get_plugin_registry,
-    parser_context,
-    with_fallback,
     with_metrics,
 )
 
@@ -131,6 +113,7 @@ from .pipeline import (  # Configuration; Pipeline stages; Core components; Fact
 )
 from .recursive import RecursiveStrategy
 from .semantic import SemanticStrategy
+from .semantic_embedding import SemanticEmbeddingStrategy
 from .sentence import SentenceStrategy
 from .sliding_window import SlidingWindowStrategy
 
@@ -145,6 +128,7 @@ __all__ = [
     "SentenceStrategy",
     "ParagraphStrategy",
     "SemanticStrategy",
+    "SemanticEmbeddingStrategy",
     "RecursiveStrategy",
     # Factory
     "ChunkingStrategyFactory",
@@ -193,40 +177,17 @@ __all__ = [
     "EXTENSION_TO_LANGUAGE",
     # Parser utilities - Errors
     "ParserError",
-    "ParserInitializationError",
     "ParseError",
-    "UnsupportedLanguageError",
-    # Parser utilities - Fallback
-    "FallbackStrategy",
-    "FallbackConfig",
     # Parser utilities - Metrics
     "ParserMetrics",
     "MetricsCollector",
     "get_metrics_collector",
-    # Parser utilities - Cache
-    "ParserCache",
-    "get_parser_cache",
-    # Parser utilities - Decorators
     "with_metrics",
-    "with_fallback",
-    "cached_parser",
-    # Parser utilities - Base classes
+    # Parser utilities - Base class
     "BaseLanguageParser",
-    "CFamilyParser",
-    "JVMFamilyParser",
-    "DynamicLanguageParser",
-    "FunctionalLanguageParser",
-    "MarkupParser",
-    # Parser utilities - Plugin system
-    "ParserPlugin",
-    "ParserPluginRegistry",
-    "get_plugin_registry",
     # Parser utilities - Validation
     "ValidationResult",
     "ConfigValidator",
-    # Parser utilities - Helpers
-    "parser_context",
-    "detect_language_from_content",
     # Document/Binary parsers
     "BinaryType",
     "DocumentType",

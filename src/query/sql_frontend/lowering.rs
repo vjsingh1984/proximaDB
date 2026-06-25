@@ -1028,30 +1028,28 @@ mod lowering_tests {
 
     /// Create mock collection service for testing
     async fn setup_test_collection_service() -> Arc<CollectionService> {
+        use crate::catalog::CatalogManager;
         use crate::core::config::StorageConfig;
         use crate::proto::proximadb_v1::CollectionConfig;
-        use crate::storage::metadata::backends::universal_backend::UniversalMetadataConfig;
-        use crate::storage::persistence::filesystem::FilesystemFactory;
 
-        let config = UniversalMetadataConfig::default();
-        let filesystem_config = Default::default();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(filesystem_config)
-                .await
-                .expect("FilesystemFactory creation should not fail in test"),
-        );
-        let backend =
-            crate::storage::metadata::backends::universal_backend::UniversalMetadataBackend::new(
-                config,
-                filesystem_factory,
-            )
+        let temp_dir = tempfile::tempdir().expect("temp dir should be creatable in test");
+        let storage_url = format!("file://{}", temp_dir.path().display());
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &storage_url)
             .await
-            .expect("UniversalMetadataBackend creation should not fail in test");
-        let storage_config = StorageConfig::default();
+            .expect("xCatalog creation should not fail in test");
+        // Keep temp_dir alive for the lifetime of the test service.
+        std::mem::forget(temp_dir);
+        let storage_config = StorageConfig {
+            metadata_url: storage_url.clone(),
+            ..Default::default()
+        };
         let service = Arc::new(
-            CollectionService::new(Arc::new(backend), storage_config)
+            CollectionService::new(storage_config)
                 .await
-                .expect("CollectionService creation should not fail in test"),
+                .expect("CollectionService creation should not fail in test")
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         // Create test collection "products"

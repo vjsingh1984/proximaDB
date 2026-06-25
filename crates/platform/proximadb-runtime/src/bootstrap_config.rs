@@ -19,6 +19,29 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use tracing::{debug, info, warn};
 
+/// Where a network surface should listen: a TCP socket or a Unix-domain socket.
+///
+/// Portless ("embedded") mode resolves every surface to [`BindTarget::Uds`] so
+/// the process opens no TCP listener at all; the default server keeps binding
+/// [`BindTarget::Tcp`]. This is the bind-target half of the `transport = "uds"`
+/// opt-in (see `proximadb_config::ApiConfig::transport`).
+#[derive(Debug, Clone)]
+pub enum BindTarget {
+    /// Bind a TCP socket at the given address (default / server mode).
+    Tcp(SocketAddr),
+    /// Bind a Unix-domain socket at the given filesystem path (embedded mode).
+    Uds(PathBuf),
+}
+
+// Socket file names under `MultiServerConfig::uds_socket_dir`. The Python SDK
+// must use identical names when deriving its UDS HTTP/gRPC/Flight clients.
+/// Socket file name for the REST surface.
+pub const UDS_REST_SOCKET_NAME: &str = "rest.sock";
+/// Socket file name for the gRPC surface.
+pub const UDS_GRPC_SOCKET_NAME: &str = "grpc.sock";
+/// Socket file name for the Arrow Flight surface.
+pub const UDS_FLIGHT_SOCKET_NAME: &str = "flight.sock";
+
 /// Multi-server configuration supporting HTTP and gRPC with binary Avro payloads
 ///
 /// ## Configuration Strategy:
@@ -78,6 +101,20 @@ pub struct MultiServerConfig {
 
     /// Bind address for unified port (e.g., "0.0.0.0")
     pub unified_bind_address: String,
+
+    /// Portless ("embedded") mode: directory holding the Unix-domain sockets for
+    /// the REST / gRPC / Arrow Flight surfaces. `None` (default) keeps TCP mode;
+    /// `Some(dir)` makes [`Self::rest_bind_target`], [`Self::grpc_bind_target`],
+    /// and [`Self::arrow_bind_target`] resolve to `<dir>/proximadb-embedded.*.sock`
+    /// and the `*_port` fields are ignored. Set by the bootstrap when
+    /// `[api].transport = "uds"`.
+    pub uds_socket_dir: Option<PathBuf>,
+
+    /// Mount the read-only embedded admin dashboard at `/admin` (+ `/dashboard`).
+    /// Sourced from `[server.admin_ui] enabled` in the TOML config. Default:
+    /// `false` — off for Kubernetes pods and embedded/UDS deployments unless an
+    /// operator explicitly opts in for a standalone instance.
+    pub admin_ui_enabled: bool,
 
     /// Cluster mode configuration (consensus, replication, health services)
     /// Only used when `cluster` feature is enabled
@@ -568,6 +605,8 @@ impl Default for MultiServerConfig {
             unified_mode: false, // Legacy multi-port mode by default
             unified_port: 5678,  // Use REST port for unified
             unified_bind_address: "0.0.0.0".to_string(),
+            uds_socket_dir: None,    // TCP mode by default; portless opt-in only
+            admin_ui_enabled: false, // read-only /admin dashboard off by default; opt-in via TOML
             // Cluster mode defaults
             #[cfg(feature = "cluster")]
             cluster_config: None, // Cluster mode disabled by default
@@ -657,6 +696,39 @@ impl MultiServerConfig {
                     .parse()
                     .unwrap_or_else(|_| SocketAddr::from(([0, 0, 0, 0], self.unified_port)))
             })
+    }
+
+    /// Resolve where the REST surface should listen. Returns a Unix-domain
+    /// socket under [`Self::uds_socket_dir`] in portless mode, else the TCP
+    /// HTTP bind address.
+    pub fn rest_bind_target(&self) -> BindTarget {
+        match &self.uds_socket_dir {
+            Some(dir) => BindTarget::Uds(dir.join(UDS_REST_SOCKET_NAME)),
+            None => BindTarget::Tcp(self.http_bind_address()),
+        }
+    }
+
+    /// Resolve where the gRPC surface should listen (UDS in portless mode,
+    /// else the TCP gRPC bind address).
+    pub fn grpc_bind_target(&self) -> BindTarget {
+        match &self.uds_socket_dir {
+            Some(dir) => BindTarget::Uds(dir.join(UDS_GRPC_SOCKET_NAME)),
+            None => BindTarget::Tcp(self.grpc_bind_address()),
+        }
+    }
+
+    /// Resolve where the Arrow Flight surface should listen (UDS in portless
+    /// mode, else the TCP Arrow IPC bind address).
+    pub fn arrow_bind_target(&self) -> BindTarget {
+        match &self.uds_socket_dir {
+            Some(dir) => BindTarget::Uds(dir.join(UDS_FLIGHT_SOCKET_NAME)),
+            None => BindTarget::Tcp(self.arrow_ipc_config.active_bind_address()),
+        }
+    }
+
+    /// True when the server is in portless (Unix-domain socket) transport mode.
+    pub fn is_uds_mode(&self) -> bool {
+        self.uds_socket_dir.is_some()
     }
 
     /// Check if unified port mode is enabled

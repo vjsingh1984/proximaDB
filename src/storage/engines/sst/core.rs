@@ -44,19 +44,19 @@ use crate::storage::transaction_coordinator::TransactionCoordinator;
 use proximadb_records::ProximaRecord;
 
 // AXIS manager for HNSW/IVF index integration
-use crate::index::axis::management::manager::AxisManager;
+use proximadb_index_traits::IndexEngine;
 use std::sync::OnceLock;
 
 /// Global AXIS manager singleton for SST engine search optimization
-static GLOBAL_SST_AXIS_MANAGER: OnceLock<Arc<AxisManager>> = OnceLock::new();
+static GLOBAL_SST_AXIS_MANAGER: OnceLock<Arc<dyn IndexEngine>> = OnceLock::new();
 
 /// Register a global AXIS manager for SST engine to use in searches
-pub fn set_sst_axis_manager(axis_manager: Arc<AxisManager>) {
+pub fn set_sst_axis_manager(axis_manager: Arc<dyn IndexEngine>) {
     let _ = GLOBAL_SST_AXIS_MANAGER.set(axis_manager);
 }
 
 /// Get the global AXIS manager if registered
-pub fn get_sst_axis_manager() -> Option<Arc<AxisManager>> {
+pub fn get_sst_axis_manager() -> Option<Arc<dyn IndexEngine>> {
     GLOBAL_SST_AXIS_MANAGER.get().cloned()
 }
 
@@ -262,7 +262,7 @@ pub struct SstEngine {
     /// - Coordinated with query optimizer
     ///
     /// Initialized from global singleton or set explicitly
-    axis_manager: Option<Arc<AxisManager>>,
+    axis_manager: Option<Arc<dyn IndexEngine>>,
 
     /// **PCA Model Cache** (Per-Collection)
     ///
@@ -667,7 +667,7 @@ impl SstEngine {
     ///
     /// Note: This method checks both the instance field and the global singleton
     /// to handle cases where the SST engine is created before AXIS manager initialization.
-    pub fn axis_manager(&self) -> Option<Arc<AxisManager>> {
+    pub fn axis_manager(&self) -> Option<Arc<dyn IndexEngine>> {
         // First check instance field, then fall back to global singleton
         self.axis_manager.clone().or_else(get_sst_axis_manager)
     }

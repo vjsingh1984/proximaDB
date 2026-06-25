@@ -331,16 +331,145 @@ message GraphEdgeTypeStats {
 }
 
 // ============================================================================
+// Streaming traversal (TD-124)
+// ============================================================================
+
+// One chunk of a server-streamed traversal. The backing engine materialises
+// the traversal eagerly and emits a single terminal chunk (`done = true`)
+// today; the chunked wire shape leaves room for incremental frontiers without
+// a contract break.
+message GraphTraversalChunk {
+  repeated GraphNode nodes = 1;
+  repeated GraphEdge edges = 2;
+  repeated GraphPath paths = 3;
+  // Present on the final chunk.
+  optional GraphTraversalStats stats = 4;
+  // True on the final chunk.
+  bool done = 5;
+}
+
+// ============================================================================
+// Analytics (TD-124)
+// ============================================================================
+
+message GraphConnectedComponentsRequest {
+  string graph_id = 1;
+}
+
+message GraphConnectedComponentsResponse {
+  repeated GraphComponent components = 1;
+}
+
+// A weakly-connected component as a set of node IDs.
+message GraphComponent {
+  repeated string node_ids = 1;
+}
+
+message GraphHasCycleRequest {
+  string graph_id = 1;
+}
+
+message GraphHasCycleResponse {
+  bool has_cycle = 1;
+}
+
+// ============================================================================
+// Unique-constraint DDL (TD-124)
+// ============================================================================
+
+message GraphUniqueConstraintRequest {
+  string graph_id = 1;
+  // Node label the constraint applies to.
+  string label = 2;
+  // Property key required to be unique within `label`.
+  string property = 3;
+}
+
+message GraphUniqueConstraintResponse {
+  bool success = 1;
+  optional string error_message = 2;
+}
+
+// ============================================================================
+// Batch create (TD-124)
+// ============================================================================
+
+message BatchCreateGraphNodesRequest {
+  string graph_id = 1;
+  repeated GraphNode nodes = 2;
+}
+
+message BatchCreateGraphEdgesRequest {
+  string graph_id = 1;
+  repeated GraphEdge edges = 2;
+}
+
+message BatchCreateGraphNodesResponse {
+  bool success = 1;
+  repeated GraphNode nodes = 2;
+  uint32 created_count = 3;
+  optional string error_message = 4;
+}
+
+message BatchCreateGraphEdgesResponse {
+  bool success = 1;
+  repeated GraphEdge edges = 2;
+  uint32 created_count = 3;
+  optional string error_message = 4;
+}
+
+// ============================================================================
+// Declarative query (Cypher) — TD-124
+// ============================================================================
+
+// Supported declarative query languages. Today only the openCypher subset is
+// backed (single-node patterns and linear traversal chains with equality
+// property constraints); GREMLIN is reserved.
+enum GraphQueryLanguage {
+  GRAPH_QUERY_LANGUAGE_UNSPECIFIED = 0;
+  // Existing property-based API surface (QueryNodes/QueryEdges).
+  GRAPH_QUERY_LANGUAGE_NATIVE = 1;
+  // openCypher-compatible declarative query (supported subset).
+  GRAPH_QUERY_LANGUAGE_CYPHER = 2;
+  // Reserved; not yet backed.
+  GRAPH_QUERY_LANGUAGE_GREMLIN = 3;
+}
+
+message ExecuteGraphQueryRequest {
+  string graph_id = 1;
+  GraphQueryLanguage language = 2;
+  // Query text, e.g. "MATCH (n:Person) WHERE n.age = 30 RETURN n".
+  string query = 3;
+  // Optional per-call timeout.
+  optional uint32 timeout_ms = 4;
+}
+
+// A single result row: column name -> scalar value. The backing graph subset
+// engine returns node-shaped rows serialised as string columns; richer value
+// types stay reserved on the v2 contract for a future engine expansion.
+message ExecuteGraphQueryRow {
+  map<string, GraphPropertyValue> columns = 1;
+}
+
+message ExecuteGraphQueryResponse {
+  repeated ExecuteGraphQueryRow rows = 1;
+  optional string error_message = 2;
+}
+
+// ============================================================================
 // Service
 // ============================================================================
 
 // Canonical v2 graph service. Replaces the deprecated
 // `proximadb.v1.GraphService` for SDK and external clients.
 //
-// Deferred from this first surface (tracked as a follow-up TD; still reachable
-// on v1 behind `enable_grpc_v1_compat`): StreamTraverse, GetConnectedComponents,
-// HasCycle, Add/RemoveUniqueConstraint, BatchCreateNodes/Edges, ExecuteQuery
-// (Cypher/Gremlin), ExecuteHybridQuery, and the retired PULSAR/QUASAR RPCs.
+// TD-124 added the analytic/batch/constraint/streaming RPCs and the declarative
+// `ExecuteQuery` (Cypher subset) below. Still deferred (only reachable on v1
+// behind `enable_grpc_v1_compat`), because they are not backed by a v2-native
+// surface: `ExecuteHybridQuery` (depends on the full vector+graph
+// `UnifiedHandlers` and the large v1 vector message graph, which has no clean
+// v2-native equivalent), and the retired/unimplemented `CreateGraphWithEngine`,
+// `GetPulsarStats`, and the PULSAR/QUASAR shard RPCs.
 service ProximaGraphService {
   // Node operations
   rpc CreateNode(CreateGraphNodeRequest) returns (GraphNodeResponse);
@@ -363,4 +492,27 @@ service ProximaGraphService {
   rpc TraverseGraph(TraverseGraphRequest) returns (TraverseGraphResponse);
   rpc ShortestPath(GraphShortestPathRequest) returns (GraphShortestPathResponse);
   rpc GetGraphStats(GetGraphStatsRequest) returns (GraphStats);
+
+  // Streaming traversal (TD-124)
+  rpc StreamTraverse(TraverseGraphRequest) returns (stream GraphTraversalChunk);
+
+  // Analytics (TD-124)
+  rpc GetConnectedComponents(GraphConnectedComponentsRequest)
+      returns (GraphConnectedComponentsResponse);
+  rpc HasCycle(GraphHasCycleRequest) returns (GraphHasCycleResponse);
+
+  // Unique-constraint DDL (TD-124)
+  rpc AddUniqueConstraint(GraphUniqueConstraintRequest)
+      returns (GraphUniqueConstraintResponse);
+  rpc RemoveUniqueConstraint(GraphUniqueConstraintRequest)
+      returns (GraphUniqueConstraintResponse);
+
+  // Batch create (TD-124)
+  rpc BatchCreateNodes(BatchCreateGraphNodesRequest)
+      returns (BatchCreateGraphNodesResponse);
+  rpc BatchCreateEdges(BatchCreateGraphEdgesRequest)
+      returns (BatchCreateGraphEdgesResponse);
+
+  // Declarative query — Cypher subset (TD-124)
+  rpc ExecuteQuery(ExecuteGraphQueryRequest) returns (ExecuteGraphQueryResponse);
 }

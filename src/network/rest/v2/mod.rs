@@ -45,6 +45,7 @@
 pub mod collections;
 pub mod discovery;
 pub mod external_collection;
+pub mod graphs;
 pub mod query;
 pub mod records;
 pub mod schema;
@@ -138,6 +139,17 @@ pub fn create_v2_router() -> Router<AppState> {
         // Query facade operations
         .route("/query", post(query::execute_query))
         .route("/query/explain", post(query::explain_query))
+        // Cross-modal fusion seam — graph instance (TD-137): vector seed → graph
+        // expand → calibrated fuse-by-oid.
+        .route(
+            "/graphs/{graph_id}/fusion-search",
+            post(graphs::fusion_search_v2),
+        )
+        // TD-131 — graph impact analysis (forward/backward blast radius).
+        .route(
+            "/graphs/{graph_id}/impact-analysis",
+            post(graphs::impact_analysis_v2),
+        )
         // Phase 8 (F1) — Continuous Discovery jobs (experimental).
         .route(
             "/collections/{collection_id}/discovery-jobs",

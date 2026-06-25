@@ -586,7 +586,9 @@ def test_process_stream_chunker_exception_fail_fast(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(p.chunker, "chunk", boom)
+    # process_stream routes through chunk_stream (genuine incremental path for
+    # streamable strategies like SENTENCE), so patch that.
+    monkeypatch.setattr(p.chunker, "chunk_stream", boom)
     with pytest.raises(RuntimeError):
         list(p.process_stream("text", "doc1"))
 
@@ -599,7 +601,7 @@ def test_process_stream_chunker_exception_collect(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(p.chunker, "chunk", boom)
+    monkeypatch.setattr(p.chunker, "chunk_stream", boom)
     assert list(p.process_stream("text", "doc1")) == []
 
 
@@ -656,7 +658,7 @@ def test_process_stream_async_chunker_exception_fail_fast(monkeypatch):
     def boom(*a, **k):
         raise RuntimeError("nope")
 
-    monkeypatch.setattr(p.chunker, "chunk", boom)
+    monkeypatch.setattr(p.chunker, "chunk_stream", boom)
 
     async def collect():
         return [c async for c in p.process_stream_async("text", "doc1")]

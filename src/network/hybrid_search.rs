@@ -305,6 +305,7 @@ impl HybridPort for RestHybridPortImpl {
     }
 }
 
+#[allow(deprecated)]
 fn proto_fusion_strategy(
     strategy: i32,
     params: Option<&proximadb_proto::v1::FusionStrategyParams>,

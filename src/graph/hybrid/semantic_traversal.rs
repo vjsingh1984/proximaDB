@@ -341,9 +341,9 @@ impl SemanticBFSTraversal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::EmbeddingVersion;
     use crate::graph::engines::GraphEngine;
     use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::proto::proximadb_v1::EmbeddingVersion;
     use std::collections::HashMap;
 
     fn create_test_engine() -> Arc<OrionGraphEngine> {

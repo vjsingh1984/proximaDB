@@ -18,9 +18,11 @@ workspace = true
 [workspace]
 resolver = "2"
 members = [
+    "apps/proximadb-ann-bench",
     "apps/proximadb-bench",
     "apps/proximadb-migrate",
     "apps/proximadb-server",
+    "apps/proximadb-vectordb-compare",
     ".",
     "clients/rust",
     "crates/foundation/proximadb-cache",
@@ -31,10 +33,15 @@ members = [
     "crates/foundation/proximadb-encoding-types",
     "crates/foundation/proximadb-filter-expression",
     "crates/foundation/proximadb-hardware",
+    "crates/foundation/proximadb-hardware-caps",
+    "crates/foundation/proximadb-distance-kernel",
+    "crates/foundation/proximadb-memory-pool",
     "crates/foundation/proximadb-kernel",
     "crates/foundation/proximadb-pipeline-operator",
     "crates/foundation/proximadb-proto",
     "crates/foundation/proximadb-quantization-types",
+    "crates/foundation/proximadb-index-types",
+    "crates/foundation/proximadb-index-traits",
     "crates/foundation/proximadb-records",
     "crates/foundation/proximadb-relational-types",
     "crates/foundation/proximadb-functions",
@@ -48,8 +55,10 @@ members = [
     "crates/horizontal/proximadb-telemetry",
     "crates/platform/proximadb-api",
     "crates/platform/proximadb-runtime",
+    "crates/platform/proximadb-admin-ui",
     "crates/modalities/proximadb-graph",
     "crates/modalities/proximadb-vector",
+    "crates/modalities/proximadb-quantization-kernel",
     "crates/modalities/proximadb-document",
     "crates/modalities/proximadb-observability",
     "crates/modalities/proximadb-embedding",
@@ -63,6 +72,10 @@ members = [
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
     "crates/storage/proximadb-iceberg-engine",
+    "crates/storage/proximadb-storage-kv",
+    "crates/storage/proximadb-storage-optimization",
+    "crates/storage/proximadb-storage-strategy",
+    "crates/storage/proximadb-storage-tenant",
     "crates/query/proximadb-document-query",
     "crates/query/proximadb-graph-arrow",
     "crates/query/proximadb-graph-query",
@@ -137,12 +150,17 @@ proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
+proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
+proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
+proximadb-memory-pool = { path = "crates/foundation/proximadb-memory-pool" }
 proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 proximadb-proto = { path = "crates/foundation/proximadb-proto" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
+proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
+proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
 proximadb-functions = { path = "crates/foundation/proximadb-functions" }
@@ -158,7 +176,7 @@ moka = { version = "0.12", features = ["future"] }
 parking_lot = "0.12"
 tracing = "0.1"
 serde_json = "1.0"
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "json", "chrono", "uuid"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "tls-native-tls", "json", "chrono", "uuid"] }
 prost = "0.14"
 prost-types = "0.14"
 futures = "0.3"
@@ -169,12 +187,13 @@ serde = { version = "1.0", features = ["derive"] }
 tempfile = "3.0"
 thiserror = "1.0"
 tokio = { version = "1.37", features = ["full"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 tonic = { version = "0.14", features = ["gzip", "tls-native-roots"] }
 toml = "0.8"
 tower = { version = "0.5", features = ["limit"] }
 tower-http = { version = "0.6", features = ["cors", "trace"] }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-document = { path = "crates/modalities/proximadb-document" }
 proximadb-observability = { path = "crates/modalities/proximadb-observability" }
 proximadb-embedding = { path = "crates/modalities/proximadb-embedding" }
@@ -184,11 +203,16 @@ proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
 proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
 proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
+proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
+proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
+proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
 crc32fast = "1.4"
 rmp-serde = "1.1"
 tonic-prost = "0.14"
@@ -210,18 +234,6 @@ numpy = { version = "0.28" }
 faer = { version = "0.20", default-features = false, features = ["std"] }
 statrs = "0.17"
 
-[[bin]]
-name = "simple-perf-bench"
-path = "benches/simple_perf_bench.rs"
-
-[[bin]]
-name = "grpc-benchmark"
-path = "benches/grpc_benchmark.rs"
-
-[[bin]]
-name = "quick-perf-bench"
-path = "benches/quick_perf_bench.rs"
-
 # Python embedded library (cdylib for PyO3)
 [lib]
 name = "proximadb"
@@ -235,11 +247,21 @@ crate-type = ["rlib"]
 [dependencies]
 # Core async runtime
 tokio = { version = "1.37", features = ["full"] }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["net"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# OpenAPI spec-from-code (TD-126 Phase 1). The `ToSchema`/`IntoParams`/`path`
+# derives annotate the v2 REST DTOs + handlers so `docs/openapi/proximadb-openapi.yaml`
+# is generated from the handler code (see src/network/rest/openapi.rs) with a CI
+# drift gate, rather than hand-maintained. Derives are zero runtime cost; the
+# aggregated document is only materialized by the generator/test path.
+utoipa = { version = "5", features = ["axum_extras", "preserve_order", "yaml"] }
+# YAML (de)serialization for the OpenAPI generator: parse the checked-in
+# supplement fragment and render the merged document to canonical YAML.
+serde_yaml = "0.9"
 bincode.workspace = true
 rmp-serde = "1.1"  # MessagePack serialization
 bytemuck = { version = "1.14", features = ["derive"] }
@@ -248,6 +270,8 @@ proximadb-document-query = { path = "crates/query/proximadb-document-query" }
 proximadb-config = { path = "crates/foundation/proximadb-config" }
 proximadb-compression-types = { path = "crates/foundation/proximadb-compression-types" }
 proximadb-hardware = { path = "crates/foundation/proximadb-hardware" }
+proximadb-hardware-caps = { path = "crates/foundation/proximadb-hardware-caps" }
+proximadb-distance-kernel = { path = "crates/foundation/proximadb-distance-kernel" }
 proximadb-data-model = { path = "crates/foundation/proximadb-data-model" }
 proximadb-distance-types = { path = "crates/foundation/proximadb-distance-types" }
 proximadb-relational-types = { path = "crates/foundation/proximadb-relational-types" }
@@ -258,10 +282,13 @@ proximadb-relational-planner = { path = "crates/query/proximadb-relational-plann
 proximadb-relational-executor = { path = "crates/query/proximadb-relational-executor" }
 proximadb-relational-frontend = { path = "crates/query/proximadb-relational-frontend" }
 proximadb-relational-engine = { path = "crates/query/proximadb-relational-engine" }
+proximadb-index-types = { path = "crates/foundation/proximadb-index-types" }
+proximadb-index-traits = { path = "crates/foundation/proximadb-index-traits" }
 proximadb-records = { path = "crates/foundation/proximadb-records" }
 proximadb-quantization-types = { path = "crates/foundation/proximadb-quantization-types" }
 proximadb-catalog = { path = "crates/control/proximadb-catalog" }
 proximadb-api = { path = "crates/platform/proximadb-api" }
+proximadb-admin-ui = { path = "crates/platform/proximadb-admin-ui" }
 proximadb-runtime = { path = "crates/platform/proximadb-runtime" }
 proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
@@ -270,7 +297,12 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
+proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
+proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
+proximadb-storage-optimization = { path = "crates/storage/proximadb-storage-optimization" }
+proximadb-storage-strategy = { path = "crates/storage/proximadb-storage-strategy" }
+proximadb-storage-tenant = { path = "crates/storage/proximadb-storage-tenant" }
 proximadb-telemetry = { path = "crates/horizontal/proximadb-telemetry" }
 proximadb-filter-expression = { path = "crates/foundation/proximadb-filter-expression" }
 proximadb-cache = { path = "crates/foundation/proximadb-cache" }
@@ -285,6 +317,7 @@ proximadb-rank-expr = { path = "crates/modalities/proximadb-rank-expr" }
 proximadb-rank-profile = { path = "crates/modalities/proximadb-rank-profile" }
 proximadb-rank-onnx = { path = "crates/modalities/proximadb-rank-onnx" }
 proximadb-vector = { path = "crates/modalities/proximadb-vector" }
+proximadb-quantization-kernel = { path = "crates/modalities/proximadb-quantization-kernel" }
 proximadb-graph-arrow = { path = "crates/query/proximadb-graph-arrow" }
 proximadb-graph-query = { path = "crates/query/proximadb-graph-query" }
 proximadb-graph-subset = { path = "crates/query/proximadb-graph-subset" }
@@ -335,10 +368,10 @@ lettre = "0.11"  # Email sending for alert notifications
 
 # Storage & Memory Management
 memmap2 = "0.9"
-lru = "0.12"  # LRU cache for disk-backed graph storage
+lru = "0.18"  # LRU cache for disk-backed graph storage
 rocksdb = { version = "0.21", optional = true }  # Optional for metadata backend
 tokio-postgres = { version = "0.7", optional = true }  # PostgreSQL client for CDC (experimental-cdc-connectors)
-sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "json", "chrono", "uuid"], optional = true }  # OLTP catalog backends (oltp-catalog)
+sqlx = { version = "0.9", features = ["runtime-tokio", "tls-native-tls", "json", "chrono", "uuid"], optional = true }  # OLTP catalog backends (oltp-catalog)
 tempfile = "3.0"
 rayon = "1.10"  # Parallel processing for search optimization
 # Parquet and Arrow dependencies - using v57+ for improved performance and tonic 0.14 compatibility
@@ -436,7 +469,7 @@ proximadb-kernel = { path = "crates/foundation/proximadb-kernel" }
 
 # Utilities
 uuid = { version = "1.0", features = ["v4", "serde"] }  # Required for JWT token generation
-jsonwebtoken = "9.2"  # JWT token creation and validation
+jsonwebtoken = "10"  # JWT token creation and validation
 chrono = { version = "0.4.31", features = ["serde"] }  # Updated for Arrow 51 compatibility
 chrono-tz = "0.10"  # Timezone support for log parsing
 hex = "0.4"  # Hex encoding for bytea types
@@ -542,6 +575,8 @@ simd-experimental = []
 experimental-turboquant = [
     "proximadb-quantization-types/experimental-turboquant",
     "proximadb-vector/experimental-turboquant",
+    "proximadb-distance-kernel/experimental-turboquant",
+    "proximadb-quantization-kernel/experimental-turboquant",
 ]
 # AVX512 intrinsics (requires nightly Rust, disabled by default for CI compatibility)
 avx512 = []
@@ -657,7 +692,7 @@ graph-first-sks = []
 datafusion-integration = ["dep:datafusion", "dep:datafusion-common"]
 
 # Hardware acceleration features
-gpu = ["metal"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
+gpu = ["metal", "proximadb-hardware-caps/gpu", "proximadb-distance-kernel/gpu"]  # GPU acceleration support (CUDA, ROCm, MPS, OpenCL)
 metal = ["dep:metal"]  # Enable Metal/MPS GPU support on macOS ARM64
 # SIMD optimizations - ARM64 has NEON, not AVX
 simd = []  # Placeholder - would need ARM NEON implementation
@@ -835,6 +870,15 @@ name = "bench_10_query_progressive"
 harness = false
 path = "benches/bench_10_query_progressive.rs"
 
+[[bench]]
+name = "bench_object_store_latency"
+harness = false
+path = "benches/bench_object_store_latency.rs"
+# Co-design T3.2: measures the object-store round-trip latency floor (GET /
+# ranged-GET / LIST). Defaults to in-process `memory://` (no network RTT — a
+# harness smoke check); point BENCH_OBJECT_STORE_URL at s3:// (with --features
+# aws) or file:// for real cloud-latency evidence.
+
 # 4. UNIFIED & CROSS-ENGINE BENCHMARKS
 # Note: Cross-engine comparisons now included in bench_storage_engines
 
@@ -922,6 +966,11 @@ path = "benches/bench_21_hybrid_search_fusion.rs"
 name = "bench_22_multimodal_queries"
 harness = false
 path = "benches/bench_22_multimodal_queries.rs"
+
+[[bench]]
+name = "bench_cross_modal_fusion_e2e"
+harness = false
+path = "benches/bench_cross_modal_fusion_e2e.rs"
 
 [[bench]]
 name = "bench_23_codec_vector_base_xor"

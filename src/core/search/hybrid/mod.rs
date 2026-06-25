@@ -90,6 +90,20 @@ pub enum FusionStrategy {
     ///     vector_normalize: true,
     /// };
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) for most
+    /// use cases, or migrate to [`crate::core::search::cross_modal_fusion::Fuser`] for the
+    /// modern cross-modal fusion seam that supports vector, graph, document, and relational sources.
+    ///
+    /// Migration path:
+    /// - Weighted linear fusion → `ReciprocalRank { k: 60 }` (similar weighted blending)
+    /// - Multi-modal fusion → `Fuser::new(FusionPolicy::default())` with vector/graph/doc sources
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     WeightedLinear {
         /// Weight for BM25 score (0.0 to 1.0, vector gets 1-alpha)
         alpha: f64,
@@ -115,6 +129,15 @@ pub enum FusionStrategy {
     ///     persistence: 0.95,
     /// };
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     RankBiasedPrecision {
         /// Persistence parameter p controlling rank emphasis (0.8 to 0.99)
         persistence: f64,
@@ -123,6 +146,15 @@ pub enum FusionStrategy {
     /// Conditional Normalization
     ///
     /// Normalizes both scores to [0,1] and averages them
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     ConditionalNormalization,
 
     /// Borda Count
@@ -135,6 +167,15 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::BordaCount;
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     BordaCount,
 
     /// CombSUM
@@ -146,6 +187,15 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::CombSum;
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     CombSum,
 
     /// CombMIN
@@ -157,6 +207,15 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::CombMin;
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     CombMin,
 
     /// CombMAX
@@ -168,6 +227,15 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::CombMax;
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     CombMax,
 
     /// Condorcet Fusion
@@ -179,6 +247,15 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::Condorcet;
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     Condorcet,
 
     /// Dempster-Shafer
@@ -193,6 +270,15 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::DempsterShafer { alpha: 0.5 };
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     DempsterShafer {
         /// Belief mass weighting parameter (0.0 to 1.0)
         alpha: f64,
@@ -210,6 +296,15 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::Adaptive;
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     Adaptive,
 
     /// Projection-Based Fusion (B5)
@@ -224,12 +319,22 @@ pub enum FusionStrategy {
     /// ```ignore
     /// let strategy = FusionStrategy::Projection { alpha: 0.5 };
     /// ```
+    ///
+    /// # Deprecation (T4.2)
+    ///
+    /// **This strategy is deprecated.** Use [`ReciprocalRank`](Self::ReciprocalRank) or migrate to
+    /// [`crate::core::search::cross_modal_fusion::Fuser`] for the modern cross-modal fusion seam.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use FusionStrategy::ReciprocalRank or crate::core::search::cross_modal_fusion::Fuser instead."
+    )]
     Projection {
         /// Balance parameter alpha (0.0 to 1.0)
         alpha: f64,
     },
 }
 
+#[allow(deprecated)]
 impl std::fmt::Display for FusionStrategy {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

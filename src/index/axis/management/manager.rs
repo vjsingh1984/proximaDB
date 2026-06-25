@@ -2720,7 +2720,7 @@ impl AxisManager {
         &self,
         collection_id: &str,
     ) -> Option<crate::compute::distance_computation::DistanceMetric> {
-        use crate::compute::distance_computation::conversion::proto_distance_to_internal;
+        use proximadb_vector::distance::conversion::proto_distance_to_internal;
 
         // Try to get from shared cache first
         if let Some(cache) = &self.shared_collection_cache
@@ -3960,10 +3960,10 @@ impl AxisManager {
         quant_config: &crate::proto::proximadb_v1::QuantizationConfig,
         collection_config: &crate::proto::proximadb_v1::CollectionConfig,
     ) -> Result<ProximaRecord> {
-        use crate::compute::distance_computation::conversion::proto_distance_to_internal;
         use crate::compute::quantization::storage_engine::{
             StorageQuantizationConfig, StorageQuantizationEngine,
         };
+        use proximadb_vector::distance::conversion::proto_distance_to_internal;
 
         // Extract the vector data
         let vector_data = vector
@@ -4194,7 +4194,7 @@ pub enum FilterOperator {
 /// the requested value (`Applied`), or there was nothing to do
 /// (`NotApplicable` — either no strategy, no HNSW indexes, or the
 /// requested ef was already in place).
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum HotSwapOutcome {
     /// One or more HNSW specs were updated. `changes` carries the
     /// per-spec before/after for observability.
@@ -4207,7 +4207,7 @@ pub enum HotSwapOutcome {
 /// Per-spec record of an `ef_search` change, for structured event
 /// emission. `index_name` is `None` when the spec wasn't given a
 /// name in [`crate::index::axis::types::IndexSpecification::name`].
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct HotSwapEfChange {
     pub index_name: Option<String>,
     pub previous_ef_search: u32,

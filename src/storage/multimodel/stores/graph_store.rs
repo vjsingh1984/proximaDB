@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId, GraphService, Node, NodeId};
-use crate::proto::proximadb_v1::{PropertyValue, property_value};
+use crate::graph::{PropertyValue, property_value};
 use proximadb_kernel::error::ProximaDBError;
 
 use super::super::traits::{ModelType, StoreCapabilities};
@@ -208,7 +208,7 @@ impl GraphStore {
             return service
                 .query_nodes(
                     &graph_id,
-                    crate::proto::proximadb_v1::NodeQuery {
+                    crate::graph::NodeQuery {
                         graph_id: graph_id.clone(),
                         labels: vec![],
                         filters: vec![],

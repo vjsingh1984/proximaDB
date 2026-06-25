@@ -4,10 +4,10 @@
 //! querying, keeping the main service lean and focused.
 
 use super::Result;
+use crate::graph::EdgeQuery;
 use crate::graph::adjacency_projection::edge_to_canonical_record;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, EdgeId};
-use crate::proto::proximadb_v1::EdgeQuery;
 use proximadb_graph::projection::GraphTopologyProjection;
 use proximadb_graph::record::GraphNodeKey;
 use std::sync::Arc;
@@ -218,7 +218,7 @@ impl super::GraphOperationsService {
         if !query.filters.is_empty() {
             results.retain(|edge| {
                 for filter in &query.filters {
-                    use crate::proto::proximadb_v1::PropertyFilterOperator as Op;
+                    use crate::graph::PropertyFilterOperator as Op;
                     let prop_val_opt = edge.properties.get(&filter.key);
                     let pass = match Op::try_from(filter.operator).unwrap_or(Op::Unspecified) {
                         Op::Equals => match prop_val_opt {
@@ -251,6 +251,32 @@ impl super::GraphOperationsService {
             });
         }
         Ok(results)
+    }
+
+    /// Enumerate every edge in a graph.
+    ///
+    /// The engine has no full edge scan — edges live in per-source adjacency, so
+    /// [`query_edges`](Self::query_edges) deliberately returns empty without an
+    /// endpoint. But every edge has exactly one source node, so iterating each
+    /// node's *outgoing* edges yields every edge exactly once (no dedup). Used by
+    /// the columnar Flight export to dump a whole graph's edges (a whole-graph
+    /// Arrow dump needs all edges, not just one node's adjacency).
+    ///
+    /// Materializes the node set and walks adjacency — an O(N+E) scan intended
+    /// for export/ETL, not the hot traversal path.
+    pub async fn all_edges(&self, graph_id: &str) -> Result<Vec<Arc<Edge>>> {
+        if !self.graph_enabled() {
+            return Err(proximadb_kernel::error::ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        let nodes = engine.get_all_nodes()?;
+        let mut edges = Vec::new();
+        for node in nodes {
+            edges.extend(engine.get_outgoing_edges(&node.id, None)?);
+        }
+        Ok(edges)
     }
 
     fn query_edges_from_fresh_csr(
@@ -474,7 +500,7 @@ mod tests {
 
     #[tokio::test]
     async fn endpoint_bound_query_served_from_adjacency_projection() {
-        use crate::proto::proximadb_v1::EdgeQuery;
+        use crate::graph::EdgeQuery;
 
         let graph_id = format!("adj_query_test_{}", std::process::id());
         let graph_id = graph_id.as_str();
@@ -584,7 +610,7 @@ mod tests {
 
     #[tokio::test]
     async fn endpoint_bound_query_uses_fresh_csr_and_falls_back_when_stale() {
-        use crate::proto::proximadb_v1::EdgeQuery;
+        use crate::graph::EdgeQuery;
 
         let graph_id = format!("csr_query_test_{}", std::process::id());
         let graph_id = graph_id.as_str();

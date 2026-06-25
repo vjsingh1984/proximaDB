@@ -87,6 +87,12 @@ pub enum MigrationExecutionError {
     SourceEqualsTarget(String),
 }
 
+/// Cache invalidation callback for tier migrations.
+///
+/// Called with `(collection, item_id)` on successful migration so caches
+/// can invalidate stale entries that referenced the old tier path.
+pub type CacheInvalidationCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Executor for tier-migration tasks. Construct once, share via `Arc`,
 /// call `execute` or `execute_batch` from policy-engine driven loops.
 pub struct TierMigrationExecutor {
@@ -98,6 +104,11 @@ pub struct TierMigrationExecutor {
     /// cold,archive}_tier_path` at construction. Missing entries cause
     /// `TierPathNotConfigured` errors at execute time.
     tier_paths: HashMap<PerformanceTier, String>,
+
+    /// Optional callback to invalidate cache entries when migration completes.
+    /// T2.2: cache-tier coordination — caches drop stale entries when data moves
+    /// between hot/warm/cold/archive tiers.
+    cache_invalidator: Option<CacheInvalidationCallback>,
 }
 
 impl TierMigrationExecutor {
@@ -111,7 +122,15 @@ impl TierMigrationExecutor {
         Self {
             filesystem,
             tier_paths,
+            cache_invalidator: None,
         }
+    }
+
+    /// Set the cache invalidation callback. Called on successful migration
+    /// with `(collection, item_id)` so caches can drop stale entries.
+    pub fn with_cache_invalidator(mut self, callback: CacheInvalidationCallback) -> Self {
+        self.cache_invalidator = Some(callback);
+        self
     }
 
     /// Build the per-tier path map directly from an `SstTieringConfig`.
@@ -134,7 +153,11 @@ impl TierMigrationExecutor {
         if let Some(p) = cfg.archive_tier_path.clone() {
             tier_paths.insert(PerformanceTier::Archive, p);
         }
-        Self::new(filesystem, tier_paths)
+        Self {
+            filesystem,
+            tier_paths,
+            cache_invalidator: None,
+        }
     }
 
     /// Resolve a tier + collection + item to a fully-qualified URL.
@@ -223,6 +246,12 @@ impl TierMigrationExecutor {
             // Best-effort delete of the source; if source doesn't exist,
             // the migration is fully complete from a prior run.
             let _ = self.filesystem.delete(&source_url).await;
+
+            // T2.2: cache-tier coordination — notify caches even for resumed migrations
+            if let Some(ref callback) = self.cache_invalidator {
+                callback(&task.collection, &task.item_id);
+            }
+
             return MigrationResult {
                 task_id: task.id.clone(),
                 collection: task.collection.clone(),
@@ -262,6 +291,11 @@ impl TierMigrationExecutor {
                     Ok(md) => md.size,
                     Err(_) => task.estimated_bytes, // fall back to estimate
                 };
+
+                // T2.2: cache-tier coordination — notify caches that data moved
+                if let Some(ref callback) = self.cache_invalidator {
+                    callback(&task.collection, &task.item_id);
+                }
 
                 MigrationResult {
                     task_id: task.id.clone(),
@@ -354,6 +388,7 @@ impl TierMigrationExecutor {
         TierMigrationExecutor {
             filesystem: Arc::clone(&self.filesystem),
             tier_paths: self.tier_paths.clone(),
+            cache_invalidator: self.cache_invalidator.clone(),
         }
     }
 }

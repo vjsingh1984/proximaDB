@@ -24,23 +24,38 @@ fn main() {
         .nth(3)
         .expect("repo root from crate manifest");
 
-    // Both files share the `proximadb.v2` package and are merged into the
+    // All files share the `proximadb.v2` package and are merged into the
     // single generated `proximadb.v2.rs`.
     let record_proto = repo_root.join("proto/proximadb/v2/record.proto");
     let graph_proto = repo_root.join("proto/proximadb/v2/graph.proto");
+    let document_proto = repo_root.join("proto/proximadb/v2/document.proto");
+    let fusion_proto = repo_root.join("proto/proximadb/v2/fusion.proto");
+    let entity_proto = repo_root.join("proto/proximadb/v2/entity.proto");
     let include = repo_root.join("proto");
     let out_dir = manifest_dir.join("src/proto");
 
     println!(
-        "cargo:warning=regenerating {} + {} -> {}",
+        "cargo:warning=regenerating {} + {} + {} + {} + {} -> {}",
         record_proto.display(),
         graph_proto.display(),
+        document_proto.display(),
+        fusion_proto.display(),
+        entity_proto.display(),
         out_dir.display()
     );
     tonic_prost_build::configure()
         .build_server(true)
         .build_client(true)
         .out_dir(&out_dir)
-        .compile_protos(&[record_proto, graph_proto], &[include])
+        .compile_protos(
+            &[
+                record_proto,
+                graph_proto,
+                document_proto,
+                fusion_proto,
+                entity_proto,
+            ],
+            &[include],
+        )
         .expect("v2 proto codegen failed");
 }

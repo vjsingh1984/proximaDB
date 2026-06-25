@@ -22,7 +22,7 @@ on:
     tags:
       - "v*"
     branches:
-      - develop
+      - qa
     paths:
       - "src/**"
       - "crates/**"
@@ -181,8 +181,12 @@ jobs:
 
           # Tag list per trigger (same scheme as single-arch):
           #  - release tag v*  -> <version>, sha-<sha>, latest
-          #  - develop push    -> develop, sha-<sha>            (rolling, no latest)
+          #  - qa push (develop→qa promotion) -> qa, sha-<sha>  (rolling, no latest)
           #  - manual dispatch -> <version>, sha-<sha> [, latest if requested]
+          #
+          # NOTE: publish is gated to the develop→qa boundary (not every develop push) — see the
+          # `on.push.branches` trigger. Per-develop-push publishes wasted ~15 min of runner time per
+          # merge and (while broken) never produced a usable image.
           SUFFIX=""
           if [ "${TARGET}" = "runtime-full" ]; then SUFFIX="-full"; fi
           ARGS=""; PRIMARY=""
@@ -190,8 +194,8 @@ jobs:
 
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             add "${VERSION}${SUFFIX}"; add "sha-${SHORT_SHA}${SUFFIX}"; add "latest${SUFFIX}"
-          elif [ "${GITHUB_REF_NAME}" = "develop" ]; then
-            add "develop${SUFFIX}"; add "sha-${SHORT_SHA}${SUFFIX}"
+          elif [ "${GITHUB_REF_NAME}" = "qa" ]; then
+            add "qa${SUFFIX}"; add "sha-${SHORT_SHA}${SUFFIX}"
           else
             add "${VERSION}${SUFFIX}"; add "sha-${SHORT_SHA}${SUFFIX}"
             if [ "${{ github.event.inputs.tag_latest }}" = "true" ]; then add "latest${SUFFIX}"; fi

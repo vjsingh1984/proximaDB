@@ -1,10 +1,9 @@
 """Offline unit tests for proximadb_sdk.embedded.
 
-All HTTP transport is mocked. The embedded module instantiates
-``httpx.AsyncClient()`` lazily inside each method (``async with
-httpx.AsyncClient() as client:``), so we patch ``httpx.AsyncClient`` with a
-fake async-context-manager whose verb methods return a ``FakeResp``. We never
-start a real subprocess server or touch the network.
+All HTTP transport is mocked. The embedded module creates its HTTP clients
+lazily, so we patch ``httpx.AsyncClient`` with a fake async-context-manager
+whose verb methods return a ``FakeResp``. We never start a real subprocess
+server or touch the network.
 """
 
 import asyncio
@@ -68,7 +67,14 @@ class FakeResp:
         return self._json
 
     def raise_for_status(self):
-        return None
+        if self.status_code >= 400:
+            request = httpx.Request("GET", "http://test.local")
+            response = httpx.Response(self.status_code, request=request, text=self.text)
+            raise httpx.HTTPStatusError(
+                self.text or "HTTP error",
+                request=request,
+                response=response,
+            )
 
 
 class FakeAsyncClient:
@@ -79,10 +85,11 @@ class FakeAsyncClient:
     """
 
     calls = []
+    init_kwargs = []
     responder = staticmethod(lambda verb, url, **kw: FakeResp({"success": True}))
 
     def __init__(self, *a, **kw):
-        pass
+        FakeAsyncClient.init_kwargs.append(kw)
 
     async def __aenter__(self):
         return self
@@ -114,6 +121,7 @@ class FakeAsyncClient:
 def patched_http(monkeypatch):
     """Patch httpx.AsyncClient and return the fake so tests set the responder."""
     FakeAsyncClient.calls = []
+    FakeAsyncClient.init_kwargs = []
     FakeAsyncClient.responder = staticmethod(
         lambda verb, url, **kw: FakeResp({"success": True})
     )
@@ -292,15 +300,21 @@ def test_create_embedding_model_factory():
 
 def test_config_defaults_and_urls():
     db = EmbeddedProximaDB(data_dir="/tmp/x")
-    assert db.rest_url == f"http://localhost:{db.config.rest_port}"
-    assert db.grpc_url == f"localhost:{db.config.grpc_port}"
+    assert db.config.transport == "uds"
+    assert db.rest_url == "http://localhost"
+    assert db.grpc_url.startswith("unix://")
+    assert db.socket_dir == E.Path("/tmp/x/sockets")
+    assert db.rest_socket_path.name == E.UDS_REST_SOCKET_NAME
     assert isinstance(db.config, EmbeddedConfig)
 
 
 def test_config_override():
-    cfg = EmbeddedConfig(data_dir="/tmp/y", rest_port=20001, grpc_port=20002)
+    cfg = EmbeddedConfig(
+        data_dir="/tmp/y", rest_port=20001, grpc_port=20002, transport="tcp"
+    )
     db = EmbeddedProximaDB(config=cfg)
     assert db.config.rest_port == 20001
+    assert db.rest_url == "http://localhost:20001"
     assert "20002" in db.grpc_url
 
 
@@ -326,6 +340,16 @@ def test_generate_config_writes_toml(tmp_path):
     text = E.Path(path).read_text()
     assert "[server]" in text
     assert "embedded-node" in text
+    assert 'transport = "uds"' in text
+    assert "socket_dir" in text
+    assert "arrow_flight_port" in text
+
+
+def test_uds_socket_dir_falls_back_when_path_is_too_long(tmp_path):
+    db = EmbeddedProximaDB(data_dir=str(tmp_path / ("x" * 120)))
+    assert db.socket_dir is not None
+    assert db.socket_dir != db._data_dir / "sockets"
+    assert db._uds_paths_fit(db.socket_dir)
 
 
 def test_find_binary_on_path(monkeypatch):
@@ -425,7 +449,18 @@ def test_start_full_flow_then_timeout(monkeypatch, tmp_path):
         return _FakeProcess()
 
     monkeypatch.setattr(E.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(httpx, "get", lambda *a, **kw: FakeResp({}, 200))
+
+    class HealthClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *a, **kw):
+            return FakeResp({}, 200)
+
+    monkeypatch.setattr(db, "_sync_http_client", lambda **kw: HealthClient())
 
     run(db.start(timeout=5.0))
     assert db._started is True
@@ -439,10 +474,17 @@ def test_start_timeout_kills(monkeypatch, tmp_path):
     monkeypatch.setattr(db, "_generate_config", lambda: "/tmp/cfg2.toml")
     monkeypatch.setattr(E.subprocess, "Popen", lambda args, **kw: _FakeProcess())
 
-    def bad_get(*a, **kw):
-        raise RuntimeError("connection refused")
+    class BadHealthClient:
+        def __enter__(self):
+            return self
 
-    monkeypatch.setattr(httpx, "get", bad_get)
+        def __exit__(self, *a):
+            return False
+
+        def get(self, *a, **kw):
+            raise RuntimeError("connection refused")
+
+    monkeypatch.setattr(db, "_sync_http_client", lambda **kw: BadHealthClient())
 
     killed = {"v": False}
     monkeypatch.setattr(db, "_kill_process", lambda: killed.__setitem__("v", True))
@@ -567,14 +609,28 @@ def test_normalize_record_payload_missing_vector():
 
 
 def test_create_collection_success(patched_http):
-    patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp({"success": True})
-    )
+    captured = {}
+
+    def responder(v, u, **kw):
+        captured["verb"] = v
+        captured["url"] = u
+        captured["json"] = kw.get("json")
+        return FakeResp({"collection_id": "uuid-c1", "name": "c1", "dimension": 4})
+
+    patched_http.responder = staticmethod(responder)
     db = make_started_db()
     col = run(db.create_collection("c1", dimension=4, distance_metric="euclidean"))
     assert isinstance(col, EmbeddedCollection)
     assert col.name == "c1"
     assert db._collections["c1"] is col
+    assert captured["verb"] == "POST"
+    assert captured["url"].endswith("/api/v2/collections")
+    assert captured["json"] == {
+        "name": "c1",
+        "dimension": 4,
+        "distance_metric": "euclidean",
+    }
+    assert "transport" in patched_http.init_kwargs[-1]
 
 
 def test_create_collection_with_model_autodim(patched_http):
@@ -601,7 +657,7 @@ def test_create_collection_requires_dimension(patched_http):
 
 def test_create_collection_failure_raises(patched_http):
     patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp({"success": False, "error": "boom"})
+        lambda v, u, **kw: FakeResp({"error": "boom"}, status_code=500, text="boom")
     )
     db = make_started_db()
     with pytest.raises(RuntimeError):
@@ -610,7 +666,7 @@ def test_create_collection_failure_raises(patched_http):
 
 def test_create_collection_already_exists_ok(patched_http):
     patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp({"success": False, "msg": "already exists"})
+        lambda v, u, **kw: FakeResp({"error": "already exists"}, status_code=409)
     )
     db = make_started_db()
     col = run(db.create_collection("c6", dimension=2))
@@ -710,21 +766,32 @@ def test_insert_with_embedding_no_model(patched_http):
         run(col.insert_with_embedding([{"id": "d", "text": "t"}]))
 
 
-def test_search_vector_nested_results(patched_http):
-    patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp(
-            {"success": True, "results": {"results": [{"id": "x", "score": 0.9}]}}
-        )
-    )
+def test_search_vector_posts_v2_typed_search(patched_http):
+    captured = {}
+
+    def responder(v, u, **kw):
+        captured["verb"] = v
+        captured["url"] = u
+        captured["json"] = kw.get("json")
+        return FakeResp({"results": [{"id": "x", "score": 0.9}]})
+
+    patched_http.responder = staticmethod(responder)
     db = make_started_db()
     col = EmbeddedCollection("c", 2, db)
     out = run(col.search([0.1, 0.2], top_k=5, filters={"f": 1}))
     assert out[0]["id"] == "x"
+    assert captured["verb"] == "POST"
+    assert captured["url"].endswith("/api/v2/collections/c/search")
+    assert captured["json"] == {
+        "vector": [0.1, 0.2],
+        "top_k": 5,
+        "filters": [{"field": "f", "op": "eq", "value": 1}],
+    }
 
 
 def test_search_vector_list_results(patched_http):
     patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp({"success": True, "results": [{"id": "y"}]})
+        lambda v, u, **kw: FakeResp({"results": [{"id": "y"}]})
     )
     db = make_started_db()
     assert run(db._search_vectors("c", [0.0], 3))[0]["id"] == "y"
@@ -740,7 +807,7 @@ def test_search_vector_empty(patched_http):
 
 def test_search_text(patched_http):
     patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp({"success": True, "results": [{"id": "t"}]})
+        lambda v, u, **kw: FakeResp({"results": [{"id": "t"}]})
     )
     db = make_started_db()
     model = FunctionEmbeddingModel(embed_fn=lambda t: [0.1, 0.2], dimension=2)
@@ -757,13 +824,32 @@ def test_search_text_no_model():
 
 
 def test_delete_vectors_and_count(patched_http):
-    patched_http.responder = staticmethod(
-        lambda v, u, **kw: FakeResp({"collection": {"stats": {"vector_count": 7}}})
-    )
+    calls = []
+
+    def responder(v, u, **kw):
+        calls.append((v, u))
+        if v == "DELETE":
+            return FakeResp({}, 204)
+        return FakeResp({"collection": {"stats": {"vector_count": 7}}})
+
+    patched_http.responder = staticmethod(responder)
     db = make_started_db()
     col = EmbeddedCollection("c", 2, db)
-    assert run(col.delete(["a", "b"])) == 0  # delete is a no-op stub
+    assert run(col.delete(["a", "b"])) == 2
+    assert calls[0] == ("DELETE", f"{db.rest_url}/api/v2/collections/c/records/a")
+    assert calls[1] == ("DELETE", f"{db.rest_url}/api/v2/collections/c/records/b")
     assert run(col.count()) == 7
+
+
+def test_delete_vectors_skips_404(patched_http):
+    def responder(v, u, **kw):
+        if u.endswith("/missing"):
+            return FakeResp({}, 404)
+        return FakeResp({}, 204)
+
+    patched_http.responder = staticmethod(responder)
+    db = make_started_db()
+    assert run(db._delete_vectors("c", ["ok", "missing"])) == 1
 
 
 def test_collection_stats_error_returns_empty(patched_http):

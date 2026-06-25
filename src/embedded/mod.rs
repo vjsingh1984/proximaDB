@@ -544,8 +544,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Convert to proto Node for storage
-    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Node {
-        use crate::proto::proximadb_v1::{Node, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> crate::graph::Node {
+        use crate::graph::{Node, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -571,8 +571,8 @@ impl EmbeddedGraphNode {
     }
 
     /// Create from proto Node
-    pub fn from_proto(node: &crate::proto::proximadb_v1::Node) -> Self {
-        use crate::proto::proximadb_v1::property_value::Value;
+    pub fn from_proto(node: &crate::graph::Node) -> Self {
+        use crate::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = node
             .properties
@@ -662,8 +662,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Convert to proto Edge
-    pub fn to_proto(&self) -> crate::proto::proximadb_v1::Edge {
-        use crate::proto::proximadb_v1::{Edge, PropertyValue, property_value::Value};
+    pub fn to_proto(&self) -> crate::graph::Edge {
+        use crate::graph::{Edge, PropertyValue, property_value::Value};
 
         let properties: std::collections::HashMap<String, PropertyValue> = self
             .properties
@@ -691,8 +691,8 @@ impl EmbeddedGraphEdge {
     }
 
     /// Create from proto Edge
-    pub fn from_proto(edge: &crate::proto::proximadb_v1::Edge) -> Self {
-        use crate::proto::proximadb_v1::property_value::Value;
+    pub fn from_proto(edge: &crate::graph::Edge) -> Self {
+        use crate::graph::model::property_value::Value;
 
         let properties: std::collections::HashMap<String, String> = edge
             .properties
@@ -1088,20 +1088,20 @@ impl EmbeddedProximaDB {
                 &storage_config,
                 Some(orchestrator),
                 None, // No full config needed
+                // Fused in-process: no Prometheus/billing/scrape background work.
+                crate::network::multi_server::ServiceProfile::Embedded,
             )
             .await
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
                 Box::new(std::io::Error::other(e.to_string()))
             })?;
 
-        // Set global metadata provider for WAL path resolution
-        // This eliminates the "No metadata provider after 100ms" warning
-        // by ensuring WAL operations can resolve collection paths immediately
-        crate::storage::persistence::write_ahead_log::set_global_metadata_provider(
-            collection_service.metadata_backend().clone(),
-        )
-        .await;
-        tracing::debug!("✅ Embedded: Global metadata provider set for WAL path resolution");
+        // Set the global catalog for WAL path resolution. The catalog is the
+        // sole authority, so WAL operations resolve collection paths through it.
+        if let Some(catalog_manager) = collection_service.catalog_manager() {
+            crate::storage::persistence::write_ahead_log::set_global_catalog(catalog_manager).await;
+            tracing::debug!("✅ Embedded: Global catalog set for WAL/recovery resolution");
+        }
 
         let collection_port: std::sync::Arc<dyn proximadb_runtime::CollectionPort> =
             collection_service;
@@ -3514,7 +3514,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let node_query = crate::proto::proximadb_v1::NodeQuery {
+            let node_query = crate::graph::NodeQuery {
                 labels,
                 ..Default::default()
             };
@@ -3548,7 +3548,7 @@ impl EmbeddedProximaDB {
             let proto_nodes = graph_service
                 .query_nodes(
                     graph_id,
-                    crate::proto::proximadb_v1::NodeQuery {
+                    crate::graph::NodeQuery {
                         graph_id: graph_id.to_string(),
                         labels: labels.unwrap_or_default(),
                         filters: properties
@@ -3581,7 +3581,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+            let edge_query = crate::graph::EdgeQuery {
                 from_node_id: Some(node_id.to_string()),
                 to_node_id: None,
                 edge_types: edge_types.unwrap_or_default(),
@@ -3612,7 +3612,7 @@ impl EmbeddedProximaDB {
         self.runtime.block_on(async {
             let graph_service = &self.shared_services.graph_service;
 
-            let edge_query = crate::proto::proximadb_v1::EdgeQuery {
+            let edge_query = crate::graph::EdgeQuery {
                 from_node_id: None,
                 to_node_id: Some(node_id.to_string()),
                 edge_types: edge_types.unwrap_or_default(),
@@ -3690,14 +3690,14 @@ impl EmbeddedProximaDB {
                 .graph_service
                 .traverse(
                     graph_id,
-                    crate::proto::proximadb_v1::TraversalRequest {
+                    crate::graph::TraversalRequest {
                         graph_id: graph_id.to_string(),
                         start_node_id: start_node_id.to_string(),
                         max_depth,
                         edge_types: edge_types.unwrap_or_default(),
                         node_labels: Vec::new(),
                         filters: Vec::new(),
-                        algorithm: crate::proto::proximadb_v1::TraversalAlgorithm::Bfs as i32,
+                        algorithm: crate::graph::TraversalAlgorithm::Bfs as i32,
                         limit,
                         timeout_ms: None,
                         max_frontier: None,
@@ -3709,6 +3709,107 @@ impl EmbeddedProximaDB {
                 })?;
 
             Ok(Self::traversal_response_to_embedded(response))
+        })
+    }
+
+    /// Impact analysis (TD-131): forward blast radius (outgoing edges — "what does X impact") or
+    /// backward (incoming edges — "what impacts X"). `direction` = `"forward"` | `"backward"`.
+    /// Delegates to the server graph service's `impact_analysis`, so the embedded result is the
+    /// server result (the embedded-parity guarantee). Reuses [`Self::traversal_response_to_embedded`].
+    pub fn impact_analysis(
+        &self,
+        graph_id: &str,
+        start_node_id: &str,
+        direction: &str,
+        edge_types: Option<Vec<String>>,
+        max_depth: u32,
+        limit: usize,
+    ) -> Result<EmbeddedGraphTraversalResult, Box<dyn std::error::Error + Send + Sync>> {
+        let dir = match direction {
+            "backward" => crate::graph::ImpactDirection::Backward,
+            _ => crate::graph::ImpactDirection::Forward,
+        };
+        self.runtime.block_on(async {
+            let response = self
+                .shared_services
+                .graph_service
+                .impact_analysis(
+                    graph_id,
+                    start_node_id,
+                    dir,
+                    edge_types.unwrap_or_default(),
+                    max_depth,
+                    limit,
+                )
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                })?;
+            Ok(Self::traversal_response_to_embedded(response))
+        })
+    }
+
+    /// Vector-seed → graph-expand → fuse-by-`oid` (TD-137/TD-131). Constructs the SAME `FusionService`
+    /// core the REST endpoint uses (`FusionService::new(vector, graph)`), so embedded results are
+    /// identical to the server path by construction. `rrf` selects the rank-based fallback policy;
+    /// `grain` = `"nodes"` | `"edges"` | `"both"`. Returns `(FusedItem, FusionStats)`.
+    pub fn fusion_search(
+        &self,
+        graph_id: &str,
+        vector_collection: &str,
+        query_vector: Vec<f32>,
+        max_depth: u32,
+        edge_types: Vec<String>,
+        max_seeds: usize,
+        limit: usize,
+        vector_weight: f32,
+        graph_weight: f32,
+        rrf: bool,
+        grain: &str,
+    ) -> Result<
+        (
+            Vec<crate::core::search::cross_modal_fusion::FusedItem>,
+            crate::core::search::cross_modal_fusion::FusionStats,
+        ),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        self.runtime.block_on(async {
+            use crate::core::search::cross_modal_fusion::FusionPolicy;
+            use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+
+            let service = FusionService::new(
+                self.shared_services.vector_operations_service.clone(),
+                self.shared_services.graph_service.clone(),
+            );
+            let params = GraphFusionParams {
+                graph_id: graph_id.to_string(),
+                vector_collection: vector_collection.to_string(),
+                query_vector,
+                max_depth,
+                edge_types,
+                max_seeds,
+                limit,
+                vector_weight,
+                graph_weight,
+                grain: match grain {
+                    "edges" => GraphGrain::Edges,
+                    "both" => GraphGrain::Both,
+                    _ => GraphGrain::Nodes,
+                },
+                // Embedded = single-repo/local; within-tenant `permitted_principals` RBAC does not
+                // apply (structural isolation only).
+                principal: None,
+                policy: if rrf {
+                    FusionPolicy::rrf()
+                } else {
+                    FusionPolicy::default()
+                },
+            };
+            service.graph_fusion_search(params).await.map_err(
+                |e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                },
+            )
         })
     }
 
@@ -4247,6 +4348,7 @@ impl EmbeddedProximaDB {
                     query.to_string(),
                     proto_params,
                     collection.map(str::to_string),
+                    None, // embedded single-process: no per-request tenant
                 )
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4260,9 +4362,10 @@ impl EmbeddedProximaDB {
     /// Insert or upsert Arrow IPC stream bytes through the embedded vector batch path.
     ///
     /// This is the in-process equivalent of Arrow Flight vector bulk_insert/bulk_upsert:
-    /// Arrow IPC stream bytes are decoded to RecordBatches, converted to ProximaRecord
-    /// batches with the shared Arrow codec, and routed directly to the embedded
-    /// vector service without binding ports or starting a Flight server.
+    /// Arrow IPC stream bytes are decoded to RecordBatches and delegated to
+    /// [`Self::insert_arrow_batches`]. This entry point exists for byte-stream
+    /// sources; in-process callers should prefer the batch path (Arrow C Data
+    /// Interface) which avoids the IPC serialize/deserialize round-trip.
     pub fn insert_arrow_ipc(
         &self,
         collection: &str,
@@ -4270,9 +4373,6 @@ impl EmbeddedProximaDB {
         insert_only: bool,
         tenant_id: Option<&str>,
     ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
-        self.check_write_access()?;
-
-        let start = std::time::Instant::now();
         let cursor = std::io::Cursor::new(ipc_stream);
         let reader = arrow_ipc::reader::StreamReader::try_new(cursor, None).map_err(
             |e| -> Box<dyn std::error::Error + Send + Sync> {
@@ -4294,6 +4394,27 @@ impl EmbeddedProximaDB {
                 })?,
             );
         }
+
+        self.insert_arrow_batches(collection, batches, insert_only, tenant_id)
+    }
+
+    /// Zero-copy sibling of [`Self::insert_arrow_ipc`]: ingest already-decoded
+    /// Arrow `RecordBatch`es. The Python embedding hands these across the FFI
+    /// boundary via the **Arrow C Data Interface** (`arrow::pyarrow`), so there is
+    /// no IPC serialize on the Python side and no IPC deserialize here — only the
+    /// unavoidable Arrow→ProximaRecord model conversion remains. Co-design Pillar C
+    /// (move the dominant cost term of the boundary that replaced the deleted
+    /// network dimension). Routed to the same embedded vector service; no ports.
+    pub fn insert_arrow_batches(
+        &self,
+        collection: &str,
+        batches: Vec<arrow::record_batch::RecordBatch>,
+        insert_only: bool,
+        tenant_id: Option<&str>,
+    ) -> Result<u64, Box<dyn std::error::Error + Send + Sync>> {
+        self.check_write_access()?;
+
+        let start = std::time::Instant::now();
 
         let mut records =
             crate::network::arrow_ipc::codec::ArrowProtoCodec::batches_to_proxima_records(batches)
@@ -4785,8 +4906,8 @@ impl EmbeddedProximaDB {
 
     fn property_filters_from_map(
         properties: &std::collections::HashMap<String, String>,
-    ) -> Vec<crate::proto::proximadb_v1::PropertyFilter> {
-        use crate::proto::proximadb_v1::{PropertyFilter, PropertyFilterOperator, PropertyValue};
+    ) -> Vec<crate::graph::PropertyFilter> {
+        use crate::graph::{PropertyFilter, PropertyFilterOperator, PropertyValue};
 
         properties
             .iter()
@@ -4794,11 +4915,9 @@ impl EmbeddedProximaDB {
                 key: key.clone(),
                 operator: PropertyFilterOperator::Equals as i32,
                 value: Some(PropertyValue {
-                    value: Some(
-                        crate::proto::proximadb_v1::property_value::Value::StringValue(
-                            value.clone(),
-                        ),
-                    ),
+                    value: Some(crate::graph::model::property_value::Value::StringValue(
+                        value.clone(),
+                    )),
                 }),
             })
             .collect()
@@ -4826,7 +4945,7 @@ impl EmbeddedProximaDB {
     }
 
     fn traversal_response_to_embedded(
-        response: crate::proto::proximadb_v1::TraversalResponse,
+        response: crate::graph::TraversalResponse,
     ) -> EmbeddedGraphTraversalResult {
         let nodes = response
             .nodes
@@ -4841,7 +4960,7 @@ impl EmbeddedProximaDB {
         let paths = response
             .paths
             .into_iter()
-            .map(|path| path.entities.into_iter().map(|entity| entity.id).collect())
+            .map(|path| path.node_ids)
             .collect();
         let stats = response.stats.map(|stats| EmbeddedTraversalStats {
             nodes_visited: stats.nodes_visited,

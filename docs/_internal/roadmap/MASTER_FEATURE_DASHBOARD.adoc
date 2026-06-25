@@ -3,12 +3,22 @@
 :toclevels: 3
 :icons: font
 :source-highlighter: rouge
-:last-updated: 2026-05-28
-:dashboard-header-refresh: 2026-05-28
+:last-updated: 2026-06-24
+:dashboard-header-refresh: 2026-06-24
 :verified: true
 
 [.lead]
 **Central inventory of feature claims under re-baseline. This file tracks implementation breadth, not the customer support contract by itself.**
+
+[WARNING]
+====
+*Stale rows — 2026-06-24 reconciliation.* The detailed 143-feature index in this file has NOT been
+re-audited row-by-row since March 2026 (acknowledged in-doc below). For *current implementation
+status* use the link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] (live, reconciled
+2026-06-24); for the *support contract* use link:../../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc].
+Reconciled drift (Phase 2.5 complete; capability-matrix stale rows; SaaS/co-design pivot integration)
+is recorded in link:./RECONCILIATION_2026_06_24.adoc[RECONCILIATION_2026_06_24].
+====
 
 [TIP]
 ====
@@ -43,17 +53,26 @@ The detailed feature-index tables further down (`<<priority-index>>` etc.) date 
 
 == Vision Phase Alignment
 
-Features are aligned with the three phases from link:../../concepts/vision.adoc[Vision Document]:
+Aligned with the Vision phases and the two 2026 pivots — the *2026-06-04 data-warehouse course
+correction* (Intelligent Multi-Engine Routing over object storage) and the *2026-06-19 co-design
+dimensional architecture* (five physical dimensions co-optimized against the measured I/O trace). See
+`docs/12-design/DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc` and
+`CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
 
+[cols="1,3,1,3", options="header"]
 |===
-| Phase | Focus | Status
+| Phase | Focus | Status | Live items (Technical Debt Register)
 
-| **Phase 1** | Format & Catalog Contract (Foundation) | ✅ Complete
-| **Phase 2** | Cross-Model Query & Indexing (Differentiation) | ✅ Complete
-| **Phase 2.5** | Foundational Performance Alignment (Execution Layer) | ✅ Complete
-| **Phase 3** | Deployment & Ecosystem Integration (Scale) | ✅ Complete (Market Entry)
-| **Phase 4** | Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search) | ✅ Complete
-| **Phase 5** | Cloud Infrastructure & Production Readiness | ✅ Complete
+| **Phase 1** | Format & Catalog Contract (Foundation) | ✅ Complete | —
+| **Phase 2** | Cross-Model Query & Indexing | 🔄 In Progress | Engines done; convergence/fusion open (TD-104/106/136-143)
+| **Phase 2.5** | Foundational Performance Alignment | ✅ Complete | TD-031/032/033/034/036/038/039/041 resolved (TD-035/040 open)
+| **Phase 3** | Deployment & Ecosystem + SaaS Operational Readiness | 🔄 In Progress | SDKs/connectors (TD-005/097/099/126); SaaS isolation/metering (TD-113/134)
+| **Phase 4** | Context DB Evolution (Time-series, Event Sourcing, Hybrid) | ✅ Engines / Beta packaging | TD-009/010/008 resolved; packaging Beta
+| **Phase 5** | Agentic Intelligence & Research Frontier | ✅ Research landed | TD-043..051 resolved; agent memory TD-100..103, TD-117 partial
+| **Phase 6** | Active Memory & Collective Reasoning | 🔄 In Progress | TD-053/054 open; TD-055/056 resolved
+| **Phase 7** | Competitive Platform & Storage Authority | 🔄 In Progress | TD-060..064, TD-110-124, TD-135 (lakehouse-native pgwire)
+| **Phase 8** | Continuous Loop & Elastic Compute | 📅 Planned | TD-086/087/088/089/090/091/094
+| **Cloud Infra** | Terraform / K8s / CI-CD / monitoring | ✅ Complete | —
 |===
 
 == 🎯 Current Maturity Summary
@@ -141,6 +160,31 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | **Production Ready**
 | Pricing strategy (4 tiers), conference presence, DevRel team chartered, documentation complete.
 | Marketing/operations surface — not a code claim.
+
+| Lakehouse-native pgwire (Phase 7)
+| **Experimental**
+| Storage-authority catalog + EXPLAIN (TD-060), L0→base compaction core (TD-114), Iceberg snapshots Phase 1 (TD-119), pg_catalog views (TD-120), HTAP constraints incl. ON DELETE FK actions (TD-110), gRPC SQL writes (TD-135).
+| Mostly Partial foundations; cost-based engine dispatch (TD-115) still routes Native-only. Not a support surface.
+
+| Cross-modal fusion seam (Phase 2)
+| **Experimental (In Progress)**
+| Calibrated fuse-by-`oid` core + GraphExpander (TD-136/137 In Progress); document/relational expanders + cost-routed fusion open (TD-138-143).
+| `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc`. Supersedes the legacy hardcoded hybrid path.
+
+| Agent memory layer
+| **Beta (Partial)**
+| Read surface (TD-100, AQL `MemoryAqlSource`) + session scoping (TD-103) landed; write/extraction (TD-101 In Progress), mem0 adapters Slice A (TD-102), agent branching foundation (TD-117).
+| ADR-022 / `AGENT_MEMORY_LAYER_HLD_2026_05_30.adoc`.
+
+| External engine connectors
+| **Partial**
+| Trino Arrow-Flight wire (TD-098 resolved); Spark JNI embedded impls + filter pushdown (TD-097); Hadoop records-scan + WAL push-down (TD-099). Residual: JVM DataSource V2, Gradle harness.
+| Connector-conformance contract gates green; live-server smokes pending.
+
+| Consumption metering / co-design (TAM surfaces)
+| **Partial**
+| KOU egress meter + KEU embedding meter (TD-134) live in `consumption_metrics.rs`; edge-collapse E0 shipped. Per-query I/O trace substrate is the co-design prerequisite.
+| `OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc`, `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`. Metered per-tenant, priced downstream in AnvaiOps.
 |===
 
 [NOTE]
@@ -161,7 +205,18 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 |===
 
 [[priority-index]]
-== 🎯 Complete Feature Index by Priority
+== 🎯 Feature Index 001–143 (frozen March-2026 baseline)
+
+[IMPORTANT]
+====
+*This 143-row index is the March-2026 implementation inventory.* It is NOT row-by-row re-audited and
+NOT the support contract. A few rows were corrected in the 2026-06-24 reconciliation (037/038 PULSAR/
+QUASAR retired; 102 ADR count). For *current* status of any item use the live
+link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register]; for the *support contract* use
+link:../../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc]. The
+<<current-era-index,Current-Era Capability Index>> below covers everything built *after* this baseline
+(Phase 7/8 lakehouse-pgwire, fusion seam, agent memory, connectors, co-design metering).
+====
 
 [cols="1,3,2,1,2", options="header"]
 |===
@@ -207,8 +262,8 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 035 | Bloom Filters | Performance | ✅ | Found in SSTable
 
 | 036 | ORION Graph Engine | Graph | ✅ | In-memory CSR; `src/graph/engines/orion/`
-| 037 | PULSAR Graph Engine | Graph | ⚠️ Experimental | Distributed graph foundation; not the canonical production graph path.
-| 038 | QUASAR Graph Engine | Graph | ⚠️ Experimental | Hybrid/tiered graph foundation; TD-068 tracks rewire-vs-retire decision.
+| 037 | PULSAR Graph Engine | Graph | ❌ Retired | *Retired (TD-001/017)* — modules/flags/routes/tests removed; `GraphEngineFactory` rejects the name. Distributed graph belongs to the relational substrate. ORION is the only graph runtime.
+| 038 | QUASAR Graph Engine | Graph | ❌ Retired | *Retired (TD-001/017/068)* — removed; tiered-graph behavior is now an xCatalog/storage projection-policy concern, not a graph engine.
 | 039 | GraphMemoryPool | Graph | ✅ | Zero-copy sharing
 
 | 040 | UnifiedAuthService | Security | ⚠️ Partial | SSO/JWT/API key plus mTLS identity and CRL support; admin/status plane still incomplete.
@@ -243,7 +298,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 
 | 067 | Cloud Storage Support | Platform | ✅ | S3/Azure/GCS
 | 068 | Python SDK | Platform | ✅ | Full client library
-| 069 | Dashboard UI | Platform | ⚠️ Partial | UI present; `ui/` (functionality limited)
+| 069 | Dashboard UI | Platform | ⚠️ Partial | Embedded *read-only* admin dashboard at `GET /admin` (self-contained, no build step) shipped in `crates/platform/proximadb-admin-ui` for local standalone/embedded — health, capabilities, metrics, collections. Full operator console (`ui/` CRA app) remains separate; write/admin-action surfaces still pending.
 | 070 | Docker Support | Platform | ✅ | Container deployment
 
 | 071 | README Documentation | Docs | ✅ | Basic readme
@@ -283,7 +338,7 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 100 | Performance Testing Guide | Docs | ✅ | Benchmarks, load testing, profiling
 
 | 101 | SDK Implementation Guide | Docs | ✅ | SDK development patterns
-| 102 | Architecture Decision Records | Docs | ✅ | 8 ADRs documented
+| 102 | Architecture Decision Records | Docs | ✅ | 24 ADRs (ADR-001..024); see `docs/12-design/adr/`
 | 103 | RFC Process Documentation | Docs | ✅ | RFC lifecycle and template
 | 104 | Contribution Guidelines | Docs | ✅ | Contributing workflow
 | 105 | Code Examples Repository | Docs | ✅ | 13 code examples
@@ -334,6 +389,61 @@ Features are aligned with the three phases from link:../../concepts/vision.adoc[
 | 143 | CrewAI Integration | Framework Integration | ✅ | `clients/python/src/proximadb_sdk/integrations/crewai.py`
 |===
 
+[[current-era-index]]
+== 🚀 Current-Era Capability Index (post-March-2026; status from the live register)
+
+Everything built after the 001–143 baseline. Status mirrors the
+link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] (reconciled 2026-06-24);
+*Dim* = co-design dimension (D1 object-store · D2 egress · D3 disk/cache · D4 compute · D5 governance).
+
+[cols="1,3,2,1,1", options="header"]
+|===
+| TD | Capability | Workstream | Status | Dim
+
+| TD-110 | OLTP/OLAP HTAP storage + PG constraints (ON DELETE FK live) | Relational/pgwire | Open | D3
+| TD-127/128 | OLTP secondary indexes + IN-list/range pushdown | Relational/pgwire | Open | D4
+| TD-076 | pgwire SQL parity Phase 2/3 (ADR-018) | Relational/pgwire | Open | D4
+| TD-115 | Cost-based multi-engine dispatch (flip Native-only router) | Relational/pgwire | Open | D4
+| TD-120 | pg_catalog completeness for ORM/driver compat | Relational/pgwire | Partial | D5
+| TD-135 | gRPC SQL relational writes (DDL/DML) | Relational/pgwire | Resolved | D4
+| TD-136/137 | Fusion neutral `Fuser` core + GraphExpander + REST v2 fusion-search | Fusion seam | In Progress | D4
+| TD-138-143 | Document/Relational/edge expanders, cost-routed fusion, alias resolution | Fusion seam | Open | D4
+| TD-146 | EntityService.SearchEntities delegates to the seam (no standalone retrieval) | Fusion seam | Open | D4
+| TD-062 | Hybrid retrieval + reranking planner surface | Fusion seam | Open | D4
+| TD-092 | Hybrid BM25 auto-indexing on canonical INSERT path | Fusion seam | Open | D4
+| TD-060 | Storage Layout Authority + external-format semantics | Storage spine | Partial | D1/D5
+| TD-114 | Background L0→base compactor + deletion vectors | Storage spine | Partial | D1/D3
+| TD-119 | Real Iceberg snapshots (metadata.json + manifest log) | Storage spine | Partial | D1
+| TD-116 | WAL tiering + read-as-of-LSN time travel | Storage spine | Open | D1
+| TD-118 | Unify paging/cache policy with tier policy | Storage spine | Open | D3
+| TD-088/087 | Point-read layout + scale-to-zero cold path | Storage spine | Open | D1
+| TD-078/090/091 | External-table execution / index-in-place / Lance interop | Storage spine | Open | D1
+| TD-096 | Vector-locality routing SST vs HELIX | Storage spine | Open | D4/D1
+| TD-112 | ANN recall over flushed/compacted segments | Storage spine | Partial | D1/D4
+| TD-147 | IVF posting-list id compaction (`Vec<String>`→`Vec<u64>`) | Storage spine | Open | D3/D1
+| TD-132 | Tier-B CPG-fragment PAX + I/O trace | Storage spine | Partial | D1
+| TD-086/089/094 | Continuous Discovery loop + elastic compute + single-node scale-to-zero | Elastic compute | Open | D4
+| TD-035/130 | Graph query executor operators + edge bulk-load | Graph | Open | D4
+| TD-122/123/124 | gRPC v2 parity + v1→v2 migration + deferred graph RPCs | Graph/gRPC | Partial/Open | D4
+| TD-121 | Hard-delete gRPC v1 (post-Sunset 2026-06-30) | Graph/gRPC | Open | D4
+| TD-100/101/102/103 | Agent memory read/write/adapters/scoping | Agent memory | Partial/Resolved | D4
+| TD-117 | Agent branching via BranchRef (COW, writer fence) | Agent memory | Partial | D1
+| TD-052/053/054 | Proactive retrieval / encoding gates / L-RAG lazy loading | Agent memory | Open | D4
+| TD-064 | Predicate-aware vector search correctness + fallback | Embedded/convergence | In Progress | D5/D4
+| TD-066 | ORION WAL as parallel durable graph truth | Embedded/convergence | Partial | D1
+| TD-104/106/109/111 | Handler extraction + proto-v1→canonical + type unification | Embedded/convergence | Partial/Open | D4
+| TD-144/145 | Composition-root relocation + Arrow-native ingestion | Embedded/convergence | Open | D4
+| TD-067/073/074/075 | OID projection keys + cataloged ANN policy/freshness/recall-gate | Embedded/convergence | Open | D4/D5
+| TD-063 | Observability/SIEM convergence to canonical records | Embedded/convergence | Open | D4
+| TD-005/126 | Multi-language SDKs + spec-driven codegen | SDKs/connectors | Partial | D2
+| TD-097/098/099 | Spark JNI / Trino Flight / Hadoop records-scan connectors | SDKs/connectors | Partial/Resolved | D4/D1
+| TD-133 | Cross-modal transactional multi-modal write | SDKs/connectors | Open | D5
+| TD-134 | Metering KEU + per-repo RBAC | Co-design/metering | Resolved | D2/D5
+| TD-029/030 | Coverage ratchet 49→80% + ibkrtrading validation | Quality | In Progress/Open | —
+| TD-024/025 | SWIFT / RAPTOR engine completion (experimental-gated) | Quality | Open | D4
+| TD-085 | Internal marketing-copy product scrub | Quality | Partial | —
+|===
+
 [[category-index]]
 == 📂 Features by Category (inventory status, not support tier)
 
@@ -360,9 +470,9 @@ the maturity summary at the top of this file or `docs/SUPPORTED_SURFACE.adoc`.
 ==== Quantization & Performance (10/10 - 100%)
 * 026-035, 066: Complete optimization suite
 
-==== Graph Database (ORION usable; distributed/tiered engines experimental)
-* 036, 039: ORION and graph memory pool are usable
-* 037-038: PULSAR / QUASAR remain experimental compatibility or projection candidates
+==== Graph Database (ORION is the only graph runtime)
+* 036, 039: ORION and graph memory pool are usable (Beta)
+* 037-038: PULSAR / QUASAR *retired* (TD-001/017) — distributed graph → relational substrate; tiered graph → storage projection policy
 
 ==== Enterprise Security (Beta)
 * 041, 045-046: RBAC, multi-tenancy foundation, and rate limiting are implemented
@@ -393,9 +503,9 @@ the maturity summary at the top of this file or `docs/SUPPORTED_SURFACE.adoc`.
   - Support tier: Beta / planner-hardening dependent
 
 * **077**: Distributed Operations Assessment ⚠️ **EXPERIMENTAL**
-  - Assessed: 3,850+ lines cluster infrastructure
-  - Found: Raft consensus, sharding, PULSAR/QUASAR engines
-  - Status: Experimental until RPC transport, remote execution, and failover validation close
+  - Assessed: ~5,491 lines cluster infrastructure (`src/cluster/`)
+  - Found: Raft consensus, sharding, routing foundations (PULSAR/QUASAR engines retired — TD-001/017)
+  - Status: Experimental until RPC transport, remote execution, and failover validation close (TD-077)
 
 ==== Documentation
 * **078**: Documentation Migration to AsciiDoc
@@ -446,24 +556,21 @@ the maturity summary at the top of this file or `docs/SUPPORTED_SURFACE.adoc`.
 
 == 🔗 Quick Links
 
-=== Status Documents
-* link:CONSOLIDATED_FEATURE_STATUS.adoc[Detailed Status Report]
-* link:completed/[Completed Features Directory]
-* link:in-progress/[In-Progress Features Directory]
-* link:future/[Future Features Directory]
+=== Live trackers (authoritative)
+* link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] — live open-items tracker (reconciled 2026-06-24)
+* link:./RECONCILIATION_2026_06_24.adoc[Tracking Reconciliation — 2026-06-24]
+* link:../../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] — support contract
+* link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] — phase sequencing
+* link:../../12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc[Design Doc Status Index] — design-doc catalogue
+* link:../../12-design/SYSTEM_MAP_2026_05_30.adoc[System Map] — architecture ground truth
 
-=== Key Implementation Guides
-* link:implementation/CORRECTED_STATUS_2024.adoc[2024 Implementation Status]
-* link:implementation/PRIORITY_ACTION_PLAN.adoc[Priority Action Plan]
-* link:implementation/Q1_2025_IMPLEMENTATION.adoc[Q1 2025 Implementation Guide]
+=== Status snapshots (historical)
+* link:../status/MVP_RELEASE_READINESS_RECONCILIATION_2026_05_28.adoc[MVP Release Readiness — 2026-05-28]
+* link:../status/PRE_RELEASE_FOUNDATIONS_2026_05_26.adoc[Pre-Release Foundations — 2026-05-26]
 
 === Technical Deep Dives
 * link:completed/01-storage-engines.adoc[Storage Engines Overview]
 * link:completed/02-index-algorithms.adoc[Index Algorithms Details]
-* link:completed/03-quantization.adoc[Quantization System]
-* link:completed/04-graph-database.adoc[Graph Database]
-* link:completed/05-enterprise-security.adoc[Security Features]
-* link:completed/06-ai-integration.adoc[AI Integration]
 
 === Storage Engine Deep Dives
 * link:completed/079-sst-engine-deep-dive.adoc[SST Engine] - LSM-tree, three-stage filtering
@@ -533,14 +640,15 @@ the maturity summary at the top of this file or `docs/SUPPORTED_SURFACE.adoc`.
 * **Quarterly**: Strategic realignment
 
 ---
-*Last Updated*: May 27, 2026 +
-*Total Indexed Features*: 143 +
+*Last Updated*: 2026-06-24 +
+*Indexed Features*: 143 (frozen March-2026 baseline) + the <<current-era-index,Current-Era Capability Index>> (TD-060..147 era) +
 *Support Contract*: `docs/SUPPORTED_SURFACE.adoc` +
+*Live Tracker*: `docs/10-quality/TECHNICAL_DEBT.adoc` +
 *Technical API/Projection Companion*: `docs/12-design/SUPPORTED_SURFACES.adoc` +
-*Detail Row Reconciliation*: partially refreshed; row-by-row support-tier audit remains open
+*Detail Row Reconciliation*: 001–143 baseline corrected for retired engines + ADR count; row-by-row support-tier audit still deferred (see RECONCILIATION_2026_06_24)
 
 == Related Documents
 
 * link:STRATEGIC_ROADMAP.adoc[Strategic Roadmap] - Vision-aligned phase planning
 * link:../DOCUMENTATION_STATUS.adoc[Documentation Status] - All docs with status
-* link:../../concepts/vision.adoc[Vision Document] - Authoritative vision and strategy
+* link:../../05-concepts/vision.adoc[Vision Document] - Authoritative vision and strategy

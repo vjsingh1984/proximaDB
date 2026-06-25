@@ -1,12 +1,21 @@
 """
 Multi-BERT Embedding Providers for ProximaDB
 
-This module provides various BERT model sizes for different use cases:
-- MiniLM: Fast, lightweight (384 dimensions)
-- BERT Base: Balanced performance (768 dimensions)
-- BERT Large: Maximum accuracy (1024 dimensions)
-- RoBERTa: Robust performance (768/1024 dimensions)
-- DeBERTa: State-of-the-art (768/1536 dimensions)
+Various BERT model sizes for different latency/accuracy/memory budgets:
+- MiniLM: fast, lightweight (384 dims)
+- BERT/RoBERTa/MPNet base: balanced (768 dims)
+- BERT/RoBERTa/E5 large: higher accuracy (1024 dims)
+- DeBERTa xlarge: maximum accuracy (1536 dims)
+
+Ported onto :class:`core.BaseEmbeddingProvider` (TD-126 System-B collapse).
+Self-registers under ``multi-bert``; :class:`AdaptiveBERTProvider` registers
+under ``adaptive-bert``. Heavy ``torch`` / ``transformers`` /
+``sentence_transformers`` imports are performed lazily inside the model-loading
+and encoding paths so importing this module pulls no model dependencies.
+
+The provider keeps its ergonomic constructor
+(``MultiBERTProvider(model_name=..., size=..., device=...)``) while also
+accepting a standard :class:`ProviderConfig` for parity with the registry.
 """
 
 import logging
@@ -16,12 +25,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
-import torch
-import torch.nn.functional as F
-from sentence_transformers import SentenceTransformer
-from transformers import AutoModel, AutoTokenizer
 
-from .base import EmbeddingProvider
+from .core.base import BaseEmbeddingProvider
+from .core.config import ModelMetadata, ProviderConfig
+from .core.device import resolve_device
+from .core.registry import ProviderRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -36,19 +44,55 @@ class ModelSize(Enum):
     XLARGE = "xlarge"  # ~3GB, 1536 dims, most accurate
 
 
-class MultiBERTProvider(EmbeddingProvider):
+# Build registry ModelMetadata from the rich internal MODELS spec below.
+def _models_to_metadata(models: dict[str, dict]) -> dict[str, ModelMetadata]:
+    return {
+        cfg["name"]: ModelMetadata(
+            name=cfg["name"],
+            dimension=cfg["dimension"],
+            max_length=512,
+            provider_type=(
+                "sentence-transformer"
+                if cfg.get("is_sentence_transformer")
+                else "transformers"
+            ),
+            languages="en",
+            description=cfg.get("description", ""),
+            use_case=f"{cfg['size'].value} model ({cfg.get('memory', '?')})",
+        )
+        for cfg in models.values()
+    }
+
+
+@ProviderRegistry.register(
+    name="multi-bert",
+    models=_models_to_metadata(
+        {
+            "mpnet-base": {
+                "name": "sentence-transformers/all-mpnet-base-v2",
+                "dimension": 768,
+                "size": ModelSize.BASE,
+                "memory": "~420MB",
+                "description": "High quality general purpose",
+                "is_sentence_transformer": True,
+            },
+        }
+    ),
+    aliases=["bert", "multibert"],
+    description="Multi-size BERT embeddings (MiniLM/BERT/RoBERTa/MPNet/DeBERTa)",
+)
+class MultiBERTProvider(BaseEmbeddingProvider):
     """
-    Multi-size BERT embedding provider with various model options
+    Multi-size BERT embedding provider with various model options.
 
     Features:
     - Multiple model sizes from Mini to XLarge
-    - Automatic model selection based on requirements
-    - GPU/CPU flexibility
-    - Batch processing optimization
-    - Memory-efficient options
+    - Automatic model selection based on available resources
+    - Configurable token pooling for the transformers backend
+    - Per-text caching keyed on model + content
     """
 
-    # Available models by size and capability
+    # Available models by size and capability.
     MODELS = {
         # Mini models (fastest, least memory)
         "minilm-l6": {
@@ -156,9 +200,13 @@ class MultiBERTProvider(EmbeddingProvider):
         },
     }
 
+    DEFAULT_MODEL = "mpnet-base"
+
     def __init__(
         self,
-        model_name: str = "mpnet-base",
+        config: ProviderConfig | None = None,
+        *,
+        model_name: str | None = None,
         size: ModelSize | None = None,
         device: str | None = None,
         cache_dir: str | None = None,
@@ -168,19 +216,17 @@ class MultiBERTProvider(EmbeddingProvider):
         max_memory_gb: float | None = None,
     ):
         """
-        Initialize Multi-BERT provider
+        Initialize the provider.
 
-        Args:
-            model_name: Specific model name or None for auto-selection
-            size: Preferred model size (mini, small, base, large, xlarge)
-            device: Device to run on ('cuda', 'cpu', or None for auto)
-            cache_dir: Directory to cache downloaded models
-            batch_size: Batch size for encoding
-            normalize: Whether to normalize embeddings
-            pooling_strategy: How to pool token embeddings
-            max_memory_gb: Maximum memory to use (helps select model)
+        Accepts either a standard :class:`ProviderConfig` (registry / get_provider
+        path) or the ergonomic keyword form (``model_name``/``size``/...). When a
+        ``config`` is supplied the keyword model selectors are ignored.
         """
-        # Auto-select model based on constraints
+        if config is not None:
+            self._init_from_config(config)
+            return
+
+        # Ergonomic / legacy keyword constructor.
         if size and not model_name:
             model_name = self._select_model_by_size(size, max_memory_gb)
         elif not model_name:
@@ -191,128 +237,200 @@ class MultiBERTProvider(EmbeddingProvider):
                 f"Model {model_name} not found. Available: {list(self.MODELS.keys())}"
             )
 
-        self.model_config = self.MODELS[model_name]
-        self.model_name = model_name
-        self.batch_size = batch_size
-        self.normalize = normalize
-        self.pooling_strategy = pooling_strategy
+        spec = self.MODELS[model_name]
+        resolved_device = device
+        if resolved_device is None:
+            resolved_device = self._auto_device(model_name)
 
-        # Set device
-        if device is None:
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            # Check if model fits in GPU memory
-            if self.device == "cuda" and self.model_config["size"] == ModelSize.XLARGE:
-                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-                if gpu_memory < 8:  # Less than 8GB GPU memory
-                    logger.warning(
-                        f"GPU memory ({gpu_memory:.1f}GB) may be insufficient for {model_name}"
-                    )
-                    self.device = "cpu"
-        else:
-            self.device = device
+        built = ProviderConfig(
+            model=self._spec_to_metadata(model_name),
+            batch_size=batch_size,
+            normalize=normalize,
+            device=resolved_device,
+            cache_dir=cache_dir,
+            extra={"pooling_strategy": pooling_strategy, "model_key": model_name},
+        )
+        self._init_from_config(built)
+        # Eager-load to preserve the legacy contract (``.model`` available after
+        # construction, used by tests + auto-selection diagnostics).
+        self.ensure_initialized()
+        logger.info(
+            "MultiBERT initialized: %s (%s, %dd) on %s",
+            model_name,
+            spec["memory"],
+            spec["dimension"],
+            self.device,
+        )
 
-        # Set cache directory
-        if cache_dir:
-            self.cache_dir = Path(cache_dir)
+    def default_config(self) -> ProviderConfig:
+        """Default configuration (the balanced MPNet base model)."""
+        return ProviderConfig(
+            model=self._spec_to_metadata(self.DEFAULT_MODEL),
+            batch_size=32,
+            normalize=True,
+            extra={"pooling_strategy": "mean", "model_key": self.DEFAULT_MODEL},
+        )
+
+    @property
+    def model_name(self) -> str:
+        """Short model key (e.g. ``"mpnet-base"``), not the HF path."""
+        return self._model_key
+
+    @model_name.setter
+    def model_name(self, value: str) -> None:
+        self._model_key = value
+
+    def _init_from_config(self, config: ProviderConfig) -> None:
+        super().__init__(config)
+        self._model_key = config.extra.get("model_key") or self._key_for_model_name(
+            config.model.name
+        )
+        self.model_config = self.MODELS.get(self.model_name, {})
+        self.batch_size = config.batch_size
+        self.normalize = config.normalize
+        self.pooling_strategy = config.extra.get("pooling_strategy", "mean")
+        self.device = resolve_device(config.device) or "cpu"
+        self._cache: dict[str, np.ndarray] = {}
+        if config.cache_dir:
+            self.cache_dir = Path(config.cache_dir)
         else:
             self.cache_dir = Path.home() / ".cache" / "proximadb" / "models"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         os.environ["TRANSFORMERS_CACHE"] = str(self.cache_dir)
 
-        # Initialize model
-        self._load_model()
+    # -- model selection -----------------------------------------------------
+    @classmethod
+    def _key_for_model_name(cls, hf_name: str) -> str:
+        for key, cfg in cls.MODELS.items():
+            if cfg["name"] == hf_name:
+                return key
+        return cls.DEFAULT_MODEL
 
-        # Text cache
-        self._cache = {}
-
-        logger.info(
-            f"MultiBERT initialized: {model_name} "
-            f"({self.model_config['memory']}, {self.model_config['dimension']}d) "
-            f"on {self.device}"
+    @classmethod
+    def _spec_to_metadata(cls, model_key: str) -> ModelMetadata:
+        cfg = cls.MODELS[model_key]
+        return ModelMetadata(
+            name=cfg["name"],
+            dimension=cfg["dimension"],
+            max_length=512,
+            provider_type=(
+                "sentence-transformer"
+                if cfg.get("is_sentence_transformer")
+                else "transformers"
+            ),
+            languages="en",
+            description=cfg.get("description", ""),
+            use_case=f"{cfg['size'].value} model ({cfg.get('memory', '?')})",
         )
 
+    def _auto_device(self, model_name: str) -> str:
+        """Pick cuda/cpu, downgrading XLARGE models off small GPUs."""
+        import torch
+
+        if torch.cuda.is_available():
+            device = "cuda"
+            if self.MODELS[model_name]["size"] == ModelSize.XLARGE:
+                gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+                if gpu_memory < 8:
+                    logger.warning(
+                        "GPU memory (%.1fGB) may be insufficient for %s",
+                        gpu_memory,
+                        model_name,
+                    )
+                    device = "cpu"
+            return device
+        return "cpu"
+
     def _auto_select_model(self, max_memory_gb: float | None = None) -> str:
-        """Auto-select best model based on available resources"""
+        """Auto-select best model based on available resources."""
+        import torch
+
         if torch.cuda.is_available():
             gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
-
             if gpu_memory >= 8:
-                return "e5-large"  # Best quality that fits
+                return "e5-large"
             elif gpu_memory >= 4:
-                return "mpnet-base"  # Good balance
-            else:
-                return "minilm-l12"  # Lightweight
-        else:
-            # CPU mode - prefer smaller models
-            import psutil
-
-            ram_gb = psutil.virtual_memory().total / 1e9
-
-            if max_memory_gb:
-                ram_gb = min(ram_gb, max_memory_gb)
-
-            if ram_gb >= 16:
                 return "mpnet-base"
-            elif ram_gb >= 8:
-                return "distilbert"
             else:
-                return "minilm-l6"
+                return "minilm-l12"
+
+        import psutil
+
+        ram_gb = psutil.virtual_memory().total / 1e9
+        if max_memory_gb:
+            ram_gb = min(ram_gb, max_memory_gb)
+
+        if ram_gb >= 16:
+            return "mpnet-base"
+        elif ram_gb >= 8:
+            return "distilbert"
+        else:
+            return "minilm-l6"
 
     def _select_model_by_size(
         self, size: ModelSize, max_memory_gb: float | None = None
     ) -> str:
-        """Select model by size preference"""
+        """Select a model by size preference (prefers sentence-transformers)."""
         candidates = [
             name for name, config in self.MODELS.items() if config["size"] == size
         ]
-
         if not candidates:
-            logger.warning(f"No models found for size {size}, using default")
-            return "mpnet-base"
+            logger.warning("No models found for size %s, using default", size)
+            return self.DEFAULT_MODEL
 
-        # Prefer sentence-transformers for ease of use
         st_models = [
             name
             for name in candidates
             if self.MODELS[name].get("is_sentence_transformer", False)
         ]
-
         return st_models[0] if st_models else candidates[0]
 
-    def _load_model(self):
-        """Load the selected model"""
+    # -- lifecycle / encoding ------------------------------------------------
+    def _is_sentence_transformer(self) -> bool:
+        return bool(self.model_config.get("is_sentence_transformer"))
+
+    def _load_model(self) -> Any:
+        """Load the selected model (sentence-transformer or transformers tuple)."""
         model_path = self.model_config["name"]
+        logger.info("Loading model: %s", model_path)
 
-        logger.info(f"Loading model: {model_path}")
+        if self._is_sentence_transformer():
+            from sentence_transformers import SentenceTransformer
 
-        if self.model_config.get("is_sentence_transformer"):
-            # Use sentence-transformers
-            self.model = SentenceTransformer(
+            self.tokenizer = None
+            model = SentenceTransformer(
                 model_path, device=self.device, cache_folder=str(self.cache_dir)
             )
-            self.tokenizer = None
-        else:
-            # Use transformers
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                model_path, cache_dir=self.cache_dir
-            )
-            self.model = AutoModel.from_pretrained(
-                model_path, cache_dir=self.cache_dir
-            ).to(self.device)
-            self.model.eval()
+            self.model = model
+            logger.info("Model loaded on %s", self.device)
+            return model
 
-        logger.info(f"Model loaded on {self.device}")
+        from transformers import AutoModel, AutoTokenizer
 
-    def embed_text(self, text: str) -> np.ndarray:
-        """Generate embedding for single text"""
-        return self.embed_texts([text])[0]
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            model_path, cache_dir=self.cache_dir
+        )
+        model = AutoModel.from_pretrained(model_path, cache_dir=self.cache_dir).to(
+            self.device
+        )
+        model.eval()
+        self.model = model
+        logger.info("Model loaded on %s", self.device)
+        return model
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        """Core embedding entry point (delegates to the cached implementation)."""
+        if not texts:
+            return np.array([])
+        return self.embed_texts(texts)
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
-        """Generate embeddings for multiple texts"""
-        # Check cache
-        uncached_texts = []
-        uncached_indices = []
-        cached_embeddings = {}
+        """Generate embeddings for multiple texts, with per-text caching."""
+        self.ensure_initialized()
+
+        uncached_texts: list[str] = []
+        uncached_indices: list[int] = []
+        cached_embeddings: dict[int, np.ndarray] = {}
 
         for i, text in enumerate(texts):
             cache_key = f"{self.model_name}:{hash(text)}"
@@ -322,10 +440,8 @@ class MultiBERTProvider(EmbeddingProvider):
                 uncached_texts.append(text)
                 uncached_indices.append(i)
 
-        # Process uncached
         if uncached_texts:
-            if self.model_config.get("is_sentence_transformer"):
-                # Sentence transformer encoding
+            if self._is_sentence_transformer():
                 new_embeddings = self.model.encode(
                     uncached_texts,
                     batch_size=self.batch_size,
@@ -334,10 +450,8 @@ class MultiBERTProvider(EmbeddingProvider):
                     device=self.device,
                 )
             else:
-                # Transformers encoding
                 new_embeddings = self._encode_with_transformers(uncached_texts)
 
-            # Cache results
             for text, embedding, idx in zip(
                 uncached_texts, new_embeddings, uncached_indices
             ):
@@ -345,7 +459,6 @@ class MultiBERTProvider(EmbeddingProvider):
                 self._cache[cache_key] = embedding
                 cached_embeddings[idx] = embedding
 
-        # Combine in order
         result = np.zeros((len(texts), self.model_config["dimension"]))
         for i, embedding in cached_embeddings.items():
             result[i] = embedding
@@ -353,13 +466,13 @@ class MultiBERTProvider(EmbeddingProvider):
         return result
 
     def _encode_with_transformers(self, texts: list[str]) -> np.ndarray:
-        """Encode using transformers library"""
-        embeddings = []
+        """Encode using the raw transformers backend with configured pooling."""
+        import torch
+        import torch.nn.functional as F
 
+        embeddings = []
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
-
-            # Tokenize
             inputs = self.tokenizer(
                 batch,
                 padding=True,
@@ -368,11 +481,9 @@ class MultiBERTProvider(EmbeddingProvider):
                 return_tensors="pt",
             ).to(self.device)
 
-            # Generate embeddings
             with torch.no_grad():
                 outputs = self.model(**inputs)
 
-                # Pool based on strategy
                 if self.pooling_strategy == "cls":
                     batch_embeddings = outputs.last_hidden_state[:, 0, :]
                 elif self.pooling_strategy == "max":
@@ -384,7 +495,6 @@ class MultiBERTProvider(EmbeddingProvider):
                     counts = attention_mask.sum(dim=1)
                     batch_embeddings = summed / counts
 
-                # Normalize if requested
                 if self.normalize:
                     batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
 
@@ -395,16 +505,16 @@ class MultiBERTProvider(EmbeddingProvider):
     def embed_documents(
         self, documents: list[dict[str, Any]], text_field: str = "text"
     ) -> np.ndarray:
-        """Generate embeddings for documents"""
+        """Generate embeddings for documents, extracting ``text_field``."""
         texts = [doc.get(text_field, "") for doc in documents]
         return self.embed_texts(texts)
 
     def get_dimension(self) -> int:
-        """Get embedding dimension"""
+        """Get embedding dimension."""
         return self.model_config["dimension"]
 
     def get_model_info(self) -> dict[str, Any]:
-        """Get detailed model information"""
+        """Get detailed model information."""
         return {
             "provider": "MultiBERT",
             "model": self.model_name,
@@ -418,7 +528,7 @@ class MultiBERTProvider(EmbeddingProvider):
         }
 
     def benchmark(self, test_texts: list[str] = None) -> dict[str, float]:
-        """Benchmark model performance"""
+        """Benchmark model throughput on a small text set."""
         import time
 
         if test_texts is None:
@@ -428,10 +538,8 @@ class MultiBERTProvider(EmbeddingProvider):
                 "Machine learning models require evaluation.",
             ] * 10
 
-        # Warmup
-        _ = self.embed_texts(test_texts[:3])
+        _ = self.embed_texts(test_texts[:3])  # warmup
 
-        # Benchmark
         start = time.time()
         embeddings = self.embed_texts(test_texts)
         elapsed = time.time() - start
@@ -446,30 +554,27 @@ class MultiBERTProvider(EmbeddingProvider):
         }
 
     @classmethod
-    def compare_models(cls, texts: list[str], models: list[str] = None) -> pd.DataFrame:
-        """Compare different models on the same texts"""
+    def compare_models(cls, texts: list[str], models: list[str] = None):
+        """Compare different models on the same texts (returns a DataFrame)."""
         import time
 
         import pandas as pd
+        import torch
 
         if models is None:
             models = ["minilm-l6", "distilbert", "mpnet-base", "e5-large"]
 
         results = []
-
         for model_name in models:
             try:
-                logger.info(f"Testing {model_name}...")
+                logger.info("Testing %s...", model_name)
                 provider = cls(model_name=model_name)
 
-                # Time embedding generation
                 start = time.time()
-                embeddings = provider.embed_texts(texts)
+                _ = provider.embed_texts(texts)
                 elapsed = time.time() - start
 
-                # Get model info
                 info = provider.get_model_info()
-
                 results.append(
                     {
                         "model": model_name,
@@ -483,57 +588,72 @@ class MultiBERTProvider(EmbeddingProvider):
                     }
                 )
 
-                # Clear GPU memory
                 if hasattr(provider, "model"):
                     del provider.model
-                torch.cuda.empty_cache()
-
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
             except Exception as e:
-                logger.error(f"Failed to test {model_name}: {e}")
+                logger.error("Failed to test %s: %s", model_name, e)
 
         return pd.DataFrame(results)
 
 
+@ProviderRegistry.register(
+    name="adaptive-bert",
+    models=_models_to_metadata(
+        {
+            "mpnet-base": {
+                "name": "sentence-transformers/all-mpnet-base-v2",
+                "dimension": 768,
+                "size": ModelSize.BASE,
+                "memory": "~420MB",
+                "description": "Adaptive default (auto-selected at runtime)",
+                "is_sentence_transformer": True,
+            },
+        }
+    ),
+    aliases=["adaptive"],
+    description="Adaptive BERT provider with runtime model selection",
+)
 class AdaptiveBERTProvider(MultiBERTProvider):
     """
-    Adaptive BERT provider that automatically selects model based on input
+    Adaptive BERT provider that selects a model based on input characteristics.
 
     Features:
     - Automatic model selection based on text length
-    - Dynamic batching based on available memory
-    - Fallback to smaller models on OOM
+    - Speed/accuracy preference knobs
+    - Fallback to a smaller model on GPU OOM
     """
 
     def __init__(
         self,
+        config: ProviderConfig | None = None,
+        *,
         prefer_speed: bool = False,
         prefer_accuracy: bool = False,
         max_memory_gb: float | None = None,
         **kwargs,
     ):
-        """
-        Initialize adaptive provider
-
-        Args:
-            prefer_speed: Prioritize speed over accuracy
-            prefer_accuracy: Prioritize accuracy over speed
-            max_memory_gb: Maximum memory to use
-            **kwargs: Additional arguments for parent class
-        """
         self.prefer_speed = prefer_speed
         self.prefer_accuracy = prefer_accuracy
 
-        # Select initial model
+        if config is not None:
+            super().__init__(config=config)
+            self.performance_stats = {
+                "total_texts": 0,
+                "total_time": 0,
+                "model_switches": 0,
+            }
+            return
+
         if prefer_speed:
             model_name = "minilm-l12"
         elif prefer_accuracy:
             model_name = "e5-large"
         else:
-            model_name = None  # Auto-select
+            model_name = None
 
         super().__init__(model_name=model_name, max_memory_gb=max_memory_gb, **kwargs)
-
-        # Track performance
         self.performance_stats = {
             "total_texts": 0,
             "total_time": 0,
@@ -541,13 +661,11 @@ class AdaptiveBERTProvider(MultiBERTProvider):
         }
 
     def embed_texts(self, texts: list[str]) -> np.ndarray:
-        """Adaptively embed texts with automatic model selection"""
+        """Adaptively embed texts with optional model switching + OOM fallback."""
+        import torch
 
-        # Analyze input
-        avg_length = np.mean([len(t) for t in texts])
-        total_chars = sum(len(t) for t in texts)
+        avg_length = np.mean([len(t) for t in texts]) if texts else 0
 
-        # Switch model if needed
         if self.prefer_speed and avg_length > 1000 and self.model_name != "minilm-l6":
             logger.info("Switching to mini model for long texts")
             self._switch_model("minilm-l6")
@@ -557,80 +675,39 @@ class AdaptiveBERTProvider(MultiBERTProvider):
             logger.info("Switching to large model for short texts")
             self._switch_model("e5-large")
 
-        # Try embedding with fallback
         try:
             embeddings = super().embed_texts(texts)
         except torch.cuda.OutOfMemoryError:
             logger.warning("GPU OOM, falling back to smaller model")
             self._switch_model("minilm-l6")
-            torch.cuda.empty_cache()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             embeddings = super().embed_texts(texts)
 
-        # Update stats
         self.performance_stats["total_texts"] += len(texts)
-
         return embeddings
 
-    def _switch_model(self, new_model: str):
-        """Switch to a different model"""
-        if new_model != self.model_name:
-            logger.info(f"Switching from {self.model_name} to {new_model}")
+    def _switch_model(self, new_model: str) -> None:
+        """Switch to a different model in-place."""
+        import torch
 
-            # Clear current model
-            if hasattr(self, "model"):
-                del self.model
-            if hasattr(self, "tokenizer"):
-                del self.tokenizer
+        if new_model == self.model_name:
+            return
+
+        logger.info("Switching from %s to %s", self.model_name, new_model)
+        if hasattr(self, "model"):
+            del self.model
+        if getattr(self, "tokenizer", None) is not None:
+            del self.tokenizer
+        if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-            # Load new model
-            self.model_name = new_model
-            self.model_config = self.MODELS[new_model]
-            self._load_model()
-
-            self.performance_stats["model_switches"] += 1
-
-
-def benchmark_all_models():
-    """Benchmark all available models"""
-
-    test_texts = [
-        "The company reported strong financial results for the quarter.",
-        "Revenue increased by 15% year-over-year to $10 billion.",
-        "Risk factors include market volatility and regulatory changes.",
-    ] * 10
-
-    print("=" * 60)
-    print("Benchmarking All BERT Models")
-    print("=" * 60)
-
-    # Test different model sizes
-    models_to_test = [
-        "minilm-l6",  # Mini
-        "minilm-l12",  # Mini+
-        "distilbert",  # Small
-        "mpnet-base",  # Base
-        "roberta-base",  # Base+
-        "e5-large",  # Large
-    ]
-
-    results = MultiBERTProvider.compare_models(test_texts, models_to_test)
-
-    print("\nResults:")
-    print(results.to_string())
-
-    # Recommendations
-    print("\n" + "=" * 60)
-    print("Recommendations:")
-    print("=" * 60)
-    print("🚀 For Speed: Use 'minilm-l6' (384d, 22MB)")
-    print("⚖️  Balanced: Use 'mpnet-base' (768d, 420MB)")
-    print("🎯 For Accuracy: Use 'e5-large' (1024d, 1.3GB)")
-    print("💾 Low Memory: Use 'minilm-l12' (384d, 40MB)")
-
-    return results
-
-
-if __name__ == "__main__":
-    # Run benchmarks when executed directly
-    benchmark_all_models()
+        self.model_name = new_model
+        self.model_config = self.MODELS[new_model]
+        # Re-point config.model so get_dimension() / metadata reflect the switch.
+        self.config = self.config.merge(model=self._spec_to_metadata(new_model))
+        self._initialized = False
+        self._model = None
+        self._cache = {}
+        self.ensure_initialized()
+        self.performance_stats["model_switches"] += 1

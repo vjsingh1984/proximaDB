@@ -12,8 +12,8 @@
 
 #[cfg(test)]
 mod grpc_methods_tests {
-    use proximadb::graph::{Node, service::GraphOperationsService};
-    use proximadb::proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig, PropertyValue};
+    use proximadb::graph::{Node, PropertyValue, service::GraphOperationsService};
+    use proximadb::proto::proximadb_v1::{CompressionAlgorithm, GraphStorageConfig};
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -335,37 +335,27 @@ mod grpc_methods_tests {
                 (
                     "name".to_string(),
                     PropertyValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::property_value::Value::StringValue(
-                                "Alice".to_string(),
-                            ),
-                        ),
+                        value: Some(proximadb::graph::property_value::Value::StringValue(
+                            "Alice".to_string(),
+                        )),
                     },
                 ),
                 (
                     "age".to_string(),
                     PropertyValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::property_value::Value::IntValue(30),
-                        ),
+                        value: Some(proximadb::graph::property_value::Value::IntValue(30)),
                     },
                 ),
                 (
                     "score".to_string(),
                     PropertyValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::property_value::Value::DoubleValue(
-                                0.95,
-                            ),
-                        ),
+                        value: Some(proximadb::graph::property_value::Value::DoubleValue(0.95)),
                     },
                 ),
                 (
                     "active".to_string(),
                     PropertyValue {
-                        value: Some(
-                            proximadb::proto::proximadb_v1::property_value::Value::BoolValue(true),
-                        ),
+                        value: Some(proximadb::graph::property_value::Value::BoolValue(true)),
                     },
                 ),
             ]),

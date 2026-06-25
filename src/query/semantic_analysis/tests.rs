@@ -210,39 +210,29 @@ impl MockCollectionService {
 }
 
 async fn setup_analyzer_with_mock() -> Analyzer {
-    // Create a real CollectionService for testing
-    use crate::storage::metadata::backends::universal_backend::{
-        UniversalMetadataBackend, UniversalMetadataConfig,
-    };
-    use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
+    // Create a real CollectionService backed by the system catalog for testing.
+    use crate::catalog::CatalogManager;
     use tempfile::TempDir;
 
     let temp_dir = TempDir::new().unwrap();
-    let fs_config = FilesystemConfig {
-        default_fs: Some(format!("file://{}", temp_dir.path().display())),
-        ..Default::default()
-    };
-    let filesystem_factory = Arc::new(FilesystemFactory::create(fs_config).await.unwrap());
+    let storage_url = format!("file://{}", temp_dir.path().display());
 
-    let config = UniversalMetadataConfig {
-        storage_url: format!("file://{}", temp_dir.path().display()),
-        ..Default::default()
-    };
-    let metadata_backend = Arc::new(
-        UniversalMetadataBackend::new(config, filesystem_factory)
-            .await
-            .unwrap(),
-    );
+    let catalog_manager = Arc::new(CatalogManager::new());
+    catalog_manager
+        .create_native_catalog("default", &storage_url)
+        .await
+        .unwrap();
 
     let storage_config = StorageConfig {
-        metadata_url: format!("file://{}", temp_dir.path().display()),
+        metadata_url: storage_url.clone(),
         ..Default::default()
     };
 
     let collection_service = Arc::new(
-        CollectionService::new(metadata_backend, storage_config)
+        CollectionService::new(storage_config)
             .await
-            .unwrap(),
+            .unwrap()
+            .with_catalog_manager(catalog_manager.clone()),
     );
 
     // Create the test collections in the actual service

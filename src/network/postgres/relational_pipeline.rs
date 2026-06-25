@@ -129,6 +129,14 @@ pub async fn try_run_select(
     vector_ops: Option<Arc<dyn proximadb_runtime::VectorOpsPort>>,
     tenant: Option<&str>,
     controls: ExecutionControls,
+    // pgwire passes `true`: only joins/GROUP BY/aggregates/set-ops engage the
+    // real-data relational engine, leaving simple SELECTs on pgwire's hardened
+    // legacy path. Off-pgwire callers (gRPC/REST `ExecuteQuery`, TD-121) have no
+    // such legacy single-table path, so they pass `false` to route *any*
+    // resolvable relational SELECT through this tenant-scoped pipeline; queries
+    // whose tables don't resolve return `None` and fall back to the caller's
+    // vector/graph engine.
+    require_engagement: bool,
 ) -> Option<Result<ExecutionPipelineResult, String>> {
     // TD-064: the connection's tenant scopes every snapshot read to the tenant's
     // record partition (carried into the SnapshotCatalog → DmlTableReader).
@@ -171,8 +179,10 @@ pub async fn try_run_select(
         return None;
     };
     // Engaged = a relational shape the legacy single-table path can't serve
-    // (joins / GROUP BY / aggregates / set-ops). Simple SELECTs stay on legacy.
-    if !query_engages_relational_engine(query) {
+    // (joins / GROUP BY / aggregates / set-ops). pgwire keeps simple SELECTs on
+    // its legacy path (`require_engagement = true`); off-pgwire callers route any
+    // resolvable relational SELECT here (`require_engagement = false`).
+    if require_engagement && !query_engages_relational_engine(query) {
         return None;
     }
 
@@ -222,11 +232,28 @@ pub async fn try_run_select(
     #[cfg(not(feature = "datafusion-integration"))]
     let parquet_backed = false;
 
+    // C4 Phase-2b: refine the shape-class with real fan-out / cardinality for
+    // hot Parquet-backed tables, peeked from the in-memory stat cache warmed by
+    // table opens (zero route-time I/O — a cold/never-scanned table stays
+    // `Unknown`, backward-compatible). Finer classes let the cost model
+    // discriminate within the OLAP-over-Parquet band where a Native↔DataFusion
+    // override is freshness-safe.
+    #[cfg(feature = "datafusion-integration")]
+    let (partition_fanout, cardinality) = if parquet_backed {
+        let locations: Vec<String> = parquet_loc_by_key.values().cloned().collect();
+        crate::query::route_cost_model::classify_table_shapes(&locations)
+    } else {
+        (Default::default(), Default::default())
+    };
+    #[cfg(not(feature = "datafusion-integration"))]
+    let (partition_fanout, cardinality) = (Default::default(), Default::default());
+
     let decision = crate::query::compute_scheduler::ComputeScheduler::new().route_select_advised(
         crate::query::compute_scheduler::QueryShape {
             engages_relational: true,
             parquet_backed,
-            ..Default::default()
+            partition_fanout,
+            cardinality,
         },
         // C4: observe-mode advisory from the trace-driven cost model — augments
         // the reason for telemetry/EXPLAIN, never changes the backend.
@@ -695,7 +722,7 @@ pub fn text_encode(v: &ProximaValue) -> Option<String> {
         V::Float64(x) => x.to_string(),
         V::Decimal(s) => s.clone(),
         V::String(s) | V::Symbol(s) => s.clone(),
-        V::Binary(b) => {
+        V::Binary(b) | V::BinaryVector(b) => {
             let mut s = String::with_capacity(2 + b.len() * 2);
             s.push_str("\\x");
             for byte in b {
@@ -725,7 +752,28 @@ pub fn text_encode(v: &ProximaValue) -> Option<String> {
             u[15]
         ),
         V::Json(j) | V::Jsonb(j) => j.to_string(),
-        other => format!("{other:?}"),
+        V::Array(values) => {
+            // Element NULL renders as the empty field in a Postgres array
+            // literal (same convention as the legacy simple-query encoder).
+            let parts = values
+                .iter()
+                .map(text_encode)
+                .map(Option::unwrap_or_default)
+                .collect::<Vec<_>>();
+            format!("{{{}}}", parts.join(","))
+        }
+        V::Map(value) | V::Struct(value) => {
+            serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
+        }
+        V::DenseVector(values) => {
+            let parts = values.iter().map(ToString::to_string).collect::<Vec<_>>();
+            format!("[{}]", parts.join(","))
+        }
+        V::SparseVector { indices, values } => serde_json::json!({
+            "indices": indices,
+            "values": values,
+        })
+        .to_string(),
     })
 }
 
@@ -1013,8 +1061,10 @@ async fn parquet_split_summary(
     let (mut any_rows, mut any_bytes) = (false, false);
     for location in locations {
         let table = ObjectStoreParquetTable::open(location).await.ok()?;
-        partitions += table.split_count();
-        if let Some(r) = table.estimated_rows() {
+        let splits = table.split_count();
+        let est_rows = table.estimated_rows();
+        partitions += splits;
+        if let Some(r) = est_rows {
             rows = rows.saturating_add(r);
             any_rows = true;
         }
@@ -1022,6 +1072,10 @@ async fn parquet_split_summary(
             bytes = bytes.saturating_add(b);
             any_bytes = true;
         }
+        // EXPLAIN opens the footer anyway — warm the route-time shape cache so
+        // the next SELECT's route decision can classify this location's fan-out
+        // / cardinality without a cold read (co-design: zero extra I/O).
+        crate::query::route_cost_model::record_table_shape_stat(location, splits as u32, est_rows);
     }
     Some(crate::query::read_route::ReadSplitSummary::row_groups(
         partitions,
@@ -1443,5 +1497,51 @@ mod tests {
         assert!(resolver.primary_key(&TableId::new("unknown")).is_empty());
         // Pushdown capabilities unchanged (pk_lookup gated per-table by primary_key).
         assert!(resolver.capabilities(&TableId::new("users")).pk_lookup);
+    }
+
+    #[test]
+    fn text_encode_null_is_none_and_exotic_types_render() {
+        // SQL NULL → None (the caller emits the pgwire `-1` null sentinel).
+        // This is the core of the pgwire NULL-rendering fix.
+        assert_eq!(text_encode(&ProximaValue::Null), None);
+
+        // Scalars render as before.
+        assert_eq!(
+            text_encode(&ProximaValue::String("alice".into())),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            text_encode(&ProximaValue::Boolean(false)),
+            Some("f".to_string())
+        );
+
+        // Exotic types now render explicitly rather than as a Debug fallback.
+        assert_eq!(
+            text_encode(&ProximaValue::Array(vec![
+                ProximaValue::Int32(1),
+                ProximaValue::Int32(2),
+            ])),
+            Some("{1,2}".to_string())
+        );
+        // A NULL element inside an array uses the empty-field convention.
+        assert_eq!(
+            text_encode(&ProximaValue::Array(vec![
+                ProximaValue::Int32(1),
+                ProximaValue::Null,
+            ])),
+            Some("{1,}".to_string())
+        );
+
+        // UUID renders dashed (Postgres format), not raw hex.
+        let uuid = ProximaValue::Uuid([
+            0x55, 0x0e, 0x84, 0x00, 0xe2, 0x9b, 0x41, 0xd4, 0xa7, 0x16, 0x44, 0x66, 0x55, 0x44,
+            0x00, 0x00,
+        ]);
+        let rendered = text_encode(&uuid).expect("uuid must encode");
+        assert_eq!(rendered, "550e8400-e29b-41d4-a716-446655440000");
+        assert!(
+            rendered.contains('-'),
+            "UUID must be dashed (Postgres format)"
+        );
     }
 }

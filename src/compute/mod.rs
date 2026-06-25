@@ -161,7 +161,11 @@
 //! - **Huge Pages**: 2MB pages for reduced TLB misses
 
 // Semantic module organization
-pub mod distance_computation;
+// distance_computation extracted to the `proximadb-distance-kernel` foundation crate
+// (decomposition contracts step 2; GPU edge inverted via register_gpu_accelerator_factory,
+// issue #162). Re-exported as the module so existing `crate::compute::distance_computation::*`
+// paths (storage + 50+ consumers) resolve unchanged.
+pub use proximadb_distance_kernel as distance_computation;
 pub mod gpu;
 pub mod montecarlo;
 pub mod pipeline_executor;

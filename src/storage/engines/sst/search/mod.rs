@@ -40,12 +40,12 @@ use crate::compute::distance_computation::DistanceMetric;
 use crate::core::search::bounded_queue::BoundedPriorityQueue;
 use crate::core::search::results::OptimizedSearchRecord;
 use crate::core::search::{ComparisonOperator, FilterExpression};
-use crate::index::axis::management::manager::{
-    FilterOperator, HybridQuery, MetadataFilter, VectorQuery,
-};
 use crate::storage::engines::core::formats::arrow_block::ArrowBlockReader;
 use crate::storage::engines::sst::{SstEngine, SstError};
 use crate::storage::traits::StorageQueryContext;
+use proximadb_index_traits::{
+    IndexFilterOperator, IndexHybridQuery, IndexMetadataFilter, IndexSearchEffort, IndexVectorQuery,
+};
 
 pub use coordinator::SearchCoordinator;
 pub use operations::SearchOperations;
@@ -309,25 +309,33 @@ impl SstEngine {
                 collection_id
             );
 
-            // Convert filter expression to AXIS metadata filters
-            let axis_filters = Self::convert_filter_to_axis(filter_expression);
+            // Convert filter expression to index metadata filters
+            let index_filters = Self::convert_filter_to_index(filter_expression);
 
-            // Build hybrid query for AXIS
-            let hybrid_query = HybridQuery {
+            // Build hybrid query for the index trait
+            let hybrid_query = IndexHybridQuery {
                 collection_id: collection_id.to_string(),
-                vector_query: Some(VectorQuery::Dense {
+                vector_query: Some(IndexVectorQuery::Dense {
                     vector: query_vector.to_vec(),
                     similarity_threshold: 0.0,
                 }),
-                metadata_filters: axis_filters,
+                metadata_filters: index_filters,
                 id_filters: Vec::new(),
                 top_k: k,
                 include_expired: false,
-                // Thread the accuracy-vs-latency knob into the AXIS query so the
+                // Thread the accuracy-vs-latency knob into the index query so the
                 // warm HNSW/IVF path honors `exact`/`approximate`/`approximate:N`
                 // (mapped to HNSW `ef` / IVF `nprobe`). `None` ⇒ index default.
-                search_effort: ctx.search_params.search_mode.to_search_effort(),
-                ..Default::default()
+                search_effort: ctx
+                    .search_params
+                    .search_mode
+                    .to_search_effort()
+                    .map(|effort| match effort {
+                        crate::core::search::SearchEffort::Exact => IndexSearchEffort::Exact,
+                        crate::core::search::SearchEffort::Approximate { hint } => {
+                            IndexSearchEffort::Approximate { hint }
+                        }
+                    }),
             };
 
             // Execute AXIS query (HNSW or IVF based on index type).
@@ -434,13 +442,15 @@ impl SstEngine {
     }
 
     /// Convert FilterExpression to AXIS MetadataFilter format
-    fn convert_filter_to_axis(filter_expression: Option<&FilterExpression>) -> Vec<MetadataFilter> {
+    fn convert_filter_to_index(
+        filter_expression: Option<&FilterExpression>,
+    ) -> Vec<IndexMetadataFilter> {
         let Some(filter) = filter_expression else {
             return Vec::new();
         };
 
-        // Convert filter expressions to AXIS metadata filters
-        let mut axis_filters = Vec::new();
+        // Convert filter expressions to index metadata filters
+        let mut index_filters = Vec::new();
 
         match filter {
             FilterExpression::Comparison {
@@ -448,43 +458,50 @@ impl SstEngine {
                 operator,
                 value,
             } => {
-                // Convert ComparisonOperator to AXIS FilterOperator
-                let axis_operator = match operator {
-                    ComparisonOperator::Equals => FilterOperator::Equals,
-                    ComparisonOperator::NotEquals => FilterOperator::NotEquals,
-                    ComparisonOperator::GreaterThan => FilterOperator::GreaterThan,
-                    ComparisonOperator::GreaterThanOrEqual => FilterOperator::GreaterThan, // Approximate
-                    ComparisonOperator::LessThan => FilterOperator::LessThan,
-                    ComparisonOperator::LessThanOrEqual => FilterOperator::LessThan, // Approximate
-                    ComparisonOperator::In => FilterOperator::In,
-                    ComparisonOperator::NotIn => FilterOperator::NotIn,
+                // Convert ComparisonOperator to IndexFilterOperator
+                let index_operator = match operator {
+                    ComparisonOperator::Equals => IndexFilterOperator::Equals,
+                    ComparisonOperator::NotEquals => IndexFilterOperator::NotEquals,
+                    ComparisonOperator::GreaterThan => IndexFilterOperator::GreaterThan,
+                    ComparisonOperator::GreaterThanOrEqual => {
+                        IndexFilterOperator::GreaterThanOrEqual
+                    }
+                    ComparisonOperator::LessThan => IndexFilterOperator::LessThan,
+                    ComparisonOperator::LessThanOrEqual => IndexFilterOperator::LessThanOrEqual,
+                    ComparisonOperator::In => IndexFilterOperator::In,
+                    ComparisonOperator::NotIn => IndexFilterOperator::NotIn,
+                    ComparisonOperator::Contains => IndexFilterOperator::Contains,
+                    ComparisonOperator::StartsWith => IndexFilterOperator::StartsWith,
+                    ComparisonOperator::EndsWith => IndexFilterOperator::EndsWith,
+                    ComparisonOperator::Like => IndexFilterOperator::Like,
+                    ComparisonOperator::Between => IndexFilterOperator::Between,
                     _ => {
                         debug!(
-                            "Operator {:?} not directly supported by AXIS, will use post-filtering",
+                            "Operator {:?} not directly supported by index, will use post-filtering",
                             operator
                         );
-                        return axis_filters;
+                        return index_filters;
                     }
                 };
 
-                axis_filters.push(MetadataFilter {
+                index_filters.push(IndexMetadataFilter {
                     field: field.clone(),
-                    operator: axis_operator,
+                    operator: index_operator,
                     value: value.clone(),
                 });
             }
             FilterExpression::And(filters) => {
                 for f in filters {
-                    axis_filters.extend(Self::convert_filter_to_axis(Some(f)));
+                    index_filters.extend(Self::convert_filter_to_index(Some(f)));
                 }
             }
             FilterExpression::Or(_) | FilterExpression::Not(_) => {
-                // OR and NOT are not directly supported by AXIS, will use post-filtering
-                debug!("OR/NOT filters not supported by AXIS, will use post-filtering");
+                // OR and NOT are not directly supported by the index, will use post-filtering
+                debug!("OR/NOT filters not supported by index, will use post-filtering");
             }
         }
 
-        axis_filters
+        index_filters
     }
 
     /// Execute direct search without orchestration

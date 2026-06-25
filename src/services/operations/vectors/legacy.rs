@@ -4527,19 +4527,16 @@ mod index_first_search_tests {
             )
             .await?,
         );
-        let metadata_backend = Arc::new(
-            crate::storage::metadata::MetadataStore::new(
-                crate::storage::metadata::MetadataStoreConfig::default(),
-            )
-            .await?,
-        )
-            as Arc<dyn crate::storage::traits::InternalCollectionProvider>;
+        let metadata_url = format!("file://{}", temp_dir.path().join("metadata").display());
+        config.storage.metadata_url = metadata_url.clone();
+        let catalog_manager = Arc::new(crate::catalog::CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &metadata_url)
+            .await?;
         let collection_service = Arc::new(
-            crate::services::collection::manager::CollectionService::new(
-                metadata_backend,
-                config.storage.clone(),
-            )
-            .await?,
+            crate::services::collection::manager::CollectionService::new(config.storage.clone())
+                .await?
+                .with_catalog_manager(catalog_manager.clone()),
         );
 
         let service = Arc::new(VectorOperationsService::new(
@@ -5344,10 +5341,19 @@ async fn observe_advisor_for_search(collection_id: &str, top_k: u32, observed_la
         return;
     };
 
+    // Downcast to concrete AxisManager for recall-target advisor methods
+    let axis_mgr = match axis_manager
+        .as_any()
+        .downcast_ref::<crate::index::axis::management::AxisManager>()
+    {
+        Some(m) => m,
+        None => return,
+    };
+
     // (2) Read the active strategy. Missing strategy → collection
     // hasn't been opted into the advisor or wasn't given a recall
     // target. No observation.
-    let strategy = match axis_manager.get_collection_strategy(collection_id).await {
+    let strategy = match axis_mgr.get_collection_strategy(collection_id).await {
         Ok(s) => s,
         Err(_) => return,
     };

@@ -115,6 +115,49 @@ Read these in order for future-shaping architecture work:
    (graph/event/audit as first-class layouts). The macro generalization of tenant catalog-resolution.
    Subordinate to the 2026-06-04 course correction and `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
 
+20. `SDK_MODULARIZATION_AND_SPEC_DRIVEN_GENERATION_2026_06_21.adoc` +
+   Stop hand-rolling clients: make the OpenAPI spec `utoipa`-generated from the REST handlers,
+   generate transport+models per shape (OpenAPI for REST, proto/buf for gRPC) behind a thin
+   hand-written ergonomic facade, and split the kitchen-sink per-language packages (e.g. Python's
+   ~86k `proximadb_sdk`, of which the wire client is only ~19k) into focused, opt-in packages
+   (core client / chunking / embeddings / integrations). Tracked as TD-126.
+21. `CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc` +
+   Co-design spec for hosting an external coding agent's Code Property Graph as a correlated
+   OLTP + graph + vector substrate: one `ProximaRecord`/`oid` per code symbol simultaneously a
+   relational row, an ORION graph node, and an HNSW vector. Trace-driven from a measured 1.26M-node
+   CPG (94% statements, 96.5K cross-fn edges, 77,902 symbol embeddings) → a three-tier split:
+   Tier-A semantic graph in ORION + co-indexed vector (in-RAM, ~120 MB f32 / ~35 MB SQ8), Tier-B
+   intra-procedural CPG in columnar PAX (offloaded), Tier-C relational over Volcano-OLTP. Embedded
+   and multi-tenant (anvaiops) shapes. Engine asks: TD-127..TD-134. Subordinate to the 2026-06-04
+   course correction and `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc`.
+
+22. `CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc` +
+   One reusable fusion seam (`seed → expand → calibrate → fuse-by-oid → rank`) converging the three
+   overlapping hybrid impls (vector+BM25/`doc_id`, vector+graph/`NodeId`, proto vector→graph) onto the
+   canonical `oid`. Literature-grounded (10 papers read in full: Samyama/NaviX/HMGI, HELIOS/Calibrated-
+   Fusion/Beyond-Similarity-Search, BoomHQ/UNIFY, HybridRAG + GraphRAG survey). Load-bearing decision:
+   **PIT/percentile-rank calibration**, not the fusion operator, is what makes heterogeneous scores
+   commensurable; prefilter-by-`oid`-membership-mask (NaviX); structural isolation/freshness/alias before
+   the blend; late-materialization + quantized in-place distance (Samyama/NaviX). Modalities are pluggable
+   `ModalityExpander`s; calibrate+fuse+rank is written once. Phase 1 = graph instance on REST v2.
+   Engine asks: TD-136..TD-143.
+23. `UNIFIED_RESOURCE_LEASE_LOCKING_REVIEW_2026_06_24.adoc` +
+   Approved correction plan for the `feat/unified-resource-key` branch. Retains the unified
+   `ResourceKey` and strategy direction, but gates DML/protocol lock exposure on foundational fixes:
+   mixed-read-safe legacy lease paths, canonical path-safe resource identity, full-key renewal,
+   real `TenantContext` for DML locks, enforced hierarchy, guard-owned renewal/release, and
+   storage-visible fencing. Read before changing `src/cluster/partition_lease.rs` or wiring locks
+   into `DmlService`/protocol handlers.
+
+23. `SEARCH_SURFACE_CONTRACT_2026_06_24.adoc` +
+   Surface-level companion to #22: pins the *endpoint* contract on top of the seam. One retrieval
+   engine (the seam); every search surface (`fusion_search_v2`, `hybrid/search`, `RecordService.Search`,
+   `EntityService.SearchEntities`, future gRPC `FusionSearch`) is a **thin facade** varying only in
+   seed/expander defaults + result projection — none owns retrieval/ranking. Decisive argument:
+   per-surface fusion is *incorrect by construction* (cosine≈Gaussian vs graph≈power-law need PIT
+   calibration only the shared `Fuser` provides). Resolves where `EntityService.SearchEntities` (PR
+   #278) fits: entity-typed view over the seam, no standalone vector-ANN. Adds TD-146.
+
 == Stable Reference Docs
 
 * `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and

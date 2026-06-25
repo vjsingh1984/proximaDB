@@ -215,15 +215,15 @@ pub mod collection_pinning;
 pub mod memtable;
 pub mod metadata;
 // Quantization now handled by unified compute module
-// Storage optimization utilities
-pub mod optimization;
-// Strategy module for collection lifecycle configuration
-pub mod strategy;
+// Storage optimization utilities — extracted to proximadb-storage-optimization (decomp slice B)
+pub use proximadb_storage_optimization as optimization;
+// Strategy module for collection lifecycle configuration — extracted to proximadb-storage-strategy (decomp slice B)
+pub use proximadb_storage_strategy as strategy;
 // Specialized cache system with shared infrastructure
 pub mod cache;
 
-// Multi-tenant architecture modules
-pub mod tenant;
+// Multi-tenant architecture modules — extracted to proximadb-storage-tenant (decomp slice B)
+pub use proximadb_storage_tenant as tenant;
 
 // Auto-tiering policy engine for data lifecycle management
 pub mod tiering;
@@ -235,8 +235,10 @@ pub mod transaction;
 pub mod entity_store;
 pub mod relations;
 
-// Key-value storage interface
-pub mod kv;
+// Key-value storage interface — extracted to the `proximadb-storage-kv` crate
+// (root-crate decomposition Slice A); re-exported here for source compatibility
+// (`crate::storage::kv::{StorageKV, FsKV}`).
+pub use proximadb_storage_kv as kv;
 
 // Unified operations coordination (flush, compaction, re-quantization)
 pub mod operations;
@@ -252,6 +254,11 @@ pub mod formats;
 
 // Arrow-native schema system for compute engine compatibility
 pub mod schema;
+
+/// Storage↔compute glue relocated from `src/compute/quantization` (quantization
+/// kernel split, step Q2): code that needs the storage/core layers and so cannot
+/// live in a foundation kernel crate.
+pub mod compute_bridge;
 
 // Lock-free implementations have been integrated into the main implementations
 // TransactionCoordinator now uses DashMap for active_operations

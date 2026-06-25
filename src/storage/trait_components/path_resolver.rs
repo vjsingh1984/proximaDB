@@ -31,13 +31,12 @@
 //! // At construction, inject the resolver
 //! let wal_manager = WriteAheadLogManager::new(
 //!     config,
-//!     Arc::new(MetadataProviderResolver::new(metadata_backend)),
+//!     Arc::new(ConfigFallbackResolver::default()),
 //! )?;
 //! ```
 //!
 //! ## Available Implementations:
 //!
-//! - `MetadataProviderResolver`: Uses InternalCollectionProvider (default)
 //! - `ConfigFallbackResolver`: Uses WAL config paths (for testing)
 //! - `CachedResolver`: Caches resolved paths (for performance)
 
@@ -131,90 +130,6 @@ pub trait CollectionPathResolver: Send + Sync {
 // ============================================================================
 // Standard Implementations
 // ============================================================================
-
-/// Resolver using InternalCollectionProvider (production default)
-///
-/// Uses the metadata backend to resolve collection paths based on
-/// stored collection configuration.
-pub struct MetadataProviderResolver {
-    provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>,
-}
-
-impl MetadataProviderResolver {
-    /// Create a new resolver with the given metadata provider
-    pub fn new(provider: Arc<dyn crate::storage::traits::InternalCollectionProvider>) -> Self {
-        Self { provider }
-    }
-}
-
-#[async_trait]
-impl CollectionPathResolver for MetadataProviderResolver {
-    fn name(&self) -> &'static str {
-        "MetadataProvider"
-    }
-
-    async fn resolve_base_location(&self, collection_id: &str) -> Result<String> {
-        let collection = self
-            .provider
-            .get_collection(collection_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
-
-        // Use storage_assignment's base_location if available
-        if let Some(ref assignment) = collection.storage_assignment {
-            if !assignment.base_location.is_empty() {
-                return Ok(assignment.base_location.clone());
-            }
-            if !assignment.primary_path.is_empty() {
-                return Ok(assignment.primary_path.clone());
-            }
-        }
-
-        // Fall back to constructing path from collection ID
-        Ok(format!(
-            "file:///tmp/proximadb/collections/{}",
-            collection_id
-        ))
-    }
-
-    async fn resolve_storage_assignment(&self, collection_id: &str) -> Result<StorageAssignment> {
-        let collection = self
-            .provider
-            .get_collection(collection_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("Collection not found: {}", collection_id))?;
-
-        // Extract from proto StorageAssignment if available
-        let primary_url = if let Some(ref proto_assignment) = collection.storage_assignment {
-            if !proto_assignment.base_location.is_empty() {
-                proto_assignment.base_location.clone()
-            } else if !proto_assignment.primary_path.is_empty() {
-                proto_assignment.primary_path.clone()
-            } else {
-                format!("file:///tmp/proximadb/collections/{}", collection_id)
-            }
-        } else {
-            format!("file:///tmp/proximadb/collections/{}", collection_id)
-        };
-
-        let replica_urls = collection
-            .storage_assignment
-            .as_ref()
-            .map(|a| a.backup_paths.clone())
-            .unwrap_or_default();
-
-        Ok(StorageAssignment {
-            primary_url,
-            weight: 1,
-            available: true,
-            replica_urls,
-        })
-    }
-
-    async fn collection_exists(&self, collection_id: &str) -> Result<bool> {
-        self.provider.collection_exists(collection_id).await
-    }
-}
 
 /// Config-based fallback resolver (for testing or simple deployments)
 ///
@@ -425,13 +340,23 @@ impl CollectionPathResolver for CompositeResolver {
 /// `namespace_id`, refuses invalid ID characters, and surfaces pool-class
 /// information so the caller can route writes to the correct bucket.
 ///
-/// The render is `data/{tenant_id}/{namespace_id}/{collection_id}/`. The
-/// helper methods append the contract's well-known subprefixes.
+/// The render is account-aware (Phase 5, two-tier operator/account model):
+/// * with an `account_id`: `accounts/{account_id}/{tenant_id}/{namespace_id}/{collection_id}/`
+///   — the SaaS isolation tree where the customer **account** is the top
+///   billing/silo boundary and `tenant_id` is a workspace/sub-org inside it.
+/// * without one (legacy / single-account): `data/{tenant_id}/{namespace_id}/{collection_id}/`
+///   — byte-identical to the pre-Phase-5 contract, so existing data resolves
+///   unchanged (mixed-safe; the account tier is inert until provisioned).
+///
+/// The helper methods append the contract's well-known subprefixes.
 ///
 /// See `docs/12-design/COLLECTION_DR_CRR_ENGINE_CONTRACT.adoc` "LLD: Physical
 /// Path Contract".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DrResolvedPath {
+    /// Owning customer account — the billing/isolation boundary above
+    /// `tenant_id`. `None` keeps the legacy flat `data/...` render.
+    pub account_id: Option<String>,
     pub tenant_id: String,
     pub namespace_id: String,
     pub collection_id: String,
@@ -439,14 +364,23 @@ pub struct DrResolvedPath {
 }
 
 impl DrResolvedPath {
-    /// Root prefix `data/<tenant_id>/<namespace_id>/<collection_id>/`.
-    /// This is the value passed as the provider replication rule filter
-    /// and the only prefix the path resolver guard accepts.
+    /// Root prefix. Account-rooted
+    /// (`accounts/<account_id>/<tenant_id>/<namespace_id>/<collection_id>/`)
+    /// when an account is set, else the legacy flat
+    /// `data/<tenant_id>/<namespace_id>/<collection_id>/`. This is the value
+    /// passed as the provider replication rule filter and the only prefix the
+    /// path resolver guard accepts.
     pub fn root_prefix(&self) -> String {
-        format!(
-            "data/{}/{}/{}/",
-            self.tenant_id, self.namespace_id, self.collection_id
-        )
+        match &self.account_id {
+            Some(account_id) => format!(
+                "accounts/{}/{}/{}/{}/",
+                account_id, self.tenant_id, self.namespace_id, self.collection_id
+            ),
+            None => format!(
+                "data/{}/{}/{}/",
+                self.tenant_id, self.namespace_id, self.collection_id
+            ),
+        }
     }
 
     /// WAL subprefix `<root>wal/`.
@@ -604,6 +538,129 @@ pub enum PathResolverError {
 /// trait wraps it once the rest of the storage layer is consolidated.
 pub struct DrPathBuilder;
 
+/// T2.3: Version-aware cache for `DrPathBuilder` results.
+///
+/// Caches `DrResolvedPath` by `(tenant_id, namespace_id, collection_id, pool_class)`
+/// with corpus version tracking for automatic invalidation on catalog changes.
+/// When the corpus version bumps, cached entries are considered stale and
+/// re-resolved on next access.
+pub struct DrPathCache {
+    /// Cache entries: key → (version, path)
+    cache: DashMap<CacheKey, (u64, DrResolvedPath)>,
+}
+
+/// Cache key for path resolution results.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CacheKey {
+    tenant_id: String,
+    namespace_id: String,
+    collection_id: String,
+    pool_class: String,
+}
+
+impl DrPathCache {
+    /// Create a new empty path cache.
+    pub fn new() -> Self {
+        Self {
+            cache: DashMap::new(),
+        }
+    }
+
+    /// Get or resolve a path, checking corpus version for staleness.
+    ///
+    /// Returns the cached path if valid (version matches current corpus version),
+    /// or resolves a new path via `resolve_fn` and caches it.
+    pub async fn get_or_resolve<F, R, Fut>(
+        &self,
+        tenant_id: &str,
+        namespace_id: &str,
+        collection_id: &str,
+        pool_class: StoragePoolClass,
+        resolve_fn: F,
+    ) -> Result<DrResolvedPath, PathResolverError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<R, PathResolverError>>,
+        R: std::borrow::Borrow<DrResolvedPath>,
+    {
+        let key = CacheKey {
+            tenant_id: tenant_id.to_string(),
+            namespace_id: namespace_id.to_string(),
+            collection_id: collection_id.to_string(),
+            pool_class: format!("{:?}", pool_class),
+        };
+
+        // Get current corpus version for this (tenant, collection)
+        let current_version = crate::catalog::CorpusVersionRegistry::global()
+            .current(tenant_id, collection_id)
+            .await;
+
+        // Check cache with version validation
+        if let Some(entry) = self.cache.get(&key) {
+            let (cached_version, path) = entry.value();
+            if *cached_version == current_version {
+                // Cache hit with valid version
+                return Ok(path.clone());
+            }
+            // Stale entry — remove and fall through to resolve
+            self.cache.remove(&key);
+        }
+
+        // Cache miss or stale — resolve and cache
+        let resolved = resolve_fn().await?.borrow().clone();
+        self.cache.insert(key, (current_version, resolved.clone()));
+        Ok(resolved)
+    }
+
+    /// Invalidate a specific cache entry.
+    ///
+    /// Called when a collection's schema or metadata changes outside of
+    /// corpus version bumps (e.g., direct catalog updates).
+    pub fn invalidate(&self, tenant_id: &str, collection_id: &str) {
+        self.cache.retain(|key, _| {
+            // Keep entries that don't match the tenant/collection
+            key.tenant_id != tenant_id || key.collection_id != collection_id
+        });
+    }
+
+    /// Clear all cached entries.
+    ///
+    /// Called on major catalog changes or configuration reloads.
+    pub fn clear(&self) {
+        self.cache.clear();
+    }
+
+    /// Get cache statistics for observability.
+    pub fn stats(&self) -> (usize, usize) {
+        let total = self.cache.len();
+        // Count unique (tenant, collection) pairs
+        let unique_pairs = self
+            .cache
+            .iter()
+            .map(|entry| {
+                let key = entry.key();
+                (key.tenant_id.clone(), key.collection_id.clone())
+            })
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        (total, unique_pairs)
+    }
+}
+
+impl Default for DrPathCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Global path cache singleton.
+static GLOBAL_PATH_CACHE: std::sync::OnceLock<DrPathCache> = std::sync::OnceLock::new();
+
+/// Get the global path cache.
+pub fn global_path_cache() -> &'static DrPathCache {
+    GLOBAL_PATH_CACHE.get_or_init(DrPathCache::new)
+}
+
 impl DrPathBuilder {
     /// Build the authoritative DR path for `collection_id` under
     /// `namespace`. Returns an error if either ID is missing or invalid,
@@ -629,7 +686,18 @@ impl DrPathBuilder {
         Self::validate_id("namespace_id", namespace_id)?;
         Self::validate_id("collection_id", collection_id)?;
 
+        // Account tier is optional + inert until provisioned. When set it is
+        // validated identically and roots the path under `accounts/{id}/…`.
+        let account_id = match namespace.account_id.as_deref() {
+            Some(account_id) => {
+                Self::validate_id("account_id", account_id)?;
+                Some(account_id.to_string())
+            }
+            None => None,
+        };
+
         Ok(DrResolvedPath {
+            account_id,
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.to_string(),
             collection_id: collection_id.to_string(),
@@ -671,10 +739,40 @@ impl DrPathBuilder {
         collection_id: &str,
         storage_pool_class: StoragePoolClass,
     ) -> Result<DrResolvedPath, PathResolverError> {
+        Self::build_from_parts_with_account(
+            None,
+            tenant_id,
+            namespace_id,
+            collection_id,
+            storage_pool_class,
+        )
+    }
+
+    /// Same as [`build_from_parts`](Self::build_from_parts) but with the
+    /// optional customer-account tier (Phase 5). `Some(account_id)` roots the
+    /// path under `accounts/{account_id}/…` (the SaaS isolation tree);
+    /// `None` is identical to `build_from_parts` (legacy flat `data/…`).
+    /// Every present segment — account included — passes the same
+    /// [`validate_id`](Self::validate_id) injection/traversal guard.
+    pub fn build_from_parts_with_account(
+        account_id: Option<&str>,
+        tenant_id: &str,
+        namespace_id: &str,
+        collection_id: &str,
+        storage_pool_class: StoragePoolClass,
+    ) -> Result<DrResolvedPath, PathResolverError> {
+        let account_id = match account_id {
+            Some(account_id) => {
+                Self::validate_id("account_id", account_id)?;
+                Some(account_id.to_string())
+            }
+            None => None,
+        };
         Self::validate_id("tenant_id", tenant_id)?;
         Self::validate_id("namespace_id", namespace_id)?;
         Self::validate_id("collection_id", collection_id)?;
         Ok(DrResolvedPath {
+            account_id,
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.to_string(),
             collection_id: collection_id.to_string(),
@@ -729,6 +827,94 @@ impl DrPathBuilder {
             });
         }
         Ok(())
+    }
+}
+
+/// Reserved roots + identity constants for the two-tier operator/account
+/// isolation model (Phase 5). The **operator** (control) plane lives under
+/// [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) and holds the SaaS provider's
+/// registry of accounts; the **account** (data) plane lives under
+/// `accounts/{account_id}/…` (rendered by [`DrResolvedPath::root_prefix`]).
+impl DrPathBuilder {
+    /// Control-plane root prefix for the **operator** catalog — the SaaS
+    /// provider's registry of all accounts (entitlements, storage bindings,
+    /// billing). It holds metadata-about-accounts, never tenant data. The
+    /// leading underscore keeps the control plane lexically separate from the
+    /// per-account `accounts/…` data tree in a top-level `list`.
+    pub const OPERATOR_ROOT: &'static str = "_operator/";
+
+    /// Default account ID for deployments that have not provisioned an explicit
+    /// account tier (single-account / OSS). Callers that want the
+    /// account-rooted layout for the default account pass this explicitly; a
+    /// `None` account keeps the legacy flat `data/…` render instead.
+    pub const DEFAULT_ACCOUNT_ID: &'static str = "default";
+
+    /// Reserved subpath under [`OPERATOR_ROOT`](Self::OPERATOR_ROOT) that holds
+    /// the deployment's system catalog (WAL + snapshot). Single canonical
+    /// constant so boot and any tooling agree on the location.
+    pub const SYSTEM_CATALOG_SUBPATH: &'static str = "catalog";
+
+    /// File name of the system catalog's canonical WAL within
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix).
+    pub const SYSTEM_CATALOG_WAL_FILE: &'static str = "system-catalog.wal";
+
+    /// File name of the system catalog's snapshot blob within
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix). For
+    /// object-store deployments this is the relative object key the snapshot is
+    /// PUT under (the per-DDL WAL stays local — Phase 6).
+    pub const SYSTEM_CATALOG_SNAPSHOT_FILE: &'static str = "system-catalog.snapshot";
+
+    /// Build a validated control-plane (operator) subprefix
+    /// `_operator/<subpath>/`. `subpath` runs through the same
+    /// [`validate_id`](Self::validate_id) guard as a path segment (e.g.
+    /// `"catalog"`, `"accounts"`), so it cannot escape the operator root.
+    pub fn operator_subprefix(subpath: &str) -> Result<String, PathResolverError> {
+        Self::validate_id("operator_subpath", subpath)?;
+        Ok(format!("{}{}/", Self::OPERATOR_ROOT, subpath))
+    }
+
+    /// Control-plane subprefix for the deployment's **system catalog**:
+    /// `_operator/catalog/`. The system catalog is the (currently single)
+    /// `Operator`-roled catalog holding the deployment's objects until
+    /// multi-account provisioning splits data-plane catalogs out per account.
+    pub fn system_catalog_subprefix() -> String {
+        // Constants are pre-validated single segments — infallible.
+        format!("{}{}/", Self::OPERATOR_ROOT, Self::SYSTEM_CATALOG_SUBPATH)
+    }
+
+    /// Relative object key of the system catalog WAL under
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/system-catalog.wal`. The snapshot blob is derived
+    /// from this by the catalog (`.with_extension("snapshot")`).
+    pub fn system_catalog_wal_relpath() -> String {
+        format!(
+            "{}{}",
+            Self::system_catalog_subprefix(),
+            Self::SYSTEM_CATALOG_WAL_FILE
+        )
+    }
+
+    /// Relative object key of the system catalog **snapshot** under
+    /// [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/system-catalog.snapshot`. For object-store
+    /// deployments this is the key the snapshot blob is PUT under (relative to
+    /// the object-store base prefix).
+    pub fn system_catalog_snapshot_relpath() -> String {
+        format!(
+            "{}{}",
+            Self::system_catalog_subprefix(),
+            Self::SYSTEM_CATALOG_SNAPSHOT_FILE
+        )
+    }
+
+    /// Relative prefix of the system catalog's **generation-fenced snapshot
+    /// manifest log** under [`system_catalog_subprefix`](Self::system_catalog_subprefix):
+    /// `_operator/catalog/_manifests/`. For object-store deployments the catalog
+    /// snapshot is published as a fenced versioned manifest under this prefix
+    /// (Phase 6a), so a stale pod cannot clobber a newer pod's snapshot. The
+    /// leading underscore keeps it lexically separate from data subprefixes.
+    pub fn system_catalog_manifests_subprefix() -> String {
+        format!("{}_manifests/", Self::system_catalog_subprefix())
     }
 }
 
@@ -992,6 +1178,127 @@ mod tests {
         assert!(DrPathBuilder::build_from_parts("..", "ns_42", "orders", pc).is_err());
         assert!(DrPathBuilder::build_from_parts("tnt_acme", "a/b", "orders", pc).is_err());
         assert!(DrPathBuilder::build_from_parts("tnt_acme", "ns_42", "", pc).is_err());
+    }
+
+    // ------------------------------------------------------------------
+    // Phase 5 — two-tier operator/account isolation model
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn account_rooted_render_when_account_set() {
+        // A provisioned account roots the whole subtree under
+        // `accounts/{account}/{tenant}/{namespace}/{object}/`.
+        let ns = dr_addressable_namespace().with_account("acct_acme");
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+
+        assert_eq!(
+            path.root_prefix(),
+            "accounts/acct_acme/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/"
+        );
+        // Subprefixes hang off the account-rooted prefix unchanged.
+        assert_eq!(
+            path.wal_subprefix(),
+            "accounts/acct_acme/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/wal/"
+        );
+        assert_eq!(
+            path.snapshots_subprefix(),
+            "accounts/acct_acme/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/snapshots/"
+        );
+    }
+
+    #[test]
+    fn legacy_flat_render_when_account_absent() {
+        // No account → byte-identical to the pre-Phase-5 contract (mixed-safe).
+        let ns = dr_addressable_namespace();
+        assert!(ns.account_id.is_none());
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+        assert_eq!(
+            path.root_prefix(),
+            "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/"
+        );
+    }
+
+    #[test]
+    fn account_id_is_validated_like_any_segment() {
+        // A malformed account is rejected with the same guard as tenant/ns/id.
+        let ns = dr_addressable_namespace().with_account("../escape");
+        let err = DrPathBuilder::build(&ns, "col_orders").unwrap_err();
+        assert!(matches!(
+            err,
+            PathResolverError::InvalidId {
+                field: "account_id",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn build_from_parts_with_account_round_trips() {
+        let pc = StoragePoolClass::default();
+        let ok = DrPathBuilder::build_from_parts_with_account(
+            Some("acct_acme"),
+            "tnt_acme",
+            "ns_42",
+            "orders",
+            pc,
+        )
+        .unwrap();
+        assert_eq!(
+            ok.root_prefix(),
+            "accounts/acct_acme/tnt_acme/ns_42/orders/"
+        );
+        // None is identical to the plain build_from_parts (legacy flat render).
+        let flat =
+            DrPathBuilder::build_from_parts_with_account(None, "tnt_acme", "ns_42", "orders", pc)
+                .unwrap();
+        assert_eq!(flat.root_prefix(), "data/tnt_acme/ns_42/orders/");
+        // The account segment is guarded too.
+        assert!(
+            DrPathBuilder::build_from_parts_with_account(
+                Some(".."),
+                "tnt_acme",
+                "ns_42",
+                "orders",
+                pc
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn operator_subprefix_is_rooted_and_validated() {
+        // Control-plane (operator) paths live under the reserved `_operator/`
+        // root, lexically separate from the per-account `accounts/…` tree.
+        assert_eq!(
+            DrPathBuilder::operator_subprefix("catalog").unwrap(),
+            "_operator/catalog/"
+        );
+        assert_eq!(DrPathBuilder::OPERATOR_ROOT, "_operator/");
+        // The subpath cannot escape the operator root.
+        assert!(DrPathBuilder::operator_subprefix("../etc").is_err());
+        assert!(DrPathBuilder::operator_subprefix("a/b").is_err());
+    }
+
+    #[test]
+    fn system_catalog_path_is_under_operator_root() {
+        // The deployment's system catalog lives under the control-plane root.
+        assert_eq!(
+            DrPathBuilder::system_catalog_subprefix(),
+            "_operator/catalog/"
+        );
+        assert_eq!(
+            DrPathBuilder::system_catalog_wal_relpath(),
+            "_operator/catalog/system-catalog.wal"
+        );
+        assert_eq!(
+            DrPathBuilder::system_catalog_snapshot_relpath(),
+            "_operator/catalog/system-catalog.snapshot"
+        );
+        // It is exactly the validated operator subprefix for "catalog".
+        assert_eq!(
+            DrPathBuilder::system_catalog_subprefix(),
+            DrPathBuilder::operator_subprefix(DrPathBuilder::SYSTEM_CATALOG_SUBPATH).unwrap()
+        );
     }
 
     #[test]

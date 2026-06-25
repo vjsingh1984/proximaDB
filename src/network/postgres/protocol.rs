@@ -272,68 +272,6 @@ struct OrderByKey {
     nulls_first: bool,
 }
 
-fn proxima_value_to_pg_text(value: &ProximaValue) -> String {
-    match value {
-        ProximaValue::Boolean(value) => {
-            if *value {
-                "t".to_string()
-            } else {
-                "f".to_string()
-            }
-        }
-        ProximaValue::Int8(value) => value.to_string(),
-        ProximaValue::Int16(value) => value.to_string(),
-        ProximaValue::Int32(value) => value.to_string(),
-        ProximaValue::Int64(value) => value.to_string(),
-        ProximaValue::UInt8(value) => value.to_string(),
-        ProximaValue::UInt16(value) => value.to_string(),
-        ProximaValue::UInt32(value) => value.to_string(),
-        ProximaValue::UInt64(value) => value.to_string(),
-        ProximaValue::Float16(value) => value.to_string(),
-        ProximaValue::Float32(value) => value.to_string(),
-        ProximaValue::Float64(value) => value.to_string(),
-        ProximaValue::Decimal(value) => value.clone(),
-        ProximaValue::String(value) | ProximaValue::Symbol(value) => value.clone(),
-        ProximaValue::Binary(value) | ProximaValue::BinaryVector(value) => {
-            format!("\\x{}", bytes_to_hex(value))
-        }
-        ProximaValue::Date(value) => value.to_string(),
-        ProximaValue::Time(value, _) => value.to_string(),
-        ProximaValue::Timestamp(value, _) => value.to_string(),
-        ProximaValue::TimestampTz(value, _) => value.to_string(),
-        ProximaValue::Uuid(value) | ProximaValue::ULID(value) => bytes_to_hex(value),
-        ProximaValue::Json(value) | ProximaValue::Jsonb(value) => value.to_string(),
-        ProximaValue::Array(values) => {
-            let parts = values
-                .iter()
-                .map(proxima_value_to_pg_text)
-                .collect::<Vec<_>>();
-            format!("{{{}}}", parts.join(","))
-        }
-        ProximaValue::Map(value) | ProximaValue::Struct(value) => {
-            serde_json::to_string(value).unwrap_or_else(|_| "{}".to_string())
-        }
-        ProximaValue::DenseVector(values) => {
-            let parts = values.iter().map(ToString::to_string).collect::<Vec<_>>();
-            format!("[{}]", parts.join(","))
-        }
-        ProximaValue::SparseVector { indices, values } => {
-            serde_json::json!({ "indices": indices, "values": values }).to_string()
-        }
-        ProximaValue::Null => String::new(),
-    }
-}
-
-fn bytes_to_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
-
 /// PostgreSQL message types (frontend)
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1554,6 +1492,9 @@ impl PostgresProtocol {
             Some(self.vector_ops.clone() as Arc<dyn proximadb_runtime::VectorOpsPort>),
             Some(read_tenant.as_str()),
             controls,
+            // pgwire keeps simple single-table SELECTs on its hardened legacy
+            // path; only relational-engaging shapes go through this pipeline.
+            true,
         )
         .await
     }
@@ -2646,7 +2587,7 @@ impl PostgresProtocol {
         // column's value, lex-ordering across keys. Correct for
         // TEXT/VARCHAR and ordering-preserving for canonical
         // numeric/timestamp string forms produced by
-        // `proxima_value_to_pg_text`. Real type-aware sort lands with
+        // `text_encode`. Real type-aware sort lands with
         // the relational planner in a later phase.
         if let Some(keys) = order_by.as_ref() {
             // Resolve each key's column to its row index up-front so
@@ -2697,8 +2638,12 @@ impl PostgresProtocol {
                                 std::cmp::Ordering::Less
                             };
                         }
-                        let av = a_val.map(proxima_value_to_pg_text).unwrap_or_default();
-                        let bv = b_val.map(proxima_value_to_pg_text).unwrap_or_default();
+                        let av = a_val
+                            .and_then(super::relational_pipeline::text_encode)
+                            .unwrap_or_default();
+                        let bv = b_val
+                            .and_then(super::relational_pipeline::text_encode)
+                            .unwrap_or_default();
                         let cmp = if *desc { bv.cmp(&av) } else { av.cmp(&bv) };
                         if cmp != std::cmp::Ordering::Equal {
                             return cmp;
@@ -2711,9 +2656,15 @@ impl PostgresProtocol {
 
         let mut rows_sent = 0usize;
         for row in result.rows {
-            let values = row.iter().map(proxima_value_to_pg_text).collect::<Vec<_>>();
-            let refs = values.iter().map(String::as_str).collect::<Vec<_>>();
-            self.send_data_row(&refs).await?;
+            // Text-encode each column via the shared nullable converter: SQL NULL
+            // (ProximaValue::Null) → None → pgwire `-1` length sentinel (see
+            // send_data_row_nullable). Non-null values render identically to the
+            // legacy simple-query encoder.
+            let values = row
+                .iter()
+                .map(super::relational_pipeline::text_encode)
+                .collect::<Vec<_>>();
+            self.send_data_row_nullable(&values).await?;
             rows_sent += 1;
             if limit.is_some_and(|limit| rows_sent >= limit) {
                 break;
@@ -3651,6 +3602,18 @@ impl PostgresProtocol {
                             .await
                     }
                     Err(e) => {
+                        if let Some((resource, holder)) =
+                            crate::errors::extract_dml_lock_conflict(&e)
+                        {
+                            let msg = match holder {
+                                Some(h) => {
+                                    format!("lock not available on {resource} (held by {h})")
+                                }
+                                None => format!("lock not available on {resource}"),
+                            };
+                            warn!("DmlService INSERT blocked by DML lock: {msg}");
+                            return self.send_error("ERROR", "55P03", &msg).await;
+                        }
                         warn!("DmlService INSERT failed: {}", e);
                         self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
                             .await
@@ -3754,6 +3717,18 @@ impl PostgresProtocol {
                             .await
                     }
                     Err(e) => {
+                        if let Some((resource, holder)) =
+                            crate::errors::extract_dml_lock_conflict(&e)
+                        {
+                            let msg = match holder {
+                                Some(h) => {
+                                    format!("lock not available on {resource} (held by {h})")
+                                }
+                                None => format!("lock not available on {resource}"),
+                            };
+                            warn!("DmlService DELETE blocked by DML lock: {msg}");
+                            return self.send_error("ERROR", "55P03", &msg).await;
+                        }
                         warn!("DmlService DELETE failed: {}", e);
                         self.send_error("ERROR", "42P01", &format!("Delete failed: {}", e))
                             .await
@@ -3851,6 +3826,18 @@ impl PostgresProtocol {
                             .await
                     }
                     Err(e) => {
+                        if let Some((resource, holder)) =
+                            crate::errors::extract_dml_lock_conflict(&e)
+                        {
+                            let msg = match holder {
+                                Some(h) => {
+                                    format!("lock not available on {resource} (held by {h})")
+                                }
+                                None => format!("lock not available on {resource}"),
+                            };
+                            warn!("DmlService UPDATE blocked by DML lock: {msg}");
+                            return self.send_error("ERROR", "55P03", &msg).await;
+                        }
                         // DmlService UPDATE returns error for not-implemented
                         // This is expected - UPDATE requires delete + insert pattern
                         warn!("DmlService UPDATE: {}", e);

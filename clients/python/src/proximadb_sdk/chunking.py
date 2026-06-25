@@ -217,6 +217,14 @@ class TextChunker:
             preserve_tables=getattr(self.config, "preserve_tables", False),
             add_context=self.config.add_context,
             context_size=self.config.context_size,
+            # Embedding-based semantic chunking (SEMANTIC_EMBEDDING). Forward the
+            # injected provider + breakpoint knobs so they survive the config
+            # rebuild; getattr keeps older ChunkingConfig instances compatible.
+            embedding_provider=getattr(self.config, "embedding_provider", None),
+            buffer_size=getattr(self.config, "buffer_size", 1),
+            breakpoint_percentile_threshold=getattr(
+                self.config, "breakpoint_percentile_threshold", 95.0
+            ),
         )
 
     def chunk_text(

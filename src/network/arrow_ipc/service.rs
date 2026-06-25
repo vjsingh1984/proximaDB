@@ -15,7 +15,8 @@ use anyhow::{Context, Result};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
-    decode::FlightRecordBatchStream, flight_service_server::FlightService,
+    decode::FlightRecordBatchStream, encode::FlightDataEncoderBuilder, error::FlightError,
+    flight_service_server::FlightService,
 };
 use arrow_schema::Schema;
 use futures::{Stream, StreamExt, stream};
@@ -72,6 +73,45 @@ struct AuthenticatedFlightContext {
     capability: Option<DataPlaneCapability>,
 }
 
+/// DoGet ticket for the batched columnar graph export path. JSON-encoded in the
+/// Flight `Ticket` bytes; `model` selects nodes vs edges and the optional fields
+/// scope the query (label / edge type / endpoints / limit).
+#[derive(Debug, Clone, serde::Deserialize)]
+struct GraphTicket {
+    /// `"graph_nodes"` or `"graph_edges"`.
+    model: String,
+    graph_id: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    edge_type: Option<String>,
+    #[serde(default)]
+    from_node_id: Option<String>,
+    #[serde(default)]
+    to_node_id: Option<String>,
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+/// `RecordBatch` source item for the streaming graph export (the input to the
+/// Flight `FlightDataEncoder`).
+type GraphBatchResult = std::result::Result<arrow_array::RecordBatch, FlightError>;
+
+/// Pagination state for the streaming node export.
+enum NodePage {
+    /// Pre-fetched first page — also used to fix the stream's schema dimension.
+    First(Vec<crate::graph::Node>),
+    /// Fetch the page starting at this offset next.
+    More(usize),
+    /// No more pages.
+    Done,
+}
+
+/// Map a graph/codec error into a Flight stream error.
+fn graph_flight_err(e: anyhow::Error) -> FlightError {
+    FlightError::ProtocolError(e.to_string())
+}
+
 /// ProximaDB Flight service implementation
 ///
 /// Thin wrapper around UnifiedHandlers that converts Arrow Flight messages
@@ -112,6 +152,13 @@ pub struct ProximaFlightService {
     /// any of them landing on the wrong pod's memtable would be
     /// invisible to the readers on the primary pod.
     primary_pod_gate: Option<FlightPrimaryPodGate>,
+    /// Graph backing service for the batched columnar graph path
+    /// (`graph_nodes`/`graph_edges` DoExchange + DoGet). Held directly (like the
+    /// vector-ops service) so bulk graph ingest lands in the live graph engine
+    /// rather than the generic record store. `None` outside production wiring
+    /// (e.g. the port-only test constructor), in which case the graph Flight
+    /// routes return `Unimplemented`.
+    graph_service: Option<Arc<crate::graph::GraphOperationsService>>,
     _codec: ArrowProtoCodec,
     file_export_handler: ArrowFileExportHandler,
 }
@@ -195,9 +242,21 @@ impl ProximaFlightService {
             catalog_manager: None,
             rank_services: None,
             primary_pod_gate: None,
+            graph_service: None,
             _codec: ArrowProtoCodec,
             file_export_handler: ArrowFileExportHandler::new(storage_locations),
         }
+    }
+
+    /// Attach the graph backing service so the `graph_nodes`/`graph_edges`
+    /// DoExchange ingest and DoGet export routes are live. Same
+    /// `GraphOperationsService` the gRPC/REST graph surfaces use.
+    pub fn with_graph_service(
+        mut self,
+        graph_service: Arc<crate::graph::GraphOperationsService>,
+    ) -> Self {
+        self.graph_service = Some(graph_service);
+        self
     }
 
     /// Boot adapter that derives the injected pieces from a root `UnifiedHandlers`.
@@ -229,6 +288,7 @@ impl ProximaFlightService {
             collection_service,
             storage_locations,
         )
+        .with_graph_service(request_handlers.graph_operations_service.clone())
     }
 
     /// Slice 6.2: attach the primary-pod write router. Once set,
@@ -1276,6 +1336,20 @@ impl FlightService for ProximaFlightService {
             return Ok(TonicResponse::new(Box::pin(stream)));
         }
 
+        // Batched columnar graph export: a graph ticket reads nodes/edges from
+        // the live graph engine and streams them, paginated, as columnar Arrow
+        // batches — the server never materializes the whole result set.
+        if let Some(graph_ticket) = Self::parse_graph_ticket(&ticket) {
+            Self::validate_flight_search_capability(
+                auth_context.capability.as_ref(),
+                &graph_ticket.graph_id,
+            )?;
+            let stream = self
+                .graph_export_flight_stream(graph_ticket, auth_context.tenant_id.clone(), edge)
+                .await?;
+            return Ok(TonicResponse::new(stream));
+        }
+
         // Otherwise, handle as vector search request
         let search_request = ArrowProtoCodec::ticket_to_search_request(&ticket).map_err(|e| {
             TonicStatus::invalid_argument(format!("Failed to parse search request: {}", e))
@@ -1548,6 +1622,7 @@ impl FlightService for ProximaFlightService {
                     text_storage_configs: vec![],
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision,
+                    permitted_principals: vec![],
                 };
 
                 // Create collection via service
@@ -2386,6 +2461,26 @@ impl FlightService for ProximaFlightService {
                 )
                 .await
             }
+            "graph_nodes" | "graph_edges" => {
+                // Bulk columnar graph ingest. Upsert semantics: the columnar
+                // batch is idempotent re-ingestible. Capability + tenant
+                // namespacing mirror the record write path.
+                Self::validate_flight_write_capability(
+                    auth_context.capability.as_ref(),
+                    &collection_id,
+                    FlightWriteOperation::Upsert,
+                    0,
+                )?;
+                let is_nodes = exchange_type == "graph_nodes";
+                self.handle_graph_write_exchange(
+                    collection_id,
+                    is_nodes,
+                    auth_context.tenant_id.clone(),
+                    first_msg,
+                    stream,
+                )
+                .await
+            }
             "bulk_search" => {
                 Self::validate_flight_search_capability(
                     auth_context.capability.as_ref(),
@@ -2404,7 +2499,7 @@ impl FlightService for ProximaFlightService {
                     .await
             }
             _ => Err(TonicStatus::unimplemented(format!(
-                "Unknown exchange type: {}. Supported: bulk_insert, bulk_upsert, bulk_delete, bulk_search, data_transfer",
+                "Unknown exchange type: {}. Supported: bulk_insert, bulk_upsert, bulk_delete, bulk_search, data_transfer, graph_nodes, graph_edges",
                 exchange_type
             ))),
         }
@@ -2538,6 +2633,292 @@ impl ProximaFlightService {
 
         let stream = stream::iter(results);
         Ok(TonicResponse::new(Box::pin(stream)))
+    }
+
+    /// Derive the effective backing graph namespace from the request tenant.
+    ///
+    /// Structural isolation: the tenant is folded into the graph storage key
+    /// (mirrors the gRPC v2 graph surface's `effective_graph_id`), never a
+    /// per-query predicate. Unauthenticated calls (no tenant) fall back to the
+    /// raw graph id.
+    fn effective_graph_id(tenant: Option<&str>, graph_id: &str) -> String {
+        match tenant {
+            Some(t) if !t.is_empty() => format!("{t}::{graph_id}"),
+            _ => graph_id.to_string(),
+        }
+    }
+
+    /// Handle the batched columnar graph ingest exchange (`graph_nodes` /
+    /// `graph_edges`). Each streamed Arrow `RecordBatch` is decoded via
+    /// [`super::graph_codec`] into neutral nodes/edges and upserted through the
+    /// live `GraphOperationsService`, so the rows are immediately
+    /// queryable/traversable (not parked in the generic record store).
+    async fn handle_graph_write_exchange(
+        &self,
+        graph_id: String,
+        is_nodes: bool,
+        tenant_id: Option<String>,
+        first_msg: FlightData,
+        stream: TonicStreaming<FlightData>,
+    ) -> TonicResult<<Self as FlightService>::DoExchangeStream> {
+        let graph = self.graph_service.as_ref().ok_or_else(|| {
+            TonicStatus::unimplemented("graph Flight path requires the graph backing service")
+        })?;
+        let effective_graph_id = Self::effective_graph_id(tenant_id.as_deref(), &graph_id);
+
+        let mut total_rows = 0u64;
+        let mut total_batches = 0u64;
+        let mut all_success = true;
+        let mut results = Vec::new();
+
+        let mut batch_stream = Self::record_batch_stream(first_msg, stream);
+        while let Some(batch) = batch_stream.next().await {
+            let batch = batch.map_err(|e| TonicStatus::internal(format!("Stream error: {}", e)))?;
+            total_batches += 1;
+            let row_count = batch.num_rows() as u64;
+
+            let written = if is_nodes {
+                let nodes = super::graph_codec::batch_to_nodes(&batch)
+                    .map_err(|e| TonicStatus::invalid_argument(format!("decode nodes: {}", e)))?;
+                graph
+                    .batch_create_nodes_with_strategy(&effective_graph_id, nodes, "update")
+                    .await
+                    .map(|created| created.len() as u64)
+            } else {
+                let edges = super::graph_codec::batch_to_edges(&batch)
+                    .map_err(|e| TonicStatus::invalid_argument(format!("decode edges: {}", e)))?;
+                graph
+                    .batch_create_edges(&effective_graph_id, edges)
+                    .await
+                    .map(|created| created.len() as u64)
+            };
+
+            let (written, ok) = match written {
+                Ok(n) => (n, true),
+                Err(e) => {
+                    all_success = false;
+                    tracing::error!(graph_id = %effective_graph_id, error = %e, "graph Flight ingest batch failed");
+                    (0, false)
+                }
+            };
+            total_rows += written;
+
+            let progress = serde_json::json!({
+                "kind": if is_nodes { "graph_nodes" } else { "graph_edges" },
+                "batch": total_batches,
+                "rows_in": row_count,
+                "rows_written": written,
+                "success": ok,
+            });
+            results.push(Ok(FlightData {
+                flight_descriptor: None,
+                data_header: Default::default(),
+                app_metadata: progress.to_string().into_bytes().into(),
+                data_body: Default::default(),
+            }));
+        }
+
+        let final_meta = serde_json::json!({
+            "kind": if is_nodes { "graph_nodes" } else { "graph_edges" },
+            "complete": true,
+            "total_batches": total_batches,
+            "total_rows_written": total_rows,
+            "success": all_success,
+        });
+        results.push(Ok(FlightData {
+            flight_descriptor: None,
+            data_header: Default::default(),
+            app_metadata: final_meta.to_string().into_bytes().into(),
+            data_body: Default::default(),
+        }));
+
+        info!(
+            graph_id = %effective_graph_id,
+            kind = if is_nodes { "graph_nodes" } else { "graph_edges" },
+            total_batches = total_batches,
+            total_rows_written = total_rows,
+            "Arrow Flight: graph columnar ingest completed"
+        );
+
+        Ok(TonicResponse::new(Box::pin(stream::iter(results))))
+    }
+
+    /// Parse a DoGet `Ticket` as a graph export request. Returns `None` for
+    /// non-graph tickets so they fall through to the vector-search path.
+    fn parse_graph_ticket(ticket: &Ticket) -> Option<GraphTicket> {
+        let parsed: GraphTicket = serde_json::from_slice(&ticket.ticket).ok()?;
+        matches!(parsed.model.as_str(), "graph_nodes" | "graph_edges").then_some(parsed)
+    }
+
+    /// Stream a graph export as a paginated columnar Flight response (the DoGet
+    /// half of the batched columnar graph path).
+    ///
+    /// Nodes are paged through `query_nodes` (limit/offset), so the server never
+    /// holds the whole node set; the schema dimension is fixed from the first
+    /// page so every page shares one Arrow schema. Edges are endpoint-scoped (the
+    /// engine has no full edge scan) and chunked. The `FlightDataEncoder` emits
+    /// one schema frame then a data frame per page; `ticket.limit` sets the page
+    /// size (the client streams pages and may cancel early). Egress bytes are
+    /// metered per frame.
+    async fn graph_export_flight_stream(
+        &self,
+        ticket: GraphTicket,
+        tenant_id: Option<String>,
+        edge: crate::metrics::consumption_metrics::EdgePolicyContext,
+    ) -> std::result::Result<<Self as FlightService>::DoGetStream, TonicStatus> {
+        const DEFAULT_PAGE: usize = 1024;
+        let graph = self.graph_service.clone().ok_or_else(|| {
+            TonicStatus::unimplemented("graph Flight path requires the graph backing service")
+        })?;
+        let gid = Self::effective_graph_id(tenant_id.as_deref(), &ticket.graph_id);
+        let page = ticket
+            .limit
+            .map(|l| l as usize)
+            .filter(|&l| l > 0)
+            .unwrap_or(DEFAULT_PAGE);
+
+        // Egress-aware shaping (co-design D2): compress the columnar body for
+        // chargeable (far) clients; the Arrow reader decompresses transparently.
+        let ipc_options = if edge.shape_policy().compress {
+            FlightCompression::Zstd.to_ipc_write_options()
+        } else {
+            FlightCompression::None.to_ipc_write_options()
+        };
+
+        let (schema, rb_stream): (
+            Arc<Schema>,
+            Pin<Box<dyn Stream<Item = GraphBatchResult> + Send>>,
+        ) = if ticket.model == "graph_nodes" {
+            let labels: Vec<String> = ticket.label.clone().into_iter().collect();
+            // Peek the first page to fix the schema dimension for the whole stream.
+            let first = Self::query_node_page(&graph, &gid, &labels, page, 0)
+                .await
+                .map_err(|e| TonicStatus::internal(format!("query nodes: {e}")))?;
+            let dim = super::graph_codec::embedding_dim_of(&first)
+                .map_err(|e| TonicStatus::invalid_argument(format!("embedding dim: {e}")))?;
+            let schema = super::graph_codec::graph_node_schema(dim);
+
+            let stream = stream::unfold(NodePage::First(first), move |state| {
+                let graph = graph.clone();
+                let gid = gid.clone();
+                let labels = labels.clone();
+                async move {
+                    match state {
+                        NodePage::First(nodes) => {
+                            let next = if nodes.len() < page {
+                                NodePage::Done
+                            } else {
+                                NodePage::More(page)
+                            };
+                            Some((
+                                super::graph_codec::nodes_to_batch_with_dim(&nodes, dim)
+                                    .map_err(graph_flight_err),
+                                next,
+                            ))
+                        }
+                        NodePage::More(offset) => {
+                            match Self::query_node_page(&graph, &gid, &labels, page, offset).await {
+                                Ok(nodes) if !nodes.is_empty() => {
+                                    let next = if nodes.len() < page {
+                                        NodePage::Done
+                                    } else {
+                                        NodePage::More(offset + page)
+                                    };
+                                    Some((
+                                        super::graph_codec::nodes_to_batch_with_dim(&nodes, dim)
+                                            .map_err(graph_flight_err),
+                                        next,
+                                    ))
+                                }
+                                Ok(_) => None,
+                                Err(e) => Some((Err(graph_flight_err(e)), NodePage::Done)),
+                            }
+                        }
+                        NodePage::Done => None,
+                    }
+                }
+            });
+            (schema, Box::pin(stream))
+        } else {
+            // Edges live in per-source adjacency. With an endpoint, use the
+            // adjacency-scoped query; without one, do a full graph edge scan
+            // (export/ETL — dump every edge), filtering by type if requested.
+            let edges = if ticket.from_node_id.is_none() && ticket.to_node_id.is_none() {
+                let mut all = graph
+                    .all_edges(&gid)
+                    .await
+                    .map_err(|e| TonicStatus::internal(format!("scan edges: {e}")))?;
+                if let Some(et) = &ticket.edge_type {
+                    all.retain(|e| e.edge_type == *et);
+                }
+                all
+            } else {
+                let query = crate::graph::EdgeQuery {
+                    graph_id: gid.clone(),
+                    from_node_id: ticket.from_node_id.clone(),
+                    to_node_id: ticket.to_node_id.clone(),
+                    edge_types: ticket.edge_type.clone().into_iter().collect(),
+                    filters: Vec::new(),
+                    limit: None,
+                    offset: None,
+                    continuation_token: None,
+                };
+                graph
+                    .query_edges(&gid, query)
+                    .await
+                    .map_err(|e| TonicStatus::internal(format!("query edges: {e}")))?
+            };
+            let edges: Vec<crate::graph::Edge> = edges.iter().map(|e| (**e).clone()).collect();
+            let batches: Vec<GraphBatchResult> = edges
+                .chunks(page)
+                .map(|chunk| super::graph_codec::edges_to_batch(chunk).map_err(graph_flight_err))
+                .collect();
+            (
+                super::graph_codec::graph_edge_schema(),
+                Box::pin(stream::iter(batches)),
+            )
+        };
+
+        let encoder = FlightDataEncoderBuilder::new()
+            .with_schema(schema)
+            .with_options(ipc_options)
+            .build(rb_stream);
+
+        // Meter the actual encoded bytes per frame, then surface encode errors
+        // as a stream-level status.
+        let metered = encoder.map(move |res| match res {
+            Ok(fd) => {
+                edge.record_result_egress(
+                    tenant_id.as_deref(),
+                    flight_data_wire_bytes(std::slice::from_ref(&fd)),
+                );
+                Ok(fd)
+            }
+            Err(e) => Err(TonicStatus::internal(format!("graph export encode: {e}"))),
+        });
+
+        Ok(Box::pin(metered))
+    }
+
+    /// Fetch one page of nodes (label-scoped, or full scan when `labels` is
+    /// empty) as neutral nodes.
+    async fn query_node_page(
+        graph: &crate::graph::GraphOperationsService,
+        graph_id: &str,
+        labels: &[String],
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<crate::graph::Node>> {
+        let query = crate::graph::NodeQuery {
+            graph_id: graph_id.to_string(),
+            labels: labels.to_vec(),
+            filters: Vec::new(),
+            limit: Some(limit as u32),
+            offset: Some(offset as u32),
+            continuation_token: None,
+        };
+        let nodes = graph.query_nodes(graph_id, query).await?;
+        Ok(nodes.iter().map(|n| (**n).clone()).collect())
     }
 
     /// Handle bulk search exchange - stream query vectors and return results

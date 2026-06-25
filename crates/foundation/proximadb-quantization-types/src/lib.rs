@@ -1,8 +1,6 @@
 //! # ProximaDB Quantization Types
 //!
 //! Foundation quantization types for ProximaDB.
-
-#![allow(deprecated)]
 //!
 //! ## Purpose
 //!
@@ -548,34 +546,6 @@ impl QuantizationType {
 }
 
 // ============================================================================
-// Legacy Type Conversions (for migration)
-// ============================================================================
-
-/// Legacy: ParsedQuantizationConfig from src/storage/traits/query.rs
-#[deprecated(note = "Use QuantizationConfig instead")]
-#[derive(Clone, Debug, PartialEq)]
-pub struct ParsedQuantizationConfig {
-    pub quantization_type: String,
-    pub quantization_level: String,
-}
-
-impl From<ParsedQuantizationConfig> for QuantizationConfig {
-    fn from(legacy: ParsedQuantizationConfig) -> Self {
-        let quantization_type =
-            QuantizationType::from_str(&legacy.quantization_type).unwrap_or(QuantizationType::None);
-        let quantization_level = QuantizationLevel::from_str(&legacy.quantization_level)
-            .unwrap_or(QuantizationLevel::None);
-
-        Self {
-            quantization_type,
-            quantization_level,
-            asymmetric: false,
-            cache: false,
-        }
-    }
-}
-
-// ============================================================================
 // Tests
 // ============================================================================
 
@@ -759,18 +729,6 @@ mod tests {
         let deserialized: QuantizationConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.quantization_type(), QuantizationType::Scalar);
         assert!(deserialized.cache);
-    }
-
-    #[test]
-    fn test_legacy_parsed_quantization_config_conversion() {
-        let legacy = ParsedQuantizationConfig {
-            quantization_type: "scalar".to_string(),
-            quantization_level: "int8".to_string(),
-        };
-
-        let config: QuantizationConfig = legacy.into();
-        assert_eq!(config.quantization_type(), QuantizationType::Scalar);
-        assert_eq!(config.quantization_level(), QuantizationLevel::Int8);
     }
 
     // ------------------------------------------------------------------

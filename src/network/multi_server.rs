@@ -96,13 +96,13 @@ use crate::security::SecurityCoordinator;
 #[cfg(feature = "cluster")]
 pub use proximadb_runtime::bootstrap_config::ClusterServerConfig;
 pub use proximadb_runtime::bootstrap_config::{
-    ArrowIpcServerConfig, GrpcHttpServerConfig, MultiServerConfig, PostgresServerConfig,
-    RestHttpServerConfig, ServerStatus, TLSConfig,
+    ArrowIpcServerConfig, BindTarget, GrpcHttpServerConfig, MultiServerConfig,
+    PostgresServerConfig, RestHttpServerConfig, ServerStatus, TLSConfig,
 };
 
 // SharedServices extracted to src/network/shared_services.rs
 // All existing call sites using `crate::network::multi_server::SharedServices` continue to work.
-pub use crate::network::shared_services::SharedServices;
+pub use crate::network::shared_services::{ServiceProfile, SharedServices};
 
 /// Apply 64 MB message limits and optional gzip compression to a tonic service.
 ///
@@ -172,7 +172,46 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_graph_service_server::ProximaGraphServiceServer<
         crate::network::grpc::v2::ProximaGraphServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaGraphServiceImpl::new(services.request_handlers.clone())
+        crate::network::grpc::v2::ProximaGraphServiceImpl::new(
+            services.request_handlers.graph_operations_service.clone(),
+            Some(services.query_adapter.clone()),
+        )
+        .into_server()
+    }
+
+    /// Build the canonical v2 document gRPC service. Mirrors
+    /// [`Self::canonical_graph_grpc_service`].
+    fn canonical_document_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_document_service_server::ProximaDocumentServiceServer<
+        crate::network::grpc::v2::ProximaDocumentServiceImpl,
+    >{
+        crate::network::grpc::v2::ProximaDocumentServiceImpl::new(services.document_service.clone())
+            .into_server()
+    }
+
+    /// Build the canonical v2 fusion gRPC service — the cross-modal retrieval
+    /// surface over gRPC (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`). A thin
+    /// facade over the shared `FusionService` port; owns no ranking logic.
+    fn canonical_fusion_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_fusion_service_server::ProximaFusionServiceServer<
+        crate::network::grpc::v2::ProximaFusionServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaFusionServiceImpl::new(services.request_handlers.clone())
+            .into_server()
+    }
+
+    /// Build the canonical v2 entity gRPC service.
+    ///
+    /// EntityService is an orchestration facade over graph + vector + document,
+    /// not a separate storage path (see SUPPORTED_SURFACES.adoc).
+    fn canonical_entity_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_entity_service_server::ProximaEntityServiceServer<
+        crate::network::grpc::v2::ProximaEntityServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaEntityServiceImpl::new(services.request_handlers.clone())
             .into_server()
     }
 
@@ -578,12 +617,15 @@ impl MultiServer {
                 .await;
 
             // Canonical v2 surfaces are always registered: ProximaRecordService +
-            // ProximaGraphService + grpc.health.v1.Health (+ optional reflection
-            // below). Service construction is centralized in the
+            // ProximaGraphService + ProximaEntityService + grpc.health.v1.Health
+            // (+ optional reflection below). Service construction is centralized in the
             // `canonical_*_grpc_service` helpers so all startup modes match.
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
+                .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -613,7 +655,7 @@ impl MultiServer {
                 server = server.add_service(reflection_service);
             }
 
-            let grpc_bind_addr = self.config.grpc_bind_address();
+            let grpc_bind_target = self.config.grpc_bind_target();
 
             // Determine the TLS mode for logging
             let mode = if mtls_enabled && cert_path.is_some() && ca_path.is_some() {
@@ -624,21 +666,38 @@ impl MultiServer {
                 "plaintext"
             };
 
-            // Start the gRPC server (TLS already configured at builder level if needed)
+            // Start the gRPC server (TLS already configured at builder level if needed).
+            // TCP in server mode; a Unix-domain socket in portless embedded mode.
+            let grpc_target_log = format!("{grpc_bind_target:?}");
             let grpc_handle = tokio::spawn(async move {
-                if let Err(e) = server.serve(grpc_bind_addr).await {
+                let result = match grpc_bind_target {
+                    BindTarget::Tcp(addr) => server.serve(addr).await,
+                    BindTarget::Uds(path) => match crate::network::uds::bind_unix_listener(&path) {
+                        Ok(listener) => {
+                            let incoming =
+                                tokio_stream::wrappers::UnixListenerStream::new(listener);
+                            server.serve_with_incoming(incoming).await
+                        }
+                        Err(e) => {
+                            tracing::error!("gRPC UDS bind failed at {}: {}", path.display(), e);
+                            return;
+                        }
+                    },
+                };
+                if let Err(e) = result {
                     tracing::error!("gRPC server error: {}", e);
                 }
             });
             handles.push(grpc_handle);
-            info!("gRPC Server started on {} ({})", grpc_bind_addr, mode);
+            info!("gRPC Server started on {} ({})", grpc_target_log, mode);
         }
 
         // Start Arrow IPC (Flight) server on port 5680 if configured
         if self.config.arrow_ipc_config.enable_arrow_ipc {
             info!("🔗 Starting Arrow IPC Server on port 5680");
 
-            let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
+            let arrow_bind_target = self.config.arrow_bind_target();
+            let arrow_target_log = format!("{arrow_bind_target:?}");
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
@@ -654,9 +713,10 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
-                use crate::network::arrow_ipc::ArrowFlightServer;
+                use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
+                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
@@ -674,7 +734,7 @@ impl MultiServer {
             });
 
             handles.push(arrow_handle);
-            info!("✅ Arrow IPC Server started on {}", arrow_bind_addr);
+            info!("✅ Arrow IPC Server started on {}", arrow_target_log);
         }
 
         // Start REST server on port 5678 if configured
@@ -682,6 +742,16 @@ impl MultiServer {
             info!("📡 Starting REST Server on port 5678");
 
             let rest_bind_addr = self.config.http_bind_address();
+            // Portless mode: serve REST over a Unix-domain socket. `/health`
+            // stays reachable over it (the SDK readiness probe does an HTTP GET).
+            let rest_uds_path = match self.config.rest_bind_target() {
+                BindTarget::Uds(p) => Some(p),
+                BindTarget::Tcp(_) => None,
+            };
+            let rest_target_log = rest_uds_path
+                .as_ref()
+                .map(|p| format!("unix:{}", p.display()))
+                .unwrap_or_else(|| rest_bind_addr.to_string());
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let metrics_collector = services.metrics_collector.clone();
@@ -742,6 +812,7 @@ impl MultiServer {
                     Some(discovery_service_for_rest),
                     Some(external_collection_service_for_rest),
                 )
+                .with_uds_path(rest_uds_path)
                 .start()
                 .await
                 {
@@ -755,7 +826,7 @@ impl MultiServer {
             });
 
             handles.push(rest_handle);
-            info!("✅ REST Server started on {}", rest_bind_addr);
+            info!("✅ REST Server started on {}", rest_target_log);
         }
 
         // Start PostgreSQL wire protocol server on port 5433 if configured
@@ -978,6 +1049,7 @@ impl MultiServer {
                 Some(services.rank_profile_store.clone()),
                 Some(services.discovery_service.clone()),
                 Some(services.external_collection_service.clone()),
+                self.config.admin_ui_enabled,
             );
 
             info!(
@@ -1082,12 +1154,16 @@ impl MultiServer {
                 .await;
 
             // Canonical surfaces always on: proximadb.v2.ProximaRecordService +
-            // ProximaGraphService, Arrow Flight, and grpc.health.v1.Health (+
+            // ProximaGraphService + ProximaEntityService + ProximaDocumentService,
+            // Arrow Flight, and grpc.health.v1.Health (+
             // optional reflection below). Construction centralized in the
             // `canonical_*_grpc_service` helpers.
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
+                .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1460,12 +1536,16 @@ impl MultiServer {
                 .await;
 
             // Canonical v2 surfaces always on: ProximaRecordService +
-            // ProximaGraphService + grpc.health.v1.Health (+ optional reflection /
+            // ProximaGraphService + ProximaEntityService + ProximaDocumentService
+            // + grpc.health.v1.Health (+ optional reflection /
             // cluster services below). Construction centralized in the
             // `canonical_*_grpc_service` helpers.
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
+                .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
+                .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -1545,7 +1625,11 @@ impl MultiServer {
         if self.config.arrow_ipc_config.enable_arrow_ipc {
             info!("Starting Arrow IPC Server on port 5680");
 
-            let arrow_bind_addr = self.config.arrow_ipc_config.active_bind_address();
+            // Cluster mode is TCP-only; portless (UDS) is a single-node embedded
+            // path. Wrap the addr as a TCP bind target to match the generalized
+            // `ArrowFlightServer::new` signature.
+            let arrow_bind_target =
+                BindTarget::Tcp(self.config.arrow_ipc_config.active_bind_address());
             let request_handlers = services.request_handlers.clone();
             let catalog_manager = services.catalog_manager.clone();
             let security_coordinator = if self.rest_auth_enabled {
@@ -1561,9 +1645,10 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
-                use crate::network::arrow_ipc::ArrowFlightServer;
+                use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                match ArrowFlightServer::new(arrow_bind_addr, request_handlers)
+                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)

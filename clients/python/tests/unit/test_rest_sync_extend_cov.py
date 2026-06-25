@@ -332,62 +332,68 @@ def test_graph_traverse_minimal(monkeypatch):
 
 
 def test_create_node(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"id": "n1"}))
+    # Rebased through the generated REST op -> goes via _make_request.
+    c = _make_client(monkeypatch, resp_body={"id": "n1"})
     out = c.create_node("n1", ["Person"], properties={"age": 30}, embedding=[1.0, 2.0])
     assert out["id"] == "n1"
-    verb, path, kw = _last_http(c)
+    verb, path, kw = _last(c)
     assert (verb, path) == ("POST", "/api/v2/graphs/default/nodes")
     assert kw["json"]["node"]["embedding"] == [1.0, 2.0]
 
 
 def test_create_node_no_embedding(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"id": "n2"}))
+    c = _make_client(monkeypatch, resp_body={"id": "n2"})
     c.create_node("n2", ["L"])
-    _, _, kw = _last_http(c)
+    _, _, kw = _last(c)
     assert "embedding" not in kw["json"]["node"]
 
 
+def test_create_node_custom_graph(monkeypatch):
+    c = _make_client(monkeypatch, resp_body={"id": "n3"})
+    c.create_node("n3", ["L"], graph_id="g7")
+    _, path, _ = _last(c)
+    assert path == "/api/v2/graphs/g7/nodes"
+
+
 def test_create_edge(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"id": "e1"}))
+    c = _make_client(monkeypatch, resp_body={"id": "e1"})
     out = c.create_edge("e1", "a", "b", "knows", properties={"w": 1}, weight=0.5)
     assert out["id"] == "e1"
-    verb, path, kw = _last_http(c)
+    verb, path, kw = _last(c)
     assert (verb, path) == ("POST", "/api/v2/graphs/default/edges")
     assert kw["json"]["edge"]["weight"] == 0.5
 
 
 def test_create_edge_no_weight(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"id": "e2"}))
+    c = _make_client(monkeypatch, resp_body={"id": "e2"})
     c.create_edge("e2", "a", "b", "rel")
-    _, _, kw = _last_http(c)
+    _, _, kw = _last(c)
     assert "weight" not in kw["json"]["edge"]
 
 
 def test_traverse_graph_extracts_nested_data(monkeypatch):
     c = _make_client(
         monkeypatch,
-        http_resp=FakeResp(
-            {
-                "success": True,
-                "data": {
-                    "nodes": [{"id": "n1"}],
-                    "edges": [{"id": "e1"}],
-                    "paths": [["n1"]],
-                    "stats": {"nodes_visited": 1},
-                },
-            }
-        ),
+        resp_body={
+            "success": True,
+            "data": {
+                "nodes": [{"id": "n1"}],
+                "edges": [{"id": "e1"}],
+                "paths": [["n1"]],
+                "stats": {"nodes_visited": 1},
+            },
+        },
     )
     out = c.traverse_graph("n1", limit=5, edge_types=["k"], node_labels=["L"])
     assert out["nodes"] == [{"id": "n1"}]
     assert out["stats"]["nodes_visited"] == 1
-    _, _, kw = _last_http(c)
+    _, _, kw = _last(c)
     assert kw["json"]["limit"] == 5
     assert kw["json"]["return_path"] is True
 
 
 def test_traverse_graph_flat_response_defaults(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"foo": "bar"}))
+    c = _make_client(monkeypatch, resp_body={"foo": "bar"})
     out = c.traverse_graph("n1")
     assert out["nodes"] == []
     assert out["stats"]["nodes_visited"] == 0
@@ -429,15 +435,15 @@ def test_query_edges(monkeypatch):
 
 
 def test_get_node(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"data": {"id": "n1"}}))
+    c = _make_client(monkeypatch, resp_body={"data": {"id": "n1"}})
     out = c.get_node("n1")
     assert out["id"] == "n1"
-    verb, path, _ = _last_http(c)
+    verb, path, _ = _last(c)
     assert (verb, path) == ("GET", "/api/v2/graphs/default/nodes/n1")
 
 
 def test_get_node_no_data_wrapper(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"id": "raw"}))
+    c = _make_client(monkeypatch, resp_body={"id": "raw"})
     out = c.get_node("raw")
     assert out["id"] == "raw"
 
@@ -467,10 +473,10 @@ def test_get_incoming_edges(monkeypatch):
 
 
 def test_delete_node(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"data": {"deleted": True}}))
+    c = _make_client(monkeypatch, resp_body={"data": {"deleted": True}})
     out = c.delete_node("n1")
     assert out["deleted"] is True
-    verb, path, _ = _last_http(c)
+    verb, path, _ = _last(c)
     assert (verb, path) == ("DELETE", "/api/v2/graphs/default/nodes/n1")
 
 
@@ -478,45 +484,45 @@ def test_delete_node(monkeypatch):
 
 
 def test_create_graph(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"graph_id": "g1"}))
+    c = _make_client(monkeypatch, resp_body={"graph_id": "g1"})
     out = c.create_graph("g1", name="G", description="d", schema={"x": 1})
     assert out["graph_id"] == "g1"
-    verb, path, kw = _last_http(c)
+    verb, path, kw = _last(c)
     assert (verb, path) == ("POST", "/api/v2/graphs")
     assert kw["json"]["schema"] == {"x": 1}
 
 
 def test_create_graph_no_schema(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"graph_id": "g2"}))
+    c = _make_client(monkeypatch, resp_body={"graph_id": "g2"})
     c.create_graph("g2")
-    _, _, kw = _last_http(c)
+    _, _, kw = _last(c)
     assert "schema" not in kw["json"]
 
 
 def test_delete_graph(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"deleted": True}))
+    c = _make_client(monkeypatch, resp_body={"deleted": True})
     out = c.delete_graph("g1")
     assert out["deleted"] is True
-    verb, path, _ = _last_http(c)
+    verb, path, _ = _last(c)
     assert (verb, path) == ("DELETE", "/api/v2/graphs/g1")
 
 
 def test_get_graph(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"name": "G"}))
+    c = _make_client(monkeypatch, resp_body={"name": "G"})
     assert c.get_graph("g1")["name"] == "G"
-    assert _last_http(c)[:2] == ("GET", "/api/v2/graphs/g1")
+    assert _last(c)[:2] == ("GET", "/api/v2/graphs/g1")
 
 
 def test_list_graphs(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"graphs": []}))
+    c = _make_client(monkeypatch, resp_body={"graphs": []})
     assert c.list_graphs() == {"graphs": []}
-    assert _last_http(c)[:2] == ("GET", "/api/v2/graphs")
+    assert _last(c)[:2] == ("GET", "/api/v2/graphs")
 
 
 def test_get_graph_stats(monkeypatch):
-    c = _make_client(monkeypatch, http_resp=FakeResp({"node_count": 3}))
+    c = _make_client(monkeypatch, resp_body={"node_count": 3})
     assert c.get_graph_stats("g1")["node_count"] == 3
-    assert _last_http(c)[:2] == ("GET", "/api/v2/graphs/g1/stats")
+    assert _last(c)[:2] == ("GET", "/api/v2/graphs/g1/stats")
 
 
 # ------------------------------------------------------------- query API

@@ -34,7 +34,10 @@ aws-sdk-glue = { version = "1.0", optional = true }
 parking_lot.workspace = true
 reqwest = { version = "0.12", optional = true, features = ["json"] }
 urlencoding = { version = "2", optional = true }
+proximadb-compression-types = { workspace = true }
 proximadb-data-model = { workspace = true }
+proximadb-distance-types = { workspace = true }
+proximadb-quantization-types = { workspace = true }
 proximadb-records = { workspace = true }
 serde.workspace = true
 serde_json.workspace = true

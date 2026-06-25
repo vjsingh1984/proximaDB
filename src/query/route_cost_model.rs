@@ -68,6 +68,90 @@ pub fn install_route_cost_observer() {
     GLOBAL_ROUTE_COST_MODEL.set_override_enabled(on);
 }
 
+// ── Per-Parquet-location shape stats (route-time classification) ────────────
+
+/// One Parquet table's physical shape, warmed for free wherever the table is
+/// opened and peeked at route time so the cost-model shape-class discriminates
+/// OLAP-over-Parquet queries by fan-out / cardinality WITHOUT a cold footer
+/// read on the route path (co-design P5: I/O round-trips, not CPU, dominate).
+#[derive(Clone, Copy, Debug)]
+pub struct TableShapeStat {
+    /// Row-group / split count — the GET-fan-out a scan of this table pays.
+    pub row_groups: u32,
+    /// Estimated row count from footer statistics, when the footer carries it.
+    pub rows: Option<u64>,
+}
+
+/// Process-global, bounded cache of per-Parquet-location [`TableShapeStat`]s.
+/// Warmed as a free side-effect of opening a table for execution/EXPLAIN (the
+/// opener already reads the footer) and consulted at the route decision so the
+/// scheduler's [`QueryShape`] carries real `partition_fanout` / `cardinality`
+/// for hot tables. A cold (never-scanned) table simply lacks an entry → the
+/// shape stays coarse (`Unknown`), so a fresh table changes nothing until its
+/// first scan warms the stat. Workload-adaptive, and adds zero I/O to routing.
+static GLOBAL_TABLE_SHAPE_STATS: LazyLock<Mutex<HashMap<String, TableShapeStat>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Soft cap on cached locations. Locations are catalog-bounded in practice; this
+/// only guards a runaway (e.g. a bug minting synthetic locations). Over-cap the
+/// cache clears wholesale — stat data is advisory and re-warms on the next scan.
+const TABLE_SHAPE_STAT_CAP: usize = 8192;
+
+/// Record (or refresh) a table's shape stat. Called by the Parquet opener after
+/// it has the footer, so this adds no I/O. Best-effort: a poisoned lock or an
+/// over-cap cache is silently dropped (classification then falls back coarse).
+pub fn record_table_shape_stat(location: &str, row_groups: u32, rows: Option<u64>) {
+    let mut guard = GLOBAL_TABLE_SHAPE_STATS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    if guard.len() >= TABLE_SHAPE_STAT_CAP {
+        guard.clear();
+    }
+    guard.insert(location.to_string(), TableShapeStat { row_groups, rows });
+}
+
+/// Aggregate the cached stats for `locations` into cost-model shape buckets.
+///
+/// Conservative: if *any* referenced location lacks a warmed stat, returns
+/// `(Unknown, Unknown)` — never half-classify a multi-table query from partial
+/// data, since an unknown table could dominate fan-out / cardinality. An empty
+/// slice also yields `Unknown`. Sums row-groups (total GET fan-out) and rows
+/// (total scan cardinality) across the tables, then buckets via the scheduler's
+/// [`PartitionFanout`] / [`CardinalityClass`].
+///
+/// [`PartitionFanout`]: crate::query::compute_scheduler::PartitionFanout
+/// [`CardinalityClass`]: crate::query::compute_scheduler::CardinalityClass
+pub fn classify_table_shapes(
+    locations: &[String],
+) -> (
+    crate::query::compute_scheduler::PartitionFanout,
+    crate::query::compute_scheduler::CardinalityClass,
+) {
+    use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout};
+    if locations.is_empty() {
+        return (PartitionFanout::Unknown, CardinalityClass::Unknown);
+    }
+    let guard = GLOBAL_TABLE_SHAPE_STATS
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let mut total_row_groups = 0u32;
+    let mut total_rows: Option<u64> = Some(0);
+    for loc in locations {
+        let Some(stat) = guard.get(loc) else {
+            return (PartitionFanout::Unknown, CardinalityClass::Unknown);
+        };
+        total_row_groups = total_row_groups.saturating_add(stat.row_groups);
+        total_rows = match (total_rows, stat.rows) {
+            (Some(acc), Some(r)) => Some(acc.saturating_add(r)),
+            _ => None,
+        };
+    }
+    (
+        PartitionFanout::from_count(Some(total_row_groups)),
+        CardinalityClass::from_estimate(total_rows),
+    )
+}
+
 /// Per-tenant governance **tier-entitlement multiplier** resolver — the final
 /// term of the §3 `Cost(q)` objective (Dimension 5, C5). Maps a `tenant_id` to a
 /// neutral scalar applied to the *reported* cost.
@@ -981,6 +1065,136 @@ mod tests {
         assert!(
             m.exploration_choice("oltp/native", &[ComputeBackend::Native])
                 .is_none()
+        );
+    }
+
+    // ── C4 Phase-2b: route-time shape-stat cache (T2.1 wiring / T3.3 ratchet) ─
+
+    #[test]
+    fn classify_table_shapes_empty_and_missing_is_unknown() {
+        use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout};
+        // Empty slice → Unknown.
+        let (pf, card) = classify_table_shapes(&[]);
+        assert_eq!(
+            (pf, card),
+            (PartitionFanout::Unknown, CardinalityClass::Unknown)
+        );
+        // A location with no warmed stat → Unknown (conservative: never
+        // half-classify — an unknown table could dominate fan-out/cardinality).
+        let (pf, card) = classify_table_shapes(&["test://route-shape/missing".to_string()]);
+        assert_eq!(
+            (pf, card),
+            (PartitionFanout::Unknown, CardinalityClass::Unknown)
+        );
+    }
+
+    #[test]
+    fn classify_table_shapes_buckets_and_sums_warmed_stats() {
+        use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout};
+        // Small / single-row-group table.
+        record_table_shape_stat("test://route-shape/small", 1, Some(500));
+        let (pf, card) = classify_table_shapes(&["test://route-shape/small".to_string()]);
+        assert_eq!(pf, PartitionFanout::Single);
+        assert_eq!(card, CardinalityClass::Small);
+
+        // Large / many-row-group table.
+        record_table_shape_stat("test://route-shape/large", 5_000, Some(50_000_000));
+        let (pf, card) = classify_table_shapes(&["test://route-shape/large".to_string()]);
+        assert_eq!(pf, PartitionFanout::Many);
+        assert_eq!(card, CardinalityClass::Large);
+
+        // Two warmed tables: row-groups and rows SUM (total GET fan-out / scan
+        // cardinality). 12 row-groups → Many; 1.3M rows → Large.
+        record_table_shape_stat("test://route-shape/sum-a", 6, Some(600_000));
+        record_table_shape_stat("test://route-shape/sum-b", 6, Some(700_000));
+        let (pf, card) = classify_table_shapes(&[
+            "test://route-shape/sum-a".to_string(),
+            "test://route-shape/sum-b".to_string(),
+        ]);
+        assert_eq!(pf, PartitionFanout::Many);
+        assert_eq!(card, CardinalityClass::Large);
+
+        // Conservative: a cold location among warmed ones → Unknown.
+        let (pf, card) = classify_table_shapes(&[
+            "test://route-shape/sum-a".to_string(),
+            "test://route-shape/cold".to_string(),
+        ]);
+        assert_eq!(
+            (pf, card),
+            (PartitionFanout::Unknown, CardinalityClass::Unknown)
+        );
+    }
+
+    #[test]
+    fn shape_class_discriminates_fine_parquet_signals() {
+        use crate::query::compute_scheduler::{CardinalityClass, PartitionFanout, QueryShape};
+        // Coarse (no fine signals) — the backward-compatible 2-part key.
+        let coarse = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            ..Default::default()
+        });
+        assert_eq!(coarse, "olap/parquet");
+        // Refined — distinct keys per fine signal, so the model accrues
+        // per-(cardinality, fan-out) cells instead of one noisy bucket.
+        let big = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: CardinalityClass::Large,
+            partition_fanout: PartitionFanout::Many,
+        });
+        let small = shape_class(&QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: CardinalityClass::Small,
+            partition_fanout: PartitionFanout::Single,
+        });
+        assert_ne!(big, coarse);
+        assert_ne!(small, coarse);
+        assert_ne!(big, small);
+    }
+
+    #[test]
+    fn warmed_fine_class_lets_cost_override_flip_route() {
+        // T2.1 keystone (T3.3 ratchet): with real fine signals the model accrues
+        // trustworthy per-(cardinality, fan-out) cost; with override enabled it
+        // flips a freshness-safe OLAP-Parquet route to the confidently-cheaper
+        // backend. This is the co-design loop actually closing — observe-mode
+        // promoted to act-mode on reliable per-class evidence.
+        use crate::query::compute_scheduler::{
+            CardinalityClass, ComputeScheduler, PartitionFanout, QueryShape,
+        };
+        let m = RouteCostModel::new()
+            .with_min_samples(1)
+            .with_min_advantage(0.1);
+        m.set_override_enabled(true);
+        let big = QueryShape {
+            engages_relational: true,
+            parquet_backed: true,
+            cardinality: CardinalityClass::Large,
+            partition_fanout: PartitionFanout::Many,
+        };
+        let class = shape_class(&big);
+        // Observe Native as confidently cheaper than DataFusion for THIS fine
+        // class (far fewer object-store round-trips). Both backends get ≥
+        // min_samples → exploration is satisfied (warm), so the exploit override
+        // runs deterministically rather than probing.
+        for _ in 0..3 {
+            m.observe(&class, &ComputeBackend::Native, &snap(2, 8192, 1));
+            m.observe(
+                &class,
+                &ComputeBackend::DataFusionLocal,
+                &snap(40, 1 << 20, 8),
+            );
+        }
+        let decision = ComputeScheduler::new().route_select_advised(big, Some(&m));
+        // Static rule picks DataFusion for OLAP-Parquet; the warmed model
+        // overrides to freshness-safe, cheaper Native.
+        assert_eq!(decision.backend, ComputeBackend::Native);
+        assert!(
+            decision.reason.contains("OVERRIDE"),
+            "expected override reason, got: {}",
+            decision.reason
         );
     }
 }

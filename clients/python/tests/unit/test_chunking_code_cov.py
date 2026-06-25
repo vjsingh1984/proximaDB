@@ -970,13 +970,23 @@ def test_placeholder_parsers(cls, lang, ext):
 
 def test_strategy_init_default(no_ts_pack):
     strat = CodeChunkingStrategy()
+    # Parsers are lazy: nothing instantiated until the first chunk(), but
+    # python must be in the allowed set.
+    assert strat._parsers == {}
+    assert "python" in strat._allowed_languages
+    # On demand, a python parser is instantiated even without tree-sitter
+    # (regex fallback) and then cached.
+    assert strat._get_parser("python") is not None
     assert "python" in strat._parsers
-    # parsers init even without tree-sitter (regex fallback)
 
 
 def test_strategy_init_specific_languages(no_ts_pack):
     cfg = CodeChunkingConfig(languages=["python", "unknownlang"])
     strat = CodeChunkingStrategy(cfg)
+    assert strat._allowed_languages == {"python", "unknownlang"}
+    # python resolves; an unknown language never produces a parser.
+    assert strat._get_parser("python") is not None
+    assert strat._get_parser("unknownlang") is None
     assert "python" in strat._parsers
     assert "unknownlang" not in strat._parsers
 

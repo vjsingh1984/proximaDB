@@ -3,7 +3,25 @@
 :toclevels: 3
 :date: 2026-05-27
 
-== Status: Design Note (no implementation yet)
+== Status: Design Note (implementation slices in progress)
+
+* 2026-05-27: Design note captured the primary-pod affinity contract.
+* 2026-06-23: `src/cluster/primary_pod_registry.rs` provides the in-memory
+  write-routing registry and `consult_for_write` gate.
+* 2026-06-23: `src/cluster/partition_lease.rs` adds the durable
+  generation-fenced partition lease primitive over object-store manifests.
+  It is covered by focused unit tests for contention, renewal, expiry takeover,
+  and split-brain-safe registry step-down.
+* 2026-06-24: The unified multi-resource lease/DML-lock expansion was reviewed
+  and approved as a correction plan in
+  `UNIFIED_RESOURCE_LEASE_LOCKING_REVIEW_2026_06_24.adoc`. That review is now
+  the gate before DML/protocol lock exposure: fix legacy path compatibility,
+  canonical `ResourceKey` encoding, full-key renewal, real `TenantContext`
+  lock keys, enforced hierarchy, guard-owned renewal/release, and
+  storage-visible fencing first.
+* Still open for MVP wiring: bootstrap a `PartitionLeaseManager` from the
+  operator control-plane prefix, run its renewal task, and call `acquire`
+  before accepting writes for a `(tenant_id, collection_id)`.
 
 == Why this matters
 
@@ -56,6 +74,11 @@ decision, not just a load-balancing one**:
 * AnvaiOps `apps/api/src/services/placement_planner.py` maps **tier →
   storage pool class** (pooled / business / enterprise / dedicated) but
   does not yet implement **collection → pod** affinity routing.
+* Partition lease primitive landed as an implementation slice:
+  `src/cluster/partition_lease.rs` stores per `(tenant, collection)` leases
+  in a generation-fenced manifest log and reconciles durable ownership into
+  `PrimaryPodRegistry`. This closes the durable ownership primitive, but not
+  the server bootstrap / failover detector wiring.
 
 == Recommendation
 
@@ -120,11 +143,12 @@ collection_id) sticky-routing contract.
 
 == Open questions
 
-* What's the failover behavior when the primary pod crashes? Currently
-  the WAL manifest in object storage is the durable authority — a new
-  pod can recover the memtable from WAL replay. The control plane
-  needs to detect the failure and re-assign the primary before reads
-  start hitting an empty memtable on the new pod.
+* What's the failover behavior when the primary pod crashes? The partition
+  lease primitive now supports expiry takeover with a higher generation and
+  split-brain-safe step-down of stale owners. The remaining open work is the
+  control-plane detector/renewal loop wiring: a live process must run renewals,
+  detect missed owners, call `PartitionLeaseManager::acquire`, and only then
+  route writes to the new primary.
 * Cross-tenant noisy-neighbor isolation: should the primary-pod
   assignment respect tier-based pool boundaries (free_trial vs
   enterprise-dedicated)? Probably yes; this is where
@@ -140,6 +164,10 @@ collection_id) sticky-routing contract.
 * `src/services/operations/vectors/legacy.rs:2827-2858` — three-stage search
 * `src/index/axis/eventlog/event_log.rs:57-64` — AXIS event types
 * `src/index/axis/storage/recovery.rs:173-240` — AXIS recovery
+* `src/cluster/primary_pod_registry.rs` — in-memory primary-pod routing cache
+  and `consult_for_write` write gate
+* `src/cluster/partition_lease.rs` — durable generation-fenced partition lease
+  primitive and registry reconciliation
 * `src/storage/tiering/mod.rs` — tier-migration trigger status
 * `anvaiops/apps/api/src/services/placement_planner.py` — tier→pool mapping
 * `docs/12-design/TD_064_PREDICATE_AWARE_VECTOR_SEARCH_DESIGN_2026_05_27.adoc` — EXPLAIN surface to extend with staleness disclosure

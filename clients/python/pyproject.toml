@@ -29,6 +29,11 @@ classifiers = [
 dependencies = [
     "httpx>=0.24.0",
     "h2>=4.0.0",  # Required for HTTP/2 support in httpx
+    # attrs + python-dateutil back the generated REST transport models
+    # (src/proximadb_sdk/_generated/rest, openapi-python-client output, TD-126
+    # Phase 4). Light core-install deps.
+    "attrs>=23.1.0",
+    "python-dateutil>=2.8.0",
     "pydantic>=2.0.0",
     "numpy>=1.21.0",
     "typing-extensions>=4.0.0",
@@ -40,23 +45,59 @@ dependencies = [
     "click>=8.1.0",
     "rich>=13.0.0",
     "tabulate>=0.9.0",
+    # auth.py uses requests (sync token/refresh flows) on the core path; it was
+    # previously only pulled in via the dev/test extras, so a core-only install
+    # failed to `import proximadb_sdk`. Light dep, belongs in core.
+    "requests>=2.28.0",
 ]
 
 [project.optional-dependencies]
+# Embeddings concern (TD-126 Phase 3): the built-in local embedding providers
+# (BGE, E5, GTE-Qwen, sentence-transformer, SFR) and their runtime model deps.
+# Opt-in so the core install stays light — `import proximadb_sdk` and even
+# `import proximadb_sdk.embedding_providers` no longer eagerly import the
+# provider modules; provider self-registration fires lazily on first registry
+# use (see embedding_providers/__init__.py). The `simulated` provider needs no
+# extra deps and works core-only.
+#   pip install 'proximadb[embeddings]'
+embeddings = [
+    "sentence-transformers>=3.2,<6",  # Local embedding models (BGE/E5/GTE-Qwen/SFR)
+]
+
+# Hosted / OpenAI-compatible embedding providers (opt-in, reachable via
+# get_provider('openai'|'cohere'|'fastembed')). Kept separate from `embeddings`
+# so the local-model install stays light.
+#   pip install 'proximadb[embeddings-cloud]'
+embeddings-cloud = [
+    "openai>=2",  # OpenAIProvider (modern >=1.0 client)
+    "cohere>=5",  # CohereProvider (cohere.ClientV2)
+    "fastembed>=0.3",  # FastEmbedProvider (ONNX)
+]
+
 # LLM integration via Victor framework
 llm = [
     "victor-ai>=0.2.0",  # Victor AI framework for embeddings and LLM
-    "sentence-transformers>=2.2.0",  # Local embedding models
+    "sentence-transformers>=3.2,<6",  # Local embedding models
 ]
 
-# Code chunking with tree-sitter (requires Python 3.10+)
+# Chunking concern (TD-126 Phase 3): text + code-aware AST chunking via
+# tree-sitter (requires Python 3.10+). Opt-in so the core install stays light —
+# `import proximadb_sdk` no longer pulls tree-sitter; the chunking public names
+# load lazily on first access (see proximadb_sdk/__init__.py __getattr__).
+#   pip install 'proximadb[chunking]'
+chunking = [
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.0",
+]
+
+# Back-compat alias for the pre-TD-126 extra name; identical to `chunking`.
 code-chunking = [
-    "tree-sitter>=0.24.0",
-    "tree-sitter-language-pack>=0.13.0",
+    "tree-sitter>=0.25",
+    "tree-sitter-language-pack>=1.0",
 ]
 
 langchain = [
-    "langchain-core>=0.1.0",
+    "langchain-core>=0.3.0",
 ]
 
 victor = [
@@ -64,24 +105,26 @@ victor = [
 ]
 
 crewai = [
-    "crewai>=0.80.0",
+    "crewai>=1.0.0",
 ]
 
 langgraph = [
-    "langgraph>=0.2.0",
-    "langchain-core>=0.1.0",
+    "langgraph>=1.0.0",
+    "langchain-core>=0.3.0",
 ]
 
 dspy = [
-    "dspy>=2.5.0",
+    "dspy>=3.0.0",
 ]
 
 autogen = [
+    # ProximaDBMemory targets the 0.4 autogen_core.memory protocol; the
+    # ProximaDBVectorDB helper also works on the 0.2 line (pyautogen).
     "autogen-agentchat>=0.4.0",
 ]
 
 llama_index = [
-    "llama-index-core>=0.10.0",
+    "llama-index-core>=0.12.0",
 ]
 
 haystack = [
@@ -95,7 +138,7 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=2.2.0",
+    "sentence-transformers>=3.2,<6",
     "requests>=2.28.0",
     "grpcio-tools>=1.80.0",
     "black>=22.0.0",
@@ -112,7 +155,7 @@ test = [
     "pytest-cov>=4.0.0",
     "pytest-html>=3.1.0",
     "pytest-xdist>=3.0.0",
-    "sentence-transformers>=2.2.0",
+    "sentence-transformers>=3.2,<6",
     "requests>=2.28.0",
 ]
 

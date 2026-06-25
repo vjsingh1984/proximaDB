@@ -113,6 +113,31 @@ pub struct ApiConfig {
     /// port via the `[api]` TOML or the standard env-var precedence.
     #[serde(default)]
     pub pg_port: Option<u16>,
+
+    /// Network transport for the REST / gRPC / Arrow Flight surfaces.
+    ///
+    /// - `"tcp"` (default): bind TCP ports (`rest_port` / `grpc_port` /
+    ///   `arrow_flight_port`). This is the production/server default and
+    ///   keeps every existing deployment unchanged (mixed-read-safe: UDS
+    ///   is strictly opt-in).
+    /// - `"uds"`: bind Unix-domain sockets under [`socket_dir`] instead of
+    ///   TCP ports — the **portless** embedded mode. The `*_port` fields are
+    ///   ignored, and the pgwire listener (a standard PG TCP driver) is
+    ///   disabled, so the process opens *no* TCP listener at all.
+    #[serde(default = "default_transport")]
+    pub transport: String,
+
+    /// Directory that holds the Unix-domain sockets when `transport = "uds"`.
+    ///
+    /// The three surfaces bind to `<socket_dir>/proximadb-embedded.rest.sock`,
+    /// `…grpc.sock`, and `…flight.sock`. Required (and created if missing)
+    /// when `transport = "uds"`; ignored for TCP.
+    #[serde(default)]
+    pub socket_dir: Option<String>,
+}
+
+fn default_transport() -> String {
+    "tcp".to_string()
 }
 
 fn default_unified_port() -> u16 {
@@ -157,6 +182,8 @@ impl Default for ApiConfig {
             http2_max_concurrent_streams: 1000,
             max_connections: 10000,
             pg_port: None,
+            transport: default_transport(),
+            socket_dir: None,
         }
     }
 }
@@ -209,6 +236,26 @@ pub struct ServerConfig {
 
     /// Root directory for persistent data files.
     pub data_dir: PathBuf,
+
+    /// Read-only embedded admin dashboard (`/admin`). Disabled by default;
+    /// opt-in via `[server.admin_ui]`. `#[serde(default)]` so existing configs
+    /// without the section keep parsing (and keep the dashboard off).
+    #[serde(default)]
+    pub admin_ui: AdminUiConfig,
+}
+
+/// Configuration for the read-only embedded admin dashboard served at `/admin`.
+///
+/// **Disabled by default.** Intended for **standalone** local instances only —
+/// keep it off for Kubernetes pods (each pod does not need it) and for
+/// embedded / UDS mode (which serves over a local Unix-domain socket, not a
+/// browser-reachable TCP port) unless an operator explicitly opts in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AdminUiConfig {
+    /// Mount the read-only `/admin` (+ `/dashboard`) route. Default: `false`
+    /// (`bool::default()`).
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 impl Default for ServerConfig {
@@ -219,6 +266,7 @@ impl Default for ServerConfig {
             port: 5678,
             grpc_port: None,
             data_dir: PathBuf::from("./data"),
+            admin_ui: AdminUiConfig::default(),
         }
     }
 }

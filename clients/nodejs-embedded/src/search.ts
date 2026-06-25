@@ -35,6 +35,14 @@ interface SearchRequest {
 export interface SearchHttpClient {
   post<T>(url: string, body: unknown): Promise<T>;
   url(): string;
+  /**
+   * Typed transport for vector search (TD-126 Phase 4). Routes through the
+   * generated REST client (POST /api/v2/collections/{collection_id}/search).
+   */
+  searchRecordsRequest(
+    collectionId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown>;
 }
 
 /**
@@ -327,9 +335,11 @@ export class SearchBuilder {
       timeoutMs: this.timeoutMsValue ?? undefined,
     };
 
-    const url = this.client.url() + `/api/v2/collections/${this.collectionName}/search`;
-    const response = await this.client.post<{ results: SearchResult[] }>(url, request);
-    
+    const response = (await this.client.searchRecordsRequest(
+      this.collectionName,
+      request as unknown as Record<string, unknown>,
+    )) as { results: SearchResult[] };
+
     let results = response.results;
 
     // Apply min_score filter if set

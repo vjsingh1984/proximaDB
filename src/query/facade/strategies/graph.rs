@@ -270,9 +270,8 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::graph::service::GraphOperationsService;
-    use crate::proto::proximadb_v1::{
-        CreateGraphRequest, Edge, Node as ProtoNode, PropertyValue, property_value,
-    };
+    use crate::graph::{Edge, Node as ProtoNode, PropertyValue, property_value};
+    use crate::proto::proximadb_v1::CreateGraphRequest;
 
     fn pv_string(value: &str) -> PropertyValue {
         PropertyValue {

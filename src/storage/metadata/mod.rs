@@ -69,16 +69,10 @@
 pub use crate::storage::transaction_coordinator;
 pub mod atomic;
 pub mod backends;
-pub mod checkpoint;
-// universal_backend moved to backends/universal_backend.rs
-pub mod indexes;
-pub mod metadata_index;
+pub mod catalog_config;
 pub mod single_index;
 pub mod store;
 pub mod write_ahead_log;
-
-#[cfg(test)]
-mod atomic_tests;
 
 use anyhow::Result;
 use async_trait::async_trait;

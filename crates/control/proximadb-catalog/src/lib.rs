@@ -8,7 +8,10 @@
 //! - `Catalog` — the core async trait every catalog backend implements
 //! - All `Catalog*` types used in trait method signatures
 
+use proximadb_compression_types::CompressionAlgorithm;
 use proximadb_data_model::{ProximaType, TimeUnit, VectorElement};
+use proximadb_distance_types::DistanceMetric;
+use proximadb_quantization_types::QuantizationType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -69,6 +72,50 @@ pub enum StoragePoolClass {
     Dedicated,
 }
 
+/// Plane a catalog instance serves in the two-tier operator/account isolation
+/// model (Phase 5).
+///
+/// * [`Operator`](Self::Operator) — the SaaS provider's **control-plane**
+///   registry of all customer accounts (entitlements, storage bindings,
+///   billing). It holds metadata-*about*-accounts, never tenant table data,
+///   and is stored under the reserved `_operator/` root.
+/// * [`Account`](Self::Account) — a customer account's **data-plane** catalog
+///   (its tenants → namespaces → objects), stored under
+///   `accounts/{account_id}/…`. A per-account catalog is structurally unable to
+///   name another account's objects — isolation is structural, not a query
+///   predicate.
+///
+/// Single-deployment default is one `Operator`-roled system catalog (it holds
+/// the whole deployment's objects until multi-account provisioning splits
+/// data-plane catalogs out per account).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogRole {
+    /// Control-plane registry of accounts (under `_operator/`).
+    Operator,
+    /// Data-plane catalog scoped to one customer account.
+    Account {
+        /// The owning account ID (roots the catalog under `accounts/{id}/…`).
+        account_id: String,
+    },
+}
+
+impl CatalogRole {
+    /// The owning account ID for an [`Account`](Self::Account) catalog, or
+    /// `None` for the [`Operator`](Self::Operator) control plane.
+    pub fn account_id(&self) -> Option<&str> {
+        match self {
+            CatalogRole::Operator => None,
+            CatalogRole::Account { account_id } => Some(account_id.as_str()),
+        }
+    }
+
+    /// True for the control-plane operator catalog.
+    pub fn is_operator(&self) -> bool {
+        matches!(self, CatalogRole::Operator)
+    }
+}
+
 /// Namespace metadata.
 ///
 /// Serves two roles:
@@ -117,6 +164,14 @@ pub struct CatalogNamespace {
     /// `"tnt_legacy_system"` until operator re-parents).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tenant_id: Option<String>,
+    /// Owning customer **account** — the SaaS billing/isolation boundary
+    /// that sits *above* `tenant_id` (a tenant is a workspace/sub-org
+    /// inside an account). Drives the account-rooted physical path
+    /// `accounts/{account_id}/{tenant_id}/{namespace_id}/{object_id}/`.
+    /// `None` keeps the legacy flat `data/{tenant_id}/...` render
+    /// (mixed-safe; the account tier is inert until provisioned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
     /// Region where authoritative writes land. `None` is allowed only
     /// for namespaces with no DR policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -154,6 +209,7 @@ impl CatalogNamespace {
             updated_at_ms: now,
             namespace_id: None,
             tenant_id: None,
+            account_id: None,
             region_home: None,
             default_dr_region_pair_id: None,
             storage_pool_class: StoragePoolClass::default(),
@@ -192,6 +248,14 @@ impl CatalogNamespace {
     /// Set the owning tenant.
     pub fn with_tenant(mut self, tenant_id: impl Into<String>) -> Self {
         self.tenant_id = Some(tenant_id.into());
+        self
+    }
+
+    /// Set the owning customer account (the billing/isolation boundary
+    /// above `tenant_id`). Activates the account-rooted physical path;
+    /// leaving it unset keeps the legacy flat `data/{tenant_id}/...` render.
+    pub fn with_account(mut self, account_id: impl Into<String>) -> Self {
+        self.account_id = Some(account_id.into());
         self
     }
 
@@ -424,6 +488,52 @@ pub fn catalog_arrow_type(ty: &ProximaType) -> arrow_schema::DataType {
     }
 }
 
+/// Catalog-authoritative embedding descriptor for a vector table.
+///
+/// The system catalog is the system-of-record for *which* model vectorizes a
+/// table and the geometry of its output, but it deliberately does NOT depend on
+/// the modality engine (`proximadb-embedding` is a `modality` crate, above the
+/// control layer). The embedding engine maps this descriptor to its own route
+/// type. Precision *policy* (allowed/canonical precisions, recall SLO) is carried
+/// separately in the dedicated precision-policy fields; this captures only model
+/// identity + output geometry.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogEmbeddingConfig {
+    /// Model/route identifier, opaque to the catalog and resolved by the
+    /// embedding engine, e.g. `"bge-small"`, `"openai:text-embedding-3-small"`,
+    /// or `"byo:https://…"`.
+    pub model: String,
+    /// Output dimensionality of the model.
+    pub dimension: u32,
+    /// Native scalar precision of the model output. Legacy/unset → `Fp32`.
+    #[serde(default)]
+    pub native_precision: proximadb_records::EmbeddingScalarType,
+    /// Whether the engine L2-normalizes embeddings before they are stored.
+    #[serde(default)]
+    pub normalize: bool,
+}
+
+/// Catalog-authoritative table-level storage descriptor.
+///
+/// Catalog-native (not the wire `proto` `StorageConfig`) so the catalog stays
+/// decoupled from the transport schema. This is the table-level default;
+/// fine-grained per-layout authority/format lives in
+/// [`CatalogTableSchema::storage_layouts`] and the selected specialization in
+/// [`CatalogTableSchema::storage_specialization`]. Every field is `None` =
+/// "inherit the engine default", so the descriptor is inert until explicitly set.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogStorageConfig {
+    /// Compression codec for cold/warehouse segments. `None` = engine default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compression: Option<CompressionAlgorithm>,
+    /// Target segment/file size in MiB before rotation. `None` = engine default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_segment_size_mb: Option<u32>,
+    /// Whether read-through caching is enabled for this table. `None` = inherit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enable_caching: Option<bool>,
+}
+
 /// Table schema
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CatalogTableSchema {
@@ -542,6 +652,29 @@ pub struct CatalogTableSchema {
     #[serde(default)]
     pub is_legacy_vector_record: bool,
 
+    // === Phase 0 (system-catalog redesign): typed vector/storage config ===
+    // Promote distance metric, quantization codec, embedding model, and storage
+    // config out of loose `properties` string carriage into typed fields, so the
+    // forthcoming catalog WAL/snapshot format serializes the *final* schema shape
+    // from day one. All additive `#[serde(default)]` ⇒ catalogs persisted before
+    // this change deserialize with `None`.
+    /// Vector distance metric for this table's ANN projections. `None` =
+    /// unspecified (the engine/projection default applies).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distance_metric: Option<DistanceMetric>,
+    /// Vector quantization codec for this table. `None` = unspecified (engine
+    /// default, typically full-precision / no quantization).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quantization: Option<QuantizationType>,
+    /// Embedding model descriptor (model identity + output geometry). `None` for
+    /// non-vector tables or when embeddings are supplied pre-computed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub embedding_config: Option<CatalogEmbeddingConfig>,
+    /// Table-level storage configuration (compression, segment size, caching).
+    /// `None` = inherit engine defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_config: Option<CatalogStorageConfig>,
+
     /// Schema version
     pub schema_version: i32,
     /// Table properties
@@ -595,6 +728,11 @@ impl Default for CatalogTableSchema {
             fingerprint: 0,
             created_at_ms_schema: 0,
             is_legacy_vector_record: false,
+            // Phase 0: typed vector/storage config, all unspecified by default.
+            distance_metric: None,
+            quantization: None,
+            embedding_config: None,
+            storage_config: None,
             schema_version: 1,
             properties: HashMap::new(),
             location: None,
@@ -640,6 +778,30 @@ impl CatalogTableSchema {
     /// Add a rebuildable projection descriptor.
     pub fn with_projection(mut self, projection: CatalogProjection) -> Self {
         self.projections.push(projection);
+        self
+    }
+
+    /// Set the vector distance metric.
+    pub fn with_distance_metric(mut self, metric: DistanceMetric) -> Self {
+        self.distance_metric = Some(metric);
+        self
+    }
+
+    /// Set the vector quantization codec.
+    pub fn with_quantization(mut self, quantization: QuantizationType) -> Self {
+        self.quantization = Some(quantization);
+        self
+    }
+
+    /// Set the embedding model descriptor.
+    pub fn with_embedding_config(mut self, config: CatalogEmbeddingConfig) -> Self {
+        self.embedding_config = Some(config);
+        self
+    }
+
+    /// Set the table-level storage configuration.
+    pub fn with_storage_config(mut self, config: CatalogStorageConfig) -> Self {
+        self.storage_config = Some(config);
         self
     }
 
@@ -2743,14 +2905,38 @@ mod tests {
     }
 
     #[test]
+    fn catalog_role_accessors_and_serde() {
+        let op = CatalogRole::Operator;
+        assert!(op.is_operator());
+        assert_eq!(op.account_id(), None);
+
+        let acct = CatalogRole::Account {
+            account_id: "acct_acme".to_string(),
+        };
+        assert!(!acct.is_operator());
+        assert_eq!(acct.account_id(), Some("acct_acme"));
+
+        // snake_case, round-trips.
+        let j = serde_json::to_string(&op).expect("ser operator");
+        assert_eq!(j, "\"operator\"");
+        let back: CatalogRole = serde_json::from_str(&j).expect("de operator");
+        assert_eq!(back, op);
+        let j2 = serde_json::to_string(&acct).expect("ser account");
+        let back2: CatalogRole = serde_json::from_str(&j2).expect("de account");
+        assert_eq!(back2, acct);
+    }
+
+    #[test]
     fn namespace_dr_builders_compose() {
         let ns = CatalogNamespace::new(vec!["catalog".into(), "db".into()])
+            .with_account("acct_acme")
             .with_tenant("tnt_acme")
             .with_namespace_id("ns_01HX7Q8K2N5R9P3M1B2C3D4E5F")
             .with_region_home("us-east-1")
             .with_default_dr_region_pair("aws:us-east-1:us-west-2")
             .with_storage_pool_class(StoragePoolClass::Standard);
 
+        assert_eq!(ns.account_id.as_deref(), Some("acct_acme"));
         assert_eq!(ns.tenant_id.as_deref(), Some("tnt_acme"));
         assert_eq!(
             ns.namespace_id.as_deref(),
@@ -2782,6 +2968,7 @@ mod tests {
             serde_json::from_str(legacy_json).expect("legacy namespace JSON must deserialize");
         assert!(ns.namespace_id.is_none());
         assert!(ns.tenant_id.is_none());
+        assert!(ns.account_id.is_none());
         assert_eq!(ns.storage_pool_class, StoragePoolClass::Pooled);
 
         // Re-serializing must skip the None fields so legacy consumers
@@ -2789,6 +2976,7 @@ mod tests {
         let reserialized = serde_json::to_string(&ns).expect("serialize");
         assert!(!reserialized.contains("namespace_id"));
         assert!(!reserialized.contains("tenant_id"));
+        assert!(!reserialized.contains("account_id"));
         assert!(!reserialized.contains("region_home"));
         assert!(!reserialized.contains("default_dr_region_pair_id"));
         // `storage_pool_class` is non-Option so it does show up; that's
@@ -3731,6 +3919,88 @@ mod tests {
         // Ported helper still works against the deserialized schema.
         assert!(schema.column_by_name("id").is_some());
         assert_eq!(schema.primary_key_ids(), vec![1]);
+    }
+
+    // === Phase 0 (system-catalog redesign): typed vector/storage config ===
+
+    /// All four typed fields survive a JSON serialize → deserialize round-trip
+    /// losslessly, exercising the reused foundation enums (`DistanceMetric`,
+    /// `QuantizationType`, `CompressionAlgorithm`) and the catalog-native config
+    /// structs.
+    #[test]
+    fn catalog_table_schema_round_trips_typed_vector_storage_config() {
+        let schema = CatalogTableSchema::new("typed_vec")
+            .with_distance_metric(DistanceMetric::Cosine)
+            .with_quantization(QuantizationType::Scalar)
+            .with_embedding_config(CatalogEmbeddingConfig {
+                model: "bge-small".to_string(),
+                dimension: 384,
+                native_precision: proximadb_records::EmbeddingScalarType::Fp32,
+                normalize: true,
+            })
+            .with_storage_config(CatalogStorageConfig {
+                compression: Some(CompressionAlgorithm::Zstd),
+                max_segment_size_mb: Some(128),
+                enable_caching: Some(true),
+            });
+
+        let json = serde_json::to_string(&schema).unwrap();
+        let back: CatalogTableSchema = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.distance_metric, Some(DistanceMetric::Cosine));
+        assert_eq!(back.quantization, Some(QuantizationType::Scalar));
+        assert_eq!(
+            back.embedding_config,
+            Some(CatalogEmbeddingConfig {
+                model: "bge-small".to_string(),
+                dimension: 384,
+                native_precision: proximadb_records::EmbeddingScalarType::Fp32,
+                normalize: true,
+            })
+        );
+        assert_eq!(
+            back.storage_config,
+            Some(CatalogStorageConfig {
+                compression: Some(CompressionAlgorithm::Zstd),
+                max_segment_size_mb: Some(128),
+                enable_caching: Some(true),
+            })
+        );
+    }
+
+    /// DURABLE compat: the four typed fields are omitted from JSON when unset
+    /// (`skip_serializing_if`), and a catalog persisted BEFORE this change — i.e.
+    /// JSON lacking the keys entirely — still deserializes, with each field
+    /// defaulting to `None`.
+    #[test]
+    fn catalog_table_schema_omits_and_defaults_typed_fields_when_unset() {
+        // Unset → omitted from serialized JSON.
+        let schema = CatalogTableSchema::new("plain");
+        let value = serde_json::to_value(&schema).unwrap();
+        let obj = value.as_object().unwrap();
+        assert!(!obj.contains_key("distance_metric"));
+        assert!(!obj.contains_key("quantization"));
+        assert!(!obj.contains_key("embedding_config"));
+        assert!(!obj.contains_key("storage_config"));
+
+        // Pre-Phase-0 JSON (no typed-config keys) still loads, fields default.
+        let pre_phase0_json = serde_json::json!({
+            "name": "pre_phase0_collection",
+            "columns": [],
+            "primary_key": [],
+            "indexes": [],
+            "schema_version": 1,
+            "properties": {},
+            "location": null,
+            "created_at_ms": 1700000000000_i64,
+            "updated_at_ms": 1700000000000_i64
+        });
+        let loaded: CatalogTableSchema = serde_json::from_value(pre_phase0_json).unwrap();
+        assert_eq!(loaded.name, "pre_phase0_collection");
+        assert!(loaded.distance_metric.is_none());
+        assert!(loaded.quantization.is_none());
+        assert!(loaded.embedding_config.is_none());
+        assert!(loaded.storage_config.is_none());
     }
 
     /// The ported storage-plane constructors/helpers behave like the original

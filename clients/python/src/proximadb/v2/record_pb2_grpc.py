@@ -245,7 +245,19 @@ class ProximaRecordServiceServicer(object):
         raise NotImplementedError("Method not implemented!")
 
     def ExecuteQuery(self, request, context):
-        """SQL query (v2 parity with v1 QueryService)"""
+        """SQL over gRPC (TD-121/TD-135): SSO/bearer-authenticated programmatic SQL.
+        gRPC carries bearer/JWT in request metadata, which pgwire (Postgres-native
+        password/MD5) cannot — so this is the token-authenticated SQL path. Serves
+        vector/graph-extension queries (e.g. VECTOR_SEARCH) AND tenant-scoped
+        relational SQL: SELECT reads route through the SAME relational pipeline
+        pgwire uses (ComputeScheduler → DataFusion/Volcano), and DDL (CREATE/ALTER/
+        DROP) + DML (INSERT/UPDATE/DELETE) route through the SAME tenant-scoped
+        DdlService/DmlService seams pgwire uses — all with the `x-tenant-id` tenant
+        scoping reads and writes to its partition (TD-064). Multi-statement
+        transactions (BEGIN/COMMIT) remain pgwire-only (this RPC is single-statement).
+        For bulk columnar results prefer Arrow Flight; for UQL/AQL/Federated (non-SQL)
+        use /api/v2/query.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details("Method not implemented!")
         raise NotImplementedError("Method not implemented!")

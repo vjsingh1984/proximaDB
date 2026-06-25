@@ -173,14 +173,17 @@ pub mod audit_sink;
 pub mod bulk_load;
 pub mod canonical_wal;
 pub mod catalog_introspection;
+pub mod catalog_snapshot_store;
 pub mod collection;
 pub mod ddl;
 pub mod discovery;
 pub mod dml;
 pub mod embedding_drainer;
+pub mod entity_orchestrator;
 pub mod events;
 pub mod external_collection;
 pub mod function_store;
+pub mod fusion_service;
 pub mod graph_collection;
 pub mod operations;
 pub mod queue_fs_adapter;
@@ -193,8 +196,11 @@ pub mod scan_cursor;
 pub mod schema;
 pub mod search;
 pub mod snapshot;
+pub mod system_catalog;
+pub mod system_catalog_state;
 #[cfg(feature = "tenant_access")]
 pub mod tenant_access;
+pub mod transaction;
 pub mod write_intent;
 
 // Re-export main service types with cleaner names
@@ -230,6 +236,7 @@ pub use record_store::{
     TableRecordWriteResult, TableWalAppender, VectorOpsTableRecordStore,
 };
 pub use search::StreamingSearch;
+pub use transaction::{CrossModelTransactionCoordinator, CrossModelTxResult, TransactionOutcome};
 pub use write_intent::{
     DEFAULT_BULK_BYTES_THRESHOLD, DEFAULT_BULK_ROW_THRESHOLD, ProjectionFreshnessRequirement,
     RejectedWriteLane, WriteDurabilityRequirement, WriteGuard, WriteIntent,

@@ -79,29 +79,60 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | SQL clients and tools — psql, psycopg2/asyncpg, JDBC, BI/ORM ecosystem.
 | Supported
 
+| *gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery`*
+| *SQL with vector/graph extensions* (e.g. `VECTOR_SEARCH`) *and tenant-scoped
+  relational SQL* — SELECT reads + DDL (`CREATE`/`ALTER`/`DROP`) + DML
+  (`INSERT`/`UPDATE`/`DELETE`).
+| Token/SSO-authenticated programmatic queries: gRPC carries bearer/JWT in
+  metadata (pgwire cannot) and uses HTTP/2 + protobuf. Relational SELECTs route
+  through the same pipeline as pgwire (ComputeScheduler → DataFusion/Volcano);
+  DDL/DML route through the same tenant-scoped `DdlService`/`DmlService` seams —
+  all scoped to the `x-tenant-id` tenant (TD-064). Multi-statement transactions
+  (BEGIN/COMMIT) remain pgwire-only (this RPC is single-statement).
+| Supported (vector/graph SQL + tenant-scoped relational SELECT/DDL/DML)
+
 | *REST/gRPC `/api/v2/query`* (unified query port)
 | *UQL* (unified multi-modal), *Federated* SQL extensions, *AQL*
 | ProximaDB-native cross-modal queries (vector + graph + relational) that SQL cannot express.
 | UQL/Federated Supported; AQL Planned
 
 | *gRPC `proximadb.v2.ProximaGraphService`*
-| Graph node/edge/traversal/shortest-path RPCs
+| Node/edge/query/traversal/shortest-path/stats + analytic
+  (GetConnectedComponents, HasCycle), batch (BatchCreateNodes/Edges),
+  unique-constraint DDL, and server-streaming (StreamTraverse) RPCs (TD-124).
 | Programmatic graph access from the SDK.
 | Supported
 
-| *Graph `ExecuteQuery`* (Cypher/Gremlin)
-| Declarative graph query
-| Deferred — TD-124.
-| Planned
+| *Graph `ExecuteQuery`* (Cypher)
+| Declarative graph query — supported openCypher subset (single-node patterns
+  and linear traversal chains with equality property constraints) on v2 (TD-124).
+| Now on v2 `ProximaGraphService`. GREMLIN reserved/unbacked.
+| Supported (subset)
+
+| *Graph `ExecuteHybridQuery` / `CreateGraphWithEngine` / `GetPulsarStats`*
+| Cross-modality hybrid query; engine-typed graph create; PULSAR stats
+| Still v1-only / unimplemented. `ExecuteHybridQuery` needs a v2-native
+  vector+graph fusion surface (depends on full `UnifiedHandlers`);
+  `CreateGraphWithEngine`/`GetPulsarStats` are unimplemented (PULSAR/QUASAR
+  retired). See TD-124.
+| Deferred — TD-124
 |===
 
 [NOTE]
 ====
 * pgwire is *SQL-only* and cannot serve UQL/AQL/Cypher; those non-SQL languages require the
   unified query port (`/api/v2/query`) or the graph service — they are not replaceable by pgwire.
-* The plain-SQL gRPC `proximadb.v2.ProximaRecordService.ExecuteQuery` RPC is *deprecated* in
-  favour of pgwire (TD-121); it is the only SQL path on gRPC/REST being retired. The
-  `/api/v2/query` UQL/Federated surface is *not* deprecated.
+* SQL is served by *two surfaces* (TD-121/TD-135). *pgwire* serves the PostgreSQL ecosystem
+  (psql/JDBC/BI/ORM, Postgres-native auth) and supports multi-statement transactions. The gRPC
+  `ProximaRecordService.ExecuteQuery` RPC is *token/SSO-authenticated* (bearer/JWT in metadata,
+  which pgwire's password/MD5 auth cannot carry) and serves vector/graph-extension SQL (e.g.
+  `VECTOR_SEARCH`) plus *tenant-scoped relational SQL — SELECT reads AND DDL/DML writes*: SELECTs
+  route through the *same* pipeline pgwire uses (`ComputeScheduler::route_select` →
+  DataFusion/Volcano); DDL (CREATE/ALTER/DROP) and DML (INSERT/UPDATE/DELETE) route through the
+  *same* tenant-scoped `DdlService`/`DmlService` seams — all scoped to the `x-tenant-id` tenant
+  (TD-064). *Out of scope on gRPC:* multi-statement transactions (BEGIN/COMMIT) — the RPC is
+  single-statement; use pgwire for transactional batches. It is *not* deprecated. For large
+  columnar result sets prefer Arrow Flight.
 * *Apache Calcite*, if adopted, is an *internal* federated-SQL planner behind pgwire and the
   Federated path — not a client surface, and not a substitute for the non-SQL languages.
 * SSO/governance (auth, RLS, tenancy) is enforced uniformly at the `TenantContext` I/O boundary,
@@ -153,7 +184,7 @@ query endpoint, and `/api/v2/query` is *not* SQL-over-REST. Route by language:
 | ORION graph operations
 | Beta
 | Node/edge CRUD, traversal, neighbors, shortest-path APIs, canonical node/edge mapping, and adjacency projections are usable. These core operations are now served on the canonical v2 gRPC surface (`proximadb.v2.ProximaGraphService`, always-registered) and consumed by the Python SDK; the deprecated `proximadb.v1.GraphService` is off by default (`enable_grpc_v1_compat`).
-| Declarative graph query execution (Cypher/Gremlin `ExecuteQuery`) and several analytic/batch RPCs are still incomplete on the canonical v2 gRPC path (deferred — TD-124); graph creation/DDL is REST-only (`/api/v2/graphs`). ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
+| The analytic (GetConnectedComponents/HasCycle), batch (BatchCreateNodes/Edges), unique-constraint, server-streaming (StreamTraverse), and declarative `ExecuteQuery` (supported openCypher subset) RPCs are now on the canonical v2 gRPC path (TD-124). Still v1-only/deferred: `ExecuteHybridQuery` (needs a v2-native vector+graph fusion surface), and the unimplemented `CreateGraphWithEngine`/`GetPulsarStats` (PULSAR/QUASAR retired); GREMLIN is reserved/unbacked. Graph creation/DDL is REST-only (`/api/v2/graphs`). ORION is a rebuildable projection runtime; durable graph authority remains in canonical records, xCatalog, WAL/log/manifest state, policy/RLS, version/time, and provenance.
 
 | Observability ingestion and query
 | Beta

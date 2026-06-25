@@ -31,7 +31,6 @@
 use super::Result;
 use crate::graph::engines::GraphEngine;
 use crate::graph::{Edge, Node};
-use crate::proto::proximadb_v1::{Edge as ProtoEdge, Node as ProtoNode};
 use dashmap::DashMap;
 use proximadb_kernel::error::ProximaDBError;
 use serde::{Deserialize, Serialize};
@@ -77,15 +76,15 @@ pub enum TransactionState {
 #[derive(Debug, Clone)]
 pub enum GraphOperation {
     /// Insert a node
-    InsertNode { shard_id: ShardId, node: ProtoNode },
+    InsertNode { shard_id: ShardId, node: Node },
     /// Update a node's properties
-    UpdateNode { shard_id: ShardId, node: ProtoNode },
+    UpdateNode { shard_id: ShardId, node: Node },
     /// Delete a node
     DeleteNode { shard_id: ShardId, node_id: String },
     /// Insert an edge
-    InsertEdge { shard_id: ShardId, edge: ProtoEdge },
+    InsertEdge { shard_id: ShardId, edge: Edge },
     /// Update an edge's properties
-    UpdateEdge { shard_id: ShardId, edge: ProtoEdge },
+    UpdateEdge { shard_id: ShardId, edge: Edge },
     /// Delete an edge
     DeleteEdge { shard_id: ShardId, edge_id: String },
 }
@@ -949,8 +948,8 @@ impl Drop for TransactionHandle {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::graph::Node;
     use crate::graph::engines::orion::OrionGraphEngine;
-    use crate::proto::proximadb_v1::Node;
     use std::collections::HashMap as StdHashMap;
 
     #[tokio::test]

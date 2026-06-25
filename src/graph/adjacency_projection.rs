@@ -36,7 +36,7 @@ use proximadb_graph::record::{CanonicalEdge, CanonicalNode, GraphNodeKey};
 use proximadb_records::{ProximaRecord, ProximaTree, ProximaTreeNode};
 
 use crate::graph::{Edge, Node};
-use crate::proto::proximadb_v1::{PropertyValue, property_value};
+use crate::graph::{PropertyValue, property_value};
 
 /// In-memory adjacency table projection for one graph dataset.
 #[derive(Debug)]
@@ -178,6 +178,46 @@ impl InMemoryGraphAdjacencyProjection {
         }
         removed
     }
+
+    /// TD-130: apply a batch of canonical edge records under a SINGLE write-lock
+    /// acquisition and a SINGLE epoch bump, instead of one lock-cycle + epoch
+    /// bump per edge (`apply_edge`). This removes the per-edge serialization that
+    /// dominated bulk edge ingest — the projection lock, not the O(1) composite
+    /// probe, was the measured per-edge cost on the batch path (e.g. ~96.5K
+    /// edges/repo at initial code-graph index). Entries are computed outside the
+    /// lock; upsert semantics match `apply_edge` (each edge's prior entries are
+    /// removed first). Returns the total adjacency entries written.
+    pub fn apply_edges(&self, edge_records: &[ProximaRecord]) -> ProjectionResult<usize> {
+        // Compute all entries before taking the lock; fail closed on any record
+        // that is not a canonical graph edge (same contract as `apply_edge`).
+        let mut prepared = Vec::with_capacity(edge_records.len());
+        for edge_record in edge_records {
+            let entries = adjacency_entries_for_edge(edge_record).ok_or_else(|| {
+                proximadb_kernel::error::ProximaDBError::InvalidInput(
+                    "record is not a canonical graph edge".to_string(),
+                )
+            })?;
+            prepared.push((edge_record.oid.as_str(), entries));
+        }
+        if prepared.is_empty() {
+            return Ok(0);
+        }
+
+        let mut state = self.state.write().map_err(|_| {
+            proximadb_kernel::error::ProximaDBError::Internal(
+                "graph adjacency projection write lock poisoned".to_string(),
+            )
+        })?;
+        let mut entries_written = 0;
+        for (edge_oid, entries) in prepared {
+            Self::remove_edge_oid(&mut state, edge_oid);
+            entries_written += Self::apply_entries(&mut state, entries);
+        }
+        // One epoch transition for the whole batch, so readers observe the batch
+        // atomically rather than N intermediate epochs.
+        state.epoch = state.epoch.next();
+        Ok(entries_written)
+    }
 }
 
 /// Convert the root graph edge compatibility shape into a canonical edge
@@ -253,7 +293,7 @@ fn property_value_to_proxima(value: &PropertyValue) -> ProximaValue {
                 .collect(),
         ),
         Some(property_value::Value::VectorValue(vector)) => {
-            ProximaValue::DenseVector(vector.values.clone())
+            ProximaValue::DenseVector(vector.clone())
         }
         None => ProximaValue::Null,
     }
@@ -471,6 +511,81 @@ mod tests {
             "graph/g1/edge/e1"
         );
         assert_eq!(projection.applied_epoch(), TopologyEpoch(2));
+    }
+
+    #[test]
+    fn apply_edges_batches_under_one_epoch() {
+        let projection = InMemoryGraphAdjacencyProjection::new("g1");
+        let records = vec![
+            edge_record("g1", "e1", "n1", "n2"),
+            edge_record("g1", "e2", "n1", "n3"),
+            edge_record("g1", "e3", "n2", "n3"),
+        ];
+
+        // Whole batch applied: 2 adjacency entries per edge (src + dst).
+        let written = projection.apply_edges(&records).expect("apply batch");
+        assert_eq!(written, 6);
+
+        // The key property (TD-130): ONE epoch transition for the batch, not one
+        // per edge — three `apply_edge` calls would land at TopologyEpoch(3).
+        assert_eq!(projection.applied_epoch(), TopologyEpoch(1));
+
+        // Topology is identical to the per-edge path.
+        assert_eq!(projection.edge_count().expect("edge count"), 3);
+        assert_eq!(
+            projection
+                .edges_by_src("graph/g1/node/n1")
+                .expect("n1 outgoing")
+                .len(),
+            2
+        );
+        assert_eq!(
+            projection
+                .edges_by_dst("graph/g1/node/n3")
+                .expect("n3 incoming")
+                .len(),
+            2
+        );
+    }
+
+    #[test]
+    fn apply_edges_upserts_and_rejects_non_edges() {
+        let projection = InMemoryGraphAdjacencyProjection::new("g1");
+        // Seed an edge, then re-point it via a later batch — upsert must drop the
+        // old destination, matching `apply_edge`'s replace semantics.
+        projection
+            .apply_edges(&[edge_record("g1", "e1", "n1", "n2")])
+            .expect("seed");
+        projection
+            .apply_edges(&[edge_record("g1", "e1", "n1", "n3")])
+            .expect("repoint");
+        assert_eq!(projection.edge_count().expect("edge count"), 1);
+        assert!(
+            projection
+                .edges_by_dst("graph/g1/node/n2")
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            projection.edges_by_dst("graph/g1/node/n3").unwrap()[0]
+                .key
+                .edge_oid,
+            "graph/g1/edge/e1"
+        );
+
+        // A non-edge record fails closed before any state is mutated.
+        let node = node_to_canonical_record(
+            "g1",
+            &Node {
+                id: "n9".to_string(),
+                labels: vec!["Person".to_string()],
+                properties: HashMap::new(),
+                embedding: None,
+                created_at_ms: 0,
+                updated_at_ms: 0,
+            },
+        );
+        assert!(projection.apply_edges(&[node]).is_err());
     }
 
     #[tokio::test]

@@ -24,6 +24,7 @@ import {
 } from "./types";
 import { CollectionBuilder, CollectionHandle, CollectionHttpClient } from "./collection";
 import { GraphBuilder, GraphHandle, GraphHttpClient } from "./graph";
+import { createTransport, GeneratedClient } from "./transport";
 
 /**
  * Default client configuration
@@ -73,6 +74,13 @@ function getFetch(): FetchFunction {
 export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
   private config: Required<ClientConfig>;
   private fetchFn: FetchFunction;
+  /**
+   * Generated typed REST transport (TD-126 Phase 4). Core collection / record
+   * / search operations route through this; it owns URL/path/query/body
+   * encoding per the OpenAPI spec. Auth, retries, and error mapping are
+   * injected via the facade's own fetch (see `transportFetch`).
+   */
+  private gen: GeneratedClient;
 
   /**
    * Create a new client with the given URL
@@ -104,6 +112,40 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
         ErrorCode.InvalidConfig
       );
     }
+
+    // Wire the generated typed transport. Every request the generated client
+    // issues is funneled through `transportFetch`, the facade's own fetch that
+    // applies bearer auth, retries, and error mapping — exactly as the legacy
+    // generic `request<T>` path does.
+    this.gen = createTransport(this.config.url, (req) => this.transportFetch(req));
+  }
+
+  /**
+   * Transport `fetch` handed to the generated client.
+   *
+   * The generated client assembles a resolved `Request` (URL + method + body);
+   * this normalizes it back to the facade's `(url, init)` retry/auth/error
+   * pipeline so the wire plumbing and transport policy compose. The returned
+   * value is a `Response`-shaped object the generated client parses; on an
+   * unsuccessful response a `ProximaDBError` is thrown (matching the generic
+   * path), so callers never see a non-2xx body.
+   */
+  private async transportFetch(req: Request): Promise<Response> {
+    const method = (req.method || "GET").toUpperCase();
+    let body: unknown = undefined;
+    if (method !== "GET" && method !== "DELETE") {
+      const text = await req.clone().text();
+      if (text.length > 0) {
+        body = JSON.parse(text);
+      }
+    }
+    const data = await this.request<unknown>(method, req.url, body);
+    // Re-wrap the already-parsed, validated body as a Response so the
+    // generated client can read `.json()`/`.ok` without re-issuing I/O.
+    return new Response(JSON.stringify(data ?? null), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   /**
@@ -265,36 +307,48 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
 
   /**
    * Delete a collection
+   *
+   * Routed through the generated typed transport (TD-126 Phase 4).
+   * Wire endpoint: DELETE /api/v2/collections/{collection_id}
+   * OpenAPI operationId: deleteCollection
    */
   async deleteCollection(name: string): Promise<void> {
-    const requestUrl = this.config.url + "/api/v2/collections/" + name;
-    await this.delete<unknown>(requestUrl);
+    await this.gen.DELETE("/api/v2/collections/{collection_id}", {
+      params: { path: { collection_id: name } },
+    });
   }
 
   /**
    * List all collections
+   *
+   * Routed through the generated typed transport (TD-126 Phase 4).
+   * Wire endpoint: GET /api/v2/collections
+   * OpenAPI operationId: listCollections
    */
   async listCollections(): Promise<CollectionInfo[]> {
-    const requestUrl = this.config.url + "/api/v2/collections";
-    const response = await this.get<{ collections: CollectionInfo[] }>(requestUrl);
-    return response.collections;
+    const { data } = await this.gen.GET("/api/v2/collections", {});
+    return ((data?.collections ?? []) as unknown[]) as CollectionInfo[];
   }
 
   /**
    * Get the schema for a collection
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: GET /api/v2/collections/{collection_id}/schema
    * OpenAPI operationId: getCollectionSchema
    */
   async getCollectionSchema(collectionId: string): Promise<SchemaResponse> {
-    const requestUrl =
-      this.config.url + "/api/v2/collections/" + collectionId + "/schema";
-    return await this.get<SchemaResponse>(requestUrl);
+    const { data } = await this.gen.GET(
+      "/api/v2/collections/{collection_id}/schema",
+      { params: { path: { collection_id: collectionId } } },
+    );
+    return data as unknown as SchemaResponse;
   }
 
   /**
    * Update the schema for a collection
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: PUT /api/v2/collections/{collection_id}/schema
    * OpenAPI operationId: updateCollectionSchema
    */
@@ -302,9 +356,14 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
     collectionId: string,
     schema: UpdateSchemaRequest
   ): Promise<UpdateSchemaResponse> {
-    const requestUrl =
-      this.config.url + "/api/v2/collections/" + collectionId + "/schema";
-    return await this.put<UpdateSchemaResponse>(requestUrl, schema);
+    const { data } = await this.gen.PUT(
+      "/api/v2/collections/{collection_id}/schema",
+      {
+        params: { path: { collection_id: collectionId } },
+        body: schema as never,
+      },
+    );
+    return data as unknown as UpdateSchemaResponse;
   }
 
   // =========================================================================
@@ -318,8 +377,10 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * OpenAPI operationId: executeQuery
    */
   async executeQuery(req: QueryRequest): Promise<QueryResponse> {
-    const requestUrl = this.config.url + "/api/v2/query";
-    return await this.post<QueryResponse>(requestUrl, req);
+    const { data } = await this.gen.POST("/api/v2/query", {
+      body: req as never,
+    });
+    return data as unknown as QueryResponse;
   }
 
   /**
@@ -329,8 +390,111 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
    * OpenAPI operationId: explainQuery
    */
   async explainQuery(req: ExplainQueryRequest): Promise<QueryResponse> {
-    const requestUrl = this.config.url + "/api/v2/query/explain";
-    return await this.post<QueryResponse>(requestUrl, req);
+    const { data } = await this.gen.POST("/api/v2/query/explain", {
+      body: req as never,
+    });
+    return data as unknown as QueryResponse;
+  }
+
+  // =========================================================================
+  // Typed transport for core collection / record / search ops (TD-126 Phase 4)
+  //
+  // These route the builders' wire calls through the generated typed client.
+  // The builders (collection.ts / search.ts) call these instead of hand-building
+  // URL strings, so the core CRUD + search paths are spec-generated end to end.
+  // =========================================================================
+
+  /**
+   * Create a collection.
+   * Wire endpoint: POST /api/v2/collections (createCollection)
+   */
+  async createCollectionRequest(body: Record<string, unknown>): Promise<unknown> {
+    const { data } = await this.gen.POST("/api/v2/collections", {
+      body: body as never,
+    });
+    return data;
+  }
+
+  /**
+   * Get collection details.
+   * Wire endpoint: GET /api/v2/collections/{collection_id} (getCollection)
+   */
+  async getCollectionRequest(collectionId: string): Promise<unknown> {
+    const { data } = await this.gen.GET("/api/v2/collections/{collection_id}", {
+      params: { path: { collection_id: collectionId } },
+    });
+    return data;
+  }
+
+  /**
+   * Insert / upsert records in a batch.
+   * Wire endpoint: POST /api/v2/collections/{collection_id}/records/batch (insertRecords)
+   */
+  async insertRecordsRequest(
+    collectionId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/collections/{collection_id}/records/batch",
+      {
+        params: { path: { collection_id: collectionId } },
+        body: body as never,
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Get a single record by ID.
+   * Wire endpoint: GET /api/v2/collections/{collection_id}/records/{record_id} (getRecord)
+   */
+  async getRecordRequest(
+    collectionId: string,
+    recordId: string,
+    includeVector: boolean,
+    includeText: boolean,
+  ): Promise<unknown> {
+    const { data } = await this.gen.GET(
+      "/api/v2/collections/{collection_id}/records/{record_id}",
+      {
+        params: {
+          path: { collection_id: collectionId, record_id: recordId },
+          query: { include_vector: includeVector, include_text: includeText },
+        },
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Delete a single record by ID.
+   * Wire endpoint: DELETE /api/v2/collections/{collection_id}/records/{record_id} (deleteRecord)
+   */
+  async deleteRecordRequest(collectionId: string, recordId: string): Promise<void> {
+    await this.gen.DELETE(
+      "/api/v2/collections/{collection_id}/records/{record_id}",
+      {
+        params: { path: { collection_id: collectionId, record_id: recordId } },
+      },
+    );
+  }
+
+  /**
+   * Vector similarity search.
+   * Wire endpoint: POST /api/v2/collections/{collection_id}/search (searchRecords)
+   */
+  async searchRecordsRequest(
+    collectionId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/collections/{collection_id}/search",
+      {
+        params: { path: { collection_id: collectionId } },
+        body: body as never,
+      },
+    );
+    return data;
   }
 
   // =========================================================================
@@ -360,24 +524,176 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
   /**
    * Delete a graph
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: DELETE /api/v2/graphs/{graph_id}
    * OpenAPI operationId: deleteGraph
    */
   async deleteGraph(name: string): Promise<void> {
-    const requestUrl = this.config.url + "/api/v2/graphs/" + name;
-    await this.delete<unknown>(requestUrl);
+    await this.gen.DELETE("/api/v2/graphs/{graph_id}", {
+      params: { path: { graph_id: name } },
+    });
   }
 
   /**
    * List all graphs
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: GET /api/v2/graphs
    * OpenAPI operationId: listGraphs
    */
   async listGraphs(): Promise<GraphInfo[]> {
-    const requestUrl = this.config.url + "/api/v2/graphs";
-    const response = await this.get<{ graphs: GraphInfo[] }>(requestUrl);
-    return response.graphs;
+    const { data } = await this.gen.GET("/api/v2/graphs", {});
+    return ((data?.graphs ?? []) as unknown[]) as GraphInfo[];
+  }
+
+  // =========================================================================
+  // Typed transport for graph ops (TD-126 Phase 4)
+  //
+  // Seam methods routing the graph builders' / handle's wire calls through the
+  // generated typed client, mirroring the core collection / record / search
+  // seams above. The public graph API (graph.ts builders + handle) is
+  // unchanged; only the wire dispatch moves off hand-built URL strings.
+  // =========================================================================
+
+  /**
+   * Create a graph collection.
+   * Wire endpoint: POST /api/v2/graphs (createGraph)
+   */
+  async createGraphRequest(body: Record<string, unknown>): Promise<unknown> {
+    const { data } = await this.gen.POST("/api/v2/graphs", {
+      body: body as never,
+    });
+    return data;
+  }
+
+  /**
+   * Get a graph collection by id.
+   * Wire endpoint: GET /api/v2/graphs/{graph_id} (getGraph)
+   */
+  async getGraphRequest(graphId: string): Promise<unknown> {
+    const { data } = await this.gen.GET("/api/v2/graphs/{graph_id}", {
+      params: { path: { graph_id: graphId } },
+    });
+    return data;
+  }
+
+  /**
+   * Get graph statistics.
+   * Wire endpoint: GET /api/v2/graphs/{graph_id}/stats (getGraphStats)
+   */
+  async getGraphStatsRequest(graphId: string): Promise<unknown> {
+    const { data } = await this.gen.GET("/api/v2/graphs/{graph_id}/stats", {
+      params: { path: { graph_id: graphId } },
+    });
+    return data;
+  }
+
+  /**
+   * Create a node in a graph.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/nodes (createNode)
+   */
+  async createNodeRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST("/api/v2/graphs/{graph_id}/nodes", {
+      params: { path: { graph_id: graphId } },
+      body: body as never,
+    });
+    return data;
+  }
+
+  /**
+   * Create multiple nodes in a single call.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/nodes/batch (batchCreateNodes)
+   */
+  async batchCreateNodesRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/graphs/{graph_id}/nodes/batch",
+      {
+        params: { path: { graph_id: graphId } },
+        body: body as never,
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Get a node by id.
+   * Wire endpoint: GET /api/v2/graphs/{graph_id}/nodes/{node_id} (getNode)
+   */
+  async getNodeRequest(graphId: string, nodeId: string): Promise<unknown> {
+    const { data } = await this.gen.GET(
+      "/api/v2/graphs/{graph_id}/nodes/{node_id}",
+      {
+        params: { path: { graph_id: graphId, node_id: nodeId } },
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Delete a node by id.
+   * Wire endpoint: DELETE /api/v2/graphs/{graph_id}/nodes/{node_id} (deleteNode)
+   */
+  async deleteNodeRequest(graphId: string, nodeId: string): Promise<void> {
+    await this.gen.DELETE("/api/v2/graphs/{graph_id}/nodes/{node_id}", {
+      params: { path: { graph_id: graphId, node_id: nodeId } },
+    });
+  }
+
+  /**
+   * Create an edge in a graph.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/edges (createEdge)
+   */
+  async createEdgeRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST("/api/v2/graphs/{graph_id}/edges", {
+      params: { path: { graph_id: graphId } },
+      body: body as never,
+    });
+    return data;
+  }
+
+  /**
+   * Create multiple edges in a single call.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/edges/batch (batchCreateEdges)
+   */
+  async batchCreateEdgesRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/graphs/{graph_id}/edges/batch",
+      {
+        params: { path: { graph_id: graphId } },
+        body: body as never,
+      },
+    );
+    return data;
+  }
+
+  /**
+   * Traverse a graph from a start node.
+   * Wire endpoint: POST /api/v2/graphs/{graph_id}/traverse (traverseGraph)
+   */
+  async traverseGraphRequest(
+    graphId: string,
+    body: Record<string, unknown>,
+  ): Promise<unknown> {
+    const { data } = await this.gen.POST(
+      "/api/v2/graphs/{graph_id}/traverse",
+      {
+        params: { path: { graph_id: graphId } },
+        body: body as never,
+      },
+    );
+    return data;
   }
 
   // =========================================================================
@@ -386,32 +702,38 @@ export class ProximaDBClient implements CollectionHttpClient, GraphHttpClient {
 
   /**
    * Check if the server is healthy
+   *
+   * Routed through the generated typed transport (TD-126 Phase 4).
+   * Wire endpoint: GET /health
+   * OpenAPI operationId: getHealth
    */
   async health(): Promise<HealthStatus> {
-    const requestUrl = this.config.url + "/health";
-    return await this.get<HealthStatus>(requestUrl);
+    const { data } = await this.gen.GET("/health", {});
+    return data as unknown as HealthStatus;
   }
 
   /**
    * Kubernetes-style liveness probe
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: GET /health/live
    * OpenAPI operationId: getLiveness
    */
   async healthLive(): Promise<ProbeResponse> {
-    const requestUrl = this.config.url + "/health/live";
-    return await this.get<ProbeResponse>(requestUrl);
+    const { data } = await this.gen.GET("/health/live", {});
+    return data as unknown as ProbeResponse;
   }
 
   /**
    * Kubernetes-style readiness probe
    *
+   * Routed through the generated typed transport (TD-126 Phase 4).
    * Wire endpoint: GET /health/ready
    * OpenAPI operationId: getReadiness
    */
   async healthReady(): Promise<ProbeResponse> {
-    const requestUrl = this.config.url + "/health/ready";
-    return await this.get<ProbeResponse>(requestUrl);
+    const { data } = await this.gen.GET("/health/ready", {});
+    return data as unknown as ProbeResponse;
   }
 
   /**

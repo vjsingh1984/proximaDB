@@ -8,20 +8,18 @@ Features:
 - Thread-safe concurrent operations
 """
 
-import json
 import logging
-import warnings
 from dataclasses import dataclass
 from typing import Any
 
 from ..exceptions import ProximaDBError
 from ..models import (
     BatchResult,
-    OperationMetrics,
     SearchResult,
     VectorOperationResponse,
 )
 from ..models_v2 import ProximaRecord
+from . import _grpc_v2_codec as _codec
 from .connection_pools import GrpcChannelContext, GrpcConnectionPool
 
 
@@ -524,6 +522,68 @@ class ProximaDBSyncGrpcClient:
             logger.error(f"gRPC {operation_name} failed: {e}")
             raise ProximaDBError(f"{operation_name} failed: {e}")
 
+    def _execute_fusion_with_pool(self, operation_name: str, operation_func):
+        """Execute fusion operation using the v2 ProximaFusionService."""
+        try:
+            from proximadb.v2 import (
+                fusion_pb2_grpc as v2_fusion_pb2_grpc,  # type: ignore
+            )
+        except ImportError:
+            raise ProximaDBError(
+                "v2 fusion gRPC stubs not available. Regenerate Python protobuf stubs."
+            )
+
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                stub = v2_fusion_pb2_grpc.ProximaFusionServiceStub(channel)
+                return operation_func(stub)
+
+        except grpc.RpcError as e:
+            logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
+            details = e.details() or str(e)
+            if e.code() == grpc.StatusCode.UNAVAILABLE or "connect" in details.lower():
+                raise ProximaDBError(f"{operation_name} connection failed: {details}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {details}")
+        except Exception as e:
+            logger.error(f"gRPC {operation_name} failed: {e}")
+            raise ProximaDBError(f"{operation_name} failed: {e}")
+
+    def _execute_entity_with_pool(self, operation_name: str, operation_func):
+        """Execute entity operation using the v2 ProximaEntityService."""
+        try:
+            from proximadb.v2 import (
+                entity_pb2_grpc as v2_entity_pb2_grpc,  # type: ignore
+            )
+        except ImportError:
+            raise ProximaDBError(
+                "v2 entity gRPC stubs not available. Regenerate Python protobuf stubs."
+            )
+
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                stub = v2_entity_pb2_grpc.ProximaEntityServiceStub(channel)
+                return operation_func(stub)
+
+        except grpc.RpcError as e:
+            logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
+            details = e.details() or str(e)
+            if e.code() == grpc.StatusCode.UNAVAILABLE or "connect" in details.lower():
+                raise ProximaDBError(f"{operation_name} connection failed: {details}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {details}")
+        except Exception as e:
+            logger.error(f"gRPC {operation_name} failed: {e}")
+            raise ProximaDBError(f"{operation_name} failed: {e}")
+
     def get_pool_metrics(self):
         """Get connection pool performance metrics"""
         if self._connection_pool:
@@ -676,15 +736,13 @@ class ProximaDBSyncGrpcClient:
         parameters: list | None = None,
         collection: str | None = None,
     ):
-        """Execute SQL over gRPC.
+        """Execute SQL over gRPC (a supported SQL surface).
 
-        .. deprecated::
-            SQL over gRPC/REST is deprecated. pgwire (the PostgreSQL wire
-            protocol) is the canonical SQL surface — connect any PostgreSQL
-            driver (psycopg2, asyncpg, JDBC, psql) and run SQL there. gRPC/REST
-            own record/vector/collection operations; SQL belongs on pgwire.
-            This method (and the v2 ``ExecuteQuery`` RPC) will be removed in a
-            future release.
+        gRPC SQL is a first-class, supported path — token/SSO-authenticated and
+        high-throughput programmatic SQL for SaaS/SDK clients. It is coequal with
+        pgwire (the PostgreSQL-ecosystem surface for psql/JDBC/BI/ORM); use
+        whichever fits the client. For non-SQL queries (UQL/AQL/Federated) use the
+        ``/api/v2/query`` surface.
 
         Args:
             query: SQL text
@@ -693,13 +751,6 @@ class ProximaDBSyncGrpcClient:
         Returns:
             ExecuteQueryResponse as dict-like (via proto object fields)
         """
-        warnings.warn(
-            "execute_sql over gRPC is deprecated; use pgwire (PostgreSQL wire "
-            "protocol) for SQL via any PostgreSQL driver. The gRPC SQL path will "
-            "be removed in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         if not GRPC_AVAILABLE:
             raise ProximaDBError(
                 "gRPC not available. Install with: pip install grpcio grpcio-tools"
@@ -937,112 +988,16 @@ class ProximaDBSyncGrpcClient:
 
     # Record Operations - Unified Interface
     def _python_to_v2_typed_value(self, value: Any):
-        """Encode Python values into v2 ProximaValue/TypedValue protobufs."""
-        if v2_record_pb2 is None:
-            raise ProximaDBError("v2 record protobuf stubs not available")
+        """Encode Python values into v2 ProximaValue/TypedValue protobufs.
 
-        type_hint = None
-        if isinstance(value, dict) and set(value.keys()) == {"type", "value"}:
-            type_hint = str(value["type"]).lower()
-            value = value["value"]
-
-        tv = v2_record_pb2.TypedValue()
-        if value is None:
-            tv.declared_type = v2_record_pb2.COLUMN_TYPE_UNSPECIFIED
-            tv.is_null = True
-        elif isinstance(value, bool):
-            tv.declared_type = v2_record_pb2.BOOLEAN
-            tv.boolean_value = value
-        elif isinstance(value, int) and not isinstance(value, bool):
-            tv.declared_type = v2_record_pb2.INTEGER
-            tv.integer_value = value
-        elif isinstance(value, float):
-            tv.declared_type = (
-                v2_record_pb2.FLOAT32 if type_hint == "float32" else v2_record_pb2.FLOAT
-            )
-            if type_hint == "float32":
-                tv.float32_value = value
-            else:
-                tv.float_value = value
-        elif isinstance(value, (bytes, bytearray, memoryview)):
-            tv.declared_type = v2_record_pb2.BINARY
-            tv.binary_value = bytes(value)
-        elif isinstance(value, str):
-            tv.declared_type = (
-                v2_record_pb2.SYMBOL if type_hint == "symbol" else v2_record_pb2.TEXT
-            )
-            if type_hint == "symbol":
-                tv.symbol_value = value
-            else:
-                tv.text_value = value
-        elif isinstance(value, (list, tuple)):
-            tv.declared_type = v2_record_pb2.ARRAY_ANY
-            tv.array_value.values.extend(
-                self._python_to_v2_typed_value(item) for item in value
-            )
-        elif isinstance(value, dict):
-            tv.declared_type = v2_record_pb2.JSONB
-            tv.jsonb_value = json.dumps(value, separators=(",", ":")).encode("utf-8")
-        else:
-            tv.declared_type = v2_record_pb2.TEXT
-            tv.text_value = str(value)
-        return tv
+        Thin delegate to the transport-agnostic codec shared with the
+        native-async gRPC client (``protocols/_grpc_v2_codec``).
+        """
+        return _codec.python_to_v2_typed_value(v2_record_pb2, value)
 
     def _v2_typed_value_to_python(self, value: Any) -> Any:
-        """Decode v2 TypedValue protobufs into Python values."""
-        which = value.WhichOneof("value")
-        if which in (None, "is_null"):
-            return None
-        if which == "text_value":
-            return value.text_value
-        if which == "integer_value":
-            return value.integer_value
-        if which == "float_value":
-            return value.float_value
-        if which == "boolean_value":
-            return value.boolean_value
-        if which == "timestamp_value":
-            return value.timestamp_value
-        if which == "date_value":
-            return value.date_value
-        if which == "time_value":
-            return value.time_value
-        if which == "duration_value":
-            return value.duration_value
-        if which == "uuid_value":
-            return bytes(value.uuid_value).hex()
-        if which == "binary_value":
-            return bytes(value.binary_value)
-        if which == "json_value":
-            try:
-                return json.loads(value.json_value)
-            except json.JSONDecodeError:
-                return value.json_value
-        if which == "jsonb_value":
-            try:
-                return json.loads(bytes(value.jsonb_value).decode("utf-8"))
-            except (UnicodeDecodeError, json.JSONDecodeError):
-                return bytes(value.jsonb_value)
-        if which == "array_value":
-            return [
-                self._v2_typed_value_to_python(item)
-                for item in value.array_value.values
-            ]
-        if which == "map_value":
-            return {
-                key: self._v2_typed_value_to_python(item)
-                for key, item in value.map_value.entries.items()
-            }
-        if which == "struct_value":
-            return {
-                key: self._v2_typed_value_to_python(item)
-                for key, item in value.struct_value.entries.items()
-            }
-        if which == "float32_value":
-            return value.float32_value
-        if which.endswith("_array"):
-            return list(getattr(value, which).values)
-        return getattr(value, which)
+        """Decode v2 TypedValue protobufs into Python values (shared codec)."""
+        return _codec.v2_typed_value_to_python(value)
 
     def _normalize_vector_alias_records(
         self, vectors: list[dict[str, Any] | Any]
@@ -1097,107 +1052,12 @@ class ProximaDBSyncGrpcClient:
     def _record_proto_for_grpc(
         self, record: ProximaRecord | dict[str, Any], index: int = 0
     ):
-        if v2_record_pb2 is None:
-            raise ProximaDBError("v2 record protobuf stubs not available")
-
-        if hasattr(record, "model_dump"):
-            record = record.model_dump(exclude_none=True)
-        elif hasattr(record, "dict"):
-            record = record.dict(exclude_none=True)
-        if not isinstance(record, dict):
-            raise TypeError(f"Unsupported record input: {type(record)!r}")
-
-        vector = record.get("vector")
-        if vector is None and record.get("embeddings"):
-            first_embedding = record["embeddings"][0]
-            vector = (
-                first_embedding.get("values")
-                if isinstance(first_embedding, dict)
-                else first_embedding
-            )
-        if vector is None:
-            raise ValueError("record is missing vector")
-
-        proto = v2_record_pb2.ProximaRecord()
-        proto.id = str(record.get("id") or record.get("oid") or f"record_{index}")
-        proto.vector.extend(float(v) for v in vector)
-        if record.get("vector_dimension") is not None:
-            proto.vector_dimension = int(record["vector_dimension"])
-
-        for source in ("props", "metadata", "flexible_fields"):
-            values = record.get(source)
-            if isinstance(values, dict):
-                for key, value in values.items():
-                    proto.props[str(key)].CopyFrom(
-                        self._python_to_v2_typed_value(value)
-                    )
-
-        typed_fields = record.get("typed_fields")
-        if isinstance(typed_fields, dict):
-            for key, value in typed_fields.items():
-                if hasattr(value, "model_dump"):
-                    value = value.model_dump(exclude_none=True)
-                if isinstance(value, dict) and "value" in value:
-                    value = {
-                        "type": value.get("value_type") or value.get("type"),
-                        "value": value["value"],
-                    }
-                proto.props[str(key)].CopyFrom(self._python_to_v2_typed_value(value))
-
-        for text_field in record.get("text_fields") or []:
-            if hasattr(text_field, "model_dump"):
-                text_field = text_field.model_dump(exclude_none=True)
-            if isinstance(text_field, dict):
-                proto.text_fields.add(
-                    name=str(text_field.get("name") or ""),
-                    content=str(text_field.get("content") or ""),
-                    storage_hint=str(text_field.get("storage_hint") or ""),
-                    chunk_count=int(text_field.get("chunk_count") or 0),
-                    chunk_reference=str(text_field.get("chunk_reference") or ""),
-                )
-
-        if record.get("timestamp_ms") is not None:
-            proto.timestamp_ms = int(record["timestamp_ms"])
-        for field in (
-            "updated_at_ms",
-            "expires_at_ms",
-            "version",
-            "source",
-            "source_type",
-            "schema_id",
-            "partition_key",
-            "created_by",
-            "updated_by",
-        ):
-            if record.get(field) is not None:
-                setattr(proto, field, record[field])
-        if isinstance(record.get("partition_values"), dict):
-            proto.partition_values.update(
-                {str(k): str(v) for k, v in record["partition_values"].items()}
-            )
-        if isinstance(record.get("custom_metadata"), dict):
-            proto.custom_metadata.update(
-                {str(k): str(v) for k, v in record["custom_metadata"].items()}
-            )
-        return proto
+        """Build a v2 ProximaRecord proto (shared transport-agnostic codec)."""
+        return _codec.record_proto_for_grpc(v2_record_pb2, record, index)
 
     def _v2_record_batch_result(self, response) -> BatchResult:
-        errors = [
-            f"{error.record_id or error.record_index}: {error.error_message}"
-            for error in response.errors
-        ]
-        return BatchResult(
-            total=int(response.total_processed),
-            success=int(response.success_count),
-            failed=int(response.failed_count),
-            errors=errors,
-            metrics=OperationMetrics(
-                total_processed=int(response.total_processed),
-                successful_count=int(response.success_count),
-                failed_count=int(response.failed_count),
-                processing_time_us=int(response.processing_time_us),
-            ),
-        )
+        """Parse a v2 batch result into a BatchResult (shared codec)."""
+        return _codec.v2_record_batch_result(response)
 
     def insert_records(
         self,
@@ -2176,6 +2036,384 @@ class ProximaDBSyncGrpcClient:
         except Exception as e:
             logger.error(f"gRPC delete_node failed: {e}")
             raise ProximaDBError(f"delete_node failed: {e}")
+
+    # ── Analytic / batch / constraint / streaming RPCs (TD-124) ─────────────
+
+    def batch_create_nodes(
+        self,
+        nodes: list[dict[str, Any]],
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Batch-create graph nodes via gRPC.
+
+        Args:
+            nodes: List of node dicts, each with ``id``/``node_id``, ``labels``,
+                and optional ``properties``.
+            graph_id: Graph collection ID (defaults to "default").
+
+        Returns:
+            Dict with ``success``, ``created_count`` and the created ``nodes``.
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
+            raise ProximaDBError(
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            proto_nodes = []
+            for node in nodes:
+                node_properties = {}
+                for key, value in (node.get("properties") or {}).items():
+                    node_properties[key] = self._convert_to_property_value(value)
+                proto_nodes.append(
+                    v2_graph_pb2.GraphNode(
+                        id=node.get("id") or node.get("node_id", ""),
+                        labels=node.get("labels", []),
+                        properties=node_properties,
+                    )
+                )
+            request = v2_graph_pb2.BatchCreateGraphNodesRequest(
+                graph_id=graph_id, nodes=proto_nodes
+            )
+            response = stub.BatchCreateNodes(request, timeout=self.timeout)
+            return {
+                "success": response.success,
+                "created_count": response.created_count,
+                "nodes": [self._convert_node_from_proto(n) for n in response.nodes],
+            }
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(
+                f"gRPC batch_create_nodes RPC error: {e.code()} - {e.details()}"
+            )
+            raise ProximaDBError(f"batch_create_nodes RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC batch_create_nodes failed: {e}")
+            raise ProximaDBError(f"batch_create_nodes failed: {e}")
+
+    def batch_create_edges(
+        self,
+        edges: list[dict[str, Any]],
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Batch-create graph edges via gRPC.
+
+        Args:
+            edges: List of edge dicts, each with ``id``/``edge_id``,
+                ``from_node_id``, ``to_node_id``, ``edge_type``, optional
+                ``properties`` and ``weight``.
+            graph_id: Graph collection ID (defaults to "default").
+
+        Returns:
+            Dict with ``success``, ``created_count`` and the created ``edges``.
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
+            raise ProximaDBError(
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            proto_edges = []
+            for edge in edges:
+                edge_properties = {}
+                for key, value in (edge.get("properties") or {}).items():
+                    edge_properties[key] = self._convert_to_property_value(value)
+                proto_edge = v2_graph_pb2.GraphEdge(
+                    id=edge.get("id") or edge.get("edge_id", ""),
+                    from_node_id=edge.get("from_node_id", ""),
+                    to_node_id=edge.get("to_node_id", ""),
+                    edge_type=edge.get("edge_type", ""),
+                    properties=edge_properties,
+                )
+                if edge.get("weight") is not None:
+                    proto_edge.weight = edge["weight"]
+                proto_edges.append(proto_edge)
+            request = v2_graph_pb2.BatchCreateGraphEdgesRequest(
+                graph_id=graph_id, edges=proto_edges
+            )
+            response = stub.BatchCreateEdges(request, timeout=self.timeout)
+            return {
+                "success": response.success,
+                "created_count": response.created_count,
+                "edges": [self._convert_edge_from_proto(e) for e in response.edges],
+            }
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(
+                f"gRPC batch_create_edges RPC error: {e.code()} - {e.details()}"
+            )
+            raise ProximaDBError(f"batch_create_edges RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC batch_create_edges failed: {e}")
+            raise ProximaDBError(f"batch_create_edges failed: {e}")
+
+    def get_connected_components(
+        self,
+        graph_id: str = "default",
+    ) -> list[list[str]]:
+        """Return weakly-connected components as lists of node IDs via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
+            raise ProximaDBError(
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            request = v2_graph_pb2.GraphConnectedComponentsRequest(graph_id=graph_id)
+            response = stub.GetConnectedComponents(request, timeout=self.timeout)
+            return [list(component.node_ids) for component in response.components]
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(
+                f"gRPC get_connected_components RPC error: {e.code()} - {e.details()}"
+            )
+            raise ProximaDBError(f"get_connected_components RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC get_connected_components failed: {e}")
+            raise ProximaDBError(f"get_connected_components failed: {e}")
+
+    def has_cycle(
+        self,
+        graph_id: str = "default",
+    ) -> bool:
+        """Return whether the graph contains a directed cycle via gRPC."""
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
+            raise ProximaDBError(
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            request = v2_graph_pb2.GraphHasCycleRequest(graph_id=graph_id)
+            response = stub.HasCycle(request, timeout=self.timeout)
+            return response.has_cycle
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC has_cycle RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"has_cycle RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC has_cycle failed: {e}")
+            raise ProximaDBError(f"has_cycle failed: {e}")
+
+    def add_unique_constraint(
+        self,
+        label: str,
+        property: str,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Add a unique constraint on (label, property) via gRPC.
+
+        Returns a dict with ``success`` and optional ``error_message``.
+        """
+        return self._unique_constraint("AddUniqueConstraint", label, property, graph_id)
+
+    def remove_unique_constraint(
+        self,
+        label: str,
+        property: str,
+        graph_id: str = "default",
+    ) -> dict[str, Any]:
+        """Remove a unique constraint on (label, property) via gRPC.
+
+        Returns a dict with ``success`` and optional ``error_message``.
+        """
+        return self._unique_constraint(
+            "RemoveUniqueConstraint", label, property, graph_id
+        )
+
+    def _unique_constraint(
+        self,
+        rpc_name: str,
+        label: str,
+        property: str,
+        graph_id: str,
+    ) -> dict[str, Any]:
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
+            raise ProximaDBError(
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            request = v2_graph_pb2.GraphUniqueConstraintRequest(
+                graph_id=graph_id, label=label, property=property
+            )
+            response = getattr(stub, rpc_name)(request, timeout=self.timeout)
+            result: dict[str, Any] = {"success": response.success}
+            if response.HasField("error_message"):
+                result["error_message"] = response.error_message
+            return result
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC {rpc_name} RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"{rpc_name} RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC {rpc_name} failed: {e}")
+            raise ProximaDBError(f"{rpc_name} failed: {e}")
+
+    def stream_traverse(
+        self,
+        start_node_id: str,
+        max_depth: int = 3,
+        edge_types: list[str] | None = None,
+        node_labels: list[str] | None = None,
+        algorithm: str = "BFS",
+        limit: int | None = None,
+        graph_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """Server-streaming traversal via gRPC; returns the list of chunks.
+
+        Each chunk is a dict with ``nodes``, ``edges``, ``paths`` and ``done``.
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
+            raise ProximaDBError(
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+
+            algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_BFS
+            if algorithm.upper() == "DFS":
+                algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_DFS
+            elif algorithm.upper() == "PARALLEL_BFS":
+                algorithm_enum = v2_graph_pb2.GRAPH_TRAVERSAL_ALGORITHM_PARALLEL_BFS
+
+            request = v2_graph_pb2.TraverseGraphRequest(
+                graph_id=graph_id,
+                start_node_id=start_node_id,
+                max_depth=max_depth,
+                edge_types=edge_types or [],
+                node_labels=node_labels or [],
+                algorithm=algorithm_enum,
+            )
+            if limit is not None:
+                request.limit = limit
+
+            chunks = []
+            for chunk in stub.StreamTraverse(request, timeout=self.timeout):
+                chunks.append(
+                    {
+                        "nodes": [
+                            self._convert_node_from_proto(n) for n in chunk.nodes
+                        ],
+                        "edges": [
+                            self._convert_edge_from_proto(e) for e in chunk.edges
+                        ],
+                        "paths": [
+                            self._convert_path_from_proto(p) for p in chunk.paths
+                        ],
+                        "done": chunk.done,
+                    }
+                )
+            return chunks
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC stream_traverse RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"stream_traverse RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC stream_traverse failed: {e}")
+            raise ProximaDBError(f"stream_traverse failed: {e}")
+
+    def execute_query(
+        self,
+        query: str,
+        language: str = "CYPHER",
+        graph_id: str = "default",
+    ) -> list[dict[str, Any]]:
+        """Execute a declarative graph query (supported openCypher subset).
+
+        Args:
+            query: e.g. "MATCH (n:Person) WHERE n.age = 30 RETURN n".
+            language: "CYPHER" (default) or "NATIVE". "GREMLIN" is not backed.
+            graph_id: Graph collection ID (defaults to "default").
+
+        Returns:
+            A list of result rows, each a dict of column name -> value.
+        """
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+        if v2_graph_pb2_grpc is None or v2_graph_pb2 is None:
+            raise ProximaDBError(
+                "ProximaGraphService stubs not found. Run: make -C clients/python gen-proto"
+            )
+
+        def _op(channel):
+            stub = v2_graph_pb2_grpc.ProximaGraphServiceStub(channel)
+            language_enum = v2_graph_pb2.GRAPH_QUERY_LANGUAGE_CYPHER
+            if language.upper() == "NATIVE":
+                language_enum = v2_graph_pb2.GRAPH_QUERY_LANGUAGE_NATIVE
+            elif language.upper() == "GREMLIN":
+                language_enum = v2_graph_pb2.GRAPH_QUERY_LANGUAGE_GREMLIN
+
+            request = v2_graph_pb2.ExecuteGraphQueryRequest(
+                graph_id=graph_id, language=language_enum, query=query
+            )
+            response = stub.ExecuteQuery(request, timeout=self.timeout)
+            rows = []
+            for row in response.rows:
+                columns = {
+                    key: self._convert_from_property_value(value)
+                    for key, value in row.columns.items()
+                }
+                rows.append(columns)
+            return rows
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                return _op(channel)
+        except grpc.RpcError as e:
+            logger.error(f"gRPC execute_query RPC error: {e.code()} - {e.details()}")
+            raise ProximaDBError(f"execute_query RPC failed: {e.details()}")
+        except Exception as e:
+            logger.error(f"gRPC execute_query failed: {e}")
+            raise ProximaDBError(f"execute_query failed: {e}")
 
 
 # Alias for consistency

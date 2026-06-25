@@ -3060,6 +3060,112 @@ class ProximaDBClient:
 
     # The generic search method is defined above and forwards to search_single
 
+    #: Server-enforced upper bound on a single scan page (SCAN_RECORDS_MAX_PAGE).
+    SCAN_MAX_PAGE = 10_000
+    #: Default safety bound on the total rows ``scan`` will accumulate across
+    #: pages before stopping, so an unbounded scan can't exhaust client memory.
+    SCAN_DEFAULT_MAX_ROWS = 1_000_000
+
+    def scan_page(
+        self,
+        collection_id: str,
+        *,
+        filter: list[dict[str, Any]] | dict[str, Any] | None = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+        include_vectors: bool = False,
+        include_text: bool = False,
+    ) -> tuple[list[SearchResult], str | None]:
+        """Scan a single page of records via the vector-free metadata-scan endpoint.
+
+        Returns ``(records, next_cursor)``. ``next_cursor`` is ``None`` at
+        end-of-scan. ``filter`` is the scan endpoint's metadata-filter shape:
+        the typed list ``[{"field", "op", "value"}]`` or an equality map
+        ``{field: value}``; it is pushed into the scan predicate server-side
+        (applied before the limit). Unlike :meth:`search`, this is a true
+        metadata scan with no ANN ordering or similarity cap.
+
+        Requires the REST transport (the scan endpoint is REST-only).
+        """
+        target = self._rest_client or (
+            self._client if hasattr(self._client, "scan_records") else None
+        )
+        if target is None or not hasattr(target, "scan_records"):
+            # Stand up a REST client on demand (the scan endpoint is REST-only).
+            if self._rest_client is None:
+                self._rest_client = self._create_rest_client()
+            target = self._rest_client
+        return target.scan_records(
+            collection_id,
+            filter=filter,
+            limit=limit,
+            cursor=cursor,
+            include_vector=include_vectors,
+            include_text=include_text,
+        )
+
+    def scan(
+        self,
+        collection_id: str,
+        *,
+        filter: list[dict[str, Any]] | dict[str, Any] | None = None,
+        page_size: int | None = None,
+        max_rows: int | None = None,
+        include_vectors: bool = False,
+        include_text: bool = False,
+    ) -> list[SearchResult]:
+        """Scan ALL records matching ``filter`` via cursor pagination.
+
+        Repeatedly calls :meth:`scan_page`, following the returned ``next_cursor``
+        until the server reports end-of-scan (``None``). This returns the full
+        matching set — not a bounded ANN window.
+
+        Args:
+            filter: Scan-endpoint metadata filter (typed list ``[{field,op,value}]``
+                or equality map ``{field: value}``), pushed down server-side.
+            page_size: Rows per page request (clamped to ``SCAN_MAX_PAGE``).
+            max_rows: Safety bound on total accumulated rows. Defaults to
+                :attr:`SCAN_DEFAULT_MAX_ROWS`; the loop stops once it is reached
+                even if the server has more pages.
+            include_vectors: Include vector embeddings in each record.
+            include_text: Include TEXT fields in each record.
+        """
+        cap = self.SCAN_DEFAULT_MAX_ROWS if max_rows is None else max_rows
+        per_page = self.SCAN_MAX_PAGE if page_size is None else page_size
+        per_page = max(1, min(per_page, self.SCAN_MAX_PAGE))
+
+        out: list[SearchResult] = []
+        cursor: str | None = None
+        seen_cursors: set[str] = set()
+        while len(out) < cap:
+            remaining = cap - len(out)
+            page_limit = min(per_page, remaining)
+            records, cursor = self.scan_page(
+                collection_id,
+                filter=filter,
+                limit=page_limit,
+                cursor=cursor,
+                include_vectors=include_vectors,
+                include_text=include_text,
+            )
+            out.extend(records)
+            if not cursor:
+                break
+            # Defensive: a server that echoes the same cursor would loop forever.
+            if cursor in seen_cursors:
+                logger.warning(
+                    "scan: repeated cursor %s for %s; stopping to avoid a loop",
+                    cursor,
+                    collection_id,
+                )
+                break
+            seen_cursors.add(cursor)
+            # A page that returned nothing but still handed back a cursor would
+            # otherwise spin; stop on an empty page too.
+            if not records:
+                break
+        return out[:cap]
+
     def search_batch(
         self,
         collection_id: str,

@@ -23,7 +23,7 @@ use tracing::{debug, info, warn};
 // Import DistanceMetric from proto module
 use crate::compute::distance_computation::engine::{GpuAccelerator, HardwareBackend};
 use crate::core::hardware_capabilities::{
-    GpuBackend, GpuDevice, HardwareCapabilities, get_hardware_capabilities,
+    GpuBackend, HardwareCapabilities, get_hardware_capabilities,
 };
 use crate::proto::proximadb_v1::DistanceMetric;
 

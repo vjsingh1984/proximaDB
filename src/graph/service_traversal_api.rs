@@ -15,8 +15,8 @@ impl super::GraphOperationsService {
     pub async fn traverse(
         &self,
         graph_id: &str,
-        request: crate::proto::proximadb_v1::TraversalRequest,
-    ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
+        request: crate::graph::TraversalRequest,
+    ) -> Result<crate::graph::TraversalResponse> {
         use std::time::Instant;
         let _t0 = Instant::now();
         if !self.graph_enabled() {
@@ -61,49 +61,34 @@ impl super::GraphOperationsService {
             }
         };
 
-        let proto_nodes: Vec<crate::proto::proximadb_v1::Node> = traversal_result
+        let proto_nodes: Vec<crate::graph::Node> = traversal_result
             .nodes
             .iter()
             .map(|n| (**n).clone())
             .collect();
-        let proto_edges: Vec<crate::proto::proximadb_v1::Edge> = traversal_result
+        let proto_edges: Vec<crate::graph::Edge> = traversal_result
             .edges
             .iter()
             .map(|e| (**e).clone())
             .collect();
 
-        let proto_paths: Vec<crate::proto::proximadb_v1::GraphPath> = traversal_result
+        let proto_paths: Vec<crate::graph::GraphPath> = traversal_result
             .paths
             .iter()
-            .map(|node_id_path| {
-                let entities: Vec<crate::proto::proximadb_v1::Entity> = node_id_path
-                    .iter()
-                    .map(|nid| crate::proto::proximadb_v1::Entity {
-                        id: nid.clone(),
-                        embeddings: vec![],
-                        typed_metadata: None,
-                        flexible_metadata: std::collections::HashMap::new(),
-                        provenance: None,
-                        relations: vec![],
-                        temporal: None,
-                        collection_id: String::new(),
-                    })
-                    .collect();
-                crate::proto::proximadb_v1::GraphPath {
-                    entities,
-                    relations: vec![],
-                }
+            .map(|node_id_path| crate::graph::GraphPath {
+                node_ids: node_id_path.to_vec(),
+                edge_ids: vec![],
             })
             .collect();
 
-        let proto_stats = Some(crate::proto::proximadb_v1::TraversalStats {
+        let proto_stats = Some(crate::graph::TraversalStats {
             nodes_visited: traversal_result.stats.nodes_visited as u32,
             edges_traversed: traversal_result.stats.edges_traversed as u32,
             max_depth_reached: traversal_result.stats.max_depth_reached,
             execution_time_microseconds: traversal_result.stats.execution_time_microseconds,
         });
 
-        Ok(crate::proto::proximadb_v1::TraversalResponse {
+        Ok(crate::graph::TraversalResponse {
             nodes: proto_nodes,
             edges: proto_edges,
             paths: proto_paths,
@@ -115,10 +100,10 @@ impl super::GraphOperationsService {
     pub async fn traverse_with_overrides(
         &self,
         graph_id: &str,
-        request: crate::proto::proximadb_v1::TraversalRequest,
+        request: crate::graph::TraversalRequest,
         _override_enable_prefetch: Option<bool>,
         _override_prefetch_budget: Option<usize>,
-    ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
+    ) -> Result<crate::graph::TraversalResponse> {
         use crate::graph::engines::orion::traversal::TraversalConfig;
         let traversal_config = TraversalConfig {
             enable_prefetch: _override_enable_prefetch.unwrap_or(true),
@@ -147,9 +132,9 @@ impl super::GraphOperationsService {
     async fn traverse_with_config(
         &self,
         graph_id: &str,
-        request: crate::proto::proximadb_v1::TraversalRequest,
+        request: crate::graph::TraversalRequest,
         config: crate::graph::engines::orion::traversal::TraversalConfig,
-    ) -> Result<crate::proto::proximadb_v1::TraversalResponse> {
+    ) -> Result<crate::graph::TraversalResponse> {
         let mut response = self.traverse(graph_id, request).await?;
         if config.enable_prefetch && config.prefetch_budget > 0 {
             debug!(
@@ -313,11 +298,11 @@ impl super::GraphOperationsService {
 
         let mut canonical_nodes = Vec::with_capacity(cap + 1);
         canonical_nodes.push(crate::graph::canonical::CanonicalNode::from_proto(
-            current.as_ref(),
+            &(*current).clone().into(),
         ));
         for n in neighbors.iter().take(cap) {
             canonical_nodes.push(crate::graph::canonical::CanonicalNode::from_proto(
-                n.as_ref(),
+                &(**n).clone().into(),
             ));
         }
 
@@ -369,12 +354,12 @@ impl super::GraphOperationsService {
             nodes: gtr
                 .nodes
                 .iter()
-                .map(|n| crate::graph::canonical::CanonicalNode::from_proto(n))
+                .map(|n| crate::graph::canonical::CanonicalNode::from_proto(&(**n).clone().into()))
                 .collect(),
             edges: gtr
                 .edges
                 .iter()
-                .map(|e| crate::graph::canonical::CanonicalEdge::from_proto(e))
+                .map(|e| crate::graph::canonical::CanonicalEdge::from_proto(&(**e).clone().into()))
                 .collect(),
             paths: None,
             stats: Some(crate::graph::canonical::TraversalStats {
@@ -382,6 +367,111 @@ impl super::GraphOperationsService {
                 edges_traversed: gtr.edges.len() as u64,
                 max_depth_reached: max_depth,
                 execution_time_ms: None,
+            }),
+        })
+    }
+
+    /// Impact analysis (TD-131): forward blast radius (OUTGOING edges — "what does X impact") or
+    /// backward (INCOMING edges — "what impacts X"). Forward reuses [`Self::traverse`] (BFS already
+    /// follows outgoing edges). Backward does a level-by-level BFS over incoming edges via
+    /// [`Self::query_edges`] with `to_node_id`, since the engine exposes only outgoing adjacency —
+    /// the same mechanism as the embedded `get_incoming_edges`. `nodes` is capped at `limit`.
+    pub async fn impact_analysis(
+        &self,
+        graph_id: &str,
+        start_node_id: &str,
+        direction: crate::graph::model::ImpactDirection,
+        edge_types: Vec<String>,
+        max_depth: u32,
+        limit: usize,
+    ) -> Result<crate::graph::TraversalResponse> {
+        if !self.graph_enabled() {
+            return Err(ProximaDBError::InvalidInput(
+                "Graph operations disabled in current mode".to_string(),
+            ));
+        }
+
+        // Forward = standard BFS over outgoing edges.
+        if matches!(direction, crate::graph::model::ImpactDirection::Forward) {
+            let request = crate::graph::TraversalRequest {
+                graph_id: graph_id.to_string(),
+                start_node_id: start_node_id.to_string(),
+                max_depth,
+                edge_types,
+                node_labels: Vec::new(),
+                filters: Vec::new(),
+                algorithm: 1, // TraversalAlgorithm::Bfs
+                limit: Some(limit as u32),
+                timeout_ms: None,
+                max_frontier: None,
+            };
+            return self.traverse(graph_id, request).await;
+        }
+
+        // Backward = BFS over incoming edges (predecessors), level by level.
+        let engine = self.get_or_create_graph_engine(graph_id).await?;
+        use std::collections::HashSet;
+
+        let mut visited: HashSet<String> = HashSet::new();
+        visited.insert(start_node_id.to_string());
+        let mut frontier: Vec<String> = vec![start_node_id.to_string()];
+
+        let mut nodes: Vec<crate::graph::Node> = Vec::new();
+        let start_id = start_node_id.to_string();
+        if let Some(start) = engine.get_node(&start_id)? {
+            nodes.push((*start).clone());
+        }
+        let mut edges: Vec<crate::graph::Edge> = Vec::new();
+        let mut depth_reached = 0u32;
+
+        for depth in 0..max_depth {
+            if frontier.is_empty() || nodes.len() >= limit {
+                break;
+            }
+            depth_reached = depth + 1;
+            let mut next_frontier: Vec<String> = Vec::new();
+            for node_id in &frontier {
+                let query = crate::graph::EdgeQuery {
+                    graph_id: graph_id.to_string(),
+                    from_node_id: None,
+                    to_node_id: Some(node_id.clone()),
+                    edge_types: edge_types.clone(),
+                    filters: Vec::new(),
+                    limit: None,
+                    offset: None,
+                    continuation_token: None,
+                };
+                let incoming = self.query_edges(graph_id, query).await?;
+                for edge in incoming {
+                    let predecessor = edge.from_node_id.clone();
+                    edges.push((*edge).clone());
+                    if visited.insert(predecessor.clone()) {
+                        next_frontier.push(predecessor);
+                    }
+                }
+            }
+            for node_id in &next_frontier {
+                if nodes.len() >= limit {
+                    break;
+                }
+                if let Some(n) = engine.get_node(node_id)? {
+                    nodes.push((*n).clone());
+                }
+            }
+            frontier = next_frontier;
+        }
+
+        let edges_traversed = edges.len() as u32;
+        nodes.truncate(limit);
+        Ok(crate::graph::TraversalResponse {
+            nodes,
+            edges,
+            paths: Vec::new(),
+            stats: Some(crate::graph::TraversalStats {
+                nodes_visited: 0,
+                edges_traversed,
+                max_depth_reached: depth_reached,
+                execution_time_microseconds: 0,
             }),
         })
     }

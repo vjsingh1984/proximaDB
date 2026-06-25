@@ -53,9 +53,8 @@
 //!
 //! - **Upstream**: Called by `UnifiedHandlers` for all collection operations
 //! - **Downstream**:
-//!   - `UniversalMetadataBackend` for metadata persistence
+//!   - `CatalogManager` (xCatalog) for collection metadata persistence
 //!   - `FilesystemFactory` for storage access
-//!   - Storage engines via `InternalCollectionProvider` trait
 //!
 //! ## Performance Optimizations
 //!
@@ -81,7 +80,6 @@ use crate::proto::proximadb_v1::{
     IndexConfig, IndexingAlgorithm, StorageAssignment, StorageEngine,
 };
 use crate::storage::persistence::filesystem::FilesystemFactory;
-use crate::storage::traits::InternalCollectionProvider;
 use proximadb_data_model::ProximaType;
 use proximadb_storage_common::storage_path::StoragePath;
 
@@ -101,8 +99,6 @@ enum StorageComponentType {
 
 /// Collection service for unified business logic with multi-disk coordination
 pub struct CollectionService {
-    /// Backend provider for collection metadata persistence
-    metadata_backend: Arc<dyn InternalCollectionProvider>,
     /// Factory for creating filesystem instances per collection path
     filesystem_factory: Arc<FilesystemFactory>,
     /// Cache for IndexConfig to avoid repeated deserialization
@@ -110,8 +106,8 @@ pub struct CollectionService {
     index_config_cache: Arc<dashmap::DashMap<String, crate::index::config::RuntimeIndexConfig>>,
     /// Global storage configuration for engine and WAL settings
     storage_config: StorageConfig,
-    /// Optional xCatalog manager. When present, collection lifecycle metadata is
-    /// mirrored through xCatalog and the legacy backend remains a storage-compatibility cache.
+    /// xCatalog manager — the sole authoritative store for collection lifecycle
+    /// metadata. When wired, collection reads/writes resolve through xCatalog.
     catalog_manager: Option<Arc<CatalogManager>>,
 
     // NEW: Multi-tenant integration
@@ -139,10 +135,7 @@ pub struct CollectionService {
 
 impl CollectionService {
     /// Create new collection service with multi-disk coordination
-    pub async fn new(
-        metadata_backend: Arc<dyn InternalCollectionProvider>,
-        storage_config: StorageConfig,
-    ) -> Result<Self> {
+    pub async fn new(storage_config: StorageConfig) -> Result<Self> {
         // Create filesystem factory with proper config from storage_config
         let fs_config = crate::storage::persistence::filesystem::FilesystemConfig {
             default_fs: Some(storage_config.metadata_url.clone()),
@@ -160,7 +153,6 @@ impl CollectionService {
         );
 
         Ok(Self {
-            metadata_backend,
             filesystem_factory,
             index_config_cache: Arc::new(dashmap::DashMap::new()),
             storage_config,
@@ -950,17 +942,8 @@ impl CollectionService {
             ));
         }
 
-        // Store proto collection using protobuf serialization (zero-copy). This remains as a
-        // compatibility cache for storage engines until all callers read xCatalog directly.
-        if let Err(e) = self
-            .metadata_backend
-            .upsert_collection_proto(&proto_collection)
-            .await
-            .context("Failed to store collection metadata_info")
-        {
-            let _ = self.drop_collection_catalog_asset(&proto_collection).await;
-            return Err(e);
-        }
+        // The catalog asset write above is the sole authoritative store for the
+        // collection; the legacy metadata backend is no longer dual-written.
 
         info!(
             "✅ Collection created: {} (UUID: {}) with storage at: {} in {}μs",
@@ -1013,8 +996,10 @@ impl CollectionService {
             return Ok(Some(collection));
         }
 
-        // Use the metadata backend's collection_metadata which handles both legacy name and UUID.
-        self.metadata_backend.collection_metadata(identifier).await
+        // The catalog is the sole read authority: collection_from_catalog_asset
+        // already resolves by both name and UUID, so a miss means the collection
+        // does not exist.
+        Ok(None)
     }
 
     /// ✅ RESOLVE COLLECTION NAME/ID TO COLLECTION ID
@@ -1304,31 +1289,8 @@ impl CollectionService {
     /// List all collections - returns proto Collections directly (proto-first architecture)
     pub async fn list_collections(&self) -> Result<Vec<Collection>> {
         debug!("📋 Listing all collections");
-        let mut collections = self.list_collections_from_catalog().await?;
-        let mut seen = HashSet::new();
-        for collection in &collections {
-            seen.insert(collection.id.clone());
-            if let Some(config) = &collection.config {
-                seen.insert(config.name.clone());
-            }
-        }
-
-        for collection in self.metadata_backend.list_collections().await? {
-            let mut duplicate = seen.contains(&collection.id);
-            if let Some(config) = &collection.config {
-                duplicate |= seen.contains(&config.name);
-            }
-            if duplicate {
-                continue;
-            }
-            seen.insert(collection.id.clone());
-            if let Some(config) = &collection.config {
-                seen.insert(config.name.clone());
-            }
-            collections.push(collection);
-        }
-
-        Ok(collections)
+        // The catalog is the sole read authority.
+        self.list_collections_from_catalog().await
     }
 
     /// Delete collection with comprehensive cleanup across all storage components
@@ -1389,20 +1351,6 @@ impl CollectionService {
                 ));
             }
 
-            if let Err(e) = self
-                .metadata_backend
-                .delete_collection(collection_name.as_deref().unwrap_or(collection_identifier))
-                .await
-            {
-                if Self::is_not_found_error(&e) {
-                    debug!(
-                        "Legacy collection metadata cache was already absent for {}",
-                        collection_identifier
-                    );
-                } else {
-                    return Err(e);
-                }
-            }
             let deleted = true;
 
             if deleted {
@@ -1453,12 +1401,8 @@ impl CollectionService {
             collection_name, vector_delta, size_delta
         );
 
-        // Get current record, update stats, and save back
-        if let Some(mut record) = self
-            .metadata_backend
-            .get_collection(collection_name)
-            .await?
-        {
+        // Get current record from the catalog, update stats, and save back.
+        if let Some(mut record) = self.collection(collection_name).await? {
             // Update stats manually for Collection
             if let Some(stats) = record.stats.as_mut() {
                 stats.vector_count += vector_delta;
@@ -1467,10 +1411,6 @@ impl CollectionService {
             record.updated_at = chrono::Utc::now().timestamp_millis();
 
             self.upsert_collection_catalog_asset(&record).await?;
-
-            self.metadata_backend
-                .upsert_collection_proto(&record)
-                .await?;
         } else {
             warn!(
                 "⚠️ Attempted to update stats for non-existent collection: {}",
@@ -1620,12 +1560,6 @@ impl CollectionService {
             .await
             .context("Failed to update collection catalog metadata")?;
 
-        // Store updated record
-        self.metadata_backend
-            .upsert_collection_proto(&record)
-            .await
-            .context("Failed to update collection metadata_info")?;
-
         info!(
             "✅ Collection updated: {} in {}μs",
             identifier,
@@ -1645,9 +1579,10 @@ impl CollectionService {
         })
     }
 
-    /// Get access to the metadata backend for recovery operations
-    pub fn metadata_backend(&self) -> &Arc<dyn InternalCollectionProvider> {
-        &self.metadata_backend
+    /// The catalog this service reads/writes collection assets through, if wired.
+    /// Used to make the catalog the WAL/recovery collection-resolution authority.
+    pub fn catalog_manager(&self) -> Option<Arc<CatalogManager>> {
+        self.catalog_manager.clone()
     }
 
     /// Resolve compression configuration based on SDK request and server defaults
@@ -1726,11 +1661,10 @@ impl CollectionService {
             }
         }
 
-        // Store updated collection
-        self.metadata_backend
-            .upsert_collection_proto(&updated_collection)
+        // Store the updated collection in the catalog (the sole authority).
+        self.upsert_collection_catalog_asset(&updated_collection)
             .await
-            .context("Failed to update collection metadata_info")?;
+            .context("Failed to update collection compression in catalog")?;
 
         info!(
             "✅ Updated compression for collection {}: algorithm={}, level={:?}",
@@ -1871,12 +1805,8 @@ impl CollectionService {
 
         let mut cleaned_components = 0;
 
-        // Get collection to find storage assignment
-        let collection = match self
-            .metadata_backend
-            .get_collection(collection_uuid)
-            .await?
-        {
+        // Get collection from the catalog to find storage assignment
+        let collection = match self.collection(collection_uuid).await? {
             Some(col) => col,
             None => {
                 warn!("Collection {} not found in metadata_info", collection_uuid);
@@ -2102,7 +2032,7 @@ impl CollectionService {
         Ok(collections)
     }
 
-    fn collection_from_catalog_schema(
+    pub(crate) fn collection_from_catalog_schema(
         table_id: &TableIdentifier,
         schema: &CatalogTableSchema,
     ) -> Result<Option<Collection>> {
@@ -2211,6 +2141,11 @@ impl CollectionService {
             })
             .collect();
 
+        config.distance_metric = schema
+            .properties
+            .get("vector.distance_metric")
+            .and_then(|metric| metric.parse::<i32>().ok());
+
         config.index_configs = schema
             .indexes
             .iter()
@@ -2223,6 +2158,39 @@ impl CollectionService {
                 ..Default::default()
             })
             .collect();
+
+        // TD-122: prefer the neutral per-index/quant blob when present so the
+        // detailed HNSW/IVF params, is_primary, and quantization survive the
+        // round-trip. Legacy collections persisted before this lack the blob and
+        // keep the coarse reconstruction above (mixed-read-safe).
+        if let Some(json) = schema.properties.get("collection.index_config") {
+            let restored = crate::storage::metadata::catalog_config::index_configs_from_json(json);
+            if !restored.is_empty() {
+                config.index_configs = restored;
+            }
+        }
+        if let Some(json) = schema.properties.get("collection.quantization") {
+            config.quantization =
+                crate::storage::metadata::catalog_config::quantization_from_json(json);
+        }
+        // TD-122: restore the ProximaRecord schema config (enable flag, enforcement,
+        // text columns) so the v2 get surface can reconstruct the schema/flags.
+        if let Some(json) = schema.properties.get("collection.record_schema") {
+            crate::storage::metadata::catalog_config::apply_record_schema_from_json(
+                &mut config,
+                json,
+            );
+        }
+        // Lossless round-trip: if the asset carries the full serialized config it
+        // is authoritative — it captures every field (including ones not mapped to
+        // a typed catalog property), so no collection config is ever silently
+        // dropped on read. The per-field properties above remain for pg_catalog
+        // introspection.
+        if let Some(json) = schema.properties.get("collection.config_json")
+            && let Ok(full) = serde_json::from_str::<CollectionConfig>(json)
+        {
+            config = full;
+        }
 
         let location = schema
             .storage_layouts
@@ -2412,6 +2380,11 @@ impl CollectionService {
         schema
             .properties
             .insert("vector.dimension".to_string(), config.dimension.to_string());
+        if let Some(metric) = config.distance_metric {
+            schema
+                .properties
+                .insert("vector.distance_metric".to_string(), metric.to_string());
+        }
         if let Some(owner) = &config.owner {
             schema.properties.insert("owner".to_string(), owner.clone());
         }
@@ -2456,6 +2429,42 @@ impl CollectionService {
                     _ => proximadb_records::EmbeddingScalarType::Fp32,
                 };
         }
+
+        // TD-122: persist the detailed per-index (HNSW m/ef, IVF n_lists/n_probe,
+        // is_primary) and quantization (enabled, strategy) config in a neutral,
+        // wire-independent form so GetCollection echoes back what CreateCollection
+        // set. The CatalogIndex entries above only carry the index identity/type;
+        // these JSON blobs carry the tuning knobs the catalog schema can't model.
+        if let Some(json) = crate::storage::metadata::catalog_config::index_configs_to_json(config)?
+        {
+            schema
+                .properties
+                .insert("collection.index_config".to_string(), json);
+        }
+        if let Some(json) = crate::storage::metadata::catalog_config::quantization_to_json(config)?
+        {
+            schema
+                .properties
+                .insert("collection.quantization".to_string(), json);
+        }
+        // TD-122: persist the ProximaRecord schema config (enable flag, enforcement,
+        // text columns) neutrally so get_collection_v2 echoes the schema/flags set
+        // at create time.
+        if let Some(json) = crate::storage::metadata::catalog_config::record_schema_to_json(config)?
+        {
+            schema
+                .properties
+                .insert("collection.record_schema".to_string(), json);
+        }
+        // Lossless round-trip: store the full serialized config so the catalog
+        // asset never drops any collection field (the typed properties above stay
+        // for pg_catalog introspection). This makes the catalog a complete,
+        // sole-authority store for collection metadata.
+        schema.properties.insert(
+            "collection.config_json".to_string(),
+            serde_json::to_string(config)
+                .context("serializing collection config for catalog asset")?,
+        );
 
         Ok(schema)
     }
@@ -2542,11 +2551,6 @@ impl CollectionService {
         }
     }
 
-    fn is_not_found_error(error: &anyhow::Error) -> bool {
-        let message = error.to_string().to_ascii_lowercase();
-        message.contains("not found") || message.contains("does not exist")
-    }
-
     /// Generate unique collection ID using UUIDs.
     ///
     /// Base62 timestamp IDs are still accepted as legacy identifiers by lookup paths, but new
@@ -2555,9 +2559,7 @@ impl CollectionService {
     async fn generate_unique_collection_id(&self) -> Result<String> {
         for _ in 0..8 {
             let id = uuid::Uuid::new_v4().to_string();
-            if !self.metadata_backend.collection_id_exists(&id).await?
-                && self.collection_from_catalog_asset(&id).await?.is_none()
-            {
+            if self.collection_from_catalog_asset(&id).await?.is_none() {
                 return Ok(id);
             }
         }
@@ -2571,7 +2573,6 @@ impl CollectionService {
 impl std::fmt::Debug for CollectionService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CollectionService")
-            .field("metadata_backend", &"UniversalMetadataBackend")
             .field("assignment_service", &"AssignmentService")
             .field("filesystem_factory", &"FilesystemFactory")
             .field("index_config_cache_info", &"HashMap<String, IndexConfig>")
@@ -2639,8 +2640,6 @@ impl CollectionServiceResponse {
 
 /// Builder for collection service with dependencies
 pub struct CollectionServiceBuilder {
-    /// Optional metadata backend to set during construction
-    metadata_backend: Option<Arc<dyn InternalCollectionProvider>>,
     /// Optional storage configuration to set during construction
     storage_config: Option<StorageConfig>,
 }
@@ -2649,15 +2648,8 @@ impl CollectionServiceBuilder {
     /// Create a new builder with no dependencies configured.
     pub fn new() -> Self {
         Self {
-            metadata_backend: None,
             storage_config: None,
         }
-    }
-
-    /// Set the metadata backend used for collection persistence.
-    pub fn with_metadata_backend(mut self, backend: Arc<dyn InternalCollectionProvider>) -> Self {
-        self.metadata_backend = Some(backend);
-        self
     }
 
     /// Set the storage configuration (data paths, engine settings, etc.).
@@ -2667,16 +2659,10 @@ impl CollectionServiceBuilder {
     }
 
     /// Consume the builder and construct a [`CollectionService`].
-    ///
-    /// Returns an error if the required metadata backend has not been provided.
     pub async fn build(self) -> Result<CollectionService> {
-        let metadata_backend = self
-            .metadata_backend
-            .ok_or_else(|| anyhow::anyhow!("Metadata backend is required"))?;
-
         let storage_config = self.storage_config.unwrap_or_default();
 
-        CollectionService::new(metadata_backend, storage_config).await
+        CollectionService::new(storage_config).await
     }
 }
 
@@ -2693,41 +2679,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_validation() -> Result<()> {
-        // Use filestore backend with temporary directory for testing
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
-        let temp_path = format!("file://{}", temp_dir.path().display());
-
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(filesystem_config)
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
-
-        let storage_config = StorageConfig::default();
-        let service = CollectionService::new(backend, storage_config)
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?;
 
@@ -2753,6 +2705,7 @@ mod tests {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
 
         // Test create with valid config
@@ -2835,41 +2788,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_name_length_validation() -> Result<()> {
-        // Create a minimal test setup
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
-        use tempfile::TempDir;
-
-        let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
-        let temp_path = format!("file://{}", temp_dir.path().display());
-
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_config = FilesystemConfig::default();
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(filesystem_config)
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
-
-        let storage_config = StorageConfig::default();
-        let service = CollectionService::new(backend, storage_config)
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?;
 
@@ -2908,6 +2827,7 @@ mod tests {
                 text_storage_configs: vec![],
                 enable_dual_use_embeddings: None,
                 canonical_embedding_precision: None,
+                permitted_principals: vec![],
             };
 
             let result = service
@@ -2946,36 +2866,19 @@ mod tests {
     /// resolution is name-authoritative.
     #[tokio::test]
     async fn test_short_name_resolves_name_authoritative() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("temp dir")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("fs factory")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("metadata backend")?,
-        );
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
             .await
-            .context("collection service")?;
+            .context("Failed to create test xCatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("collection service")?
+            .with_catalog_manager(catalog_manager.clone());
 
         // A short, standard SQL identifier (4 chars) — would have been rejected by
         // the old 8-char floor.
@@ -3001,6 +2904,7 @@ mod tests {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
         let created = service.create_collection(&config).await.context("create")?;
         assert!(
@@ -3030,38 +2934,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_collection_persists_explicit_cosine_metric() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
             .await
-            .context("Failed to create collection service for test")?;
+            .context("Failed to create test xCatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
 
         let config = CollectionConfig {
             name: "metric_default_test".to_string(),
@@ -3084,6 +2970,7 @@ mod tests {
             text_storage_configs: vec![],
             enable_dual_use_embeddings: None,
             canonical_embedding_precision: None,
+            permitted_principals: vec![],
         };
 
         let result = service.create_collection(&config).await?;
@@ -3107,38 +2994,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_collection_preserves_exact_default_without_indexes() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
 
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path,
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let catalog_manager = Arc::new(CatalogManager::new());
+        catalog_manager
+            .create_native_catalog("default", &temp_path)
             .await
-            .context("Failed to create collection service for test")?;
+            .context("Failed to create test xCatalog")?;
+        let service = CollectionService::new(StorageConfig::default())
+            .await
+            .context("Failed to create collection service for test")?
+            .with_catalog_manager(catalog_manager.clone());
 
         let config = CollectionConfig {
             name: "exact_default_case".to_string(),
@@ -3172,35 +3041,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_collection_lifecycle_mirrors_to_xcatalog_with_uuid_id() -> Result<()> {
-        use crate::storage::metadata::backends::universal_backend::{
-            UniversalMetadataBackend, UniversalMetadataConfig,
-        };
-        use crate::storage::persistence::filesystem::{FilesystemConfig, FilesystemFactory};
         use tempfile::TempDir;
 
         let temp_dir = TempDir::new().context("Failed to create temporary directory for test")?;
         let temp_path = format!("file://{}", temp_dir.path().display());
-
-        let filestore_config = UniversalMetadataConfig {
-            storage_url: temp_path.clone(),
-            compression: false,
-            enable_snapshots: false,
-            snapshot_threshold: 1000,
-            keep_snapshots: 3,
-            backup_url: None,
-            temp_dir: None,
-        };
-
-        let filesystem_factory = Arc::new(
-            FilesystemFactory::create(FilesystemConfig::default())
-                .await
-                .context("Failed to create filesystem factory for test")?,
-        );
-        let backend = Arc::new(
-            UniversalMetadataBackend::new(filestore_config, filesystem_factory)
-                .await
-                .context("Failed to create metadata backend for test")?,
-        );
 
         let catalog_manager = Arc::new(CatalogManager::new());
         catalog_manager
@@ -3208,7 +3052,7 @@ mod tests {
             .await
             .context("Failed to create test xCatalog")?;
 
-        let service = CollectionService::new(backend, StorageConfig::default())
+        let service = CollectionService::new(StorageConfig::default())
             .await
             .context("Failed to create collection service for test")?
             .with_catalog_manager(catalog_manager.clone());
@@ -3262,11 +3106,8 @@ mod tests {
         );
         assert_eq!(schema.projections.len(), 1);
 
-        service
-            .metadata_backend()
-            .delete_collection("catalog_vector_assets")
-            .await?;
-
+        // The catalog is the sole store; reads reconstruct the collection from the
+        // xCatalog asset (by name and by UUID).
         let catalog_backed_by_name = service
             .collection("catalog_vector_assets")
             .await?
@@ -3319,12 +3160,81 @@ mod tests {
         assert!(response.success);
         assert_eq!(response.processing_time_us, 1000);
     }
-}
 
-// CollectionService does NOT implement MetadataProvider - it USES a MetadataProvider backend!
-// The backend (LocalRocksDbBackend or UniversalMetadataBackend) implements MetadataProvider.
-// CollectionService can implement InternalCollectionProvider if needed for backward compatibility,
-// but it delegates to its metadata_backend which is the actual MetadataProvider.
+    /// TD-122: the detailed per-index (HNSW m/ef, IVF n_lists/n_probe,
+    /// is_primary) and quantization (enabled, strategy) config must survive a
+    /// round-trip through the read-authoritative xCatalog table asset. Before
+    /// the fix this reconstruction returned `m=0`, `is_primary=false`, and
+    /// quantization disabled.
+    #[test]
+    fn catalog_asset_round_trips_detailed_index_and_quant_config() {
+        use crate::proto::proximadb_v1::{
+            Collection, HnswConfig, IndexConfig, IvfConfig, QuantizationConfig, StorageAssignment,
+            quantization_config::Strategy,
+        };
+
+        let collection = Collection {
+            id: "col-td122".to_string(),
+            config: Some(CollectionConfig {
+                name: "td122_round_trip".to_string(),
+                dimension: 128,
+                index_configs: vec![IndexConfig {
+                    index_name: "primary_hnsw".to_string(),
+                    hnsw_config: Some(HnswConfig {
+                        m: Some(24),
+                        ef_construction: Some(150),
+                        ef_search: Some(64),
+                        ..Default::default()
+                    }),
+                    ivf_config: Some(IvfConfig {
+                        n_lists: Some(256),
+                        n_probe: Some(16),
+                        ..Default::default()
+                    }),
+                    is_primary: Some(true),
+                    ..Default::default()
+                }],
+                quantization: Some(QuantizationConfig {
+                    enabled: Some(true),
+                    strategy: Some(Strategy::Aggressive as i32),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            storage_assignment: Some(StorageAssignment {
+                primary_path: "file:///tmp/td122".to_string(),
+                base_location: "file:///tmp/td122".to_string(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let schema = CollectionService::catalog_schema_from_collection(&collection)
+            .expect("schema from collection");
+        let identifier = CollectionService::collection_table_identifier(
+            collection.config.as_ref().expect("config"),
+        );
+        let restored = CollectionService::collection_from_catalog_schema(&identifier, &schema)
+            .expect("collection from schema")
+            .expect("collection present");
+
+        let config = restored.config.expect("restored config");
+        assert_eq!(config.index_configs.len(), 1, "one ANN index retained");
+        let ic = &config.index_configs[0];
+        assert_eq!(ic.index_name, "primary_hnsw");
+        assert_eq!(ic.is_primary, Some(true));
+        let hnsw = ic.hnsw_config.as_ref().expect("hnsw config restored");
+        assert_eq!(hnsw.m, Some(24));
+        assert_eq!(hnsw.ef_construction, Some(150));
+        assert_eq!(hnsw.ef_search, Some(64));
+        let ivf = ic.ivf_config.as_ref().expect("ivf config restored");
+        assert_eq!(ivf.n_lists, Some(256));
+        assert_eq!(ivf.n_probe, Some(16));
+        let quant = config.quantization.as_ref().expect("quantization restored");
+        assert_eq!(quant.enabled, Some(true));
+        assert_eq!(quant.strategy, Some(Strategy::Aggressive as i32));
+    }
+}
 
 // ── CollectionPort impl ───────────────────────────────────────────────────────
 

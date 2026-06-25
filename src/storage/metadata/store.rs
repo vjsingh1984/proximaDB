@@ -22,7 +22,6 @@ use super::{
     SystemMetadata,
     write_ahead_log::{MetadataWALConfig, MetadataWriteAheadLog},
 };
-use crate::storage::traits::{InternalCollectionProvider, MetadataProvider};
 // use crate::storage::strategy::CollectionStrategyConfig; // Unused
 
 use crate::storage::persistence::filesystem::FilesystemFactory;
@@ -468,6 +467,7 @@ impl MetadataStoreInterface for MetadataStore {
                     if let Some(se) = config.storage_engine {
                         m.insert("storage_engine".to_string(), serde_json::json!(se));
                     }
+                    super::catalog_config::write_index_and_quant(config, &mut m)?;
                     m
                 },
                 description: Some(format!("Collection {}", config.name)),
@@ -495,11 +495,11 @@ impl MetadataStoreInterface for MetadataStore {
                     ), // Default
                     storage_engine: Some(crate::proto::proximadb_v1::StorageEngine::Viper as i32), // Default
                     storage_config: None,
-                    index_configs: Vec::new(),
+                    index_configs: super::catalog_config::read_index_configs(&versioned.config),
                     primary_index: Some(String::new()),
                     auto_index_selection: Some(true),
                     filterable_columns: Vec::new(),
-                    quantization: None,
+                    quantization: super::catalog_config::read_quantization(&versioned.config),
                     description: versioned.description.clone(),
                     tags: versioned.tags.clone(),
                     owner: versioned.owner.clone(),
@@ -511,6 +511,7 @@ impl MetadataStoreInterface for MetadataStore {
                     text_storage_configs: vec![],
                     enable_dual_use_embeddings: None,
                     canonical_embedding_precision: None,
+                    permitted_principals: vec![],
                 };
 
                 let stats = CollectionStats {
@@ -567,6 +568,7 @@ impl MetadataStoreInterface for MetadataStore {
                     if let Some(se) = config.storage_engine {
                         m.insert("storage_engine".to_string(), serde_json::json!(se));
                     }
+                    super::catalog_config::write_index_and_quant(config, &mut m)?;
                     m
                 },
                 description: Some(format!("Collection {}", config.name)),
@@ -626,6 +628,7 @@ impl MetadataStoreInterface for MetadataStore {
                         text_storage_configs: vec![],
                         enable_dual_use_embeddings: None,
                         canonical_embedding_precision: None,
+                        permitted_principals: vec![],
                     };
 
                     let stats = CollectionStats {
@@ -831,39 +834,3 @@ impl MetadataStoreInterface for MetadataStore {
         Ok(())
     }
 }
-
-// Implement MetadataProvider for MetadataStore
-#[async_trait]
-impl MetadataProvider for MetadataStore {
-    async fn get_uuid(&self, collection_id: &str) -> Result<Option<String>> {
-        // Delegate to get_collection and extract UUID if found
-        match self.get_collection(collection_id).await? {
-            Some(collection) => Ok(Some(collection.id)),
-            None => Ok(None),
-        }
-    }
-
-    async fn collection_metadata(&self, collection_id: &str) -> Result<Option<Collection>> {
-        self.get_collection(collection_id).await
-    }
-
-    async fn get_collection(&self, collection_id: &str) -> Result<Option<Collection>> {
-        MetadataStoreInterface::get_collection(self, collection_id).await
-    }
-
-    async fn list_collections(&self) -> Result<Vec<Collection>> {
-        MetadataStoreInterface::list_collections(self, None).await
-    }
-
-    async fn upsert_collection_proto(&self, collection: &Collection) -> Result<()> {
-        MetadataStoreInterface::create_collection(self, collection.clone()).await
-    }
-
-    async fn delete_collection(&self, collection_id: &str) -> Result<()> {
-        MetadataStoreInterface::delete_collection(self, collection_id).await?;
-        Ok(())
-    }
-}
-
-// Implement InternalCollectionProvider (marker trait)
-impl InternalCollectionProvider for MetadataStore {}

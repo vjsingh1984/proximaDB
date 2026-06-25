@@ -6,9 +6,9 @@
 //! service adaptation in the root crate.
 
 use crate::graph::GraphOperationsService;
+use crate::graph::{Edge, EdgeQuery, Node, NodeQuery};
 use async_trait::async_trait;
 use futures::Stream;
-use proximadb_proto::proximadb_v1::{Edge, EdgeQuery, Node, NodeQuery};
 use std::collections::HashMap;
 use std::pin::Pin;
 use std::sync::Arc;

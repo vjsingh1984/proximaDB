@@ -72,6 +72,18 @@ lazy_static! {
         "Outgress bytes per tenant by locality + direction (KOU, Dimension 2)",
         &["tenant_id", "kou_locality", "direction"]
     );
+    /// Per-tenant embedding units — the **KEU** (Kilo-Embedding-Unit) meter
+    /// (Dimension 5). Distinct from general read KRU. `provider` identifies the
+    /// embedding service (e.g. "openai", "victor", "huggingface"); `model` names
+    /// the model (e.g. "text-embedding-3-small", "bge-base-en-v1.5"); `operation`
+    /// is the embedding operation type (e.g. "embed", "embed_batch").
+    /// Neutral telemetry only: the per-(provider, model) $ weight is control-plane
+    /// (anvaiops) policy.
+    pub static ref KEU_UNITS_TOTAL: CounterVec = registered_counter_vec(
+        "proximadb_keu_units_total",
+        "Embedding units (Kilo-Embedding-Units, KEU, Dimension 5) per tenant by provider, model, and operation",
+        &["tenant_id", "provider", "model", "operation"]
+    );
 }
 
 /// Cloud provider hosting the object store — the multi-cloud axis for egress
@@ -589,6 +601,43 @@ pub fn record_kou_bytes(
     }
 }
 
+/// Record embedding units for one tenant — the **KEU** (Kilo-Embedding-Unit) meter
+/// (Dimension 5). `provider` identifies the embedding service (e.g. "openai",
+/// "victor", "huggingface"); `model` names the model; `operation` is the operation
+/// type (e.g. "embed", "embed_batch"). It does two things at once:
+///
+/// 1. Increments the per-tenant [`KEU_UNITS_TOTAL`] counter in **kilo-units**
+///    (tokens / 1000.0) — the chargeback source of truth, attributed by
+///    `(tenant, provider, model, operation)`.
+/// 2. Folds the raw token counts into the active per-query I/O trace's embedding
+///    term — the quantity the cost model consumes. Outside a query scope this
+///    silently no-ops.
+///
+/// KEU is a TAM surface: metered per-tenant, priced downstream in AnvaiOps.
+/// This is a neutral quantity at this layer (no in-engine pricing).
+pub fn record_keu_units(
+    tenant_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    operation: &str,
+    input_tokens: u64,
+    output_tokens: u64,
+) {
+    let total_tokens = input_tokens.saturating_add(output_tokens);
+    if total_tokens == 0 {
+        return;
+    }
+
+    let t_id = tenant_id.unwrap_or("default");
+    // Record in kilo-units (KEU = Kilo-Embedding-Units)
+    KEU_UNITS_TOTAL
+        .with_label_values(&[t_id, provider, model, operation])
+        .inc_by(total_tokens as f64 / 1000.0);
+
+    // Also fold into the per-query trace (inside a scope, silently no-ops outside)
+    crate::observability::io_trace::record_embedding(input_tokens, output_tokens);
+}
+
 /// Publish a per-tenant cache stats snapshot (e.g. from the footer cache's
 /// `tenant_stats()`) onto the `proximadb_cache_tenant` gauge. `cache` names the
 /// cache (e.g. "footer").
@@ -872,5 +921,89 @@ mod tests {
                 .shape_policy()
                 .compress
         );
+    }
+
+    #[tokio::test]
+    async fn record_keu_feeds_query_trace_and_prometheus() {
+        // Inside a query scope, KEU recording contributes to the embedding trace
+        // and increments the Prometheus counter in kilo-units.
+        use crate::observability::io_trace;
+
+        let snap = io_trace::scope(async {
+            record_keu_units(
+                Some("tenant-a"),
+                "openai",
+                "text-embedding-3-small",
+                "embed",
+                1000,
+                2000,
+            );
+            record_keu_units(
+                Some("tenant-a"),
+                "victor",
+                "bge-base-en-v1.5",
+                "embed_batch",
+                500,
+                1500,
+            );
+            record_keu_units(
+                Some("tenant-a"),
+                "openai",
+                "text-embedding-3-small",
+                "embed",
+                0,
+                0,
+            ); // zero → ignored
+            io_trace::snapshot()
+        })
+        .await
+        .expect("snapshot inside scope");
+
+        // Verify trace captured the embedding operations
+        assert_eq!(snap.embedding_calls, 2); // 2 non-zero calls
+        assert_eq!(snap.embedding_input_tokens, 1500); // 1000 + 500
+        assert_eq!(snap.embedding_output_tokens, 3500); // 2000 + 1500
+        assert_eq!(snap.total_embedding_tokens(), 5000);
+    }
+
+    #[tokio::test]
+    async fn record_keu_outside_scope_is_a_noop_for_trace() {
+        // No active trace: the counter still records, but nothing panics and the
+        // trace stays empty (helper silently no-ops the trace term).
+        record_keu_units(
+            Some("t"),
+            "openai",
+            "text-embedding-3-small",
+            "embed",
+            1000,
+            2000,
+        );
+        assert!(io_trace::snapshot().is_none());
+    }
+
+    #[test]
+    fn record_keu_with_default_tenant() {
+        // Verify default tenant handling works
+        record_keu_units(None, "victor", "bge-base-en-v1.5", "embed", 500, 1000);
+        // Counter should have been incremented (we can't easily read it back, but this should not panic)
+    }
+
+    #[tokio::test]
+    async fn keu_tracks_independently_from_kou() {
+        // KEU and KOU are separate meters — they should not interfere
+        use crate::observability::io_trace;
+
+        let snap = io_trace::scope(async {
+            record_keu_units(Some("t"), "openai", "model", "embed", 100, 200);
+            record_kou_bytes(Some("t"), KouLocality::CrossRegion, "read", 1000);
+            io_trace::snapshot()
+        })
+        .await
+        .expect("snapshot inside scope");
+
+        assert_eq!(snap.embedding_calls, 1);
+        assert_eq!(snap.embedding_input_tokens, 100);
+        assert_eq!(snap.embedding_output_tokens, 200);
+        assert_eq!(snap.egress_bytes, 1000);
     }
 }
