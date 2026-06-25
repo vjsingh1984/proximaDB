@@ -179,6 +179,7 @@ pub mod ddl;
 pub mod discovery;
 pub mod dml;
 pub mod embedding_drainer;
+pub mod entity_orchestrator;
 pub mod events;
 pub mod external_collection;
 pub mod function_store;
