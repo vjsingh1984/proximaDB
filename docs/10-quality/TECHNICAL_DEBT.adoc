@@ -380,6 +380,9 @@ PR #265). Moved to the closed archive.
 
 | TD-085 | Internal marketing-copy overclaims — product scrub | LOW | Partial | — | OE
 | *Engineering side resolved 2026-05-30:* `docs/_internal/{enterprise,business}` sealed with INTERNAL-ONLY banners + `make docs-claim-check` hard-fail on external references. Residual (product-owner scope): actually scrub "85-96% cost reduction" / "296% performance" claims or cite reproducible methodology before moving out of `_internal/`.
+
+| TD-148 | Collection stats over-count dead records | MED | Open | D1 | PERF
+| `collection_stats` (`ViperEngine` et al.) reports `row_count` from a raw atomic counter that increments on insert but never decrements on delete/tombstone, so the count includes deleted/expired records. The read-surface accuracy audit (PRs #305, #313, #317) confirmed every *record-returning* read path now filters dead records; `collection_stats` is the last over-count. *Do NOT build a throwaway per-engine tombstone counter* — it is partial work superseded by ADR-025 deletion vectors, where live count = total positions − deletion-vector bits (computed naturally in the N2/N3 DV phases). Until then, treat `row_count` as approximate (document this on the stats surface). See `docs/12-design/adr/ADR-025-deletion-vectors-cold-path.adoc`.
 |===
 
 == Summary (accurate as of 2026-06-24)
