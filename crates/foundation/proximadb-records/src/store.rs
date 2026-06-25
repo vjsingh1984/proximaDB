@@ -123,6 +123,19 @@ impl RecordScanOptions {
     }
 
     pub fn matches_record(&self, record: &ProximaRecord) -> bool {
+        // Dead-record filter (defense-in-depth, applies to EVERY scan using
+        // RecordScanOptions): a tombstone (valid_to_ns == Some(0)) or
+        // TTL-expired (valid_to_ns in the past) record must never surface.
+        // Uses the canonical ProximaRecord::is_visible_at on valid_to_ns
+        // (ns) — never the unit-muddled expires_at.
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        if !record.is_visible_at(now_ns) {
+            return false;
+        }
+
         if let Some(label) = &self.required_label
             && !record.labels.contains(label)
         {
@@ -278,6 +291,41 @@ mod tests {
     use super::*;
     use std::collections::HashMap;
     use std::sync::RwLock;
+
+    #[test]
+    fn matches_record_excludes_tombstone_and_expired() {
+        // A live record passes the unbounded scan filter.
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        let live = ProximaRecord {
+            oid: "alive".into(),
+            ..ProximaRecord::default()
+        };
+        assert!(
+            RecordScanOptions::unbounded().matches_record(&live),
+            "live record matches"
+        );
+
+        // A delete tombstone (valid_to_ns == 0) is excluded.
+        let tombstone = ProximaRecord::tombstone("dead", now_ns);
+        assert!(
+            !RecordScanOptions::unbounded().matches_record(&tombstone),
+            "tombstone excluded from scan"
+        );
+
+        // A TTL-expired record (valid_to_ns in the past) is excluded.
+        let expired = ProximaRecord {
+            oid: "stale".into(),
+            valid_to_ns: Some(now_ns - 1_000_000_000),
+            ..ProximaRecord::default()
+        };
+        assert!(
+            !RecordScanOptions::unbounded().matches_record(&expired),
+            "TTL-expired record excluded from scan"
+        );
+    }
 
     #[derive(Default)]
     struct MemoryRecordStore {
