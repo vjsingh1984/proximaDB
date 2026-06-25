@@ -4835,44 +4835,44 @@ mod tests {
         assert_eq!(key1, key4); // Same collection and key
     }
 
-    /// TD-147: verify that compact internal ids (Vec<usize>) in posting lists +
-    /// ConcurrentIdMapping resolve to correct external String ids at search time.
-    #[tokio::test]
-    async fn compact_id_search_returns_correct_external_ids() {
-        let config = UnifiedIvfConfig {
-            n_clusters: 2,
-            n_probe: 2,
-            ..Default::default()
-        };
-        let mut index =
-            UnifiedIvfIndex::new("test_compact_ids".to_string(), config).expect("create IVF index");
+    /// TD-147: verify compact internal ids (Vec<usize>) + ConcurrentIdMapping resolve
+    /// to correct external String ids at search time.
+    #[test]
+    fn compact_id_search_returns_correct_external_ids() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let config = UnifiedIvfConfig {
+                n_clusters: 2,
+                n_probe: 2,
+                ..Default::default()
+            };
+            let mut index =
+                UnifiedIvfIndex::new("test_compact_ids".to_string(), config).expect("create IVF");
 
-        // Train with well-separated vectors.
-        let vectors: Vec<Vec<f32>> = (0..10)
-            .map(|i| {
-                vec![
-                    i as f32 * 100.0,
-                    (i as f32 + 1.0) * 100.0,
-                    (i as f32 + 2.0) * 100.0,
-                ]
-            })
-            .collect();
-        index.train(&vectors).expect("train");
+            let vectors: Vec<Vec<f32>> = (0..10)
+                .map(|i| {
+                    vec![
+                        i as f32 * 100.0,
+                        (i as f32 + 1.0) * 100.0,
+                        (i as f32 + 2.0) * 100.0,
+                    ]
+                })
+                .collect();
+            index.train(&vectors).expect("train");
 
-        // Add with known external ids.
-        for (i, v) in vectors.iter().enumerate() {
-            index
-                .add_vector(format!("vec_{i}"), v.clone(), None)
-                .await
-                .expect("add_vector");
-        }
+            for (i, v) in vectors.iter().enumerate() {
+                index
+                    .add_vector(format!("vec_{i}"), v.clone(), None)
+                    .await
+                    .expect("add_vector");
+            }
 
-        // Search for vec_3 → must return "vec_3" (exact-match nearest neighbor).
-        let results = index.search(&vectors[3], 5, None).await.expect("search");
-        let ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
-        assert!(
-            ids.contains(&"vec_3"),
-            "compact-id search must return correct external id 'vec_3'; got {ids:?}"
-        );
+            let results = index.search(&vectors[3], 5, None).await.expect("search");
+            let ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
+            assert!(
+                ids.contains(&"vec_3"),
+                "compact-id search must return correct external id 'vec_3'; got {ids:?}"
+            );
+        });
     }
 }
