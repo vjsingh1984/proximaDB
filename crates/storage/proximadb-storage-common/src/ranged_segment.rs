@@ -826,4 +826,101 @@ mod tests {
             "scalar-only ranged fetched {fetched} not << segment {total}"
         );
     }
+
+    /// Footer-cache + ranged-read cloud-economics measurement (co-design C0;
+    /// "measure, don't assert"). Quantifies the byte/request savings of a
+    /// footer-cached vector-column projection read vs a whole-byte read across a
+    /// steady-state run of queries over one warm segment. The `InMemoryRangeBridge`
+    /// stands in for S3 ranged GETs, so bytes_read / range_gets / footer hit-ratio
+    /// directly proxy S3 egress + per-request-fee + cache effectiveness — the
+    /// evidence that justifies wiring the ranged reader into the live object-store
+    /// read path. Reports the numbers; asserts only the clear wins (hit ratio +
+    /// bytes), leaving GET-count as an honest reported metric (per-block column
+    /// scans can fragment into more, smaller GETs — the co-design §2.1 signal).
+    #[tokio::test]
+    async fn footer_cache_ranged_read_economics_vs_whole_byte() {
+        const N: usize = 4_000;
+        const DIM: usize = 128;
+        const Q: usize = 20; // steady-state queries over one warm segment
+
+        let bytes = build_segment_bytes(N, DIM);
+        let whole_segment_bytes = bytes.len() as u64;
+        let bridge = InMemoryRangeBridge {
+            bytes,
+            ranged_bytes: AtomicU64::new(0),
+        };
+        let footer_cache: Arc<FooterCache> = Arc::new(FooterCache::new(
+            proximadb_cache::CacheBudget::new(1 << 30, 1 << 30),
+        ));
+
+        // Steady state: Q vector-column projection reads sharing one tenant
+        // footer cache. Pass 1 warms the cache (footer+metadata fetched); passes
+        // 2..Q hit (only the vector stripes are fetched).
+        let mut ranged_bytes_total = 0u64;
+        let mut range_gets_total = 0u64;
+        let mut footer_hits = 0u64;
+        let mut footer_misses = 0u64;
+        for _ in 0..Q {
+            let r = RangedSegmentReader::open_with_cache(
+                &bridge,
+                Path::from("seg.pax"),
+                Some("t"),
+                Some(footer_cache.clone()),
+                None,
+            )
+            .await
+            .unwrap();
+            let vecs = r.read_f32_vec_column(col_id::EMBED_BASE).await.unwrap();
+            assert_eq!(vecs.len(), N, "vector column decodes all rows");
+            let s = r.read_stats();
+            ranged_bytes_total += s.bytes_read;
+            range_gets_total += s.range_gets;
+            footer_hits += s.footer_hits;
+            footer_misses += s.footer_misses;
+        }
+
+        // Whole-byte baseline (the current live read path): each query GETs the
+        // entire segment — no caching, no projection.
+        let whole_bytes_total = whole_segment_bytes * Q as u64;
+        let whole_gets_total = Q as u64;
+
+        let decisions = (footer_hits + footer_misses).max(1);
+        let hit_ratio = footer_hits as f64 / decisions as f64;
+        let byte_reduction = 100.0 * (1.0 - ranged_bytes_total as f64 / whole_bytes_total as f64);
+        let get_delta_pct = 100.0 * (range_gets_total as f64 / whole_gets_total as f64 - 1.0);
+
+        // Cloud-economics projection (S3 Standard, us-east-1 list): GET
+        // $0.00045/1k requests; egress $0.09/GB. Per-query figures in parens.
+        let bytes_saved = whole_bytes_total.saturating_sub(ranged_bytes_total);
+        let egress_usd = bytes_saved as f64 / (1024.0 * 1024.0 * 1024.0) * 0.09;
+        let gets_delta = range_gets_total as i64 - whole_gets_total as i64;
+        let get_fee_delta_usd = gets_delta as f64 * 0.00045 / 1000.0;
+
+        eprintln!("[footer-cache-bench] segment={whole_segment_bytes}B N={N} DIM={DIM} Q={Q}");
+        eprintln!(
+            "[footer-cache-bench] whole-byte  : {whole_bytes_total}B / {whole_gets_total} GETs"
+        );
+        eprintln!(
+            "[footer-cache-bench] ranged+cache: {ranged_bytes_total}B / {range_gets_total} GETs | footer hit-ratio={hit_ratio:.3}"
+        );
+        eprintln!(
+            "[footer-cache-bench] bytes -{byte_reduction:.1}% (egress saves ${egress_usd:.5} over {Q}q, ${:.7}/q)",
+            egress_usd / Q as f64
+        );
+        eprintln!(
+            "[footer-cache-bench] GETs {get_delta_pct:+.1}% vs whole ({gets_delta:+} reqs, ${get_fee_delta_usd:+.6} fee) — fragmentation signal"
+        );
+
+        // Ratchet: footer cache hits in steady state, and the projection reads
+        // strictly fewer bytes than whole-byte (the egress win). GET count is a
+        // reported signal, not a ratchet — per-block column scans can fragment.
+        assert!(
+            hit_ratio >= 0.9,
+            "footer cache should hit >=90% in steady state, got {hit_ratio:.3}"
+        );
+        assert!(
+            ranged_bytes_total < whole_bytes_total,
+            "ranged+cached ({ranged_bytes_total}B) must read less than whole-byte ({whole_bytes_total}B)"
+        );
+    }
 }

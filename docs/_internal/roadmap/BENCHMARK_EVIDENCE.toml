@@ -145,6 +145,20 @@ date = "2026-06-25"
 version = "v0.2"
 notes = "qa-gate ratchet (develop→qa promotion). Deterministic seeded LCG corpus (DIM=64). N=1000 REFINE=100 mean recall@10 = 0.9340; N=100000 REFINE=1000 mean recall@10 = 0.9320. Both >= 0.90 ratchet (only goes up, #10). Proves the RaBitQ->SQ8 cascade (stage-1 binary rank -> stage-2 SQ8 rerank, no f32 GET) holds recall at production scale -- the prerequisite for flipping PAX quant default-on (rollout Phase 2). NOTE: REFINE=200 at N=100k gave 0.708; a 1000-wide stage-1 pool (1% of corpus) recovers to 0.932. Indicative local run, not an SLA."
 
+[[claims]]
+id = "pax_footer_cache_ranged_read_economics"
+claim = "PAX footer-cache + ranged-read cloud-economics vs whole-byte (local S3-proxy measurement)"
+metric = "object_store_read_economics"
+status = "measured"
+asserted_in = ["crates/storage/proximadb-storage-common/src/ranged_segment.rs"]
+bench_source = "crates/storage/proximadb-storage-common/src/ranged_segment.rs"
+bench_command = "cargo test -p proximadb-storage-common --lib footer_cache_ranged_read_economics_vs_whole_byte -- --nocapture"
+artifact = "docs/_internal/status/PAX_FOOTER_CACHE_ECONOMICS_2026_06_25.adoc"
+hardware = "Apple M1 Max, 64 GB, macOS 26.2 (shared dev machine — indicative, not an SLA)"
+date = "2026-06-25"
+version = "v0.2"
+notes = "Local measurement (InMemoryRangeBridge = S3 ranged-GET proxy). 4000x128 PAX segment, Q=20 steady-state vector-column reads. RESULT: footer hit-ratio 0.950; ranged+cache 10.5MB/6000 GETs vs whole-byte 24.6MB/20 GETs -> bytes -57.1% (egress saves $0.0012) BUT GETs +29,900% (+$0.0027 fee). FINDING: naive per-block ranged reads are FEE-DOMINATED (GET fee > egress saving) -> naively wiring RAISES cloud cost. Real Phase 5 win = range coalescing (~8-16MiB GETs) + block pruning, not naive ranged reads. The harness is the ratchet for future coalescing work. Indicative, not an SLA."
+
 # ---------------------------------------------------------------------------
 # ASPIRATIONAL — target / acceptance-criterion only; no benchmark yet.
 # ---------------------------------------------------------------------------
