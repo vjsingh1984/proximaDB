@@ -1620,7 +1620,7 @@ pub async fn search_with_typed_filters(
         "rest.v2.records.search",
         crate::observability::predicate_diagnostics::scope(async {
             let outcome = state
-                .request_handlers
+                .record_ops
                 .handle_record_search_for_tenant(search_request, Some(&tenant.tenant_id))
                 .await;
             let downgraded =
@@ -2008,7 +2008,7 @@ pub async fn get_record_v2(
     });
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_get_for_tenant(
             RichRecordGetRequest {
                 collection_id: collection_id.clone(),
@@ -2306,7 +2306,7 @@ pub async fn scan_records(
     // streaming layer; the handler returns a single ordered page plus the next
     // cursor (O(log d + limit) per page once the scan index is warm).
     let (page, next_cursor) = state
-        .request_handlers
+        .record_ops
         .handle_record_scan_paginated_for_tenant(
             &collection_id,
             inbound_cursor.as_ref(),
@@ -2433,7 +2433,7 @@ pub async fn get_changes(
     Query(q): Query<ChangesQuery>,
 ) -> ApiResult<Json<serde_json::Value>> {
     let changes = state
-        .request_handlers
+        .record_ops
         .table_changes(&collection_id, q.since_lsn)
         .await
         .map_err(|e| ApiError::Internal(format!("change-feed read failed: {e}")))?;
