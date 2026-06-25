@@ -18,7 +18,6 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::debug;
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::core::search::cross_modal_fusion::FusionPolicy;
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v2 as pv2;
@@ -38,15 +37,15 @@ pub struct ProximaFusionServiceImpl {
 }
 
 impl ProximaFusionServiceImpl {
-    /// Build from the shared unified request handlers. The `FusionService` port
-    /// is constructed once at boot (from the vector + graph services) and shared
+    /// Build from the concrete vector + graph backing services. The `FusionService`
+    /// port is constructed once here (from the vector + graph services) and shared
     /// across requests — never per-RPC.
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(
+        vector: Arc<crate::services::VectorOperationsService>,
+        graph: Arc<crate::graph::GraphOperationsService>,
+    ) -> Self {
         Self {
-            fusion: Arc::new(FusionService::new(
-                request_handlers.vector_operations_service.clone(),
-                request_handlers.graph_operations_service.clone(),
-            )),
+            fusion: Arc::new(FusionService::new(vector, graph)),
         }
     }
 

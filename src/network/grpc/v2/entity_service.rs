@@ -24,7 +24,6 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error, warn};
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::core::search::cross_modal_fusion::FusionPolicy;
 use crate::graph::{
     Edge, GraphOperationsService, Node, NodeId, NodeQuery, PropertyFilter, PropertyValue,
@@ -58,17 +57,19 @@ pub struct ProximaEntityServiceImpl {
 }
 
 impl ProximaEntityServiceImpl {
-    /// Create a new service from the shared unified request handlers.
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        let graph = request_handlers.graph_operations_service.clone();
-        let vector = request_handlers.vector_operations_service.clone();
+    /// Create a new service from its concrete backing services (production wiring).
+    /// The fusion port is built once here from the vector + graph services
+    /// (mirrors the REST AppState pattern, PR #282).
+    pub fn new(
+        graph: Arc<GraphOperationsService>,
+        vector: Arc<VectorOperationsService>,
+        document: Arc<DocumentService>,
+    ) -> Self {
         Self {
             graph_service: graph.clone(),
             vector_service: vector.clone(),
-            // The fusion port is built once at boot from the vector + graph
-            // services (mirrors the REST AppState pattern, PR #282).
             fusion_service: Arc::new(FusionService::new(vector, graph)),
-            document_service: request_handlers.document_service.clone(),
+            document_service: document,
         }
     }
 
