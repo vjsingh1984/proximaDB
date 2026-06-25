@@ -2260,6 +2260,52 @@ impl PartitionLeaseManager {
         self.acquire(tenant_id, collection_id, now_ms).await
     }
 
+    /// Read the current durable leaseholder for `(tenant, collection)` — the
+    /// storage-write fence's authority. Returns the lease record (manifest
+    /// version + generation + holder) or `None` if the partition has never been
+    /// leased. This is the read half of the A6 boundary fence (the write half is
+    /// [`validate_fencing`]); it delegates to the durable lease log, not the
+    /// in-memory registry, so it reflects ground truth across pods.
+    pub async fn current_holder(
+        &self,
+        tenant_id: &str,
+        collection_id: &str,
+    ) -> Result<Option<(u64, PartitionLease)>> {
+        self.store.read(tenant_id, collection_id).await
+    }
+
+    /// A6 storage-write fence decision: is THIS pod fenced out of writing
+    /// `(tenant, collection)` to shared storage at `now_ms`?
+    ///
+    /// Returns `true` iff a *live* lease (not released, not expired) is held by a
+    /// **different** pod — i.e. a takeover has displaced this pod, so a flush from
+    /// it would publish stale data and must be rejected. Fail-open (`false`) when
+    /// no lease exists, the lease is released/expired, or the durable read errors:
+    /// the lease stack's bootstrap posture is fail-open, and the registry/admission
+    /// layer (lease-on-write) is the first line — this is the boundary backstop.
+    ///
+    /// NOTE: this is the fence *primitive*. Wiring it at the live storage-write
+    /// boundary is gated on the flush-path convergence (the server vector-flush
+    /// path is currently stubbed; see the A6 TD / LEASE_FENCE_REREVIEW doc).
+    pub async fn is_fenced_out(&self, tenant_id: &str, collection_id: &str, now_ms: i64) -> bool {
+        match self.current_holder(tenant_id, collection_id).await {
+            Ok(Some((_version, lease))) => {
+                !lease.released && !lease.is_expired(now_ms) && lease.holder_pod != self.self_pod_id
+            }
+            Ok(None) => false,
+            Err(e) => {
+                tracing::warn!(
+                    target: "proximadb.fence",
+                    tenant_id = %tenant_id,
+                    collection_id = %collection_id,
+                    error = %e,
+                    "A6 fence: durable lease read failed; failing open"
+                );
+                false
+            }
+        }
+    }
+
     /// Acquire a lease for a resource identified by its ResourceKey.
     ///
     /// This is the multi-modality entry point that uses the registered strategy
@@ -3436,6 +3482,33 @@ mod tests {
                 target_pod: "A".to_string()
             }
         );
+        Ok(())
+    }
+
+    /// A6 fence primitive: `is_fenced_out` (via `current_holder`) detects that a
+    /// live lease held by another pod fences this pod out of writing to shared
+    /// storage, and fails open when there is no live lease.
+    #[tokio::test]
+    async fn is_fenced_out_detects_takeover() -> Result<()> {
+        let backing = shared_backing();
+        let reg_a = Arc::new(PrimaryPodRegistry::new());
+        let reg_b = Arc::new(PrimaryPodRegistry::new());
+        let mgr_a = PartitionLeaseManager::new(Arc::new(store(&backing)), reg_a, "A", LEASE_MS);
+        let mgr_b = PartitionLeaseManager::new(Arc::new(store(&backing)), reg_b, "B", LEASE_MS);
+
+        assert!(mgr_a.acquire("t", "c", 0).await?);
+        // A holds the live lease → A is not fenced; B (a different pod) IS fenced
+        // out and must not flush.
+        assert!(!mgr_a.is_fenced_out("t", "c", 1).await);
+        assert!(mgr_b.is_fenced_out("t", "c", 1).await);
+        // No lease for an unrelated collection → fail-open (not fenced).
+        assert!(!mgr_b.is_fenced_out("t", "other", 1).await);
+        // Once A's lease expires with no renewal it is no longer live → B is no
+        // longer fenced (it could legitimately take over).
+        assert!(!mgr_b.is_fenced_out("t", "c", LEASE_MS + 1).await);
+        // current_holder still surfaces the (now-stale) record for inspection.
+        let held = mgr_b.current_holder("t", "c").await?;
+        assert_eq!(held.map(|(_, l)| l.holder_pod), Some("A".to_string()));
         Ok(())
     }
 
