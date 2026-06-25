@@ -7,14 +7,20 @@ Copyright 2025 ProximaDB Contributors
 Licensed under the Apache License, Version 2.0
 """
 
-import pytest
 import os
 import sys
+
+import pytest
 
 # Add src to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../src"))
 
-from proximadb_sdk.entity_v2 import Entity, EntityServiceClient, UpsertEntityResponse, SearchEntitiesResponse
+from proximadb_sdk.entity_v2 import (
+    Entity,
+    EntityServiceClient,
+    SearchEntitiesResponse,
+    UpsertEntityResponse,
+)
 from proximadb_sdk.protocols.grpc_sync import ProximaDBSyncGrpcClient
 
 
