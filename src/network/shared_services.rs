@@ -1817,19 +1817,27 @@ impl SharedServices {
         // table-level DML contention is real across pods (only one pod's
         // `DmlLockService` can hold the CAS-backed lease). Fail-open — no locks
         // — if the store can't be opened (test/embedded paths); never block
-        // bootstrap. The pod id is process-unique; a stable deployment-level
-        // pod id is a follow-up (matters only for multi-pod restart affinity).
+        // bootstrap.
+        //
+        // Registry/pod-id unification (lease ↔ write-gate): the lease manager
+        // MUST reconcile into the SAME `primary_pod_registry` the write gates
+        // consult (built above, wired into AppState/gRPC/Flight gates below) and
+        // use the SAME `self_pod_id` those gates compare against
+        // (`resolve_self_pod_id(None)`). Previously the manager owned a throwaway
+        // `PrimaryPodRegistry::new()` and a `pod-{pid}` id, so the renew loop's
+        // `reconcile`→`assign` (step-down on lease loss) updated a registry
+        // nobody read, and the assigned owner id never matched the gate's id —
+        // a displaced pod kept seeing `Allow` and kept writing (split brain).
         let dml_lock_service = {
             use crate::cluster::partition_lease::{
                 DmlLockService, PartitionLeaseManager, PartitionLeaseStore,
             };
-            use crate::cluster::primary_pod_registry::PrimaryPodRegistry;
             match PartitionLeaseStore::from_url(&storage_config.metadata_url, "_operator/leases") {
                 Ok(store) => {
-                    let pod_id = format!("pod-{}", std::process::id());
+                    let pod_id = crate::cluster::primary_pod_registry::resolve_self_pod_id(None);
                     let manager = Arc::new(PartitionLeaseManager::new(
                         Arc::new(store),
-                        Arc::new(PrimaryPodRegistry::new()),
+                        primary_pod_registry.clone(),
                         pod_id.clone(),
                         10_000,
                     ));

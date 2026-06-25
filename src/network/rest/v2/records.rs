@@ -2102,6 +2102,44 @@ pub async fn delete_record_v2(
         ));
     }
 
+    // Primary-pod write-router gate (symmetric with `insert_records`). Deletes
+    // are mutations too: a delete accepted on a displaced pod would never reach
+    // the primary's memtable, leaving the record live on the primary. Gate
+    // BEFORE any storage work.
+    match crate::cluster::primary_pod_registry::consult_for_write(
+        &state.primary_pod_registry,
+        &state.self_pod_id,
+        &tenant.tenant_id,
+        &collection_id,
+    ) {
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Allow => {
+            if state
+                .primary_pod_registry
+                .is_assigned(&tenant.tenant_id, &collection_id)
+            {
+                crate::metrics::primary_pod_metrics::record_allowed_bound(&tenant.tenant_id);
+            } else {
+                crate::metrics::primary_pod_metrics::record_allowed_unbounded(&tenant.tenant_id);
+            }
+        }
+        crate::cluster::primary_pod_registry::WriteRoutingDecision::Misrouted { target_pod } => {
+            crate::metrics::primary_pod_metrics::record_misrouted(&tenant.tenant_id);
+            tracing::warn!(
+                target = "proximadb.primary_pod.misroute",
+                self_pod = %state.self_pod_id,
+                target_pod = %target_pod,
+                tenant_id = %tenant.tenant_id,
+                collection_id = %collection_id,
+                "v2 delete misrouted — client SDK should retry against the primary pod"
+            );
+            return Err(ApiError::Misdirected {
+                target_pod,
+                tenant_id: tenant.tenant_id.clone(),
+                collection_id: collection_id.clone(),
+            });
+        }
+    }
+
     let intent = WriteIntent::new(&collection_id, WriteOperationKind::Delete)
         .with_durability(WriteDurabilityRequirement::WalRequired)
         .with_row_count_hint(1);

@@ -858,6 +858,16 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
+        // Primary-pod write-router gate (symmetric with `insert_records`). Every
+        // mutation must gate — not just insert — or a displaced pod silently
+        // accepts upserts that the new primary's reader never sees. Runs after
+        // auth/validation, before the lane router / storage path.
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
+
         let record_ids: Vec<String> = batch
             .records
             .iter()
@@ -929,6 +939,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.records.len()
         );
 
+        // Primary-pod write-router gate (symmetric with `insert_records`).
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
+
         let record_ids: Vec<String> = batch
             .records
             .iter()
@@ -987,6 +1004,13 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             batch.collection_id,
             batch.records.len()
         );
+
+        // Primary-pod write-router gate (symmetric with `insert_records`).
+        check_primary_pod_gate(
+            &self.primary_pod_gate,
+            tenant_id.as_deref().unwrap_or(""),
+            &batch.collection_id,
+        )?;
 
         let record_ids: Vec<String> = batch
             .records
