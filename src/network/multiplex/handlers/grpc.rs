@@ -12,18 +12,7 @@
 use crate::network::multiplex::traits::{BoxResponseFuture, DetectedProtocol, ProtocolHandler};
 use axum::body::Body;
 use hyper::http::{Request, Response, StatusCode};
-use std::sync::Arc;
 use tracing::{trace, warn};
-
-use crate::api_handlers::UnifiedHandlers;
-
-/// Configuration for the gRPC handler
-pub struct GrpcHandlerConfig {
-    /// Shared unified handlers for business logic delegation
-    pub request_handlers: Arc<UnifiedHandlers>,
-    /// Whether gzip compression is enabled for gRPC responses
-    pub compression_enabled: bool,
-}
 
 /// gRPC protocol handler
 ///
@@ -47,23 +36,6 @@ impl GrpcHandler {
 
     /// Create a gRPC handler marked as ready
     pub fn ready() -> Self {
-        Self {
-            ready: true,
-            grpc_port: 5679,
-        }
-    }
-
-    /// Create a gRPC handler with configuration
-    ///
-    /// Note: The request_handlers are not currently used because gRPC
-    /// multiplexing requires http crate version alignment.
-    pub fn with_config(config: GrpcHandlerConfig) -> Self {
-        // Log that we received the config but can't use it yet
-        tracing::debug!(
-            "GrpcHandler created with config (compression={}), but gRPC multiplexing not yet supported",
-            config.compression_enabled
-        );
-
         Self {
             ready: true,
             grpc_port: 5679,

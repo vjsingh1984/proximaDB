@@ -48,6 +48,11 @@ pub struct AppState {
     /// Document service, extracted at boot (TD-104 S5). Feeds the document AQL
     /// source; same `Arc` as the root handler.
     pub document_service: Arc<crate::storage::document::DocumentService>,
+    /// Cross-modal fusion service — the single retrieval port every search
+    /// surface delegates to (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`).
+    /// Constructed once at boot from the vector + graph services (mirrors the
+    /// TD-104 S5 extraction pattern) instead of per-request in each handler.
+    pub fusion_service: Arc<crate::services::fusion_service::FusionService>,
     /// Observability service, extracted at boot (TD-104 S5). Feeds the
     /// observability AQL source; same `Arc` as the root handler.
     pub observability_service: Arc<crate::observability::ObservabilityService>,
@@ -183,6 +188,13 @@ impl AppState {
         let document_service = request_handlers.document_service.clone();
         let observability_service = request_handlers.observability_service.clone();
         let event_log = request_handlers.event_log.clone();
+        // Cross-modal fusion port — built once at boot from the vector + graph
+        // services (search-surface contract: one retrieval engine, shared port).
+        let fusion_service =
+            std::sync::Arc::new(crate::services::fusion_service::FusionService::new(
+                request_handlers.vector_operations_service.clone(),
+                request_handlers.graph_operations_service.clone(),
+            ));
         // TD-104 2(b): default `api_handlers` to the root handler cast to its
         // `ApiHandlersPort` impl. Production overrides via `with_api_handlers`
         // with the runtime port-based handler; legacy/dev/test paths that never
@@ -195,6 +207,7 @@ impl AppState {
             graph_execution_service,
             vector_operations_service,
             document_service,
+            fusion_service,
             observability_service,
             event_log,
             security_coordinator,

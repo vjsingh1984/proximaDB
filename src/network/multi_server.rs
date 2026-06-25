@@ -172,8 +172,11 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_graph_service_server::ProximaGraphServiceServer<
         crate::network::grpc::v2::ProximaGraphServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaGraphServiceImpl::new(services.request_handlers.clone())
-            .into_server()
+        crate::network::grpc::v2::ProximaGraphServiceImpl::new(
+            services.request_handlers.graph_operations_service.clone(),
+            Some(services.query_adapter.clone()),
+        )
+        .into_server()
     }
 
     /// Build the canonical v2 document gRPC service. Mirrors
@@ -183,7 +186,19 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_document_service_server::ProximaDocumentServiceServer<
         crate::network::grpc::v2::ProximaDocumentServiceImpl,
     >{
-        crate::network::grpc::v2::ProximaDocumentServiceImpl::new(services.request_handlers.clone())
+        crate::network::grpc::v2::ProximaDocumentServiceImpl::new(services.document_service.clone())
+            .into_server()
+    }
+
+    /// Build the canonical v2 fusion gRPC service — the cross-modal retrieval
+    /// surface over gRPC (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`). A thin
+    /// facade over the shared `FusionService` port; owns no ranking logic.
+    fn canonical_fusion_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_fusion_service_server::ProximaFusionServiceServer<
+        crate::network::grpc::v2::ProximaFusionServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaFusionServiceImpl::new(services.request_handlers.clone())
             .into_server()
     }
 
@@ -596,6 +611,7 @@ impl MultiServer {
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -683,9 +699,10 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
-                use crate::network::arrow_ipc::ArrowFlightServer;
+                use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                match ArrowFlightServer::new(arrow_bind_target, request_handlers)
+                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
@@ -1129,6 +1146,7 @@ impl MultiServer {
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1508,6 +1526,7 @@ impl MultiServer {
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
+                .add_service(Self::canonical_fusion_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -1607,9 +1626,10 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
-                use crate::network::arrow_ipc::ArrowFlightServer;
+                use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                match ArrowFlightServer::new(arrow_bind_target, request_handlers)
+                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)

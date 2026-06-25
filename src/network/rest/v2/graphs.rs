@@ -16,7 +16,7 @@ use crate::errors::{ApiError, ApiResult};
 use crate::network::middleware::tenant::TenantContext;
 use crate::network::rest::openapi::ErrorResponse;
 use crate::network::rest::v1::handlers::AppState;
-use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+use crate::services::fusion_service::{GraphFusionParams, GraphGrain};
 
 fn default_limit() -> usize {
     10
@@ -138,10 +138,9 @@ pub async fn fusion_search_v2(
         policy.consensus_beta = beta;
     }
 
-    let service = FusionService::new(
-        state.vector_operations_service.clone(),
-        state.request_handlers.graph_operations_service.clone(),
-    );
+    // Use the shared fusion port constructed once at boot (AppState::fusion_service),
+    // per the search-surface contract — one retrieval engine, no per-handler construction.
+    let service = state.fusion_service.clone();
     let params = GraphFusionParams {
         graph_id,
         vector_collection: request.vector_collection,

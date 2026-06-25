@@ -13,7 +13,6 @@ use std::sync::Arc;
 use tonic::transport::Server;
 use tracing::info;
 
-use crate::api_handlers::request_handlers::UnifiedHandlers;
 use crate::catalog::CatalogManager;
 use crate::security::SecurityCoordinator;
 use proximadb_runtime::bootstrap_config::BindTarget;
@@ -23,7 +22,7 @@ use super::service::ProximaFlightService;
 /// Arrow Flight server for ProximaDB
 pub struct ArrowFlightServer {
     bind_target: BindTarget,
-    request_handlers: Arc<UnifiedHandlers>,
+    flight_service: ProximaFlightService,
     security_coordinator: Option<Arc<SecurityCoordinator>>,
     catalog_manager: Option<Arc<CatalogManager>>,
     max_message_size: usize,
@@ -40,10 +39,10 @@ impl ArrowFlightServer {
     ///
     /// `bind_target` is either a TCP [`SocketAddr`](std::net::SocketAddr)
     /// (server mode) or a Unix-domain socket path (portless embedded mode).
-    pub fn new(bind_target: BindTarget, request_handlers: Arc<UnifiedHandlers>) -> Self {
+    pub fn new(bind_target: BindTarget, flight_service: ProximaFlightService) -> Self {
         Self {
             bind_target,
-            request_handlers,
+            flight_service,
             security_coordinator: None,
             catalog_manager: None,
             max_message_size: 512 * 1024 * 1024, // 512MB default
@@ -99,11 +98,12 @@ impl ArrowFlightServer {
             "Starting Arrow Flight server"
         );
 
-        // Create Flight service
-        let mut flight_service =
-            ProximaFlightService::from_unified_handlers(self.request_handlers.clone())
-                .with_security_coordinator(self.security_coordinator.clone())
-                .with_catalog_manager(self.catalog_manager.clone());
+        // Apply the outer-wrapper options (security/catalog) onto the injected
+        // Flight service (built from ports at the wiring layer).
+        let mut flight_service = self
+            .flight_service
+            .with_security_coordinator(self.security_coordinator.clone())
+            .with_catalog_manager(self.catalog_manager.clone());
 
         // Slice 6.2: only wire the gate when BOTH the registry and
         // the pod identity are present. Partial wiring would silently

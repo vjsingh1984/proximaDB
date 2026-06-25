@@ -3,6 +3,18 @@
 :toclevels: 2
 :last-updated: 2026-03-12
 :last-audit: 2026-05-26
+:last-reconciled: 2026-06-24
+
+[NOTE]
+====
+*2026-06-24 reconciliation.* The *Workstreams* and *Milestone Gates* status columns below were
+re-scored against `origin/develop` HEAD and the live
+link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register]; a 2026-06-24 block was appended
+to the *Session Log* (the March-2026 entries are retained as historical baseline, per the note below).
+Authority for live status: the Technical Debt Register (implementation) +
+link:../../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] (support contract). The broader tracking
+reconciliation is recorded in link:./RECONCILIATION_2026_06_24.adoc[RECONCILIATION_2026_06_24].
+====
 
 [.lead]
 Operational execution tracker for closing foundation gaps and achieving best-in-class product quality (UX, robustness, and product-market fit).
@@ -66,50 +78,50 @@ Primary objective:
 | WS-0
 | Truth Layer (Docs/Code/Roadmap Alignment)
 | Capability claims are accurate and synchronized.
-| In Progress
-| Automated capability matrix generated in CI; strategic docs reference same source of truth.
+| In Progress → substantially complete (2026-06-24)
+| Automated capability matrix generated in CI; strategic docs reference same source of truth. *2026-06-24:* TD register split into live tracker + closed archive, dashboard/roadmap/matrix reconciled, capability matrix validator green in CI, all surfaces point to the live register. Residual: full DESIGN_DOC_STATUS_INDEX table re-merge + 143-row legacy dashboard re-audit.
 
 | WS-1
 | Surface Coherence (One Production Path per Feature)
 | No ambiguous API behavior for core features.
 | In Progress
-| Hybrid/vector/document/graph endpoints each have a single canonical production path.
+| Hybrid/vector/document/graph endpoints each have a single canonical production path. *2026-06-24:* legacy graph routes 308-deprecated (done); hybrid dead mock removed (TD-092); fusion seam converging all modalities onto one fuse-by-`oid` path (TD-136/137) and retiring the weak proto path (TD-143/146). Residual: finish the seam + remove the duplicate hybrid entry point.
 
 | WS-2
 | Reliability Layer (Panic + Failure Semantics)
 | Panic risk is systematically reduced.
-| In Progress
-| Clippy `unwrap_used` policy enforced for production modules; panic hotspots triaged with burn-down tracking.
+| Done (2026-06-24)
+| Clippy `unwrap_used` policy enforced for production modules; panic hotspots triaged with burn-down tracking. *Met:* 0 unwrap + 0 expect in production (TD-007 resolved), `clippy::unwrap_used/expect_used` warns + CI panic-policy guard; root crate clippy-clean (TD-079).
 
 | WS-3
 | Capability Exposure Layer (Engine Parity)
 | Implemented engines are consistently exposed across proto/server/embedded.
 | In Progress
-| TST/EventLog available in proto enums, API mappings, embedded API, and e2e tests.
+| TST/EventLog available in proto enums, API mappings, embedded API, and e2e tests. *2026-06-24:* TST/EventLog engines exposed (TD-009/010); gRPC v2 ProximaGraphService delivered (TD-122). Residual: Document/Entity v2 gRPC services (TD-122) + v1→v2 message migration (TD-123).
 
 | WS-4
 | Security Chain (Transport -> Identity -> AuthZ -> Audit)
 | Security story is complete end-to-end.
-| Not Started
-| Client cert identity mapping implemented; documented security matrix; regression tests for mTLS auth flow.
+| In Progress (2026-06-24)
+| Client cert identity mapping implemented; documented security matrix; regression tests for mTLS auth flow. *2026-06-24:* mTLS code-complete incl. CN-to-user mapping (TD-006, Beta), RBAC, encryption-at-rest (TD-016), RLS engine hooks (SST/VIPER/NOVA/HELIX), per-repo RBAC (TD-134). Residual: security admin/status APIs + stronger online revocation (CRL/OCSP).
 
 | WS-5
 | Distributed Readiness (Feature-flagged Productization)
 | Consensus is productized without destabilizing single-node.
-| Not Started
-| Raft runtime path wired behind explicit feature gates with deterministic failover tests.
+| In Progress — Experimental (2026-06-24)
+| Raft runtime path wired behind explicit feature gates with deterministic failover tests. *2026-06-24:* Raft internals, snapshots, shard planning, routing exist behind the `cluster` flag (TD-077, Experimental tier). Residual: real RPC transport + remote execution + deterministic failover suite.
 
 | WS-6
 | Developer Experience Layer
 | Fast, low-friction onboarding with predictable behavior.
 | Not Started
-| 5-minute quickstart validated in CI; canonical examples for core use cases.
+| 5-minute quickstart validated in CI; canonical examples for core use cases. *2026-06-24:* SDK breadth grew (Python/Rust/Go + JVM/Node embedded; TD-005/126 spec-driven codegen) but no CI-validated quickstart yet.
 
 | WS-7
 | PMF Layer (ICP-Focused Packaging)
 | Clear differentiation for target customer segments.
 | Not Started
-| Two reference architectures with measurable outcomes and adoption feedback loop.
+| Two reference architectures with measurable outcomes and adoption feedback loop. *2026-06-24:* ibkrtrading dogfood evidence still open (TD-030).
 |===
 
 == Milestone Gates
@@ -119,15 +131,15 @@ Primary objective:
 
 | M1 Foundation Coherence
 | 2026-Q2
-| WS-0 and WS-1 exit criteria complete; no contradictory capability claims.
+| WS-0 and WS-1 exit criteria complete; no contradictory capability claims. *2026-06-24: largely met* — WS-0 substantially complete (tracking surfaces reconciled, validator in CI), WS-1 advanced (fusion-seam convergence in progress).
 
 | M2 Production Robustness
 | 2026-Q3
-| WS-2, WS-3, WS-4 materially complete with test evidence.
+| WS-2, WS-3, WS-4 materially complete with test evidence. *2026-06-24: partially met* — WS-2 Done (panic-free + clippy-clean), WS-3 + WS-4 In Progress (v2 gRPC parity + security admin residual).
 
 | M3 Scale + Adoption
 | 2026-Q4
-| WS-5, WS-6, WS-7 complete with reference implementations and user validation.
+| WS-5, WS-6, WS-7 complete with reference implementations and user validation. *2026-06-24: early* — WS-5 Experimental (distributed transport residual, TD-077), WS-6/WS-7 not started.
 |===
 
 == Session Log
@@ -236,10 +248,20 @@ Primary objective:
 | Replaced the remote distributed executor’s simulated empty-result behavior with a registered handler contract, made remote failures propagate instead of being silently dropped, and added focused remote executor regressions. This makes remote execution wiring honest before true transport is introduced.
 | `src/query/distributed/{remote.rs,coordinator.rs,mod.rs}`, `docs/_internal/roadmap/implementation/active/FOUNDATIONAL_MULTIMODEL_EXECUTION_2026.adoc`
 | Finish targeted cargo verification, then choose between the relational scan backend gap and real node-to-node transport for the next foundational execution slice.
+
+| 2026-06-24
+| Tracking-surface reconciliation (WS-0) + workstream re-score
+| Reconciled every tech-debt / feature / vision tracking surface against `origin/develop` HEAD + the 2026-06-04/06-19 pivots: split the TD register into a live tracker + closed archive, overhauled MASTER_FEATURE_DASHBOARD, fully reconciled CAPABILITY_MATRIX.toml (validator green) + STRATEGIC_ROADMAP, rebuilt the DESIGN_DOC_STATUS_INDEX addendum, refreshed SYSTEM_MAP, and re-scored WS-0..WS-7 + M1/M2/M3 here. Status flips verified vs develop: TD-129/134/133/135 Resolved; TD-132 Partial.
+| `docs/10-quality/TECHNICAL_DEBT.adoc`, `docs/_archive/quality/2026-06/TECHNICAL_DEBT_CLOSED_2026_06_24.adoc`, `docs/_internal/roadmap/{MASTER_FEATURE_DASHBOARD,STRATEGIC_ROADMAP,CAPABILITY_MATRIX.toml,RECONCILIATION_2026_06_24}.adoc`, `docs/12-design/{SYSTEM_MAP_2026_05_30,DESIGN_DOC_STATUS_INDEX_2026_05_26}.adoc`, `scripts/validate_capability_matrix.py` (green)
+| Re-merge the DESIGN_DOC_STATUS_INDEX two tables; re-audit the 143-row frozen dashboard baseline against code; advance WS-1 fusion-seam convergence (TD-136/137).
 |===
 
 == Current Priority Queue
 
-1. Finish verification for the F1/F2/F3 code now in flight, especially the new function-backed `LATERAL` and remote-handler execution paths.
-2. Close the next foundational federated gap: add the missing relational scan backend for generic table-led joins.
-3. Replace the handler-based remote execution contract with real node-to-node query transport and keep capability claims aligned with verified runtime behavior.
+_Reconciled 2026-06-24._
+
+1. *WS-1:* land the cross-modal fusion seam (TD-136 Fuser core + TD-137 GraphExpander/REST v2 fusion-search), then retire the duplicate hybrid/proto paths (TD-143/146) so each modality has exactly one production path.
+2. *WS-3:* close gRPC v2 parity — Document/Entity v2 services (TD-122) — and advance the v1→v2 transport-agnostic-domain migration (TD-123) ahead of the 2026-06-30 v1 sunset (TD-121).
+3. *WS-4:* finish the security admin/status plane + stronger online revocation (CRL/OCSP) to graduate mTLS from Beta (TD-006).
+4. *WS-7:* publish the ibkrtrading dogfood validation evidence (TD-030).
+5. *Co-design:* wire cost-based multi-engine dispatch (TD-115) and the per-query I/O trace substrate so routing/caching optimize the measured dominant cost term.

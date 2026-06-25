@@ -38,7 +38,6 @@ use std::time::Instant;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error};
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::graph::model as mg;
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v1 as pv1;
@@ -50,9 +49,9 @@ use crate::proto::proximadb_v2::proxima_graph_service_server::{
 /// gRPC V2 native graph service.
 pub struct ProximaGraphServiceImpl {
     /// The shared graph backing service — the primary dependency the handlers
-    /// use. Held directly (rather than the whole `UnifiedHandlers`) so the
-    /// service is constructible in tests from a standalone
-    /// `GraphOperationsService`.
+    /// use. Held directly so the service is constructible in tests from a
+    /// standalone `GraphOperationsService` (no ROOT `UnifiedHandlers`
+    /// dependency).
     graph: Arc<crate::graph::GraphOperationsService>,
     /// Optional unified-query facade for declarative `ExecuteQuery` (the
     /// supported Cypher subset). `None` outside production wiring (and in the
@@ -63,11 +62,15 @@ pub struct ProximaGraphServiceImpl {
 }
 
 impl ProximaGraphServiceImpl {
-    /// Create a new service over the shared unified handlers (production wiring).
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
+    /// Create a new service over the shared graph backing service + optional
+    /// unified-query facade.
+    pub fn new(
+        graph: Arc<crate::graph::GraphOperationsService>,
+        query_adapter: Option<Arc<crate::query::facade::QueryFacadeAdapter>>,
+    ) -> Self {
         Self {
-            graph: request_handlers.graph_operations_service.clone(),
-            query_adapter: request_handlers.get_query_adapter(),
+            graph,
+            query_adapter,
         }
     }
 
