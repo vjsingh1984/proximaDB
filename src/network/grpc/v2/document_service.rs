@@ -37,7 +37,6 @@ use std::sync::Arc;
 use tonic::{Request, Response, Status};
 use tracing::{debug, error};
 
-use crate::api_handlers::UnifiedHandlers;
 use crate::network::grpc::auth as grpc_auth;
 use crate::proto::proximadb_v2 as pv2;
 use crate::proto::proximadb_v2::proxima_document_service_server::{
@@ -47,18 +46,16 @@ use crate::storage::document::{DocumentRecord, DocumentService};
 
 /// gRPC V2 native document service.
 pub struct ProximaDocumentServiceImpl {
-    /// The shared document backing service — held directly (rather than the whole
-    /// `UnifiedHandlers`) so the service is constructible in tests from a
-    /// standalone `DocumentService`.
+    /// The shared document backing service — held directly so the service is
+    /// constructible in tests from a standalone `DocumentService` (no ROOT
+    /// `UnifiedHandlers` dependency).
     documents: Arc<DocumentService>,
 }
 
 impl ProximaDocumentServiceImpl {
-    /// Create a new service over the shared unified handlers (production wiring).
-    pub fn new(request_handlers: Arc<UnifiedHandlers>) -> Self {
-        Self {
-            documents: request_handlers.document_service.clone(),
-        }
+    /// Create a new service over the shared document backing service.
+    pub fn new(documents: Arc<DocumentService>) -> Self {
+        Self { documents }
     }
 
     /// Convert to a tonic server.
