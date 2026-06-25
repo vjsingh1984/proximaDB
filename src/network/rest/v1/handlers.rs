@@ -809,6 +809,7 @@ pub async fn execute_sql(
             query_with_hint,
             sql_params_to_proxima_values(request.parameters.clone()),
             request.collection,
+            None,
         )
         .await
     {

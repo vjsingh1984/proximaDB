@@ -74,5 +74,10 @@ pub trait ApiHandlersPort: Send + Sync {
         query: String,
         parameters: Option<Vec<ProximaValue>>,
         collection: Option<String>,
+        // TD-064: the authenticated tenant scopes relational SQL to the tenant's
+        // partition. `None` keeps the legacy unscoped behavior (callers that
+        // haven't been wired pass `None`); production gRPC/REST threads the real
+        // tenant from the request.
+        tenant_id: Option<&str>,
     ) -> Result<ExecuteQueryResponse>;
 }
