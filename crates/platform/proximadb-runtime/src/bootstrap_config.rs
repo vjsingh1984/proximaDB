@@ -110,6 +110,12 @@ pub struct MultiServerConfig {
     /// `[api].transport = "uds"`.
     pub uds_socket_dir: Option<PathBuf>,
 
+    /// Mount the read-only embedded admin dashboard at `/admin` (+ `/dashboard`).
+    /// Sourced from `[server.admin_ui] enabled` in the TOML config. Default:
+    /// `false` — off for Kubernetes pods and embedded/UDS deployments unless an
+    /// operator explicitly opts in for a standalone instance.
+    pub admin_ui_enabled: bool,
+
     /// Cluster mode configuration (consensus, replication, health services)
     /// Only used when `cluster` feature is enabled
     #[cfg(feature = "cluster")]
@@ -599,7 +605,8 @@ impl Default for MultiServerConfig {
             unified_mode: false, // Legacy multi-port mode by default
             unified_port: 5678,  // Use REST port for unified
             unified_bind_address: "0.0.0.0".to_string(),
-            uds_socket_dir: None, // TCP mode by default; portless opt-in only
+            uds_socket_dir: None,    // TCP mode by default; portless opt-in only
+            admin_ui_enabled: false, // read-only /admin dashboard off by default; opt-in via TOML
             // Cluster mode defaults
             #[cfg(feature = "cluster")]
             cluster_config: None, // Cluster mode disabled by default

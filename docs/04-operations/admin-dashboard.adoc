@@ -9,9 +9,31 @@ embedded operation. It is served by the REST listener itself — no separate pro
 no node/npm toolchain, no build step, no external network — so it works in offline
 and air-gapped deployments.
 
+== Enabling it (off by default)
+
+The dashboard is **disabled by default** — Kubernetes pods and embedded deployments
+do not get it unless an operator explicitly opts in. Enable it in the TOML config for
+a **standalone** instance:
+
+[source,toml]
+----
+[server.admin_ui]
+enabled = true        # mount the read-only /admin route (default: false)
+----
+
+[NOTE]
+====
+Intended for standalone local instances. Leave it off for Kubernetes pods (each pod
+does not need it). In embedded / UDS mode (`[api].transport = "uds"`) the HTTP surface
+is a local Unix-domain socket, not a browser-reachable TCP port — even if you set
+`enabled = true` there it is only reachable via `curl --unix-socket`, so it is meant
+for TCP standalone deployments. The legacy multi-port server never serves it.
+====
+
 == Accessing it
 
-Start the server and open `/admin` on the REST port (default `5678`):
+With `[server.admin_ui] enabled = true`, start the server and open `/admin` on the
+REST port (default `5678`):
 
 [source,console]
 ----
@@ -20,10 +42,9 @@ $ cargo run --release --bin proximadb-server
 #   http://localhost:5678/admin
 ----
 
-`GET /dashboard` is kept as a back-compat alias for the same page.
-
-It is reachable wherever the REST HTTP listener runs — standalone
-`proximadb-server` and any embedded deployment that boots the HTTP server.
+`GET /dashboard` is kept as a back-compat alias for the same page. On startup the
+server logs `🖥️  Read-only admin dashboard enabled at /admin` when the toggle is on;
+when off, the `/admin` route does not exist (404).
 
 == What it shows
 

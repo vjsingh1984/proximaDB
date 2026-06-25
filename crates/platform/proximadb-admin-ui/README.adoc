@@ -41,9 +41,25 @@ URLs, and no write verbs in the page.
 base_router = base_router.merge(proximadb_admin_ui::admin_router());
 ----
 
+== Enabling (off by default)
+
+Disabled by default. Opt in via TOML, for **standalone** instances only (keep it off
+for Kubernetes pods and embedded/UDS mode):
+
+[source,toml]
+----
+[server.admin_ui]
+enabled = true
+----
+
+The router-build path always merges `admin_router_if(enabled)`; the toggle decides
+whether `/admin` actually exists. The flag flows
+`[server.admin_ui] enabled` → `ServerConfig` → `MultiServerBuilder::with_admin_ui_enabled`
+→ `MultiServerConfig::admin_ui_enabled` → `build_router_for_unified(.., admin_ui_enabled)`.
+
 == Accessing
 
-Start the server and open `/admin` on the REST port (default 5678):
+With the toggle on, start the server and open `/admin` on the REST port (default 5678):
 
 [source,console]
 ----

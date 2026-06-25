@@ -493,9 +493,9 @@ impl RestServer {
             tracing::info!("✅ Metrics endpoints enabled at /metrics");
         }
 
-        // Read-only admin dashboard at /admin (+ back-compat /dashboard alias),
-        // served from the self-contained `proximadb-admin-ui` crate.
-        base_router = base_router.merge(proximadb_admin_ui::admin_router());
+        // NOTE: the read-only admin dashboard (/admin) is mounted ONLY on the
+        // unified standalone path (`build_router_for_unified`), gated by
+        // `[server.admin_ui] enabled`. This legacy multi-port path never serves it.
 
         // Add V2 API router with ProximaRecord support
         let state_for_v3 = state_for_v2.clone();
@@ -707,6 +707,8 @@ impl RestServer {
         external_collection_service: Option<
             Arc<crate::services::external_collection::ExternalCollectionService>,
         >,
+        // Mount the read-only `/admin` dashboard (from `[server.admin_ui] enabled`).
+        admin_ui_enabled: bool,
     ) -> Router {
         let mut base_state = AppState::new(
             request_handlers,
@@ -802,8 +804,12 @@ impl RestServer {
         }
 
         // Read-only admin dashboard at /admin (+ back-compat /dashboard alias),
-        // served from the self-contained `proximadb-admin-ui` crate.
-        base_router = base_router.merge(proximadb_admin_ui::admin_router());
+        // gated by `[server.admin_ui] enabled` (off by default — empty router when
+        // disabled). Mounted from the self-contained `proximadb-admin-ui` crate.
+        base_router = base_router.merge(proximadb_admin_ui::admin_router_if(admin_ui_enabled));
+        if admin_ui_enabled {
+            tracing::info!("🖥️  Read-only admin dashboard enabled at /admin (+ /dashboard)");
+        }
 
         // Add V2 API router with ProximaRecord support
         let state_for_v3 = state_for_v2.clone();

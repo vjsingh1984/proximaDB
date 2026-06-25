@@ -1049,6 +1049,7 @@ impl MultiServer {
                 Some(services.rank_profile_store.clone()),
                 Some(services.discovery_service.clone()),
                 Some(services.external_collection_service.clone()),
+                self.config.admin_ui_enabled,
             );
 
             info!(
