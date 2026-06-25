@@ -686,9 +686,10 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
-                use crate::network::arrow_ipc::ArrowFlightServer;
+                use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                match ArrowFlightServer::new(arrow_bind_target, request_handlers)
+                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
@@ -1610,9 +1611,10 @@ impl MultiServer {
             let self_pod_id = services.self_pod_id.clone();
 
             let arrow_handle = tokio::spawn(async move {
-                use crate::network::arrow_ipc::ArrowFlightServer;
+                use crate::network::arrow_ipc::{ArrowFlightServer, service::ProximaFlightService};
 
-                match ArrowFlightServer::new(arrow_bind_target, request_handlers)
+                let flight_service = ProximaFlightService::from_unified_handlers(request_handlers);
+                match ArrowFlightServer::new(arrow_bind_target, flight_service)
                     .with_security_coordinator(security_coordinator)
                     .with_catalog_manager(Some(catalog_manager))
                     .with_max_message_size(max_message_size)
