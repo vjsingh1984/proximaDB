@@ -1062,12 +1062,6 @@ impl GraphOperationsService {
                         "ORION CSR rebuilt from adjacency projection"
                     );
                 }
-                #[allow(unreachable_patterns)]
-                _ => {
-                    tracing::debug!(
-                        "rebuild_orion_csr_from_adjacency_projection: not an ORION engine, skipped"
-                    );
-                }
             }
         }
 
