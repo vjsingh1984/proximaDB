@@ -2,7 +2,7 @@
 :toc: left
 :toclevels: 3
 :icons: font
-:last-updated: May 8, 2026
+:last-updated: 2026-06-24
 
 [.lead]
 **Strategic roadmap aligned with the Vision document phases. This file is authoritative for sequencing and prioritization, not for support tier by itself.**
@@ -32,16 +32,19 @@ matrix also marks that capability as supported.
 
 == Vision Alignment
 
-This roadmap implements the three-phase approach from link:../../concepts/vision.adoc[Vision Document]:
+This roadmap implements the phased approach from link:../../05-concepts/vision.adoc[Vision Document],
+co-optimized under the 2026-06-04 data-warehouse course correction and the 2026-06-19 co-design
+dimensional architecture (see `docs/12-design/`):
 
-* **Phase 1**: Format and Catalog Contract (Foundation)
-* **Phase 2**: Cross-Model Query and Indexing (Differentiation)
-* **Phase 2.5**: Foundational Performance Alignment (Execution Layer) -- _added March 2026_
-* Phase 3: Deployment and Ecosystem Integration (Scale)
-* Phase 4: Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search)
-* Phase 5: Agentic Intelligence & Research Frontier (2026 Strategy)
-* Phase 7: Competitive Platform Architecture & Storage Authority (2026+)
-* Phase 8: Continuous Data Loop & Elastic Compute (CS/CD, scale-to-zero, External Collection)
+* **Phase 1**: Format and Catalog Contract (Foundation) — ✅ Complete
+* **Phase 2**: Cross-Model Query and Indexing (Differentiation) — 🔄 In Progress
+* **Phase 2.5**: Foundational Performance Alignment (Execution Layer) — ✅ effectively complete _(added March 2026)_
+* **Phase 3**: Deployment and Ecosystem Integration + SaaS Operational Readiness (Scale) — 🔄 In Progress
+* **Phase 4**: Context Database Evolution (Time-Series, Event Sourcing, Hybrid Search) — ✅ engines / Beta packaging
+* **Phase 5**: Agentic Intelligence & Research Frontier (2026 Strategy) — ✅ research landed; agent-memory layer In Progress
+* **Phase 6**: Active Memory & Collective Reasoning — 🔄 In Progress
+* **Phase 7**: Competitive Platform Architecture & Storage Authority (lakehouse-native pgwire) — 🔄 In Progress
+* **Phase 8**: Continuous Data Loop & Elastic Compute (CS/CD, scale-to-zero, External Collection) — 📅 Planned
 
 
 == Status Legend
@@ -161,8 +164,8 @@ _Differentiation: Unified query planner for graph + vector + document + relation
 | ORION Graph Engine | ✅ Complete | In-memory CSR, WAL persistence
 | Graph Traversal | ✅ Complete | BFS, DFS, shortest path
 | Graph Algorithms | ⚠️ Partial | Core algorithms exist; graph product surface still centers ORION
-| PULSAR Engine | ⚠️ Partial | Experimental distributed graph foundation
-| QUASAR Engine | ⚠️ Partial | Experimental hybrid vector+graph foundation
+| PULSAR Engine | ❌ Retired | Retired (TD-001/017): modules/flags/routes/tests removed; `GraphEngineFactory` rejects the name. Distributed graph → relational substrate.
+| QUASAR Engine | ❌ Retired | Retired (TD-001/017/068): removed; tiered-graph behavior → xCatalog/storage projection policy. ORION is the only graph runtime.
 |===
 
 === Document Store [🔄 In Progress]
@@ -235,19 +238,19 @@ _Added June 04, 2026 to support the commercial revenue wedge._
 | Feature | Status | Priority | Notes
 
 | SaaS Path Isolation (DrPathBuilder)
-| 📅 Phase 3
+| ⚠️ Partial
 | P0
-| Enforce strict `data/{tenant_id}/{namespace_id}/...` prefixing across all Object Storage interactions to prevent cross-tenant data leakage.
+| Warehouse-materialize path now threads `TenantContext` and lands under `data/{tenant}/…` (TD-113 mostly resolved); the opaque-namespace `DrPathBuilder` layout (`PROXIMADB_WAREHOUSE_DRPATH`) is opt-in pending a repath migration.
 
 | Consumption Billing Telemetry
-| 📅 Phase 3
+| ⚠️ Partial
 | P0
-| Plumb accurate request/byte-level telemetry (`proximadb_object_store_ops_total`, `task_execution_time_ms`) tied to `TenantContext` for accurate billing.
+| KOU egress meter + KEU embedding meter live (`consumption_metrics.rs`; TD-134 resolved, KOU partial); per-query I/O trace substrate is the co-design prerequisite still landing.
 
 | Tenant Bootstrapping Resilience
-| 📅 Phase 3
+| ⚠️ Partial
 | P1
-| Implement aggressive caching/memory-pinning for `TenantTierStore` to prevent cyclic read dependencies during system initialization.
+| `TenantTierStore` caching/pinning + catalog default-bootstrap fixes landed (TD-080); broader cyclic-init hardening continues.
 |===
 
 === Compute Engine Adapters [📅 Phase 3]
@@ -255,10 +258,11 @@ _Added June 04, 2026 to support the commercial revenue wedge._
 |===
 | Feature | Status | Phase | Notes
 
-| Trino Connector | 📅 Phase 3 | P3 | SQL federation
-| Spark Connector | 📅 Phase 3 | P3 | Batch analytics
+| Trino Connector | ✅ Complete | P3 | Arrow-Flight wire layer, all 7 flight_* methods (TD-098 resolved 2026-06-02)
+| Spark Connector | ⚠️ Partial | P3 | JNI embedded impls + Rust-side filter pushdown + lifecycle (TD-097); JVM DataSource V2 + Gradle harness residual
+| Hadoop Connector | ⚠️ Partial | P3 | records-scan endpoint + cursor + WAL scan push-down (TD-099)
 | DataFusion Native | ✅ Complete | P2 | Already integrated
-| DuckDB Integration | 📅 Phase 3 | P3 | Embedded analytics
+| DuckDB Integration | 📅 Phase 3 | P3 | Embedded analytics (planned)
 |===
 
 === Streaming & CDC [✅ Complete]
@@ -297,15 +301,15 @@ _Added June 04, 2026 to support the commercial revenue wedge._
 |===
 | SDK | Status | Phase | Notes
 
-| Python SDK | ✅ Complete | P1 | Full featured
-| Go SDK | 🔄 In Progress | P2 | Basic implementation
-| Java SDK | 📅 Phase 3 | P3 | JVM ecosystem
-| Node.js SDK | 📅 Phase 3 | P3 | JavaScript ecosystem
+| Python SDK | ✅ Complete | P1 | Full featured; REST spec-generated (TD-126)
 | Rust SDK | ✅ Complete | P1 | Native Rust; `clients/rust/`
-| C++ SDK | 💡 Nice to Have | - | C++ ecosystem
-| .NET SDK | 💡 Nice to Have | - | .NET ecosystem
-| Ruby SDK | 💡 Nice to Have | - | Ruby ecosystem
-| Swift SDK | 💡 Nice to Have | - | Apple ecosystem
+| Go SDK | ⚠️ Partial | P2 | `clients/go` (+embedded); spec-driven codegen Phase 2 open (TD-126)
+| Java SDK | ⚠️ Embedded | P3 | `clients/java-embedded`, `clients/jvm`; standalone SDK planned
+| Node.js SDK | ⚠️ Embedded | P3 | `clients/nodejs-embedded`; standalone SDK planned
+| C++ SDK | 💡 Nice to Have | - | C++ ecosystem (planned, TD-005)
+| .NET SDK | 💡 Nice to Have | - | .NET ecosystem (planned, TD-005)
+| Ruby SDK | 💡 Nice to Have | - | Ruby ecosystem (planned, TD-005)
+| Swift SDK | 💡 Nice to Have | - | Apple ecosystem (planned, TD-005)
 |===
 
 == Phase 2.5: Foundational Performance Alignment [✅ effectively complete]
@@ -490,33 +494,26 @@ _Added March 26, 2026._
 | Pass transaction context through federated query execution so cross-modal queries have consistency guarantees.
 |===
 
-=== Target Timeline
+=== Reconciled Status (2026-06-24)
 
-_Updated March 26, 2026._
+The April–July sprint plan that previously lived here is *historical* (it predates the work landing).
+Actual per-item status from the link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register]:
 
-[source]
-----
-Sprint 1 (April):
-  TD-041: Wire vectorized executor into query path -- 2-3 weeks, HIGHEST ROI
-  TD-033: Row group numeric statistics pruning -- 1 week
+|===
+| Item | TD | Status
 
-Sprint 2 (May):
-  TD-031: Full pipeline-based execution (DataChunks) -- 4-6 weeks
-  TD-039: Morsel-driven parallelism -- 3-4 weeks (parallel with TD-031)
-
-Sprint 3 (June):
-  TD-032: Arrow as cross-model format -- 3-4 weeks
-  TD-035: Graph executor completion -- 3-4 weeks
-
-Sprint 4 (July):
-  TD-034: Spill-to-disk (L2 backend) -- 3-4 weeks
-  TD-038: Cross-modal 2PC -- 4-6 weeks (start)
-
-Benchmark validation gates:
-  After Sprint 1: 10x improvement on analytical benchmarks
-  After Sprint 2: Multi-core scaling demonstrated
-  After Sprint 3: <5ms cross-modal queries
-----
+| Vectorized execution engine (DataChunk pipeline) | TD-031 | ✅ Resolved
+| Vectorized executor wired into primary query path | TD-041 | ✅ Resolved
+| Row-group statistics pruning (numeric) | TD-033 | ✅ Resolved
+| Arrow native cross-model format | TD-032 | ✅ Resolved
+| Spill-to-disk (L2 NVMe) | TD-034 | ✅ Resolved
+| Per-segment adaptive codec | TD-036 | ✅ Resolved (was already adaptive)
+| Distance multi-vector batching (NEON 4-way + prefetch) | TD-037 | ✅ Resolved (full matrix transpose deferred)
+| Cross-modal transaction isolation (durable 2PC) | TD-038 | ✅ Resolved
+| Morsel-driven query parallelism | TD-039 | ✅ Resolved
+| Graph query executor operators | TD-035 | 🔄 Open
+| Read-side quantization-aware row-group pruning | TD-040 | ⚠️ Partial (write-side stats landed)
+|===
 
 == Phase 4: Context Database Evolution
 
@@ -639,6 +636,22 @@ See link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] Phase 5 s
 | AV-SQL — 3-Agent Decomposition | ✅ Complete | TD-048 | Rewriter / ViewGenerator / Composer traits and REST integration landed (April 2026).
 | Block-Batched Semantic Joins | ✅ Complete | TD-049 | LLM block-batched join with prompt packing implemented in executor.
 |===
+
+=== Agent Memory Layer & Cross-Modal Fusion Seam [🔄 In Progress]
+
+_Reconciled 2026-06-24. The agent-memory layer (ADR-022) and the fuse-by-`oid` seam
+(`CROSS_MODAL_FUSION_SEAM_2026_06_22`) are the active Phase-5/6 build. See the Technical Debt Register._
+
+|===
+| Feature | Status | TD ID | Notes
+
+| Agent memory read surface (mem0-aligned) | ✅ Complete | TD-100 | `MemoryAqlSource` + pgwire WHERE pushdown; session scoping (TD-103) resolved.
+| Agent memory write surface (extraction + consolidation) | 🔄 In Progress | TD-101 | `MemoryWriteEngine.ingest` + embedder + `/api/v1/memory/ingest`; consolidation audit persistence residual.
+| mem0 / agentmemory framework adapters | ⚠️ Partial | TD-102 | pgwire Slice A landed; Python provider Slice B open.
+| Agent branching (BranchRef, COW, writer fence) | ⚠️ Partial | TD-117 | Foundation landed; ancestor fall-through, live CAS fencing, branch GC open. Depends on TD-116/119.
+| Neutral `Fuser` core + GraphExpander + REST v2 fusion-search | 🔄 In Progress | TD-136, TD-137 | Calibrated fuse-by-`oid` seam; document/relational/edge expanders + cost-routed fusion (TD-138–143) open.
+| EntityService.SearchEntities → seam typed facade | 📅 Open | TD-146 | No standalone retrieval engine; delegates to the seam.
+| Cross-modal atomic multi-modal write | ✅ Complete | TD-133 | `CrossModelTransactionCoordinator` (resolved 2026-06-24).
 |===
 
 == Phase 6: Active Memory & Collective Reasoning [📅 NEW 2026+]
@@ -665,7 +678,7 @@ _Autonomous Memory: Enabling agents to actively manage, link, and gate their own
 | Metadata Pseudo-Query Generation | 📅 Phase 6 | TD-056 | (Sub) Solve vocabulary mismatch via augmented indexing. arXiv:2604.16394
 |===
 
-== Phase 7: Competitive Platform Architecture And Storage Authority [📅 NEW 2026+]
+== Phase 7: Competitive Platform Architecture And Storage Authority [🔄 In Progress]
 
 [.lead]
 _Context Data Platform: tightening ProximaDB's competitive shape across vector, graph, document,
@@ -689,7 +702,35 @@ maturity justifies consolidation. The governing documents are:
 
 | Storage layout authority model | 🔄 Phase 7 | TD-060 | Contract skeleton, `CatalogTableSchema` persistence, internal `ObjectSchema` propagation, information-schema introspection, nullable EXPLAIN storage-authority metadata, SQL EXPLAIN catalog resolution, and unified EXPLAIN target extraction landed; planner-native resolved object context remains.
 | Optional relational capabilities | 📅 Phase 7 | TD-061 | Cataloged keys, unique indexes, secondary indexes, FKs, checks, materialized views, transaction profiles, and schema-evolution policy.
-| Predicate-aware vector correctness | 📅 Phase 7 | TD-064 | `VectorTopK` plans must disclose exact, predicate-aware ANN, prefilter-exact, or post-filter fallback behavior.
+| Predicate-aware vector correctness | 🔄 In Progress | TD-064 | `VectorTopK` plans disclose exact / predicate-aware ANN / prefilter-exact / post-filter fallback; slices 1-5 landed, IVF inline pushdown residual.
+|===
+
+=== Lakehouse-Native pgwire & HTAP [🔄 In Progress]
+
+_Governing doc: `docs/12-design/PROXIMADB_AS_LAKEHOUSE_NATIVE_PG_ENGINE_2026_06_17.md`. Co-design D1/D3/D4._
+
+|===
+| Feature | Status | TD ID | Notes
+
+| OLTP/OLAP HTAP storage + PG constraints | ⚠️ Partial | TD-110 | ON DELETE FK actions (RESTRICT/CASCADE/SET NULL) on single-col FK landed; ON UPDATE / composite-FK / MVCC residual.
+| Background L0→base compactor + deletion vectors | ⚠️ Partial | TD-114 | Tested PAX merge-on-read core + flag-gated trigger (default OFF); live auto-invoke from flush residual.
+| Cost-based multi-engine dispatch | 📅 Open | TD-115 | `ComputeScheduler::route_select` hardcodes Native today; cost model + `QueryShape` stats not wired.
+| WAL tiering + read-as-of-LSN time travel | 📅 Open | TD-116 | WAL local-only; `SELECT … AS OF` read path missing. Unblocks TD-117.
+| Unify paging/cache policy with tier policy | 📅 Open | TD-118 | One hierarchy policy for eviction + demotion; scan-ring so cold scans don't evict the OLTP working set.
+| Real Iceberg snapshots (metadata.json + manifest log) | ⚠️ Partial | TD-119 | Phase 1 landed; Avro manifest-list/DataFile stats for Spark/Trino scans residual.
+| pg_catalog completeness for ORM/driver compat | ⚠️ Partial | TD-120 | pg_type/namespace/class/attribute/constraint views landed; pg_index + live ORM round-trip residual.
+| gRPC SQL relational writes (DDL/DML) | ✅ Complete | TD-135 | `ExecuteQuery` routes DDL/DML through tenant-scoped `Ddl/DmlService::execute_scoped`.
+|===
+
+=== gRPC v1→v2 Convergence [🔄 In Progress]
+
+|===
+| Feature | Status | TD ID | Notes
+
+| gRPC v2 parity services (graph/document/entity) | ⚠️ Partial | TD-122 | `ProximaGraphService` delivered 2026-06-21; Document/Entity v2 services residual.
+| v1→v2 message-type migration (transport-agnostic domain) | 🔄 In Progress | TD-123 | Graph keystone done (neutral `graph::model`); record/vector/collection services + typed `GraphRef` tenancy residual.
+| Deferred v2 graph RPCs (analytic/batch/stream) | 📅 Open | TD-124 | `GetConnectedComponents`, `HasCycle`, `BatchCreate*`, `StreamTraverse`, declarative `ExecuteQuery`.
+| Hard-delete gRPC v1 proto + compat adapters | 📅 Open | TD-121 | Post-Sunset 2026-06-30 (do NOT merge before 2026-07-01); unblocked by TD-122 + TD-123.
 |===
 
 === Competitive Query And Observability Surface
@@ -749,6 +790,16 @@ the full trend analysis and the alignment scorecard. These workstreams realize t
 |===
 
 == Documentation Status
+
+[NOTE]
+====
+*Stale paths (pre-2026-05 docs taxonomy).* The file paths in the tables below predate the docs
+reorganization into numbered sections (`03-api-reference/`, `05-concepts/`, etc.). For the current
+design-doc catalogue use link:../../12-design/DESIGN_DOC_STATUS_INDEX_2026_05_26.adoc[Design Doc Status
+Index] (reconciled 2026-06-24); for the architecture map use
+link:../../12-design/SYSTEM_MAP_2026_05_30.adoc[System Map]. This section is retained as a historical
+completeness inventory only.
+====
 
 === Public Documentation [✅ Complete]
 
@@ -853,7 +904,7 @@ For v1.0 release, the following must be complete:
 === Q2 2026 [Current hardening]
 
 * Time-series engine (TST) implementation is complete at engine level (TD-009 resolved); product packaging, API parity, and at-scale validation keep the surface Beta.
-* Backup / point-in-time recovery is complete (TD-013 resolved).
+* Backup / restore infrastructure is complete (TD-014 resolved); read-as-of-LSN time travel is the separate TD-116 (planned).
 * mTLS infrastructure is complete (TD-006 resolved); remaining security work is admin/status and stronger online revocation policy.
 * Pre-release foundations focus: dashboard/support-surface honesty, multi-tenant safety hardening, canonical WAL authority, ADR-012 minimum branch merge, and hybrid gRPC parity.
 
@@ -894,6 +945,7 @@ For v1.0 release, the following must be complete:
 
 ---
 
-_Last Updated_: May 27, 2026
+_Last Updated_: 2026-06-24 (full reconciliation vs the Technical Debt Register + the 2026-06-04 / 2026-06-19 pivots)
 _Version_: 0.2.0
-_Next Review_: End of Phase 6 Design Review (Graph-Linked Chunking + Uncertainty-Gated Search spec)
+_Authoritative live status_: link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] (implementation) + link:../../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] (support contract)
+_Next Review_: End of Phase 6 Design Review
