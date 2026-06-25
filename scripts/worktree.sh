@@ -54,6 +54,10 @@ emit_cache_env() {
   if command -v sccache >/dev/null 2>&1; then
     printf 'export RUSTC_WRAPPER=%q\n' "$(command -v sccache)"
     printf 'export SCCACHE_DIR=%q\n' "${SCCACHE_DIR:-$HOME/.cache/sccache}"
+    # LRU-capped shared cache (sccache evicts past this), so disk stays bounded
+    # unlike the unbounded per-worktree incremental/ dirs it replaces. Default
+    # 25G suits the ~66-crate workspace's hit rate; override with SCCACHE_CACHE_SIZE.
+    printf 'export SCCACHE_CACHE_SIZE=%q\n' "${SCCACHE_CACHE_SIZE:-25G}"
     printf 'export CARGO_INCREMENTAL=0\n'
   elif [ "${PROXIMADB_KEEP_INCREMENTAL:-0}" = "1" ]; then
     printf 'worktree: sccache absent and PROXIMADB_KEEP_INCREMENTAL=1 — incremental ON; expect multi-GB target/ growth per worktree. Reclaim it with: scripts/worktree.sh gc\n' >&2
