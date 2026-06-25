@@ -359,6 +359,45 @@ type EmbeddingInput struct {
 	Vector   []float32 `json:"vector"`
 }
 
+// EntityDto defines model for EntityDto.
+type EntityDto struct {
+	CollectionId     string                 `json:"collection_id"`
+	FlexibleMetadata map[string]interface{} `json:"flexible_metadata"`
+	Id               string                 `json:"id"`
+}
+
+// EntityEmbeddingInput defines model for EntityEmbeddingInput.
+type EntityEmbeddingInput struct {
+	Dimension *int32    `json:"dimension,omitempty"`
+	Modality  *string   `json:"modality"`
+	ModelId   string    `json:"model_id"`
+	Vector    []float32 `json:"vector"`
+}
+
+// EntityProvenanceInput defines model for EntityProvenanceInput.
+type EntityProvenanceInput struct {
+	ChunkId          *string            `json:"chunk_id,omitempty"`
+	ChunkPosition    *int32             `json:"chunk_position,omitempty"`
+	ExtractionMethod *string            `json:"extraction_method,omitempty"`
+	Metadata         *map[string]string `json:"metadata,omitempty"`
+	SourceId         *string            `json:"source_id,omitempty"`
+}
+
+// EntityRelationInput defines model for EntityRelationInput.
+type EntityRelationInput struct {
+	Properties     *map[string]string `json:"properties,omitempty"`
+	RelationType   string             `json:"relation_type"`
+	SourceEntityId string             `json:"source_entity_id"`
+	TargetEntityId string             `json:"target_entity_id"`
+	Weight         *float32           `json:"weight,omitempty"`
+}
+
+// EntitySearchResult defines model for EntitySearchResult.
+type EntitySearchResult struct {
+	Entity EntityDto `json:"entity"`
+	Score  float32   `json:"score"`
+}
+
 // ErrorBody Inner body of [`ErrorResponse`].
 type ErrorBody struct {
 	// Code HTTP status code.
@@ -897,6 +936,22 @@ type SchemaResponse struct {
 	UpdatedAt *string `json:"updated_at"`
 }
 
+// SearchEntitiesRequest defines model for SearchEntitiesRequest.
+type SearchEntitiesRequest struct {
+	// Filters Equality metadata filters as a `{field: value}` JSON object.
+	Filters *map[string]interface{} `json:"filters,omitempty"`
+
+	// QueryVector Query embedding for vector similarity search. Omit for metadata-only search.
+	QueryVector *[]float32 `json:"query_vector,omitempty"`
+	TopK        *int32     `json:"top_k,omitempty"`
+}
+
+// SearchEntitiesResponse defines model for SearchEntitiesResponse.
+type SearchEntitiesResponse struct {
+	Results []EntitySearchResult `json:"results"`
+	Total   int32                `json:"total"`
+}
+
 // TextFieldInput Input format for TEXT fields
 //
 // TEXT fields are stored in dedicated columns with optional chunking
@@ -1119,6 +1174,24 @@ type UpdateSchemaResponse struct {
 	Warnings []string `json:"warnings"`
 }
 
+// UpsertEntityRequest defines model for UpsertEntityRequest.
+type UpsertEntityRequest struct {
+	Embeddings       *[]EntityEmbeddingInput `json:"embeddings,omitempty"`
+	FlexibleMetadata *map[string]interface{} `json:"flexible_metadata,omitempty"`
+
+	// Id Empty ⇒ the server generates a UUID.
+	Id         *string                `json:"id,omitempty"`
+	Provenance *EntityProvenanceInput `json:"provenance"`
+	Relations  *[]EntityRelationInput `json:"relations,omitempty"`
+}
+
+// UpsertEntityResponse defines model for UpsertEntityResponse.
+type UpsertEntityResponse struct {
+	EntityId string `json:"entity_id"`
+	Message  string `json:"message"`
+	Success  bool   `json:"success"`
+}
+
 // GraphId defines model for GraphId.
 type GraphId = string
 
@@ -1194,6 +1267,12 @@ type QueryLogsJSONBody map[string]interface{}
 
 // CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
 type CreateCollectionJSONRequestBody = CreateCollectionV2Request
+
+// UpsertEntityV2JSONRequestBody defines body for UpsertEntityV2 for application/json ContentType.
+type UpsertEntityV2JSONRequestBody = UpsertEntityRequest
+
+// SearchEntitiesV2JSONRequestBody defines body for SearchEntitiesV2 for application/json ContentType.
+type SearchEntitiesV2JSONRequestBody = SearchEntitiesRequest
 
 // InsertRecordsJSONRequestBody defines body for InsertRecords for application/json ContentType.
 type InsertRecordsJSONRequestBody = InsertRecordsRequest
@@ -2824,6 +2903,22 @@ type ClientInterface interface {
 	// GetCollection request
 	GetCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// UpsertEntityV2WithBody request with any body
+	UpsertEntityV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	UpsertEntityV2(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SearchEntitiesV2WithBody request with any body
+	SearchEntitiesV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SearchEntitiesV2(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteEntityV2 request
+	DeleteEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetEntityV2 request
+	GetEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// InsertRecordsWithBody request with any body
 	InsertRecordsWithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -3029,6 +3124,78 @@ func (c *Client) DeleteCollection(ctx context.Context, collectionId string, reqE
 
 func (c *Client) GetCollection(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCollectionRequest(c.Server, collectionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpsertEntityV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpsertEntityV2RequestWithBody(c.Server, collectionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UpsertEntityV2(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpsertEntityV2Request(c.Server, collectionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SearchEntitiesV2WithBody(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchEntitiesV2RequestWithBody(c.Server, collectionId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SearchEntitiesV2(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSearchEntitiesV2Request(c.Server, collectionId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) DeleteEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteEntityV2Request(c.Server, collectionId, entityId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetEntityV2(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetEntityV2Request(c.Server, collectionId, entityId)
 	if err != nil {
 		return nil, err
 	}
@@ -3886,6 +4053,182 @@ func NewGetCollectionRequest(server string, collectionId string) (*http.Request,
 	}
 
 	operationPath := fmt.Sprintf("/api/v2/collections/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpsertEntityV2Request calls the generic UpsertEntityV2 builder with application/json body
+func NewUpsertEntityV2Request(server string, collectionId string, body UpsertEntityV2JSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpsertEntityV2RequestWithBody(server, collectionId, "application/json", bodyReader)
+}
+
+// NewUpsertEntityV2RequestWithBody generates requests for UpsertEntityV2 with any type of body
+func NewUpsertEntityV2RequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "collection_id", runtime.ParamLocationPath, collectionId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/entities", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewSearchEntitiesV2Request calls the generic SearchEntitiesV2 builder with application/json body
+func NewSearchEntitiesV2Request(server string, collectionId string, body SearchEntitiesV2JSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSearchEntitiesV2RequestWithBody(server, collectionId, "application/json", bodyReader)
+}
+
+// NewSearchEntitiesV2RequestWithBody generates requests for SearchEntitiesV2 with any type of body
+func NewSearchEntitiesV2RequestWithBody(server string, collectionId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "collection_id", runtime.ParamLocationPath, collectionId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/entities/search", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewDeleteEntityV2Request generates requests for DeleteEntityV2
+func NewDeleteEntityV2Request(server string, collectionId string, entityId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "collection_id", runtime.ParamLocationPath, collectionId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "entity_id", runtime.ParamLocationPath, entityId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/entities/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetEntityV2Request generates requests for GetEntityV2
+func NewGetEntityV2Request(server string, collectionId string, entityId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "collection_id", runtime.ParamLocationPath, collectionId)
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithLocation("simple", false, "entity_id", runtime.ParamLocationPath, entityId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/collections/%s/entities/%s", pathParam0, pathParam1)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -5368,6 +5711,22 @@ type ClientWithResponsesInterface interface {
 	// GetCollectionWithResponse request
 	GetCollectionWithResponse(ctx context.Context, collectionId string, reqEditors ...RequestEditorFn) (*GetCollectionHTTPResp, error)
 
+	// UpsertEntityV2WithBodyWithResponse request with any body
+	UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
+
+	UpsertEntityV2WithResponse(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error)
+
+	// SearchEntitiesV2WithBodyWithResponse request with any body
+	SearchEntitiesV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error)
+
+	SearchEntitiesV2WithResponse(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error)
+
+	// DeleteEntityV2WithResponse request
+	DeleteEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*DeleteEntityV2HTTPResp, error)
+
+	// GetEntityV2WithResponse request
+	GetEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*GetEntityV2HTTPResp, error)
+
 	// InsertRecordsWithBodyWithResponse request with any body
 	InsertRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error)
 
@@ -5618,6 +5977,102 @@ func (r GetCollectionHTTPResp) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCollectionHTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UpsertEntityV2HTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *UpsertEntityResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r UpsertEntityV2HTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpsertEntityV2HTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type SearchEntitiesV2HTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *SearchEntitiesResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r SearchEntitiesV2HTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SearchEntitiesV2HTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type DeleteEntityV2HTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *UpsertEntityResponse
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteEntityV2HTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteEntityV2HTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetEntityV2HTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *EntityDto
+	JSON404      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r GetEntityV2HTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetEntityV2HTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -6454,6 +6909,58 @@ func (c *ClientWithResponses) GetCollectionWithResponse(ctx context.Context, col
 	return ParseGetCollectionHTTPResp(rsp)
 }
 
+// UpsertEntityV2WithBodyWithResponse request with arbitrary body returning *UpsertEntityV2HTTPResp
+func (c *ClientWithResponses) UpsertEntityV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error) {
+	rsp, err := c.UpsertEntityV2WithBody(ctx, collectionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpsertEntityV2HTTPResp(rsp)
+}
+
+func (c *ClientWithResponses) UpsertEntityV2WithResponse(ctx context.Context, collectionId string, body UpsertEntityV2JSONRequestBody, reqEditors ...RequestEditorFn) (*UpsertEntityV2HTTPResp, error) {
+	rsp, err := c.UpsertEntityV2(ctx, collectionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpsertEntityV2HTTPResp(rsp)
+}
+
+// SearchEntitiesV2WithBodyWithResponse request with arbitrary body returning *SearchEntitiesV2HTTPResp
+func (c *ClientWithResponses) SearchEntitiesV2WithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error) {
+	rsp, err := c.SearchEntitiesV2WithBody(ctx, collectionId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchEntitiesV2HTTPResp(rsp)
+}
+
+func (c *ClientWithResponses) SearchEntitiesV2WithResponse(ctx context.Context, collectionId string, body SearchEntitiesV2JSONRequestBody, reqEditors ...RequestEditorFn) (*SearchEntitiesV2HTTPResp, error) {
+	rsp, err := c.SearchEntitiesV2(ctx, collectionId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSearchEntitiesV2HTTPResp(rsp)
+}
+
+// DeleteEntityV2WithResponse request returning *DeleteEntityV2HTTPResp
+func (c *ClientWithResponses) DeleteEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*DeleteEntityV2HTTPResp, error) {
+	rsp, err := c.DeleteEntityV2(ctx, collectionId, entityId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteEntityV2HTTPResp(rsp)
+}
+
+// GetEntityV2WithResponse request returning *GetEntityV2HTTPResp
+func (c *ClientWithResponses) GetEntityV2WithResponse(ctx context.Context, collectionId string, entityId string, reqEditors ...RequestEditorFn) (*GetEntityV2HTTPResp, error) {
+	rsp, err := c.GetEntityV2(ctx, collectionId, entityId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetEntityV2HTTPResp(rsp)
+}
+
 // InsertRecordsWithBodyWithResponse request with arbitrary body returning *InsertRecordsHTTPResp
 func (c *ClientWithResponses) InsertRecordsWithBodyWithResponse(ctx context.Context, collectionId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*InsertRecordsHTTPResp, error) {
 	rsp, err := c.InsertRecordsWithBody(ctx, collectionId, contentType, body, reqEditors...)
@@ -7065,6 +7572,166 @@ func ParseGetCollectionHTTPResp(rsp *http.Response) (*GetCollectionHTTPResp, err
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpsertEntityV2HTTPResp parses an HTTP response from a UpsertEntityV2WithResponse call
+func ParseUpsertEntityV2HTTPResp(rsp *http.Response) (*UpsertEntityV2HTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpsertEntityV2HTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpsertEntityResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSearchEntitiesV2HTTPResp parses an HTTP response from a SearchEntitiesV2WithResponse call
+func ParseSearchEntitiesV2HTTPResp(rsp *http.Response) (*SearchEntitiesV2HTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SearchEntitiesV2HTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SearchEntitiesResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteEntityV2HTTPResp parses an HTTP response from a DeleteEntityV2WithResponse call
+func ParseDeleteEntityV2HTTPResp(rsp *http.Response) (*DeleteEntityV2HTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteEntityV2HTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpsertEntityResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetEntityV2HTTPResp parses an HTTP response from a GetEntityV2WithResponse call
+func ParseGetEntityV2HTTPResp(rsp *http.Response) (*GetEntityV2HTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetEntityV2HTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest EntityDto
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

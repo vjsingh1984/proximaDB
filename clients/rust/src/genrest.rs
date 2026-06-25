@@ -1977,6 +1977,246 @@ pub mod types {
             Default::default()
         }
     }
+    ///`EntityDto`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "collection_id",
+    ///    "flexible_metadata",
+    ///    "id"
+    ///  ],
+    ///  "properties": {
+    ///    "collection_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "flexible_metadata": {
+    ///      "type": "object",
+    ///      "additionalProperties": {}
+    ///    },
+    ///    "id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct EntityDto {
+        pub collection_id: ::std::string::String,
+        pub flexible_metadata: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        pub id: ::std::string::String,
+    }
+    impl EntityDto {
+        pub fn builder() -> builder::EntityDto {
+            Default::default()
+        }
+    }
+    ///`EntityEmbeddingInput`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "model_id",
+    ///    "vector"
+    ///  ],
+    ///  "properties": {
+    ///    "dimension": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "modality": {
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    },
+    ///    "model_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "vector": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "number",
+    ///        "format": "float"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct EntityEmbeddingInput {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub dimension: ::std::option::Option<i32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub modality: ::std::option::Option<::std::string::String>,
+        pub model_id: ::std::string::String,
+        pub vector: ::std::vec::Vec<f32>,
+    }
+    impl EntityEmbeddingInput {
+        pub fn builder() -> builder::EntityEmbeddingInput {
+            Default::default()
+        }
+    }
+    ///`EntityProvenanceInput`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "chunk_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "chunk_position": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    },
+    ///    "extraction_method": {
+    ///      "type": "string"
+    ///    },
+    ///    "metadata": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "source_id": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct EntityProvenanceInput {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub chunk_id: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub chunk_position: ::std::option::Option<i32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub extraction_method: ::std::option::Option<::std::string::String>,
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub metadata: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub source_id: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for EntityProvenanceInput {
+        fn default() -> Self {
+            Self {
+                chunk_id: Default::default(),
+                chunk_position: Default::default(),
+                extraction_method: Default::default(),
+                metadata: Default::default(),
+                source_id: Default::default(),
+            }
+        }
+    }
+    impl EntityProvenanceInput {
+        pub fn builder() -> builder::EntityProvenanceInput {
+            Default::default()
+        }
+    }
+    ///`EntityRelationInput`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "relation_type",
+    ///    "source_entity_id",
+    ///    "target_entity_id"
+    ///  ],
+    ///  "properties": {
+    ///    "properties": {
+    ///      "type": "object",
+    ///      "additionalProperties": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "relation_type": {
+    ///      "type": "string"
+    ///    },
+    ///    "source_entity_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "target_entity_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "weight": {
+    ///      "type": "number",
+    ///      "format": "float"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct EntityRelationInput {
+        #[serde(
+            default,
+            skip_serializing_if = ":: std :: collections :: HashMap::is_empty"
+        )]
+        pub properties: ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+        pub relation_type: ::std::string::String,
+        pub source_entity_id: ::std::string::String,
+        pub target_entity_id: ::std::string::String,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub weight: ::std::option::Option<f32>,
+    }
+    impl EntityRelationInput {
+        pub fn builder() -> builder::EntityRelationInput {
+            Default::default()
+        }
+    }
+    ///`EntitySearchResult`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "entity",
+    ///    "score"
+    ///  ],
+    ///  "properties": {
+    ///    "entity": {
+    ///      "$ref": "#/components/schemas/EntityDto"
+    ///    },
+    ///    "score": {
+    ///      "type": "number",
+    ///      "format": "float"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct EntitySearchResult {
+        pub entity: EntityDto,
+        pub score: f32,
+    }
+    impl EntitySearchResult {
+        pub fn builder() -> builder::EntitySearchResult {
+            Default::default()
+        }
+    }
     ///Inner body of [`ErrorResponse`].
     ///
     /// <details><summary>JSON schema</summary>
@@ -4831,6 +5071,98 @@ pub mod types {
             Default::default()
         }
     }
+    ///`SearchEntitiesRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "filters": {
+    ///      "description": "Equality metadata filters as a `{field: value}` JSON object.",
+    ///      "type": "object",
+    ///      "additionalProperties": {}
+    ///    },
+    ///    "query_vector": {
+    ///      "description": "Query embedding for vector similarity search. Omit for metadata-only search.",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "number",
+    ///        "format": "float"
+    ///      }
+    ///    },
+    ///    "top_k": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct SearchEntitiesRequest {
+        ///Equality metadata filters as a `{field: value}` JSON object.
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub filters: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        ///Query embedding for vector similarity search. Omit for metadata-only search.
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub query_vector: ::std::vec::Vec<f32>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub top_k: ::std::option::Option<i32>,
+    }
+    impl ::std::default::Default for SearchEntitiesRequest {
+        fn default() -> Self {
+            Self {
+                filters: Default::default(),
+                query_vector: Default::default(),
+                top_k: Default::default(),
+            }
+        }
+    }
+    impl SearchEntitiesRequest {
+        pub fn builder() -> builder::SearchEntitiesRequest {
+            Default::default()
+        }
+    }
+    ///`SearchEntitiesResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "results",
+    ///    "total"
+    ///  ],
+    ///  "properties": {
+    ///    "results": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/EntitySearchResult"
+    ///      }
+    ///    },
+    ///    "total": {
+    ///      "type": "integer",
+    ///      "format": "int32",
+    ///      "minimum": 0.0
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct SearchEntitiesResponse {
+        pub results: ::std::vec::Vec<EntitySearchResult>,
+        pub total: i32,
+    }
+    impl SearchEntitiesResponse {
+        pub fn builder() -> builder::SearchEntitiesResponse {
+            Default::default()
+        }
+    }
     /// Input format for TEXT fields
     ///
     /// TEXT fields are stored in dedicated columns with optional chunking
@@ -5608,6 +5940,119 @@ pub mod types {
     }
     impl UpdateSchemaResponse {
         pub fn builder() -> builder::UpdateSchemaResponse {
+            Default::default()
+        }
+    }
+    ///`UpsertEntityRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "embeddings": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/EntityEmbeddingInput"
+    ///      }
+    ///    },
+    ///    "flexible_metadata": {
+    ///      "type": "object",
+    ///      "additionalProperties": {}
+    ///    },
+    ///    "id": {
+    ///      "description": "Empty ⇒ the server generates a UUID.",
+    ///      "type": "string"
+    ///    },
+    ///    "provenance": {
+    ///      "oneOf": [
+    ///        {
+    ///          "type": "null"
+    ///        },
+    ///        {
+    ///          "allOf": [
+    ///            {
+    ///              "$ref": "#/components/schemas/EntityProvenanceInput"
+    ///            }
+    ///          ]
+    ///        }
+    ///      ]
+    ///    },
+    ///    "relations": {
+    ///      "type": "array",
+    ///      "items": {
+    ///        "$ref": "#/components/schemas/EntityRelationInput"
+    ///      }
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UpsertEntityRequest {
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub embeddings: ::std::vec::Vec<EntityEmbeddingInput>,
+        #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+        pub flexible_metadata: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        ///Empty ⇒ the server generates a UUID.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub id: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub provenance: ::std::option::Option<EntityProvenanceInput>,
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub relations: ::std::vec::Vec<EntityRelationInput>,
+    }
+    impl ::std::default::Default for UpsertEntityRequest {
+        fn default() -> Self {
+            Self {
+                embeddings: Default::default(),
+                flexible_metadata: Default::default(),
+                id: Default::default(),
+                provenance: Default::default(),
+                relations: Default::default(),
+            }
+        }
+    }
+    impl UpsertEntityRequest {
+        pub fn builder() -> builder::UpsertEntityRequest {
+            Default::default()
+        }
+    }
+    ///`UpsertEntityResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "entity_id",
+    ///    "message",
+    ///    "success"
+    ///  ],
+    ///  "properties": {
+    ///    "entity_id": {
+    ///      "type": "string"
+    ///    },
+    ///    "message": {
+    ///      "type": "string"
+    ///    },
+    ///    "success": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct UpsertEntityResponse {
+        pub entity_id: ::std::string::String,
+        pub message: ::std::string::String,
+        pub success: bool,
+    }
+    impl UpsertEntityResponse {
+        pub fn builder() -> builder::UpsertEntityResponse {
             Default::default()
         }
     }
@@ -7476,6 +7921,430 @@ pub mod types {
                     modality: Ok(value.modality),
                     model_id: Ok(value.model_id),
                     vector: Ok(value.vector),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct EntityDto {
+            collection_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            flexible_metadata: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            id: ::std::result::Result<::std::string::String, ::std::string::String>,
+        }
+        impl ::std::default::Default for EntityDto {
+            fn default() -> Self {
+                Self {
+                    collection_id: Err("no value supplied for collection_id".to_string()),
+                    flexible_metadata: Err("no value supplied for flexible_metadata".to_string()),
+                    id: Err("no value supplied for id".to_string()),
+                }
+            }
+        }
+        impl EntityDto {
+            pub fn collection_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.collection_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for collection_id: {e}"));
+                self
+            }
+            pub fn flexible_metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.flexible_metadata = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for flexible_metadata: {e}")
+                });
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<EntityDto> for super::EntityDto {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: EntityDto,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    collection_id: value.collection_id?,
+                    flexible_metadata: value.flexible_metadata?,
+                    id: value.id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::EntityDto> for EntityDto {
+            fn from(value: super::EntityDto) -> Self {
+                Self {
+                    collection_id: Ok(value.collection_id),
+                    flexible_metadata: Ok(value.flexible_metadata),
+                    id: Ok(value.id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct EntityEmbeddingInput {
+            dimension: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            modality: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            model_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for EntityEmbeddingInput {
+            fn default() -> Self {
+                Self {
+                    dimension: Ok(Default::default()),
+                    modality: Ok(Default::default()),
+                    model_id: Err("no value supplied for model_id".to_string()),
+                    vector: Err("no value supplied for vector".to_string()),
+                }
+            }
+        }
+        impl EntityEmbeddingInput {
+            pub fn dimension<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.dimension = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for dimension: {e}"));
+                self
+            }
+            pub fn modality<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.modality = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for modality: {e}"));
+                self
+            }
+            pub fn model_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.model_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for model_id: {e}"));
+                self
+            }
+            pub fn vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for vector: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<EntityEmbeddingInput> for super::EntityEmbeddingInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: EntityEmbeddingInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    dimension: value.dimension?,
+                    modality: value.modality?,
+                    model_id: value.model_id?,
+                    vector: value.vector?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::EntityEmbeddingInput> for EntityEmbeddingInput {
+            fn from(value: super::EntityEmbeddingInput) -> Self {
+                Self {
+                    dimension: Ok(value.dimension),
+                    modality: Ok(value.modality),
+                    model_id: Ok(value.model_id),
+                    vector: Ok(value.vector),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct EntityProvenanceInput {
+            chunk_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            chunk_position:
+                ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+            extraction_method: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            metadata: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            source_id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for EntityProvenanceInput {
+            fn default() -> Self {
+                Self {
+                    chunk_id: Ok(Default::default()),
+                    chunk_position: Ok(Default::default()),
+                    extraction_method: Ok(Default::default()),
+                    metadata: Ok(Default::default()),
+                    source_id: Ok(Default::default()),
+                }
+            }
+        }
+        impl EntityProvenanceInput {
+            pub fn chunk_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.chunk_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for chunk_id: {e}"));
+                self
+            }
+            pub fn chunk_position<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.chunk_position = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for chunk_position: {e}")
+                });
+                self
+            }
+            pub fn extraction_method<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.extraction_method = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for extraction_method: {e}")
+                });
+                self
+            }
+            pub fn metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.metadata = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for metadata: {e}"));
+                self
+            }
+            pub fn source_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for source_id: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<EntityProvenanceInput> for super::EntityProvenanceInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: EntityProvenanceInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    chunk_id: value.chunk_id?,
+                    chunk_position: value.chunk_position?,
+                    extraction_method: value.extraction_method?,
+                    metadata: value.metadata?,
+                    source_id: value.source_id?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::EntityProvenanceInput> for EntityProvenanceInput {
+            fn from(value: super::EntityProvenanceInput) -> Self {
+                Self {
+                    chunk_id: Ok(value.chunk_id),
+                    chunk_position: Ok(value.chunk_position),
+                    extraction_method: Ok(value.extraction_method),
+                    metadata: Ok(value.metadata),
+                    source_id: Ok(value.source_id),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct EntityRelationInput {
+            properties: ::std::result::Result<
+                ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                ::std::string::String,
+            >,
+            relation_type: ::std::result::Result<::std::string::String, ::std::string::String>,
+            source_entity_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            target_entity_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            weight: ::std::result::Result<::std::option::Option<f32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for EntityRelationInput {
+            fn default() -> Self {
+                Self {
+                    properties: Ok(Default::default()),
+                    relation_type: Err("no value supplied for relation_type".to_string()),
+                    source_entity_id: Err("no value supplied for source_entity_id".to_string()),
+                    target_entity_id: Err("no value supplied for target_entity_id".to_string()),
+                    weight: Ok(Default::default()),
+                }
+            }
+        }
+        impl EntityRelationInput {
+            pub fn properties<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::std::collections::HashMap<::std::string::String, ::std::string::String>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.properties = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for properties: {e}"));
+                self
+            }
+            pub fn relation_type<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.relation_type = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for relation_type: {e}"));
+                self
+            }
+            pub fn source_entity_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.source_entity_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for source_entity_id: {e}")
+                });
+                self
+            }
+            pub fn target_entity_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.target_entity_id = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for target_entity_id: {e}")
+                });
+                self
+            }
+            pub fn weight<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.weight = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for weight: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<EntityRelationInput> for super::EntityRelationInput {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: EntityRelationInput,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    properties: value.properties?,
+                    relation_type: value.relation_type?,
+                    source_entity_id: value.source_entity_id?,
+                    target_entity_id: value.target_entity_id?,
+                    weight: value.weight?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::EntityRelationInput> for EntityRelationInput {
+            fn from(value: super::EntityRelationInput) -> Self {
+                Self {
+                    properties: Ok(value.properties),
+                    relation_type: Ok(value.relation_type),
+                    source_entity_id: Ok(value.source_entity_id),
+                    target_entity_id: Ok(value.target_entity_id),
+                    weight: Ok(value.weight),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct EntitySearchResult {
+            entity: ::std::result::Result<super::EntityDto, ::std::string::String>,
+            score: ::std::result::Result<f32, ::std::string::String>,
+        }
+        impl ::std::default::Default for EntitySearchResult {
+            fn default() -> Self {
+                Self {
+                    entity: Err("no value supplied for entity".to_string()),
+                    score: Err("no value supplied for score".to_string()),
+                }
+            }
+        }
+        impl EntitySearchResult {
+            pub fn entity<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<super::EntityDto>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.entity = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for entity: {e}"));
+                self
+            }
+            pub fn score<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<f32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.score = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for score: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<EntitySearchResult> for super::EntitySearchResult {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: EntitySearchResult,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    entity: value.entity?,
+                    score: value.score?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::EntitySearchResult> for EntitySearchResult {
+            fn from(value: super::EntitySearchResult) -> Self {
+                Self {
+                    entity: Ok(value.entity),
+                    score: Ok(value.score),
                 }
             }
         }
@@ -10775,6 +11644,136 @@ pub mod types {
             }
         }
         #[derive(Clone, Debug)]
+        pub struct SearchEntitiesRequest {
+            filters: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            query_vector: ::std::result::Result<::std::vec::Vec<f32>, ::std::string::String>,
+            top_k: ::std::result::Result<::std::option::Option<i32>, ::std::string::String>,
+        }
+        impl ::std::default::Default for SearchEntitiesRequest {
+            fn default() -> Self {
+                Self {
+                    filters: Ok(Default::default()),
+                    query_vector: Ok(Default::default()),
+                    top_k: Ok(Default::default()),
+                }
+            }
+        }
+        impl SearchEntitiesRequest {
+            pub fn filters<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.filters = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for filters: {e}"));
+                self
+            }
+            pub fn query_vector<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<f32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.query_vector = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for query_vector: {e}"));
+                self
+            }
+            pub fn top_k<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<i32>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.top_k = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for top_k: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<SearchEntitiesRequest> for super::SearchEntitiesRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: SearchEntitiesRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    filters: value.filters?,
+                    query_vector: value.query_vector?,
+                    top_k: value.top_k?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::SearchEntitiesRequest> for SearchEntitiesRequest {
+            fn from(value: super::SearchEntitiesRequest) -> Self {
+                Self {
+                    filters: Ok(value.filters),
+                    query_vector: Ok(value.query_vector),
+                    top_k: Ok(value.top_k),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct SearchEntitiesResponse {
+            results: ::std::result::Result<
+                ::std::vec::Vec<super::EntitySearchResult>,
+                ::std::string::String,
+            >,
+            total: ::std::result::Result<i32, ::std::string::String>,
+        }
+        impl ::std::default::Default for SearchEntitiesResponse {
+            fn default() -> Self {
+                Self {
+                    results: Err("no value supplied for results".to_string()),
+                    total: Err("no value supplied for total".to_string()),
+                }
+            }
+        }
+        impl SearchEntitiesResponse {
+            pub fn results<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::EntitySearchResult>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.results = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for results: {e}"));
+                self
+            }
+            pub fn total<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<i32>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.total = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for total: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<SearchEntitiesResponse> for super::SearchEntitiesResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: SearchEntitiesResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    results: value.results?,
+                    total: value.total?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::SearchEntitiesResponse> for SearchEntitiesResponse {
+            fn from(value: super::SearchEntitiesResponse) -> Self {
+                Self {
+                    results: Ok(value.results),
+                    total: Ok(value.total),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
         pub struct TextFieldInput {
             content: ::std::result::Result<::std::string::String, ::std::string::String>,
             name: ::std::result::Result<::std::string::String, ::std::string::String>,
@@ -11754,6 +12753,187 @@ pub mod types {
                 }
             }
         }
+        #[derive(Clone, Debug)]
+        pub struct UpsertEntityRequest {
+            embeddings: ::std::result::Result<
+                ::std::vec::Vec<super::EntityEmbeddingInput>,
+                ::std::string::String,
+            >,
+            flexible_metadata: ::std::result::Result<
+                ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                ::std::string::String,
+            >,
+            id: ::std::result::Result<
+                ::std::option::Option<::std::string::String>,
+                ::std::string::String,
+            >,
+            provenance: ::std::result::Result<
+                ::std::option::Option<super::EntityProvenanceInput>,
+                ::std::string::String,
+            >,
+            relations: ::std::result::Result<
+                ::std::vec::Vec<super::EntityRelationInput>,
+                ::std::string::String,
+            >,
+        }
+        impl ::std::default::Default for UpsertEntityRequest {
+            fn default() -> Self {
+                Self {
+                    embeddings: Ok(Default::default()),
+                    flexible_metadata: Ok(Default::default()),
+                    id: Ok(Default::default()),
+                    provenance: Ok(Default::default()),
+                    relations: Ok(Default::default()),
+                }
+            }
+        }
+        impl UpsertEntityRequest {
+            pub fn embeddings<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::EntityEmbeddingInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.embeddings = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for embeddings: {e}"));
+                self
+            }
+            pub fn flexible_metadata<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<
+                        ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+                    >,
+                T::Error: ::std::fmt::Display,
+            {
+                self.flexible_metadata = value.try_into().map_err(|e| {
+                    format!("error converting supplied value for flexible_metadata: {e}")
+                });
+                self
+            }
+            pub fn id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<::std::string::String>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for id: {e}"));
+                self
+            }
+            pub fn provenance<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::option::Option<super::EntityProvenanceInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.provenance = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for provenance: {e}"));
+                self
+            }
+            pub fn relations<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::vec::Vec<super::EntityRelationInput>>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.relations = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for relations: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UpsertEntityRequest> for super::UpsertEntityRequest {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UpsertEntityRequest,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    embeddings: value.embeddings?,
+                    flexible_metadata: value.flexible_metadata?,
+                    id: value.id?,
+                    provenance: value.provenance?,
+                    relations: value.relations?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UpsertEntityRequest> for UpsertEntityRequest {
+            fn from(value: super::UpsertEntityRequest) -> Self {
+                Self {
+                    embeddings: Ok(value.embeddings),
+                    flexible_metadata: Ok(value.flexible_metadata),
+                    id: Ok(value.id),
+                    provenance: Ok(value.provenance),
+                    relations: Ok(value.relations),
+                }
+            }
+        }
+        #[derive(Clone, Debug)]
+        pub struct UpsertEntityResponse {
+            entity_id: ::std::result::Result<::std::string::String, ::std::string::String>,
+            message: ::std::result::Result<::std::string::String, ::std::string::String>,
+            success: ::std::result::Result<bool, ::std::string::String>,
+        }
+        impl ::std::default::Default for UpsertEntityResponse {
+            fn default() -> Self {
+                Self {
+                    entity_id: Err("no value supplied for entity_id".to_string()),
+                    message: Err("no value supplied for message".to_string()),
+                    success: Err("no value supplied for success".to_string()),
+                }
+            }
+        }
+        impl UpsertEntityResponse {
+            pub fn entity_id<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.entity_id = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for entity_id: {e}"));
+                self
+            }
+            pub fn message<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<::std::string::String>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.message = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for message: {e}"));
+                self
+            }
+            pub fn success<T>(mut self, value: T) -> Self
+            where
+                T: ::std::convert::TryInto<bool>,
+                T::Error: ::std::fmt::Display,
+            {
+                self.success = value
+                    .try_into()
+                    .map_err(|e| format!("error converting supplied value for success: {e}"));
+                self
+            }
+        }
+        impl ::std::convert::TryFrom<UpsertEntityResponse> for super::UpsertEntityResponse {
+            type Error = super::error::ConversionError;
+            fn try_from(
+                value: UpsertEntityResponse,
+            ) -> ::std::result::Result<Self, super::error::ConversionError> {
+                Ok(Self {
+                    entity_id: value.entity_id?,
+                    message: value.message?,
+                    success: value.success?,
+                })
+            }
+        }
+        impl ::std::convert::From<super::UpsertEntityResponse> for UpsertEntityResponse {
+            fn from(value: super::UpsertEntityResponse) -> Self {
+                Self {
+                    entity_id: Ok(value.entity_id),
+                    message: Ok(value.message),
+                    success: Ok(value.success),
+                }
+            }
+        }
     }
     /// Generation of default values for serde.
     pub mod defaults {
@@ -11950,6 +13130,66 @@ impl Client {
     /// ```
     pub fn delete_collection(&self) -> builder::DeleteCollection<'_> {
         builder::DeleteCollection::new(self)
+    }
+    /// Sends a `POST` request to `/api/v2/collections/{collection_id}/entities`
+    ///
+    /// Arguments:
+    /// - `collection_id`: Collection backing the entities
+    /// - `body`
+    /// ```text
+    /// let response = client.upsert_entity_v2()
+    /// .collection_id(collection_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn upsert_entity_v2(&self) -> builder::UpsertEntityV2<'_> {
+        builder::UpsertEntityV2::new(self)
+    }
+    /// Sends a `POST` request to `/api/v2/collections/{collection_id}/entities/search`
+    ///
+    /// Arguments:
+    /// - `collection_id`: Collection backing the entities
+    /// - `body`
+    /// ```text
+    /// let response = client.search_entities_v2()
+    /// .collection_id(collection_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn search_entities_v2(&self) -> builder::SearchEntitiesV2<'_> {
+        builder::SearchEntitiesV2::new(self)
+    }
+    /// Sends a `GET` request to `/api/v2/collections/{collection_id}/entities/{entity_id}`
+    ///
+    /// Arguments:
+    /// - `collection_id`: Collection backing the entities
+    /// - `entity_id`: Entity ID
+    /// ```text
+    /// let response = client.get_entity_v2()
+    /// .collection_id(collection_id)
+    /// .entity_id(entity_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn get_entity_v2(&self) -> builder::GetEntityV2<'_> {
+        builder::GetEntityV2::new(self)
+    }
+    /// Sends a `DELETE` request to `/api/v2/collections/{collection_id}/entities/{entity_id}`
+    ///
+    /// Arguments:
+    /// - `collection_id`: Collection backing the entities
+    /// - `entity_id`: Entity ID
+    /// ```text
+    /// let response = client.delete_entity_v2()
+    /// .collection_id(collection_id)
+    /// .entity_id(entity_id)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn delete_entity_v2(&self) -> builder::DeleteEntityV2<'_> {
+        builder::DeleteEntityV2::new(self)
     }
     /// Insert or upsert ProximaRecord batches
     ///
@@ -12920,6 +14160,381 @@ pub mod builder {
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::upsert_entity_v2`]
+    ///
+    /// [`Client::upsert_entity_v2`]: super::Client::upsert_entity_v2
+    #[derive(Debug, Clone)]
+    pub struct UpsertEntityV2<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        body: Result<types::builder::UpsertEntityRequest, String>,
+    }
+    impl<'a> UpsertEntityV2<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::UpsertEntityRequest>,
+            <V as std::convert::TryInto<types::UpsertEntityRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `UpsertEntityRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::UpsertEntityRequest,
+                ) -> types::builder::UpsertEntityRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/collections/{collection_id}/entities`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UpsertEntityResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::UpsertEntityRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/entities",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "upsert_entity_v2",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::search_entities_v2`]
+    ///
+    /// [`Client::search_entities_v2`]: super::Client::search_entities_v2
+    #[derive(Debug, Clone)]
+    pub struct SearchEntitiesV2<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        body: Result<types::builder::SearchEntitiesRequest, String>,
+    }
+    impl<'a> SearchEntitiesV2<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::SearchEntitiesRequest>,
+            <V as std::convert::TryInto<types::SearchEntitiesRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value.try_into().map(From::from).map_err(|s| {
+                format!(
+                    "conversion to `SearchEntitiesRequest` for body failed: {}",
+                    s
+                )
+            });
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::SearchEntitiesRequest,
+                ) -> types::builder::SearchEntitiesRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/collections/{collection_id}/entities/search`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::SearchEntitiesResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection_id,
+                body,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::SearchEntitiesRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/entities/search",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "search_entities_v2",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::get_entity_v2`]
+    ///
+    /// [`Client::get_entity_v2`]: super::Client::get_entity_v2
+    #[derive(Debug, Clone)]
+    pub struct GetEntityV2<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        entity_id: Result<::std::string::String, String>,
+    }
+    impl<'a> GetEntityV2<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                entity_id: Err("entity_id was not initialized".to_string()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn entity_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.entity_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for entity_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `GET` request to `/api/v2/collections/{collection_id}/entities/{entity_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::EntityDto>, Error<types::ErrorResponse>> {
+            let Self {
+                client,
+                collection_id,
+                entity_id,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let entity_id = entity_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/entities/{}",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+                encode_path(&entity_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .get(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "get_entity_v2",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::delete_entity_v2`]
+    ///
+    /// [`Client::delete_entity_v2`]: super::Client::delete_entity_v2
+    #[derive(Debug, Clone)]
+    pub struct DeleteEntityV2<'a> {
+        client: &'a super::Client,
+        collection_id: Result<::std::string::String, String>,
+        entity_id: Result<::std::string::String, String>,
+    }
+    impl<'a> DeleteEntityV2<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                collection_id: Err("collection_id was not initialized".to_string()),
+                entity_id: Err("entity_id was not initialized".to_string()),
+            }
+        }
+        pub fn collection_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.collection_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for collection_id failed".to_string()
+            });
+            self
+        }
+        pub fn entity_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.entity_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for entity_id failed".to_string()
+            });
+            self
+        }
+        ///Sends a `DELETE` request to `/api/v2/collections/{collection_id}/entities/{entity_id}`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::UpsertEntityResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                collection_id,
+                entity_id,
+            } = self;
+            let collection_id = collection_id.map_err(Error::InvalidRequest)?;
+            let entity_id = entity_id.map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/collections/{}/entities/{}",
+                client.baseurl,
+                encode_path(&collection_id.to_string()),
+                encode_path(&entity_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .delete(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "delete_entity_v2",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),
