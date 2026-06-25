@@ -2133,10 +2133,13 @@ impl UnifiedHandlers {
                 if is_write {
                     let tenant_ctx = tenant_id
                         .map(crate::storage::tenant::context::TenantContext::for_tenant_id);
+                    // Use `.context` (NOT `anyhow!("DML failed: {e}")`) so a typed
+                    // ProximaDBError::DmlLockConflict in the chain survives for the
+                    // protocol layer (gRPC/pgwire) to downcast + map to ABORTED/55P03.
                     let result = dml
                         .execute_scoped(statement, tenant_ctx.as_ref())
                         .await
-                        .map_err(|e| anyhow::anyhow!("DML failed: {e}"))?;
+                        .context("DML failed")?;
                     return Ok(crate::proto::proximadb_v1::ExecuteQueryResponse {
                         rows: vec![],
                         rows_scanned: 0,

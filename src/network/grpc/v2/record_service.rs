@@ -1902,7 +1902,18 @@ impl ProximaRecordService for ProximaRecordServiceImpl {
             .request_handlers
             .execute_sql_v1(q.query, None, collection, tenant_id.as_deref())
             .await
-            .map_err(|e| Status::internal(format!("ExecuteQuery failed: {e}")))?;
+            .map_err(|e| {
+                // A DML lock conflict → ABORTED (retryable); other errors → INTERNAL.
+                if let Some((resource, holder)) = crate::errors::extract_dml_lock_conflict(&e) {
+                    let msg = match holder {
+                        Some(h) => format!("DML lock conflict on {resource} held by {h}"),
+                        None => format!("DML lock conflict on {resource}"),
+                    };
+                    Status::aborted(msg)
+                } else {
+                    Status::internal(format!("ExecuteQuery failed: {e}"))
+                }
+            })?;
         let rows = resp
             .rows
             .into_iter()

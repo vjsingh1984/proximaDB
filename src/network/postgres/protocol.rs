@@ -3654,6 +3654,18 @@ impl PostgresProtocol {
                             .await
                     }
                     Err(e) => {
+                        if let Some((resource, holder)) =
+                            crate::errors::extract_dml_lock_conflict(&e)
+                        {
+                            let msg = match holder {
+                                Some(h) => {
+                                    format!("lock not available on {resource} (held by {h})")
+                                }
+                                None => format!("lock not available on {resource}"),
+                            };
+                            warn!("DmlService INSERT blocked by DML lock: {msg}");
+                            return self.send_error("ERROR", "55P03", &msg).await;
+                        }
                         warn!("DmlService INSERT failed: {}", e);
                         self.send_error("ERROR", "42P01", &format!("Insert failed: {}", e))
                             .await
@@ -3757,6 +3769,18 @@ impl PostgresProtocol {
                             .await
                     }
                     Err(e) => {
+                        if let Some((resource, holder)) =
+                            crate::errors::extract_dml_lock_conflict(&e)
+                        {
+                            let msg = match holder {
+                                Some(h) => {
+                                    format!("lock not available on {resource} (held by {h})")
+                                }
+                                None => format!("lock not available on {resource}"),
+                            };
+                            warn!("DmlService DELETE blocked by DML lock: {msg}");
+                            return self.send_error("ERROR", "55P03", &msg).await;
+                        }
                         warn!("DmlService DELETE failed: {}", e);
                         self.send_error("ERROR", "42P01", &format!("Delete failed: {}", e))
                             .await
@@ -3854,6 +3878,18 @@ impl PostgresProtocol {
                             .await
                     }
                     Err(e) => {
+                        if let Some((resource, holder)) =
+                            crate::errors::extract_dml_lock_conflict(&e)
+                        {
+                            let msg = match holder {
+                                Some(h) => {
+                                    format!("lock not available on {resource} (held by {h})")
+                                }
+                                None => format!("lock not available on {resource}"),
+                            };
+                            warn!("DmlService UPDATE blocked by DML lock: {msg}");
+                            return self.send_error("ERROR", "55P03", &msg).await;
+                        }
                         // DmlService UPDATE returns error for not-implemented
                         // This is expected - UPDATE requires delete + insert pattern
                         warn!("DmlService UPDATE: {}", e);

@@ -868,14 +868,35 @@ impl DmlService {
                 intent,
                 Self::now_unix_ms(),
             )
-            .await
-            .with_context(|| {
-                format!(
-                    "acquiring DML lock for tenant '{tenant_id}', namespace '{namespace_id}', table '{}'",
-                    table_id.name
-                )
-            })?;
-        Ok(Some(guard))
+            .await;
+        match guard {
+            Ok(g) => Ok(Some(g)),
+            Err(e) => {
+                // A lock conflict → typed ProximaDBError so protocol layers can
+                // map it (pgwire SQLSTATE 55P03 / gRPC ABORTED). Walk the chain
+                // (anyhow downcast_ref only sees the top error) to find the
+                // cluster-local conflict detail.
+                use crate::cluster::partition_lease::DmlLockAcquireError;
+                if let Some(conflict) = e
+                    .chain()
+                    .find_map(|s| s.downcast_ref::<DmlLockAcquireError>())
+                {
+                    let (resource, holder) = conflict.resource_holder();
+                    return Err(crate::core::errors::ProximaDBError::DmlLockConflict {
+                        resource,
+                        holder,
+                    }
+                    .into());
+                }
+                // Non-conflict failure — propagate with context.
+                Err(e).with_context(|| {
+                    format!(
+                        "acquiring DML lock for tenant '{tenant_id}', namespace '{namespace_id}', table '{}'",
+                        table_id.name
+                    )
+                })
+            }
+        }
     }
 
     fn dml_lock_namespace_id(

@@ -73,6 +73,11 @@ pub enum ApiError {
     #[error("Conflict: {0}")]
     Conflict(String),
 
+    /// DML write-lock conflict — another writer holds the table/schema lease.
+    /// REST 409 / gRPC ABORTED / pgwire SQLSTATE 55P03.
+    #[error("DML lock conflict: {0}")]
+    LockConflict(String),
+
     /// Capability not supported by storage engine
     #[error("Capability not supported: {0}")]
     UnsupportedCapability(String),
@@ -128,6 +133,9 @@ impl From<ApiError> for tonic::Status {
                 tonic::Status::invalid_argument(format!("Invalid vector: {}", msg))
             }
             ApiError::Conflict(msg) => tonic::Status::aborted(msg),
+            ApiError::LockConflict(msg) => tonic::Status::aborted(format!(
+                "DML lock conflict: {msg}. Retry the write once the holder releases."
+            )),
             ApiError::UnsupportedCapability(msg) => tonic::Status::invalid_argument(format!(
                 "Capability not supported: {}. Please check storage engine capabilities.",
                 msg
@@ -189,6 +197,7 @@ impl IntoResponse for ApiError {
             ApiError::DimensionMismatch { .. } => (StatusCode::BAD_REQUEST, "dimension_mismatch"),
             ApiError::InvalidVector(_) => (StatusCode::BAD_REQUEST, "invalid_vector"),
             ApiError::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
+            ApiError::LockConflict(_) => (StatusCode::CONFLICT, "lock_conflict"),
             ApiError::UnsupportedCapability(_) => {
                 (StatusCode::BAD_REQUEST, "unsupported_capability")
             }
@@ -399,9 +408,31 @@ impl From<crate::core::errors::ProximaDBError> for ApiError {
                 "{} conflicts with {}",
                 transaction, conflicting_with
             )),
+            E::DmlLockConflict { resource, holder } => ApiError::LockConflict(match holder {
+                Some(h) => format!("{resource} held by {h}"),
+                None => resource,
+            }),
             other => ApiError::Internal(other.to_string()),
         }
     }
+}
+
+/// Walk an `anyhow::Error` chain looking for a DML lock conflict
+/// (`ProximaDBError::DmlLockConflict`). Returns `(resource, holder?)` so
+/// protocol boundaries that receive a raw `anyhow::Error` (pgwire, gRPC) can
+/// detect a lock conflict and map it to the right code (SQLSTATE 55P03 /
+/// `tonic::ABORTED`) without each reimplementing the chain walk. Anyhow's
+/// `downcast_ref` only inspects the top error, so we iterate `.chain()` to see
+/// through `.context(...)` wrappers added along the way.
+pub fn extract_dml_lock_conflict(err: &anyhow::Error) -> Option<(String, Option<String>)> {
+    use crate::core::errors::ProximaDBError as E;
+    err.chain()
+        .find_map(|source| match source.downcast_ref::<E>() {
+            Some(E::DmlLockConflict { resource, holder }) => {
+                Some((resource.clone(), holder.clone()))
+            }
+            _ => None,
+        })
 }
 
 /// Helper function to convert Result<T, ApiError> to Response
@@ -424,6 +455,54 @@ mod tests {
         let err = ApiError::CollectionNotFound("test_collection".to_string());
         let status: tonic::Status = err.into();
         assert_eq!(status.code(), tonic::Code::NotFound);
+    }
+
+    #[test]
+    fn dml_lock_conflict_maps_to_conflict_status_and_http() {
+        use crate::core::errors::ProximaDBError;
+        let mk = || {
+            ApiError::from(ProximaDBError::DmlLockConflict {
+                resource: "public.users".into(),
+                holder: Some("pod-7".into()),
+            })
+        };
+        // Variant + gRPC → ABORTED (retryable).
+        let api = mk();
+        assert!(matches!(api, ApiError::LockConflict(_)));
+        let status: tonic::Status = api.into();
+        assert_eq!(status.code(), tonic::Code::Aborted);
+        // REST → 409 Conflict (ApiError isn't Clone, so rebuild).
+        let resp = mk().into_response();
+        assert_eq!(resp.status().as_u16(), 409);
+    }
+
+    #[test]
+    fn extract_dml_lock_conflict_walks_anyhow_chain() {
+        use crate::core::errors::ProximaDBError;
+        // Plain (no context wrapper).
+        let e: anyhow::Error = ProximaDBError::DmlLockConflict {
+            resource: "public.t".into(),
+            holder: None,
+        }
+        .into();
+        let (resource, holder) = extract_dml_lock_conflict(&e).expect("should find the conflict");
+        assert_eq!(resource, "public.t");
+        assert!(holder.is_none());
+
+        // Through a .context(...) wrapper (the real DmlService path).
+        let wrapped: anyhow::Error = anyhow::Error::new(ProximaDBError::DmlLockConflict {
+            resource: "s.t".into(),
+            holder: Some("pod-1".into()),
+        })
+        .context("DML failed");
+        let (resource, holder) =
+            extract_dml_lock_conflict(&wrapped).expect("should see through context");
+        assert_eq!(resource, "s.t");
+        assert_eq!(holder.as_deref(), Some("pod-1"));
+
+        // Unrelated error → None.
+        let other: anyhow::Error = ProximaDBError::InvalidInput("boom".into()).into();
+        assert!(extract_dml_lock_conflict(&other).is_none());
     }
 
     #[test]
