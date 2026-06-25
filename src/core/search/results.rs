@@ -3,6 +3,7 @@
 use crate::compute::distance_computation::engine::SimilarityResult;
 use crate::proto::proximadb_v1::SourceContent;
 use proximadb_data_model::ProximaValue;
+pub use proximadb_records::is_record_dead;
 // Canonical ranking score types — see roadmap/RANKING_FRAMEWORK_SPEC_2026_05_23.md (R-0).
 pub use proximadb_kernel::{PhaseId, ScoreComponent, ScoreVector};
 use std::collections::HashMap;
@@ -282,8 +283,15 @@ pub struct OptimizedSearchRecord {
     pub timestamp: Option<i64>,
     /// Last-update timestamp (ms since epoch)
     pub updated_at: Option<i64>,
-    /// TTL expiration timestamp (ms since epoch)
+    /// TTL expiration timestamp (ms since epoch). DISPLAY ONLY — unit-muddled
+    /// (ms on the proto wire, secs when derived in the WAL path). Correctness
+    /// (dead-record filtering) MUST use [`Self::valid_to_ns`] via
+    /// [`Self::is_dead`], never this field.
     pub expires_at: Option<i64>,
+    /// Validity end in nanoseconds (mirrors `ProximaRecord.valid_to_ns`).
+    /// `Some(0)` = tombstone; `Some(v)` in the past = TTL-expired. This is
+    /// the canonical field for dead-record filtering.
+    pub valid_to_ns: Option<i64>,
 
     // --- Source / context ---
     /// Original source content (skipped from serde — too large for wire)
@@ -313,6 +321,14 @@ impl OptimizedSearchRecord {
             score,
             ..Default::default()
         }
+    }
+
+    /// Returns true when this record must NOT appear in a read at `now_ns`
+    /// (tombstone `valid_to_ns == Some(0)` or TTL-expired). Uses the
+    /// canonical [`is_record_dead`] on `valid_to_ns` (ns) — never the
+    /// unit-muddled `expires_at`.
+    pub fn is_dead(&self, now_ns: i64) -> bool {
+        is_record_dead(self.valid_to_ns, now_ns)
     }
 
     /// Standardized distance-to-similarity conversion for consistent ranking across all metrics
