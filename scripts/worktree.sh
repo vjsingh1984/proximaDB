@@ -17,6 +17,7 @@
 #   scripts/worktree.sh list                         # list worktrees + state
 #   scripts/worktree.sh rm    <type/topic> [--force] # remove (guards dirty)
 #   scripts/worktree.sh clean [--dry-run]            # reclaim merged/squashed worktrees
+#   scripts/worktree.sh gc    [--all] [--dry-run]    # purge incremental/ bloat (kept worktrees)
 #   scripts/worktree.sh guard                        # fail if in main checkout
 #
 # Typical flow (also the agent mandate — see CLAUDE.md):
@@ -54,8 +55,17 @@ emit_cache_env() {
     printf 'export RUSTC_WRAPPER=%q\n' "$(command -v sccache)"
     printf 'export SCCACHE_DIR=%q\n' "${SCCACHE_DIR:-$HOME/.cache/sccache}"
     printf 'export CARGO_INCREMENTAL=0\n'
+  elif [ "${PROXIMADB_KEEP_INCREMENTAL:-0}" = "1" ]; then
+    printf 'worktree: sccache absent and PROXIMADB_KEEP_INCREMENTAL=1 — incremental ON; expect multi-GB target/ growth per worktree. Reclaim it with: scripts/worktree.sh gc\n' >&2
   else
-    printf 'worktree: sccache not installed — worktrees will cold-compile. Share the cache with: cargo install sccache (or brew install sccache)\n' >&2
+    # No sccache: disable incremental anyway. Per-worktree target/*/incremental
+    # dirs (multi-GB dep-graph.bin/query-cache.bin per crate) are the dominant
+    # RECURRING disk consumer and are never shared across worktrees, so in this
+    # many-worktree workflow their disk cost outweighs their rebuild-speed
+    # benefit. CARGO_INCREMENTAL=0 stops them being created. For fast rebuilds,
+    # install sccache (shared cross-worktree cache) — then this branch is unused.
+    printf 'export CARGO_INCREMENTAL=0\n'
+    printf 'worktree: incremental compilation OFF to avoid multi-GB per-worktree target/ bloat. For fast rebuilds install a shared cache: brew install sccache (or cargo install sccache). Override with PROXIMADB_KEEP_INCREMENTAL=1.\n' >&2
   fi
 }
 
@@ -173,6 +183,45 @@ cmd_clean() {
     "$(awk -v k="$freed_kb" 'BEGIN{printf "%.1f", k/1024/1024}')" >&2
 }
 
+# Reclaim build-cache bloat from worktrees you KEEP — deletes the regenerable
+# target/*/incremental dirs (the dominant recurring consumer: multi-GB
+# dep-graph.bin/query-cache.bin per crate) without removing the worktree or
+# touching source/WIP. Defaults to the CURRENT worktree only (safe — your own
+# session). `--all` sweeps every worktree; cargo just rebuilds the incremental
+# state next compile, but if another session has a build IN FLIGHT there it will
+# be forced to recompile, so --all warns. `--dry-run` previews. The lasting fix
+# is to stop creating these (sccache / CARGO_INCREMENTAL=0 via `new`/`cache-env`).
+cmd_gc() {
+  local all="" dry="" dirs
+  for a in "$@"; do
+    case "$a" in --all) all=1;; --dry-run|-n) dry=1;; esac
+  done
+  if [ -n "$all" ]; then
+    [ -n "$dry" ] || printf 'worktree: gc --all — purging incremental dirs in ALL worktrees; an in-flight build elsewhere will recompile\n' >&2
+    dirs="$(git -C "$(repo_main)" worktree list --porcelain | sed -n 's/^worktree //p')"
+  else
+    dirs="$(git rev-parse --show-toplevel 2>/dev/null || echo)"
+    [ -n "$dirs" ] || die "not in a git repo — cd into a worktree, or pass --all"
+  fi
+  local freed_kb=0
+  while read -r d; do
+    [ -d "$d/target" ] || continue
+    while read -r inc; do
+      [ -d "$inc" ] || continue
+      local kb; kb="$(du -sk "$inc" 2>/dev/null | cut -f1)"; kb="${kb:-0}"
+      freed_kb=$((freed_kb + kb))
+      if [ -n "$dry" ]; then
+        printf 'would gc: %s — %s MB\n' "$inc" "$((kb/1024))" >&2
+      else
+        rm -rf "$inc" && printf 'gc: removed %s — %s MB\n' "$inc" "$((kb/1024))" >&2
+      fi
+    done < <(find "$d/target" -type d -name incremental -prune 2>/dev/null)
+  done <<< "$dirs"
+  local verb="reclaimed"; [ -n "$dry" ] && verb="would reclaim"
+  printf 'worktree: gc %s %s GB of incremental build cache\n' \
+    "$verb" "$(awk -v k="$freed_kb" 'BEGIN{printf "%.1f", k/1024/1024}')" >&2
+}
+
 # Guardrail: refuse if the CWD is the MAIN checkout (agents call this before
 # editing). A worktree's toplevel != the main checkout's toplevel.
 cmd_guard() {
@@ -212,6 +261,7 @@ case "${1:-}" in
   list)  shift; cmd_list "$@" ;;
   rm)    shift; cmd_rm "$@" ;;
   clean) shift; cmd_clean "$@" ;;
+  gc)    shift; cmd_gc "$@" ;;
   guard) shift; cmd_guard "$@" ;;
   cache-env) shift; emit_cache_env ;;
   check) shift; cmd_check "$@" ;;
@@ -222,6 +272,7 @@ worktree: one task = one worktree = one branch (isolated by construction)
   scripts/worktree.sh list                          list worktrees + dirty state
   scripts/worktree.sh rm    <type/topic> [--force]  remove (guards dirty)
   scripts/worktree.sh clean [--dry-run]             drop worktrees merged/squashed to develop, reclaim target/
+  scripts/worktree.sh gc [--all] [--dry-run]        purge target/*/incremental bloat from KEPT worktree(s)
   scripts/worktree.sh guard                         fail if run in the main checkout
   scripts/worktree.sh cache-env                     print sccache env for an existing worktree (eval it)
   scripts/worktree.sh check                         cargo check ONLY the crates changed vs develop
