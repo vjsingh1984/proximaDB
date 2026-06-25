@@ -104,22 +104,36 @@ merges on develop, except TD-133 which is still genuinely Open) and can be prune
 | TD-054 used for two items | Collision resolved (see above).
 |===
 
+== Also reconciled in this PR (follow-up commits)
+
+. *MASTER_FEATURE_DASHBOARD* overhauled — false rows corrected (PULSAR/QUASAR retired; ADR 8→24),
+  phase table refreshed to the real 8 phases + pivots, maturity rows added for lakehouse-pgwire /
+  fusion / agent-memory / connectors / metering, a *Current-Era Capability Index* (TD-060..147) added,
+  6 dead Quick Links pruned. (The 143-row legacy index stays a *frozen March-2026 baseline*, clearly
+  demarcated — not individually re-audited.)
+. *CAPABILITY_MATRIX.toml* fully reconciled — `header_status` flipped from `stale-rows-not-reaudited`
+  to `reconciled-2026-06-24`; wrong rows fixed (`framework_integrations_python` →complete,
+  hybrid/mTLS notes), `controlling_td` cross-links added, ~14 current-era capability rows added.
+  `scripts/validate_capability_matrix.py` passes.
+. *STRATEGIC_ROADMAP* fully reconciled — fixed an 11-error table-syntax bug; collapsed the obsolete
+  Phase 2.5 sprint timeline into a per-item status table; PULSAR/QUASAR →Retired; Phase 3
+  connector/SDK/SaaS statuses; added the Phase 5/6 agent-memory + fusion-seam build and the Phase 7
+  lakehouse-pgwire + gRPC v1→v2 workstreams; added the missing Phase 6 to Vision Alignment.
+
 == Drift deliberately NOT closed here (follow-ups)
 
 To keep this a coherent, reviewable documentation PR (no code changes), the following are recorded but
 deferred:
 
-. *Row-by-row re-audit of MASTER_FEATURE_DASHBOARD (143 rows) and CAPABILITY_MATRIX.toml* against
-  current code. Both self-declare stale; banners now point readers to the live register. A dedicated
-  audit pass should refresh or retire them.
+. *Row-by-row re-audit of the 143-row frozen baseline in MASTER_FEATURE_DASHBOARD* against current
+  code (the maturity table, current-era index, and capability matrix are reconciled; the legacy
+  001–143 rows remain a demarcated historical inventory).
 . *Full re-merge of the DESIGN_DOC_STATUS_INDEX two tables* (the 2026-05-26 table + the 2026-06-24
   addendum) into one, with per-doc WIRED/PARTIAL grep verification.
 . *BEST_IN_CLASS_EXECUTION_TRACKER* workstream log is stale since 2026-03-14; WS-0..WS-7 + M1/M2/M3
   gates should be re-scored.
 . *Renaming dated filenames* (`SYSTEM_MAP_2026_05_30`, `DESIGN_DOC_STATUS_INDEX_2026_05_26`) to current
   dates — deferred to avoid breaking inbound links in this PR; the internal dates are corrected.
-. *SaaS (2026-06-04) + co-design (2026-06-19) pivot integration* into the dashboard/exec-tracker/
-  capability-matrix as first-class dimensions (the register now carries the dimension tags).
 
 == Status snapshot (register, 2026-06-24)
 
