@@ -1841,9 +1841,13 @@ impl SharedServices {
                     // lifetime (matches SharedServices' existing background-task
                     // pattern); interval ≤ lease_ms/2 so a lease never lapses
                     // between renewals.
-                    let _ = manager
-                        .clone()
-                        .spawn_renew_loop(std::time::Duration::from_millis(5_000));
+                    // `drop` (not `let _ =`) so clippy::let_underscore_future doesn't
+                    // fire on the JoinHandle; dropping it does NOT abort the task.
+                    drop(
+                        manager
+                            .clone()
+                            .spawn_renew_loop(std::time::Duration::from_millis(5_000)),
+                    );
                     let lock_service = Arc::new(DmlLockService::new(manager, pod_id));
                     let _ = lock_service.spawn_reconciliation_loop(5_000);
                     Some(lock_service)
