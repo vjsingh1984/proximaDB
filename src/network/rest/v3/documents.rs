@@ -342,7 +342,7 @@ async fn ingest_documents_inner(
     };
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_batch_for_tenant(batch_request, Some(&tenant_id))
         .await
     {

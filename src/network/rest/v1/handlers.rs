@@ -48,6 +48,12 @@ pub struct AppState {
     /// Document service, extracted at boot (TD-104 S5). Feeds the document AQL
     /// source; same `Arc` as the root handler.
     pub document_service: Arc<crate::storage::document::DocumentService>,
+    /// Collection service, extracted at boot (TD-104 S5). Feeds the health
+    /// endpoint's collection-count probe; same `Arc` as the root handler.
+    pub collection_service: Arc<crate::services::CollectionService>,
+    /// Record write-path service (TD-104 S5). Owns record-batch insert/delete
+    /// orchestration; same `Arc` the root handler's `record_ops()` returns.
+    pub record_ops: Arc<crate::api_handlers::record_ops_service::RecordOpsService>,
     /// Cross-modal fusion service — the single retrieval port every search
     /// surface delegates to (`SEARCH_SURFACE_CONTRACT_2026_06_24.adoc`).
     /// Constructed once at boot from the vector + graph services (mirrors the
@@ -186,6 +192,8 @@ impl AppState {
         // Mirrors how `graph_execution_service` is already threaded.
         let vector_operations_service = request_handlers.vector_operations_service.clone();
         let document_service = request_handlers.document_service.clone();
+        let collection_service = request_handlers.collection_service.clone();
+        let record_ops = request_handlers.record_ops();
         let observability_service = request_handlers.observability_service.clone();
         let event_log = request_handlers.event_log.clone();
         // Cross-modal fusion port — built once at boot from the vector + graph
@@ -207,6 +215,8 @@ impl AppState {
             graph_execution_service,
             vector_operations_service,
             document_service,
+            collection_service,
+            record_ops,
             fusion_service,
             observability_service,
             event_log,
@@ -421,7 +431,7 @@ impl AppState {
     pub fn health_state(&self) -> health::HealthState {
         health::HealthState::new(
             self.vector_operations_service.clone(),
-            self.request_handlers.collection_service.clone(),
+            self.collection_service.clone(),
             self.graph_execution_service.clone(),
         )
     }
@@ -1259,10 +1269,7 @@ pub fn create_router(state: AppState) -> axum::Router {
             CsrRelationsStore, InMemoryProvenanceRegistry, ProximaEntityStore,
         };
 
-        let engine = state
-            .request_handlers
-            .vector_operations_service
-            .unified_engine();
+        let engine = state.vector_operations_service.unified_engine();
         let legacy_store = ProximaEntityStore::with_vector_service(
             engine,
             Arc::new(CsrRelationsStore::new()),

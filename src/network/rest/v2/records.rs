@@ -1287,7 +1287,7 @@ pub async fn insert_records(
     );
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_batch_for_tenant(batch_request, Some(&tenant.tenant_id))
         .await
     {
@@ -2114,7 +2114,7 @@ pub async fn delete_record_v2(
     );
 
     match state
-        .request_handlers
+        .record_ops
         .handle_record_delete_batch_for_tenant(
             RichRecordDeleteBatchRequest {
                 collection_id: collection_id.clone(),

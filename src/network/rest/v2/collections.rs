@@ -650,7 +650,7 @@ pub async fn create_collection_v2(
 
     // Create collection via unified handlers
     match state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(collection_request, Some(&tenant.tenant_id))
         .await
     {
@@ -851,7 +851,7 @@ pub async fn get_collection_v2(
     };
 
     match state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -1114,7 +1114,7 @@ pub async fn list_collections_v2(
     };
 
     match state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
     {
@@ -1214,7 +1214,7 @@ pub async fn delete_collection_v2(
     };
 
     state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -2049,7 +2049,7 @@ pub async fn get_collection_route_health_v2(
     };
 
     let resp = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -2068,7 +2068,6 @@ pub async fn get_collection_route_health_v2(
     let distance_metric_str = collection_distance_metric_label(config.distance_metric).to_string();
     let cached_object_economy_status = if engine_str == "sst" {
         state
-            .request_handlers
             .vector_operations_service
             .cached_object_economy_directory_status(&collection_id)
             .as_ref()
@@ -2402,7 +2401,7 @@ pub async fn post_collection_recall_tune_v2(
     };
 
     let resp = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -2732,7 +2731,7 @@ async fn ensure_collection_exists(
         migration_config: Default::default(),
     };
     state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
@@ -2867,7 +2866,7 @@ pub async fn post_collection_recluster_v2(
         migration_config: Default::default(),
     };
     let resp = state
-        .request_handlers
+        .api_handlers
         .handle_collection_operation_for_tenant(request, Some(&tenant.tenant_id))
         .await
         .map_err(|e| {
