@@ -6558,6 +6558,7 @@ dependencies = [
  "proximadb-sdk",
  "proximadb-security",
  "proximadb-storage-common",
+ "proximadb-storage-filesystem-types",
  "proximadb-storage-kv",
  "proximadb-storage-optimization",
  "proximadb-storage-strategy",
@@ -6620,18 +6621,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-admin-ui"
+version = "0.2.0"
+dependencies = [
+ "axum",
+]
+
+[[package]]
 name = "proximadb-ann-bench"
 version = "0.2.0"
 dependencies = [
  "anyhow",
  "proximadb",
-]
-
-[[package]]
-name = "proximadb-admin-ui"
-version = "0.2.0"
-dependencies = [
- "axum",
 ]
 
 [[package]]
@@ -7583,6 +7584,19 @@ dependencies = [
  "tokio",
  "toml 0.8.23",
  "tracing",
+]
+
+[[package]]
+name = "proximadb-storage-filesystem-types"
+version = "0.2.0"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "memmap2",
+ "proximadb-kernel",
+ "serde",
+ "thiserror 1.0.69",
+ "url",
 ]
 
 [[package]]
