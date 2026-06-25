@@ -61,7 +61,7 @@ use crate::cluster::primary_pod_registry::{
 };
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Unified Resource Key (Type-Agnostic Core)
+// Unified Resource Key (Type-Agnostic Core)
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Resource type discriminator — enables routing to correct strategy
@@ -358,20 +358,20 @@ impl ResourceKey {
             None => return None,
         };
 
-        let resource_type = match parts.get(resource_type_idx)? {
-            &"collection" => ResourceType::Collection,
-            &"table" => ResourceType::Table,
-            &"schema" => ResourceType::Schema,
-            &"graph" => ResourceType::Graph,
-            &"graph_node" => ResourceType::GraphNode,
-            &"graph_edge" => ResourceType::GraphEdge,
-            &"document" => ResourceType::Document,
-            &"doc" => ResourceType::Doc,
-            &"model" => ResourceType::Model,
-            &"model_version" => ResourceType::ModelVersion,
-            &"experiment" => ResourceType::Experiment,
-            &"experiment_run" => ResourceType::ExperimentRun,
-            &"feature_set" => ResourceType::FeatureSet,
+        let resource_type = match *parts.get(resource_type_idx)? {
+            "collection" => ResourceType::Collection,
+            "table" => ResourceType::Table,
+            "schema" => ResourceType::Schema,
+            "graph" => ResourceType::Graph,
+            "graph_node" => ResourceType::GraphNode,
+            "graph_edge" => ResourceType::GraphEdge,
+            "document" => ResourceType::Document,
+            "doc" => ResourceType::Doc,
+            "model" => ResourceType::Model,
+            "model_version" => ResourceType::ModelVersion,
+            "experiment" => ResourceType::Experiment,
+            "experiment_run" => ResourceType::ExperimentRun,
+            "feature_set" => ResourceType::FeatureSet,
             _ => return None,
         };
 
@@ -397,7 +397,7 @@ impl ResourceKey {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Resource Strategy Pattern (Type-Specific Behavior)
+// Resource Strategy Pattern (Type-Specific Behavior)
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Strategy for handling a specific resource type.
@@ -442,12 +442,15 @@ pub trait ResourceStrategy: Send + Sync {
     /// - Collection: [collection_id]
     /// - Table: [schema_name, table_name]
     /// - Graph: [graph_id]
+    ///
+    /// Returns [`LeaseError::InvalidKey`] when `components` does not satisfy the
+    /// required shape for this resource type (e.g. an empty slice for a Collection).
     fn make_key(
         &self,
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey;
+    ) -> Result<ResourceKey, LeaseError>;
 
     /// Validate that an operation is allowed on this resource type.
     ///
@@ -507,7 +510,7 @@ pub enum LeaseError {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Built-in Strategy Implementations
+// Built-in Strategy Implementations
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Strategy for vector collections.
@@ -536,16 +539,18 @@ impl ResourceStrategy for CollectionStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.is_empty() {
-            panic!("Collection key requires at least collection_id");
+            return Err(LeaseError::InvalidKey {
+                reason: "Collection key requires at least collection_id".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::Collection,
             resource_id: ResourceIdentifier::single(components[0].clone()),
-        }
+        })
     }
 
     fn validate_operation(&self, operation: &ResourceOperation) -> Result<(), LeaseError> {
@@ -589,11 +594,13 @@ impl ResourceStrategy for TableStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.len() < 2 {
-            panic!("Table key requires schema_name and table_name");
+            return Err(LeaseError::InvalidKey {
+                reason: "Table key requires schema_name and table_name".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::Table,
@@ -601,13 +608,13 @@ impl ResourceStrategy for TableStrategy {
                 components[0].clone(),
                 components[1].clone(),
             ]),
-        }
+        })
     }
 
     fn parent_key(&self, key: &ResourceKey) -> Option<ResourceKey> {
         // Parent of a table is its schema
         match &key.resource_id {
-            ResourceIdentifier::Composite(parts) if parts.len() >= 1 => Some(ResourceKey {
+            ResourceIdentifier::Composite(parts) if !parts.is_empty() => Some(ResourceKey {
                 tenant_id: key.tenant_id.clone(),
                 namespace_id: key.namespace_id.clone(),
                 resource_type: ResourceType::Schema,
@@ -653,16 +660,18 @@ impl ResourceStrategy for SchemaStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.is_empty() {
-            panic!("Schema key requires at least schema_name");
+            return Err(LeaseError::InvalidKey {
+                reason: "Schema key requires at least schema_name".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::Schema,
             resource_id: ResourceIdentifier::single(components[0].clone()),
-        }
+        })
     }
 
     fn validate_operation(&self, operation: &ResourceOperation) -> Result<(), LeaseError> {
@@ -704,16 +713,18 @@ impl ResourceStrategy for GraphStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.is_empty() {
-            panic!("Graph key requires at least graph_id");
+            return Err(LeaseError::InvalidKey {
+                reason: "Graph key requires at least graph_id".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::Graph,
             resource_id: ResourceIdentifier::single(components[0].clone()),
-        }
+        })
     }
 
     fn validate_operation(&self, _operation: &ResourceOperation) -> Result<(), LeaseError> {
@@ -748,11 +759,13 @@ impl ResourceStrategy for GraphNodeStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.len() < 2 {
-            panic!("GraphNode key requires graph_id and node_id");
+            return Err(LeaseError::InvalidKey {
+                reason: "GraphNode key requires graph_id and node_id".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::GraphNode,
@@ -760,7 +773,7 @@ impl ResourceStrategy for GraphNodeStrategy {
                 components[0].clone(),
                 components[1].clone(),
             ]),
-        }
+        })
     }
 }
 
@@ -790,11 +803,13 @@ impl ResourceStrategy for GraphEdgeStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.len() < 2 {
-            panic!("GraphEdge key requires graph_id and edge_id");
+            return Err(LeaseError::InvalidKey {
+                reason: "GraphEdge key requires graph_id and edge_id".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::GraphEdge,
@@ -802,7 +817,7 @@ impl ResourceStrategy for GraphEdgeStrategy {
                 components[0].clone(),
                 components[1].clone(),
             ]),
-        }
+        })
     }
 }
 
@@ -832,16 +847,18 @@ impl ResourceStrategy for DocumentStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.is_empty() {
-            panic!("Document key requires at least collection_id");
+            return Err(LeaseError::InvalidKey {
+                reason: "Document key requires at least collection_id".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::Document,
             resource_id: ResourceIdentifier::single(components[0].clone()),
-        }
+        })
     }
 }
 
@@ -875,23 +892,25 @@ impl ResourceStrategy for ModelStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.is_empty() {
-            panic!("Model key requires at least model_name");
+            return Err(LeaseError::InvalidKey {
+                reason: "Model key requires at least model_name".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::Model,
             resource_id: ResourceIdentifier::single(components[0].clone()),
-        }
+        })
     }
 
     fn parent_key(&self, key: &ResourceKey) -> Option<ResourceKey> {
         // ModelVersion parent is the Model
         if key.resource_type == ResourceType::ModelVersion {
             match &key.resource_id {
-                ResourceIdentifier::Composite(parts) if parts.len() >= 1 => {
+                ResourceIdentifier::Composite(parts) if !parts.is_empty() => {
                     return Some(ResourceKey {
                         tenant_id: key.tenant_id.clone(),
                         namespace_id: key.namespace_id.clone(),
@@ -950,11 +969,13 @@ impl ResourceStrategy for ModelVersionStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.len() < 2 {
-            panic!("ModelVersion key requires model_name and version");
+            return Err(LeaseError::InvalidKey {
+                reason: "ModelVersion key requires model_name and version".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::ModelVersion,
@@ -962,13 +983,13 @@ impl ResourceStrategy for ModelVersionStrategy {
                 components[0].clone(),
                 components[1].clone(),
             ]),
-        }
+        })
     }
 
     fn parent_key(&self, key: &ResourceKey) -> Option<ResourceKey> {
         // Parent of a model version is its model
         match &key.resource_id {
-            ResourceIdentifier::Composite(parts) if parts.len() >= 1 => Some(ResourceKey {
+            ResourceIdentifier::Composite(parts) if !parts.is_empty() => Some(ResourceKey {
                 tenant_id: key.tenant_id.clone(),
                 namespace_id: key.namespace_id.clone(),
                 resource_type: ResourceType::Model,
@@ -1025,23 +1046,25 @@ impl ResourceStrategy for ExperimentStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.is_empty() {
-            panic!("Experiment key requires at least experiment_name");
+            return Err(LeaseError::InvalidKey {
+                reason: "Experiment key requires at least experiment_name".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::Experiment,
             resource_id: ResourceIdentifier::single(components[0].clone()),
-        }
+        })
     }
 
     fn parent_key(&self, key: &ResourceKey) -> Option<ResourceKey> {
         // ExperimentRun parent is the Experiment
         if key.resource_type == ResourceType::ExperimentRun {
             match &key.resource_id {
-                ResourceIdentifier::Composite(parts) if parts.len() >= 1 => {
+                ResourceIdentifier::Composite(parts) if !parts.is_empty() => {
                     return Some(ResourceKey {
                         tenant_id: key.tenant_id.clone(),
                         namespace_id: key.namespace_id.clone(),
@@ -1100,11 +1123,13 @@ impl ResourceStrategy for ExperimentRunStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.len() < 2 {
-            panic!("ExperimentRun key requires experiment_name and run_id");
+            return Err(LeaseError::InvalidKey {
+                reason: "ExperimentRun key requires experiment_name and run_id".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::ExperimentRun,
@@ -1112,13 +1137,13 @@ impl ResourceStrategy for ExperimentRunStrategy {
                 components[0].clone(),
                 components[1].clone(),
             ]),
-        }
+        })
     }
 
     fn parent_key(&self, key: &ResourceKey) -> Option<ResourceKey> {
         // Parent of an experiment run is its experiment
         match &key.resource_id {
-            ResourceIdentifier::Composite(parts) if parts.len() >= 1 => Some(ResourceKey {
+            ResourceIdentifier::Composite(parts) if !parts.is_empty() => Some(ResourceKey {
                 tenant_id: key.tenant_id.clone(),
                 namespace_id: key.namespace_id.clone(),
                 resource_type: ResourceType::Experiment,
@@ -1171,16 +1196,18 @@ impl ResourceStrategy for FeatureSetStrategy {
         tenant_id: &str,
         namespace_id: Option<&str>,
         components: &[String],
-    ) -> ResourceKey {
+    ) -> Result<ResourceKey, LeaseError> {
         if components.is_empty() {
-            panic!("FeatureSet key requires at least feature_set_name");
+            return Err(LeaseError::InvalidKey {
+                reason: "FeatureSet key requires at least feature_set_name".to_string(),
+            });
         }
-        ResourceKey {
+        Ok(ResourceKey {
             tenant_id: tenant_id.to_string(),
             namespace_id: namespace_id.map(|s| s.to_string()),
             resource_type: ResourceType::FeatureSet,
             resource_id: ResourceIdentifier::single(components[0].clone()),
-        }
+        })
     }
 
     fn validate_operation(&self, operation: &ResourceOperation) -> Result<(), LeaseError> {
@@ -1204,7 +1231,7 @@ impl ResourceStrategy for FeatureSetStrategy {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// DML-Level Locking (Hierarchical & Coordinator-Driven)
+// DML-Level Locking (Hierarchical & Coordinator-Driven)
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Lock levels (hierarchical): Schema → Table → Partition → Record
@@ -1523,7 +1550,7 @@ fn dml_lock_outcome_label(outcome: &LockOutcome) -> &'static str {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// Lease Types
+// Lease Types
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Current wall-clock milliseconds since the Unix epoch.
@@ -2377,7 +2404,7 @@ pub fn consult_for_write_leased(
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-/// DML Lock Service (Hierarchical Locking for Fine-Grained DML)
+// DML Lock Service (Hierarchical Locking for Fine-Grained DML)
 ////////////////////////////////////////////////////////////////////////////////
 
 /// Active DML lock (held by a pod for a specific scope with an intent).
@@ -2503,11 +2530,11 @@ impl DmlLockService {
     pub fn spawn_reconciliation_loop(
         &self,
         reconciliation_interval_ms: u64,
-    ) -> tokio::task::JoinHandle<()> {
+    ) -> Option<tokio::task::JoinHandle<()>> {
         let active_locks = self.active_locks.clone();
-        let mut shutdown_rx = self.shutdown_rx.as_ref().unwrap().clone();
+        let mut shutdown_rx = self.shutdown_rx.as_ref()?.clone();
 
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             let mut interval =
                 tokio::time::interval(Duration::from_millis(reconciliation_interval_ms));
             loop {
@@ -2522,7 +2549,7 @@ impl DmlLockService {
                     }
                 }
             }
-        })
+        }))
     }
 
     /// Reconcile expired locks from the in-memory registry.
@@ -3301,11 +3328,13 @@ mod tests {
     #[tokio::test]
     async fn table_strategy_composite_key() -> Result<()> {
         let strategy = TableStrategy;
-        let key = strategy.make_key(
-            "tenant1",
-            None,
-            &["schema1".to_string(), "table1".to_string()],
-        );
+        let key = strategy
+            .make_key(
+                "tenant1",
+                None,
+                &["schema1".to_string(), "table1".to_string()],
+            )
+            .expect("valid key");
 
         assert_eq!(key.tenant_id, "tenant1");
         assert_eq!(key.resource_type, ResourceType::Table);
@@ -3355,14 +3384,18 @@ mod tests {
         let node_strategy = GraphNodeStrategy;
         let edge_strategy = GraphEdgeStrategy;
 
-        let graph_key = graph_strategy.make_key("tenant1", None, &["graph1".to_string()]);
+        let graph_key = graph_strategy
+            .make_key("tenant1", None, &["graph1".to_string()])
+            .expect("valid key");
         assert_eq!(graph_key.resource_type, ResourceType::Graph);
 
-        let node_key = node_strategy.make_key(
-            "tenant1",
-            None,
-            &["graph1".to_string(), "node1".to_string()],
-        );
+        let node_key = node_strategy
+            .make_key(
+                "tenant1",
+                None,
+                &["graph1".to_string(), "node1".to_string()],
+            )
+            .expect("valid key");
         assert_eq!(node_key.resource_type, ResourceType::GraphNode);
         match node_key.resource_id {
             ResourceIdentifier::Composite(parts) => {
@@ -3371,11 +3404,13 @@ mod tests {
             _ => panic!("Expected composite identifier"),
         }
 
-        let edge_key = edge_strategy.make_key(
-            "tenant1",
-            None,
-            &["graph1".to_string(), "edge1".to_string()],
-        );
+        let edge_key = edge_strategy
+            .make_key(
+                "tenant1",
+                None,
+                &["graph1".to_string(), "edge1".to_string()],
+            )
+            .expect("valid key");
         assert_eq!(edge_key.resource_type, ResourceType::GraphEdge);
 
         Ok(())
@@ -3387,11 +3422,14 @@ mod tests {
         let model_strategy = ModelStrategy;
         let version_strategy = ModelVersionStrategy;
 
-        let model_key = model_strategy.make_key("tenant1", None, &["model1".to_string()]);
+        let model_key = model_strategy
+            .make_key("tenant1", None, &["model1".to_string()])
+            .expect("valid key");
         assert_eq!(model_key.resource_type, ResourceType::Model);
 
-        let version_key =
-            version_strategy.make_key("tenant1", None, &["model1".to_string(), "v1.0".to_string()]);
+        let version_key = version_strategy
+            .make_key("tenant1", None, &["model1".to_string(), "v1.0".to_string()])
+            .expect("valid key");
         assert_eq!(version_key.resource_type, ResourceType::ModelVersion);
         match version_key.resource_id {
             ResourceIdentifier::Composite(ref parts) => {
@@ -3420,11 +3458,13 @@ mod tests {
     async fn table_schema_hierarchy() -> Result<()> {
         let table_strategy = TableStrategy;
 
-        let table_key = table_strategy.make_key(
-            "tenant1",
-            None,
-            &["public".to_string(), "users".to_string()],
-        );
+        let table_key = table_strategy
+            .make_key(
+                "tenant1",
+                None,
+                &["public".to_string(), "users".to_string()],
+            )
+            .expect("valid key");
 
         // Verify parent key lookup
         let parent = table_strategy.parent_key(&table_key);
@@ -3740,7 +3780,9 @@ mod tests {
         drop(locks);
 
         // Start reconciliation loop with 50ms interval
-        let handle = lock_service.spawn_reconciliation_loop(50);
+        let handle = lock_service
+            .spawn_reconciliation_loop(50)
+            .expect("reconciliation handle");
 
         // Wait for at least one reconciliation cycle
         tokio::time::sleep(Duration::from_millis(150)).await;
@@ -3766,7 +3808,9 @@ mod tests {
         let lock_service = DmlLockService::new(Arc::new(manager), "pod-1".to_string());
 
         // Start reconciliation loop with 1s interval
-        let handle = lock_service.spawn_reconciliation_loop(1000);
+        let handle = lock_service
+            .spawn_reconciliation_loop(1000)
+            .expect("reconciliation handle");
 
         // Shutdown immediately
         lock_service.shutdown();
@@ -3894,12 +3938,16 @@ mod tests {
         let model_strategy = ModelStrategy;
         let version_strategy = ModelVersionStrategy;
 
-        let model_key = model_strategy.make_key("tenant1", None, &["my_model".to_string()]);
-        let version_key = version_strategy.make_key(
-            "tenant1",
-            None,
-            &["my_model".to_string(), "v1.0".to_string()],
-        );
+        let model_key = model_strategy
+            .make_key("tenant1", None, &["my_model".to_string()])
+            .expect("valid key");
+        let version_key = version_strategy
+            .make_key(
+                "tenant1",
+                None,
+                &["my_model".to_string(), "v1.0".to_string()],
+            )
+            .expect("valid key");
         assert_eq!(model_key.resource_type, ResourceType::Model);
 
         // Verify model version parent is the model
@@ -3923,9 +3971,12 @@ mod tests {
         let exp_strategy = ExperimentStrategy;
         let run_strategy = ExperimentRunStrategy;
 
-        let exp_key = exp_strategy.make_key("tenant1", None, &["exp1".to_string()]);
-        let run_key =
-            run_strategy.make_key("tenant1", None, &["exp1".to_string(), "run123".to_string()]);
+        let exp_key = exp_strategy
+            .make_key("tenant1", None, &["exp1".to_string()])
+            .expect("valid key");
+        let run_key = run_strategy
+            .make_key("tenant1", None, &["exp1".to_string(), "run123".to_string()])
+            .expect("valid key");
         assert_eq!(exp_key.resource_type, ResourceType::Experiment);
 
         // Verify experiment run parent is the experiment
@@ -3972,9 +4023,12 @@ mod tests {
         let model_strategy = ModelStrategy;
         let exp_strategy = ExperimentStrategy;
 
-        let model_key =
-            model_strategy.make_key("tenant1", Some("ml-namespace"), &["my_model".to_string()]);
-        let exp_key = exp_strategy.make_key("tenant1", None, &["exp1".to_string()]);
+        let model_key = model_strategy
+            .make_key("tenant1", Some("ml-namespace"), &["my_model".to_string()])
+            .expect("valid key");
+        let exp_key = exp_strategy
+            .make_key("tenant1", None, &["exp1".to_string()])
+            .expect("valid key");
 
         // Model with namespace: {tenant}/{namespace}/{type}/{name}
         assert_eq!(model_key.to_path(), "tenant1/ml-namespace/model/my_model");
