@@ -303,12 +303,12 @@ async fn pgwire_enforces_on_delete_referential_actions() {
         );
         // SET NULL clears the FK so it no longer references the deleted parent.
         // The record-store value is genuinely ProximaValue::Null (covered by the
-        // `delete_enforces_referential_actions` unit test); over pgwire simple-query
-        // a cleared value renders as SQL NULL (None) — accept either cleared form.
-        let pid = scalar(&child_rows, "pid");
-        assert!(
-            pid.as_deref().map(str::is_empty).unwrap_or(true),
-            "ON DELETE SET NULL must clear the child FK column (pid), got: {pid:?}"
+        // `delete_enforces_referential_actions` unit test) and now renders over
+        // pgwire simple-query as a real SQL NULL (None), not an empty string.
+        assert_eq!(
+            scalar(&child_rows, "pid"),
+            None,
+            "ON DELETE SET NULL must render the child FK as SQL NULL"
         );
     }
 
