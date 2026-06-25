@@ -3712,6 +3712,107 @@ impl EmbeddedProximaDB {
         })
     }
 
+    /// Impact analysis (TD-131): forward blast radius (outgoing edges — "what does X impact") or
+    /// backward (incoming edges — "what impacts X"). `direction` = `"forward"` | `"backward"`.
+    /// Delegates to the server graph service's `impact_analysis`, so the embedded result is the
+    /// server result (the embedded-parity guarantee). Reuses [`Self::traversal_response_to_embedded`].
+    pub fn impact_analysis(
+        &self,
+        graph_id: &str,
+        start_node_id: &str,
+        direction: &str,
+        edge_types: Option<Vec<String>>,
+        max_depth: u32,
+        limit: usize,
+    ) -> Result<EmbeddedGraphTraversalResult, Box<dyn std::error::Error + Send + Sync>> {
+        let dir = match direction {
+            "backward" => crate::graph::ImpactDirection::Backward,
+            _ => crate::graph::ImpactDirection::Forward,
+        };
+        self.runtime.block_on(async {
+            let response = self
+                .shared_services
+                .graph_service
+                .impact_analysis(
+                    graph_id,
+                    start_node_id,
+                    dir,
+                    edge_types.unwrap_or_default(),
+                    max_depth,
+                    limit,
+                )
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                })?;
+            Ok(Self::traversal_response_to_embedded(response))
+        })
+    }
+
+    /// Vector-seed → graph-expand → fuse-by-`oid` (TD-137/TD-131). Constructs the SAME `FusionService`
+    /// core the REST endpoint uses (`FusionService::new(vector, graph)`), so embedded results are
+    /// identical to the server path by construction. `rrf` selects the rank-based fallback policy;
+    /// `grain` = `"nodes"` | `"edges"` | `"both"`. Returns `(FusedItem, FusionStats)`.
+    pub fn fusion_search(
+        &self,
+        graph_id: &str,
+        vector_collection: &str,
+        query_vector: Vec<f32>,
+        max_depth: u32,
+        edge_types: Vec<String>,
+        max_seeds: usize,
+        limit: usize,
+        vector_weight: f32,
+        graph_weight: f32,
+        rrf: bool,
+        grain: &str,
+    ) -> Result<
+        (
+            Vec<crate::core::search::cross_modal_fusion::FusedItem>,
+            crate::core::search::cross_modal_fusion::FusionStats,
+        ),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        self.runtime.block_on(async {
+            use crate::core::search::cross_modal_fusion::FusionPolicy;
+            use crate::services::fusion_service::{FusionService, GraphFusionParams, GraphGrain};
+
+            let service = FusionService::new(
+                self.shared_services.vector_operations_service.clone(),
+                self.shared_services.graph_service.clone(),
+            );
+            let params = GraphFusionParams {
+                graph_id: graph_id.to_string(),
+                vector_collection: vector_collection.to_string(),
+                query_vector,
+                max_depth,
+                edge_types,
+                max_seeds,
+                limit,
+                vector_weight,
+                graph_weight,
+                grain: match grain {
+                    "edges" => GraphGrain::Edges,
+                    "both" => GraphGrain::Both,
+                    _ => GraphGrain::Nodes,
+                },
+                // Embedded = single-repo/local; within-tenant `permitted_principals` RBAC does not
+                // apply (structural isolation only).
+                principal: None,
+                policy: if rrf {
+                    FusionPolicy::rrf()
+                } else {
+                    FusionPolicy::default()
+                },
+            };
+            service.graph_fusion_search(params).await.map_err(
+                |e| -> Box<dyn std::error::Error + Send + Sync> {
+                    Box::new(std::io::Error::other(e.to_string()))
+                },
+            )
+        })
+    }
+
     /// Delete entire graph
     pub fn delete_graph(
         &self,

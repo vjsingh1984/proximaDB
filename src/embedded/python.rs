@@ -2850,6 +2850,99 @@ impl PyProximaDB {
         Ok(dict.into())
     }
 
+    /// Impact analysis (TD-131): forward blast radius (outgoing edges — "what does X impact") or
+    /// backward (incoming edges — "what impacts X"). Delegates to the same server graph service
+    /// method the REST `POST /api/v2/graphs/{id}/impact-analysis` endpoint uses.
+    #[pyo3(signature = (graph_id, node_id, direction="forward", max_depth=3, edge_types=None, limit=100))]
+    fn impact_analysis(
+        &self,
+        py: Python<'_>,
+        graph_id: &str,
+        node_id: &str,
+        direction: &str,
+        max_depth: u32,
+        edge_types: Option<Vec<String>>,
+        limit: usize,
+    ) -> PyResult<Py<PyAny>> {
+        let result = self
+            .db()?
+            .impact_analysis(graph_id, node_id, direction, edge_types, max_depth, limit)
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed impact analysis: {}", e)))?;
+
+        let dict = PyDict::new(py);
+        let nodes: Vec<PyGraphNode> = result.nodes.into_iter().map(PyGraphNode::from).collect();
+        let edges: Vec<PyGraphEdge> = result.edges.into_iter().map(PyGraphEdge::from).collect();
+        dict.set_item("nodes", nodes)?;
+        dict.set_item("edges", edges)?;
+
+        let stats = PyDict::new(py);
+        if let Some(stat_values) = result.stats {
+            stats.set_item("edges_traversed", stat_values.edges_traversed)?;
+            stats.set_item("max_depth_reached", stat_values.max_depth_reached)?;
+        }
+        dict.set_item("stats", stats)?;
+
+        Ok(dict.into())
+    }
+
+    /// Vector-seed → graph-expand → fuse-by-`oid` (TD-137/TD-131). Runs the SAME `FusionService`
+    /// core as the REST endpoint in-process, so embedded results match the server path by
+    /// construction (the embedded-parity guarantee). Returns `{results: [{oid, score,
+    /// source_count}], stats: {...}}`.
+    #[pyo3(signature = (graph_id, vector_collection, query_vector, max_depth=1, edge_types=None, max_seeds=5, limit=10, vector_weight=1.0, graph_weight=1.0, rrf=false, grain="nodes"))]
+    fn fusion_search(
+        &self,
+        py: Python<'_>,
+        graph_id: &str,
+        vector_collection: &str,
+        query_vector: Vec<f32>,
+        max_depth: u32,
+        edge_types: Option<Vec<String>>,
+        max_seeds: usize,
+        limit: usize,
+        vector_weight: f32,
+        graph_weight: f32,
+        rrf: bool,
+        grain: &str,
+    ) -> PyResult<Py<PyAny>> {
+        let (items, stats) = self
+            .db()?
+            .fusion_search(
+                graph_id,
+                vector_collection,
+                query_vector,
+                max_depth,
+                edge_types.unwrap_or_default(),
+                max_seeds,
+                limit,
+                vector_weight,
+                graph_weight,
+                rrf,
+                grain,
+            )
+            .map_err(|e| PyRuntimeError::new_err(format!("Failed fusion search: {}", e)))?;
+
+        let dict = PyDict::new(py);
+        let mut results: Vec<Py<PyAny>> = Vec::with_capacity(items.len());
+        for item in items {
+            let hit = PyDict::new(py);
+            hit.set_item("oid", item.oid)?;
+            hit.set_item("score", item.score)?;
+            hit.set_item("source_count", item.source_count)?;
+            results.push(hit.into());
+        }
+        dict.set_item("results", results)?;
+
+        let stats_dict = PyDict::new(py);
+        stats_dict.set_item("sources_fused", stats.sources_fused)?;
+        stats_dict.set_item("sources_skipped", stats.sources_skipped)?;
+        stats_dict.set_item("candidates_in", stats.candidates_in)?;
+        stats_dict.set_item("items_out", stats.items_out)?;
+        dict.set_item("stats", stats_dict)?;
+
+        Ok(dict.into())
+    }
+
     /// Execute a read-only Cypher query through the embedded GRAPH_QUERY SQL
     /// extension. The durable authority remains the shared graph/query stack.
     #[pyo3(signature = (cypher, graph_id=None))]

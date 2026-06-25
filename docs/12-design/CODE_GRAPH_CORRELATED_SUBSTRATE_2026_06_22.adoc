@@ -268,7 +268,13 @@ A benchmark gap (no e2e cold trace for graph/hybrid at 80K-node scale) is regist
 
 * Spec self-consistency: every TD referenced here has a matching ledger row; every measured number
 traces to a query against `.victor/project.db` or the Lance table.
-* (Future, when TDs are picked up) Embedded parity test: index a small fixture repo via
-`ProximaGraphStore`; assert `impact_analysis(forward/backward)` and hybrid seed→expand match the SQLite
-store on known symbols; record Arrow Flight bulk-load timing in `BENCHMARK_EVIDENCE.toml`; 2-tenant
-isolation test on a code-graph collection; `branch_id` scoping check.
+* Embedded parity test (SHIPPED — ADR-0017 §F gate #3 clearance): `tests/embedded_code_graph_parity_e2e.rs`
+indexes a small synthesized code-graph fixture via `EmbeddedProximaDB` (one graph + one co-indexed
+vector collection) and asserts `impact_analysis(forward/backward)` and the hybrid seed→expand
+(`fusion_search`) return deterministic, correct results. The embedded `fusion_search`/`impact_analysis`
+delegate to the SAME `FusionService`/`GraphOperationsService::impact_analysis` core the REST v2
+endpoints use (PR #308), so the embedded result IS the server result by construction — parity holds
+across embedded vs server without a cross-process comparison. (Remaining future work: SQLite/`.victor`
+baseline comparison on real symbols; Arrow Flight bulk-load timing in `BENCHMARK_EVIDENCE.toml`;
+2-tenant isolation test on a code-graph collection; `branch_id` scoping check.)
+
