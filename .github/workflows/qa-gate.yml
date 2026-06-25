@@ -77,6 +77,28 @@ jobs:
       - name: Run TPC-DS over pgwire
         run: CARGO_BUILD_JOBS=2 cargo test --test tpcds_pgwire_e2e -- --nocapture
 
+  # PAX stacked-quantization recall gate. Storage-format mandate (#8): any
+  # quantization / block / segment change is gated on recall@k vs the exact-f32
+  # baseline, and the ratchet only ever goes UP (#10). These run the RaBitQ→SQ8
+  # cold-scan recall harnesses in `proximadb-block-format` — a recall regression
+  # fails the develop→qa→main promotion. Green at HEAD: recall@10 ≥ 0.90.
+  pax-recall-ratchet:
+    name: ANN Recall Ratchet (PAX RaBitQ→SQ8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev pkg-config protobuf-compiler
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: "v1-qa-pax-recall"
+      - name: Run PAX recall ratchets
+        run: cargo test -p proximadb-block-format --lib recall -- --nocapture
+
   sdk-coverage-ratchet:
     name: SDK Coverage Ratchet
     runs-on: ubuntu-latest
