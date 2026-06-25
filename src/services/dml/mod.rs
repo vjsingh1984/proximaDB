@@ -5,6 +5,34 @@
 //! - UPDATE ... SET ... WHERE ...
 //! - DELETE FROM ... WHERE ...
 //! - UPSERT / INSERT ... ON CONFLICT ...
+//!
+//! ## Cross-Model Transactions (TD-133)
+//!
+//! For atomic multi-modal writes (node + embedding + edges), use the
+//! [`CrossModelTransactionCoordinator`](crate::services::transaction::CrossModelTransactionCoordinator):
+//!
+//! ```ignore
+//! // Coordinator is constructed with a graph engine, record store, and the
+//! // embedding collection id (see CrossModelTransactionCoordinator::new).
+//! let result = coordinator
+//!     .write_symbol_atomically(node, embedding, edges, &tenant_ctx)
+//!     .await?;
+//!
+//! match result {
+//!     TransactionOutcome::Committed { node_oid } => {
+//!         println!("Symbol committed: {}", node_oid);
+//!     }
+//!     TransactionOutcome::RolledBack { reason } => {
+//!         eprintln!("Transaction rolled back: {}", reason);
+//!     }
+//!     TransactionOutcome::Disabled => {
+//!         // Fall back to legacy separate-write path
+//!     }
+//! }
+//! ```
+//!
+//! The coordinator is behind the `PROXIMADB_CROSS_MODEL_TX_ENABLED` flag and
+//! provides atomicity guarantees across graph and vector storage engines.
 
 use std::collections::HashMap;
 use std::sync::Arc;
