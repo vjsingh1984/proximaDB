@@ -1097,7 +1097,12 @@ impl GraphServiceImpl {
         }
     }
 
-    /// Execute hybrid vector-graph query
+    /// Execute hybrid vector-graph query.
+    ///
+    /// DEPRECATED (TD-143): v1 entry — delegates to the deprecated inherent impl,
+    /// reachable only when `enable_grpc_v1_compat` is on. Prefer v2
+    /// `ProximaFusionService.FusionSearch`.
+    #[allow(deprecated)]
     async fn execute_hybrid_query(
         &self,
         request: Request<HybridSearchRequest>,

@@ -61,7 +61,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tracing::{debug, error, info, info_span};
+use tracing::{debug, error, info, info_span, warn};
 
 /// Global request counter for generating unique request IDs
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1413,12 +1413,41 @@ impl UnifiedHandlers {
         }
     }
 
-    /// Execute a hybrid vector-graph query
+    /// Execute a hybrid vector-graph query.
+    ///
+    /// # DEPRECATED (TD-143)
+    ///
+    /// This v1 `ExecuteHybridQuery` path is **dormant**: it is only reachable when
+    /// `enable_grpc_v1_compat` is enabled (default OFF; `PROXIMADB_GRPC_V1_COMPAT`),
+    /// and the REST v1 surface for it is a mock. It violates the one-fusion-engine
+    /// contract (#280) — it owns its own ranking via `combination_strategy`, which is a
+    /// sequential vector→graph / graph→vector *pipeline*, not the PIT-calibrated
+    /// score-fusion of v2 `graph_fusion_search`. It is also **not tenant-scoped**, and
+    /// its response shape (`nodes`/`edges`/`paths`/`vector_results`) has no 1:1 mapping
+    /// to v2 fused results (`FusedItem` + `FusionStats`).
+    ///
+    /// Use v2 **FusionSearch** instead — REST `POST /api/v2/graphs/{graph_id}/fusion-search`
+    /// (`GraphFusionParams`) or gRPC `ProximaFusionService.FusionSearch`. Hard removal is
+    /// deferred until the v1 compat surface itself sunsets; do not extend this path.
+    #[deprecated(
+        note = "v1 ExecuteHybridQuery is a dormant legacy path behind enable_grpc_v1_compat \
+                (default OFF). It owns its own combination_strategy ranking (sequential \
+                pipeline, not score-fusion) and is not tenant-scoped. Use v2 FusionSearch \
+                (POST /api/v2/graphs/{graph_id}/fusion-search, GraphFusionParams). See TD-143."
+    )]
     pub async fn execute_hybrid_query(
         &self,
         request: crate::proto::proximadb_v1::HybridSearchRequest,
     ) -> Result<crate::proto::proximadb_v1::HybridSearchResponse> {
         let start_time = std::time::Instant::now();
+        warn!(
+            target: "proximadb::deprecation",
+            "execute_hybrid_query (v1 ExecuteHybridQuery) is DEPRECATED — dormant behind \
+             enable_grpc_v1_compat (default OFF). It does its own combination_strategy ranking \
+             (sequential pipeline, not score-fusion) and is not tenant-scoped. Use v2 \
+             FusionSearch (POST /api/v2/graphs/{{graph_id}}/fusion-search, GraphFusionParams) \
+             or gRPC ProximaFusionService.FusionSearch. See TD-143."
+        );
         info!(
             "Executing hybrid query with strategy: {:?}",
             request.combination_strategy
@@ -3858,6 +3887,8 @@ impl proximadb_runtime::ApiHandlersPort for UnifiedHandlers {
         .await
     }
 
+    /// DEPRECATED (TD-143): forwards to the deprecated v1 inherent impl.
+    #[allow(deprecated)]
     async fn execute_hybrid_query(
         &self,
         request: crate::proto::proximadb_v1::HybridSearchRequest,

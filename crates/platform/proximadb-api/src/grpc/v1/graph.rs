@@ -318,6 +318,8 @@ impl GraphServiceTrait for GraphServiceImpl {
 
     // ── Hybrid query ──────────────────────────────────────────────────────
 
+    /// DEPRECATED (TD-143): v1 entry — calls the deprecated `GraphPort::execute_hybrid_query`.
+    #[allow(deprecated)]
     async fn execute_hybrid_query(
         &self,
         request: Request<HybridSearchRequest>,
