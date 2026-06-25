@@ -287,6 +287,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          # Match rust-toolchain.toml's declared components + target so `cargo
+          # check` doesn't trigger a rustup re-sync that collides installing
+          # rustfmt-preview on the runner's existing bin/cargo-fmt (T4.2 red).
+          components: rustfmt, clippy
+          targets: x86_64-unknown-linux-gnu
       - name: Install System Dependencies
         run: |
           sudo apt-get update
