@@ -10,6 +10,7 @@
 //
 // Durability: All write operations are WAL-logged before in-memory update
 
+use dashmap::DashMap;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -66,7 +67,7 @@ pub struct DocumentService {
     collections: Arc<RwLock<HashMap<String, DocumentCollection>>>,
     /// In-memory document store (hot cache, backed by WAL)
     /// Used when document_engine is None (legacy mode)
-    documents: Arc<RwLock<HashMap<String, HashMap<String, DocumentRecord>>>>,
+    documents: Arc<DashMap<String, HashMap<String, DocumentRecord>>>,
     /// Canonical durable record store for the Phase 2 document rebase.
     /// When the `canonical-document-store` feature is enabled and this is
     /// configured, document writes/read-throughs use `ProximaRecord` as the
@@ -91,7 +92,7 @@ impl DocumentService {
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            documents: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(DashMap::new()),
             #[cfg(feature = "canonical-document-store")]
             canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
@@ -114,7 +115,7 @@ impl DocumentService {
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            documents: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(DashMap::new()),
             #[cfg(feature = "canonical-document-store")]
             canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
@@ -134,7 +135,7 @@ impl DocumentService {
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            documents: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(DashMap::new()),
             #[cfg(feature = "canonical-document-store")]
             canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(None)),
@@ -160,7 +161,7 @@ impl DocumentService {
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            documents: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(DashMap::new()),
             canonical_record_store: Some(record_store),
             wal_writer: Arc::new(Mutex::new(None)),
             wal_path: String::new(),
@@ -190,7 +191,7 @@ impl DocumentService {
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            documents: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(DashMap::new()),
             canonical_record_store: Some(record_store),
             wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
             wal_path,
@@ -227,7 +228,7 @@ impl DocumentService {
             index_manager: Arc::new(IndexManager::new()),
             query_executor: Arc::new(QueryExecutor::new()),
             collections: Arc::new(RwLock::new(HashMap::new())),
-            documents: Arc::new(RwLock::new(HashMap::new())),
+            documents: Arc::new(DashMap::new()),
             #[cfg(feature = "canonical-document-store")]
             canonical_record_store: None,
             wal_writer: Arc::new(Mutex::new(Some(wal_writer))),
@@ -296,8 +297,8 @@ impl DocumentService {
                         document,
                     } => {
                         // Replay insert
-                        let mut documents = self.documents.write().await;
-                        let collection_docs = documents.entry(collection_id).or_default();
+                        let documents = &*self.documents;
+                        let mut collection_docs = documents.entry(collection_id).or_default();
                         collection_docs.insert(document.id.clone(), document);
                         recovered_docs += 1;
                     }
@@ -310,8 +311,8 @@ impl DocumentService {
                             .push(RecordRecoveryOperation::Upsert(Box::new(record.clone())));
 
                         if let Some(document) = proxima_record_to_legacy_document(&record) {
-                            let mut documents = self.documents.write().await;
-                            let collection_docs = documents.entry(collection_id).or_default();
+                            let documents = &*self.documents;
+                            let mut collection_docs = documents.entry(collection_id).or_default();
                             collection_docs.insert(document.id.clone(), document);
                             recovered_docs += 1;
                         } else {
@@ -328,8 +329,8 @@ impl DocumentService {
                         ..
                     } => {
                         // Update version (simplified recovery - full update replay would need stored doc)
-                        let mut documents = self.documents.write().await;
-                        if let Some(collection_docs) = documents.get_mut(&collection_id)
+                        let documents = &*self.documents;
+                        if let Some(mut collection_docs) = documents.get_mut(&collection_id)
                             && let Some(doc) = collection_docs.get_mut(&document_id)
                         {
                             doc.version = new_version;
@@ -340,8 +341,8 @@ impl DocumentService {
                         document_id,
                     } => {
                         // Replay delete
-                        let mut documents = self.documents.write().await;
-                        if let Some(collection_docs) = documents.get_mut(&collection_id) {
+                        let documents = &*self.documents;
+                        if let Some(mut collection_docs) = documents.get_mut(&collection_id) {
                             collection_docs.remove(&document_id);
                         }
                     }
@@ -356,8 +357,8 @@ impl DocumentService {
                         #[cfg(not(feature = "canonical-document-store"))]
                         let _ = record_oid;
 
-                        let mut documents = self.documents.write().await;
-                        if let Some(collection_docs) = documents.get_mut(&collection_id) {
+                        let documents = &*self.documents;
+                        if let Some(mut collection_docs) = documents.get_mut(&collection_id) {
                             collection_docs.remove(&document_id);
                         }
                     }
@@ -366,8 +367,8 @@ impl DocumentService {
                         documents: docs,
                     } => {
                         // Replay batch insert
-                        let mut doc_store = self.documents.write().await;
-                        let collection_docs = doc_store.entry(collection_id).or_default();
+                        let doc_store = &*self.documents;
+                        let mut collection_docs = doc_store.entry(collection_id).or_default();
                         for doc in docs {
                             collection_docs.insert(doc.id.clone(), doc);
                             recovered_docs += 1;
@@ -391,7 +392,7 @@ impl DocumentService {
                         // Replay collection deletion
                         let mut collections = self.collections.write().await;
                         collections.remove(&collection_id);
-                        let mut documents = self.documents.write().await;
+                        let documents = &*self.documents;
                         documents.remove(&collection_id);
                     }
                 }
@@ -562,7 +563,7 @@ impl DocumentService {
 
         // Get documents for this collection
         let docs_to_flush: Vec<DocumentRecord> = {
-            let documents = self.documents.read().await;
+            let documents = &*self.documents;
             match documents.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
                 None => {
@@ -854,7 +855,7 @@ impl DocumentService {
 
         // Remove documents
         {
-            let mut documents = self.documents.write().await;
+            let documents = &*self.documents;
             documents.remove(name);
         }
 
@@ -940,8 +941,8 @@ impl DocumentService {
 
         // Store document in memory (backed by WAL for durability)
         {
-            let mut documents = self.documents.write().await;
-            let collection_docs = documents.entry(collection.to_string()).or_default();
+            let documents = &*self.documents;
+            let mut collection_docs = documents.entry(collection.to_string()).or_default();
             collection_docs.insert(doc_id.clone(), record.clone());
         }
 
@@ -1027,7 +1028,7 @@ impl DocumentService {
         }
 
         // Retrieve from in-memory store
-        let documents = self.documents.read().await;
+        let documents = &*self.documents;
         if let Some(collection_docs) = documents.get(collection)
             && let Some(record) = collection_docs.get(id)
         {
@@ -1147,8 +1148,8 @@ impl DocumentService {
 
         // Persist updated document to in-memory store
         {
-            let mut documents = self.documents.write().await;
-            if let Some(collection_docs) = documents.get_mut(collection) {
+            let documents = &*self.documents;
+            if let Some(mut collection_docs) = documents.get_mut(collection) {
                 collection_docs.insert(id.to_string(), record.clone());
             }
         }
@@ -1444,7 +1445,7 @@ impl DocumentService {
                     .context("Failed to check canonical document record existence")?
                     .is_some()
             } else {
-                let documents = self.documents.read().await;
+                let documents = &*self.documents;
                 documents
                     .get(collection)
                     .is_some_and(|docs| docs.contains_key(id))
@@ -1452,7 +1453,7 @@ impl DocumentService {
 
             #[cfg(not(feature = "canonical-document-store"))]
             {
-                let documents = self.documents.read().await;
+                let documents = &*self.documents;
                 documents
                     .get(collection)
                     .is_some_and(|docs| docs.contains_key(id))
@@ -1486,8 +1487,8 @@ impl DocumentService {
 
         // Remove from in-memory store
         {
-            let mut documents = self.documents.write().await;
-            if let Some(collection_docs) = documents.get_mut(collection) {
+            let documents = &*self.documents;
+            if let Some(mut collection_docs) = documents.get_mut(collection) {
                 collection_docs.remove(id);
             }
         }
@@ -1549,7 +1550,7 @@ impl DocumentService {
                     .filter_map(proxima_record_to_legacy_document)
                     .collect()
             } else {
-                let docs = self.documents.read().await;
+                let docs = &*self.documents;
                 match docs.get(collection) {
                     Some(collection_docs) => collection_docs.values().cloned().collect(),
                     None => Vec::new(),
@@ -1558,7 +1559,7 @@ impl DocumentService {
 
         #[cfg(not(feature = "canonical-document-store"))]
         let documents: Vec<DocumentRecord> = {
-            let docs = self.documents.read().await;
+            let docs = &*self.documents;
             match docs.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
                 None => Vec::new(),
@@ -1621,7 +1622,7 @@ impl DocumentService {
 
         // Get all documents from the collection
         let documents: Vec<DocumentRecord> = {
-            let docs = self.documents.read().await;
+            let docs = &*self.documents;
             match docs.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
                 None => Vec::new(),
@@ -1683,7 +1684,7 @@ impl DocumentService {
 
         // Get all documents from the source collection
         let documents: Vec<DocumentRecord> = {
-            let docs = self.documents.read().await;
+            let docs = &*self.documents;
             match docs.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
                 None => Vec::new(),
@@ -1755,7 +1756,7 @@ impl DocumentService {
 
         // Get all documents from the source collection
         let documents: Vec<DocumentRecord> = {
-            let docs = this.documents.read().await;
+            let docs = &*this.documents;
             match docs.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
                 None => Vec::new(),
@@ -1856,7 +1857,7 @@ impl DocumentService {
 
         // Get all documents from the collection
         let documents: Vec<DocumentRecord> = {
-            let docs = self.documents.read().await;
+            let docs = &*self.documents;
             match docs.get(collection) {
                 Some(collection_docs) => collection_docs.values().cloned().collect(),
                 None => Vec::new(),
