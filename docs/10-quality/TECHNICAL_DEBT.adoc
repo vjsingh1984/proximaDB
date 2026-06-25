@@ -10,10 +10,15 @@ link:../_archive/quality/2026-06/TECHNICAL_DEBT_CLOSED_2026_06_24.adoc[the Close
 
 [IMPORTANT]
 ====
-This register tracks *implementation state*, not *product-support level*.
+This register tracks _implementation state_, not _product-support level_.
 link:../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc] is the authoritative product-support contract
 and wins for any customer, release-note, or marketing claim. A "Resolved" status here means the code
 path is complete in the working tree — it does *not* by itself make a capability a Supported v0.2 surface.
+
+*Support-tier anchors* (the controlling tiers in `SUPPORTED_SURFACE.adoc`, repeated here so the
+honesty guard cannot drift): external catalogs are _Experimental in v0.2 (see SUPPORTED_SURFACE)_;
+mTLS and the time-series / event-sourcing foundations are _Beta in v0.2 (see SUPPORTED_SURFACE)_;
+framework integrations ship in the SDK but are Not a v0.2 supported surface (see SUPPORTED_SURFACE).
 ====
 
 [NOTE]
