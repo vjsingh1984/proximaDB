@@ -2762,7 +2762,7 @@ impl UnifiedIvfIndex {
                 .read()
                 .unwrap_or_else(|poisoned| poisoned.into_inner());
             for (vector_id, _h, _cd) in coarse {
-                if let Some(view) = collection.get(&vector_id)
+                if let Some(view) = collection.get(vector_id)
                     && let Some(vector_data) = view.as_f32()
                 {
                     let distance = self
