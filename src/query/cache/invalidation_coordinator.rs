@@ -295,9 +295,10 @@ mod tests {
         let s = InvalidationSummary {
             plan_cache_entries: 3,
             batch_groups_closed: 5,
+            query_cache_entries: 2,
             corpus_version_after: None,
         };
-        assert_eq!(s.total(), 8);
+        assert_eq!(s.total(), 10);
     }
 
     // Bind one cache key digest to a stable u64 so the coordinator tests
