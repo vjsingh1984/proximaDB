@@ -999,7 +999,33 @@ impl GraphOperationsService {
         if let Some(engine) = self.graphs.get(graph_id) {
             match engine.value().as_ref() {
                 crate::graph::engines::GraphEngineImpl::Orion(orion) => {
+                    let scoped = crate::storage::persistence::write_ahead_log::wal_operations::canonical_replay_scope_enabled();
+                    // TD-066 (c) Part 2: stamp the engine WAL with a
+                    // `CanonicalEmission(checkpoint_lsn)` marker before the
+                    // engine WAL flush, so every subsequent frame is known to
+                    // post-date this canonical checkpoint.
+                    if scoped {
+                        if let Some(persistence) = orion.persistence() {
+                            persistence
+                                .append_canonical_emission_marker(checkpoint_lsn)
+                                .await?;
+                        }
+                    }
+                    // Flush the engine WAL so the marker is durable BEFORE the
+                    // snapshot is written. This guarantees the recovery
+                    // invariant "snapshot(X) exists ⟹ marker(X) is durable",
+                    // so a loaded snapshot can always be correlated to its
+                    // marker and replay scoped precisely (no over-replay).
                     orion.flush_wal().await?;
+                    // Write an engine snapshot tagged with checkpoint_lsn so the
+                    // canonical checkpoint is backed by real data — the marker
+                    // alone is only a watermark. Crash-safe: ordered after the
+                    // marker flush (see invariant above).
+                    if scoped {
+                        if let Some(persistence) = orion.persistence() {
+                            persistence.save_snapshot(orion, checkpoint_lsn).await?;
+                        }
+                    }
                 }
             }
         }
