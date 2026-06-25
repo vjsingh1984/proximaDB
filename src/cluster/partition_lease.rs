@@ -2232,6 +2232,34 @@ impl PartitionLeaseManager {
         Ok(self.reconcile(tenant_id, collection_id, outcome))
     }
 
+    /// Ensure this pod owns `(tenant, collection)` with at most one object-store
+    /// round-trip per pod per collection (lease = latency optimization).
+    ///
+    /// Fast path: if the shared registry already binds the partition to this pod,
+    /// the renew loop keeps the durable lease warm, so return `true` without I/O.
+    /// Slow path (no binding, or a foreign owner): [`acquire`] (CAS) + reconcile,
+    /// which repoints the shared registry at the true owner so `consult_for_write`
+    /// is durably backed rather than empty-after-restart. Returns whether this pod
+    /// owns the partition. Callers fail-open on `Err` (transient object-store
+    /// blip), matching the lease stack's bootstrap posture; the storage-write
+    /// fence (A6) is the boundary backstop for the residual handoff race.
+    pub async fn ensure_owned(
+        &self,
+        tenant_id: &str,
+        collection_id: &str,
+        now_ms: i64,
+    ) -> Result<bool> {
+        if self
+            .registry
+            .lookup(tenant_id, collection_id)
+            .map(|binding| binding.pod == self.self_pod_id)
+            .unwrap_or(false)
+        {
+            return Ok(true);
+        }
+        self.acquire(tenant_id, collection_id, now_ms).await
+    }
+
     /// Acquire a lease for a resource identified by its ResourceKey.
     ///
     /// This is the multi-modality entry point that uses the registered strategy
@@ -3370,6 +3398,42 @@ mod tests {
             consult_for_write(&reg_a, "A", "t", "c"),
             WriteRoutingDecision::Misrouted {
                 target_pod: "B".to_string()
+            }
+        );
+        Ok(())
+    }
+
+    /// `ensure_owned` is the lease-on-write entry point: it acquires on a miss
+    /// (making the shared registry truthful), is idempotent on the fast-path when
+    /// already held, and steps a non-owner down to the true owner so the gate
+    /// Misroutes instead of admitting a split-brain write.
+    #[tokio::test]
+    async fn ensure_owned_idempotent_and_steps_down() -> Result<()> {
+        let backing = shared_backing();
+        let reg_a = Arc::new(PrimaryPodRegistry::new());
+        let reg_b = Arc::new(PrimaryPodRegistry::new());
+        let mgr_a =
+            PartitionLeaseManager::new(Arc::new(store(&backing)), reg_a.clone(), "A", LEASE_MS);
+        let mgr_b =
+            PartitionLeaseManager::new(Arc::new(store(&backing)), reg_b.clone(), "B", LEASE_MS);
+
+        // A's first write: ensure_owned acquires (registry miss) → A owns → Allow.
+        assert!(mgr_a.ensure_owned("t", "c", 0).await?);
+        assert_eq!(
+            consult_for_write(&reg_a, "A", "t", "c"),
+            WriteRoutingDecision::Allow
+        );
+        // A's subsequent write: fast-path (already bound to self) → still owns.
+        assert!(mgr_a.ensure_owned("t", "c", 1_000).await?);
+
+        // B's first write to the same collection: ensure_owned acquires → A holds
+        // the live lease → B does NOT own it, and B's shared registry is repointed
+        // to A so its gate Misroutes (no split brain).
+        assert!(!mgr_b.ensure_owned("t", "c", 2_000).await?);
+        assert_eq!(
+            consult_for_write(&reg_b, "B", "t", "c"),
+            WriteRoutingDecision::Misrouted {
+                target_pod: "A".to_string()
             }
         );
         Ok(())

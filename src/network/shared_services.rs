@@ -1828,7 +1828,7 @@ impl SharedServices {
         // `reconcile`→`assign` (step-down on lease loss) updated a registry
         // nobody read, and the assigned owner id never matched the gate's id —
         // a displaced pod kept seeing `Allow` and kept writing (split brain).
-        let dml_lock_service = {
+        let (dml_lock_service, lease_manager_for_writes) = {
             use crate::cluster::partition_lease::{
                 DmlLockService, PartitionLeaseManager, PartitionLeaseStore,
             };
@@ -1855,9 +1855,13 @@ impl SharedServices {
                     manager
                         .clone()
                         .spawn_renew_loop(std::time::Duration::from_millis(5_000));
-                    let lock_service = Arc::new(DmlLockService::new(manager, pod_id));
+                    let lock_service = Arc::new(DmlLockService::new(manager.clone(), pod_id));
                     let _ = lock_service.spawn_reconciliation_loop(5_000);
-                    Some(lock_service)
+                    // Surface the manager so RecordOpsService can lease-on-write:
+                    // acquire/confirm the collection lease before each vector-record
+                    // write so the shared primary-pod registry the gates consult is
+                    // durably backed (not empty-after-restart → wrong-pod write).
+                    (Some(lock_service), Some(manager))
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -1866,7 +1870,7 @@ impl SharedServices {
                         "DML lock service disabled (lease store unavailable); \
                          DML writes run lock-free (fail-open)"
                     );
-                    None
+                    (None, None)
                 }
             }
         };
@@ -1897,6 +1901,19 @@ impl SharedServices {
 
         request_handlers.set_dml_service(dml_service_for_grpc);
         debug!("✅ SharedServices::new - DmlService wired to UnifiedHandlers for EXPLAIN routing");
+
+        // Lease-on-write: give RecordOpsService the durable lease manager so the
+        // vector-record write path acquires/confirms the collection lease and the
+        // shared registry the network gates consult reflects ground truth after
+        // restart/partition (Scenario-1 routing truth). Absent → fail-open.
+        if let Some(lease_manager) = lease_manager_for_writes {
+            request_handlers
+                .record_ops()
+                .set_lease_manager(lease_manager);
+            debug!(
+                "✅ SharedServices::new - PartitionLeaseManager wired to RecordOpsService (lease-on-write)"
+            );
+        }
 
         // TD-135: wire a DdlService built from the SAME catalog_manager pgwire uses
         // (DdlService is a thin wrapper over the shared catalog), so relational
