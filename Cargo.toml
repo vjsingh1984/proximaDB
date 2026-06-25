@@ -230,18 +230,6 @@ numpy = { version = "0.28" }
 faer = { version = "0.20", default-features = false, features = ["std"] }
 statrs = "0.17"
 
-[[bin]]
-name = "simple-perf-bench"
-path = "benches/simple_perf_bench.rs"
-
-[[bin]]
-name = "grpc-benchmark"
-path = "benches/grpc_benchmark.rs"
-
-[[bin]]
-name = "quick-perf-bench"
-path = "benches/quick_perf_bench.rs"
-
 # Python embedded library (cdylib for PyO3)
 [lib]
 name = "proximadb"
