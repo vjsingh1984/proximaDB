@@ -35,7 +35,7 @@
 //! the graph surface (handlers live in the `proximadb-api` crate and take
 //! private DTOs), and the free-form `hybrid` / `document-collections` /
 //! `observability` passthrough endpoints — are carried verbatim from a small,
-//! checked-in supplement fragment (`docs/openapi/_supplement.yaml`) and merged
+//! checked-in supplement fragment (`src/network/rest/openapi_supplement.yaml`) and merged
 //! on top of the generated document. These are tracked for code-annotation in
 //! later TD-126 increments (their handlers either live in another crate or
 //! return dynamic `serde_json::Value`); keeping them in the supplement ensures
@@ -141,7 +141,7 @@ pub struct ApiDoc;
 /// The committed supplement fragment carrying the surfaces that are not yet
 /// annotated in code (see the module docs for scope). Checked in alongside the
 /// generated spec so the generator is hermetic.
-const SUPPLEMENT_YAML: &str = include_str!("../../../docs/openapi/_supplement.yaml");
+const SUPPLEMENT_YAML: &str = include_str!("openapi_supplement.yaml");
 
 /// Deep-merge `overlay` into `base` (objects merge key-wise; arrays / scalars in
 /// `overlay` replace `base`). Used to fold the supplement onto the generated
@@ -194,7 +194,7 @@ fn openapi_document() -> Result<Value, String> {
     }
 
     let supplement: Value = serde_yaml::from_str(SUPPLEMENT_YAML)
-        .map_err(|e| format!("parse docs/openapi/_supplement.yaml: {e}"))?;
+        .map_err(|e| format!("parse openapi_supplement.yaml: {e}"))?;
     merge_into(&mut doc, &supplement);
     Ok(doc)
 }
