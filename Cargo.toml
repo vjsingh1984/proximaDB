@@ -18,9 +18,11 @@ workspace = true
 [workspace]
 resolver = "2"
 members = [
+    "apps/proximadb-ann-bench",
     "apps/proximadb-bench",
     "apps/proximadb-migrate",
     "apps/proximadb-server",
+    "apps/proximadb-vectordb-compare",
     ".",
     "clients/rust",
     "crates/foundation/proximadb-cache",

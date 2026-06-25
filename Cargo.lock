@@ -6619,6 +6619,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "proximadb-ann-bench"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "proximadb",
+]
+
+[[package]]
 name = "proximadb-api"
 version = "0.2.0"
 dependencies = [
@@ -7676,6 +7684,14 @@ dependencies = [
  "proximadb-distance-types",
  "proximadb-kernel",
  "proximadb-records",
+]
+
+[[package]]
+name = "proximadb-vectordb-compare"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "tokio",
 ]
 
 [[package]]
