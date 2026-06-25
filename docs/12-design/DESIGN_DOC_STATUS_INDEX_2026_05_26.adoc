@@ -1,8 +1,17 @@
-= Design Doc Status Index — 2026-05-27 Bookkeeping Audit
+= Design Doc Status Index — Bookkeeping Audit (2026-05-27, reconciled 2026-06-24)
 :toc: left
 :toclevels: 3
 :icons: font
 :last-updated: 2026-06-24
+
+[NOTE]
+====
+*2026-06-24 reconciliation:* the original table below was a 2026-05-26 snapshot of 29 docs. The folder
+now holds 56 top-level design docs + 24 ADRs. The 28 docs + 2 ADRs added since (including the two
+canonical *pivot* docs — `DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04` and
+`CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19`) are catalogued in <<addendum-2026-06-24>>. Do a full
+re-merge of the two tables at the next 4–6 week refresh.
+====
 
 [.lead]
 **Audit-time bookkeeping index for every doc under `docs/12-design/` plus tracker-shaped docs across other roots. No code changes — this doc is the single point of reference for "what's still load-bearing, what's wired, what should be archived" as of 2026-05-26.**
@@ -47,7 +56,7 @@ This audit complements (does not replace) `link:DOCUMENTATION_CONSOLIDATION_AND_
 ** **N/A** — convention/index doc, no code expected.
 * **Cluster** — semantic grouping for consolidation review (see <<consolidation-clusters>>).
 
-== docs/12-design top-level (29 files)
+== docs/12-design top-level (29 files as of 2026-05-26; +28 in <<addendum-2026-06-24>>)
 
 [cols="3,1,1,1,3", options="header"]
 |===
@@ -390,6 +399,56 @@ The above are tracked per-ADR / per-design-doc where applicable (ADR-009 governs
 === `legacy.rs` / `legacy_*` modules
 
 Standalone legacy file: `src/services/operations/vectors/legacy.rs` — interior of `VectorOperationsService`, hosts the pre-modular API surface that the consumer-migration chain (Task #76) just finished pulling through to ports. Eventual cleanup is captured in memory `project_consumer_migrations_2026_05_24.md` (port chain complete at 8 consumers).
+
+[#addendum-2026-06-24]
+== Addendum 2026-06-24: docs added since the 2026-05-26 table
+
+The main table above ("docs/12-design top-level (29 files)") was a 2026-05-26 snapshot. As of
+2026-06-24 the folder holds *56 top-level design docs + 25 `adr/` files (24 ADRs + README)*. The
+following *28 docs and 2 ADRs* were not in the original table and are catalogued here. *Status*
+uses the same vocabulary as <<How to read this index>>. *Pivot* docs are canonical and load-bearing
+for the whole-system course corrections; treat them as required reading (see `README.adoc`).
+
+[cols="3,1,1,3", options="header"]
+|===
+| File | Status | Class | Notes / drives
+
+| DATA_WAREHOUSE_AND_ENGINEERING_COURSE_CORRECTION_2026_06_04.adoc | Active | *Pivot* | The 2026-06-04 strategic pivot to Intelligent Multi-Engine Routing over object storage. Canonical (CLAUDE.md). *Was missing from the index.*
+| CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc | Active | *Pivot* | The co-design cost-spine (5 physical dimensions, per-query I/O trace). Canonical (CLAUDE.md). *Was missing from the index.*
+| OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc | Active | Cost model | KOU egress metering; `consumption_metrics.rs`. Co-design D2.
+| CACHING_AND_MULTITENANCY_RECALIBRATION_2026_06_17.adoc | Active | Design | Cache/tenant policy; drives TD-118. D3.
+| CATALOG_OBJECT_MODEL_2026_06_21.adoc | Active | Design | Catalog object model; TD-060/061.
+| STORAGE_INDEX_COMPUTE_DECOUPLING_CONTRACTS_2026_06_21.adoc | Active | Design | Storage↔index↔compute seam contracts.
+| ROOT_CRATE_DECOMPOSITION_PLAN_2026_06_21.adoc | Active | Plan | Drives TD-104 (handler extraction).
+| SDK_MODULARIZATION_AND_SPEC_DRIVEN_GENERATION_2026_06_21.adoc | Active | Plan | Drives TD-126 (spec-driven SDK codegen). Referenced in README, *was missing*.
+| CODE_GRAPH_CORRELATED_SUBSTRATE_2026_06_22.adoc | Active | Design | Drives TD-127/128/130/132/133 (code-graph).
+| CROSS_MODAL_FUSION_SEAM_2026_06_22.adoc | Active | Design | Drives TD-136..143 (fusion seam).
+| SEARCH_SURFACE_CONTRACT_2026_06_24.adoc | Active | Design | One retrieval engine, typed facades; drives TD-146 (EntityService delegates to seam).
+| QUANTIZATION_KERNEL_SPLIT_2026_06_22.adoc | Active | Design | Quantization kernel split.
+| IN_PROCESS_EDGE_COLLAPSE_HLD_2026_06_19.adoc | Active | HLD | Edge-collapse E0/E1; `consumption_metrics.rs`.
+| FORMAT_STRATEGY_ICEBERG_DELTA_LANCE_2026_06.adoc | Active | Design | Open-format strategy; TD-091 (Lance).
+| DATAFUSION_BALLISTA_DISTRIBUTED_EXECUTION_2026_06_05.adoc | Pending | Design | Distributed DataFusion/Ballista; depends on TD-077/115.
+| PROXIMA_NOTEBOOK_PSEUDO_DISTRIBUTED_BLUEPRINT_2026_06_04.adoc | Active | Blueprint | Notebook pseudo-distributed; referenced in README, *was missing*.
+| OSS_ENTERPRISE_BOUNDARY_2026_06_17.adoc | Active | Governance | OSS/enterprise boundary; D5.
+| RABITQ_PAX_SEGMENT_MIGRATION_PLAN_2026_06.adoc | Active | Plan | Canonical phased storage-format migration pattern (CLAUDE.md mandate #8).
+| RABITQ_ANN_INTEGRATION_SCOPING_2026_06.adoc | Pending | Scoping | RaBitQ ANN integration; relates to TD-087.
+| CLUSTERING_AND_STREAMING_FRESHNESS_PLAN_2026_06.adoc | Pending | Plan | Clustering + streaming freshness.
+| VECTOR_LAKEBASE_ALIGNMENT_2026_05_28.adoc | Active | Design | Drives TD-086..094 (continuous loop / elastic compute).
+| PHASE8_CONTINUOUS_LOOP_HLD_LLD_2026_05_28.adoc | Active | HLD/LLD | Phase 8 continuous loop.
+| TENANT_COLLECTION_POD_AFFINITY_2026_05_27.adoc | Active | Design | Pod affinity; D5.
+| NON_AXIS_INDEX_MIGRATION_AUDIT_2026_05_27.adoc | Active-Memo | Audit | Orphan non-AXIS index deletion (TD-064 ~4600 LOC removed).
+| TD_066_PART2_LSN_CORRELATION_DESIGN_2026_05_28.adoc | Active | Design | TD-066 residual (Option A LSN correlation).
+| TD104_HANDLER_CONVERGENCE_PLAN_2026_06_03.adoc | Active | Plan | TD-104 handler convergence.
+| TD106_DOCUMENT_CANONICAL_MIGRATION_HANDOFF_2026_06_03.adoc | Active | Handoff | TD-106 document canonical migration.
+| CONVERGENCE_SESSION_HANDOFF_2026_06_03.adoc | Active-Memo | Handoff | Convergence-audit session handoff.
+| UNIFIED_RESOURCE_LEASE_LOCKING_REVIEW_2026_06_24.adoc | Active | Review | Approved correction plan for unified `ResourceKey`/DML-lock (see header delta).
+| adr/ADR-023-f2-cold-load-ordering.adoc | Accepted | ADR | Cold-load ordering (TD-087). *Post-dated the 2026-05-26 ADR count.*
+| adr/ADR-024-single-canonical-data-type-and-schema.adoc | Accepted | ADR | Single canonical data type + schema (TD-111). *Post-dated the count.*
+|===
+
+NOTE: ADR total is now *24 Accepted* (ADR-001..024), not the 22 stated in the pre-2026-06-24 ADR
+summary. The TD-XXX cross-references above point at the live
+link:../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register].
 
 == Maintenance cadence
 

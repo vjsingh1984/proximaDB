@@ -9,6 +9,18 @@
 
 Execution tracking across sessions: link:./BEST_IN_CLASS_EXECUTION_TRACKER.adoc[Best-in-Class Foundation Execution Tracker]
 
+[NOTE]
+====
+*2026-06-24 reconciliation.* The authoritative live status for *implementation* of any item below is
+the link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register] (reconciled 2026-06-24), and the
+support contract is link:../../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc]. Where this roadmap's
+phase markers disagree with the register, the register wins. Known reconciled drift recorded in
+link:./RECONCILIATION_2026_06_24.adoc[RECONCILIATION_2026_06_24]: *Phase 2.5 is effectively complete*
+(TD-031/032/033/034/036/038/039/041 Resolved Mar–May 2026 — see the Phase 2.5 note); the 2026-06-04
+SaaS and 2026-06-19 co-design pivots are reflected in the register's co-design dimension tags but not
+yet re-threaded through every dashboard row.
+====
+
 [IMPORTANT]
 ====
 Use link:../../SUPPORTED_SURFACE.adoc[Supported Surface Matrix] for the current support contract.
@@ -296,7 +308,18 @@ _Added June 04, 2026 to support the commercial revenue wedge._
 | Swift SDK | 💡 Nice to Have | - | Apple ecosystem
 |===
 
-== Phase 2.5: Foundational Performance Alignment [📅 NEW]
+== Phase 2.5: Foundational Performance Alignment [✅ effectively complete]
+
+[NOTE]
+====
+*Status reconciled 2026-06-24:* the Phase 2.5 execution-layer items have landed — TD-031 (vectorized
+pipeline), TD-032 (Arrow cross-model), TD-033 (row-group pruning), TD-034 (spill-to-disk L2),
+TD-036 (adaptive codec, already done), TD-038 (cross-modal durable commit), TD-039 (morsel
+parallelism), TD-041 (vectorized executor wired) are all *Resolved* in the
+link:../../10-quality/TECHNICAL_DEBT.adoc[Technical Debt Register]. TD-035 (graph executor) and TD-040
+(read-side quant pruning) remain Open/Partial. The "📅 NEW / planned" markers and the April–July
+sprint timeline below are *historical*; do not treat them as current.
+====
 
 [.lead]
 _Performance Credibility: Align the execution layer between storage and API with single-node analytical system patterns (DuckDB, Polars). Without this, columnar analytics and cross-model query performance claims are not substantiable._
