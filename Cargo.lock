@@ -6558,6 +6558,7 @@ dependencies = [
  "proximadb-sdk",
  "proximadb-security",
  "proximadb-storage-common",
+ "proximadb-storage-encryption",
  "proximadb-storage-filesystem-types",
  "proximadb-storage-kv",
  "proximadb-storage-operations",
@@ -7585,6 +7586,25 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "toml 0.8.23",
+ "tracing",
+]
+
+[[package]]
+name = "proximadb-storage-encryption"
+version = "0.2.0"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "async-trait",
+ "bincode",
+ "hkdf 0.12.4",
+ "memmap2",
+ "proximadb-storage-filesystem-types",
+ "rand 0.8.6",
+ "rayon",
+ "serde",
+ "sha2 0.10.9",
+ "tokio",
  "tracing",
 ]
 

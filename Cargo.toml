@@ -69,6 +69,7 @@ members = [
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
     "crates/storage/proximadb-storage-common",
+    "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
     "crates/storage/proximadb-iceberg-engine",
@@ -211,6 +212,7 @@ proximadb-codec = { path = "crates/horizontal/proximadb-codec" }
 proximadb-compression = { path = "crates/horizontal/proximadb-compression" }
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
 proximadb-storage-operations = { path = "crates/storage/proximadb-storage-operations" }
@@ -302,6 +304,7 @@ proximadb-embedded-common = { path = "crates/horizontal/proximadb-embedded-commo
 proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }
 proximadb-iceberg-engine = { path = "crates/storage/proximadb-iceberg-engine" }
