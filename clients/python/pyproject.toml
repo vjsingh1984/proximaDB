@@ -268,8 +268,9 @@ markers = [
     "integration: marks tests as integration tests (may require running server)",
     "performance: marks tests as performance tests (may take longer to run)",
     "large_scale: marks tests as large-scale tests with significant data volumes",
-    "grpc: marks tests as gRPC-specific tests", 
+    "grpc: marks tests as gRPC-specific tests",
     "rest: marks tests as REST-specific tests",
+    "live: marks tests that require an external dependency or live service (e.g. the `victor` package, a real model download, network) — excluded from the offline SDK coverage ratchet",
 ]
 filterwarnings = [
     "ignore::DeprecationWarning",

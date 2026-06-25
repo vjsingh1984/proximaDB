@@ -101,9 +101,12 @@ jobs:
           # Coverage needs a single aggregating process; tolerate the known
           # _cov sys.modules-leak failures (the ratchet measures coverage, not
           # pass/fail — the per-file isolation gate in ci.yml owns correctness).
+          # Run OFFLINE unit tests only: filter out `integration` (needs a running
+          # server) and `live` (needs an external dependency / network, e.g. the
+          # `victor` package). The victor test self-skips via importorskip + `live`.
           pytest tests/unit/ -q -p no:cacheprovider --timeout=120 \
             --cov=proximadb_sdk --cov-report=json:/tmp/sdk-cov.json \
-            --ignore=tests/unit/test_integrations_victor_cov.py \
+            -m "not integration and not live" \
             --ignore=tests/unit/test_chunking_code_cov.py \
             --continue-on-collection-errors || true
           test -f /tmp/sdk-cov.json
