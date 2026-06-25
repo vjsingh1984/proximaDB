@@ -1171,9 +1171,6 @@ type IngestLogJSONBody map[string]interface{}
 // QueryLogsJSONBody defines parameters for QueryLogs.
 type QueryLogsJSONBody map[string]interface{}
 
-// FusionSearchV2JSONRequestBody defines body for FusionSearchV2 for application/json ContentType.
-type FusionSearchV2JSONRequestBody = FusionSearchRequest
-
 // CreateCollectionJSONRequestBody defines body for CreateCollection for application/json ContentType.
 type CreateCollectionJSONRequestBody = CreateCollectionV2Request
 
@@ -1203,6 +1200,9 @@ type CreateEdgeJSONRequestBody = CreateEdgeRequest
 
 // BatchCreateEdgesJSONRequestBody defines body for BatchCreateEdges for application/json ContentType.
 type BatchCreateEdgesJSONRequestBody = BatchCreateEdgesRequest
+
+// FusionSearchV2JSONRequestBody defines body for FusionSearchV2 for application/json ContentType.
+type FusionSearchV2JSONRequestBody = FusionSearchRequest
 
 // CreateNodeJSONRequestBody defines body for CreateNode for application/json ContentType.
 type CreateNodeJSONRequestBody = CreateNodeRequest
@@ -2786,11 +2786,6 @@ type ClientInterface interface {
 	// GetCapabilities request
 	GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// FusionSearchV2WithBody request with any body
-	FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListCollections request
 	ListCollections(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2874,6 +2869,11 @@ type ClientInterface interface {
 
 	BatchCreateEdges(ctx context.Context, graphId GraphId, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// FusionSearchV2WithBody request with any body
+	FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateNodeWithBody request with any body
 	CreateNodeWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -2940,30 +2940,6 @@ type ClientInterface interface {
 
 func (c *Client) GetCapabilities(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetCapabilitiesRequest(c.Server)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewFusionSearchV2RequestWithBody(c.Server, graphId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewFusionSearchV2Request(c.Server, graphId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3346,6 +3322,30 @@ func (c *Client) BatchCreateEdges(ctx context.Context, graphId GraphId, body Bat
 	return c.Client.Do(req)
 }
 
+func (c *Client) FusionSearchV2WithBody(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFusionSearchV2RequestWithBody(c.Server, graphId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) FusionSearchV2(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewFusionSearchV2Request(c.Server, graphId, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) CreateNodeWithBody(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewCreateNodeRequestWithBody(c.Server, graphId, contentType, body)
 	if err != nil {
@@ -3657,53 +3657,6 @@ func NewGetCapabilitiesRequest(server string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	return req, nil
-}
-
-// NewFusionSearchV2Request calls the generic FusionSearchV2 builder with application/json body
-func NewFusionSearchV2Request(server string, graphId string, body FusionSearchV2JSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewFusionSearchV2RequestWithBody(server, graphId, "application/json", bodyReader)
-}
-
-// NewFusionSearchV2RequestWithBody generates requests for FusionSearchV2 with any type of body
-func NewFusionSearchV2RequestWithBody(server string, graphId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "graph_id", runtime.ParamLocationPath, graphId)
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/v2/api/v2/graphs/%s/fusion-search", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -4616,6 +4569,53 @@ func NewBatchCreateEdgesRequestWithBody(server string, graphId GraphId, contentT
 	return req, nil
 }
 
+// NewFusionSearchV2Request calls the generic FusionSearchV2 builder with application/json body
+func NewFusionSearchV2Request(server string, graphId string, body FusionSearchV2JSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewFusionSearchV2RequestWithBody(server, graphId, "application/json", bodyReader)
+}
+
+// NewFusionSearchV2RequestWithBody generates requests for FusionSearchV2 with any type of body
+func NewFusionSearchV2RequestWithBody(server string, graphId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "graph_id", runtime.ParamLocationPath, graphId)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v2/graphs/%s/fusion-search", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCreateNodeRequest calls the generic CreateNode builder with application/json body
 func NewCreateNodeRequest(server string, graphId GraphId, body CreateNodeJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -5254,11 +5254,6 @@ type ClientWithResponsesInterface interface {
 	// GetCapabilitiesWithResponse request
 	GetCapabilitiesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetCapabilitiesHTTPResp, error)
 
-	// FusionSearchV2WithBodyWithResponse request with any body
-	FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
-
-	FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
-
 	// ListCollectionsWithResponse request
 	ListCollectionsWithResponse(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*ListCollectionsHTTPResp, error)
 
@@ -5342,6 +5337,11 @@ type ClientWithResponsesInterface interface {
 
 	BatchCreateEdgesWithResponse(ctx context.Context, graphId GraphId, body BatchCreateEdgesJSONRequestBody, reqEditors ...RequestEditorFn) (*BatchCreateEdgesHTTPResp, error)
 
+	// FusionSearchV2WithBodyWithResponse request with any body
+	FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
+
+	FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error)
+
 	// CreateNodeWithBodyWithResponse request with any body
 	CreateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error)
 
@@ -5422,30 +5422,6 @@ func (r GetCapabilitiesHTTPResp) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetCapabilitiesHTTPResp) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type FusionSearchV2HTTPResp struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	JSON200      *FusionSearchResponse
-	JSON400      *ErrorResponse
-	JSON500      *ErrorResponse
-}
-
-// Status returns HTTPResponse.Status
-func (r FusionSearchV2HTTPResp) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r FusionSearchV2HTTPResp) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5932,6 +5908,30 @@ func (r BatchCreateEdgesHTTPResp) StatusCode() int {
 	return 0
 }
 
+type FusionSearchV2HTTPResp struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *FusionSearchResponse
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r FusionSearchV2HTTPResp) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r FusionSearchV2HTTPResp) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type CreateNodeHTTPResp struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6281,23 +6281,6 @@ func (c *ClientWithResponses) GetCapabilitiesWithResponse(ctx context.Context, r
 	return ParseGetCapabilitiesHTTPResp(rsp)
 }
 
-// FusionSearchV2WithBodyWithResponse request with arbitrary body returning *FusionSearchV2HTTPResp
-func (c *ClientWithResponses) FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
-	rsp, err := c.FusionSearchV2WithBody(ctx, graphId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseFusionSearchV2HTTPResp(rsp)
-}
-
-func (c *ClientWithResponses) FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
-	rsp, err := c.FusionSearchV2(ctx, graphId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseFusionSearchV2HTTPResp(rsp)
-}
-
 // ListCollectionsWithResponse request returning *ListCollectionsHTTPResp
 func (c *ClientWithResponses) ListCollectionsWithResponse(ctx context.Context, params *ListCollectionsParams, reqEditors ...RequestEditorFn) (*ListCollectionsHTTPResp, error) {
 	rsp, err := c.ListCollections(ctx, params, reqEditors...)
@@ -6567,6 +6550,23 @@ func (c *ClientWithResponses) BatchCreateEdgesWithResponse(ctx context.Context, 
 	return ParseBatchCreateEdgesHTTPResp(rsp)
 }
 
+// FusionSearchV2WithBodyWithResponse request with arbitrary body returning *FusionSearchV2HTTPResp
+func (c *ClientWithResponses) FusionSearchV2WithBodyWithResponse(ctx context.Context, graphId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
+	rsp, err := c.FusionSearchV2WithBody(ctx, graphId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFusionSearchV2HTTPResp(rsp)
+}
+
+func (c *ClientWithResponses) FusionSearchV2WithResponse(ctx context.Context, graphId string, body FusionSearchV2JSONRequestBody, reqEditors ...RequestEditorFn) (*FusionSearchV2HTTPResp, error) {
+	rsp, err := c.FusionSearchV2(ctx, graphId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseFusionSearchV2HTTPResp(rsp)
+}
+
 // CreateNodeWithBodyWithResponse request with arbitrary body returning *CreateNodeHTTPResp
 func (c *ClientWithResponses) CreateNodeWithBodyWithResponse(ctx context.Context, graphId GraphId, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateNodeHTTPResp, error) {
 	rsp, err := c.CreateNodeWithBody(ctx, graphId, contentType, body, reqEditors...)
@@ -6794,46 +6794,6 @@ func ParseGetCapabilitiesHTTPResp(rsp *http.Response) (*GetCapabilitiesHTTPResp,
 			return nil, err
 		}
 		response.JSON200 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseFusionSearchV2HTTPResp parses an HTTP response from a FusionSearchV2WithResponse call
-func ParseFusionSearchV2HTTPResp(rsp *http.Response) (*FusionSearchV2HTTPResp, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &FusionSearchV2HTTPResp{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest FusionSearchResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
 
 	}
 
@@ -7506,6 +7466,46 @@ func ParseBatchCreateEdgesHTTPResp(rsp *http.Response) (*BatchCreateEdgesHTTPRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseFusionSearchV2HTTPResp parses an HTTP response from a FusionSearchV2WithResponse call
+func ParseFusionSearchV2HTTPResp(rsp *http.Response) (*FusionSearchV2HTTPResp, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &FusionSearchV2HTTPResp{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest FusionSearchResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

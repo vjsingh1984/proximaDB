@@ -1847,44 +1847,6 @@ paths:
       summary: Negotiate server capabilities.
       tags:
       - Meta
-  /api/v2/api/v2/graphs/{graph_id}/fusion-search:
-    post:
-      operationId: fusion_search_v2
-      parameters:
-      - description: Graph ID for traversal expansion
-        in: path
-        name: graph_id
-        required: true
-        schema:
-          type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/FusionSearchRequest'
-        required: true
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FusionSearchResponse'
-          description: Fusion results with calibrated scores
-        '400':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Invalid request (empty query_vector, etc.)
-        '500':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Fusion execution failed
-      summary: '`POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.'
-      tags:
-      - graphs
   /api/v2/collections:
     get:
       description: |-
@@ -2570,6 +2532,44 @@ paths:
       summary: Create multiple edges in a single call.
       tags:
       - Graphs
+  /api/v2/graphs/{graph_id}/fusion-search:
+    post:
+      operationId: fusion_search_v2
+      parameters:
+      - description: Graph ID for traversal expansion
+        in: path
+        name: graph_id
+        required: true
+        schema:
+          type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FusionSearchRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FusionSearchResponse'
+          description: Fusion results with calibrated scores
+        '400':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Invalid request (empty query_vector, etc.)
+        '500':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Fusion execution failed
+      summary: '`POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid.'
+      tags:
+      - graphs
   /api/v2/graphs/{graph_id}/nodes:
     parameters:
     - $ref: '#/components/parameters/GraphId'

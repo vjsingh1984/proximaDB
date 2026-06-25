@@ -11560,23 +11560,6 @@ impl Client {
     pub fn get_capabilities(&self) -> builder::GetCapabilities<'_> {
         builder::GetCapabilities::new(self)
     }
-    /// `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid
-    ///
-    /// Sends a `POST` request to `/api/v2/api/v2/graphs/{graph_id}/fusion-search`
-    ///
-    /// Arguments:
-    /// - `graph_id`: Graph ID for traversal expansion
-    /// - `body`
-    /// ```text
-    /// let response = client.fusion_search_v2()
-    /// .graph_id(graph_id)
-    /// .body(body)
-    /// .send()
-    /// .await;
-    /// ```
-    pub fn fusion_search_v2(&self) -> builder::FusionSearchV2<'_> {
-        builder::FusionSearchV2::new(self)
-    }
     /// List collections
     ///
     /// List all collections with pagination.
@@ -12049,6 +12032,23 @@ impl Client {
     pub fn batch_create_edges(&self) -> builder::BatchCreateEdges<'_> {
         builder::BatchCreateEdges::new(self)
     }
+    /// `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid
+    ///
+    /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/fusion-search`
+    ///
+    /// Arguments:
+    /// - `graph_id`: Graph ID for traversal expansion
+    /// - `body`
+    /// ```text
+    /// let response = client.fusion_search_v2()
+    /// .graph_id(graph_id)
+    /// .body(body)
+    /// .send()
+    /// .await;
+    /// ```
+    pub fn fusion_search_v2(&self) -> builder::FusionSearchV2<'_> {
+        builder::FusionSearchV2::new(self)
+    }
     /// Create a node in a graph
     ///
     /// Sends a `POST` request to `/api/v2/graphs/{graph_id}/nodes`
@@ -12307,106 +12307,6 @@ pub mod builder {
             let response = result?;
             match response.status().as_u16() {
                 200u16 => ResponseValue::from_response(response).await,
-                _ => Err(Error::UnexpectedResponse(response)),
-            }
-        }
-    }
-    /// Builder for [`Client::fusion_search_v2`]
-    ///
-    /// [`Client::fusion_search_v2`]: super::Client::fusion_search_v2
-    #[derive(Debug, Clone)]
-    pub struct FusionSearchV2<'a> {
-        client: &'a super::Client,
-        graph_id: Result<::std::string::String, String>,
-        body: Result<types::builder::FusionSearchRequest, String>,
-    }
-    impl<'a> FusionSearchV2<'a> {
-        pub fn new(client: &'a super::Client) -> Self {
-            Self {
-                client: client,
-                graph_id: Err("graph_id was not initialized".to_string()),
-                body: Ok(::std::default::Default::default()),
-            }
-        }
-        pub fn graph_id<V>(mut self, value: V) -> Self
-        where
-            V: std::convert::TryInto<::std::string::String>,
-        {
-            self.graph_id = value.try_into().map_err(|_| {
-                "conversion to `:: std :: string :: String` for graph_id failed".to_string()
-            });
-            self
-        }
-        pub fn body<V>(mut self, value: V) -> Self
-        where
-            V: std::convert::TryInto<types::FusionSearchRequest>,
-            <V as std::convert::TryInto<types::FusionSearchRequest>>::Error: std::fmt::Display,
-        {
-            self.body = value
-                .try_into()
-                .map(From::from)
-                .map_err(|s| format!("conversion to `FusionSearchRequest` for body failed: {}", s));
-            self
-        }
-        pub fn body_map<F>(mut self, f: F) -> Self
-        where
-            F: std::ops::FnOnce(
-                    types::builder::FusionSearchRequest,
-                ) -> types::builder::FusionSearchRequest,
-        {
-            self.body = self.body.map(f);
-            self
-        }
-        ///Sends a `POST` request to `/api/v2/api/v2/graphs/{graph_id}/fusion-search`
-        pub async fn send(
-            self,
-        ) -> Result<ResponseValue<types::FusionSearchResponse>, Error<types::ErrorResponse>>
-        {
-            let Self {
-                client,
-                graph_id,
-                body,
-            } = self;
-            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
-            let body = body
-                .and_then(|v| types::FusionSearchRequest::try_from(v).map_err(|e| e.to_string()))
-                .map_err(Error::InvalidRequest)?;
-            let url = format!(
-                "{}/api/v2/api/v2/graphs/{}/fusion-search",
-                client.baseurl,
-                encode_path(&graph_id.to_string()),
-            );
-            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-            header_map.append(
-                ::reqwest::header::HeaderName::from_static("api-version"),
-                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
-            );
-            #[allow(unused_mut)]
-            let mut request = client
-                .client
-                .post(url)
-                .header(
-                    ::reqwest::header::ACCEPT,
-                    ::reqwest::header::HeaderValue::from_static("application/json"),
-                )
-                .json(&body)
-                .headers(header_map)
-                .build()?;
-            let info = OperationInfo {
-                operation_id: "fusion_search_v2",
-            };
-            client.pre(&mut request, &info).await?;
-            let result = client.exec(request, &info).await;
-            client.post(&result, &info).await?;
-            let response = result?;
-            match response.status().as_u16() {
-                200u16 => ResponseValue::from_response(response).await,
-                400u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
-                500u16 => Err(Error::ErrorResponse(
-                    ResponseValue::from_response(response).await?,
-                )),
                 _ => Err(Error::UnexpectedResponse(response)),
             }
         }
@@ -14108,6 +14008,106 @@ pub mod builder {
                     ResponseValue::from_response(response).await?,
                 )),
                 404u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                _ => Err(Error::UnexpectedResponse(response)),
+            }
+        }
+    }
+    /// Builder for [`Client::fusion_search_v2`]
+    ///
+    /// [`Client::fusion_search_v2`]: super::Client::fusion_search_v2
+    #[derive(Debug, Clone)]
+    pub struct FusionSearchV2<'a> {
+        client: &'a super::Client,
+        graph_id: Result<::std::string::String, String>,
+        body: Result<types::builder::FusionSearchRequest, String>,
+    }
+    impl<'a> FusionSearchV2<'a> {
+        pub fn new(client: &'a super::Client) -> Self {
+            Self {
+                client: client,
+                graph_id: Err("graph_id was not initialized".to_string()),
+                body: Ok(::std::default::Default::default()),
+            }
+        }
+        pub fn graph_id<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<::std::string::String>,
+        {
+            self.graph_id = value.try_into().map_err(|_| {
+                "conversion to `:: std :: string :: String` for graph_id failed".to_string()
+            });
+            self
+        }
+        pub fn body<V>(mut self, value: V) -> Self
+        where
+            V: std::convert::TryInto<types::FusionSearchRequest>,
+            <V as std::convert::TryInto<types::FusionSearchRequest>>::Error: std::fmt::Display,
+        {
+            self.body = value
+                .try_into()
+                .map(From::from)
+                .map_err(|s| format!("conversion to `FusionSearchRequest` for body failed: {}", s));
+            self
+        }
+        pub fn body_map<F>(mut self, f: F) -> Self
+        where
+            F: std::ops::FnOnce(
+                    types::builder::FusionSearchRequest,
+                ) -> types::builder::FusionSearchRequest,
+        {
+            self.body = self.body.map(f);
+            self
+        }
+        ///Sends a `POST` request to `/api/v2/graphs/{graph_id}/fusion-search`
+        pub async fn send(
+            self,
+        ) -> Result<ResponseValue<types::FusionSearchResponse>, Error<types::ErrorResponse>>
+        {
+            let Self {
+                client,
+                graph_id,
+                body,
+            } = self;
+            let graph_id = graph_id.map_err(Error::InvalidRequest)?;
+            let body = body
+                .and_then(|v| types::FusionSearchRequest::try_from(v).map_err(|e| e.to_string()))
+                .map_err(Error::InvalidRequest)?;
+            let url = format!(
+                "{}/api/v2/graphs/{}/fusion-search",
+                client.baseurl,
+                encode_path(&graph_id.to_string()),
+            );
+            let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+            header_map.append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(super::Client::api_version()),
+            );
+            #[allow(unused_mut)]
+            let mut request = client
+                .client
+                .post(url)
+                .header(
+                    ::reqwest::header::ACCEPT,
+                    ::reqwest::header::HeaderValue::from_static("application/json"),
+                )
+                .json(&body)
+                .headers(header_map)
+                .build()?;
+            let info = OperationInfo {
+                operation_id: "fusion_search_v2",
+            };
+            client.pre(&mut request, &info).await?;
+            let result = client.exec(request, &info).await;
+            client.post(&result, &info).await?;
+            let response = result?;
+            match response.status().as_u16() {
+                200u16 => ResponseValue::from_response(response).await,
+                400u16 => Err(Error::ErrorResponse(
+                    ResponseValue::from_response(response).await?,
+                )),
+                500u16 => Err(Error::ErrorResponse(
                     ResponseValue::from_response(response).await?,
                 )),
                 _ => Err(Error::UnexpectedResponse(response)),

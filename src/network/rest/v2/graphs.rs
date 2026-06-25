@@ -91,7 +91,6 @@ pub struct FusionSearchResponse {
 #[utoipa::path(
     post,
     path = "/api/v2/graphs/{graph_id}/fusion-search",
-    context_path = "/api/v2",
     params(
         ("graph_id" = String, Path, description = "Graph ID for traversal expansion"),
     ),

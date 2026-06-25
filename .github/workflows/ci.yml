@@ -1630,6 +1630,7 @@ jobs:
       - sdk-contract-gates
       - connectors-contract-gates
       - spark-jni-smoke
+      - openapi-spec-drift
     if: always()
     steps:
       # HARD GATE — Rust lib + test compile (the `rust-compile` matrix) must pass.
@@ -1653,15 +1654,23 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
-      # Advisory visibility for the OTHER required jobs. Broad enforcement of
-      # every `needs.*` job is intentionally deferred: develop currently carries
-      # pre-existing red in some non-compile jobs (e.g. Proto Compatibility) that
-      # predate this change, and flipping them all to blocking at once would wedge
-      # merges. Promote this to a hard `exit 1` once those jobs are green.
-      - name: Report other job results (advisory)
+      # HARD GATE — every other required job must pass (or be skipped by its path
+      # filter). `CI Success` now means ALL of CI is green, not just rust-compile.
+      # A `needs.*` result of `failure`/`cancelled` fails the merge; `success` and
+      # `skipped` (path-filtered jobs that did not apply) pass. This closes the gap
+      # that let PR #264 merge while `openapi-spec-drift` was red: back then CI
+      # Success was green solely because only `rust-compile` was hard-gated, so a
+      # failing non-compile job did not block the merge.
+      - name: Require all required jobs green
         if: ${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}
         run: |
-          echo "::warning::One or more non-compile CI jobs failed or were cancelled (advisory — not yet blocking; see the job list)."
+          echo "::error::One or more required CI jobs failed or were cancelled — blocking merge. CI Success requires every required job green (or path-filtered to skipped)."
+          {
+            echo "## CI Results Summary"
+            echo ""
+            echo "❌ A required CI job failed or was cancelled."
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
 
       - name: Compile gate passed
         run: |
