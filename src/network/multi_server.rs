@@ -201,8 +201,11 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_fusion_service_server::ProximaFusionServiceServer<
         crate::network::grpc::v2::ProximaFusionServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaFusionServiceImpl::new(services.request_handlers.clone())
-            .into_server()
+        crate::network::grpc::v2::ProximaFusionServiceImpl::new(
+            services.vector_operations_service.clone(),
+            services.request_handlers.graph_operations_service.clone(),
+        )
+        .into_server()
     }
 
     /// Build the canonical v2 entity gRPC service.
@@ -214,8 +217,12 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_entity_service_server::ProximaEntityServiceServer<
         crate::network::grpc::v2::ProximaEntityServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaEntityServiceImpl::new(services.request_handlers.clone())
-            .into_server()
+        crate::network::grpc::v2::ProximaEntityServiceImpl::new(
+            services.request_handlers.graph_operations_service.clone(),
+            services.vector_operations_service.clone(),
+            services.document_service.clone(),
+        )
+        .into_server()
     }
 
     /// Create new multi-server instance (orchestrator only)
