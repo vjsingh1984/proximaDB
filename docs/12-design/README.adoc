@@ -149,6 +149,15 @@ Read these in order for future-shaping architecture work:
    storage-visible fencing. Read before changing `src/cluster/partition_lease.rs` or wiring locks
    into `DmlService`/protocol handlers.
 
+23. `SEARCH_SURFACE_CONTRACT_2026_06_24.adoc` +
+   Surface-level companion to #22: pins the *endpoint* contract on top of the seam. One retrieval
+   engine (the seam); every search surface (`fusion_search_v2`, `hybrid/search`, `RecordService.Search`,
+   `EntityService.SearchEntities`, future gRPC `FusionSearch`) is a **thin facade** varying only in
+   seed/expander defaults + result projection — none owns retrieval/ranking. Decisive argument:
+   per-surface fusion is *incorrect by construction* (cosine≈Gaussian vs graph≈power-law need PIT
+   calibration only the shared `Fuser` provides). Resolves where `EntityService.SearchEntities` (PR
+   #278) fits: entity-typed view over the seam, no standalone vector-ANN. Adds TD-146.
+
 == Stable Reference Docs
 
 * `ARCHITECTURE_ATLAS_2026_05_22.adoc` - top-down OSS/SaaS architecture map, workspace map, and
