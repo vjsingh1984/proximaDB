@@ -298,7 +298,7 @@ link:../../SUPPORTED_SURFACE.adoc[SUPPORTED_SURFACE.adoc]. The
 
 | 067 | Cloud Storage Support | Platform | ✅ | S3/Azure/GCS
 | 068 | Python SDK | Platform | ✅ | Full client library
-| 069 | Dashboard UI | Platform | ⚠️ Partial | UI present; `ui/` (functionality limited)
+| 069 | Dashboard UI | Platform | ⚠️ Partial | Embedded *read-only* admin dashboard at `GET /admin` (self-contained, no build step) shipped in `crates/platform/proximadb-admin-ui` for local standalone/embedded — health, capabilities, metrics, collections. Full operator console (`ui/` CRA app) remains separate; write/admin-action surfaces still pending.
 | 070 | Docker Support | Platform | ✅ | Container deployment
 
 | 071 | README Documentation | Docs | ✅ | Basic readme

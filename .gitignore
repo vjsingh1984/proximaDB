@@ -365,6 +365,8 @@ WAL_*.md
 reports/
 *.html
 !docs/**/*.html
+# Embedded admin-dashboard asset is source (compiled in via include_str!), not a report.
+!crates/platform/proximadb-admin-ui/assets/*.html
 !target/criterion/**/*.html
 !src/network/rest/dashboard.html
 

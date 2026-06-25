@@ -272,7 +272,8 @@ impl ProximaDB {
             .http(|h| h.bind_address(rest_addr))
             .grpc(|g| g.bind_address(grpc_addr))
             .with_api_config(config.api.clone())
-            .with_data_dir(config.server.data_dir.clone());
+            .with_data_dir(config.server.data_dir.clone())
+            .with_admin_ui_enabled(config.server.admin_ui.enabled);
 
         // Add TLS configuration if enabled
         if config.api.enable_tls.unwrap_or(false) {

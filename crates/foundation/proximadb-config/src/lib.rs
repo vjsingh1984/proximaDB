@@ -236,6 +236,26 @@ pub struct ServerConfig {
 
     /// Root directory for persistent data files.
     pub data_dir: PathBuf,
+
+    /// Read-only embedded admin dashboard (`/admin`). Disabled by default;
+    /// opt-in via `[server.admin_ui]`. `#[serde(default)]` so existing configs
+    /// without the section keep parsing (and keep the dashboard off).
+    #[serde(default)]
+    pub admin_ui: AdminUiConfig,
+}
+
+/// Configuration for the read-only embedded admin dashboard served at `/admin`.
+///
+/// **Disabled by default.** Intended for **standalone** local instances only —
+/// keep it off for Kubernetes pods (each pod does not need it) and for
+/// embedded / UDS mode (which serves over a local Unix-domain socket, not a
+/// browser-reachable TCP port) unless an operator explicitly opts in.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct AdminUiConfig {
+    /// Mount the read-only `/admin` (+ `/dashboard`) route. Default: `false`
+    /// (`bool::default()`).
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 impl Default for ServerConfig {
@@ -246,6 +266,7 @@ impl Default for ServerConfig {
             port: 5678,
             grpc_port: None,
             data_dir: PathBuf::from("./data"),
+            admin_ui: AdminUiConfig::default(),
         }
     }
 }

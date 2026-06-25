@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ProximaDB Admin (read-only)</title>
+<style>
+  :root {
+    --bg: #0f1320; --panel: #171c2e; --panel2: #1d2438; --border: #2a3350;
+    --text: #e6eaf5; --muted: #8893b0; --accent: #5b8def; --ok: #22c55e;
+    --warn: #f59e0b; --err: #ef4444; --chip: #243049;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 14px 20px; background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5; }
+  .brand { font-weight: 700; font-size: 18px; letter-spacing: .3px; }
+  .pill { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--chip); color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.err { background: var(--err); }
+  header .spacer { flex: 1; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  button, label.toggle { background: var(--panel2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 13px; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  .notice { margin: 14px 20px 0; padding: 8px 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--panel); color: var(--muted); font-size: 12.5px; }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 14px; padding: 16px 20px 40px; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
+  .card.wide { grid-column: 1 / -1; }
+  .card h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--muted); padding: 12px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .card .body { padding: 12px 14px; }
+  .kv { display: grid; grid-template-columns: minmax(120px, 38%) 1fr; gap: 4px 10px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { color: var(--text); word-break: break-word; font-variant-numeric: tabular-nums; }
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+  .stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .stat .num { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: .4px; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: var(--panel2); }
+  tbody tr.sel { background: var(--chip); }
+  .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.ok { color: var(--ok); border-color: var(--ok); }
+  .badge.warn { color: var(--warn); border-color: var(--warn); }
+  .badge.err { color: var(--err); border-color: var(--err); }
+  pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; overflow: auto; max-height: 260px; font-size: 12px; color: var(--muted); }
+  .empty { color: var(--muted); font-style: italic; }
+  .err-line { color: var(--err); font-size: 12.5px; }
+  footer { color: var(--muted); font-size: 12px; padding: 0 20px 28px; }
+  code { background: var(--chip); padding: 1px 5px; border-radius: 5px; font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="status-dot"></span>
+  <span class="brand">ProximaDB</span>
+  <span class="pill">Admin &middot; read-only</span>
+  <span class="spacer"></span>
+  <span class="meta" id="last-updated">never refreshed</span>
+  <label class="toggle"><input type="checkbox" id="auto" checked> auto-refresh</label>
+  <button id="refresh">Refresh</button>
+</header>
+
+<div class="notice">
+  This is a <strong>read-only</strong> dashboard for local standalone / embedded operation. It only
+  issues <code>GET</code> requests against the server's diagnostic endpoints &mdash; it cannot create,
+  modify, or delete data. For mutations use the SDKs, REST <code>/api/v2</code>, gRPC, or pgwire.
+</div>
+
+<main>
+  <section class="card">
+    <h2><span class="dot" id="health-dot"></span> Server Health</h2>
+    <div class="body"><div class="kv" id="health">Loading&hellip;</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Build &amp; Capabilities</h2>
+    <div class="body"><div class="kv" id="caps">Loading&hellip;</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Metrics</h2>
+    <div class="body"><div class="stat-grid" id="metrics">Loading&hellip;</div></div>
+  </section>
+
+  <section class="card wide">
+    <h2>Collections</h2>
+    <div class="body" id="collections">Loading&hellip;</div>
+  </section>
+
+  <section class="card wide" id="detail-card" style="display:none">
+    <h2>Collection Detail &mdash; <span id="detail-name"></span></h2>
+    <div class="body"><pre id="detail">Select a collection above.</pre></div>
+  </section>
+</main>
+
+<footer>
+  Polls (GET only): <code>/health</code>, <code>/health/ready</code>,
+  <code>/api/v2/_meta/capabilities</code>, <code>/api/v2/collections</code>,
+  <code>/api/v2/collections/{id}</code>, <code>/metrics/json</code>.
+  Panels that show <span class="empty">n/a</span> mean that endpoint is disabled,
+  unauthorized, or unavailable in this deployment.
+</footer>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// READ-ONLY data access: every request is a GET (fetch default verb), no-store,
+// with an 8s timeout. No write verbs are ever issued from this page.
+async function getJSON(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 8000);
+  try {
+    const r = await fetch(url, { cache: 'no-store', signal: ctrl.signal, headers: { 'accept': 'application/json' } });
+    const text = await r.text();
+    let data = null;
+    try { data = text ? JSON.parse(text) : null; } catch (_) { data = text; }
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, error: String(e && e.message || e) };
+  } finally { clearTimeout(t); }
+}
+
+function kvRows(obj) {
+  const entries = Object.entries(obj || {});
+  if (!entries.length) return '<span class="empty">n/a</span>';
+  return entries.map(([k, v]) => {
+    let val = (v !== null && typeof v === 'object') ? JSON.stringify(v) : String(v);
+    return `<span class="k">${esc(k)}</span><span class="v">${esc(val)}</span>`;
+  }).join('');
+}
+
+function flattenNumbers(obj, prefix, out) {
+  out = out || {}; prefix = prefix || '';
+  if (obj && typeof obj === 'object') {
+    for (const [k, v] of Object.entries(obj)) {
+      const key = prefix ? prefix + '.' + k : k;
+      if (typeof v === 'number') out[key] = v;
+      else if (v && typeof v === 'object') flattenNumbers(v, key, out);
+    }
+  }
+  return out;
+}
+
+function fmtNum(n) {
+  if (typeof n !== 'number') return String(n);
+  if (Math.abs(n) >= 1e9) return (n/1e9).toFixed(2) + 'B';
+  if (Math.abs(n) >= 1e6) return (n/1e6).toFixed(2) + 'M';
+  if (Math.abs(n) >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return Number.isInteger(n) ? String(n) : n.toFixed(3);
+}
+
+function setDot(el, cls) { el.className = 'dot ' + (cls || ''); }
+
+async function loadHealth() {
+  const [h, ready] = await Promise.all([getJSON('/health'), getJSON('/health/ready')]);
+  const out = {};
+  out['liveness'] = h.ok ? 'ok' : ('error (' + (h.status || h.error) + ')');
+  out['readiness'] = ready.ok ? 'ready' : ('not ready (' + (ready.status || ready.error) + ')');
+  if (h.data && typeof h.data === 'object') for (const [k, v] of Object.entries(h.data)) out[k] = v;
+  $('health').innerHTML = kvRows(out);
+  const cls = h.ok && ready.ok ? 'ok' : (h.ok || ready.ok ? 'warn' : 'err');
+  setDot($('health-dot'), cls);
+  return cls;
+}
+
+async function loadCaps() {
+  const r = await getJSON('/api/v2/_meta/capabilities');
+  if (!r.ok) { $('caps').innerHTML = `<span class="err-line">n/a (${esc(r.status || r.error)})</span>`; return; }
+  const d = r.data || {};
+  // Prefer a few well-known summary keys, fall back to the whole object.
+  const summary = {};
+  for (const k of ['version', 'build', 'commit', 'edition', 'tier', 'mode', 'name']) if (k in d) summary[k] = d[k];
+  $('caps').innerHTML = kvRows(Object.keys(summary).length ? summary : d);
+}
+
+async function loadMetrics() {
+  const r = await getJSON('/metrics/json');
+  if (!r.ok) { $('metrics').innerHTML = `<span class="err-line">n/a (${esc(r.status || r.error)})</span>`; return; }
+  const nums = flattenNumbers(r.data);
+  const keys = Object.keys(nums);
+  if (!keys.length) { $('metrics').innerHTML = '<span class="empty">no numeric metrics</span>'; return; }
+  // Surface a readable subset (first 12), sorted by name, as stat cards.
+  keys.sort();
+  $('metrics').innerHTML = keys.slice(0, 12).map((k) => {
+    const short = k.split('.').slice(-2).join('.');
+    return `<div class="stat"><div class="num">${esc(fmtNum(nums[k]))}</div><div class="lbl" title="${esc(k)}">${esc(short)}</div></div>`;
+  }).join('');
+}
+
+function collectionRows(list) {
+  return list.map((c, i) => {
+    const id = c.id || c.collection_id || c.name || ('#' + i);
+    const name = c.name || id;
+    const engine = c.engine || c.storage_engine || c.engine_type || '';
+    const dim = c.dimension || c.dim || (c.config && c.config.dimension) || '';
+    const count = c.record_count != null ? c.record_count : (c.vector_count != null ? c.vector_count : (c.count != null ? c.count : ''));
+    const status = c.status || c.state || '';
+    return `<tr data-id="${esc(id)}" data-name="${esc(name)}">
+      <td>${esc(name)}</td><td>${esc(engine || '—')}</td>
+      <td>${esc(dim || '—')}</td><td>${esc(count !== '' ? fmtNum(Number(count)) : '—')}</td>
+      <td>${status ? `<span class="badge ${/ready|active|ok|online/i.test(status) ? 'ok' : ''}">${esc(status)}</span>` : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function loadCollections() {
+  const r = await getJSON('/api/v2/collections');
+  if (!r.ok) { $('collections').innerHTML = `<span class="err-line">n/a (${esc(r.status || r.error)})</span>`; return; }
+  let list = r.data;
+  if (list && !Array.isArray(list)) list = list.collections || list.items || list.data || [];
+  if (!Array.isArray(list) || !list.length) { $('collections').innerHTML = '<span class="empty">no collections</span>'; return; }
+  $('collections').innerHTML =
+    `<table><thead><tr><th>Name</th><th>Engine</th><th>Dim</th><th>Records</th><th>Status</th></tr></thead>
+     <tbody>${collectionRows(list)}</tbody></table>`;
+  $('collections').querySelectorAll('tbody tr').forEach((tr) => {
+    tr.addEventListener('click', () => {
+      $('collections').querySelectorAll('tr.sel').forEach((x) => x.classList.remove('sel'));
+      tr.classList.add('sel');
+      loadDetail(tr.getAttribute('data-id'), tr.getAttribute('data-name'));
+    });
+  });
+}
+
+async function loadDetail(id, name) {
+  $('detail-card').style.display = '';
+  $('detail-name').textContent = name || id;
+  $('detail').textContent = 'Loading…';
+  const r = await getJSON('/api/v2/collections/' + encodeURIComponent(id));
+  $('detail').textContent = r.ok ? JSON.stringify(r.data, null, 2) : ('n/a (' + (r.status || r.error) + ')');
+}
+
+let refreshing = false;
+async function refreshAll() {
+  if (refreshing) return; refreshing = true;
+  try {
+    const [healthCls] = await Promise.all([loadHealth(), loadCaps(), loadMetrics(), loadCollections()]);
+    setDot($('status-dot'), healthCls);
+    $('last-updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+  } finally { refreshing = false; }
+}
+
+$('refresh').addEventListener('click', refreshAll);
+let timer = null;
+function arm() { if (timer) clearInterval(timer); if ($('auto').checked) timer = setInterval(refreshAll, 10000); }
+$('auto').addEventListener('change', arm);
+refreshAll(); arm();
+</script>
+</body>
+</html>
