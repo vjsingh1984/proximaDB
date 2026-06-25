@@ -250,17 +250,12 @@ pub struct ServerConfig {
 /// keep it off for Kubernetes pods (each pod does not need it) and for
 /// embedded / UDS mode (which serves over a local Unix-domain socket, not a
 /// browser-reachable TCP port) unless an operator explicitly opts in.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct AdminUiConfig {
-    /// Mount the read-only `/admin` (+ `/dashboard`) route. Default: `false`.
+    /// Mount the read-only `/admin` (+ `/dashboard`) route. Default: `false`
+    /// (`bool::default()`).
     #[serde(default)]
     pub enabled: bool,
-}
-
-impl Default for AdminUiConfig {
-    fn default() -> Self {
-        Self { enabled: false }
-    }
 }
 
 impl Default for ServerConfig {
