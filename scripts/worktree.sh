@@ -16,7 +16,7 @@
 #   scripts/worktree.sh new   <type/topic> [base]   # create + print path
 #   scripts/worktree.sh list                         # list worktrees + state
 #   scripts/worktree.sh rm    <type/topic> [--force] # remove (guards dirty)
-#   scripts/worktree.sh clean                        # drop merged worktrees
+#   scripts/worktree.sh clean [--dry-run]            # reclaim merged/squashed worktrees
 #   scripts/worktree.sh guard                        # fail if in main checkout
 #
 # Typical flow (also the agent mandate — see CLAUDE.md):
@@ -104,6 +104,24 @@ wt_for_branch() {
     /^worktree /{p=$2} /^branch /{ if ($2==b) print p }'
 }
 
+# Is <branch> already in develop? Catches BOTH integration styles:
+#   1. fast-forward / merge-commit — branch tip is an ancestor of develop.
+#   2. squash-merge (GitHub default) — branch commits are rewritten into ONE
+#      commit with a new SHA, so the tip is NOT an ancestor. We detect this the
+#      git-delete-squashed idiom: synthesize a single commit of the branch's
+#      tree on top of the merge-base and ask `git cherry` whether develop already
+#      contains an equivalent patch (a leading '-' means yes). Offline-safe — no
+#      remote branch required, only the local develop ref.
+branch_in_develop() {
+  local main br; main="$(repo_main)"; br="$1"
+  git -C "$main" merge-base --is-ancestor "$br" "$REMOTE/$BASE_DEFAULT" 2>/dev/null && return 0
+  local mb tree synth; mb="$(git -C "$main" merge-base "$REMOTE/$BASE_DEFAULT" "$br" 2>/dev/null)" || return 1
+  [ -n "$mb" ] || return 1
+  tree="$(git -C "$main" rev-parse "$br^{tree}" 2>/dev/null)" || return 1
+  synth="$(git -C "$main" commit-tree "$tree" -p "$mb" -m _ 2>/dev/null)" || return 1
+  [ "$(git -C "$main" cherry "$REMOTE/$BASE_DEFAULT" "$synth" 2>/dev/null | head -1 | cut -c1)" = "-" ]
+}
+
 cmd_rm() {
   local branch="${1:-}" force=""
   [ -n "$branch" ] || die "usage: rm <type/topic> [--force]"
@@ -121,22 +139,38 @@ cmd_rm() {
   fi
 }
 
+# Drop every worktree whose branch has landed in develop (merge OR squash),
+# reclaiming its target/ build cache — the dominant disk consumer (tens of GB
+# per worktree). Dirty worktrees are always skipped. `--dry-run` reports what
+# WOULD be reclaimed without touching anything.
 cmd_clean() {
+  local dry=""; [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "-n" ] && dry=1
   git -C "$(repo_main)" fetch --quiet "$REMOTE" "$BASE_DEFAULT" || true
-  local removed=0
+  local removed=0 freed_kb=0
   while read -r dir; do
     [ "$dir" = "$(repo_main)" ] && continue
     local br; br="$(git -C "$dir" rev-parse --abbrev-ref HEAD 2>/dev/null || echo)"
     [ -n "$br" ] || continue
-    if git -C "$(repo_main)" merge-base --is-ancestor "$br" "$REMOTE/$BASE_DEFAULT" 2>/dev/null; then
-      [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ] && { printf 'skip (dirty): %s\n' "$dir" >&2; continue; }
-      git -C "$(repo_main)" worktree remove "$dir" && git -C "$(repo_main)" branch -D "$br" >/dev/null 2>&1 || true
-      printf 'cleaned merged worktree: %s (%s)\n' "$dir" "$br" >&2
-      removed=$((removed+1))
+    branch_in_develop "$br" || continue
+    if [ -n "$(git -C "$dir" status --porcelain 2>/dev/null)" ]; then
+      printf 'skip (dirty): %s (%s)\n' "$dir" "$br" >&2; continue
     fi
+    local kb; kb="$(du -sk "$dir" 2>/dev/null | cut -f1)"; kb="${kb:-0}"
+    freed_kb=$((freed_kb + kb))
+    if [ -n "$dry" ]; then
+      printf 'would clean: %s (%s) — %s MB\n' "$dir" "$br" "$((kb/1024))" >&2
+    else
+      git -C "$(repo_main)" worktree remove "$dir" && git -C "$(repo_main)" branch -D "$br" >/dev/null 2>&1 || true
+      printf 'cleaned merged worktree: %s (%s) — reclaimed %s MB\n' "$dir" "$br" "$((kb/1024))" >&2
+    fi
+    removed=$((removed+1))
   done < <(git -C "$(repo_main)" worktree list --porcelain | sed -n 's/^worktree //p')
-  git -C "$(repo_main)" worktree prune
-  printf 'worktree: cleaned %d merged worktree(s)\n' "$removed" >&2
+  [ -n "$dry" ] || git -C "$(repo_main)" worktree prune
+  local verb="cleaned" gerund="reclaimed"
+  [ -n "$dry" ] && { verb="would clean"; gerund="reclaiming"; }
+  printf 'worktree: %s %d merged worktree(s), %s %s GB\n' \
+    "$verb" "$removed" "$gerund" \
+    "$(awk -v k="$freed_kb" 'BEGIN{printf "%.1f", k/1024/1024}')" >&2
 }
 
 # Guardrail: refuse if the CWD is the MAIN checkout (agents call this before
@@ -187,7 +221,7 @@ worktree: one task = one worktree = one branch (isolated by construction)
   scripts/worktree.sh new   <type/topic> [base]   create + print `cd` + cache env (eval it)
   scripts/worktree.sh list                          list worktrees + dirty state
   scripts/worktree.sh rm    <type/topic> [--force]  remove (guards dirty)
-  scripts/worktree.sh clean                         drop worktrees merged to develop
+  scripts/worktree.sh clean [--dry-run]             drop worktrees merged/squashed to develop, reclaim target/
   scripts/worktree.sh guard                         fail if run in the main checkout
   scripts/worktree.sh cache-env                     print sccache env for an existing worktree (eval it)
   scripts/worktree.sh check                         cargo check ONLY the crates changed vs develop
