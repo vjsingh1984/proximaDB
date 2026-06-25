@@ -106,9 +106,32 @@ struct BenchConfig {
     top_k: usize,
     cold_runs: usize,
     warm_runs: usize,
+    /// C0 cloud-trace enabler: object-store URL for the collection's
+    /// `base_location`. `None` (default) → local tempdir (current behavior).
+    /// Set `BENCH_OBJECT_STORE_URL=s3://bucket/path` (+ build with the cloud
+    /// feature e.g. `aws` + creds in env) to measure real cloud-cold RTT —
+    /// the dominant cost term ComputeScheduler currently guesses at.
+    store_url: Option<String>,
 }
 
 impl BenchConfig {
+    /// Store-scheme classification for the evidence artifact (so a local run
+    /// is never mistaken for a cloud run — the whole point of C0).
+    fn store_kind(&self) -> &'static str {
+        match self.store_url.as_deref() {
+            Some(u)
+                if u.starts_with("s3://")
+                    || u.starts_with("gs://")
+                    || u.starts_with("az://")
+                    || u.starts_with("abfs://") =>
+            {
+                "cloud"
+            }
+            Some(_) => "configured",
+            None => "local-fs",
+        }
+    }
+
     fn from_env() -> Self {
         Self {
             vector_count: env_usize("BENCH_VECTORS", 10_000),
@@ -116,6 +139,7 @@ impl BenchConfig {
             top_k: env_usize("BENCH_TOP_K", 10),
             cold_runs: env_usize("BENCH_COLD_RUNS", 3),
             warm_runs: env_usize("BENCH_WARM_RUNS", 50),
+            store_url: std::env::var("BENCH_OBJECT_STORE_URL").ok(),
         }
     }
 }
@@ -146,7 +170,11 @@ struct SetupResult {
 impl SetupResult {
     async fn run(cfg: &BenchConfig) -> Self {
         let temp_dir = TempDir::new().expect("tempdir");
-        let collection = make_collection(&temp_dir, cfg.dimension);
+        let base = cfg
+            .store_url
+            .clone()
+            .unwrap_or_else(|| temp_dir.path().to_str().unwrap().to_string());
+        let collection = make_collection(&base, cfg.dimension);
 
         let vectors = synthetic_records(&collection.id, cfg.vector_count, cfg.dimension);
 
@@ -238,7 +266,11 @@ async fn measure_cold(cfg: &BenchConfig) -> LatencyDist {
 
     for run in 0..cfg.cold_runs {
         let temp_dir = TempDir::new().expect("tempdir");
-        let collection = make_collection(&temp_dir, cfg.dimension);
+        let base = cfg
+            .store_url
+            .clone()
+            .unwrap_or_else(|| temp_dir.path().to_str().unwrap().to_string());
+        let collection = make_collection(&base, cfg.dimension);
         let vectors = synthetic_records(&collection.id, cfg.vector_count, cfg.dimension);
 
         let fs = Arc::new(
@@ -352,6 +384,22 @@ fn print_report(cfg: &BenchConfig, setup: &SetupResult, cold: &LatencyDist, warm
         format_bytes(setup.bytes_on_disk)
     );
     println!();
+    println!("Object store (C0 cloud-trace enabler):");
+    println!("  kind:                   {}", cfg.store_kind());
+    println!(
+        "  url:                    {}",
+        cfg.store_url.as_deref().unwrap_or("<local tempdir>")
+    );
+    if cfg.store_kind() != "cloud" {
+        println!(
+            "  NOTE: {} run — NOT a cloud-cold measurement.",
+            cfg.store_kind()
+        );
+        println!(
+            "  Set BENCH_OBJECT_STORE_URL=s3://… (+ cloud feature + creds) for the C0 number."
+        );
+    }
+    println!();
     println!("Cold query latency (fresh engine, no caches):");
     println!("  min:                    {:.2} ms", cold.min());
     println!("  mean:                   {:.2} ms", cold.mean());
@@ -399,13 +447,41 @@ fn print_report(cfg: &BenchConfig, setup: &SetupResult, cold: &LatencyDist, warm
         println!("  BENCH_VECTORS=1000000 for the headline comparison.");
     }
     println!();
+    println!("================================================================================");
+    println!("   BENCHMARK_EVIDENCE artifact — curate into");
+    println!("   docs/_internal/roadmap/BENCHMARK_EVIDENCE.toml");
+    println!("================================================================================");
+    println!();
+    let status = if cfg.store_kind() == "cloud" {
+        "measured-cloud"
+    } else {
+        "measured-local"
+    };
+    println!("[[claims]]");
+    println!("id = \"object_economy_e2e_latency\"");
+    println!(
+        "status = \"{status}\"  # local ≠ cloud-cold; do NOT promote to measured-cloud from a non-cloud run"
+    );
+    println!("store_kind = \"{}\"", cfg.store_kind());
+    println!(
+        "store_url = \"{}\"",
+        cfg.store_url.as_deref().unwrap_or("<local tempdir>")
+    );
+    println!("vectors = {}", cfg.vector_count);
+    println!("dimension = {}", cfg.dimension);
+    println!("top_k = {}", cfg.top_k);
+    println!("cold_p50_ms = {:.2}", cold.percentile(50.0));
+    println!("cold_p99_ms = {:.2}", cold.percentile(99.0));
+    println!("warm_p50_ms = {:.2}", warm.percentile(50.0));
+    println!("warm_p99_ms = {:.2}", warm.percentile(99.0));
+    println!();
 }
 
 // ────────────────────────────────────────────────────────────────────────
 // Synthetic data generators
 // ────────────────────────────────────────────────────────────────────────
 
-fn make_collection(temp_dir: &TempDir, dim: usize) -> Collection {
+fn make_collection(base_location: &str, dim: usize) -> Collection {
     Collection {
         id: "bench_voe_e2e".to_string(),
         config: Some(CollectionConfig {
@@ -414,7 +490,7 @@ fn make_collection(temp_dir: &TempDir, dim: usize) -> Collection {
             ..Default::default()
         }),
         storage_assignment: Some(proximadb::proto::proximadb_v1::StorageAssignment {
-            base_location: temp_dir.path().to_str().unwrap().to_string(),
+            base_location: base_location.to_string(),
             ..Default::default()
         }),
         ..Default::default()
