@@ -842,6 +842,17 @@ pub async fn execute_sql(
         }
         Err(e) => {
             error!("SQL query {} failed: {}", request_id, e);
+            // A DML lock/fence conflict must surface as a retryable 409
+            // lock_conflict, not a generic 500. The typed `DmlLockConflict` can
+            // sit several `.context(...)` layers deep, so walk the chain — same
+            // as the pgwire 55P03 and gRPC ABORTED mappings. (421 Misdirected =
+            // wrong pod stays distinct from 409 = conflict on the right pod.)
+            if let Some((resource, holder)) = crate::errors::extract_dml_lock_conflict(&e) {
+                return Err(ApiError::LockConflict(match holder {
+                    Some(h) => format!("{resource} held by {h}"),
+                    None => resource,
+                }));
+            }
             Err(ApiError::Internal(e.to_string()))
         }
     }
