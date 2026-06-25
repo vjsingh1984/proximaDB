@@ -11,8 +11,6 @@
     "missing-servicer:proto/proximadb/v1/security.proto::SecurityService",
     "missing-servicer:proto/proximadb/v1/streaming.proto::StreamingService",
     "missing-servicer:proto/proximadb/v2/document.proto::ProximaDocumentService",
-    "missing-servicer:proto/proximadb/v2/fusion.proto::ProximaFusionService",
-    "missing-stub:proto/proximadb/v2/fusion.proto",
     "missing-stub:proto/proximadb/v1/catalog.proto",
     "missing-stub:proto/proximadb/v1/cluster.proto",
     "missing-stub:proto/proximadb/v1/observability.proto",

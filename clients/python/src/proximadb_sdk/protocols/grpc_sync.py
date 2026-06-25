@@ -522,6 +522,37 @@ class ProximaDBSyncGrpcClient:
             logger.error(f"gRPC {operation_name} failed: {e}")
             raise ProximaDBError(f"{operation_name} failed: {e}")
 
+    def _execute_fusion_with_pool(self, operation_name: str, operation_func):
+        """Execute fusion operation using the v2 ProximaFusionService."""
+        try:
+            from proximadb.v2 import (
+                fusion_pb2_grpc as v2_fusion_pb2_grpc,  # type: ignore
+            )
+        except ImportError:
+            raise ProximaDBError(
+                "v2 fusion gRPC stubs not available. Regenerate Python protobuf stubs."
+            )
+
+        if not GRPC_AVAILABLE:
+            raise ProximaDBError(
+                "gRPC not available. Install with: pip install grpcio grpcio-tools"
+            )
+
+        try:
+            with GrpcChannelContext(self._connection_pool) as channel:
+                stub = v2_fusion_pb2_grpc.ProximaFusionServiceStub(channel)
+                return operation_func(stub)
+
+        except grpc.RpcError as e:
+            logger.error(f"gRPC {operation_name} RPC error: {e.code()} - {e.details()}")
+            details = e.details() or str(e)
+            if e.code() == grpc.StatusCode.UNAVAILABLE or "connect" in details.lower():
+                raise ProximaDBError(f"{operation_name} connection failed: {details}")
+            raise ProximaDBError(f"{operation_name} RPC failed: {details}")
+        except Exception as e:
+            logger.error(f"gRPC {operation_name} failed: {e}")
+            raise ProximaDBError(f"{operation_name} failed: {e}")
+
     def get_pool_metrics(self):
         """Get connection pool performance metrics"""
         if self._connection_pool:
