@@ -421,10 +421,7 @@ impl UnifiedHandlers {
         table: &str,
         since_lsn: u64,
     ) -> anyhow::Result<Vec<crate::services::record_store::ChangeRow>> {
-        match self.get_dml_service() {
-            Some(dml) => dml.changes_since(table, since_lsn).await,
-            None => Ok(Vec::new()),
-        }
+        self.record_ops.table_changes(table, since_lsn).await
     }
 
     /// Post-construction setter for the canonical-precision resolver.
@@ -851,47 +848,20 @@ impl UnifiedHandlers {
         request: RichSearchRequest,
         tenant_id: Option<&str>,
     ) -> Result<RichSearchResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let request = RichSearchRequest {
-            collection_id: match self
-                .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
-                .await?
-            {
-                Some(id) => id,
-                None => {
-                    return Err(anyhow!("Collection '{}' not found", request.collection_id));
-                }
-            },
-            ..request
-        };
-
-        self.vector_operations_service
-            .search_records_with_tenant_context(request, tenant_context.as_ref())
+        self.record_ops
+            .handle_record_search_for_tenant(request, tenant_id)
             .await
     }
 
     /// Canonical rich-record get handler used by v2 REST/gRPC/internal callers.
+    /// Delegates to the shared `RecordOpsService` (TD-104 REST phase 2).
     pub async fn handle_record_get_for_tenant(
         &self,
         request: RichRecordGetRequest,
         tenant_id: Option<&str>,
     ) -> Result<RichRecordGetResponse> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let request = RichRecordGetRequest {
-            collection_id: match self
-                .resolve_collection_id_internal(&request.collection_id, tenant_context.as_ref())
-                .await?
-            {
-                Some(id) => id,
-                None => {
-                    return Err(anyhow!("Collection '{}' not found", request.collection_id));
-                }
-            },
-            ..request
-        };
-
-        self.vector_operations_service
-            .get_record_with_tenant_context(request, tenant_context.as_ref())
+        self.record_ops
+            .handle_record_get_for_tenant(request, tenant_id)
             .await
     }
 
@@ -941,7 +911,6 @@ impl UnifiedHandlers {
     /// from the deduped, time-ordered scan index and returns `(page,
     /// next_cursor)`.
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     pub async fn handle_record_scan_paginated_for_tenant(
         &self,
         collection_id: &str,
@@ -956,25 +925,14 @@ impl UnifiedHandlers {
         Vec<proximadb_records::ProximaRecord>,
         Option<crate::services::scan_cursor::ScanCursor>,
     )> {
-        let tenant_context = self.collection_service.load_tenant_context(tenant_id)?;
-        let resolved_id = match self
-            .resolve_collection_id_internal(collection_id, tenant_context.as_ref())
-            .await?
-        {
-            Some(id) => id,
-            None => {
-                return Err(anyhow!("Collection '{}' not found", collection_id));
-            }
-        };
-
-        self.vector_operations_service
-            .scan_records_paginated(
-                &resolved_id,
+        self.record_ops
+            .handle_record_scan_paginated_for_tenant(
+                collection_id,
                 cursor,
                 limit,
                 include_vector,
                 include_props,
-                tenant_context.as_ref(),
+                tenant_id,
                 filter,
                 now_ns,
             )

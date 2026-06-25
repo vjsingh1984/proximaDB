@@ -36,7 +36,10 @@ use serde::{Deserialize, Serialize};
 /// Shared application state
 #[derive(Clone)]
 pub struct AppState {
-    /// Shared unified handlers for business logic delegation
+    /// Shared unified handlers — retained for the (deprecating) v1 REST graph
+    /// surface + v2 graph/entity field accesses (graph_operations_service /
+    /// graph_collection_service). Record/collection/vector reads are off this
+    /// field (TD-104 S5 / REST phases 1–2); it goes away when v1 graph is deleted.
     pub request_handlers: Arc<UnifiedHandlers>,
     /// Extracted graph execution capability for query planning/execution helpers
     pub graph_execution_service: Arc<dyn GraphExecutionService>,
