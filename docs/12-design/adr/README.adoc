@@ -71,6 +71,11 @@ This directory contains Architecture Decision Records (ADRs) governing ProximaDB
 | `PortUserContext` — Boundary Type for `SecurityPort` Authentication
 | Accepted
 | Lossy projection of root-crate `UnifiedUserContext` so `SecurityPort::authenticate` can exist at the runtime boundary without dragging the typed permission graph into the runtime crate
+
+| link:ADR-025-deletion-vectors-cold-path.adoc[ADR-025]
+| Deletion Vectors for Cold-Path Deletes (Layered over MVCC)
+| Proposed
+| Cold-path delete mechanism (DV bitmap + immutable files + Iceberg snapshots); rejects redo/undo; retains MVCC for the hot delta
 |===
 
 NOTE: ADR-010 through ADR-013 exist in this directory but are not yet
