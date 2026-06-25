@@ -2380,6 +2380,32 @@ pub fn consult_for_write_leased(
 /// DML Lock Service (Hierarchical Locking for Fine-Grained DML)
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Cluster-local typed error: a DML lock could not be acquired (conflict /
+/// held / fenced). Kept cluster-local (no `core::errors` dependency — layering)
+/// and mapped to `ProximaDBError::DmlLockConflict` at the services layer so
+/// protocol handlers can recover it uniformly via an anyhow chain-walk.
+#[derive(Debug, thiserror::Error)]
+pub enum DmlLockAcquireError {
+    #[error("DML lock conflict on {resource}")]
+    Conflict { resource: String },
+    #[error("DML lock held by {holder} on {resource}")]
+    Held { resource: String, holder: String },
+    #[error("DML lock fenced by {holder} on {resource}")]
+    Fenced { resource: String, holder: String },
+}
+
+impl DmlLockAcquireError {
+    /// `(resource, holder?)` for mapping into a typed protocol error.
+    pub fn resource_holder(&self) -> (String, Option<String>) {
+        match self {
+            Self::Conflict { resource } => (resource.clone(), None),
+            Self::Held { resource, holder } | Self::Fenced { resource, holder } => {
+                (resource.clone(), Some(holder.clone()))
+            }
+        }
+    }
+}
+
 /// Active DML lock (held by a pod for a specific scope with an intent).
 #[derive(Debug, Clone)]
 pub struct ActiveLock {
@@ -2688,6 +2714,9 @@ impl DmlLockService {
         intent: LockIntent,
         now_ms: i64,
     ) -> Result<DmlLockGuard> {
+        // Compute the resource label up front so the error arms can use it
+        // without moving `scope` (which the Acquired arm consumes).
+        let resource = scope.to_key();
         match self
             .acquire_dml_lock(tenant_id, namespace_id, &scope, intent.clone(), now_ms)
             .await?
@@ -2701,23 +2730,17 @@ impl DmlLockService {
                 lease_generation: lease.generation,
                 released: false,
             }),
-            LockOutcome::Conflict => Err(anyhow::anyhow!(
-                "DML lock conflict for tenant '{tenant_id}', namespace {:?}, scope {:?}",
-                namespace_id,
-                scope
-            )),
-            LockOutcome::Held { holder, expires_at } => Err(anyhow::anyhow!(
-                "DML lock held by pod '{holder}' until {expires_at} for tenant '{tenant_id}', namespace {:?}, scope {:?}",
-                namespace_id,
-                scope
-            )),
-            LockOutcome::Fenced { latest } => Err(anyhow::anyhow!(
-                "DML lock fenced by pod '{}' generation {} for tenant '{tenant_id}', namespace {:?}, scope {:?}",
-                latest.holder_pod,
-                latest.generation,
-                namespace_id,
-                scope
-            )),
+            // Typed conflict errors (wrapped in anyhow) — mapped to
+            // ProximaDBError::DmlLockConflict at the services layer.
+            LockOutcome::Conflict => Err(DmlLockAcquireError::Conflict { resource }.into()),
+            LockOutcome::Held { holder, .. } => {
+                Err(DmlLockAcquireError::Held { resource, holder }.into())
+            }
+            LockOutcome::Fenced { latest } => Err(DmlLockAcquireError::Fenced {
+                resource,
+                holder: latest.holder_pod,
+            }
+            .into()),
         }
     }
 
