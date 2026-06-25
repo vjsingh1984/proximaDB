@@ -29,6 +29,7 @@ use tracing::info;
 use crate::compute::distance_computation::DistanceMetric;
 use crate::compute::distance_computation::engine::UnifiedDistanceCompute;
 use crate::index::axis::types::IndexAlgorithm;
+use crate::index::axis::utils::ConcurrentIdMapping;
 use crate::infrastructure::adaptive_structures::{
     AdaptiveStore, AdaptiveStoreConfig, BackendType, DemotionCriteria, EvictionPolicy,
     IndexStructure, MetricsConfig, PromotionCriteria, TierConfig, UnifiedTierPolicy,
@@ -467,7 +468,7 @@ pub struct TieredPostingList {
     /// Identifier of the cluster this posting list belongs to.
     pub cluster_id: usize,
     /// Vector IDs assigned to this cluster.
-    pub vector_ids: Vec<String>,
+    pub vector_ids: Vec<usize>, // TD-147: compact internal ids (via ConcurrentIdMapping)
     /// Full-precision vectors, or `None` when evicted to disk.
     pub vectors: Option<Vec<Vec<f32>>>,
     /// PQ-encoded vectors when product quantization is enabled.
@@ -683,6 +684,9 @@ pub struct UnifiedIvfIndex {
     /// Global statistics
     vector_count: Arc<AtomicUsize>,
     search_count: Arc<AtomicU64>,
+
+    /// Compact external↔internal id mapping (TD-147).
+    id_mapping: ConcurrentIdMapping,
 
     /// Access pattern tracking for prefetch
     access_correlations: Arc<DashMap<usize, Vec<(usize, f32)>>>,
@@ -1333,6 +1337,7 @@ impl UnifiedIvfIndex {
             },
             config,
             vector_count: Arc::new(AtomicUsize::new(0)),
+            id_mapping: ConcurrentIdMapping::new(),
             search_count: Arc::new(AtomicU64::new(0)),
             access_correlations: Arc::new(DashMap::new()),
             product_quantizer: None,
@@ -1472,7 +1477,9 @@ impl UnifiedIvfIndex {
         };
 
         // Add vector ID to posting list
-        posting_list.vector_ids.push(id.clone());
+        posting_list
+            .vector_ids
+            .push(self.id_mapping.register(id.clone())?);
 
         // If vectors are stored in posting list (for small clusters)
         if let Some(ref mut vectors) = posting_list.vectors {
@@ -1591,13 +1598,18 @@ impl UnifiedIvfIndex {
             // This access may promote the posting list to memory
             if let Some(posting_list) = self.posting_lists.get(&key).await {
                 // Search within posting list
-                for vector_id in &posting_list.vector_ids {
+                for internal_id in &posting_list.vector_ids {
+                    // TD-147: resolve compact internal id → external String
+                    let vector_id = match self.id_mapping.external(*internal_id) {
+                        Some(id) => id,
+                        None => continue,
+                    };
                     // Get vector from zero-overhead collection
                     if let Some(collection_entry) = self.vectors.get(&self.collection_id) {
                         let collection = collection_entry
                             .read()
                             .unwrap_or_else(|poisoned| poisoned.into_inner());
-                        if let Some(view) = collection.get(vector_id)
+                        if let Some(view) = collection.get(&vector_id)
                             && let Some(vector_data) = view.as_f32()
                         {
                             // SimilarityResult.rank_value carries
@@ -2000,8 +2012,13 @@ impl UnifiedIvfIndex {
             let bq = BinaryCode::from_rotated_residual(query, centroid, &self.rotation_signs);
             let key = PartitionedKey::new(self.collection_id.clone(), *cluster_id);
             if let Some(posting_list) = self.posting_lists.get(&key).await {
-                for vector_id in &posting_list.vector_ids {
-                    if let Some(code) = self.binary_codes.get(vector_id) {
+                for internal_id in &posting_list.vector_ids {
+                    // TD-147: resolve compact internal id → external String
+                    let vector_id = match self.id_mapping.external(*internal_id) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+                    if let Some(code) = self.binary_codes.get(&vector_id) {
                         coarse.push((vector_id.clone(), bq.hamming(&code), *centroid_dist));
                     }
                 }
@@ -2532,8 +2549,12 @@ impl UnifiedIvfIndex {
         for key in self.posting_lists.keys().await {
             if let Some(posting_list) = self.posting_lists.get(&key).await {
                 let cluster_id = posting_list.cluster_id as u32;
-                for vid in &posting_list.vector_ids {
-                    if let Some(code) = self.binary_codes.get(vid) {
+                for internal_id in &posting_list.vector_ids {
+                    let vid = match self.id_mapping.external(*internal_id) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+                    if let Some(code) = self.binary_codes.get(&vid) {
                         binary_tier.push((vid.clone(), code.bits.clone(), cluster_id));
                     }
                     ids.push(vid.clone());
@@ -2606,8 +2627,12 @@ impl UnifiedIvfIndex {
         for key in self.posting_lists.keys().await {
             if let Some(posting_list) = self.posting_lists.get(&key).await {
                 let cluster_id = posting_list.cluster_id as u32;
-                for vid in &posting_list.vector_ids {
-                    if let Some(code) = self.binary_codes.get(vid) {
+                for internal_id in &posting_list.vector_ids {
+                    let vid = match self.id_mapping.external(*internal_id) {
+                        Some(id) => id,
+                        None => continue,
+                    };
+                    if let Some(code) = self.binary_codes.get(&vid) {
                         binary_tier.push((vid.clone(), code.bits.clone(), cluster_id));
                     }
                 }
@@ -2635,12 +2660,12 @@ impl UnifiedIvfIndex {
 
         // Group ids by cluster to build posting lists (membership only — no fp32),
         // and install the binary codes.
-        let mut by_cluster: HashMap<usize, Vec<String>> = HashMap::new();
+        let mut by_cluster: HashMap<usize, Vec<usize>> = HashMap::new();
         for (id, bits, cluster_id) in cold.binary_tier {
             by_cluster
                 .entry(cluster_id as usize)
                 .or_default()
-                .push(id.clone());
+                .push(self.id_mapping.register(id.clone())?);
             self.binary_codes.insert(id, BinaryCode::from_bits(bits));
             self.vector_count.fetch_add(1, Ordering::Relaxed);
         }
@@ -4808,5 +4833,46 @@ mod tests {
 
         let key4 = PartitionedKey::new("collection1".to_string(), 42);
         assert_eq!(key1, key4); // Same collection and key
+    }
+
+    /// TD-147: verify compact internal ids (Vec<usize>) + ConcurrentIdMapping resolve
+    /// to correct external String ids at search time.
+    #[test]
+    fn compact_id_search_returns_correct_external_ids() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let config = UnifiedIvfConfig {
+                n_clusters: 2,
+                n_probe: 2,
+                ..Default::default()
+            };
+            let mut index =
+                UnifiedIvfIndex::new("test_compact_ids".to_string(), config).expect("create IVF");
+
+            let vectors: Vec<Vec<f32>> = (0..10)
+                .map(|i| {
+                    vec![
+                        i as f32 * 100.0,
+                        (i as f32 + 1.0) * 100.0,
+                        (i as f32 + 2.0) * 100.0,
+                    ]
+                })
+                .collect();
+            index.train(vectors.clone()).await.expect("train");
+
+            for (i, v) in vectors.iter().enumerate() {
+                index
+                    .add_vector(format!("vec_{i}"), v.clone(), None)
+                    .await
+                    .expect("add_vector");
+            }
+
+            let results = index.search(&vectors[3], 5, None).await.expect("search");
+            let ids: Vec<&str> = results.iter().map(|(id, _)| id.as_str()).collect();
+            assert!(
+                ids.contains(&"vec_3"),
+                "compact-id search must return correct external id 'vec_3'; got {ids:?}"
+            );
+        });
     }
 }
