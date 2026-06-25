@@ -3063,6 +3063,49 @@ mod tests {
         Ok(())
     }
 
+    /// P1a: the background renew loop (spawned in production by SharedServices)
+    /// keeps a held lease alive past its TTL. Without it the lease would lapse
+    /// and the leaseholder model the write-gate (421) + DML locks rely on
+    /// silently degrades.
+    #[tokio::test]
+    async fn renew_loop_keeps_held_lease_past_ttl() -> Result<()> {
+        let backing = shared_backing();
+        let store_handle = Arc::new(store(&backing));
+        // Short TTL (100ms) so the test is fast.
+        let mgr = Arc::new(PartitionLeaseManager::new(
+            store_handle.clone(),
+            Arc::new(PrimaryPodRegistry::new()),
+            "pod-A",
+            100,
+        ));
+        let key = ResourceKey::legacy_collection("t1", "c1");
+        assert!(mgr.acquire_with_key(&key, now_millis()).await?);
+
+        // Renew every 40ms (≤ TTL/2), fire-and-forget like production.
+        let renew_handle = mgr.clone().spawn_renew_loop(Duration::from_millis(40));
+
+        // Sleep well past the TTL. Without renewal the lease would be expired;
+        // with the renew loop it must stay held by pod-A at the same generation.
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        let (_, lease) = store_handle
+            .read_key(&key)
+            .await?
+            .expect("lease still present");
+        assert_eq!(lease.holder_pod, "pod-A");
+        assert!(
+            !lease.is_expired(now_millis()),
+            "renewal must push expiry forward past now"
+        );
+        assert_eq!(
+            lease.generation, 1,
+            "renewal keeps generation (no takeover)"
+        );
+
+        renew_handle.abort();
+        Ok(())
+    }
+
     /// Owner death (lease expiry) → fenced handoff: a new pod takes over with a
     /// strictly-higher generation, and the dead owner's later renewal is rejected.
     #[tokio::test]
