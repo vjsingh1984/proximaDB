@@ -445,6 +445,75 @@ mod tests {
         assert_eq!(back.len(), records.len());
     }
 
+    /// Mixed-read-safe coexistence (storage-format mandate #8). A store rolling
+    /// PAX quantization on will have BOTH legacy `ProximaBlocks` segments (written
+    /// before the flip) and new PAX segments side by side. The magic-byte router
+    /// must read BOTH back through the single `read_segment_records` entry —
+    /// disjoint oids, no mis-route. This is the property that makes the staged
+    /// default-on flip safe (default OFF in v0.2, flip gated by the recall ratchet).
+    #[test]
+    fn mixed_format_legacy_and_pax_segments_coexist_and_read_back() {
+        let legacy_records = vec![
+            rec(
+                "legacy_a",
+                1_700_000_000_000_000_000,
+                vec![1.0, 2.0, 3.0, 4.0],
+            ),
+            rec(
+                "legacy_b",
+                1_700_000_000_000_000_001,
+                vec![5.0, 6.0, 7.0, 8.0],
+            ),
+        ];
+        let legacy_bytes = ProximaDataBlock::new(legacy_records, BlockCompressionConfig::default())
+            .serialize()
+            .unwrap();
+
+        let dir = tempfile::tempdir().unwrap();
+        let pax_path = dir.path().join("coexist.pax");
+        let pax_records = vec![
+            rec(
+                "pax_c",
+                1_700_000_000_000_000_002,
+                vec![9.0, 10.0, 11.0, 12.0],
+            ),
+            rec(
+                "pax_d",
+                1_700_000_000_000_000_003,
+                vec![13.0, 14.0, 15.0, 16.0],
+            ),
+        ];
+        write_pax_segment(&pax_path, &pax_records, "col", 1, VectorQuant::RaBitQ).unwrap();
+        let pax_bytes = std::fs::read(&pax_path).unwrap();
+
+        // The two segments are detected as DIFFERENT formats (never mis-routed).
+        assert_eq!(
+            SegmentFormat::detect(&legacy_bytes),
+            SegmentFormat::ProximaBlocks
+        );
+        assert_eq!(SegmentFormat::detect(&pax_bytes), SegmentFormat::Pax);
+
+        // ...and BOTH read back through the single mixed-format router.
+        let legacy_back = read_segment_records(&legacy_bytes, &[], &[], None).unwrap();
+        let pax_back = read_segment_records(&pax_bytes, &[], &[], None).unwrap();
+
+        let mut legacy_oids: Vec<&str> = legacy_back.iter().map(|r| r.oid.as_str()).collect();
+        legacy_oids.sort_unstable();
+        let mut pax_oids: Vec<&str> = pax_back.iter().map(|r| r.oid.as_str()).collect();
+        pax_oids.sort_unstable();
+
+        assert_eq!(
+            legacy_oids,
+            vec!["legacy_a", "legacy_b"],
+            "legacy segment oids"
+        );
+        assert_eq!(
+            pax_oids,
+            vec!["pax_c", "pax_d"],
+            "PAX segment oids (disjoint from legacy)"
+        );
+    }
+
     /// P3 C.2 cascade primitive — recall + trace gate. A real PAX+RaBitQ segment
     /// is cold-scanned via `rabitq_search_segment` (RaBitQ candidate prefilter →
     /// SQ8 rerank → top-k); recall@10 must hold ≥ 0.90 vs the exact-f32 baseline,

@@ -151,8 +151,12 @@ impl SstEngine {
         let codec = FilenameCodec::new();
         let mut block_format = BlockFormat::parse_block_format(&self.config().block_format);
         // P3 Phase B: flag-gated PAX vector segments (default OFF). Reads stay
-        // mixed-format-safe (see `segment_format`), so flipping this on only changes
-        // newly written segments; existing ProximaBlocks segments still read back.
+        // mixed-format-safe — see
+        // `segment_format::mixed_format_legacy_and_pax_segments_coexist_and_read_back`
+        // — so flipping this on only changes newly written segments; existing
+        // ProximaBlocks segments still read back. STAGED ROLLOUT: default OFF in
+        // v0.2; the develop→qa recall ratchet (qa-gate `pax-recall-ratchet`,
+        // recall@10 >= 0.90 at N=100k) gates the v0.3 flip to default ON.
         if std::env::var("PROXIMADB_PAX_VECTOR_SEGMENTS")
             .map(|v| matches!(v.as_str(), "1" | "true" | "on" | "yes"))
             .unwrap_or(false)
@@ -433,6 +437,8 @@ impl SstEngine {
                 // P3 Phase D: vector quantization strategy. Deployment selector for now
                 // (`PROXIMADB_PAX_VECTOR_QUANT` = rabitq|sq8|auto); per-collection proto
                 // config is the productionization follow-up. `Auto` keeps the env default.
+                // STAGED ROLLOUT: only takes effect once PAX segments are enabled above
+                // (default OFF v0.2); the recall ratchet gates the v0.3 default-on flip.
                 let quant = match std::env::var("PROXIMADB_PAX_VECTOR_QUANT")
                     .unwrap_or_default()
                     .to_ascii_lowercase()
