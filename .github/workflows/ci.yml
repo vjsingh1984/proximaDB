@@ -70,6 +70,10 @@ jobs:
       test_tier: ${{ github.base_ref == 'qa' || github.base_ref == 'main' || github.ref == 'refs/heads/qa' || github.ref == 'refs/heads/main' }}
       extensive: ${{ github.base_ref == 'main' || github.ref == 'refs/heads/main' }}
       rust: ${{ steps.filter.outputs.rust }}
+      # Comprehensive code-path superset gating the always-required rust-compile
+      # hard gate (skips ONLY on docs/non-code-only diffs). See the `compile:`
+      # filter definition below and the rust-compile job comment.
+      compile: ${{ steps.filter.outputs.compile }}
       python: ${{ steps.filter.outputs.python }}
       docker: ${{ steps.filter.outputs.docker }}
       docs: ${{ steps.filter.outputs.docs }}
@@ -107,6 +111,26 @@ jobs:
               - 'build.rs'
               - 'tests/**'
               - 'benches/**'
+            # `compile` gates the rust-compile hard gate. It is a deliberate
+            # SUPERSET of every path that can affect `cargo check --workspace`:
+            # the root `src/**`, every workspace member under `crates/**` and
+            # `apps/**` (NOT covered by `rust:` above), test/bench targets, the
+            # manifests + lockfile, build script, toolchain pin, cargo config,
+            # and generated-proto inputs. A docs/non-code-only diff matches
+            # nothing here, so the compile gate skips; ANY code change matches,
+            # so a non-compiling change can never skip the gate (#226 guarantee).
+            compile:
+              - 'src/**'
+              - 'crates/**'
+              - 'apps/**'
+              - 'tests/**'
+              - 'benches/**'
+              - 'build.rs'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain*'
+              - '.cargo/**'
+              - 'proto/**'
             python:
               - 'clients/python/**'
               - 'clients/python-embedded/**'
@@ -977,13 +1001,19 @@ jobs:
   # ============================================================================
   # COMPILE GATE - lib + test shapes, both REQUIRED, in parallel
   # ============================================================================
-  # ALWAYS runs — deliberately NOT gated on the `changes` filter. A non-compiling
-  # lib OR test shape must block the merge, and a *skipped* job does not trip the
-  # `ci-success` check, so this gate must never be skippable. This is the guard
-  # that would have caught the non-compiling `develop` of #226 (a source file
-  # silently `.gitignore`'d away while its `mod` decl landed) and the stale
-  # integration tests that no required job compiled. `cargo check` (no
-  # codegen/link) keeps it fast. Both matrix legs are in `ci-success.needs`.
+  # Gated ONLY by the comprehensive `compile` path filter (a deliberate SUPERSET
+  # of everything `cargo check --workspace` reads: src/**, crates/**, apps/**,
+  # tests/**, benches/**, manifests, lockfile, build.rs, toolchain pin, .cargo/**,
+  # proto/**). A non-compiling lib OR test shape must block the merge — this is
+  # the guard that would have caught the non-compiling `develop` of #226 (a source
+  # file silently `.gitignore`'d away while its `mod` decl landed) and stale
+  # integration tests no required job compiled. Because the filter is a superset
+  # of ALL code paths, a real code change can never skip this gate; only a
+  # docs/non-code-only diff skips it, which is safe (nothing to compile) and saves
+  # two runner jobs per docs PR. `ci-success` treats a *skipped* compile (docs
+  # only) as pass and blocks only on failure/cancelled — see its "Require Rust
+  # compile" step. `cargo check` (no codegen/link) + rust-cache keep it fast.
+  # Both matrix legs are in `ci-success.needs`.
   #
   # The `test` shape is `--lib --bins --tests` (unit + integration tests) — the
   # correctness-bearing targets. Benches/examples are excluded for now (they
@@ -992,6 +1022,8 @@ jobs:
   rust-compile:
     name: Rust Compile (${{ matrix.shape }})
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.compile == 'true'
     # CARGO_BUILD_JOBS=1: serial compilation keeps peak memory bounded. The
     # `test` shape compiles every crate's test targets at once and OOM-killed the
     # runner (exit 143) under default parallelism; serial is the repo's standard
@@ -1639,18 +1671,20 @@ jobs:
       - openapi-spec-drift
     if: always()
     steps:
-      # HARD GATE — Rust lib + test compile (the `rust-compile` matrix) must pass.
-      # This is the requested merge criterion: a non-compiling lib OR test shape
-      # blocks the merge via the already-required `CI Success` context. A matrix
-      # job's `result` is 'success' only when BOTH legs (lib, test) succeed, so
-      # `!= 'success'` (failure / cancelled / skipped) blocks. Enforcement uses
+      # HARD GATE — Rust lib + test compile (the `rust-compile` matrix) must pass
+      # whenever it runs. `rust-compile` is gated on the comprehensive `compile`
+      # path filter (a SUPERSET of all code paths), so it is `skipped` ONLY for a
+      # docs/non-code-only diff — safe to let through (nothing to compile).
+      # Therefore block on `failure`/`cancelled` and treat `skipped` (and
+      # `success`) as pass. A matrix job's `result` is 'success' only when BOTH
+      # legs (lib, test) succeed, and 'failure' if either fails. Enforcement uses
       # GitHub's `needs.<job>.result` expression — NOT a shell-grep of
       # `toJSON(needs.*.result)`: the historical grep embedded a multi-line JSON
       # array with unescaped `"` into `results="..."`, which broke bash quoting so
       # it NEVER matched — `CI Success` silently passed through every failure (it
       # let the non-compiling develop of #226 merge). Do NOT restore that grep.
       - name: Require Rust compile (lib + test)
-        if: ${{ needs.rust-compile.result != 'success' }}
+        if: ${{ needs.rust-compile.result == 'failure' || needs.rust-compile.result == 'cancelled' }}
         run: |
           echo "::error::Rust Compile (lib and/or test shape) did not pass — blocking merge."
           {
