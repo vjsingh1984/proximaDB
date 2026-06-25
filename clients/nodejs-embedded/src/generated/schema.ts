@@ -24,23 +24,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v2/api/v2/graphs/{graph_id}/fusion-search": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /** `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid. */
-        post: operations["fusion_search_v2"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v2/collections": {
         parameters: {
             query?: never;
@@ -441,6 +424,23 @@ export interface paths {
          * @description Batch counterpart to `createEdge`.
          */
         post: operations["batchCreateEdges"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/graphs/{graph_id}/fusion-search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** `POST /api/v2/graphs/{graph_id}/fusion-search` — vector seed → graph expand → calibrated fuse-by-oid. */
+        post: operations["fusion_search_v2"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1839,51 +1839,6 @@ export interface operations {
             };
         };
     };
-    fusion_search_v2: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Graph ID for traversal expansion */
-                graph_id: string;
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["FusionSearchRequest"];
-            };
-        };
-        responses: {
-            /** @description Fusion results with calibrated scores */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["FusionSearchResponse"];
-                };
-            };
-            /** @description Invalid request (empty query_vector, etc.) */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-            /** @description Fusion execution failed */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ErrorResponse"];
-                };
-            };
-        };
-    };
     listCollections: {
         parameters: {
             query?: {
@@ -2507,6 +2462,51 @@ export interface operations {
             };
             400: components["responses"]["BadRequest"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    fusion_search_v2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Graph ID for traversal expansion */
+                graph_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FusionSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Fusion results with calibrated scores */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FusionSearchResponse"];
+                };
+            };
+            /** @description Invalid request (empty query_vector, etc.) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Fusion execution failed */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     createNode: {

@@ -25,7 +25,7 @@ def _get_kwargs(
 
     _kwargs: dict[str, Any] = {
         "method": "post",
-        "url": "/api/v2/api/v2/graphs/{graph_id}/fusion-search".format(
+        "url": "/api/v2/graphs/{graph_id}/fusion-search".format(
             graph_id=graph_id,
         ),
     }
