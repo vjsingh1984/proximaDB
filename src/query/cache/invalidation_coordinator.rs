@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use crate::query::cache::batch_group::BatchGroupCache;
 use crate::query::cache::plan_cache::PlanCache;
+use crate::storage::cache::specialized::query_cache::QueryCache;
 
 /// Per-call result — how many entries each cache dropped. Useful in
 /// observability dashboards and in tests that need to assert fan-out.
@@ -30,6 +31,7 @@ use crate::query::cache::plan_cache::PlanCache;
 pub struct InvalidationSummary {
     pub plan_cache_entries: u64,
     pub batch_groups_closed: u64,
+    pub query_cache_entries: u64,
     /// Corpus version after the bump that fired during this call —
     /// `None` only if the registry wasn't reachable. The observability
     /// dashboard reports this so an SRE can correlate "the version
@@ -39,7 +41,7 @@ pub struct InvalidationSummary {
 
 impl InvalidationSummary {
     pub fn total(&self) -> u64 {
-        self.plan_cache_entries + self.batch_groups_closed
+        self.plan_cache_entries + self.batch_groups_closed + self.query_cache_entries
     }
 }
 
@@ -49,6 +51,7 @@ impl InvalidationSummary {
 pub struct CacheInvalidationCoordinator {
     plan_cache: Option<Arc<PlanCache>>,
     batch_group: Option<Arc<BatchGroupCache>>,
+    query_cache: Option<Arc<QueryCache>>,
 }
 
 impl CacheInvalidationCoordinator {
@@ -59,6 +62,7 @@ impl CacheInvalidationCoordinator {
         Self {
             plan_cache: None,
             batch_group: None,
+            query_cache: None,
         }
     }
 
@@ -71,6 +75,12 @@ impl CacheInvalidationCoordinator {
     /// Attach the batch-group cache.
     pub fn with_batch_group(mut self, cache: Arc<BatchGroupCache>) -> Self {
         self.batch_group = Some(cache);
+        self
+    }
+
+    /// Attach the query-results cache.
+    pub fn with_query_cache(mut self, cache: Arc<QueryCache>) -> Self {
+        self.query_cache = Some(cache);
         self
     }
 
@@ -94,6 +104,10 @@ impl CacheInvalidationCoordinator {
 
         if let Some(cache) = &self.plan_cache {
             summary.plan_cache_entries = cache.invalidate_collection(tenant_id, collection).await;
+        }
+
+        if let Some(cache) = &self.query_cache {
+            summary.query_cache_entries = cache.invalidate_collection(collection).await as u64;
         }
 
         if let Some(cache) = &self.batch_group {
@@ -281,9 +295,10 @@ mod tests {
         let s = InvalidationSummary {
             plan_cache_entries: 3,
             batch_groups_closed: 5,
+            query_cache_entries: 2,
             corpus_version_after: None,
         };
-        assert_eq!(s.total(), 8);
+        assert_eq!(s.total(), 10);
     }
 
     // Bind one cache key digest to a stable u64 so the coordinator tests

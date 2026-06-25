@@ -486,6 +486,21 @@ impl VectorOperationsService {
     pub fn invalidate_collection_cache(&self, collection_id: &str) {
         self.collection_resolver()
             .invalidate_collection_cache(collection_id);
+        // Read-after-write coherence: drop cached query results for this
+        // collection so the next search reflects the write. Fire-and-forget
+        // (async) — callers that need the invalidation guaranteed before a
+        // subsequent read call `invalidate_query_cache` and await it.
+        let query_cache = self.query_cache.clone();
+        let coll = collection_id.to_string();
+        tokio::spawn(async move {
+            query_cache.invalidate_collection(&coll).await;
+        });
+    }
+
+    /// Invalidate cached query results for a collection, awaited. Use this on
+    /// the write paths (insert/delete) where the next read must see the write.
+    pub async fn invalidate_query_cache(&self, collection_id: &str) {
+        self.query_cache.invalidate_collection(collection_id).await;
     }
 
     async fn validate_tenant_collection_access(
@@ -855,6 +870,9 @@ impl VectorOperationsService {
         if !result.success {
             return Ok(result);
         }
+        // Read-after-write coherence: a deleted record must not resurface
+        // from a stale cached query result. Await so the next search sees it.
+        self.invalidate_query_cache(collection_id).await;
         let total_processed = result.metrics.total_processed.max(0);
         let processing_time_us = start.elapsed().as_micros() as i64;
 
@@ -1781,9 +1799,16 @@ impl VectorOperationsService {
             return Err(anyhow::anyhow!(e));
         }
 
-        self.write_coordinator()
+        let result = self
+            .write_coordinator()
             .insert_batch_internal(collection_id, records)
-            .await
+            .await?;
+        // Read-after-write coherence: a freshly inserted record must be
+        // visible to the next search, not hidden behind a stale cached result.
+        if result.success {
+            self.invalidate_query_cache(collection_id).await;
+        }
+        Ok(result)
     }
 
     /// Alias kept for callers already using ProximaRecord envelopes.
@@ -2176,7 +2201,20 @@ impl VectorOperationsService {
             k as u32,
             filter_str.as_deref(),
         );
-        if let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await {
+        // Strong-freshness reads must NEVER be served from the query cache —
+        // a cached result could predate a concurrent write and violate
+        // read-after-write. Only non-Strong (StaleOk / BoundedStale) reads
+        // may use the cache. Extract freshness here (before the cache check)
+        // so the gate is correct.
+        let freshness_mode = config
+            .as_ref()
+            .and_then(|c| c.freshness_mode.clone())
+            .unwrap_or_default();
+        if !matches!(
+            freshness_mode,
+            crate::core::search::VectorFreshnessMode::Strong
+        ) && let Some(cached_v1) = self.query_cache.get_if_fresh_v1(&cache_key, 300).await
+        {
             // Phase 7.2: a process-local cache hit is the strongest
             // possible signal that this node owns the warm path for
             // the collection — record affinity here too.
@@ -2210,14 +2248,9 @@ impl VectorOperationsService {
             .map(|c| c.search_mode.clone())
             .unwrap_or_default();
 
-        // Phase 5: pull the request's freshness mode (default = Strong)
-        // so the v1 path applies the same delta-merge semantics as the
-        // legacy path. Keep clones of query_vector + filter for the
-        // delta scan since execute_unified_plan takes ownership.
-        let freshness_mode = config
-            .as_ref()
-            .and_then(|c| c.freshness_mode.clone())
-            .unwrap_or_default();
+        // freshness_mode was extracted above (before the cache check) so the
+        // Strong-bypass gate is correct. Keep clones of query_vector + filter
+        // for the delta scan since execute_unified_plan takes ownership.
         let delta_query_vector = query_vector.clone();
         let delta_filter = filter.clone();
 
