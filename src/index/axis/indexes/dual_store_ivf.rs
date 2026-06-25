@@ -4858,7 +4858,7 @@ mod tests {
                     ]
                 })
                 .collect();
-            index.train(&vectors).expect("train");
+            index.train(vectors.clone()).await.expect("train");
 
             for (i, v) in vectors.iter().enumerate() {
                 index
