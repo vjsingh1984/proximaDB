@@ -6783,3 +6783,1034 @@ pub mod proxima_fusion_service_server {
         const NAME: &'static str = SERVICE_NAME;
     }
 }
+/// Entity represents a semantic unit with embeddings, metadata, and relationships.
+/// `flexible_metadata` uses the v2 `TypedValue` map for full ProximaValue coverage.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Entity {
+    #[prost(string, tag = "1")]
+    pub id: ::prost::alloc::string::String,
+    #[prost(message, repeated, tag = "2")]
+    pub embeddings: ::prost::alloc::vec::Vec<EmbeddingVersion>,
+    #[prost(message, optional, tag = "3")]
+    pub typed_metadata: ::core::option::Option<TypedMetadata>,
+    /// v2 TypedValue (was SqlValue in v1)
+    #[prost(map = "string, message", tag = "4")]
+    pub flexible_metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        TypedValue,
+    >,
+    #[prost(message, optional, tag = "5")]
+    pub provenance: ::core::option::Option<Provenance>,
+    #[prost(message, repeated, tag = "6")]
+    pub relations: ::prost::alloc::vec::Vec<Relation>,
+    #[prost(message, optional, tag = "7")]
+    pub temporal: ::core::option::Option<TemporalInfo>,
+    #[prost(string, tag = "8")]
+    pub collection_id: ::prost::alloc::string::String,
+}
+/// Embedding version with vector, model info, and modality.
+/// Note: `vector` is repeated float (v1 parity); native Arrow FloatArray is a
+/// future follow-up for zero-copy columnar path.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EmbeddingVersion {
+    #[prost(string, tag = "1")]
+    pub model_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub model_version: ::prost::alloc::string::String,
+    #[prost(float, repeated, tag = "3")]
+    pub vector: ::prost::alloc::vec::Vec<f32>,
+    #[prost(uint32, tag = "4")]
+    pub dimension: u32,
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "5")]
+    pub created_at_ms: i64,
+    #[prost(map = "string, string", tag = "6")]
+    pub model_params: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+    #[prost(enumeration = "EntityModality", tag = "7")]
+    pub modality: i32,
+}
+/// Typed metadata with strongly-typed fields (v1 parity, unchanged in v2).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TypedMetadata {
+    #[prost(map = "string, message", tag = "1")]
+    pub fields: ::std::collections::HashMap<::prost::alloc::string::String, TypedField>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TypedField {
+    #[prost(bool, tag = "7")]
+    pub indexed: bool,
+    #[prost(bool, tag = "8")]
+    pub filterable: bool,
+    #[prost(oneof = "typed_field::Value", tags = "1, 2, 3, 4, 5, 6")]
+    pub value: ::core::option::Option<typed_field::Value>,
+}
+/// Nested message and enum types in `TypedField`.
+pub mod typed_field {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(string, tag = "1")]
+        StringValue(::prost::alloc::string::String),
+        #[prost(int64, tag = "2")]
+        IntValue(i64),
+        #[prost(double, tag = "3")]
+        DoubleValue(f64),
+        #[prost(bool, tag = "4")]
+        BoolValue(bool),
+        #[prost(message, tag = "5")]
+        StringArray(super::StringArray),
+        /// Unix epoch milliseconds
+        #[prost(int64, tag = "6")]
+        TimestampValueMs(i64),
+    }
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct StringArray {
+    #[prost(string, repeated, tag = "1")]
+    pub values: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
+}
+/// Provenance tracking for entity extraction.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Provenance {
+    #[prost(string, tag = "1")]
+    pub source_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub chunk_id: ::prost::alloc::string::String,
+    #[prost(uint32, tag = "3")]
+    pub chunk_position: u32,
+    #[prost(string, tag = "4")]
+    pub extraction_method: ::prost::alloc::string::String,
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "5")]
+    pub extracted_at_ms: i64,
+    #[prost(map = "string, string", tag = "6")]
+    pub metadata: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Temporal information for versioned entities.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TemporalInfo {
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "1")]
+    pub created_at_ms: i64,
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "2")]
+    pub valid_from_ms: i64,
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "3")]
+    pub valid_to_ms: i64,
+    #[prost(bool, tag = "4")]
+    pub is_current: bool,
+    #[prost(message, repeated, tag = "5")]
+    pub versions: ::prost::alloc::vec::Vec<TemporalVersion>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TemporalVersion {
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "1")]
+    pub timestamp_ms: i64,
+    #[prost(string, tag = "2")]
+    pub version_id: ::prost::alloc::string::String,
+    #[prost(map = "string, string", tag = "3")]
+    pub changes: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Relation between entities with typed weight and properties.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct Relation {
+    #[prost(string, tag = "1")]
+    pub source_entity_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub target_entity_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub relation_type: ::prost::alloc::string::String,
+    #[prost(float, tag = "4")]
+    pub weight: f32,
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "5")]
+    pub created_at_ms: i64,
+    #[prost(map = "string, string", tag = "6")]
+    pub properties: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Upsert (insert or update) an entity. If the entity ID is empty, the server
+/// generates a UUID. `create_collection_if_missing` auto-creates the collection
+/// when true (v1 parity).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct UpsertEntityRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub entity: ::core::option::Option<Entity>,
+    #[prost(bool, tag = "3")]
+    pub create_collection_if_missing: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct UpsertEntityResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(string, tag = "2")]
+    pub entity_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "3")]
+    pub message: ::prost::alloc::string::String,
+}
+/// Get an entity by ID. Optional flags control inclusion of embeddings and
+/// relations (default: both included).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct GetEntityRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub entity_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub include_embeddings: bool,
+    #[prost(bool, tag = "4")]
+    pub include_relations: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct GetEntityResponse {
+    #[prost(message, optional, tag = "1")]
+    pub entity: ::core::option::Option<Entity>,
+}
+/// Delete an entity by ID. `hard_delete` removes from storage; soft delete marks
+/// as deleted (v1 parity semantics).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteEntityRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
+    pub entity_id: ::prost::alloc::string::String,
+    #[prost(bool, tag = "3")]
+    pub hard_delete: bool,
+}
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct DeleteEntityResponse {
+    #[prost(bool, tag = "1")]
+    pub success: bool,
+    #[prost(string, tag = "2")]
+    pub message: ::prost::alloc::string::String,
+}
+/// Search entities by similarity (text or vector), with metadata filters,
+/// temporal clauses, and optional progressive result streaming (v1 parity).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SearchEntitiesRequest {
+    #[prost(string, tag = "1")]
+    pub collection_id: ::prost::alloc::string::String,
+    #[prost(message, optional, tag = "2")]
+    pub similar: ::core::option::Option<SimilarQuery>,
+    #[prost(message, optional, tag = "3")]
+    pub filters: ::core::option::Option<MetadataFilter>,
+    #[prost(message, optional, tag = "4")]
+    pub temporal: ::core::option::Option<TemporalClause>,
+    #[prost(uint32, tag = "5")]
+    pub top_k: u32,
+    #[prost(bool, tag = "6")]
+    pub progressive: bool,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SearchEntitiesResponse {
+    #[prost(message, repeated, tag = "1")]
+    pub results: ::prost::alloc::vec::Vec<EntityResult>,
+    #[prost(uint32, tag = "2")]
+    pub total: u32,
+    #[prost(message, optional, tag = "3")]
+    pub page_info: ::core::option::Option<PageInfo>,
+    #[prost(message, optional, tag = "4")]
+    pub progress: ::core::option::Option<ProgressInfo>,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct EntityResult {
+    #[prost(message, optional, tag = "1")]
+    pub entity: ::core::option::Option<Entity>,
+    #[prost(float, tag = "2")]
+    pub score: f32,
+    #[prost(map = "string, string", tag = "3")]
+    pub debug_info: ::std::collections::HashMap<
+        ::prost::alloc::string::String,
+        ::prost::alloc::string::String,
+    >,
+}
+/// Vector data for similarity search (repeated float, v1 parity).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct VectorData {
+    #[prost(float, repeated, tag = "1")]
+    pub values: ::prost::alloc::vec::Vec<f32>,
+}
+/// Similarity query: text (embedding generated server-side) or raw vector.
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct SimilarQuery {
+    #[prost(string, tag = "4")]
+    pub model_id: ::prost::alloc::string::String,
+    #[prost(enumeration = "EntityModality", tag = "5")]
+    pub modality: i32,
+    #[prost(oneof = "similar_query::Query", tags = "1, 2, 3")]
+    pub query: ::core::option::Option<similar_query::Query>,
+}
+/// Nested message and enum types in `SimilarQuery`.
+pub mod similar_query {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Query {
+        #[prost(string, tag = "1")]
+        Text(::prost::alloc::string::String),
+        #[prost(message, tag = "2")]
+        Vector(super::VectorData),
+        #[prost(bytes, tag = "3")]
+        RawData(::prost::alloc::vec::Vec<u8>),
+    }
+}
+/// Metadata filter with clauses and logical operators (v1 parity).
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct MetadataFilter {
+    #[prost(message, repeated, tag = "1")]
+    pub clauses: ::prost::alloc::vec::Vec<FilterClause>,
+    #[prost(enumeration = "EntityLogicalOp", tag = "2")]
+    pub op: i32,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct FilterClause {
+    #[prost(string, tag = "1")]
+    pub field: ::prost::alloc::string::String,
+    #[prost(enumeration = "EntityComparisonOp", tag = "2")]
+    pub op: i32,
+    #[prost(oneof = "filter_clause::Value", tags = "3, 4, 5, 6")]
+    pub value: ::core::option::Option<filter_clause::Value>,
+}
+/// Nested message and enum types in `FilterClause`.
+pub mod filter_clause {
+    #[derive(Clone, PartialEq, ::prost::Oneof)]
+    pub enum Value {
+        #[prost(string, tag = "3")]
+        StringValue(::prost::alloc::string::String),
+        #[prost(int64, tag = "4")]
+        IntValue(i64),
+        #[prost(double, tag = "5")]
+        DoubleValue(f64),
+        #[prost(bool, tag = "6")]
+        BoolValue(bool),
+    }
+}
+/// Temporal clause for time-bounded search (v1 parity).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TemporalClause {
+    #[prost(oneof = "temporal_clause::Clause", tags = "1, 2")]
+    pub clause: ::core::option::Option<temporal_clause::Clause>,
+}
+/// Nested message and enum types in `TemporalClause`.
+pub mod temporal_clause {
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Oneof)]
+    pub enum Clause {
+        /// Unix epoch milliseconds
+        #[prost(int64, tag = "1")]
+        AtTimeMs(i64),
+        #[prost(message, tag = "2")]
+        ValidBetween(super::TimeRange),
+    }
+}
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct TimeRange {
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "1")]
+    pub start_ms: i64,
+    /// Unix epoch milliseconds
+    #[prost(int64, tag = "2")]
+    pub end_ms: i64,
+}
+/// Pagination info for progressive search (v1 parity).
+#[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct PageInfo {
+    #[prost(string, tag = "1")]
+    pub cursor: ::prost::alloc::string::String,
+    #[prost(bool, tag = "2")]
+    pub has_more: bool,
+}
+/// Progress info for progressive search (v1 parity).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
+pub struct ProgressInfo {
+    #[prost(uint32, tag = "1")]
+    pub stage: u32,
+    #[prost(uint32, tag = "2")]
+    pub total_stages: u32,
+    #[prost(bool, tag = "3")]
+    pub complete: bool,
+}
+/// Entity modality (prefixed to avoid conflict with ColumnDataType enum values).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EntityModality {
+    Unspecified = 0,
+    Text = 1,
+    Image = 2,
+    Audio = 3,
+    Video = 4,
+    Multimodal = 5,
+}
+impl EntityModality {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::Unspecified => "ENTITY_MODALITY_UNSPECIFIED",
+            Self::Text => "ENTITY_MODALITY_TEXT",
+            Self::Image => "ENTITY_MODALITY_IMAGE",
+            Self::Audio => "ENTITY_MODALITY_AUDIO",
+            Self::Video => "ENTITY_MODALITY_VIDEO",
+            Self::Multimodal => "ENTITY_MODALITY_MULTIMODAL",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ENTITY_MODALITY_UNSPECIFIED" => Some(Self::Unspecified),
+            "ENTITY_MODALITY_TEXT" => Some(Self::Text),
+            "ENTITY_MODALITY_IMAGE" => Some(Self::Image),
+            "ENTITY_MODALITY_AUDIO" => Some(Self::Audio),
+            "ENTITY_MODALITY_VIDEO" => Some(Self::Video),
+            "ENTITY_MODALITY_MULTIMODAL" => Some(Self::Multimodal),
+            _ => None,
+        }
+    }
+}
+/// Entity comparison operator (prefixed to avoid conflict with TypedFilterOperator).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EntityComparisonOp {
+    EntityComparisonUnspecified = 0,
+    EntityComparisonEq = 1,
+    EntityComparisonNe = 2,
+    EntityComparisonGt = 3,
+    EntityComparisonGte = 4,
+    EntityComparisonLt = 5,
+    EntityComparisonLte = 6,
+    EntityComparisonIn = 7,
+    EntityComparisonNotIn = 8,
+    EntityComparisonContains = 9,
+}
+impl EntityComparisonOp {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::EntityComparisonUnspecified => "ENTITY_COMPARISON_UNSPECIFIED",
+            Self::EntityComparisonEq => "ENTITY_COMPARISON_EQ",
+            Self::EntityComparisonNe => "ENTITY_COMPARISON_NE",
+            Self::EntityComparisonGt => "ENTITY_COMPARISON_GT",
+            Self::EntityComparisonGte => "ENTITY_COMPARISON_GTE",
+            Self::EntityComparisonLt => "ENTITY_COMPARISON_LT",
+            Self::EntityComparisonLte => "ENTITY_COMPARISON_LTE",
+            Self::EntityComparisonIn => "ENTITY_COMPARISON_IN",
+            Self::EntityComparisonNotIn => "ENTITY_COMPARISON_NOT_IN",
+            Self::EntityComparisonContains => "ENTITY_COMPARISON_CONTAINS",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ENTITY_COMPARISON_UNSPECIFIED" => Some(Self::EntityComparisonUnspecified),
+            "ENTITY_COMPARISON_EQ" => Some(Self::EntityComparisonEq),
+            "ENTITY_COMPARISON_NE" => Some(Self::EntityComparisonNe),
+            "ENTITY_COMPARISON_GT" => Some(Self::EntityComparisonGt),
+            "ENTITY_COMPARISON_GTE" => Some(Self::EntityComparisonGte),
+            "ENTITY_COMPARISON_LT" => Some(Self::EntityComparisonLt),
+            "ENTITY_COMPARISON_LTE" => Some(Self::EntityComparisonLte),
+            "ENTITY_COMPARISON_IN" => Some(Self::EntityComparisonIn),
+            "ENTITY_COMPARISON_NOT_IN" => Some(Self::EntityComparisonNotIn),
+            "ENTITY_COMPARISON_CONTAINS" => Some(Self::EntityComparisonContains),
+            _ => None,
+        }
+    }
+}
+/// Entity logical operator (prefixed to avoid conflict with FilterLogicOperator).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+#[repr(i32)]
+pub enum EntityLogicalOp {
+    EntityLogicalUnspecified = 0,
+    EntityLogicalAnd = 1,
+    EntityLogicalOr = 2,
+    EntityLogicalNot = 3,
+}
+impl EntityLogicalOp {
+    /// String value of the enum field names used in the ProtoBuf definition.
+    ///
+    /// The values are not transformed in any way and thus are considered stable
+    /// (if the ProtoBuf definition does not change) and safe for programmatic use.
+    pub fn as_str_name(&self) -> &'static str {
+        match self {
+            Self::EntityLogicalUnspecified => "ENTITY_LOGICAL_UNSPECIFIED",
+            Self::EntityLogicalAnd => "ENTITY_LOGICAL_AND",
+            Self::EntityLogicalOr => "ENTITY_LOGICAL_OR",
+            Self::EntityLogicalNot => "ENTITY_LOGICAL_NOT",
+        }
+    }
+    /// Creates an enum from field names used in the ProtoBuf definition.
+    pub fn from_str_name(value: &str) -> ::core::option::Option<Self> {
+        match value {
+            "ENTITY_LOGICAL_UNSPECIFIED" => Some(Self::EntityLogicalUnspecified),
+            "ENTITY_LOGICAL_AND" => Some(Self::EntityLogicalAnd),
+            "ENTITY_LOGICAL_OR" => Some(Self::EntityLogicalOr),
+            "ENTITY_LOGICAL_NOT" => Some(Self::EntityLogicalNot),
+            _ => None,
+        }
+    }
+}
+/// Generated client implementations.
+pub mod proxima_entity_service_client {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    use tonic::codegen::http::Uri;
+    #[derive(Debug, Clone)]
+    pub struct ProximaEntityServiceClient<T> {
+        inner: tonic::client::Grpc<T>,
+    }
+    impl ProximaEntityServiceClient<tonic::transport::Channel> {
+        /// Attempt to create a new client by connecting to a given endpoint.
+        pub async fn connect<D>(dst: D) -> Result<Self, tonic::transport::Error>
+        where
+            D: TryInto<tonic::transport::Endpoint>,
+            D::Error: Into<StdError>,
+        {
+            let conn = tonic::transport::Endpoint::new(dst)?.connect().await?;
+            Ok(Self::new(conn))
+        }
+    }
+    impl<T> ProximaEntityServiceClient<T>
+    where
+        T: tonic::client::GrpcService<tonic::body::Body>,
+        T::Error: Into<StdError>,
+        T::ResponseBody: Body<Data = Bytes> + std::marker::Send + 'static,
+        <T::ResponseBody as Body>::Error: Into<StdError> + std::marker::Send,
+    {
+        pub fn new(inner: T) -> Self {
+            let inner = tonic::client::Grpc::new(inner);
+            Self { inner }
+        }
+        pub fn with_origin(inner: T, origin: Uri) -> Self {
+            let inner = tonic::client::Grpc::with_origin(inner, origin);
+            Self { inner }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> ProximaEntityServiceClient<InterceptedService<T, F>>
+        where
+            F: tonic::service::Interceptor,
+            T::ResponseBody: Default,
+            T: tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+                Response = http::Response<
+                    <T as tonic::client::GrpcService<tonic::body::Body>>::ResponseBody,
+                >,
+            >,
+            <T as tonic::codegen::Service<
+                http::Request<tonic::body::Body>,
+            >>::Error: Into<StdError> + std::marker::Send + std::marker::Sync,
+        {
+            ProximaEntityServiceClient::new(InterceptedService::new(inner, interceptor))
+        }
+        /// Compress requests with the given encoding.
+        ///
+        /// This requires the server to support it otherwise it might respond with an
+        /// error.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.send_compressed(encoding);
+            self
+        }
+        /// Enable decompressing responses.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.inner = self.inner.accept_compressed(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_decoding_message_size(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.inner = self.inner.max_encoding_message_size(limit);
+            self
+        }
+        /// Entity CRUD operations
+        pub async fn upsert_entity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::UpsertEntityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpsertEntityResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaEntityService/UpsertEntity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaEntityService", "UpsertEntity"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn get_entity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::GetEntityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetEntityResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaEntityService/GetEntity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaEntityService", "GetEntity"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        pub async fn delete_entity(
+            &mut self,
+            request: impl tonic::IntoRequest<super::DeleteEntityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteEntityResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaEntityService/DeleteEntity",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new("proximadb.v2.ProximaEntityService", "DeleteEntity"),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+        /// Entity search with similarity and metadata filters
+        pub async fn search_entities(
+            &mut self,
+            request: impl tonic::IntoRequest<super::SearchEntitiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SearchEntitiesResponse>,
+            tonic::Status,
+        > {
+            self.inner
+                .ready()
+                .await
+                .map_err(|e| {
+                    tonic::Status::unknown(
+                        format!("Service was not ready: {}", e.into()),
+                    )
+                })?;
+            let codec = tonic_prost::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static(
+                "/proximadb.v2.ProximaEntityService/SearchEntities",
+            );
+            let mut req = request.into_request();
+            req.extensions_mut()
+                .insert(
+                    GrpcMethod::new(
+                        "proximadb.v2.ProximaEntityService",
+                        "SearchEntities",
+                    ),
+                );
+            self.inner.unary(req, path, codec).await
+        }
+    }
+}
+/// Generated server implementations.
+pub mod proxima_entity_service_server {
+    #![allow(
+        unused_variables,
+        dead_code,
+        missing_docs,
+        clippy::wildcard_imports,
+        clippy::let_unit_value,
+    )]
+    use tonic::codegen::*;
+    /// Generated trait containing gRPC methods that should be implemented for use with ProximaEntityServiceServer.
+    #[async_trait]
+    pub trait ProximaEntityService: std::marker::Send + std::marker::Sync + 'static {
+        /// Entity CRUD operations
+        async fn upsert_entity(
+            &self,
+            request: tonic::Request<super::UpsertEntityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::UpsertEntityResponse>,
+            tonic::Status,
+        >;
+        async fn get_entity(
+            &self,
+            request: tonic::Request<super::GetEntityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::GetEntityResponse>,
+            tonic::Status,
+        >;
+        async fn delete_entity(
+            &self,
+            request: tonic::Request<super::DeleteEntityRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::DeleteEntityResponse>,
+            tonic::Status,
+        >;
+        /// Entity search with similarity and metadata filters
+        async fn search_entities(
+            &self,
+            request: tonic::Request<super::SearchEntitiesRequest>,
+        ) -> std::result::Result<
+            tonic::Response<super::SearchEntitiesResponse>,
+            tonic::Status,
+        >;
+    }
+    #[derive(Debug)]
+    pub struct ProximaEntityServiceServer<T> {
+        inner: Arc<T>,
+        accept_compression_encodings: EnabledCompressionEncodings,
+        send_compression_encodings: EnabledCompressionEncodings,
+        max_decoding_message_size: Option<usize>,
+        max_encoding_message_size: Option<usize>,
+    }
+    impl<T> ProximaEntityServiceServer<T> {
+        pub fn new(inner: T) -> Self {
+            Self::from_arc(Arc::new(inner))
+        }
+        pub fn from_arc(inner: Arc<T>) -> Self {
+            Self {
+                inner,
+                accept_compression_encodings: Default::default(),
+                send_compression_encodings: Default::default(),
+                max_decoding_message_size: None,
+                max_encoding_message_size: None,
+            }
+        }
+        pub fn with_interceptor<F>(
+            inner: T,
+            interceptor: F,
+        ) -> InterceptedService<Self, F>
+        where
+            F: tonic::service::Interceptor,
+        {
+            InterceptedService::new(Self::new(inner), interceptor)
+        }
+        /// Enable decompressing requests with the given encoding.
+        #[must_use]
+        pub fn accept_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.accept_compression_encodings.enable(encoding);
+            self
+        }
+        /// Compress responses with the given encoding, if the client supports it.
+        #[must_use]
+        pub fn send_compressed(mut self, encoding: CompressionEncoding) -> Self {
+            self.send_compression_encodings.enable(encoding);
+            self
+        }
+        /// Limits the maximum size of a decoded message.
+        ///
+        /// Default: `4MB`
+        #[must_use]
+        pub fn max_decoding_message_size(mut self, limit: usize) -> Self {
+            self.max_decoding_message_size = Some(limit);
+            self
+        }
+        /// Limits the maximum size of an encoded message.
+        ///
+        /// Default: `usize::MAX`
+        #[must_use]
+        pub fn max_encoding_message_size(mut self, limit: usize) -> Self {
+            self.max_encoding_message_size = Some(limit);
+            self
+        }
+    }
+    impl<T, B> tonic::codegen::Service<http::Request<B>>
+    for ProximaEntityServiceServer<T>
+    where
+        T: ProximaEntityService,
+        B: Body + std::marker::Send + 'static,
+        B::Error: Into<StdError> + std::marker::Send + 'static,
+    {
+        type Response = http::Response<tonic::body::Body>;
+        type Error = std::convert::Infallible;
+        type Future = BoxFuture<Self::Response, Self::Error>;
+        fn poll_ready(
+            &mut self,
+            _cx: &mut Context<'_>,
+        ) -> Poll<std::result::Result<(), Self::Error>> {
+            Poll::Ready(Ok(()))
+        }
+        fn call(&mut self, req: http::Request<B>) -> Self::Future {
+            match req.uri().path() {
+                "/proximadb.v2.ProximaEntityService/UpsertEntity" => {
+                    #[allow(non_camel_case_types)]
+                    struct UpsertEntitySvc<T: ProximaEntityService>(pub Arc<T>);
+                    impl<
+                        T: ProximaEntityService,
+                    > tonic::server::UnaryService<super::UpsertEntityRequest>
+                    for UpsertEntitySvc<T> {
+                        type Response = super::UpsertEntityResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::UpsertEntityRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaEntityService>::upsert_entity(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = UpsertEntitySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaEntityService/GetEntity" => {
+                    #[allow(non_camel_case_types)]
+                    struct GetEntitySvc<T: ProximaEntityService>(pub Arc<T>);
+                    impl<
+                        T: ProximaEntityService,
+                    > tonic::server::UnaryService<super::GetEntityRequest>
+                    for GetEntitySvc<T> {
+                        type Response = super::GetEntityResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::GetEntityRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaEntityService>::get_entity(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = GetEntitySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaEntityService/DeleteEntity" => {
+                    #[allow(non_camel_case_types)]
+                    struct DeleteEntitySvc<T: ProximaEntityService>(pub Arc<T>);
+                    impl<
+                        T: ProximaEntityService,
+                    > tonic::server::UnaryService<super::DeleteEntityRequest>
+                    for DeleteEntitySvc<T> {
+                        type Response = super::DeleteEntityResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::DeleteEntityRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaEntityService>::delete_entity(&inner, request)
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = DeleteEntitySvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/proximadb.v2.ProximaEntityService/SearchEntities" => {
+                    #[allow(non_camel_case_types)]
+                    struct SearchEntitiesSvc<T: ProximaEntityService>(pub Arc<T>);
+                    impl<
+                        T: ProximaEntityService,
+                    > tonic::server::UnaryService<super::SearchEntitiesRequest>
+                    for SearchEntitiesSvc<T> {
+                        type Response = super::SearchEntitiesResponse;
+                        type Future = BoxFuture<
+                            tonic::Response<Self::Response>,
+                            tonic::Status,
+                        >;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::SearchEntitiesRequest>,
+                        ) -> Self::Future {
+                            let inner = Arc::clone(&self.0);
+                            let fut = async move {
+                                <T as ProximaEntityService>::search_entities(
+                                        &inner,
+                                        request,
+                                    )
+                                    .await
+                            };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let max_decoding_message_size = self.max_decoding_message_size;
+                    let max_encoding_message_size = self.max_encoding_message_size;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let method = SearchEntitiesSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec)
+                            .apply_compression_config(
+                                accept_compression_encodings,
+                                send_compression_encodings,
+                            )
+                            .apply_max_message_size_config(
+                                max_decoding_message_size,
+                                max_encoding_message_size,
+                            );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                _ => {
+                    Box::pin(async move {
+                        let mut response = http::Response::new(
+                            tonic::body::Body::default(),
+                        );
+                        let headers = response.headers_mut();
+                        headers
+                            .insert(
+                                tonic::Status::GRPC_STATUS,
+                                (tonic::Code::Unimplemented as i32).into(),
+                            );
+                        headers
+                            .insert(
+                                http::header::CONTENT_TYPE,
+                                tonic::metadata::GRPC_CONTENT_TYPE,
+                            );
+                        Ok(response)
+                    })
+                }
+            }
+        }
+    }
+    impl<T> Clone for ProximaEntityServiceServer<T> {
+        fn clone(&self) -> Self {
+            let inner = self.inner.clone();
+            Self {
+                inner,
+                accept_compression_encodings: self.accept_compression_encodings,
+                send_compression_encodings: self.send_compression_encodings,
+                max_decoding_message_size: self.max_decoding_message_size,
+                max_encoding_message_size: self.max_encoding_message_size,
+            }
+        }
+    }
+    /// Generated gRPC service name
+    pub const SERVICE_NAME: &str = "proximadb.v2.ProximaEntityService";
+    impl<T> tonic::server::NamedService for ProximaEntityServiceServer<T> {
+        const NAME: &'static str = SERVICE_NAME;
+    }
+}

@@ -202,6 +202,19 @@ impl MultiServer {
             .into_server()
     }
 
+    /// Build the canonical v2 entity gRPC service.
+    ///
+    /// EntityService is an orchestration facade over graph + vector + document,
+    /// not a separate storage path (see SUPPORTED_SURFACES.adoc).
+    fn canonical_entity_grpc_service(
+        services: &SharedServices,
+    ) -> crate::proto::proximadb_v2::proxima_entity_service_server::ProximaEntityServiceServer<
+        crate::network::grpc::v2::ProximaEntityServiceImpl,
+    > {
+        crate::network::grpc::v2::ProximaEntityServiceImpl::new(services.request_handlers.clone())
+            .into_server()
+    }
+
     /// Create new multi-server instance (orchestrator only)
     /// MultiServer focuses on network orchestration, SharedServices handles business logic
     pub fn new(
@@ -604,14 +617,15 @@ impl MultiServer {
                 .await;
 
             // Canonical v2 surfaces are always registered: ProximaRecordService +
-            // ProximaGraphService + grpc.health.v1.Health (+ optional reflection
-            // below). Service construction is centralized in the
+            // ProximaGraphService + ProximaEntityService + grpc.health.v1.Health
+            // (+ optional reflection below). Service construction is centralized in the
             // `canonical_*_grpc_service` helpers so all startup modes match.
             let mut server = server_builder
                 .add_service(Self::canonical_record_grpc_service(&services))
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
+                .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
@@ -1139,7 +1153,8 @@ impl MultiServer {
                 .await;
 
             // Canonical surfaces always on: proximadb.v2.ProximaRecordService +
-            // ProximaGraphService, Arrow Flight, and grpc.health.v1.Health (+
+            // ProximaGraphService + ProximaEntityService + ProximaDocumentService,
+            // Arrow Flight, and grpc.health.v1.Health (+
             // optional reflection below). Construction centralized in the
             // `canonical_*_grpc_service` helpers.
             let mut server = server_builder
@@ -1147,6 +1162,7 @@ impl MultiServer {
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
+                .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(flight_server)
                 .add_service(standard_health_server);
 
@@ -1519,7 +1535,8 @@ impl MultiServer {
                 .await;
 
             // Canonical v2 surfaces always on: ProximaRecordService +
-            // ProximaGraphService + grpc.health.v1.Health (+ optional reflection /
+            // ProximaGraphService + ProximaEntityService + ProximaDocumentService
+            // + grpc.health.v1.Health (+ optional reflection /
             // cluster services below). Construction centralized in the
             // `canonical_*_grpc_service` helpers.
             let mut server = server_builder
@@ -1527,6 +1544,7 @@ impl MultiServer {
                 .add_service(Self::canonical_graph_grpc_service(&services))
                 .add_service(Self::canonical_document_grpc_service(&services))
                 .add_service(Self::canonical_fusion_grpc_service(&services))
+                .add_service(Self::canonical_entity_grpc_service(&services))
                 .add_service(standard_health_server);
 
             // Deprecated gRPC v1 compatibility adapters are gated behind
