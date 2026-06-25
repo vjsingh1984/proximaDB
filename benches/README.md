@@ -40,7 +40,7 @@ wget http://ann-benchmarks.com/mnist-784-euclidean.hdf5
 
 ```bash
 # HNSW on SIFT dataset
-cargo run --bin ann-benchmarks -- \
+cargo run -p proximadb-ann-bench -- \
   --dataset sift \
   --algorithm hnsw \
   --m 16 \
@@ -49,7 +49,7 @@ cargo run --bin ann-benchmarks -- \
   --runs 1000
 
 # IVF on GIST dataset
-cargo run --bin ann-benchmarks -- \
+cargo run -p proximadb-ann-bench -- \
   --dataset gist \
   --algorithm ivf \
   --nlist 100 \
@@ -57,7 +57,7 @@ cargo run --bin ann-benchmarks -- \
   --runs 100
 
 # DiskANN on DEEP1B dataset
-cargo run --bin ann-benchmarks -- \
+cargo run -p proximadb-ann-bench -- \
   --dataset deep1b \
   --algorithm diskann \
   --r 32 \
@@ -83,10 +83,10 @@ cd docker/milvus && docker-compose up -d
 Then run the comparison:
 
 ```bash
-cargo build --bin vectordb_comparison
+cargo build -p proximadb-vectordb-compare
 
 # Compare all databases on SIFT
-./target/debug/vectordb_comparison \
+./target/debug/proximadb-vectordb-compare \
   --dataset sift \
   --num-vectors 1000000 \
   --dimensions 128 \
@@ -201,7 +201,7 @@ To reproduce published benchmark results:
 
 ```bash
 # Use exact same parameters
-cargo run --bin ann-benchmarks -- \
+cargo run -p proximadb-ann-bench -- \
   --dataset sift \
   --algorithm hnsw \
   --m 16 \
@@ -233,7 +233,7 @@ jobs:
       - uses: actions/checkout@v3
       - name: Run benchmarks
         run: |
-          cargo run --bin ann-benchmarks -- --dataset sift --algorithm hnsw
+          cargo run -p proximadb-ann-bench -- --dataset sift --algorithm hnsw
       - name: Upload results
         uses: actions/upload-artifact@v3
         with:

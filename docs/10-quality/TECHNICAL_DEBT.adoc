@@ -261,8 +261,8 @@ a| *RESOLVED Mar 2026*: **Comprehensive benchmark infrastructure complete**. All
 !===
 ! Component ! Status ! Location ! Features
 ! ANN-Benchmarks Adapter ! ✅ Complete ! `src/bench/ann_benchmarks/adapter.rs` ! HNSW, IVF, DiskANN, Annoy, LSH, PQ algorithms; SIFT/GIST/MNIST/DEEP1B datasets
-! Binary Runner ! ✅ Complete ! `src/bin/ann-benchmarks.rs` ! CLI runner with CSV/JSON export
-! VectorDBBench Comparison ! ✅ Complete ! `src/bin/vectordb_comparison.rs` ! Competitor comparison (Qdrant, Weaviate, Milvus, Pinecone)
+! Binary Runner ! ✅ Complete ! `apps/proximadb-ann-bench/src/main.rs` ! CLI runner with CSV/JSON export
+! VectorDBBench Comparison ! ✅ Complete ! `apps/proximadb-vectordb-compare/src/main.rs` ! Competitor comparison (Qdrant, Weaviate, Milvus, Pinecone)
 ! Public Documentation ! ✅ Complete ! `docs/10-quality/benchmarks/PERFORMANCE.md` ! 271 lines with methodology, results, competitor comparisons
 ! Python Benchmarks ! ✅ Complete ! `clients/python/tests/` ! 15+ benchmark scripts for SDK validation
 !===

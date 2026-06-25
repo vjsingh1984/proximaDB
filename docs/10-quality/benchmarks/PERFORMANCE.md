@@ -201,7 +201,7 @@ wget http://ann-benchmarks.com/mnist-784-euclidean.hdf5
 
 ```bash
 # HNSW on SIFT
-cargo run --bin ann-benchmarks -- \
+cargo run -p proximadb-ann-bench -- \
   --dataset sift \
   --algorithm hnsw \
   --m 16 \
@@ -209,14 +209,14 @@ cargo run --bin ann-benchmarks -- \
   --ef-search 100
 
 # IVF on GIST
-cargo run --bin ann-benchmarks -- \
+cargo run -p proximadb-ann-bench -- \
   --dataset gist \
   --algorithm ivf \
   --nlist 100 \
   --nprobe 10
 
 # DiskANN on DEEP1B
-cargo run --bin ann-benchmarks -- \
+cargo run -p proximadb-ann-bench -- \
   --dataset deep1b \
   --algorithm diskann \
   --r 32 \
