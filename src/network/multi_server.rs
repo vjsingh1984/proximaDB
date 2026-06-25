@@ -155,13 +155,16 @@ impl MultiServer {
     ) -> crate::proto::proximadb_v2::proxima_record_service_server::ProximaRecordServiceServer<
         crate::network::grpc::v2::ProximaRecordServiceImpl,
     > {
-        crate::network::grpc::v2::ProximaRecordServiceImpl::new(services.request_handlers.clone())
-            .with_segment_registry(services.segment_registry.clone())
-            .with_primary_pod_gate(
-                services.primary_pod_registry.clone(),
-                services.self_pod_id.clone(),
-            )
-            .into_server()
+        crate::network::grpc::v2::ProximaRecordServiceImpl::new(
+            services.api_handlers.clone(),
+            services.request_handlers.record_ops(),
+        )
+        .with_segment_registry(services.segment_registry.clone())
+        .with_primary_pod_gate(
+            services.primary_pod_registry.clone(),
+            services.self_pod_id.clone(),
+        )
+        .into_server()
     }
 
     /// Construct the always-on canonical v2 **graph** gRPC service
