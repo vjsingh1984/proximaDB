@@ -446,6 +446,10 @@ impl ProximaEntityService for ProximaEntityServiceImpl {
                 graph_weight: 0.0,
                 grain: GraphGrain::Nodes,
                 policy: FusionPolicy::default(),
+                // Entity fusion search is vector-only (graph_weight 0), so no
+                // graph RBAC principal applies yet. Threading the caller
+                // principal here is a follow-up for entity RBAC.
+                principal: None,
             };
 
             let (items, _stats) = self
