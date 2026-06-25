@@ -58,7 +58,7 @@ the root `proximadb` crate. The published spec is now generated, not hand-edited
 
 *Generator + drift gate.* `src/network/rest/openapi.rs` aggregates the annotated paths into an
 `ApiDoc` (`OpenApi` derive), folds in a checked-in supplement fragment
-(`docs/openapi/_supplement.yaml`), and renders canonical YAML. The integration test
+(`src/network/rest/openapi_supplement.yaml`), and renders canonical YAML. The integration test
 `tests/openapi_spec_gen.rs` is both the generator (`UPDATE_OPENAPI_SPEC=1 cargo test -p proximadb
 --test openapi_spec_gen` writes `docs/openapi/proximadb-openapi.yaml`) and the gate (default run
 fails on drift). CI: the `openapi-spec-drift` job in `.github/workflows/ci.yml` regenerates and
