@@ -2494,6 +2494,7 @@ impl WriteAheadLogManager {
                         timestamp: Some(vector_record.created_at_ns / 1_000_000),
                         updated_at: Some(vector_record.updated_at_ns / 1_000_000),
                         expires_at: expires_at_secs,
+                        valid_to_ns: vector_record.valid_to_ns,
                         ..Default::default()
                     };
                     all_results.push(tombstone_result);
@@ -2557,6 +2558,7 @@ impl WriteAheadLogManager {
                     timestamp: Some(vector_record.created_at_ns / 1_000_000),
                     updated_at: Some(vector_record.updated_at_ns / 1_000_000),
                     expires_at: expires_at_secs,
+                    valid_to_ns: vector_record.valid_to_ns,
                     source: None,
                     semantic_similarity: Some(similarity_result.clone()),
                     ..Default::default()

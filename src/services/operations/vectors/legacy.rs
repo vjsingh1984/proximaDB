@@ -640,6 +640,15 @@ impl VectorOperationsService {
                 record.tenant_id.is_empty() || record.tenant_id == tenant_context.tenant_id
             });
         }
+        // Defense-in-depth: drop dead records (tombstone / TTL-expired) using
+        // the canonical ProximaRecord::is_dead on valid_to_ns (ns). The WAL
+        // memtable already filters these, but this guarantees no scan ever
+        // leaks a deleted/expired row regardless of the upstream path.
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as i64)
+            .unwrap_or(0);
+        records.retain(|record| !record.is_dead(now_ns));
         if !include_vector {
             for record in &mut records {
                 record.embeddings.clear();
@@ -3224,19 +3233,32 @@ impl VectorOperationsService {
         // This is critical for delete/update operations where WAL contains tombstones
         use std::collections::HashMap;
 
-        // Get current time for tombstone detection
-        let current_time_secs = std::time::SystemTime::now()
+        // Current time in nanoseconds for canonical dead-record detection
+        // (see OptimizedSearchRecord::is_dead / proximadb_records::is_record_dead).
+        let now_ns = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs() as i64)
+            .map(|d| d.as_nanos() as i64)
             .unwrap_or(0);
 
         // Build map from results with priority: WAL > AXIS > Storage
         let mut id_to_result: HashMap<String, crate::core::search::results::OptimizedSearchRecord> =
             HashMap::new();
 
-        // WAL results have highest priority (fresher data)
+        // WAL results have highest priority (fresher data). A dead record
+        // (tombstone/expired) wins over a live one for the same OID: in the
+        // insert-then-delete-before-flush case both copies are unflushed in
+        // the same WAL delta, and the tombstone must survive so the dead-record
+        // filter below removes the OID. Never let a live copy overwrite a dead
+        // record. Uses the canonical is_dead(valid_to_ns) — not expires_at.
         for result in wal_optimized_results {
-            id_to_result.insert(result.id.clone(), result);
+            id_to_result
+                .entry(result.id.clone())
+                .and_modify(|existing| {
+                    if !existing.is_dead(now_ns) && result.is_dead(now_ns) {
+                        *existing = result.clone();
+                    }
+                })
+                .or_insert(result);
         }
 
         // AXIS HNSW results second priority (fast indexed search)
@@ -3249,25 +3271,18 @@ impl VectorOperationsService {
             id_to_result.entry(result.id.clone()).or_insert(result);
         }
 
-        // Filter out tombstones and collect final results
-        // Tombstone design: empty vector (Some(vec![])) + expires_at in past (including 0)
-        // NOTE: A record with vector=None is NOT a tombstone - it just means the vector wasn't
-        // returned in the optimized search (common for storage engines that return only IDs/scores)
+        // Filter out dead records (tombstone valid_to_ns==Some(0) OR TTL-expired)
+        // using the canonical predicate on valid_to_ns (ns) — immune to the
+        // expires_at unit confusion and to vector==None (engines returning only
+        // id/score). Defense-in-depth alongside the WAL delta merge.
         let mut all_results: Vec<crate::core::search::results::OptimizedSearchRecord> =
             id_to_result
                 .into_values()
                 .filter(|r| {
-                    // Check if this is a tombstone
-                    // Tombstone: vector is explicitly empty (Some(vec![])) AND expired
-                    // A record with vector=None is NOT a tombstone - it's just missing vector data
-                    let is_explicit_empty_vector = r.vector.as_ref().is_some_and(|v| v.is_empty());
-                    let is_expired = r.expires_at.is_some_and(|e| e <= current_time_secs);
-                    let is_tombstone = is_explicit_empty_vector && is_expired;
-
-                    if is_tombstone {
+                    if r.is_dead(now_ns) {
                         debug!(
-                            "🗑️ Filtering tombstone from two-stage search results: {}",
-                            r.id
+                            "🗑️ Filtering dead record from two-stage search results: {} (valid_to_ns={:?})",
+                            r.id, r.valid_to_ns
                         );
                         false
                     } else {
