@@ -188,6 +188,7 @@ async fn cpg_fragment_pax_contract_and_io_trace_emission() {
         "test_collection",
         0, // embedding_count — fragments carry no vectors.
         proximadb_block_format::VectorQuant::Auto,
+        None, // target_block — writer default
     )
     .expect("write_pax_segment must succeed");
 

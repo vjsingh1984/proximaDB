@@ -448,12 +448,21 @@ impl SstEngine {
                     "sq8" => VectorQuant::Sq8,
                     _ => VectorQuant::Auto,
                 };
+                // TD-156 / ADR-026: configurable PAX block geometry. `None` keeps
+                // the writer default; a larger value (e.g. 8-16 MiB for object
+                // storage) coalesces rows into fewer blocks, cutting the per-block
+                // ranged-GET fragmentation measured by the footer-cache economics
+                // harness. Per-collection config is the productionization follow-up.
+                let target_block = std::env::var("PROXIMADB_PAX_BLOCK_SIZE")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok());
                 let meta = write_pax_segment(
                     std::path::Path::new(staging_path),
                     &records,
                     collection_id,
                     embedding_count,
                     quant,
+                    target_block,
                 )
                 .context("Failed to write PAX vector segment")?;
                 tracing::debug!(blocks = meta.block_count, "PAX segment write completed");
