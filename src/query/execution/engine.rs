@@ -635,25 +635,33 @@ mod tests {
 
     #[tokio::test]
     async fn native_volcano_stream_truncates_without_error() {
-        let controls = ExecutionControls {
-            max_rows: Some(1),
-            row_limit_mode: RowLimitMode::Truncate,
-            ..Default::default()
-        };
-        let result = NativeVolcanoEngine::execute_physical_stream(
-            values_plan(),
-            &EmptyReaderFactory,
-            controls,
-        )
-        .await
-        .expect("values plan should open for streaming");
+        // Wrap in a timeout to convert the known streaming hang (CLAUDE.md #11:
+        // Limit executor race) into a deterministic, bounded failure instead of
+        // an indefinite CI runner block. If this times out, the root cause is
+        // the Limit executor's stream-termination race — not the test logic.
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            let controls = ExecutionControls {
+                max_rows: Some(1),
+                row_limit_mode: RowLimitMode::Truncate,
+                ..Default::default()
+            };
+            let result = NativeVolcanoEngine::execute_physical_stream(
+                values_plan(),
+                &EmptyReaderFactory,
+                controls,
+            )
+            .await
+            .expect("values plan should open for streaming");
 
-        let mut rows = result.rows;
-        let first = rows.next().await.expect("first row").expect("row ok");
-        assert_eq!(first, vec![ProximaValue::Int64(1)]);
-        // Truncate mode stops at the cap with no overflow error: the second row
-        // of the values plan is never produced.
-        assert!(rows.next().await.is_none());
+            let mut rows = result.rows;
+            let first = rows.next().await.expect("first row").expect("row ok");
+            assert_eq!(first, vec![ProximaValue::Int64(1)]);
+            // Truncate mode stops at the cap with no overflow error: the second row
+            // of the values plan is never produced.
+            assert!(rows.next().await.is_none());
+        })
+        .await
+        .expect("stream truncated within 10s — if timed out, the Limit executor race is the root cause (CLAUDE.md #11)");
     }
 
     #[tokio::test]
