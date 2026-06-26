@@ -819,6 +819,13 @@ oltp-catalog-full     = ["oltp-catalog-postgres", "oltp-catalog-mysql", "oltp-ca
 # TLS/mTLS support (enabled by default)
 tls = []  # Enable TLS/mTLS certificate management and secure connections
 
+# TD-160 / ADR-027: compile-time gate for the perf/geometry trace class.
+# When OFF (default), record_range_gets / record_footer / record_footers compile
+# to inline no-ops — zero per-read cost in normal mode. The billing meters
+# (bytes_read/written, ops, egress, embedding, compute, route) are ALWAYS ON
+# (never gated). Enable for observability / adaptive-engine development.
+io-trace = []
+
 # External libraries
 # faiss-cpu = ["faiss"]  # Unused - no FAISS integration
 # faiss-gpu = ["faiss"]  # Unused - no FAISS integration

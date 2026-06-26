@@ -421,25 +421,40 @@ pub fn record_bytes_read(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_bytes_read(bytes));
 }
 
-/// Add to the count of ranged GET requests for the active query.
+/// Add to the count of ranged GET requests for the active query. (TD-160:
+/// perf/geometry trace class — compile-time gated; no-op when `io-trace` is off.)
+#[cfg(feature = "io-trace")]
 pub fn record_range_gets(gets: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_range_gets(gets));
 }
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_range_gets(_gets: u64) {}
 
 /// Add to bytes written to object storage for the active query.
 pub fn record_bytes_written(bytes: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_bytes_written(bytes));
 }
 
-/// Record a footer/metadata cache outcome for the active query.
+/// Record a footer/metadata cache outcome for the active query. (TD-160:
+/// perf/geometry trace class — compile-time gated.)
+#[cfg(feature = "io-trace")]
 pub fn record_footer(hit: bool) {
     let _ = IO_TRACE.try_with(|t| t.record_footer(hit));
 }
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_footer(_hit: bool) {}
 
 /// Record a batch of footer/metadata cache outcomes for the active query.
+/// (TD-160: perf/geometry trace class — compile-time gated.)
+#[cfg(feature = "io-trace")]
 pub fn record_footers(hits: u64, misses: u64) {
     let _ = IO_TRACE.try_with(|t| t.record_footers(hits, misses));
 }
+#[cfg(not(feature = "io-trace"))]
+#[inline(always)]
+pub fn record_footers(_hits: u64, _misses: u64) {}
 
 /// Record chargeable egress bytes (cross-region / internet — KEU) for the
 /// active query.
