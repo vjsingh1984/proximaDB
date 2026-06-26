@@ -141,19 +141,25 @@ heuristics"* (co-design mandate):
   emitted on the live AXIS/SST read path** (which reads whole-byte local-FS), so
   the per-query GET-count / bytes-per-block signal geometry tuning needs is not
   collected in production. The C0 cloud-I/O-trace gap is open for the live read.
-* **Adaptive/ML: narrow, not geometry-aware.** `src/automl/` + the AXIS
-  `adaptive_engine` ARE wired and running, but they (a) tune **only HNSW/IVF
-  index params** (`ef_search`/`nprobe`/`M`/`nlist`) from **latency heuristics
-  (p50/p99)**, (b) do **not** consume `io_trace`, and (c) do **not** tune
-  storage geometry or quant. So no model can refine geometry/quant today.
+* **Adaptive/ML: narrow, latency-only, not geometry-aware.** `src/automl/` + the
+  AXIS `adaptive_engine` ARE wired and running, but they (a) tune HNSW/IVF index
+  params (`ef_search`/`nprobe`/`M`/`nlist`) **plus a defined quantization
+  param-space** (`quantization_level`, `codebook_size` — `automl/tuning.rs:902-920`),
+  all driven by **latency heuristics (p50/p99)**, (b) do **not** consume `io_trace`,
+  and (c) do **not** tune **storage geometry** (block/row-group size). So the tuner is
+  *latency-driven, not trace/geometry-aware*: quant is in its search space but is not
+  refined from the measured I/O trace, and geometry is not tunable at all today.
+  (Corrected 2026-06-25 — the earlier "do not tune quant" was inaccurate; see
+  `docs/_internal/review/PAX_SUBSTRATE_DESIGN_PLAN_2026_06_25.adoc`.)
 
 *Sequencing (measure before you tune — co-design mandate):*
 . **TD-158** — wire block-level `range_gets`/bytes into the live AXIS/SST read
    path (+ the object-store ranged reader when TD-151 lands). Prerequisite
    observability; without it there is no signal to tune against.
 . **TD-159** — extend the adaptive engine to consume `io_trace` (not just
-   latency) and add storage geometry + quant to its tunable set (today it only
-   tunes ef/nprobe/M).
+   latency), add **storage geometry** (block/row-group, TD-156) to its tunable set,
+   and make quant tuning **trace-driven + recall-ratchet-gated** (today quant is in
+   the param-space but tuned from latency only, and geometry is absent).
 . Then **TD-157** (full adaptive geometry/quant) and the future RL ADR (layer 3).
 
 The recall ratchet is the safety floor under all of it: no tuning layer may

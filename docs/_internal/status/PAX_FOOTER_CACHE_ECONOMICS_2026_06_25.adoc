@@ -35,6 +35,18 @@ mode. At S3 prices the GET-fee increase (+$0.0027) *outweighs* the egress saving
 ($0.0012) for this workload, so **naively wiring the ranged reader would *raise*
 cloud cost**, not lower it.
 
+[NOTE]
+====
+**Egress reconciliation (audit 2026-06-25).** The `$0.0012` egress saving above prices
+the byte reduction at **internet egress ($0.09/GB)**. That is **superseded** by the
+same-day corrected model `PAX_RANGED_READ_MULTICLOUD_COST_2026_06_25.adoc`: compute is
+co-located in-region with the store, so **same-region storage-read egress is FREE** on
+S3/GCS/Azure. Under the corrected model the byte reduction has **no `$` value** and the
+`+29,900%` GET fee is **unoffset** → the naive ranged read is **purely cost-negative**
+(the finding is *strengthened*). Storage-read cost = **GET-count × locality-independent
+per-request fee**; bytes remain a latency/footprint signal, not a `$` signal.
+====
+
 == Implication (reframes Phase 5)
 The real Phase 5 win is **not** "wire ranged reads" — it is **range coalescing**
 (fetch contiguous column stripes / whole blocks in fewer, larger GETs toward the

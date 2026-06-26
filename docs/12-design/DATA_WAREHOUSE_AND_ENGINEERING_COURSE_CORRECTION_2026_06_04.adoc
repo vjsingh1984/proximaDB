@@ -8,6 +8,19 @@
 [.lead]
 This document defines a strategic course correction for ProximaDB's architecture, shifting focus towards direct competition with enterprise data warehouses (Snowflake, Databricks, BigQuery, Trino) and modern distributed data engineering engines (Spark, Ray). While the vector and multi-modal capabilities remain important, the foundational MVP and initial product wedge will now explicitly prioritize relational semantics, object-storage-first decoupled architecture, and Rust-native distributed execution.
 
+[NOTE]
+====
+**Storage-format clauses partially superseded by ADR-027 (2026-06-26).** The storage-layer
+positions in this doc — Parquet/Iceberg as the *OLAP base/publication tier*, DataFusion as
+*"strategically non-negotiable"*, PAX as a *"specialized layout / projection"* — are partially
+superseded by `adr/ADR-027-unified-storage-and-metering-substrate.adoc`, which makes **PAX the
+single internal columnar format** and demotes Parquet/DataFusion to the **interop seam + interim
+warehouse executor** (the native engine scans PAX per
+`NATIVE_OLAP_ENGINE_BLUEPRINT_2026_06_22.adoc`). The multi-engine **routing** decision (§3) and
+the pgwire/object-store-first wedge are **unchanged**. See ADR-027 §"Reconciliation with the
+2026-06-04 course-correction".
+====
+
 == 1. Strategic Shifts
 
 === 1.1. Postgres Wire Compatibility as the Primary Wedge
