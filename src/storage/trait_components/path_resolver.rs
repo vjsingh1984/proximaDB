@@ -446,6 +446,32 @@ impl DrResolvedPath {
     pub fn branches_subprefix(&self) -> String {
         format!("{}_branches/", self.root_prefix())
     }
+
+    /// Per-**tenant** root prefix (account/legacy split) — `accounts/{account}/
+    /// {tenant}/` or legacy `data/{tenant}/`. Stops *above* the namespace and
+    /// collection so per-tenant system subtrees (`_metering`, `_trace`) hang off
+    /// the tenant, not off a single collection. (TD-164)
+    pub fn tenant_root(&self) -> String {
+        match &self.account_id {
+            Some(account_id) => format!("accounts/{}/{}/", account_id, self.tenant_id),
+            None => format!("data/{}/", self.tenant_id),
+        }
+    }
+
+    /// Per-tenant **metering** subtree `<tenant_root>_metering/` — the durable,
+    /// tenant-owned billing-meter sink (ADR-027 dual-sink; the differentiator;
+    /// written by TD-161's coalesced writer). The leading underscore keeps it
+    /// lexically separate from namespace/collection ids, which `validate_id`
+    /// reserves so a user object can never collide (structural isolation #3).
+    pub fn metering_subprefix(&self) -> String {
+        format!("{}_metering/", self.tenant_root())
+    }
+
+    /// Per-tenant **perf/geometry trace** subtree `<tenant_root>_trace/` — the
+    /// gateable perf class (ADR-027), written by TD-161's coalesced writer.
+    pub fn trace_subprefix(&self) -> String {
+        format!("{}_trace/", self.tenant_root())
+    }
 }
 
 /// Resolve the catalog-addressed index locations for a collection's vector-ANN
@@ -826,6 +852,19 @@ impl DrPathBuilder {
                 reason: "must not contain traversal sequence",
             });
         }
+        // TD-164: reserve the underscore-prefixed system segments so a
+        // user-supplied id (tenant / namespace / collection / operator subpath)
+        // can never collide with a control-plane or per-tenant system subtree
+        // (structural isolation #3). The subtrees themselves are built from
+        // constants, never from validated user input, so this only rejects user
+        // input that would shadow them.
+        if Self::RESERVED_SYSTEM_SEGMENTS.contains(&value) {
+            return Err(PathResolverError::InvalidId {
+                field,
+                value: value.to_string(),
+                reason: "must not use a reserved system segment (_operator/_branches/_metering/_trace/_manifests)",
+            });
+        }
         Ok(())
     }
 }
@@ -842,6 +881,20 @@ impl DrPathBuilder {
     /// leading underscore keeps the control plane lexically separate from the
     /// per-account `accounts/…` data tree in a top-level `list`.
     pub const OPERATOR_ROOT: &'static str = "_operator/";
+
+    /// System-reserved path segments (underscore-prefixed) that user-supplied ids
+    /// must never equal, so a user object cannot shadow a control-plane or
+    /// per-tenant system subtree (TD-164; structural isolation #3). Enforced by
+    /// [`validate_id`](Self::validate_id). These name the *segment* (no trailing
+    /// `/`); the subtrees are built from constants like [`OPERATOR_ROOT`](Self::OPERATOR_ROOT)
+    /// and the per-tenant `_metering/`/`_trace/`/`_branches/` subprefixes.
+    pub const RESERVED_SYSTEM_SEGMENTS: &'static [&'static str] = &[
+        "_operator",
+        "_branches",
+        "_metering",
+        "_trace",
+        "_manifests",
+    ];
 
     /// Default account ID for deployments that have not provisioned an explicit
     /// account tier (single-account / OSS). Callers that want the
@@ -1039,6 +1092,35 @@ mod tests {
             "data/tnt_acme/ns_01HX7Q8K2N5R9P3M1B2C3D4E5F/col_orders/restore-checkpoints/"
         );
         assert_eq!(path.storage_pool_class, StoragePoolClass::Standard);
+    }
+
+    #[test]
+    fn per_tenant_metering_and_trace_subprefixes_hang_off_tenant_root() {
+        // TD-164: _metering / _trace are per-TENANT (above namespace/collection),
+        // unlike the per-collection data subprefixes (segments/, wal/, …).
+        let ns = dr_addressable_namespace();
+        let path = DrPathBuilder::build(&ns, "col_orders").unwrap();
+
+        assert_eq!(path.tenant_root(), "data/tnt_acme/");
+        assert_eq!(path.metering_subprefix(), "data/tnt_acme/_metering/");
+        assert_eq!(path.trace_subprefix(), "data/tnt_acme/_trace/");
+        // Lexically separate from (and a strict prefix-parent of) the collection
+        // tree, never nested under a single collection.
+        assert!(path.root_prefix().starts_with(&path.tenant_root()));
+        assert!(!path.metering_subprefix().contains("col_orders"));
+    }
+
+    #[test]
+    fn validate_id_reserves_system_segments() {
+        for seg in DrPathBuilder::RESERVED_SYSTEM_SEGMENTS {
+            assert!(
+                DrPathBuilder::validate_id("collection_id", seg).is_err(),
+                "reserved system segment {seg} must be rejected as a user id"
+            );
+        }
+        // Ordinary ids still pass; a name that merely *contains* an underscore is fine.
+        assert!(DrPathBuilder::validate_id("collection_id", "orders").is_ok());
+        assert!(DrPathBuilder::validate_id("collection_id", "my_orders").is_ok());
     }
 
     #[test]
