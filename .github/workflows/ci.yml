@@ -1679,14 +1679,7 @@ jobs:
       - feature-matrix
       - rust-security
       - rust-build
-      # TEMPORARILY ADVISORY (2026-06-26): `rust-test` (the `Rust Tests (unit)`+`doc` matrix) is
-      # NOT in the ci-success gate while a batch of develop-wide unit-test failures UNRELATED to
-      # any single PR is triaged — embedded SQL DDL, dual_store_ivf, flushcoordinator metrics, and
-      # the `query::semantic_analysis::analyzer` cluster. The job still RUNS and is visible; it just
-      # does not block merges, so correct PRs can ship. Re-add to `needs` once the suite is green.
-      # Tracking: docs/_internal/status/UNIT_TEST_GATE_ADVISORY_2026_06_26.adoc (and the jsonwebtoken
-      # provider fix in this PR resolved the `network::auth::jwt` cluster).
-      # - rust-test
+      - rust-test
       - rust-integration-test-storage
       - rust-integration-test-query
       - rust-integration-test-graph
