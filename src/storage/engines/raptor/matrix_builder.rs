@@ -18,14 +18,14 @@ use std::sync::Arc;
 use tracing::warn;
 use tracing::{debug, info};
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::storage::engines::core::ops::proximacodec::types::ProximaScheme;
 use proximadb_distance_kernel::engine::{DistanceMetric, UnifiedDistanceCompute};
+use proximadb_hardware_caps::HardwareCapabilities;
 
 #[cfg(feature = "gpu")]
 use crate::compute::gpu::distance::GpuDistanceCompute;
 #[cfg(feature = "gpu")]
-use crate::core::hardware_capabilities::GpuBackend;
+use proximadb_hardware_caps::GpuBackend;
 
 use super::common::{
     CompressionType, DeltaEntry, HierarchicalData, InterCentroidCompressionMetadata,
@@ -727,7 +727,7 @@ mod tests {
     fn test_p2_matrix_building() {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Cosine);
@@ -748,7 +748,7 @@ mod tests {
     fn test_k2_matrix_building() {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
         let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Euclidean);
@@ -792,7 +792,7 @@ mod tests {
 
     fn create_builder(metric: DistanceMetric) -> MatrixBuilder {
         let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let distance_compute = Arc::new(UnifiedDistanceCompute::new(metric));
         MatrixBuilder::new(distance_compute, hardware, metric)
     }

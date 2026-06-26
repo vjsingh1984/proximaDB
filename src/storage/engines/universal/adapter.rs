@@ -10,12 +10,12 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info, trace};
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_distance_kernel::{
     DistanceMetric, Int8VectorData, PQVectorData, QuantizedDistanceResult, QuantizedVectorData,
     SelectedFormat, SimilarityResult, UnifiedDistanceCompute,
 };
+use proximadb_hardware_caps::HardwareCapabilities;
 
 use super::{
     config::ProgressiveRefinementConfig as ConfigProgressiveRefinementConfig,

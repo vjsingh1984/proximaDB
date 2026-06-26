@@ -32,7 +32,7 @@ use proximadb_distance_kernel::DistanceMetric;
 // Performance optimization handled internally
 // NOVA-specific optimization structures removed - now using universal module
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use proximadb_hardware_caps::HardwareCapabilities;
 
 /// NOVA Engine - Next-generation Optimized Vector Analytics
 ///
@@ -237,7 +237,7 @@ pub struct NovaEngine {
 impl NovaEngine {
     /// Create new NOVA engine instance
     pub async fn new() -> Result<Self> {
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
         let optimized_ops = Arc::new(OptimizedNovaOperations::new()?);
 
         // Initialize filesystem factory

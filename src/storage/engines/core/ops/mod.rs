@@ -205,9 +205,9 @@ pub use crate::storage::engines::core::search::search_common::{
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use crate::proto::proximadb_v1::VectorRecord;
 use proximadb_distance_kernel::DistanceMetric;
+use proximadb_hardware_caps::HardwareCapabilities;
 
 // Temporary placeholder types until modules are created
 #[derive(Debug, Clone)]
@@ -959,7 +959,7 @@ mod tests {
 
     #[test]
     fn test_workload_specific_config() {
-        let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+        let hardware = proximadb_hardware_caps::get_hardware_capabilities();
 
         let high_throughput_config =
             create_config_for_workload(WorkloadType::HighThroughput, &hardware);

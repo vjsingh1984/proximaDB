@@ -415,14 +415,14 @@ pub fn create_pq8_quantization_config()
 // HARDWARE & COMPUTE HELPERS
 // ============================================================================
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
+use proximadb_hardware_caps::HardwareCapabilities;
 
 /// Initialize hardware capabilities for testing
 /// Source: Multiple test files
 #[allow(dead_code)]
 pub fn init_hardware_capabilities() -> Arc<HardwareCapabilities> {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
-    crate::core::hardware_capabilities::get_hardware_capabilities()
+    proximadb_hardware_caps::get_hardware_capabilities()
 }
 
 /// Create a UnifiedDistanceCompute instance for testing

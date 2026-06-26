@@ -301,7 +301,7 @@ async fn test_p2_matrix_search_integration() -> Result<()> {
 fn test_phase1_boundary_detection_basic() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-    let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+    let hardware = proximadb_hardware_caps::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Euclidean));
     let builder = MatrixBuilder::new(
         distance_compute.clone(),
@@ -373,7 +373,7 @@ fn test_phase1_boundary_detection_basic() {
 fn test_phase2_spillover_detection() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-    let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+    let hardware = proximadb_hardware_caps::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
     let builder = MatrixBuilder::new(distance_compute.clone(), hardware, DistanceMetric::Cosine);
 
@@ -639,7 +639,7 @@ fn test_spillover_map_generation() {
 fn test_p2_matrix_building() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-    let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+    let hardware = proximadb_hardware_caps::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
     let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Cosine);
@@ -660,7 +660,7 @@ fn test_p2_matrix_building() {
 fn test_k2_matrix_building() {
     let _ = proximadb_hardware::hardware_capabilities(); // OnceLock auto-init
 
-    let hardware = crate::core::hardware_capabilities::get_hardware_capabilities();
+    let hardware = proximadb_hardware_caps::get_hardware_capabilities();
     let distance_compute = Arc::new(UnifiedDistanceCompute::new(DistanceMetric::Cosine));
 
     let builder = MatrixBuilder::new(distance_compute, hardware, DistanceMetric::Euclidean);

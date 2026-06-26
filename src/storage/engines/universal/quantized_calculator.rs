@@ -7,11 +7,11 @@ use anyhow::Result;
 use std::sync::Arc;
 use tracing::{debug, trace};
 
-use crate::core::hardware_capabilities::HardwareCapabilities;
 use proximadb_distance_kernel::{
     ComputationMethod, DistanceMetric, DistanceMetrics, QuantizedDistanceResult,
     QuantizedVectorData, SelectedFormat, UnifiedDistanceCompute,
 };
+use proximadb_hardware_caps::HardwareCapabilities;
 
 use super::config::UniversalAdapterConfig;
 
