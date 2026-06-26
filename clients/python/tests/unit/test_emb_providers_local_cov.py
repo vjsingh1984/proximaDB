@@ -78,6 +78,7 @@ def _install_st_stub():
     mod = types.ModuleType("sentence_transformers")
     mod.SentenceTransformer = _FakeSentenceTransformer
     sys.modules["sentence_transformers"] = mod
+    return mod
 
 
 _install_st_stub()
@@ -119,9 +120,19 @@ from proximadb_sdk.embedding_providers.providers.testing import (  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
-def _clean_model_cache():
+def _clean_model_cache(monkeypatch):
     """Each test starts and ends with an empty shared ModelCache so the fake
-    SentenceTransformer is reconstructed and last_kwargs reflects this test."""
+    SentenceTransformer is reconstructed and last_kwargs reflects this test.
+
+    Sibling test files in the offline suite also stub
+    ``sentence_transformers`` into ``sys.modules`` and those stubs persist for
+    the whole pytest session. The local providers load their model lazily via
+    ``from sentence_transformers import SentenceTransformer``, so a foreign stub
+    installed by another module would win and break these tests. Re-pin OUR fake
+    for the duration of each test (monkeypatch restores the prior entry on
+    teardown).
+    """
+    monkeypatch.setitem(sys.modules, "sentence_transformers", _install_st_stub())
     ModelCache().clear()
     _FakeSentenceTransformer.last_kwargs = None
     yield

@@ -184,10 +184,22 @@ _tf.AutoTokenizer = FakeAutoTokenizer
 
 @pytest.fixture(autouse=True)
 def offline_env(monkeypatch, tmp_path):
-    """Force CPU + redirect the default cache dir into a tmp dir."""
+    """Force CPU + redirect the default cache dir into a tmp dir.
+
+    Other test modules in the offline suite also stub
+    ``sentence_transformers`` / ``transformers`` into ``sys.modules`` at import
+    time, and those stubs persist for the whole pytest session. The
+    MultiBERTProvider loads its model lazily via
+    ``from sentence_transformers import SentenceTransformer`` (and likewise for
+    ``transformers``), so a foreign stub installed by a sibling test file would
+    win and break these tests. Re-pin OUR fakes in ``sys.modules`` for the
+    duration of each test (monkeypatch restores the prior entries on teardown).
+    """
     import proximadb_sdk.embedding_providers.multi_bert_provider as mbp
 
     monkeypatch.setattr(mbp.Path, "home", classmethod(lambda cls: tmp_path))
+    monkeypatch.setitem(sys.modules, "sentence_transformers", _st)
+    monkeypatch.setitem(sys.modules, "transformers", _tf)
     yield
 
 
