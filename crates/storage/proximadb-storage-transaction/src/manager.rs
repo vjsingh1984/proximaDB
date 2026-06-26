@@ -860,7 +860,7 @@ impl MultiModelTransactionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::storage::transaction::operations::VectorOperation;
+    use crate::operations::VectorOperation;
 
     fn create_manager() -> MultiModelTransactionManager {
         MultiModelTransactionManager::new(ManagerTransactionConfig::default())

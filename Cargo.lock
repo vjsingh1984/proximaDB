@@ -6563,6 +6563,7 @@ dependencies = [
  "proximadb-storage-optimization",
  "proximadb-storage-strategy",
  "proximadb-storage-tenant",
+ "proximadb-storage-transaction",
  "proximadb-telemetry",
  "proximadb-uql",
  "proximadb-vector",
@@ -7641,6 +7642,19 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "proximadb-storage-transaction"
+version = "0.2.0"
+dependencies = [
+ "parking_lot",
+ "proximadb-kernel",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
  "uuid",
 ]
 
