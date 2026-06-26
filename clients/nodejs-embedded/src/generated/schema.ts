@@ -984,6 +984,7 @@ export interface components {
              *     to the IVF arm). When omitted, the engine selects a default (HNSW).
              */
             index_configs?: components["schemas"]["IndexConfigInput"][] | null;
+            index_policy?: null | components["schemas"]["IndexPolicyInput"];
             /**
              * Format: int64
              * @description Initial capacity hint for pre-allocation
@@ -1296,6 +1297,35 @@ export interface components {
             parameters?: {
                 [key: string]: string;
             };
+        };
+        /**
+         * @description REST input for the per-collection index routing policy (mirrors proto
+         *     `IndexPolicy`; ADR-028).
+         */
+        IndexPolicyInput: {
+            /**
+             * Format: int64
+             * @description Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+             *     for the storage class.
+             */
+            byte_budget?: number | null;
+            /**
+             * @description Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+             *     "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+             *     The engine modes force the collection onto that engine/route.
+             */
+            mode?: string | null;
+            /**
+             * Format: int32
+             * @description nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+             *     `mode = "exact"`.
+             */
+            nprobe?: number | null;
+            /**
+             * @description Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+             *     Index/auto modes only — rejected when `mode = "exact"`.
+             */
+            rehydrate?: string | null;
         };
         /** @description REST output for a single index config (mirrors gRPC `V2IndexSpec`). */
         IndexSpecOutput: {

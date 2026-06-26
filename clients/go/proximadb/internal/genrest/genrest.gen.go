@@ -225,6 +225,10 @@ type CreateCollectionV2Request struct {
 	// to the IVF arm). When omitted, the engine selects a default (HNSW).
 	IndexConfigs *[]IndexConfigInput `json:"index_configs"`
 
+	// IndexPolicy REST input for the per-collection index routing policy (mirrors proto
+	// `IndexPolicy`; ADR-028).
+	IndexPolicy *IndexPolicyInput `json:"index_policy,omitempty"`
+
 	// InitialCapacity Initial capacity hint for pre-allocation
 	InitialCapacity *int64 `json:"initial_capacity"`
 
@@ -562,6 +566,27 @@ type IndexConfigInput struct {
 
 	// Parameters Free-form algorithm parameters.
 	Parameters *map[string]string `json:"parameters,omitempty"`
+}
+
+// IndexPolicyInput REST input for the per-collection index routing policy (mirrors proto
+// `IndexPolicy`; ADR-028).
+type IndexPolicyInput struct {
+	// ByteBudget Exact-scan byte budget override (bytes). 0/omitted ⇒ cost-model default
+	// for the storage class.
+	ByteBudget *int64 `json:"byte_budget"`
+
+	// Mode Routing mode: "auto" (default) | "exact" | "ivf" | "hnsw" | "helix".
+	// "auto"/omitted ⇒ cost-derived. "exact" ⇒ always brute-force (no index).
+	// The engine modes force the collection onto that engine/route.
+	Mode *string `json:"mode"`
+
+	// Nprobe nprobe override for index modes. 0/omitted ⇒ cost-derived. Rejected when
+	// `mode = "exact"`.
+	Nprobe *int32 `json:"nprobe"`
+
+	// Rehydrate Cold-start index warming: "auto" (default) | "eager" | "lazy" | "never".
+	// Index/auto modes only — rejected when `mode = "exact"`.
+	Rehydrate *string `json:"rehydrate"`
 }
 
 // IndexSpecOutput REST output for a single index config (mirrors gRPC `V2IndexSpec`).
