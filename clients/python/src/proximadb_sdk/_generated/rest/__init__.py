@@ -5,6 +5,7 @@
 # fails if this directory drifts from a fresh regeneration.
 
 """A client library for accessing ProximaDB REST API"""
+
 from .client import AuthenticatedClient, Client
 
 __all__ = (
