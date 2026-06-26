@@ -10,6 +10,7 @@
 
 use anyhow::{Context, Result};
 // Use columnar module's StreamingParquetWriter instead of direct ArrowWriter
+use proximadb_storage_ports::CollectionMetadataPort;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, warn};
@@ -36,8 +37,7 @@ pub struct Flush {
     schema: ColumnarSchema,
 
     /// Collection service for metadata access
-    collection_service:
-        Arc<RwLock<Option<Arc<crate::services::collection::manager::CollectionService>>>>,
+    collection_service: Arc<RwLock<Option<Arc<dyn CollectionMetadataPort>>>>,
 
     /// Filesystem factory for cross-cloud atomic writes
     filesystem_factory: Arc<FilesystemFactory>,
@@ -60,7 +60,7 @@ impl std::fmt::Debug for Flush {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Flush")
             .field("schema", &self.schema)
-            .field("collection_service", &self.collection_service)
+            .field("collection_service", &"<dyn CollectionMetadataPort>")
             .field("filesystem_factory", &self.filesystem_factory)
             .field("atomic_coordinator", &self.atomic_coordinator)
             .field("compression_provider", &"StandardCompression")
@@ -72,9 +72,7 @@ impl std::fmt::Debug for Flush {
 
 impl Flush {
     pub async fn new(
-        collection_service: Arc<
-            RwLock<Option<Arc<crate::services::collection::manager::CollectionService>>>,
-        >,
+        collection_service: Arc<RwLock<Option<Arc<dyn CollectionMetadataPort>>>>,
         filesystem_factory: Arc<FilesystemFactory>,
     ) -> Result<Self> {
         // Create atomic coordinator

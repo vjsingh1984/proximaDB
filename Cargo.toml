@@ -73,6 +73,7 @@ members = [
     "crates/modalities/proximadb-rank-profile",
     "crates/modalities/proximadb-rank-onnx",
     "crates/storage/proximadb-storage-common",
+    "crates/storage/proximadb-storage-ports",
     "crates/storage/proximadb-storage-encryption",
     "crates/storage/proximadb-block-format",
     "crates/storage/proximadb-object-store",
@@ -220,6 +221,7 @@ proximadb-runtime-common = { path = "crates/horizontal/proximadb-runtime-common"
 proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-storage-kv = { path = "crates/storage/proximadb-storage-kv" }
@@ -314,6 +316,7 @@ proximadb-serialization = { path = "crates/horizontal/proximadb-serialization" }
 proximadb-security = { path = "crates/horizontal/proximadb-security" }
 proximadb-tls = { path = "crates/horizontal/proximadb-tls" }
 proximadb-storage-common = { path = "crates/storage/proximadb-storage-common" }
+proximadb-storage-ports = { path = "crates/storage/proximadb-storage-ports" }
 proximadb-storage-encryption = { path = "crates/storage/proximadb-storage-encryption" }
 proximadb-block-format = { path = "crates/storage/proximadb-block-format" }
 proximadb-object-store = { path = "crates/storage/proximadb-object-store" }

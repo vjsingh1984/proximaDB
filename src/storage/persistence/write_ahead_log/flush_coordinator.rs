@@ -12,6 +12,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use proximadb_storage_ports::CollectionMetadataPort;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -83,7 +84,7 @@ pub struct WALFlushCoordinator {
     /// Optimized flush coordinator for high-performance flushing
     optimized_coordinator: Option<Arc<OptimizedFlushCoordinator>>,
     /// Collection service for fetching metadata
-    collection_service: Option<Arc<crate::services::collection::manager::CollectionService>>,
+    collection_service: Option<Arc<dyn CollectionMetadataPort>>,
     /// Metrics updater for tracking flush operations
     metrics_updater: Option<Arc<dyn crate::metrics::InternalMetricsUpdater>>,
     /// Memtable manager for cleanup after flush
@@ -163,10 +164,7 @@ impl WALFlushCoordinator {
     }
 
     /// Set collection service for metadata fetching
-    pub fn set_collection_service(
-        &mut self,
-        service: Arc<crate::services::collection::manager::CollectionService>,
-    ) {
+    pub fn set_collection_service(&mut self, service: Arc<dyn CollectionMetadataPort>) {
         self.collection_service = Some(service);
     }
 

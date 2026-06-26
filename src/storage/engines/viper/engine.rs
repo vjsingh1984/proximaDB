@@ -23,6 +23,7 @@
 //! - AXIS can optionally add ML clustering as an optimization layer
 //! - Clean separation: VIPER = storage, AXIS = indexing
 use anyhow::Result;
+use proximadb_storage_ports::CollectionMetadataPort;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -125,8 +126,7 @@ pub struct ViperEngine {
     /// - None during engine initialization
     /// - Some when first collection accessed
     /// - Shared read access for concurrent queries
-    collection_service:
-        Arc<RwLock<Option<Arc<crate::services::collection::manager::CollectionService>>>>,
+    collection_service: Arc<RwLock<Option<Arc<dyn CollectionMetadataPort>>>>,
 
     /// **Unified Caching Filesystem**
     ///
@@ -597,7 +597,7 @@ impl ViperEngine {
     /// Set the collection service for metadata access
     pub async fn set_collection_service(
         &self,
-        collection_service: Arc<crate::services::collection::manager::CollectionService>,
+        collection_service: Arc<dyn CollectionMetadataPort>,
     ) {
         let mut service_lock = self.collection_service.write().await;
         *service_lock = Some(collection_service);
