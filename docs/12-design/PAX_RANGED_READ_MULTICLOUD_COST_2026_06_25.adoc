@@ -1,0 +1,113 @@
+= PAX Ranged-Read Economics Across Clouds (S3 / ADLS-ABFS / GCS) — Validation 2026-06-25
+:toc: macro
+
+Validates the footer-cache fragmentation finding (ADR-026; artifact
+`docs/_internal/status/PAX_FOOTER_CACHE_ECONOMICS_2026_06_25.adoc`, PR #341) against
+AWS S3, Azure ADLS Gen2 / Blob (ABFS), and Google Cloud Storage pricing + performance.
+The #341 measurement was S3-priced; this re-projects it per cloud and confirms the
+storage-engineering conclusion is cloud-robust.
+
+toc::[]
+
+== 1. The measured workload (from #341)
+
+One 4000×128 PAX segment (~1.17 MiB), Q steady-state vector-column reads, footer cache warm:
+
+[cols="1,2,2", options="header"]
+|===
+| | whole-byte read (live path) | footer-cached ranged read
+| bytes / query | 1.228 MB (1.000×) | 0.527 MB (0.43×)
+| GET requests / query | 1 | 300 (one per block; ~16 KiB blocks)
+| round-trips / query | 1 | 300
+|===
+
+The lever introduced by TD-156 (configurable block geometry): at a 256 KiB
+`target_block` the same scan is **2 blocks → 2 GETs/query** instead of 300.
+
+== 2. Per-cloud pricing (mid-2026 US list, multi-sourced)
+
+[cols="1,2,2,2", options="header"]
+|===
+| | AWS S3 Standard | Azure Blob Hot / ADLS Gen2 (ABFS) | GCS Standard
+| read op (GET) | $0.0004 / 1,000 | $0.0004 / 10,000 (=$0.00004/1k) | $0.0004 / 1,000 (Class B)
+| same-region read | free | free | free
+| internet egress | $0.09 / GiB | $0.087 / GiB (Zone 1) | $0.12 / GiB (Premium)
+|===
+
+Two nuances the design must encode:
+
+. **Azure reads are ~10× cheaper per GET** than S3/GCS ($0.00004/1k vs $0.0004/1k) —
+  this *flips* the fragmentation cost conclusion for Azure (see §3).
+. **ADLS Gen2 (hierarchical namespace) charges reads per 4 MiB chunk**; our ranged
+  stripes (~0.5 MiB) each count as one cheap transaction, so the Blob-Hot conclusion
+  holds. ADLS *list* operations are pricier (avoid listing in hot paths — we don't).
+
+== 3. Per-query cost projection
+
+=== 3.1 Same-region object-store read (free egress — the production default)
+Cost is **GET-count only** (egress free, all three clouds):
+
+[cols="1,3,3,1", options="header"]
+|===
+| | whole (1 GET) | ranged (300 GET) | verdict
+| S3 | $0.0000004 | $0.00012 | whole wins **300×**
+| GCS | $0.0000004 | $0.00012 | whole wins **300×**
+| Azure | $0.00000004 | $0.000012 | whole wins **300×**
+|===
+
+In the default deployment (compute co-located with the store), naive ranged reads
+are **300× more expensive on every cloud** — the #341 conclusion holds universally
+*and is strongest here*. Egress never enters it.
+
+=== 3.2 Internet / cross-region egress (charged)
+Per query = GET fee + egress on bytes:
+
+[cols="1,3,3,1", options="header"]
+|===
+| | whole (1 GET + 1.228 MB) | ranged (300 GET + 0.527 MB) | verdict
+| S3 ($0.09/GiB) | $0.0001033 | $0.0001641 | ranged **+59%** (fee-dominated)
+| GCS ($0.12/GiB) | $0.0001376 | $0.0001788 | ranged **+30%** (closer — higher egress helps ranged's byte saving)
+| Azure ($0.087/GiB) | $0.0000994 | $0.0000546 | ranged **−45%** (cheap reads → ranged WINS)
+|===
+
+Only on the egress-charged path does the picture split: **S3/GCS are fee-dominated
+(naive ranged loses $), Azure is ranged-favorable (cheap reads flip it).**
+
+== 4. Performance (round-trips — the co-design dominant cost)
+Cost aside, the co-design cost spine says a cloud DB's dominant term is **I/O
+round-trips, not bytes or CPU**. Naive ranged reads issue **300 sequential round-trips
+per query** vs whole-byte's **1** — ~300× the tail latency on *every* cloud, in *every*
+locality. This alone makes naive ranged reads unacceptable regardless of pricing.
+
+== 5. Conclusion — TD-156 + TD-151 universalize the ranged-read win
+
+. **Same-region (the default): naive ranged loses 300× on all clouds** (GET-count) +
+   300× latency. Whole-byte wins; ranged must coalesce.
+. **Internet: S3/GCS fee-dominated (ranged +30–59%); Azure ranged-favorable (−45%).**
+. **Everywhere: 300 round-trips/query is the killer** (latency).
+
+The fix is the same for all three clouds and is already the plan:
+* **TD-156 (configurable geometry)**: a 256 KiB+ `target_block` collapses 300 → 2
+  GETs/query. Re-projected at 2 GETs/query:
+** S3 internet ranged = $0.0000449 vs whole $0.0001033 → ranged **−56%** (now WINS).
+** GCS internet ranged = $0.0000596 vs whole $0.0001376 → ranged **−57%** (WINS).
+** Azure stays ranged-favorable. Same-region ranged ≈ whole (2 vs 1 GET). Latency ≈ parity (2 vs 1 RT).
+* **TD-151 (range coalescing + block pruning)**: drives GETs toward the ~8–16 MiB
+  cost-throughput optimum and skips excluded blocks (cuts both bytes and GETs).
+
+So: naive ranged reads are fee-dominated on S3/GCS (not Azure) and latency-broken
+everywhere; **larger blocks (TD-156) + coalescing/pruning (TD-151) make ranged reads
+win on all three clouds and all localities.** The #341 harness's GET-count metric is
+the cloud-neutral ratchet.
+
+== 6. What the store must encode (ties to the existing KOU model)
+`OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc` already models *byte-egress*
+locality (same-region free on all three). This validation adds the missing
+**per-operation (GET-count)** axis: `SegmentReadStats.range_gets` must be metered per
+tenant alongside KOU bytes, and the cost layer must apply the per-cloud read-op rate
+(S3/GCS $0.0004/1k; Azure $0.00004/1k; same-region egress free). TD-157 (adaptive
+tuning) consumes both to pick geometry/quant.
+
+== References
+* ADR-026 (PAX canonical vector path) · `PAX_FOOTER_CACHE_ECONOMICS_2026_06_25.adoc` (#341) · `OUTGRESS_KOU_MULTICLOUD_COST_MODEL_2026_06_21.adoc` · `CODESIGN_DIMENSIONAL_ARCHITECTURE_2026_06_19.adoc` §2.1–2.2
+* Pricing (mid-2026): link:https://aws.amazon.com/s3/pricing/[AWS S3]^, link:https://azure.microsoft.com/en-us/pricing/details/storage/blobs/[Azure Blob]^, link:https://cloud.google.com/storage/pricing[GCS]^ — re-pin to primary pages before quoting customers.
